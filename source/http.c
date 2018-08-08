@@ -332,7 +332,7 @@ static inline int s_aws_http_get_status_code_class(char c, enum aws_http_respons
 #define AWS_HTTP_CHECK_OP(X) do { if ((X) != AWS_OP_SUCCESS) { goto aws_error; } } while (0)
 #define AWS_HTTP_ASSERT(X) do { if (!(X)) { goto aws_error; } } while (0)
 
-static int s_aws_http_read_headers_and_optional_body(struct aws_http_message_data *data, struct aws_http_str *input, struct aws_array_list *headers) {
+static int s_aws_http_read_headers_and_optional_body(struct aws_http_message_data *data, struct aws_http_str *input, struct aws_array_list *headers, int *cache) {
     struct aws_http_str str;
 
     /* Scan for headers. */
@@ -343,6 +343,10 @@ static int s_aws_http_read_headers_and_optional_body(struct aws_http_message_dat
         AWS_HTTP_CHECK_OP(s_aws_http_scan(input, &str, ':'));
         header_field.key_str = str;
         header_field.key = s_aws_http_str_to_request_key(str);
+
+        if (header_field.key) {
+            cache[(size_t)header_field.key] = (int)aws_array_list_length(headers) + 1;
+        }
 
         bool has_content = false;
         if (header_field.key == AWS_HTTP_REQUEST_KEY_CONTENT_LENGTH) {
@@ -418,7 +422,7 @@ int aws_http_request_init(struct aws_allocator *alloc, struct aws_http_request *
     AWS_HTTP_ASSERT(request->version != AWS_HTTP_VERSION_UNKNOWN);
 
     /* Read in headers and optional body data. */
-    s_aws_http_read_headers_and_optional_body(&request->data, &input, &headers);
+    s_aws_http_read_headers_and_optional_body(&request->data, &input, &headers, request->header_cache);
 
     return AWS_OP_SUCCESS;
 
@@ -456,9 +460,7 @@ static inline int s_aws_http_get_header_by_str(const struct aws_http_message_dat
         if (len != key_len) {
             return AWS_OP_ERR;
         }
-        if (memcpy(str.begin, key, (size_t)len)) {
-            return AWS_OP_ERR;
-        } else {
+        if (!memcmp(str.begin, key, (size_t)len)) {
             *header = data->headers[i];
             return AWS_OP_SUCCESS;
         }
@@ -499,7 +501,7 @@ int aws_http_response_init(struct aws_allocator *alloc, struct aws_http_response
     AWS_HTTP_CHECK_OP(s_aws_http_scan_for_eol_or_eos(&input, &str));
 
     /* Read in headers and optional body data. */
-    s_aws_http_read_headers_and_optional_body(&response->data, &input, &headers);
+    s_aws_http_read_headers_and_optional_body(&response->data, &input, &headers, response->header_cache);
 
     return AWS_OP_SUCCESS;
 
@@ -510,7 +512,7 @@ aws_error:
     return AWS_OP_ERR;
 }
 
-int aws_http_response_clean_up(struct aws_http_response *response) {
+void aws_http_response_clean_up(struct aws_http_response *response) {
     aws_mem_release(response->data.alloc, response->data.headers);
     AWS_ZERO_STRUCT(*response);
 }

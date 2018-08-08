@@ -95,7 +95,7 @@ enum aws_http_request_key {
  * \ref aws_http_request_key.
  */
 struct aws_http_header {
-    enum aws_http_request_key key;
+    int key;
     struct aws_http_str key_str; /* Case insensitive. */
     struct aws_http_str value_str;
 };
@@ -196,7 +196,7 @@ AWS_HTTP_API int aws_http_request_get_header_by_enum(const struct aws_http_reque
 AWS_HTTP_API int aws_http_request_get_header_by_str(const struct aws_http_request *request, struct aws_http_header *header, const char *key, int key_len);
 
 AWS_HTTP_API int aws_http_response_init(struct aws_allocator *alloc,struct aws_http_response *response, const void* buffer, size_t size);
-AWS_HTTP_API int aws_http_response_clean_up(struct aws_http_response *response);
+AWS_HTTP_API void aws_http_response_clean_up(struct aws_http_response *response);
 AWS_HTTP_API int aws_http_response_get_header_by_enum(const struct aws_http_response *response, struct aws_http_header *header, enum aws_http_request_key key);
 AWS_HTTP_API int aws_http_response_get_header_by_str(const struct aws_http_response *response, struct aws_http_header *header, const char *key, int key_len);
 
