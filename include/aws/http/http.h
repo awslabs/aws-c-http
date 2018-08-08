@@ -16,7 +16,7 @@
 #include <aws/http/exports.h>
 
 enum aws_http_version {
-    AWS_HTTP_VERSION_UNKNOWN,
+    AWS_HTTP_VERSION_UNKNOWN, /* Invalid version. */
     AWS_HTTP_VERSION_1_0,
     AWS_HTTP_VERSION_1_1,
     AWS_HTTP_VERSION_2_0,
@@ -38,7 +38,7 @@ struct aws_http_str {
 };
 
 enum aws_http_request_method {
-    AWS_HTTP_REQUEST_METHOD_UNKNOWN,
+    AWS_HTTP_REQUEST_METHOD_UNKNOWN, /* Invalid request. */
     AWS_HTTP_REQUEST_METHOD_CONNECT,
     AWS_HTTP_REQUEST_METHOD_DELETE,
     AWS_HTTP_REQUEST_METHOD_GET,
@@ -51,7 +51,12 @@ enum aws_http_request_method {
 };
 
 enum aws_http_request_key {
+    /* 
+     * Valid request header key, but not mapped to an enum (e.g. uncommon headers are
+     * not apart of this enum.
+     */
     AWS_HTTP_REQUEST_KEY_UNKNOWN,
+
     AWS_HTTP_REQUEST_KEY_ACCEPT,
     AWS_HTTP_REQUEST_KEY_ACCEPT_CHARSET,
     AWS_HTTP_REQUEST_KEY_ACCEPT_ENCODING,
@@ -82,13 +87,17 @@ enum aws_http_request_key {
     AWS_HTTP_REQUEST_KEY_VIA,
 };
 
-/* Case insensitive. */
+/*
+ * Headers are string key-value pairs. Some keys are pre-mapped to convenience enum values. See
+ * \ref aws_http_request_key.
+ */
 struct aws_http_header {
     enum aws_http_request_key key;
-    struct aws_http_str key_str;
+    struct aws_http_str key_str; /* Case insensitive. */
     struct aws_http_str value_str;
 };
 
+/* Common structure shared between requests/responses. */
 struct aws_http_message_data {
     size_t header_count;
     struct aws_http_header* headers;
@@ -106,7 +115,7 @@ struct aws_http_request {
 
 enum aws_http_response_status_code_class
 {
-    AWS_HTTP_RESPONSE_STATUS_CODE_UNKNOWN,
+    AWS_HTTP_RESPONSE_STATUS_CODE_UNKNOWN, /* Invalid status code. */
     AWS_HTTP_RESPONSE_STATUS_CODE_INFORMATIONAL,
     AWS_HTTP_RESPONSE_STATUS_CODE_SUCCESSFUL,
     AWS_HTTP_RESPONSE_STATUS_CODE_REDIRECTION,
@@ -115,7 +124,12 @@ enum aws_http_response_status_code_class
 };
 
 enum aws_http_response_key {
+    /* 
+     * Valid response header key, but not mapped to an enum (e.g. uncommon headers are
+     * not apart of this enum.
+     */
     AWS_HTTP_RESPONSE_KEY_UNKNOWN,
+
     AWS_HTTP_RESPONSE_KEY_ACCEPT_RANGES,
     AWS_HTTP_RESPONSE_KEY_AGE,
     AWS_HTTP_RESPONSE_KEY_ALLOW,
