@@ -53,12 +53,85 @@ static bool s_aws_http_eol(char c) {
     return false;
 }
 
+/*
+ * The next four functions were generated from a small program in C, that takes a text-file as
+ * input, reads in header keys as strings, and their corresponding enums as strings. The program
+ * then spits out a nicely formatted switch statement for all the key-value pairs. The hashed sting
+ * is included as a comment after each switch case. Here is the hash program:
+ */
+
+#if 0
+    #define _CRT_SECURE_NO_WARNINGS
+    #include <stdio.h>
+    #include <stdint.h>
+    #include <ctype.h>
+    #include <string.h>
+
+    uint64_t s_aws_FNV1a(const char* text) {
+        uint64_t h = (uint64_t)14695981039346656037U;
+        while (*text) {
+            char c = *text++;
+            h = h ^ (uint64_t)c;
+            h = h * (uint64_t)1099511628211;
+        }
+        return h;
+    }
+
+    char *s_upper(char *s) {
+        char *orig = s;
+        while (*s) {
+            *s = (char)toupper(*s);
+            ++s;
+        }
+        return orig;
+    }
+
+    int main(int argc, char **argv) {
+        if (argc < 2) {
+            printf("Not enough arguments: %d\n", argc);
+            return -1;
+        }
+
+        char buffer[256];
+        char *strings[64];
+        char *enums[64];
+
+        const char *path = argv[1];
+        FILE *fp = fopen(path, "rb");
+
+        int count = 0;
+        while (1) {
+            if (feof(fp)) break;
+            fscanf(fp, "%s", buffer);
+            strings[count] = strdup(s_upper(buffer));
+            fscanf(fp, "%s", buffer);
+            enums[count] = strdup(s_upper(buffer));
+            ++count;
+        }
+
+        printf("\n\nstatic enum enum_type s_aws_http_str_to_enum_type(struct aws_http_str str) {\n");
+        printf("    uint64_t h = s_aws_FNV1a(str);\n");
+        printf("    switch (h) {\n");
+        printf("    default: return AWS_HTTP_REQUEST_METHOD_UNKNOWN;\n");
+
+        for (int i = 0; i < count; ++i) {
+            uint64_t h = s_aws_FNV1a(strings[i]);
+            printf("    case %lluU: return %s; /* %s */\n", h, enums[i], strings[i]);
+        }
+
+        printf("    }\n");
+        printf("}");
+
+        return 0;
+    }
+#endif
+
 static inline uint64_t s_aws_FNV1a(struct aws_http_str str) {
     uint64_t h = (uint64_t)14695981039346656037U;
     while (str.begin < str.end) {
         char c = (char)toupper(*str.begin++);
         h = h ^ (uint64_t)c;
-        h = h * (uint64_t)1099511628211;
+        h = h * (uint64_t)1099511628211U;
     }
     return h;
 }
@@ -162,8 +235,8 @@ static inline int s_aws_http_skip_space(struct aws_http_str *input) {
         if (!(scan < input->end)) {
             return AWS_OP_ERR;
         }
-    } while (*scan++ != ' ');
-    input->begin = scan;
+    } while (*scan++ == ' ');
+    input->begin = scan - 1;
     return AWS_OP_SUCCESS;
 }
 
@@ -203,7 +276,7 @@ static int s_aws_http_scan_for_eol_or_eos(struct aws_http_str *input, struct aws
             return AWS_OP_SUCCESS;
         }
         ++scan;
-    } while (!isspace(c));
+    } while (!s_aws_http_eol(c));
     if (c == '\r') {
         if (scan < input->end + 1 && *scan++ != '\n') {
             return AWS_OP_ERR;
@@ -212,6 +285,7 @@ static int s_aws_http_scan_for_eol_or_eos(struct aws_http_str *input, struct aws
     out->begin = input->begin;
     out->end = scan - 2;
     input->begin = scan;
+    s_aws_http_trim_trailing_space(out);
     return AWS_OP_SUCCESS;
 }
 

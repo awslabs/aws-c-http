@@ -25,10 +25,12 @@ static void s_print(struct aws_http_str str) {
 
 static void s_print_request(struct aws_http_request *request) {
     printf("%s\n", aws_http_request_method_to_str(request->method));
+    s_print(request->target);
+    printf("\n");
     printf("%s\n", aws_http_version_code_to_str(request->version));
     for (int i = 0; i < request->header_count; ++i) {
         s_print(request->headers[i].key_str);
-        printf(" : ");
+        printf(":");
         s_print(request->headers[i].value_str);
         printf("\n");
     }
@@ -40,19 +42,67 @@ AWS_TEST_CASE(dummy_test, dummy_test_fn)
 static int dummy_test_fn(struct aws_allocator *alloc, void *ctx) {
     (void)ctx;
 
-    const char *request_str =
+    const char *request_strs[] = {
         "GET / HTTP/1.1\r\n"
         "Host: developer.mozilla.org\r\n"
         "Accept-Language: fr\r\n"
         "Content-Length : 6\r\n"
         "\r\n"
-        "123456"
-        ;
+        "123456",
 
-    struct aws_http_request request;
-    aws_http_request_init(alloc, &request, request_str, strlen(request_str));
-    s_print_request(&request);
-    aws_http_request_clean_up(&request);
+        "CONNECT server.example.com:80 HTTP/1.1\r\n"
+        "Host: server.example.com:80\r\n"
+        "Proxy-Authorization: basic aGVsbG86d29ybGQ=\r\n",
+
+        "DELETE /file.html HTTP/1.1\r\n",
+
+        "HEAD /index.html HTTP/1.1\r\n",
+
+        "OPTIONS /index.html HTTP/1.1\r\n",
+
+        "OPTIONS * HTTP/1.1\r\n",
+
+        "PATCH /file.txt HTTP/1.1\r\n"
+        "Host: www.example.com\r\n"
+        "Content-Type: application/example\r\n"
+        "If-Match: \"e0023aa4e\"\r\n"
+        "Content-Length: 10\r\n"
+        "\r\n"
+        "0123456789\r\n",
+
+        "POST / HTTP/1.1\r\n"
+        "Host: foo.com\r\n"
+        "Content-Type: application/x-www-form-urlencoded\r\n"
+        "Content-Length: 13\r\n"
+        "\r\n"
+        "say=Hi&to=Mom\r\n",
+
+        "PUT /new.html HTTP/1.1\r\n"
+        "Host: example.com\r\n"
+        "Content-type: text/html\r\n"
+        "Content-length: 16\r\n"
+        "\r\n"
+        "<p>New File</p>\r\n",
+
+        "TRACE /index.html HTTP/1.1\r\n",
+
+        "GET /home.html HTTP/1.1\r\n"
+        "Host: example.com\r\n"
+        "a-fake-header:      oh   what is this odd     whitespace      \r\n"
+        "another-fake-header:   the message data has a trailing crlf beyond it ...  \r\n"
+        "Content-Length : 1\r\n"
+        "\r\n"
+        "X\r\n",
+    };
+
+    for (int i = 0; i < sizeof(request_strs) / sizeof(*request_strs); ++i) {
+        struct aws_http_request request;
+        const char *request_str = request_strs[i];
+        ASSERT_SUCCESS(aws_http_request_init(alloc, &request, request_str, strlen(request_str)));
+        //s_print_request(&request);
+        //printf("\n");
+        aws_http_request_clean_up(&request);
+    }
 
     return 0;
 }

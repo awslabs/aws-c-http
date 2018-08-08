@@ -22,7 +22,8 @@ enum aws_http_version {
     AWS_HTTP_VERSION_2_0,
 };
 
-/* String representation by a begin and end pointer pair. The `begin` pointer points to the
+/* 
+ * String representation by a begin and end pointer pair. The `begin` pointer points to the
  * first element in the string, and the `end` pointer points to one beyond the end of the string.
  * For example the string "Hello world!" as an `aws_http_str would be properly setup like so:
  * 
@@ -34,13 +35,6 @@ enum aws_http_version {
 struct aws_http_str {
     const char* begin;
     const char* end;
-};
-
-/* Case insensitive. */
-struct aws_http_header {
-    enum aws_http_response_key key;
-    struct aws_http_str key_str;
-    struct aws_http_str value_str;
 };
 
 enum aws_http_request_method {
@@ -86,6 +80,13 @@ enum aws_http_request_key {
     AWS_HTTP_REQUEST_KEY_REFERRER,
     AWS_HTTP_REQUEST_KEY_USER_AGENT,
     AWS_HTTP_REQUEST_KEY_VIA,
+};
+
+/* Case insensitive. */
+struct aws_http_header {
+    enum aws_http_request_key key;
+    struct aws_http_str key_str;
+    struct aws_http_str value_str;
 };
 
 struct aws_http_request {
