@@ -38,8 +38,8 @@ static void s_print_request(struct aws_http_request *request) {
     printf("\n");
 }
 
-AWS_TEST_CASE(dummy_test, dummy_test_fn)
-static int dummy_test_fn(struct aws_allocator *alloc, void *ctx) {
+AWS_TEST_CASE(http_parse_lots_of_headers, http_parse_lots_of_headers_fn)
+static int http_parse_lots_of_headers_fn(struct aws_allocator *alloc, void *ctx) {
     (void)ctx;
 
     const char *request_strs[] = {
@@ -99,10 +99,64 @@ static int dummy_test_fn(struct aws_allocator *alloc, void *ctx) {
         struct aws_http_request request;
         const char *request_str = request_strs[i];
         ASSERT_SUCCESS(aws_http_request_init(alloc, &request, request_str, strlen(request_str)));
-        s_print_request(&request);
-        printf("\n");
+        //s_print_request(&request);
+        //printf("\n");
         aws_http_request_clean_up(&request);
     }
+
+    return 0;
+}
+
+static inline int s_test_strcmp(struct aws_http_str a, const char* b) {
+    while (a.begin < a.end) {
+        if (toupper(*a.begin++) != toupper(*b++)) {
+            return AWS_OP_ERR;
+        }
+    }
+    return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(http_parse_and_lookup_header, http_parse_and_lookup_header_fn)
+static int http_parse_and_lookup_header_fn(struct aws_allocator *alloc, void *ctx) {
+    (void)ctx;
+    const char *request_str =
+        "GET / HTTP/1.1\r\n"
+        "Host: developer.mozilla.org\r\n"
+        "Accept-Language: fr\r\n"
+        "Content-Length : 6\r\n"
+        "\r\n"
+        "123456";
+
+    struct aws_http_request request;
+    ASSERT_SUCCESS(aws_http_request_init(alloc, &request, request_str, strlen(request_str)));
+
+    struct aws_http_header header;
+    ASSERT_SUCCESS(aws_http_request_get_header_by_enum(&request, &header, AWS_HTTP_REQUEST_ACCEPT_LANGUAGE));
+    ASSERT_SUCCESS(s_test_strcmp(header.key_str, "content-length"));
+    ASSERT_SUCCESS(s_test_strcmp(header.value_str, "6"));
+
+    const char* key = "CoNteNt-LeNgTh";
+    ASSERT_SUCCESS(aws_http_request_get_header_by_str(&request, &header, key, strlen(key)));
+    ASSERT_SUCCESS(s_test_strcmp(header.key_str, "content-length"));
+
+    aws_http_request_clean_up(&request);
+
+    return 0;
+}
+
+AWS_TEST_CASE(http_parse_bad_or_empty_input, http_parse_bad_or_empty_input_fn)
+static int http_parse_bad_or_empty_input_fn(struct aws_allocator *alloc, void *ctx) {
+    (void)ctx;
+    const char *request_str = NULL;
+
+    struct aws_http_request request;
+    ASSERT_FAILS(aws_http_request_init(alloc, &request, request_str, 0));
+    aws_http_request_clean_up(&request);
+
+    request_str = "";
+
+    ASSERT_FAILS(aws_http_request_init(alloc, &request, request_str, strlen(request_str)));
+    aws_http_request_clean_up(&request);
 
     return 0;
 }

@@ -55,36 +55,36 @@ enum aws_http_request_key {
      * Valid request header key, but not mapped to an enum (e.g. uncommon headers are
      * not apart of this enum.
      */
-    AWS_HTTP_REQUEST_KEY_UNKNOWN,
+    AWS_HTTP_REQUEST_UNKNOWN,
 
-    AWS_HTTP_REQUEST_KEY_ACCEPT,
-    AWS_HTTP_REQUEST_KEY_ACCEPT_CHARSET,
-    AWS_HTTP_REQUEST_KEY_ACCEPT_ENCODING,
-    AWS_HTTP_REQUEST_KEY_ACCEPT_LANGUAGE,
-    AWS_HTTP_REQUEST_KEY_AUTHORIZATION,
-    AWS_HTTP_REQUEST_KEY_CACHE_CONTROL,
-    AWS_HTTP_REQUEST_KEY_CONNECTION,
-    AWS_HTTP_REQUEST_KEY_CONTENT_LENGTH,
-    AWS_HTTP_REQUEST_KEY_CONTENT_TYPE,
-    AWS_HTTP_REQUEST_KEY_COOKIE,
-    AWS_HTTP_REQUEST_KEY_DATE,
-    AWS_HTTP_REQUEST_KEY_EXPECT,
-    AWS_HTTP_REQUEST_KEY_FORWARDED,
-    AWS_HTTP_REQUEST_KEY_FROM,
-    AWS_HTTP_REQUEST_KEY_HOST,
-    AWS_HTTP_REQUEST_KEY_IF_MATCH,
-    AWS_HTTP_REQUEST_KEY_IF_MODIFIED_SINCE,
-    AWS_HTTP_REQUEST_KEY_IF_NONE_MATCH,
-    AWS_HTTP_REQUEST_KEY_IF_RANGE,
-    AWS_HTTP_REQUEST_KEY_IF_UNMODIFIED_SINCE,
-    AWS_HTTP_REQUEST_KEY_KEEP_ALIVE,
-    AWS_HTTP_REQUEST_KEY_MAX_FORWARDS,
-    AWS_HTTP_REQUEST_KEY_ORIGIN,
-    AWS_HTTP_REQUEST_KEY_PROXY_AUTHORIZATION,
-    AWS_HTTP_REQUEST_KEY_RANGE,
-    AWS_HTTP_REQUEST_KEY_REFERRER,
-    AWS_HTTP_REQUEST_KEY_USER_AGENT,
-    AWS_HTTP_REQUEST_KEY_VIA,
+    AWS_HTTP_REQUEST_ACCEPT,
+    AWS_HTTP_REQUEST_ACCEPT_CHARSET,
+    AWS_HTTP_REQUEST_ACCEPT_ENCODING,
+    AWS_HTTP_REQUEST_ACCEPT_LANGUAGE,
+    AWS_HTTP_REQUEST_AUTHORIZATION,
+    AWS_HTTP_REQUEST_CACHE_CONTROL,
+    AWS_HTTP_REQUEST_CONNECTION,
+    AWS_HTTP_REQUEST_CONTENT_LENGTH,
+    AWS_HTTP_REQUEST_CONTENT_TYPE,
+    AWS_HTTP_REQUEST_COOKIE,
+    AWS_HTTP_REQUEST_DATE,
+    AWS_HTTP_REQUEST_EXPECT,
+    AWS_HTTP_REQUEST_FORWARDED,
+    AWS_HTTP_REQUEST_FROM,
+    AWS_HTTP_REQUEST_HOST,
+    AWS_HTTP_REQUEST_IF_MATCH,
+    AWS_HTTP_REQUEST_IF_MODIFIED_SINCE,
+    AWS_HTTP_REQUEST_IF_NONE_MATCH,
+    AWS_HTTP_REQUEST_IF_RANGE,
+    AWS_HTTP_REQUEST_IF_UNMODIFIED_SINCE,
+    AWS_HTTP_REQUEST_KEEP_ALIVE,
+    AWS_HTTP_REQUEST_MAX_FORWARDS,
+    AWS_HTTP_REQUEST_ORIGIN,
+    AWS_HTTP_REQUEST_PROXY_AUTHORIZATION,
+    AWS_HTTP_REQUEST_RANGE,
+    AWS_HTTP_REQUEST_REFERRER,
+    AWS_HTTP_REQUEST_USER_AGENT,
+    AWS_HTTP_REQUEST_VIA,
 
     /* Must be last. */
     AWS_HTTP_REQUEST_LAST
@@ -114,8 +114,6 @@ struct aws_http_request {
     struct aws_http_str target;
     struct aws_http_message_data data;
 
-    /* TODO: Static assert the size is less than the LAST enum value. */
-    /* TODO: Document how duplicate headers can be handled. */
     int header_cache[AWS_HTTP_REQUEST_LAST];
 };
 
@@ -134,33 +132,33 @@ enum aws_http_response_key {
      * Valid response header key, but not mapped to an enum (e.g. uncommon headers are
      * not apart of this enum.
      */
-    AWS_HTTP_RESPONSE_KEY_UNKNOWN,
+    AWS_HTTP_RESPONSE_UNKNOWN,
 
-    AWS_HTTP_RESPONSE_KEY_ACCEPT_RANGES,
-    AWS_HTTP_RESPONSE_KEY_AGE,
-    AWS_HTTP_RESPONSE_KEY_ALLOW,
-    AWS_HTTP_RESPONSE_KEY_CACHE_CONTROL,
-    AWS_HTTP_RESPONSE_KEY_CONTENT_DISPOSITION,
-    AWS_HTTP_RESPONSE_KEY_CONTENT_ENCODING,
-    AWS_HTTP_RESPONSE_KEY_CONTENT_LANGUAGE,
-    AWS_HTTP_RESPONSE_KEY_CONTENT_LENGTH,
-    AWS_HTTP_RESPONSE_KEY_CONTENT_LOCATION,
-    AWS_HTTP_RESPONSE_KEY_CONTENT_RANGE,
-    AWS_HTTP_RESPONSE_KEY_CONTENT_TYPE,
-    AWS_HTTP_RESPONSE_KEY_DATE,
-    AWS_HTTP_RESPONSE_KEY_ETAG,
-    AWS_HTTP_RESPONSE_KEY_LAST_MODIFIED,
-    AWS_HTTP_RESPONSE_KEY_LINK,
-    AWS_HTTP_RESPONSE_KEY_LOCATION,
-    AWS_HTTP_RESPONSE_KEY_PROXY_AUTHENTICATE,
-    AWS_HTTP_RESPONSE_KEY_RETRY_AFTER,
-    AWS_HTTP_RESPONSE_KEY_SERVER,
-    AWS_HTTP_RESPONSE_KEY_SET_COOKIE,
-    AWS_HTTP_RESPONSE_KEY_STRICT_TRANSPORT_SECURITY,
-    AWS_HTTP_RESPONSE_KEY_UPGRADE,
-    AWS_HTTP_RESPONSE_KEY_VARY,
-    AWS_HTTP_RESPONSE_KEY_VIA,
-    AWS_HTTP_RESPONSE_KEY_WWW_AUTHENTICATE,
+    AWS_HTTP_RESPONSE_ACCEPT_RANGES,
+    AWS_HTTP_RESPONSE_AGE,
+    AWS_HTTP_RESPONSE_ALLOW,
+    AWS_HTTP_RESPONSE_CACHE_CONTROL,
+    AWS_HTTP_RESPONSE_CONTENT_DISPOSITION,
+    AWS_HTTP_RESPONSE_CONTENT_ENCODING,
+    AWS_HTTP_RESPONSE_CONTENT_LANGUAGE,
+    AWS_HTTP_RESPONSE_CONTENT_LENGTH,
+    AWS_HTTP_RESPONSE_CONTENT_LOCATION,
+    AWS_HTTP_RESPONSE_CONTENT_RANGE,
+    AWS_HTTP_RESPONSE_CONTENT_TYPE,
+    AWS_HTTP_RESPONSE_DATE,
+    AWS_HTTP_RESPONSE_ETAG,
+    AWS_HTTP_RESPONSE_LAST_MODIFIED,
+    AWS_HTTP_RESPONSE_LINK,
+    AWS_HTTP_RESPONSE_LOCATION,
+    AWS_HTTP_RESPONSE_PROXY_AUTHENTICATE,
+    AWS_HTTP_RESPONSE_RETRY_AFTER,
+    AWS_HTTP_RESPONSE_SERVER,
+    AWS_HTTP_RESPONSE_SET_COOKIE,
+    AWS_HTTP_RESPONSE_STRICT_TRANSPORT_SECURITY,
+    AWS_HTTP_RESPONSE_UPGRADE,
+    AWS_HTTP_RESPONSE_VARY,
+    AWS_HTTP_RESPONSE_VIA,
+    AWS_HTTP_RESPONSE_WWW_AUTHENTICATE,
 
     /* Must be last. */
     AWS_HTTP_RESPONSE_LAST
@@ -173,8 +171,6 @@ struct aws_http_response {
     struct aws_http_str status_code_reason_phrase;
     struct aws_http_message_data data;
 
-    /* TODO: Static assert the size is less than the LAST enum value. */
-    /* TODO: Document how duplicate headers can be handled. */
     int header_cache[AWS_HTTP_RESPONSE_LAST];
 };
 
@@ -192,13 +188,35 @@ extern "C" {
 
 AWS_HTTP_API int aws_http_request_init(struct aws_allocator *alloc, struct aws_http_request *request, const void* buffer, size_t size);
 AWS_HTTP_API void aws_http_request_clean_up(struct aws_http_request *request);
+
+/*
+ * Headers are searched the order they are parsed (from top-down), and the first match is returned. These `get`
+ * functions do not do any special handling for duplicate headers, and will always naively return the first match found.
+ * This function searches for a header given the associated enum value. Not all possible headers have a pre-defined
+ * enum value associated with them; only the commons have an enum.
+ */
 AWS_HTTP_API int aws_http_request_get_header_by_enum(const struct aws_http_request *request, struct aws_http_header *header, enum aws_http_request_key key);
-AWS_HTTP_API int aws_http_request_get_header_by_str(const struct aws_http_request *request, struct aws_http_header *header, const char *key, int key_len);
+
+/*
+ * Searches for a header given the string representation of the header name. The search is case-insensitive.
+ */
+AWS_HTTP_API int aws_http_request_get_header_by_str(const struct aws_http_request *request, struct aws_http_header *header, const char *key, size_t key_len);
 
 AWS_HTTP_API int aws_http_response_init(struct aws_allocator *alloc,struct aws_http_response *response, const void* buffer, size_t size);
 AWS_HTTP_API void aws_http_response_clean_up(struct aws_http_response *response);
+
+/*
+ * Headers are searched the order they are parsed (from top-down), and the first match is returned. These `get`
+ * functions do not do any special handling for duplicate headers, and will always naively return the first match found.
+ * This function searches for a header given the associated enum value. Not all possible headers have a pre-defined
+ * enum value associated with them; only the commons have an enum.
+ */
 AWS_HTTP_API int aws_http_response_get_header_by_enum(const struct aws_http_response *response, struct aws_http_header *header, enum aws_http_request_key key);
-AWS_HTTP_API int aws_http_response_get_header_by_str(const struct aws_http_response *response, struct aws_http_header *header, const char *key, int key_len);
+
+/*
+ * Searches for a header given the string representation of the header name. The search is case-insensitive.
+ */
+AWS_HTTP_API int aws_http_response_get_header_by_str(const struct aws_http_response *response, struct aws_http_header *header, const char *key, size_t key_len);
 
 AWS_HTTP_API const char *aws_http_request_method_to_str(enum aws_http_request_method method);
 AWS_HTTP_API const char *aws_http_request_key_to_str(enum aws_http_request_key key);

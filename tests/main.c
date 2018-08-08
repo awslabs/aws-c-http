@@ -19,7 +19,9 @@
 
 static int run_tests(int argc, char *argv[]) {
     AWS_RUN_TEST_CASES(
-        &dummy_test,
+        &http_parse_lots_of_headers,
+        &http_parse_and_lookup_header,
+        &http_parse_bad_or_empty_input,
         );
 }
 

@@ -46,12 +46,14 @@ void aws_http_load_error_strings(void) {
     }
 }
 
-static bool s_aws_http_eol(char c) {
-    switch (c) {
-    case '\n': return true;
-    case '\r': return true;
+static inline uint64_t s_aws_FNV1a(struct aws_http_str str) {
+    uint64_t h = (uint64_t)14695981039346656037U;
+    while (str.begin < str.end) {
+        char c = (char)toupper(*str.begin++);
+        h = h ^ (uint64_t)c;
+        h = h * (uint64_t)1099511628211U;
     }
-    return false;
+    return h;
 }
 
 /*
@@ -127,16 +129,6 @@ static bool s_aws_http_eol(char c) {
     }
 #endif
 
-static inline uint64_t s_aws_FNV1a(struct aws_http_str str) {
-    uint64_t h = (uint64_t)14695981039346656037U;
-    while (str.begin < str.end) {
-        char c = (char)toupper(*str.begin++);
-        h = h ^ (uint64_t)c;
-        h = h * (uint64_t)1099511628211U;
-    }
-    return h;
-}
-
 static enum aws_http_request_method s_aws_http_str_to_method(struct aws_http_str str) {
     uint64_t h = s_aws_FNV1a(str);
     switch (h) {
@@ -167,34 +159,34 @@ static enum aws_http_request_key s_aws_http_str_to_request_key(struct aws_http_s
     uint64_t h = s_aws_FNV1a(str);
     switch (h) {
     default: return AWS_HTTP_REQUEST_METHOD_UNKNOWN;
-    case 13730350826456040585U: return AWS_HTTP_REQUEST_KEY_ACCEPT; /* ACCEPT */
-    case 11998153583302541512U: return AWS_HTTP_REQUEST_KEY_ACCEPT_CHARSET; /* ACCEPT-CHARSET */
-    case 16472008978911737049U: return AWS_HTTP_REQUEST_KEY_ACCEPT_ENCODING; /* ACCEPT-ENCODING */
-    case 10881689647198945718U: return AWS_HTTP_REQUEST_KEY_ACCEPT_LANGUAGE; /* ACCEPT-LANGUAGE */
-    case 4769608422278259006U: return AWS_HTTP_REQUEST_KEY_AUTHORIZATION; /* AUTHORIZATION */
-    case 8404053799361727437U: return AWS_HTTP_REQUEST_KEY_CACHE_CONTROL; /* CACHE-CONTROL */
-    case 13363958336066981721U: return AWS_HTTP_REQUEST_KEY_CONNECTION; /* CONNECTION */
-    case 2077250306427260445U: return AWS_HTTP_REQUEST_KEY_CONTENT_LENGTH; /* CONTENT-LENGTH */
-    case 9038029200640296341U: return AWS_HTTP_REQUEST_KEY_CONTENT_TYPE; /* CONTENT-TYPE */
-    case 15778669228840481407U: return AWS_HTTP_REQUEST_KEY_COOKIE; /* COOKIE */
-    case 11057272162187349817U: return AWS_HTTP_REQUEST_KEY_DATE; /* DATE */
-    case 7073337260905031384U: return AWS_HTTP_REQUEST_KEY_EXPECT; /* EXPECT */
-    case 3479755954935787829U: return AWS_HTTP_REQUEST_KEY_FORWARDED; /* FOWARDED */
-    case 13566972404832258421U: return AWS_HTTP_REQUEST_KEY_FROM; /* FROM */
-    case 9085161059174616367U: return AWS_HTTP_REQUEST_KEY_HOST; /* HOST */
-    case 6418037819517172938U: return AWS_HTTP_REQUEST_KEY_IF_MATCH; /* IF-MATCH */
-    case 4117785351877396457U: return AWS_HTTP_REQUEST_KEY_IF_MODIFIED_SINCE; /* IF-MODIFIED-SINCE */
-    case 8104367861445127735U: return AWS_HTTP_REQUEST_KEY_IF_NONE_MATCH; /* IF-NONE-MATCH */
-    case 7240927477939468126U: return AWS_HTTP_REQUEST_KEY_IF_RANGE; /* IF-RANGE */
-    case 16642224557580229834U: return AWS_HTTP_REQUEST_KEY_IF_UNMODIFIED_SINCE; /* IF-UNMODIFIED-SINCE */
-    case 3496160052878495872U: return AWS_HTTP_REQUEST_KEY_KEEP_ALIVE; /* KEEP-ALIVE */
-    case 6343919293466479542U: return AWS_HTTP_REQUEST_KEY_MAX_FORWARDS; /* MAX-FORWARDS */
-    case 2258293222208450831U: return AWS_HTTP_REQUEST_KEY_ORIGIN; /* ORIGIN */
-    case 4426599689128916827U: return AWS_HTTP_REQUEST_KEY_PROXY_AUTHORIZATION; /* PROXY-AUTHORIZATION */
-    case 2758068308593703698U: return AWS_HTTP_REQUEST_KEY_RANGE; /* RANGE */
-    case 1987516960552772662U: return AWS_HTTP_REQUEST_KEY_REFERRER; /* REFERRER */
-    case 6256811187728553230U: return AWS_HTTP_REQUEST_KEY_USER_AGENT; /* USER-AGENT */
-    case 8932950445327619603U: return AWS_HTTP_REQUEST_KEY_VIA; /* VIA */
+    case 13730350826456040585U: return AWS_HTTP_REQUEST_ACCEPT; /* ACCEPT */
+    case 11998153583302541512U: return AWS_HTTP_REQUEST_ACCEPT_CHARSET; /* ACCEPT-CHARSET */
+    case 16472008978911737049U: return AWS_HTTP_REQUEST_ACCEPT_ENCODING; /* ACCEPT-ENCODING */
+    case 10881689647198945718U: return AWS_HTTP_REQUEST_ACCEPT_LANGUAGE; /* ACCEPT-LANGUAGE */
+    case 4769608422278259006U: return AWS_HTTP_REQUEST_AUTHORIZATION; /* AUTHORIZATION */
+    case 8404053799361727437U: return AWS_HTTP_REQUEST_CACHE_CONTROL; /* CACHE-CONTROL */
+    case 13363958336066981721U: return AWS_HTTP_REQUEST_CONNECTION; /* CONNECTION */
+    case 2077250306427260445U: return AWS_HTTP_REQUEST_CONTENT_LENGTH; /* CONTENT-LENGTH */
+    case 9038029200640296341U: return AWS_HTTP_REQUEST_CONTENT_TYPE; /* CONTENT-TYPE */
+    case 15778669228840481407U: return AWS_HTTP_REQUEST_COOKIE; /* COOKIE */
+    case 11057272162187349817U: return AWS_HTTP_REQUEST_DATE; /* DATE */
+    case 7073337260905031384U: return AWS_HTTP_REQUEST_EXPECT; /* EXPECT */
+    case 3479755954935787829U: return AWS_HTTP_REQUEST_FORWARDED; /* FOWARDED */
+    case 13566972404832258421U: return AWS_HTTP_REQUEST_FROM; /* FROM */
+    case 9085161059174616367U: return AWS_HTTP_REQUEST_HOST; /* HOST */
+    case 6418037819517172938U: return AWS_HTTP_REQUEST_IF_MATCH; /* IF-MATCH */
+    case 4117785351877396457U: return AWS_HTTP_REQUEST_IF_MODIFIED_SINCE; /* IF-MODIFIED-SINCE */
+    case 8104367861445127735U: return AWS_HTTP_REQUEST_IF_NONE_MATCH; /* IF-NONE-MATCH */
+    case 7240927477939468126U: return AWS_HTTP_REQUEST_IF_RANGE; /* IF-RANGE */
+    case 16642224557580229834U: return AWS_HTTP_REQUEST_IF_UNMODIFIED_SINCE; /* IF-UNMODIFIED-SINCE */
+    case 3496160052878495872U: return AWS_HTTP_REQUEST_KEEP_ALIVE; /* KEEP-ALIVE */
+    case 6343919293466479542U: return AWS_HTTP_REQUEST_MAX_FORWARDS; /* MAX-FORWARDS */
+    case 2258293222208450831U: return AWS_HTTP_REQUEST_ORIGIN; /* ORIGIN */
+    case 4426599689128916827U: return AWS_HTTP_REQUEST_PROXY_AUTHORIZATION; /* PROXY-AUTHORIZATION */
+    case 2758068308593703698U: return AWS_HTTP_REQUEST_RANGE; /* RANGE */
+    case 1987516960552772662U: return AWS_HTTP_REQUEST_REFERRER; /* REFERRER */
+    case 6256811187728553230U: return AWS_HTTP_REQUEST_USER_AGENT; /* USER-AGENT */
+    case 8932950445327619603U: return AWS_HTTP_REQUEST_VIA; /* VIA */
     }
 }
 
@@ -202,31 +194,39 @@ static enum aws_http_response_key s_aws_http_str_to_response_key(struct aws_http
     uint64_t h = s_aws_FNV1a(str);
     switch (h) {
     default: return AWS_HTTP_REQUEST_METHOD_UNKNOWN;
-    case 10235293050403537958U: return AWS_HTTP_RESPONSE_KEY_ACCEPT_RANGES; /* ACCEPT-RANGES */
-    case 18025011105778868284U: return AWS_HTTP_RESPONSE_KEY_AGE; /* AGE */
-    case 13991742668690892754U: return AWS_HTTP_RESPONSE_KEY_ALLOW; /* ALLOW */
-    case 8404053799361727437U: return AWS_HTTP_RESPONSE_KEY_CACHE_CONTROL; /* CACHE-CONTROL */
-    case 7663579564929273116U: return AWS_HTTP_RESPONSE_KEY_CONTENT_DISPOSITION; /* CONTENT-DISPOSITION */
-    case 11752469631340170856U: return AWS_HTTP_RESPONSE_KEY_CONTENT_ENCODING; /* CONTENT-ENCODING */
-    case 8829838042123945811U: return AWS_HTTP_RESPONSE_KEY_CONTENT_LANGUAGE; /* CONTENT-LANGUAGE */
-    case 2077250306427260445U: return AWS_HTTP_RESPONSE_KEY_CONTENT_LENGTH; /* CONTENT-LENGTH */
-    case 12653014935277881550U: return AWS_HTTP_RESPONSE_KEY_CONTENT_LOCATION; /* CONTENT-LOCATION */
-    case 17600038849846870634U: return AWS_HTTP_RESPONSE_KEY_CONTENT_RANGE; /* CONTENT-RANGE */
-    case 9038029200640296341U: return AWS_HTTP_RESPONSE_KEY_CONTENT_TYPE; /* CONTENT-TYPE */
-    case 11057272162187349817U: return AWS_HTTP_RESPONSE_KEY_DATE; /* DATE */
-    case 316544368650233792U: return AWS_HTTP_RESPONSE_KEY_ETAG; /* ETAG */
-    case 2436777764307782475U: return AWS_HTTP_RESPONSE_KEY_LAST_MODIFIED; /* LAST-MODIFIED */
-    case 5950553309356616713U: return AWS_HTTP_RESPONSE_KEY_LINK; /* LINK */
-    case 18356742770282409510U: return AWS_HTTP_RESPONSE_KEY_LOCATION; /* LOCATION */
-    case 6870506677877940815U: return AWS_HTTP_RESPONSE_KEY_PROXY_AUTHENTICATE; /* PROXY-AUTHENTICATE */
-    case 694305183914426550U: return AWS_HTTP_RESPONSE_KEY_RETRY_AFTER; /* RETRY-AFTER */
-    case 15870971199206770642U: return AWS_HTTP_RESPONSE_KEY_SERVER; /* SERVER */
-    case 1899463423072374126U: return AWS_HTTP_RESPONSE_KEY_SET_COOKIE; /* SER-COOKIE */
-    case 10109864252571853441U: return AWS_HTTP_RESPONSE_KEY_STRICT_TRANSPORT_SECURITY; /* STRICT-TRANSPORT-SECURITY */
-    case 15525098723723187301U: return AWS_HTTP_RESPONSE_KEY_VARY; /* VARY */
-    case 8932950445327619603U: return AWS_HTTP_RESPONSE_KEY_VIA; /* VIA */
-    case 7594562872792977346U: return AWS_HTTP_RESPONSE_KEY_WWW_AUTHENTICATE; /* WWW-AUTHENTICATE */
+    case 10235293050403537958U: return AWS_HTTP_RESPONSE_ACCEPT_RANGES; /* ACCEPT-RANGES */
+    case 18025011105778868284U: return AWS_HTTP_RESPONSE_AGE; /* AGE */
+    case 13991742668690892754U: return AWS_HTTP_RESPONSE_ALLOW; /* ALLOW */
+    case 8404053799361727437U: return AWS_HTTP_RESPONSE_CACHE_CONTROL; /* CACHE-CONTROL */
+    case 7663579564929273116U: return AWS_HTTP_RESPONSE_CONTENT_DISPOSITION; /* CONTENT-DISPOSITION */
+    case 11752469631340170856U: return AWS_HTTP_RESPONSE_CONTENT_ENCODING; /* CONTENT-ENCODING */
+    case 8829838042123945811U: return AWS_HTTP_RESPONSE_CONTENT_LANGUAGE; /* CONTENT-LANGUAGE */
+    case 2077250306427260445U: return AWS_HTTP_RESPONSE_CONTENT_LENGTH; /* CONTENT-LENGTH */
+    case 12653014935277881550U: return AWS_HTTP_RESPONSE_CONTENT_LOCATION; /* CONTENT-LOCATION */
+    case 17600038849846870634U: return AWS_HTTP_RESPONSE_CONTENT_RANGE; /* CONTENT-RANGE */
+    case 9038029200640296341U: return AWS_HTTP_RESPONSE_CONTENT_TYPE; /* CONTENT-TYPE */
+    case 11057272162187349817U: return AWS_HTTP_RESPONSE_DATE; /* DATE */
+    case 316544368650233792U: return AWS_HTTP_RESPONSE_ETAG; /* ETAG */
+    case 2436777764307782475U: return AWS_HTTP_RESPONSE_LAST_MODIFIED; /* LAST-MODIFIED */
+    case 5950553309356616713U: return AWS_HTTP_RESPONSE_LINK; /* LINK */
+    case 18356742770282409510U: return AWS_HTTP_RESPONSE_LOCATION; /* LOCATION */
+    case 6870506677877940815U: return AWS_HTTP_RESPONSE_PROXY_AUTHENTICATE; /* PROXY-AUTHENTICATE */
+    case 694305183914426550U: return AWS_HTTP_RESPONSE_RETRY_AFTER; /* RETRY-AFTER */
+    case 15870971199206770642U: return AWS_HTTP_RESPONSE_SERVER; /* SERVER */
+    case 1899463423072374126U: return AWS_HTTP_RESPONSE_SET_COOKIE; /* SER-COOKIE */
+    case 10109864252571853441U: return AWS_HTTP_RESPONSE_STRICT_TRANSPORT_SECURITY; /* STRICT-TRANSPORT-SECURITY */
+    case 15525098723723187301U: return AWS_HTTP_RESPONSE_VARY; /* VARY */
+    case 8932950445327619603U: return AWS_HTTP_RESPONSE_VIA; /* VIA */
+    case 7594562872792977346U: return AWS_HTTP_RESPONSE_WWW_AUTHENTICATE; /* WWW-AUTHENTICATE */
     }
+}
+
+static bool s_aws_http_eol(char c) {
+    switch (c) {
+    case '\n': return true;
+    case '\r': return true;
+    }
+    return false;
 }
 
 static inline int s_aws_http_skip_space(struct aws_http_str *input) {
@@ -251,6 +251,9 @@ static inline void s_aws_http_trim_trailing_space(struct aws_http_str *str) {
 
 static int s_aws_http_scan(struct aws_http_str *input, struct aws_http_str *out, char search) {
     const char *scan = input->begin;
+    if (!scan) {
+        return AWS_OP_ERR;
+    }
     char c;
     do {
         c = *scan;
@@ -268,6 +271,9 @@ static int s_aws_http_scan(struct aws_http_str *input, struct aws_http_str *out,
 
 static int s_aws_http_scan_for_eol_or_eos(struct aws_http_str *input, struct aws_http_str *out) {
     const char *scan = input->begin;
+    if (!scan) {
+        return AWS_OP_ERR;
+    }
     char c;
     do {
         c = *scan;
@@ -332,8 +338,10 @@ static inline int s_aws_http_get_status_code_class(char c, enum aws_http_respons
 #define AWS_HTTP_CHECK_OP(X) do { if ((X) != AWS_OP_SUCCESS) { goto aws_error; } } while (0)
 #define AWS_HTTP_ASSERT(X) do { if (!(X)) { goto aws_error; } } while (0)
 
-static int s_aws_http_read_headers_and_optional_body(struct aws_http_message_data *data, struct aws_http_str *input, struct aws_array_list *headers, int *cache) {
+static int s_aws_http_read_headers_and_optional_body(struct aws_http_message_data *data, struct aws_http_str *input, struct aws_array_list *headers, int *cache, bool one_request_zero_response) {
     struct aws_http_str str;
+    int cache_max_index = one_request_zero_response ? AWS_HTTP_RESPONSE_LAST : AWS_HTTP_REQUEST_LAST;
+    int content_length_key = one_request_zero_response ? AWS_HTTP_REQUEST_CONTENT_LENGTH : AWS_HTTP_RESPONSE_CONTENT_LENGTH;
 
     /* Scan for headers. */
     int content_length = 0;
@@ -342,14 +350,18 @@ static int s_aws_http_read_headers_and_optional_body(struct aws_http_message_dat
         struct aws_http_header header_field;
         AWS_HTTP_CHECK_OP(s_aws_http_scan(input, &str, ':'));
         header_field.key_str = str;
-        header_field.key = s_aws_http_str_to_request_key(str);
+        header_field.key = one_request_zero_response ? s_aws_http_str_to_request_key(str) : s_aws_http_str_to_response_key(str);
 
         if (header_field.key) {
-            cache[(size_t)header_field.key] = (int)aws_array_list_length(headers) + 1;
+            size_t index = (size_t)header_field.key - 1;
+            if (index > cache_max_index) {
+                return AWS_OP_ERR;
+            }
+            cache[index] = (int)aws_array_list_length(headers) + 1;
         }
 
         bool has_content = false;
-        if (header_field.key == AWS_HTTP_REQUEST_KEY_CONTENT_LENGTH) {
+        if (header_field.key == content_length_key) {
             has_content = true;
         }
 
@@ -422,7 +434,7 @@ int aws_http_request_init(struct aws_allocator *alloc, struct aws_http_request *
     AWS_HTTP_ASSERT(request->version != AWS_HTTP_VERSION_UNKNOWN);
 
     /* Read in headers and optional body data. */
-    s_aws_http_read_headers_and_optional_body(&request->data, &input, &headers, request->header_cache);
+    s_aws_http_read_headers_and_optional_body(&request->data, &input, &headers, request->header_cache, 1);
 
     return AWS_OP_SUCCESS;
 
@@ -434,7 +446,10 @@ aws_error:
 }
 
 void aws_http_request_clean_up(struct aws_http_request *request) {
-    aws_mem_release(request->data.alloc, request->data.headers);
+    assert(request);
+    if (request->data.alloc) {
+        aws_mem_release(request->data.alloc, request->data.headers);
+    }
     AWS_ZERO_STRUCT(*request);
 }
 
@@ -453,14 +468,25 @@ int aws_http_request_get_header_by_enum(const struct aws_http_request *request, 
     return AWS_OP_ERR;
 }
 
+/* Works like memcmp or strcmp, except is case-agonstic. */
+static inline int s_aws_http_strcmp_case_insensitive(const char *a, const char *b, int key_len) {
+    for (int i = 0; i < key_len; ++i) {
+        int d = toupper(a[i]) - toupper(b[i]);
+        if (d) {
+            return d;
+        }
+    }
+    return 0;
+}
+
 static inline int s_aws_http_get_header_by_str(const struct aws_http_message_data *data, struct aws_http_header *header, const char *key, int key_len) {
     for (int i = 0; i < data->header_count; ++i) {
         struct aws_http_str str = data->headers[i].key_str;
         int len = (int)(size_t)(str.end - str.begin);
         if (len != key_len) {
-            return AWS_OP_ERR;
+            continue;
         }
-        if (!memcmp(str.begin, key, (size_t)len)) {
+        if (!s_aws_http_strcmp_case_insensitive(str.begin, key, len)) {
             *header = data->headers[i];
             return AWS_OP_SUCCESS;
         }
@@ -468,8 +494,8 @@ static inline int s_aws_http_get_header_by_str(const struct aws_http_message_dat
     return AWS_OP_ERR;
 }
 
-int aws_http_request_get_header_by_str(const struct aws_http_request *request, struct aws_http_header *header, const char *key, int key_len) {
-    return s_aws_http_get_header_by_str(&request->data, header, key, key_len);
+int aws_http_request_get_header_by_str(const struct aws_http_request *request, struct aws_http_header *header, const char *key, size_t key_len) {
+    return s_aws_http_get_header_by_str(&request->data, header, key, (int)key_len);
 }
 
 int aws_http_response_init(struct aws_allocator *alloc, struct aws_http_response *response, const void *buffer, size_t size) {
@@ -501,7 +527,7 @@ int aws_http_response_init(struct aws_allocator *alloc, struct aws_http_response
     AWS_HTTP_CHECK_OP(s_aws_http_scan_for_eol_or_eos(&input, &str));
 
     /* Read in headers and optional body data. */
-    s_aws_http_read_headers_and_optional_body(&response->data, &input, &headers, response->header_cache);
+    s_aws_http_read_headers_and_optional_body(&response->data, &input, &headers, response->header_cache, 0);
 
     return AWS_OP_SUCCESS;
 
@@ -513,7 +539,10 @@ aws_error:
 }
 
 void aws_http_response_clean_up(struct aws_http_response *response) {
-    aws_mem_release(response->data.alloc, response->data.headers);
+    assert(response);
+    if (response->data.alloc) {
+        aws_mem_release(response->data.alloc, response->data.headers);
+    }
     AWS_ZERO_STRUCT(*response);
 }
 
@@ -532,8 +561,8 @@ int aws_http_response_get_header_by_enum(const struct aws_http_response *respons
     return AWS_OP_ERR;
 }
 
-int aws_http_response_get_header_by_str(const struct aws_http_response *response, struct aws_http_header *header, const char *key, int key_len) {
-    return s_aws_http_get_header_by_str(&response->data, header, key, key_len);
+int aws_http_response_get_header_by_str(const struct aws_http_response *response, struct aws_http_header *header, const char *key, size_t key_len) {
+    return s_aws_http_get_header_by_str(&response->data, header, key, (int)key_len);
 }
 
 const char *aws_http_request_method_to_str(enum aws_http_request_method method) {
@@ -554,65 +583,65 @@ const char *aws_http_request_method_to_str(enum aws_http_request_method method) 
 
 const char *aws_http_request_key_to_str(enum aws_http_request_key key) {
     switch (key) {
-    case AWS_HTTP_REQUEST_KEY_UNKNOWN:             return "AWS_HTTP_REQUEST_KEY_UNKNOWN";
-    case AWS_HTTP_REQUEST_KEY_ACCEPT:              return "AWS_HTTP_REQUEST_KEY_ACCEPT";
-    case AWS_HTTP_REQUEST_KEY_ACCEPT_CHARSET:      return "AWS_HTTP_REQUEST_KEY_ACCEPT_CHARSET";
-    case AWS_HTTP_REQUEST_KEY_ACCEPT_ENCODING:     return "AWS_HTTP_REQUEST_KEY_ACCEPT_ENCODING";
-    case AWS_HTTP_REQUEST_KEY_ACCEPT_LANGUAGE:     return "AWS_HTTP_REQUEST_KEY_ACCEPT_LANGUAGE";
-    case AWS_HTTP_REQUEST_KEY_AUTHORIZATION:       return "AWS_HTTP_REQUEST_KEY_AUTHORIZATION";
-    case AWS_HTTP_REQUEST_KEY_CACHE_CONTROL:       return "AWS_HTTP_REQUEST_KEY_CACHE_CONTROL";
-    case AWS_HTTP_REQUEST_KEY_CONNECTION:          return "AWS_HTTP_REQUEST_KEY_CONNECTION";
-    case AWS_HTTP_REQUEST_KEY_CONTENT_LENGTH:      return "AWS_HTTP_REQUEST_KEY_CONTENT_LENGTH";
-    case AWS_HTTP_REQUEST_KEY_CONTENT_TYPE:        return "AWS_HTTP_REQUEST_KEY_CONTENT_TYPE";
-    case AWS_HTTP_REQUEST_KEY_COOKIE:              return "AWS_HTTP_REQUEST_KEY_COOKIE";
-    case AWS_HTTP_REQUEST_KEY_DATE:                return "AWS_HTTP_REQUEST_KEY_DATE";
-    case AWS_HTTP_REQUEST_KEY_EXPECT:              return "AWS_HTTP_REQUEST_KEY_EXPECT";
-    case AWS_HTTP_REQUEST_KEY_FORWARDED:           return "AWS_HTTP_REQUEST_KEY_FORWARDED";
-    case AWS_HTTP_REQUEST_KEY_FROM:                return "AWS_HTTP_REQUEST_KEY_FROM";
-    case AWS_HTTP_REQUEST_KEY_HOST:                return "AWS_HTTP_REQUEST_KEY_HOST";
-    case AWS_HTTP_REQUEST_KEY_IF_MATCH:            return "AWS_HTTP_REQUEST_KEY_IF_MATCH";
-    case AWS_HTTP_REQUEST_KEY_IF_MODIFIED_SINCE:   return "AWS_HTTP_REQUEST_KEY_IF_MODIFIED_SINCE";
-    case AWS_HTTP_REQUEST_KEY_IF_NONE_MATCH:       return "AWS_HTTP_REQUEST_KEY_IF_NONE_MATCH";
-    case AWS_HTTP_REQUEST_KEY_IF_RANGE:            return "AWS_HTTP_REQUEST_KEY_IF_RANGE";
-    case AWS_HTTP_REQUEST_KEY_IF_UNMODIFIED_SINCE: return "AWS_HTTP_REQUEST_KEY_IF_UNMODIFIED_SINCE";
-    case AWS_HTTP_REQUEST_KEY_KEEP_ALIVE:          return "AWS_HTTP_REQUEST_KEY_KEEP_ALIVE";
-    case AWS_HTTP_REQUEST_KEY_MAX_FORWARDS:        return "AWS_HTTP_REQUEST_KEY_MAX_FORWARDS";
-    case AWS_HTTP_REQUEST_KEY_ORIGIN:              return "AWS_HTTP_REQUEST_KEY_ORIGIN";
-    case AWS_HTTP_REQUEST_KEY_PROXY_AUTHORIZATION: return "AWS_HTTP_REQUEST_KEY_PROXY_AUTHORIZATION";
-    case AWS_HTTP_REQUEST_KEY_RANGE:               return "AWS_HTTP_REQUEST_KEY_RANGE";
-    case AWS_HTTP_REQUEST_KEY_USER_AGENT:          return "AWS_HTTP_REQUEST_KEY_USER_AGENT";
-    case AWS_HTTP_REQUEST_KEY_VIA:                 return "AWS_HTTP_REQUEST_KEY_VIA";
+    case AWS_HTTP_REQUEST_UNKNOWN:             return "AWS_HTTP_REQUEST_UNKNOWN";
+    case AWS_HTTP_REQUEST_ACCEPT:              return "AWS_HTTP_REQUEST_ACCEPT";
+    case AWS_HTTP_REQUEST_ACCEPT_CHARSET:      return "AWS_HTTP_REQUEST_ACCEPT_CHARSET";
+    case AWS_HTTP_REQUEST_ACCEPT_ENCODING:     return "AWS_HTTP_REQUEST_ACCEPT_ENCODING";
+    case AWS_HTTP_REQUEST_ACCEPT_LANGUAGE:     return "AWS_HTTP_REQUEST_ACCEPT_LANGUAGE";
+    case AWS_HTTP_REQUEST_AUTHORIZATION:       return "AWS_HTTP_REQUEST_AUTHORIZATION";
+    case AWS_HTTP_REQUEST_CACHE_CONTROL:       return "AWS_HTTP_REQUEST_CACHE_CONTROL";
+    case AWS_HTTP_REQUEST_CONNECTION:          return "AWS_HTTP_REQUEST_CONNECTION";
+    case AWS_HTTP_REQUEST_CONTENT_LENGTH:      return "AWS_HTTP_REQUEST_CONTENT_LENGTH";
+    case AWS_HTTP_REQUEST_CONTENT_TYPE:        return "AWS_HTTP_REQUEST_CONTENT_TYPE";
+    case AWS_HTTP_REQUEST_COOKIE:              return "AWS_HTTP_REQUEST_COOKIE";
+    case AWS_HTTP_REQUEST_DATE:                return "AWS_HTTP_REQUEST_DATE";
+    case AWS_HTTP_REQUEST_EXPECT:              return "AWS_HTTP_REQUEST_EXPECT";
+    case AWS_HTTP_REQUEST_FORWARDED:           return "AWS_HTTP_REQUEST_FORWARDED";
+    case AWS_HTTP_REQUEST_FROM:                return "AWS_HTTP_REQUEST_FROM";
+    case AWS_HTTP_REQUEST_HOST:                return "AWS_HTTP_REQUEST_HOST";
+    case AWS_HTTP_REQUEST_IF_MATCH:            return "AWS_HTTP_REQUEST_IF_MATCH";
+    case AWS_HTTP_REQUEST_IF_MODIFIED_SINCE:   return "AWS_HTTP_REQUEST_IF_MODIFIED_SINCE";
+    case AWS_HTTP_REQUEST_IF_NONE_MATCH:       return "AWS_HTTP_REQUEST_IF_NONE_MATCH";
+    case AWS_HTTP_REQUEST_IF_RANGE:            return "AWS_HTTP_REQUEST_IF_RANGE";
+    case AWS_HTTP_REQUEST_IF_UNMODIFIED_SINCE: return "AWS_HTTP_REQUEST_IF_UNMODIFIED_SINCE";
+    case AWS_HTTP_REQUEST_KEEP_ALIVE:          return "AWS_HTTP_REQUEST_KEEP_ALIVE";
+    case AWS_HTTP_REQUEST_MAX_FORWARDS:        return "AWS_HTTP_REQUEST_MAX_FORWARDS";
+    case AWS_HTTP_REQUEST_ORIGIN:              return "AWS_HTTP_REQUEST_ORIGIN";
+    case AWS_HTTP_REQUEST_PROXY_AUTHORIZATION: return "AWS_HTTP_REQUEST_PROXY_AUTHORIZATION";
+    case AWS_HTTP_REQUEST_RANGE:               return "AWS_HTTP_REQUEST_RANGE";
+    case AWS_HTTP_REQUEST_USER_AGENT:          return "AWS_HTTP_REQUEST_USER_AGENT";
+    case AWS_HTTP_REQUEST_VIA:                 return "AWS_HTTP_REQUEST_VIA";
     }
     return NULL;
 }
 
 AWS_HTTP_API const char *aws_http_response_key_to_str(enum aws_http_request_key key) {
     switch (key) {
-    case AWS_HTTP_RESPONSE_KEY_ACCEPT_RANGES:             return "AWS_HTTP_RESPONSE_KEY_ACCEPT_RANGES";
-    case AWS_HTTP_RESPONSE_KEY_AGE:                       return "AWS_HTTP_RESPONSE_KEY_AGE";
-    case AWS_HTTP_RESPONSE_KEY_ALLOW:                     return "AWS_HTTP_RESPONSE_KEY_ALLOW";
-    case AWS_HTTP_RESPONSE_KEY_CACHE_CONTROL:             return "AWS_HTTP_RESPONSE_KEY_CACHE_CONTROL";
-    case AWS_HTTP_RESPONSE_KEY_CONTENT_DISPOSITION:       return "AWS_HTTP_RESPONSE_KEY_CONTENT_DISPOSITION";
-    case AWS_HTTP_RESPONSE_KEY_CONTENT_ENCODING:          return "AWS_HTTP_RESPONSE_KEY_CONTENT_ENCODING";
-    case AWS_HTTP_RESPONSE_KEY_CONTENT_LANGUAGE:          return "AWS_HTTP_RESPONSE_KEY_CONTENT_LANGUAGE";
-    case AWS_HTTP_RESPONSE_KEY_CONTENT_LENGTH:            return "AWS_HTTP_RESPONSE_KEY_CONTENT_LENGTH";
-    case AWS_HTTP_RESPONSE_KEY_CONTENT_LOCATION:          return "AWS_HTTP_RESPONSE_KEY_CONTENT_LOCATION";
-    case AWS_HTTP_RESPONSE_KEY_CONTENT_RANGE:             return "AWS_HTTP_RESPONSE_KEY_CONTENT_RANGE";
-    case AWS_HTTP_RESPONSE_KEY_CONTENT_TYPE:              return "AWS_HTTP_RESPONSE_KEY_CONTENT_TYPE";
-    case AWS_HTTP_RESPONSE_KEY_DATE:                      return "AWS_HTTP_RESPONSE_KEY_DATE";
-    case AWS_HTTP_RESPONSE_KEY_ETAG:                      return "AWS_HTTP_RESPONSE_KEY_ETAG";
-    case AWS_HTTP_RESPONSE_KEY_LAST_MODIFIED:             return "AWS_HTTP_RESPONSE_KEY_LAST_MODIFIED";
-    case AWS_HTTP_RESPONSE_KEY_LINK:                      return "AWS_HTTP_RESPONSE_KEY_LINK";
-    case AWS_HTTP_RESPONSE_KEY_LOCATION:                  return "AWS_HTTP_RESPONSE_KEY_LOCATION";
-    case AWS_HTTP_RESPONSE_KEY_PROXY_AUTHENTICATE:        return "AWS_HTTP_RESPONSE_KEY_PROXY_AUTHENTICATE";
-    case AWS_HTTP_RESPONSE_KEY_RETRY_AFTER:               return "AWS_HTTP_RESPONSE_KEY_RETRY_AFTER";
-    case AWS_HTTP_RESPONSE_KEY_SERVER:                    return "AWS_HTTP_RESPONSE_KEY_SERVER";
-    case AWS_HTTP_RESPONSE_KEY_SET_COOKIE:                return "AWS_HTTP_RESPONSE_KEY_SET_COOKIE";
-    case AWS_HTTP_RESPONSE_KEY_STRICT_TRANSPORT_SECURITY: return "AWS_HTTP_RESPONSE_KEY_STRICT_TRANSPORT_SECURITY";
-    case AWS_HTTP_RESPONSE_KEY_UPGRADE:                   return "AWS_HTTP_RESPONSE_KEY_UPGRADE";
-    case AWS_HTTP_RESPONSE_KEY_VARY:                      return "AWS_HTTP_RESPONSE_KEY_VARY";
-    case AWS_HTTP_RESPONSE_KEY_VIA:                       return "AWS_HTTP_RESPONSE_KEY_VIA";
-    case AWS_HTTP_RESPONSE_KEY_WWW_AUTHENTICATE:          return "AWS_HTTP_RESPONSE_KEY_WWW_AUTHENTICATE";
+    case AWS_HTTP_RESPONSE_ACCEPT_RANGES:             return "AWS_HTTP_RESPONSE_ACCEPT_RANGES";
+    case AWS_HTTP_RESPONSE_AGE:                       return "AWS_HTTP_RESPONSE_AGE";
+    case AWS_HTTP_RESPONSE_ALLOW:                     return "AWS_HTTP_RESPONSE_ALLOW";
+    case AWS_HTTP_RESPONSE_CACHE_CONTROL:             return "AWS_HTTP_RESPONSE_CACHE_CONTROL";
+    case AWS_HTTP_RESPONSE_CONTENT_DISPOSITION:       return "AWS_HTTP_RESPONSE_CONTENT_DISPOSITION";
+    case AWS_HTTP_RESPONSE_CONTENT_ENCODING:          return "AWS_HTTP_RESPONSE_CONTENT_ENCODING";
+    case AWS_HTTP_RESPONSE_CONTENT_LANGUAGE:          return "AWS_HTTP_RESPONSE_CONTENT_LANGUAGE";
+    case AWS_HTTP_RESPONSE_CONTENT_LENGTH:            return "AWS_HTTP_RESPONSE_CONTENT_LENGTH";
+    case AWS_HTTP_RESPONSE_CONTENT_LOCATION:          return "AWS_HTTP_RESPONSE_CONTENT_LOCATION";
+    case AWS_HTTP_RESPONSE_CONTENT_RANGE:             return "AWS_HTTP_RESPONSE_CONTENT_RANGE";
+    case AWS_HTTP_RESPONSE_CONTENT_TYPE:              return "AWS_HTTP_RESPONSE_CONTENT_TYPE";
+    case AWS_HTTP_RESPONSE_DATE:                      return "AWS_HTTP_RESPONSE_DATE";
+    case AWS_HTTP_RESPONSE_ETAG:                      return "AWS_HTTP_RESPONSE_ETAG";
+    case AWS_HTTP_RESPONSE_LAST_MODIFIED:             return "AWS_HTTP_RESPONSE_LAST_MODIFIED";
+    case AWS_HTTP_RESPONSE_LINK:                      return "AWS_HTTP_RESPONSE_LINK";
+    case AWS_HTTP_RESPONSE_LOCATION:                  return "AWS_HTTP_RESPONSE_LOCATION";
+    case AWS_HTTP_RESPONSE_PROXY_AUTHENTICATE:        return "AWS_HTTP_RESPONSE_PROXY_AUTHENTICATE";
+    case AWS_HTTP_RESPONSE_RETRY_AFTER:               return "AWS_HTTP_RESPONSE_RETRY_AFTER";
+    case AWS_HTTP_RESPONSE_SERVER:                    return "AWS_HTTP_RESPONSE_SERVER";
+    case AWS_HTTP_RESPONSE_SET_COOKIE:                return "AWS_HTTP_RESPONSE_SET_COOKIE";
+    case AWS_HTTP_RESPONSE_STRICT_TRANSPORT_SECURITY: return "AWS_HTTP_RESPONSE_STRICT_TRANSPORT_SECURITY";
+    case AWS_HTTP_RESPONSE_UPGRADE:                   return "AWS_HTTP_RESPONSE_UPGRADE";
+    case AWS_HTTP_RESPONSE_VARY:                      return "AWS_HTTP_RESPONSE_VARY";
+    case AWS_HTTP_RESPONSE_VIA:                       return "AWS_HTTP_RESPONSE_VIA";
+    case AWS_HTTP_RESPONSE_WWW_AUTHENTICATE:          return "AWS_HTTP_RESPONSE_WWW_AUTHENTICATE";
     }
     return NULL;
 }
