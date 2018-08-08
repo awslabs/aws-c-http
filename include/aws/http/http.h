@@ -85,6 +85,9 @@ enum aws_http_request_key {
     AWS_HTTP_REQUEST_KEY_REFERRER,
     AWS_HTTP_REQUEST_KEY_USER_AGENT,
     AWS_HTTP_REQUEST_KEY_VIA,
+
+    /* Must be last. */
+    AWS_HTTP_REQUEST_LAST
 };
 
 /*
@@ -102,7 +105,6 @@ struct aws_http_message_data {
     size_t header_count;
     struct aws_http_header* headers;
     struct aws_http_str body;
-
     struct aws_allocator *alloc;
 };
 
@@ -111,6 +113,10 @@ struct aws_http_request {
     enum aws_http_version version;
     struct aws_http_str target;
     struct aws_http_message_data data;
+
+    /* TODO: Static assert the size is less than the LAST enum value. */
+    /* TODO: Document how duplicate headers can be handled. */
+    int header_cache[AWS_HTTP_REQUEST_LAST];
 };
 
 enum aws_http_response_status_code_class
@@ -155,6 +161,9 @@ enum aws_http_response_key {
     AWS_HTTP_RESPONSE_KEY_VARY,
     AWS_HTTP_RESPONSE_KEY_VIA,
     AWS_HTTP_RESPONSE_KEY_WWW_AUTHENTICATE,
+
+    /* Must be last. */
+    AWS_HTTP_RESPONSE_LAST
 };
 
 struct aws_http_response {
@@ -163,6 +172,10 @@ struct aws_http_response {
     int status_code;
     struct aws_http_str status_code_reason_phrase;
     struct aws_http_message_data data;
+
+    /* TODO: Static assert the size is less than the LAST enum value. */
+    /* TODO: Document how duplicate headers can be handled. */
+    int header_cache[AWS_HTTP_RESPONSE_LAST];
 };
 
 enum aws_http_errors {
@@ -179,9 +192,13 @@ extern "C" {
 
 AWS_HTTP_API int aws_http_request_init(struct aws_allocator *alloc, struct aws_http_request *request, const void* buffer, size_t size);
 AWS_HTTP_API void aws_http_request_clean_up(struct aws_http_request *request);
+AWS_HTTP_API int aws_http_request_get_header_by_enum(const struct aws_http_request *request, struct aws_http_header *header, enum aws_http_request_key key);
+AWS_HTTP_API int aws_http_request_get_header_by_str(const struct aws_http_request *request, struct aws_http_header *header, const char *key, int key_len);
 
 AWS_HTTP_API int aws_http_response_init(struct aws_allocator *alloc,struct aws_http_response *response, const void* buffer, size_t size);
 AWS_HTTP_API int aws_http_response_clean_up(struct aws_http_response *response);
+AWS_HTTP_API int aws_http_response_get_header_by_enum(const struct aws_http_response *response, struct aws_http_header *header, enum aws_http_request_key key);
+AWS_HTTP_API int aws_http_response_get_header_by_str(const struct aws_http_response *response, struct aws_http_header *header, const char *key, int key_len);
 
 AWS_HTTP_API const char *aws_http_request_method_to_str(enum aws_http_request_method method);
 AWS_HTTP_API const char *aws_http_request_key_to_str(enum aws_http_request_key key);

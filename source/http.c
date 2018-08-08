@@ -13,6 +13,7 @@
  * permissions and limitations under the License.
  */
 
+#include <assert.h>
 #include <ctype.h>
 
 #include <aws/common/array_list.h>
@@ -382,12 +383,21 @@ aws_error:
     return AWS_OP_ERR;
 }
 
+#define AWS_HTTP_HEADER_CACHE_INVALID (~0)
+
+static inline void s_aws_http_init_header_cache(int *cache, int count) {
+    for (int i = 0; i < count; ++i ) {
+        cache[i] = AWS_HTTP_HEADER_CACHE_INVALID;
+    }
+}
+
 int aws_http_request_init(struct aws_allocator *alloc, struct aws_http_request *request, const void *buffer, size_t size) {
     struct aws_http_str input;
     struct aws_http_str str;
     struct aws_array_list headers;
     aws_array_list_init_dynamic(&headers, alloc, 16, sizeof(struct aws_http_header));
     AWS_ZERO_STRUCT(*request);
+    s_aws_http_init_header_cache(request->header_cache, (int)AWS_HTTP_REQUEST_LAST);
     request->data.alloc = alloc;
 
     input.begin = (const char *)buffer;
@@ -424,12 +434,49 @@ void aws_http_request_clean_up(struct aws_http_request *request) {
     AWS_ZERO_STRUCT(*request);
 }
 
+int aws_http_request_get_header_by_enum(const struct aws_http_request *request, struct aws_http_header *header, enum aws_http_request_key key) {
+    size_t index = (size_t)key - 1;
+    if (index > AWS_HTTP_REQUEST_LAST - 1) {
+        return AWS_OP_ERR;
+    }
+
+    int at = request->header_cache[index];
+    if (at != AWS_HTTP_HEADER_CACHE_INVALID) {
+        assert(at >= 0 && at < request->data.header_count);
+        *header = request->data.headers[at];
+        return AWS_OP_SUCCESS;
+    }
+    return AWS_OP_ERR;
+}
+
+static inline int s_aws_http_get_header_by_str(const struct aws_http_message_data *data, struct aws_http_header *header, const char *key, int key_len) {
+    for (int i = 0; i < data->header_count; ++i) {
+        struct aws_http_str str = data->headers[i].key_str;
+        int len = (int)(size_t)(str.end - str.begin);
+        if (len != key_len) {
+            return AWS_OP_ERR;
+        }
+        if (memcpy(str.begin, key, (size_t)len)) {
+            return AWS_OP_ERR;
+        } else {
+            *header = data->headers[i];
+            return AWS_OP_SUCCESS;
+        }
+    }
+    return AWS_OP_ERR;
+}
+
+int aws_http_request_get_header_by_str(const struct aws_http_request *request, struct aws_http_header *header, const char *key, int key_len) {
+    return s_aws_http_get_header_by_str(&request->data, header, key, key_len);
+}
+
 int aws_http_response_init(struct aws_allocator *alloc, struct aws_http_response *response, const void *buffer, size_t size) {
     struct aws_http_str input;
     struct aws_http_str str;
     struct aws_array_list headers;
     aws_array_list_init_dynamic(&headers, alloc, 16, sizeof(struct aws_http_header));
     AWS_ZERO_STRUCT(*response);
+    s_aws_http_init_header_cache(response->header_cache, (int)AWS_HTTP_RESPONSE_LAST);
     response->data.alloc = alloc;
 
     input.begin = (const char *)buffer;
@@ -466,6 +513,25 @@ aws_error:
 int aws_http_response_clean_up(struct aws_http_response *response) {
     aws_mem_release(response->data.alloc, response->data.headers);
     AWS_ZERO_STRUCT(*response);
+}
+
+int aws_http_response_get_header_by_enum(const struct aws_http_response *response, struct aws_http_header *header, enum aws_http_request_key key) {
+    size_t index = (size_t)key - 1;
+    if (index > AWS_HTTP_RESPONSE_LAST - 1) {
+        return AWS_OP_ERR;
+    }
+
+    int at = response->header_cache[index];
+    if (at != AWS_HTTP_HEADER_CACHE_INVALID) {
+        assert(at >= 0 && at < response->data.header_count);
+        *header = response->data.headers[at];
+        return AWS_OP_SUCCESS;
+    }
+    return AWS_OP_ERR;
+}
+
+int aws_http_response_get_header_by_str(const struct aws_http_response *response, struct aws_http_header *header, const char *key, int key_len) {
+    return s_aws_http_get_header_by_str(&response->data, header, key, key_len);
 }
 
 const char *aws_http_request_method_to_str(enum aws_http_request_method method) {
