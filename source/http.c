@@ -307,37 +307,39 @@ static inline bool s_aws_http_is_end_of_headers(struct aws_http_str *input) {
     }
 }
 
-#define AWS_HTTP_CHECK(X) do { if (!(X)) { goto aws_error; } } while (0)
+static inline int s_aws_http_read_int(struct aws_http_str str, int* val) {
+    char *end;
+    *val = strtol(str.begin, &end, 10);
+    if (str.begin != end) {
+        return AWS_OP_SUCCESS;
+    } else {
+        return AWS_OP_ERR;
+    }
+}
 
-int aws_http_request_init(struct aws_allocator *alloc, struct aws_http_request *request, const void *buffer, size_t size) {
-    struct aws_http_str input;
+static inline int s_aws_http_get_status_code_class(char c, enum aws_http_response_status_code_class *code_class) {
+    switch (c) {
+    case '1': *code_class = AWS_HTTP_RESPONSE_STATUS_CODE_INFORMATIONAL; return AWS_OP_SUCCESS;
+    case '2': *code_class = AWS_HTTP_RESPONSE_STATUS_CODE_SUCCESSFUL;    return AWS_OP_SUCCESS;
+    case '3': *code_class = AWS_HTTP_RESPONSE_STATUS_CODE_REDIRECTION;   return AWS_OP_SUCCESS;
+    case '4': *code_class = AWS_HTTP_RESPONSE_STATUS_CODE_CLIENT_ERROR;  return AWS_OP_SUCCESS;
+    case '5': *code_class = AWS_HTTP_RESPONSE_STATUS_CODE_SERVER_ERROR;  return AWS_OP_SUCCESS;
+    default: return AWS_OP_ERR;
+    }
+}
+
+#define AWS_HTTP_CHECK_OP(X) do { if ((X) != AWS_OP_SUCCESS) { goto aws_error; } } while (0)
+#define AWS_HTTP_ASSERT(X) do { if (!(X)) { goto aws_error; } } while (0)
+
+static int s_aws_http_read_headers_and_optional_body(struct aws_http_message_data *data, struct aws_http_str *input, struct aws_array_list *headers) {
     struct aws_http_str str;
-    struct aws_array_list headers;
-    aws_array_list_init_dynamic(&headers, alloc, 16, sizeof(struct aws_http_header));
-    AWS_ZERO_STRUCT(*request);
-
-    input.begin = (const char *)buffer;
-    input.end = input.begin + size;
-
-    /* Method. */
-    AWS_HTTP_CHECK(s_aws_http_scan(&input, &str, ' ') == AWS_OP_SUCCESS);
-    request->method = s_aws_http_str_to_method(str);
-    AWS_HTTP_CHECK(request->method != AWS_HTTP_REQUEST_METHOD_UNKNOWN);
-
-    /* Target URI. */
-    AWS_HTTP_CHECK(s_aws_http_scan(&input, &str, ' ') == AWS_OP_SUCCESS);
-    request->target = str;
-
-    /* HTTP version. */
-    AWS_HTTP_CHECK(s_aws_http_scan_for_eol_or_eos(&input, &str) == AWS_OP_SUCCESS);
-    request->version = s_aws_http_str_to_version(str);
-    AWS_HTTP_CHECK(request->version != AWS_HTTP_VERSION_UNKNOWN);
 
     /* Scan for headers. */
     int content_length = 0;
-    while (!s_aws_http_is_end_of_headers(&input)) {
+    while (!s_aws_http_is_end_of_headers(input)) {
+        /* Read in header key. */
         struct aws_http_header header_field;
-        AWS_HTTP_CHECK(s_aws_http_scan(&input, &str, ':') == AWS_OP_SUCCESS);
+        AWS_HTTP_CHECK_OP(s_aws_http_scan(input, &str, ':'));
         header_field.key_str = str;
         header_field.key = s_aws_http_str_to_request_key(str);
 
@@ -346,57 +348,124 @@ int aws_http_request_init(struct aws_allocator *alloc, struct aws_http_request *
             has_content = true;
         }
 
-        AWS_HTTP_CHECK(s_aws_http_skip_space(&input) == AWS_OP_SUCCESS);
-        AWS_HTTP_CHECK(s_aws_http_scan_for_eol_or_eos(&input, &str) == AWS_OP_SUCCESS);
+        /* Read in header value string. */
+        AWS_HTTP_CHECK_OP(s_aws_http_skip_space(input));
+        AWS_HTTP_CHECK_OP(s_aws_http_scan_for_eol_or_eos(input, &str));
         header_field.value_str = str;
 
         if (has_content) {
-            char *end;
-            content_length = strtol(header_field.value_str.begin, &end, 10);
-            AWS_HTTP_CHECK(header_field.value_str.begin != end);
+            AWS_HTTP_CHECK_OP(s_aws_http_read_int(header_field.value_str, &content_length));
         }
 
-        aws_array_list_push_back(&headers, &header_field);
+        /* Record header key-value pair. */
+        aws_array_list_push_back(headers, &header_field);
     }
-    request->headers = (struct aws_http_header *)headers.data;
-    request->header_count = headers.length;
-    request->alloc = alloc;
+
+    data->headers = (struct aws_http_header *)headers->data;
+    data->header_count = headers->length;
 
     if (content_length) {
-        AWS_HTTP_CHECK(s_aws_http_expect_eol(&input));
+        AWS_HTTP_CHECK_OP(s_aws_http_expect_eol(input));
 
-        /* Read in content here. Handle chunked encoding? */
+        /* Read in content here. TODO: Handle chunked encoding? */
 
-        request->body.begin = input.begin;
-        request->body.end = input.begin + content_length;
+        data->body.begin = input->begin;
+        data->body.end = input->begin + content_length;
     } else {
-        request->body.begin = NULL;
-        request->body.end = NULL;
+        data->body.begin = NULL;
+        data->body.end = NULL;
     }
 
     return AWS_OP_SUCCESS;
 
 aws_error:
+    return AWS_OP_ERR;
+}
+
+int aws_http_request_init(struct aws_allocator *alloc, struct aws_http_request *request, const void *buffer, size_t size) {
+    struct aws_http_str input;
+    struct aws_http_str str;
+    struct aws_array_list headers;
+    aws_array_list_init_dynamic(&headers, alloc, 16, sizeof(struct aws_http_header));
+    AWS_ZERO_STRUCT(*request);
+    request->data.alloc = alloc;
+
+    input.begin = (const char *)buffer;
+    input.end = input.begin + size;
+
+    /* Method. */
+    AWS_HTTP_CHECK_OP(s_aws_http_scan(&input, &str, ' '));
+    request->method = s_aws_http_str_to_method(str);
+    AWS_HTTP_ASSERT(request->method != AWS_HTTP_REQUEST_METHOD_UNKNOWN);
+
+    /* Target URI. */
+    AWS_HTTP_CHECK_OP(s_aws_http_scan(&input, &str, ' '));
+    request->target = str;
+
+    /* HTTP version. */
+    AWS_HTTP_CHECK_OP(s_aws_http_scan_for_eol_or_eos(&input, &str));
+    request->version = s_aws_http_str_to_version(str);
+    AWS_HTTP_ASSERT(request->version != AWS_HTTP_VERSION_UNKNOWN);
+
+    /* Read in headers and optional body data. */
+    s_aws_http_read_headers_and_optional_body(&request->data, &input, &headers);
+
+    return AWS_OP_SUCCESS;
+
+aws_error:
+    aws_array_list_clean_up(&headers);
+    AWS_ZERO_STRUCT(*request);
     aws_raise_error(AWS_HTTP_ERROR_PARSE);
     return AWS_OP_ERR;
 }
 
 void aws_http_request_clean_up(struct aws_http_request *request) {
-    aws_mem_release(request->alloc, request->headers);
+    aws_mem_release(request->data.alloc, request->data.headers);
     AWS_ZERO_STRUCT(*request);
 }
 
 int aws_http_response_init(struct aws_allocator *alloc, struct aws_http_response *response, const void *buffer, size_t size) {
-    (void)alloc;
-    (void)response;
-    (void)buffer;
-    (void)size;
-    return 0;
+    struct aws_http_str input;
+    struct aws_http_str str;
+    struct aws_array_list headers;
+    aws_array_list_init_dynamic(&headers, alloc, 16, sizeof(struct aws_http_header));
+    AWS_ZERO_STRUCT(*response);
+    response->data.alloc = alloc;
+
+    input.begin = (const char *)buffer;
+    input.end = input.begin + size;
+
+    /* HTTP version. */
+    AWS_HTTP_CHECK_OP(s_aws_http_scan(&input, &str, ' '));
+    response->version = s_aws_http_str_to_version(str);
+    AWS_HTTP_ASSERT(response->version != AWS_HTTP_VERSION_UNKNOWN);
+
+    /* Integral status code. */
+    AWS_HTTP_CHECK_OP(s_aws_http_scan(&input, &str, ' '));
+    int status_code;
+    AWS_HTTP_CHECK_OP(s_aws_http_read_int(str, &status_code));
+    AWS_HTTP_CHECK_OP(s_aws_http_get_status_code_class(str.begin[0], &response->status_code_class));
+    response->status_code = status_code;
+    response->status_code_reason_phrase = str;
+
+    /* Reason phrase associated with the status code. */
+    AWS_HTTP_CHECK_OP(s_aws_http_scan_for_eol_or_eos(&input, &str));
+
+    /* Read in headers and optional body data. */
+    s_aws_http_read_headers_and_optional_body(&response->data, &input, &headers);
+
+    return AWS_OP_SUCCESS;
+
+aws_error:
+    aws_array_list_clean_up(&headers);
+    AWS_ZERO_STRUCT(*response);
+    aws_raise_error(AWS_HTTP_ERROR_PARSE);
+    return AWS_OP_ERR;
 }
 
 int aws_http_response_clean_up(struct aws_http_response *response) {
-    (void)response;
-    return 0;
+    aws_mem_release(response->data.alloc, response->data.headers);
+    AWS_ZERO_STRUCT(*response);
 }
 
 const char *aws_http_request_method_to_str(enum aws_http_request_method method) {

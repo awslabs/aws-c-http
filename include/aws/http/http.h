@@ -89,11 +89,7 @@ struct aws_http_header {
     struct aws_http_str value_str;
 };
 
-struct aws_http_request {
-    enum aws_http_request_method method;
-    enum aws_http_version version;
-    struct aws_http_str target;
-
+struct aws_http_message_data {
     size_t header_count;
     struct aws_http_header* headers;
     struct aws_http_str body;
@@ -101,14 +97,21 @@ struct aws_http_request {
     struct aws_allocator *alloc;
 };
 
-enum aws_http_response_code_class
+struct aws_http_request {
+    enum aws_http_request_method method;
+    enum aws_http_version version;
+    struct aws_http_str target;
+    struct aws_http_message_data data;
+};
+
+enum aws_http_response_status_code_class
 {
-    AWS_HTTP_RESPONSE_CODE_UNKNOWN,
-    AWS_HTTP_RESPONSE_CODE_INFORMATIONAL,
-    AWS_HTTP_RESPONSE_CODE_SUCCESSFUL,
-    AWS_HTTP_RESPONSE_CODE_REDIRECTION,
-    AWS_HTTP_RESPONSE_CODE_CLIENT_ERROR,
-    AWS_HTTP_RESPONSE_CODE_SERVER_ERROR,
+    AWS_HTTP_RESPONSE_STATUS_CODE_UNKNOWN,
+    AWS_HTTP_RESPONSE_STATUS_CODE_INFORMATIONAL,
+    AWS_HTTP_RESPONSE_STATUS_CODE_SUCCESSFUL,
+    AWS_HTTP_RESPONSE_STATUS_CODE_REDIRECTION,
+    AWS_HTTP_RESPONSE_STATUS_CODE_CLIENT_ERROR,
+    AWS_HTTP_RESPONSE_STATUS_CODE_SERVER_ERROR,
 };
 
 enum aws_http_response_key {
@@ -141,15 +144,11 @@ enum aws_http_response_key {
 };
 
 struct aws_http_response {
-    enum aws_http_response_code_class response_class;
-    int response_code;
     enum aws_http_version version;
-
-    int header_count;
-    struct aws_http_header* headers;
-    struct aws_http_str body;
-
-    struct aws_allocator *alloc;
+    enum aws_http_response_status_code_class status_code_class;
+    int status_code;
+    struct aws_http_str status_code_reason_phrase;
+    struct aws_http_message_data data;
 };
 
 enum aws_http_errors {

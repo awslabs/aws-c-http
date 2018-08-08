@@ -28,13 +28,13 @@ static void s_print_request(struct aws_http_request *request) {
     s_print(request->target);
     printf("\n");
     printf("%s\n", aws_http_version_code_to_str(request->version));
-    for (int i = 0; i < request->header_count; ++i) {
-        s_print(request->headers[i].key_str);
+    for (int i = 0; i < request->data.header_count; ++i) {
+        s_print(request->data.headers[i].key_str);
         printf(":");
-        s_print(request->headers[i].value_str);
+        s_print(request->data.headers[i].value_str);
         printf("\n");
     }
-    s_print(request->body);
+    s_print(request->data.body);
     printf("\n");
 }
 
@@ -99,8 +99,8 @@ static int dummy_test_fn(struct aws_allocator *alloc, void *ctx) {
         struct aws_http_request request;
         const char *request_str = request_strs[i];
         ASSERT_SUCCESS(aws_http_request_init(alloc, &request, request_str, strlen(request_str)));
-        //s_print_request(&request);
-        //printf("\n");
+        s_print_request(&request);
+        printf("\n");
         aws_http_request_clean_up(&request);
     }
 
