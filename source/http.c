@@ -19,6 +19,7 @@
 #include <aws/common/byte_buf.h>
 #include <aws/common/error.h>
 
+#include <stdlib.h>
 #include <assert.h>
 #include <ctype.h>
 
@@ -230,7 +231,7 @@ static enum aws_http_version s_aws_http_str_to_version(struct aws_http_str str) 
         break;
     }
 
-    return match ? (enum aws_http_version)ret : AWS_HTTP_REQUEST_METHOD_UNKNOWN;
+    return match ? (enum aws_http_version)ret : AWS_HTTP_VERSION_UNKNOWN;
 }
 
 static enum aws_http_request_key s_aws_http_str_to_request_key(struct aws_http_str str) {
@@ -381,7 +382,7 @@ static enum aws_http_request_key s_aws_http_str_to_request_key(struct aws_http_s
         break;
     }
 
-    return match ? (enum aws_http_request_key)ret : AWS_HTTP_REQUEST_METHOD_UNKNOWN;
+    return match ? (enum aws_http_request_key)ret : AWS_HTTP_REQUEST_UNKNOWN;
 }
 
 static enum aws_http_response_key s_aws_http_str_to_response_key(struct aws_http_str str) {
@@ -512,7 +513,7 @@ static enum aws_http_response_key s_aws_http_str_to_response_key(struct aws_http
         break;
     }
 
-    return match ? (enum aws_http_response_key)ret : AWS_HTTP_REQUEST_METHOD_UNKNOWN;
+    return match ? (enum aws_http_response_key)ret : AWS_HTTP_RESPONSE_UNKNOWN;
 }
 
 static bool s_aws_http_eol(char c) {
@@ -635,7 +636,7 @@ static inline int s_aws_http_get_status_code_class(char c, enum aws_http_respons
 
 static int s_aws_http_read_headers_and_optional_body(struct aws_http_message_data *data, struct aws_http_str *input, struct aws_array_list *headers, int *cache, bool one_request_zero_response) {
     struct aws_http_str str;
-    int cache_max_index = one_request_zero_response ? AWS_HTTP_RESPONSE_LAST : AWS_HTTP_REQUEST_LAST;
+    size_t cache_max_index = one_request_zero_response ? AWS_HTTP_RESPONSE_LAST : AWS_HTTP_REQUEST_LAST;
     int content_length_key = one_request_zero_response ? AWS_HTTP_REQUEST_CONTENT_LENGTH : AWS_HTTP_RESPONSE_CONTENT_LENGTH;
 
     /* Scan for headers. */
@@ -674,7 +675,7 @@ static int s_aws_http_read_headers_and_optional_body(struct aws_http_message_dat
     }
 
     data->headers = (struct aws_http_header *)headers->data;
-    data->header_count = headers->length;
+    data->header_count = (int)headers->length;
 
     if (content_length) {
         AWS_HTTP_CHECK_OP(s_aws_http_expect_eol(input));
@@ -861,8 +862,8 @@ const char *aws_http_request_method_to_str(enum aws_http_request_method method) 
     case AWS_HTTP_REQUEST_METHOD_POST:    return "AWS_HTTP_REQUEST_METHOD_POST";
     case AWS_HTTP_REQUEST_METHOD_PUT:     return "AWS_HTTP_REQUEST_METHOD_PUT";
     case AWS_HTTP_REQUEST_METHOD_TRACE:   return "AWS_HTTP_REQUEST_METHOD_TRACE";
+    default: return NULL;
     }
-    return NULL;
 }
 
 const char *aws_http_request_key_to_str(enum aws_http_request_key key) {
@@ -893,10 +894,11 @@ const char *aws_http_request_key_to_str(enum aws_http_request_key key) {
     case AWS_HTTP_REQUEST_ORIGIN:              return "AWS_HTTP_REQUEST_ORIGIN";
     case AWS_HTTP_REQUEST_PROXY_AUTHORIZATION: return "AWS_HTTP_REQUEST_PROXY_AUTHORIZATION";
     case AWS_HTTP_REQUEST_RANGE:               return "AWS_HTTP_REQUEST_RANGE";
+    case AWS_HTTP_REQUEST_REFERRER:            return "AWS_HTTP_REQUEST_REFERRER";
     case AWS_HTTP_REQUEST_USER_AGENT:          return "AWS_HTTP_REQUEST_USER_AGENT";
     case AWS_HTTP_REQUEST_VIA:                 return "AWS_HTTP_REQUEST_VIA";
+    default: return NULL;
     }
-    return NULL;
 }
 
 AWS_HTTP_API const char *aws_http_response_key_to_str(enum aws_http_request_key key) {
@@ -926,8 +928,8 @@ AWS_HTTP_API const char *aws_http_response_key_to_str(enum aws_http_request_key 
     case AWS_HTTP_RESPONSE_VARY:                      return "AWS_HTTP_RESPONSE_VARY";
     case AWS_HTTP_RESPONSE_VIA:                       return "AWS_HTTP_RESPONSE_VIA";
     case AWS_HTTP_RESPONSE_WWW_AUTHENTICATE:          return "AWS_HTTP_RESPONSE_WWW_AUTHENTICATE";
+    default: return NULL;
     }
-    return NULL;
 }
 
 const char *aws_http_version_code_to_str(enum aws_http_version version) {
@@ -936,6 +938,6 @@ const char *aws_http_version_code_to_str(enum aws_http_version version) {
     case AWS_HTTP_VERSION_1_0:     return "AWS_HTTP_VERSION_1_0";
     case AWS_HTTP_VERSION_1_1:     return "AWS_HTTP_VERSION_1_1";
     case AWS_HTTP_VERSION_2_0:     return "AWS_HTTP_VERSION_2_0";
+    default: return NULL;
     }
-    return NULL;
 }

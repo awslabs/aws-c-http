@@ -18,6 +18,8 @@
 
 #include <aws/http/exports.h>
 
+#include <aws/common/common.h>
+
 enum aws_http_version {
     AWS_HTTP_VERSION_UNKNOWN, /* Invalid version. */
     AWS_HTTP_VERSION_1_0,
@@ -105,7 +107,7 @@ struct aws_http_header {
 
 /* Common structure shared between requests/responses. */
 struct aws_http_message_data {
-    size_t header_count;
+    int header_count;
     struct aws_http_header* headers;
     struct aws_http_str body;
     struct aws_allocator *alloc;

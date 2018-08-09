@@ -17,10 +17,14 @@
 
 #include <aws/testing/aws_test_harness.h>
 
+#include <ctype.h>
 #include <stdio.h>
 
+#define HTTP_TESTS_DO_PRINTING 0
+
+#if HTTP_TESTS_DO_PRINTING
 static void s_print(struct aws_http_str str) {
-    printf("%0.*s", (int)(size_t)(str.end - str.begin), str.begin);
+    printf("%.*s", (int)(size_t)(str.end - str.begin), str.begin);
 }
 
 static void s_print_request(struct aws_http_request *request) {
@@ -37,6 +41,7 @@ static void s_print_request(struct aws_http_request *request) {
     s_print(request->data.body);
     printf("\n");
 }
+#endif
 
 AWS_TEST_CASE(http_parse_lots_of_headers, http_parse_lots_of_headers_fn)
 static int http_parse_lots_of_headers_fn(struct aws_allocator *alloc, void *ctx) {
@@ -95,12 +100,14 @@ static int http_parse_lots_of_headers_fn(struct aws_allocator *alloc, void *ctx)
         "X\r\n",
     };
 
-    for (int i = 0; i < sizeof(request_strs) / sizeof(*request_strs); ++i) {
+    for (int i = 0; i < (int)(sizeof(request_strs) / sizeof(*request_strs)); ++i) {
         struct aws_http_request request;
         const char *request_str = request_strs[i];
         ASSERT_SUCCESS(aws_http_request_init(&request, alloc, request_str, strlen(request_str)));
-        //s_print_request(&request);
-        //printf("\n");
+#if HTTP_TESTS_DO_PRINTING
+        s_print_request(&request);
+        printf("\n");
+#endif
         aws_http_request_clean_up(&request);
     }
 

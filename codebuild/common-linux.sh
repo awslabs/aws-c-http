@@ -14,7 +14,7 @@ make install
 
 cd ../..
 
-cd aws-c-compression
+cd aws-c-http
 mkdir build
 cd build
 cmake -DCMAKE_INSTALL_PREFIX=../../install -DENABLE_SANITIZERS=ON $@ ../
