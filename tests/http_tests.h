@@ -13,11 +13,11 @@
  * permissions and limitations under the License.
  */
 
-#include <stdio.h>
+#include <aws/http/http.h>
 
 #include <aws/testing/aws_test_harness.h>
 
-#include <aws/http/http.h>
+#include <stdio.h>
 
 static void s_print(struct aws_http_str str) {
     printf("%0.*s", (int)(size_t)(str.end - str.begin), str.begin);
@@ -98,7 +98,7 @@ static int http_parse_lots_of_headers_fn(struct aws_allocator *alloc, void *ctx)
     for (int i = 0; i < sizeof(request_strs) / sizeof(*request_strs); ++i) {
         struct aws_http_request request;
         const char *request_str = request_strs[i];
-        ASSERT_SUCCESS(aws_http_request_init(alloc, &request, request_str, strlen(request_str)));
+        ASSERT_SUCCESS(aws_http_request_init(&request, alloc, request_str, strlen(request_str)));
         //s_print_request(&request);
         //printf("\n");
         aws_http_request_clean_up(&request);
@@ -128,7 +128,7 @@ static int http_parse_and_lookup_header_fn(struct aws_allocator *alloc, void *ct
         "123456";
 
     struct aws_http_request request;
-    ASSERT_SUCCESS(aws_http_request_init(alloc, &request, request_str, strlen(request_str)));
+    ASSERT_SUCCESS(aws_http_request_init(&request, alloc, request_str, strlen(request_str)));
 
     struct aws_http_header header;
     ASSERT_SUCCESS(aws_http_request_get_header_by_enum(&request, &header, AWS_HTTP_REQUEST_ACCEPT_LANGUAGE));
@@ -150,12 +150,12 @@ static int http_parse_bad_or_empty_input_fn(struct aws_allocator *alloc, void *c
     const char *request_str = NULL;
 
     struct aws_http_request request;
-    ASSERT_FAILS(aws_http_request_init(alloc, &request, request_str, 0));
+    ASSERT_FAILS(aws_http_request_init(&request, alloc, request_str, 0));
     aws_http_request_clean_up(&request);
 
     request_str = "";
 
-    ASSERT_FAILS(aws_http_request_init(alloc, &request, request_str, strlen(request_str)));
+    ASSERT_FAILS(aws_http_request_init(&request, alloc, request_str, strlen(request_str)));
     aws_http_request_clean_up(&request);
 
     return 0;

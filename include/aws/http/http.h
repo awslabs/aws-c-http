@@ -13,6 +13,9 @@
  * permissions and limitations under the License.
  */
 
+#ifndef AWS_HTTP_H
+#define AWS_HTTP_H
+
 #include <aws/http/exports.h>
 
 enum aws_http_version {
@@ -92,7 +95,7 @@ enum aws_http_request_key {
 
 /*
  * Headers are string key-value pairs. Some keys are pre-mapped to convenience enum values. See
- * \ref aws_http_request_key.
+ * \ref aws_http_request_key and \ref aws_http_response_key.
  */
 struct aws_http_header {
     int key;
@@ -114,6 +117,7 @@ struct aws_http_request {
     struct aws_http_str target;
     struct aws_http_message_data data;
 
+    /* Used for constant-time lookups for common headers. */
     int header_cache[AWS_HTTP_REQUEST_LAST];
 };
 
@@ -171,6 +175,7 @@ struct aws_http_response {
     struct aws_http_str status_code_reason_phrase;
     struct aws_http_message_data data;
 
+    /* Used for constant-time lookups for common headers. */
     int header_cache[AWS_HTTP_RESPONSE_LAST];
 };
 
@@ -186,7 +191,7 @@ extern "C" {
 
 // TODO: The host header must be in each requests for http1.1, and a 400 bad request is the response otherwise.
 
-AWS_HTTP_API int aws_http_request_init(struct aws_allocator *alloc, struct aws_http_request *request, const void* buffer, size_t size);
+AWS_HTTP_API int aws_http_request_init(struct aws_http_request *request, struct aws_allocator *alloc, const void* buffer, size_t buffer_size);
 AWS_HTTP_API void aws_http_request_clean_up(struct aws_http_request *request);
 
 /*
@@ -202,7 +207,7 @@ AWS_HTTP_API int aws_http_request_get_header_by_enum(const struct aws_http_reque
  */
 AWS_HTTP_API int aws_http_request_get_header_by_str(const struct aws_http_request *request, struct aws_http_header *header, const char *key, size_t key_len);
 
-AWS_HTTP_API int aws_http_response_init(struct aws_allocator *alloc,struct aws_http_response *response, const void* buffer, size_t size);
+AWS_HTTP_API int aws_http_response_init(struct aws_http_response *response, struct aws_allocator *alloc, const void* buffer, size_t buffer_size);
 AWS_HTTP_API void aws_http_response_clean_up(struct aws_http_response *response);
 
 /*
@@ -231,3 +236,5 @@ AWS_HTTP_API void aws_http_load_error_strings(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* AWS_HTTP_H */
