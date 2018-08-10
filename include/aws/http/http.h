@@ -18,7 +18,11 @@
 
 #include <aws/http/exports.h>
 
-#include <aws/common/common.h>
+enum aws_http_errors {
+    AWS_HTTP_ERROR_UNKNOWN = 0x0800,
+    AWS_HTTP_ERROR_PARSE,
+    AWS_HTTP_ERROR_END_RANGE = 0x0C00,
+};
 
 enum aws_http_version {
     AWS_HTTP_VERSION_UNKNOWN, /* Invalid version. */
@@ -27,213 +31,177 @@ enum aws_http_version {
     AWS_HTTP_VERSION_2_0,
 };
 
-/* 
- * String representation by a begin and end pointer pair. The `begin` pointer points to the
- * first element in the string, and the `end` pointer points to one beyond the end of the string.
- * For example the string "Hello world!" as an `aws_http_str would be properly setup like so:
- * 
- * const char* s = "Hello world!";
- * struct aws_http_str str;
- * str.begin = s;
- * str.end = s + strlen(s); // Note: no +1 here; `aws_http_str` strings are not NUL-byte terminated.
- */
-struct aws_http_str {
-    const char* begin;
-    const char* end;
+enum aws_http_method {
+    AWS_HTTP_METHOD_UNKNOWN, /* Invalid request. */
+    AWS_HTTP_METHOD_CONNECT,
+    AWS_HTTP_METHOD_DELETE,
+    AWS_HTTP_METHOD_GET,
+    AWS_HTTP_METHOD_HEAD,
+    AWS_HTTP_METHOD_OPTIONS,
+    AWS_HTTP_METHOD_PATCH,
+    AWS_HTTP_METHOD_POST,
+    AWS_HTTP_METHOD_PUT,
+    AWS_HTTP_METHOD_TRACE,
 };
 
-enum aws_http_request_method {
-    AWS_HTTP_REQUEST_METHOD_UNKNOWN, /* Invalid request. */
-    AWS_HTTP_REQUEST_METHOD_CONNECT,
-    AWS_HTTP_REQUEST_METHOD_DELETE,
-    AWS_HTTP_REQUEST_METHOD_GET,
-    AWS_HTTP_REQUEST_METHOD_HEAD,
-    AWS_HTTP_REQUEST_METHOD_OPTIONS,
-    AWS_HTTP_REQUEST_METHOD_PATCH,
-    AWS_HTTP_REQUEST_METHOD_POST,
-    AWS_HTTP_REQUEST_METHOD_PUT,
-    AWS_HTTP_REQUEST_METHOD_TRACE,
-};
-
-enum aws_http_request_key {
+enum aws_http_header_name {
     /* 
      * Valid request header key, but not mapped to an enum (e.g. uncommon headers are
      * not apart of this enum.
      */
-    AWS_HTTP_REQUEST_UNKNOWN,
+    AWS_HTTP_HEADER_UNKNOWN,
 
-    AWS_HTTP_REQUEST_ACCEPT,
-    AWS_HTTP_REQUEST_ACCEPT_CHARSET,
-    AWS_HTTP_REQUEST_ACCEPT_ENCODING,
-    AWS_HTTP_REQUEST_ACCEPT_LANGUAGE,
-    AWS_HTTP_REQUEST_AUTHORIZATION,
-    AWS_HTTP_REQUEST_CACHE_CONTROL,
-    AWS_HTTP_REQUEST_CONNECTION,
-    AWS_HTTP_REQUEST_CONTENT_LENGTH,
-    AWS_HTTP_REQUEST_CONTENT_TYPE,
-    AWS_HTTP_REQUEST_COOKIE,
-    AWS_HTTP_REQUEST_DATE,
-    AWS_HTTP_REQUEST_EXPECT,
-    AWS_HTTP_REQUEST_FORWARDED,
-    AWS_HTTP_REQUEST_FROM,
-    AWS_HTTP_REQUEST_HOST,
-    AWS_HTTP_REQUEST_IF_MATCH,
-    AWS_HTTP_REQUEST_IF_MODIFIED_SINCE,
-    AWS_HTTP_REQUEST_IF_NONE_MATCH,
-    AWS_HTTP_REQUEST_IF_RANGE,
-    AWS_HTTP_REQUEST_IF_UNMODIFIED_SINCE,
-    AWS_HTTP_REQUEST_KEEP_ALIVE,
-    AWS_HTTP_REQUEST_MAX_FORWARDS,
-    AWS_HTTP_REQUEST_ORIGIN,
-    AWS_HTTP_REQUEST_PROXY_AUTHORIZATION,
-    AWS_HTTP_REQUEST_RANGE,
-    AWS_HTTP_REQUEST_REFERRER,
-    AWS_HTTP_REQUEST_USER_AGENT,
-    AWS_HTTP_REQUEST_VIA,
-
-    /* Must be last. */
-    AWS_HTTP_REQUEST_LAST
+    AWS_HTTP_HEADER_ACCEPT,
+    AWS_HTTP_HEADER_ACCEPT_CHARSET,
+    AWS_HTTP_HEADER_ACCEPT_ENCODING,
+    AWS_HTTP_HEADER_ACCEPT_LANGUAGE,
+    AWS_HTTP_HEADER_ACCEPT_RANGES,
+    AWS_HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN,
+    AWS_HTTP_HEADER_AGE,
+    AWS_HTTP_HEADER_ALLOW,
+    AWS_HTTP_HEADER_AUTHORIZATION,
+    AWS_HTTP_HEADER_CACHE_CONTROL,
+    AWS_HTTP_HEADER_CONNECTION,
+    AWS_HTTP_HEADER_CONTENT_DISPOSITION,
+    AWS_HTTP_HEADER_CONTENT_ENCODING,
+    AWS_HTTP_HEADER_CONTENT_LANGUAGE,
+    AWS_HTTP_HEADER_CONTENT_LENGTH,
+    AWS_HTTP_HEADER_CONTENT_LOCATION,
+    AWS_HTTP_HEADER_CONTENT_RANGE,
+    AWS_HTTP_HEADER_CONTENT_TYPE,
+    AWS_HTTP_HEADER_COOKIE,
+    AWS_HTTP_HEADER_DATE,
+    AWS_HTTP_HEADER_ETAG,
+    AWS_HTTP_HEADER_EXPECT,
+    AWS_HTTP_HEADER_EXPIRES,
+    AWS_HTTP_HEADER_FORWARDED,
+    AWS_HTTP_HEADER_FROM,
+    AWS_HTTP_HEADER_HOST,
+    AWS_HTTP_HEADER_IF_MATCH,
+    AWS_HTTP_HEADER_IF_MODIFIED_SINCE,
+    AWS_HTTP_HEADER_IF_NONE_MATCH,
+    AWS_HTTP_HEADER_IF_RANGE,
+    AWS_HTTP_HEADER_IF_UNMODIFIED_SINCE,
+    AWS_HTTP_HEADER_KEEP_ALIVE,
+    AWS_HTTP_HEADER_LAST_MODIFIED,
+    AWS_HTTP_HEADER_LINK,
+    AWS_HTTP_HEADER_LOCATION,
+    AWS_HTTP_HEADER_MAX_FORWARDS,
+    AWS_HTTP_HEADER_ORIGIN,
+    AWS_HTTP_HEADER_PROXY_AUTHENTICATE,
+    AWS_HTTP_HEADER_PROXY_AUTHORIZATION,
+    AWS_HTTP_HEADER_RANGE,
+    AWS_HTTP_HEADER_REFERRER,
+    AWS_HTTP_HEADER_REFRESH,
+    AWS_HTTP_HEADER_RETRY_AFTER,
+    AWS_HTTP_HEADER_SERVER,
+    AWS_HTTP_HEADER_SET_COOKIE,
+    AWS_HTTP_HEADER_STRICT_TRANSPORT_SECURITY,
+    AWS_HTTP_HEADER_TRANSFER_ENCODING,
+    AWS_HTTP_HEADER_UPGRADE,
+    AWS_HTTP_HEADER_USER_AGENT,
+    AWS_HTTP_HEADER_VARY,
+    AWS_HTTP_HEADER_VIA,
+    AWS_HTTP_HEADER_WWW_AUTHENTICATE,
 };
 
-/*
- * Headers are string key-value pairs. Some keys are pre-mapped to convenience enum values. See
- * \ref aws_http_request_key and \ref aws_http_response_key.
- */
-struct aws_http_header {
-    int key;
-    struct aws_http_str key_str; /* Case insensitive. */
-    struct aws_http_str value_str;
-};
-
-/* Common structure shared between requests/responses. */
-struct aws_http_message_data {
-    int header_count;
-    struct aws_http_header* headers;
-    struct aws_http_str body;
-    struct aws_allocator *alloc;
-};
-
-struct aws_http_request {
-    enum aws_http_request_method method;
-    enum aws_http_version version;
-    struct aws_http_str target;
-    struct aws_http_message_data data;
-
-    /* Used for constant-time lookups for common headers. */
-    int header_cache[AWS_HTTP_REQUEST_LAST];
-};
-
-enum aws_http_response_status_code_class
+enum aws_http_code
 {
-    AWS_HTTP_RESPONSE_STATUS_CODE_UNKNOWN, /* Invalid status code. */
-    AWS_HTTP_RESPONSE_STATUS_CODE_INFORMATIONAL,
-    AWS_HTTP_RESPONSE_STATUS_CODE_SUCCESSFUL,
-    AWS_HTTP_RESPONSE_STATUS_CODE_REDIRECTION,
-    AWS_HTTP_RESPONSE_STATUS_CODE_CLIENT_ERROR,
-    AWS_HTTP_RESPONSE_STATUS_CODE_SERVER_ERROR,
-};
-
-enum aws_http_response_key {
-    /* 
-     * Valid response header key, but not mapped to an enum (e.g. uncommon headers are
-     * not apart of this enum.
-     */
-    AWS_HTTP_RESPONSE_UNKNOWN,
-
-    AWS_HTTP_RESPONSE_ACCEPT_RANGES,
-    AWS_HTTP_RESPONSE_AGE,
-    AWS_HTTP_RESPONSE_ALLOW,
-    AWS_HTTP_RESPONSE_CACHE_CONTROL,
-    AWS_HTTP_RESPONSE_CONTENT_DISPOSITION,
-    AWS_HTTP_RESPONSE_CONTENT_ENCODING,
-    AWS_HTTP_RESPONSE_CONTENT_LANGUAGE,
-    AWS_HTTP_RESPONSE_CONTENT_LENGTH,
-    AWS_HTTP_RESPONSE_CONTENT_LOCATION,
-    AWS_HTTP_RESPONSE_CONTENT_RANGE,
-    AWS_HTTP_RESPONSE_CONTENT_TYPE,
-    AWS_HTTP_RESPONSE_DATE,
-    AWS_HTTP_RESPONSE_ETAG,
-    AWS_HTTP_RESPONSE_LAST_MODIFIED,
-    AWS_HTTP_RESPONSE_LINK,
-    AWS_HTTP_RESPONSE_LOCATION,
-    AWS_HTTP_RESPONSE_PROXY_AUTHENTICATE,
-    AWS_HTTP_RESPONSE_RETRY_AFTER,
-    AWS_HTTP_RESPONSE_SERVER,
-    AWS_HTTP_RESPONSE_SET_COOKIE,
-    AWS_HTTP_RESPONSE_STRICT_TRANSPORT_SECURITY,
-    AWS_HTTP_RESPONSE_UPGRADE,
-    AWS_HTTP_RESPONSE_VARY,
-    AWS_HTTP_RESPONSE_VIA,
-    AWS_HTTP_RESPONSE_WWW_AUTHENTICATE,
-
-    /* Must be last. */
-    AWS_HTTP_RESPONSE_LAST
-};
-
-struct aws_http_response {
-    enum aws_http_version version;
-    enum aws_http_response_status_code_class status_code_class;
-    int status_code;
-    struct aws_http_str status_code_reason_phrase;
-    struct aws_http_message_data data;
-
-    /* Used for constant-time lookups for common headers. */
-    int header_cache[AWS_HTTP_RESPONSE_LAST];
-};
-
-enum aws_http_errors {
-    AWS_HTTP_ERROR_UNKNOWN = 0x0800,
-    AWS_HTTP_ERROR_PARSE,
-    AWS_HTTP_ERROR_END_RANGE = 0x0C00,
+    AWS_HTTP_CODE_UNKNOWN, /* Invalid status code. */
+    AWS_HTTP_CODE_REQUEST_NOT_MADE = -1,
+    AWS_HTTP_CODE_CONTINUE = 100,
+    AWS_HTTP_CODE_SWITCHING_PROTOCOLS = 101,
+    AWS_HTTP_CODE_PROCESSING = 102,
+    AWS_HTTP_CODE_OK = 200,
+    AWS_HTTP_CODE_CREATED = 201,
+    AWS_HTTP_CODE_ACCEPTED = 202,
+    AWS_HTTP_CODE_NON_AUTHORITATIVE_INFORMATION = 203,
+    AWS_HTTP_CODE_NO_CONTENT = 204,
+    AWS_HTTP_CODE_RESET_CONTENT = 205,
+    AWS_HTTP_CODE_PARTIAL_CONTENT = 206,
+    AWS_HTTP_CODE_MULTI_STATUS = 207,
+    AWS_HTTP_CODE_ALREADY_REPORTED = 208,
+    AWS_HTTP_CODE_IM_USED = 226,
+    AWS_HTTP_CODE_MULTIPLE_CHOICES = 300,
+    AWS_HTTP_CODE_MOVED_PERMANENTLY = 301,
+    AWS_HTTP_CODE_FOUND = 302,
+    AWS_HTTP_CODE_SEE_OTHER = 303,
+    AWS_HTTP_CODE_NOT_MODIFIED = 304,
+    AWS_HTTP_CODE_USE_PROXY = 305,
+    AWS_HTTP_CODE_SWITCH_PROXY = 306,
+    AWS_HTTP_CODE_TEMPORARY_REDIRECT = 307,
+    AWS_HTTP_CODE_PERMANENT_REDIRECT = 308,
+    AWS_HTTP_CODE_BAD_REQUEST = 400,
+    AWS_HTTP_CODE_UNAUTHORIZED = 401,
+    AWS_HTTP_CODE_PAYMENT_REQUIRED = 402,
+    AWS_HTTP_CODE_FORBIDDEN = 403,
+    AWS_HTTP_CODE_NOT_FOUND = 404,
+    AWS_HTTP_CODE_METHOD_NOT_ALLOWED = 405,
+    AWS_HTTP_CODE_NOT_ACCEPTABLE = 406,
+    AWS_HTTP_CODE_PROXY_AUTHENTICATION_REQUIRED = 407,
+    AWS_HTTP_CODE_REQUEST_TIMEOUT = 408,
+    AWS_HTTP_CODE_CONFLICT = 409,
+    AWS_HTTP_CODE_GONE = 410,
+    AWS_HTTP_CODE_LENGTH_REQUIRED = 411,
+    AWS_HTTP_CODE_PRECONDITION_FAILED = 412,
+    AWS_HTTP_CODE_REQUEST_ENTITY_TOO_LARGE = 413,
+    AWS_HTTP_CODE_REQUEST_URI_TOO_LONG = 414,
+    AWS_HTTP_CODE_UNSUPPORTED_MEDIA_TYPE = 415,
+    AWS_HTTP_CODE_REQUESTED_RANGE_NOT_SATISFIABLE = 416,
+    AWS_HTTP_CODE_EXPECTATION_FAILED = 417,
+    AWS_HTTP_CODE_IM_A_TEAPOT = 418,
+    AWS_HTTP_CODE_AUTHENTICATION_TIMEOUT = 419,
+    AWS_HTTP_CODE_METHOD_FAILURE = 420,
+    AWS_HTTP_CODE_UNPROC_ENTITY = 422,
+    AWS_HTTP_CODE_LOCKED = 423,
+    AWS_HTTP_CODE_FAILED_DEPENDENCY = 424,
+    AWS_HTTP_CODE_UPGRADE_REQUIRED = 426,
+    AWS_HTTP_CODE_PRECONDITION_REQUIRED = 427,
+    AWS_HTTP_CODE_TOO_MANY_REQUESTS = 429,
+    AWS_HTTP_CODE_REQUEST_HEADER_FIELDS_TOO_LARGE = 431,
+    AWS_HTTP_CODE_LOGIN_TIMEOUT = 440,
+    AWS_HTTP_CODE_NO_RESPONSE = 444,
+    AWS_HTTP_CODE_RETRY_WITH = 449,
+    AWS_HTTP_CODE_BLOCKED = 450,
+    AWS_HTTP_CODE_REDIRECT = 451,
+    AWS_HTTP_CODE_REQUEST_HEADER_TOO_LARGE = 494,
+    AWS_HTTP_CODE_CERT_ERROR = 495,
+    AWS_HTTP_CODE_NO_CERT = 496,
+    AWS_HTTP_CODE_HTTP_TO_HTTPS = 497,
+    AWS_HTTP_CODE_CLIENT_CLOSED_TO_REQUEST = 499,
+    AWS_HTTP_CODE_INTERNAL_SERVER_ERROR = 500,
+    AWS_HTTP_CODE_NOT_IMPLEMENTED = 501,
+    AWS_HTTP_CODE_BAD_GATEWAY = 502,
+    AWS_HTTP_CODE_SERVICE_UNAVAILABLE = 503,
+    AWS_HTTP_CODE_GATEWAY_TIMEOUT = 504,
+    AWS_HTTP_CODE_HTTP_VERSION_NOT_SUPPORTED = 505,
+    AWS_HTTP_CODE_VARIANT_ALSO_NEGOTIATES = 506,
+    AWS_HTTP_CODE_INSUFFICIENT_STORAGE = 506,
+    AWS_HTTP_CODE_LOOP_DETECTED = 508,
+    AWS_HTTP_CODE_BANDWIDTH_LIMIT_EXCEEDED = 509,
+    AWS_HTTP_CODE_NOT_EXTENDED = 510,
+    AWS_HTTP_CODE_NETWORK_AUTHENTICATION_REQUIRED = 511,
+    AWS_HTTP_CODE_NETWORK_READ_TIMEOUT = 598,
+    AWS_HTTP_CODE_NETWORK_CONNECT_TIMEOUT = 599
 };
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// TODO: The host header must be in each requests for http1.1, and a 400 bad request is the response otherwise.
-
-AWS_HTTP_API int aws_http_request_init(struct aws_http_request *request, struct aws_allocator *alloc, const void* buffer, size_t buffer_size);
-AWS_HTTP_API void aws_http_request_clean_up(struct aws_http_request *request);
-
-/*
- * Headers are searched the order they are parsed (from top-down), and the first match is returned. These `get`
- * functions do not do any special handling for duplicate headers, and will always naively return the first match found.
- * This function searches for a header given the associated enum value. Not all possible headers have a pre-defined
- * enum value associated with them; only the commons have an enum.
- */
-AWS_HTTP_API int aws_http_request_get_header_by_enum(const struct aws_http_request *request, struct aws_http_header *header, enum aws_http_request_key key);
-
-/*
- * Searches for a header given the string representation of the header name. The search is case-insensitive.
- */
-AWS_HTTP_API int aws_http_request_get_header_by_str(const struct aws_http_request *request, struct aws_http_header *header, const char *key, size_t key_len);
-
-AWS_HTTP_API int aws_http_response_init(struct aws_http_response *response, struct aws_allocator *alloc, const void* buffer, size_t buffer_size);
-AWS_HTTP_API void aws_http_response_clean_up(struct aws_http_response *response);
-
-/*
- * Headers are searched the order they are parsed (from top-down), and the first match is returned. These `get`
- * functions do not do any special handling for duplicate headers, and will always naively return the first match found.
- * This function searches for a header given the associated enum value. Not all possible headers have a pre-defined
- * enum value associated with them; only the commons have an enum.
- */
-AWS_HTTP_API int aws_http_response_get_header_by_enum(const struct aws_http_response *response, struct aws_http_header *header, enum aws_http_request_key key);
-
-/*
- * Searches for a header given the string representation of the header name. The search is case-insensitive.
- */
-AWS_HTTP_API int aws_http_response_get_header_by_str(const struct aws_http_response *response, struct aws_http_header *header, const char *key, size_t key_len);
-
-AWS_HTTP_API const char *aws_http_request_method_to_str(enum aws_http_request_method method);
-AWS_HTTP_API const char *aws_http_request_key_to_str(enum aws_http_request_key key);
-AWS_HTTP_API const char *aws_http_response_key_to_str(enum aws_http_request_key key);
-AWS_HTTP_API const char *aws_http_version_code_to_str(enum aws_http_version version);
-
 /**
  * Loads error strings for this API so that aws_last_error_str etc. will return useful debug strings.
  */
 AWS_HTTP_API void aws_http_load_error_strings(void);
+
+AWS_HTTP_API const char *aws_http_header_name_to_str(enum aws_http_header_name name);
+AWS_HTTP_API const char *aws_http_request_method_to_str(enum aws_http_request_method method);
+AWS_HTTP_API const char *aws_http_version_code_to_str(enum aws_http_version version);
+
+AWS_HTTP_API enum aws_http_request_method aws_http_str_to_method(struct aws_byte_cursor str);
+AWS_HTTP_API enum aws_http_version aws_http_str_to_version(struct aws_byte_cursor str);
+AWS_HTTP_API enum aws_http_version aws_http_str_to_header_name(struct aws_byte_cursor str);
+AWS_HTTP_API enum aws_http_code aws_http_int_to_code(int code);
 
 #ifdef __cplusplus
 }
