@@ -83,8 +83,12 @@ struct aws_http_decoder_params {
     aws_http_decoder_on_body_fn *on_body;
     aws_http_decoder_on_version_fn *on_version;
     aws_http_decoder_on_uri_fn *on_uri;
+    bool true_for_request_false_for_response;
     void *user_data;
 };
+
+/* For internal use. */
+typedef int (s_aws_http_decoder_state_fn)(struct aws_http_decoder *decoder, const uint8_t *data, size_t data_bytes, size_t *bytes_processed);
 
 /*
  * Streaming decoder for parsing HTTP 1.1 messages from a segmented input stream (a series of buffers).
@@ -92,14 +96,15 @@ struct aws_http_decoder_params {
 struct AWS_CACHE_ALIGN aws_http_decoder {
     /* Implementation data. */
     struct aws_allocator *alloc;
-    void *state_cb;
+    s_aws_http_decoder_state_fn *state_cb;
 
-    /* User callbacks. */
+    /* User callbacks and settings. */
     aws_http_decoder_on_code_fn *on_code;
     aws_http_decoder_on_header_fn *on_header;
     aws_http_decoder_on_body_fn *on_body;
     aws_http_decoder_on_version_fn *on_version;
     aws_http_decoder_on_uri_fn *on_uri;
+    bool true_for_request_false_for_response;
     void *user_data;
 };
 
@@ -107,7 +112,7 @@ struct AWS_CACHE_ALIGN aws_http_decoder {
 extern "C" {
 #endif
 
-AWS_HTTP_API int aws_http_decode_init(struct aws_http_decoder* decoder, struct aws_http_decoder_params *params);
+AWS_HTTP_API void aws_http_decode_init(struct aws_http_decoder* decoder, struct aws_http_decoder_params *params);
 AWS_HTTP_API void aws_http_decode_clean_up(struct aws_http_decoder* decoder);
 AWS_HTTP_API int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t data_bytes);
 

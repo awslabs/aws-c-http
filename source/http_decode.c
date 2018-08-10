@@ -15,6 +15,8 @@
 
 #include <aws/http/http_decode.h>
 
+#include <assert.h>
+
 /* Works like memcmp or strcmp, except is case-agonstic. */
 static inline int s_aws_byte_cursorcmp_case_insensitive(const char *a, const char *b, size_t key_len) {
     for (size_t i = 0; i < key_len; ++i) {
@@ -362,13 +364,52 @@ int aws_http_response_get_header_by_str(const struct aws_http_response *response
 }
 #endif
 
-typedef int (s_aws_http_decoder_state_fn)(struct aws_http_decoder *decoder, const uint8_t *data, size_t data_bytes, size_t *bytes_processed);
+int s_aws_http_decoder_state_begin_request(struct aws_http_decoder *decoder, const uint8_t *data, size_t data_bytes, size_t *bytes_processed) {
+    (void)decoder;
+    (void)data;
+    (void)data_bytes;
+    (void)bytes_processed;
+    return AWS_OP_ERR;
+}
 
-int aws_http_decode_init(struct aws_http_decoder* decoder, struct aws_http_decoder_params *params) {
+int s_aws_http_decoder_state_begin_response(struct aws_http_decoder *decoder, const uint8_t *data, size_t data_bytes, size_t *bytes_processed) {
+    (void)decoder;
+    (void)data;
+    (void)data_bytes;
+    (void)bytes_processed;
+    return AWS_OP_ERR;
+}
+
+void aws_http_decode_init(struct aws_http_decoder* decoder, struct aws_http_decoder_params *params) {
+    decoder->alloc = params->alloc;
+    decoder->on_code = params->on_code;
+    decoder->on_header = params->on_header;
+    decoder->on_body = params->on_body;
+    decoder->on_version = params->on_version;
+    decoder->on_uri = params->on_uri;
+    decoder->user_data = params->user_data;
+
+    if (params->true_for_request_false_for_response) {
+        decoder->state_cb = s_aws_http_decoder_state_begin_request;
+    } else {
+        decoder->state_cb = s_aws_http_decoder_state_begin_response;
+    }
 }
 
 void aws_http_decode_clean_up(struct aws_http_decoder* decoder) {
+    (void)decoder;
 }
 
 int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t data_bytes) {
+    assert(decoder);
+    assert(data);
+
+    int ret = AWS_OP_SUCCESS;
+    while (ret == AWS_OP_SUCCESS && data_bytes) {
+        size_t bytes_processed = 0;
+        ret = decoder->state_cb(decoder, (const uint8_t *)data, data_bytes, &bytes_processed);
+        data_bytes -= bytes_processed;
+    }
+
+    return ret;
 }
