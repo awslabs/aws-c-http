@@ -373,10 +373,11 @@ static inline struct aws_byte_cursor s_aws_byte_cursor_increment(struct aws_byte
 static int s_aws_http_scan(struct aws_byte_cursor *input, struct aws_byte_cursor *out, char search) {
     struct aws_byte_cursor cursor = *input;
     int ret = AWS_OP_ERR;
+    bool found = false;
     out->ptr = NULL;
     out->len = 0;
     while (cursor.len) {
-        bool found = *cursor.ptr == search;
+        found = *cursor.ptr == search;
         cursor = s_aws_byte_cursor_increment(cursor, 1);
         if (found) {
             ret = AWS_OP_SUCCESS;
@@ -384,12 +385,16 @@ static int s_aws_http_scan(struct aws_byte_cursor *input, struct aws_byte_cursor
         }
     }
     out->ptr = input->ptr;
-    out->len = input->len - cursor.len;
+    out->len = input->len - cursor.len - (found ? 1 : 0);
     *input = cursor;
     return ret;
 }
 
-int s_aws_http_decoder_working_buffer_cat(struct aws_http_decoder *decoder, struct aws_byte_cursor processed) {
+static int s_aws_http_decoder_working_buffer_cat(struct aws_http_decoder *decoder, struct aws_byte_cursor processed) {
+    if (!processed.len) {
+        return AWS_OP_SUCCESS;
+    }
+
     if (AWS_LIKELY(aws_byte_buf_append(&decoder->working_buffer, &processed) == AWS_OP_SUCCESS)) {
         return AWS_OP_SUCCESS;
     } else {
@@ -452,6 +457,10 @@ static int s_aws_http_decoder_expect(struct aws_byte_cursor *input, const char *
     return ret;
 }
 
+static inline bool s_aws_http_decoder_is_using_working_buffer(struct aws_http_decoder *decoder) {
+    return decoder->working_buffer.len != 0 ? true : false;
+}
+
 static int s_aws_http_decoder_state_header_value(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     (void)decoder;
     (void)input;
@@ -460,27 +469,49 @@ static int s_aws_http_decoder_state_header_value(struct aws_http_decoder *decode
 }
 
 static int s_aws_http_decoder_state_header_name(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
-    (void)decoder;
-    (void)input;
-    (void)bytes_processed;
-    return AWS_OP_ERR;
+    struct aws_byte_cursor processed;
+    bool scan_succeeded = s_aws_http_scan(&input, &processed, ':') == AWS_OP_SUCCESS;
+    int ret = AWS_OP_SUCCESS;
+
+    if (AWS_UNLIKELY((!scan_succeeded | s_aws_http_decoder_is_using_working_buffer(decoder)))) {
+        ret = s_aws_http_decoder_working_buffer_cat(decoder, processed);
+    }
+
+    if (AWS_LIKELY(scan_succeeded)) {
+        if (s_aws_http_decoder_is_using_working_buffer(decoder)) {
+        } else {
+        }
+        decoder->state_cb = s_aws_http_decoder_state_header_value;
+    }
+
+    *bytes_processed = processed.len;
+
+    return ret;
 }
 
 static int s_aws_http_decoder_state_version(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     struct aws_byte_cursor processed;
-
     bool scan_succeeded = s_aws_http_scan(&input, &processed, '\r') == AWS_OP_SUCCESS;
     int ret = AWS_OP_SUCCESS;
+
+    if (AWS_UNLIKELY((!scan_succeeded | s_aws_http_decoder_is_using_working_buffer(decoder)))) {
+        ret = s_aws_http_decoder_working_buffer_cat(decoder, processed);
+    }
+
+    /* Working here. Need to capture the \r\n as apart of the input buffer. */
 
     if (AWS_LIKELY(scan_succeeded)) {
         ret = s_aws_http_decoder_expect(&input, "\n");
         if (AWS_LIKELY(ret == AWS_OP_SUCCESS)) {
-            decoder->version = aws_http_str_to_version(aws_byte_cursor_from_buf(&decoder->working_buffer));
-            s_aws_http_decoder_working_buffer_clean_up(decoder);
+            if (s_aws_http_decoder_is_using_working_buffer(decoder)) {
+                decoder->version = aws_http_str_to_version(aws_byte_cursor_from_buf(&decoder->working_buffer));
+                s_aws_http_decoder_working_buffer_clean_up(decoder);
+            } else {
+                decoder->version = aws_http_str_to_version(processed);
+            }
             decoder->state_cb = s_aws_http_decoder_state_header_name;
+            processed.len = 2;
         }
-    } else {
-        ret = s_aws_http_decoder_working_buffer_cat(decoder, processed);
     }
 
     *bytes_processed = processed.len;
@@ -490,15 +521,24 @@ static int s_aws_http_decoder_state_version(struct aws_http_decoder *decoder, st
 
 static int s_aws_http_decoder_state_uri(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     struct aws_byte_cursor processed;
-
     bool scan_succeeded = s_aws_http_scan(&input, &processed, ' ') == AWS_OP_SUCCESS;
     int ret = AWS_OP_SUCCESS;
 
-    if (AWS_LIKELY(scan_succeeded)) {
-        s_aws_http_decoder_working_buffer_copy(decoder, &decoder->uri_data);
-        decoder->state_cb = s_aws_http_decoder_state_version;
-    } else {
+    if (AWS_UNLIKELY((!scan_succeeded | s_aws_http_decoder_is_using_working_buffer(decoder)))) {
         ret = s_aws_http_decoder_working_buffer_cat(decoder, processed);
+    }
+
+    if (AWS_LIKELY(scan_succeeded)) {
+        if (s_aws_http_decoder_is_using_working_buffer(decoder)) {
+            s_aws_http_decoder_working_buffer_copy(decoder, &decoder->uri_data);
+        } else {
+            struct aws_byte_buf buf;
+            if (aws_byte_buf_init(decoder->alloc, &buf, processed.len) != AWS_OP_SUCCESS) {
+                return AWS_OP_ERR;
+            }
+            memcpy(buf.buffer, processed.ptr, processed.len);
+        }
+        decoder->state_cb = s_aws_http_decoder_state_version;
     }
 
     *bytes_processed = processed.len;
@@ -508,16 +548,21 @@ static int s_aws_http_decoder_state_uri(struct aws_http_decoder *decoder, struct
 
 static int s_aws_http_decoder_state_method(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     struct aws_byte_cursor processed;
-
     bool scan_succeeded = s_aws_http_scan(&input, &processed, ' ') == AWS_OP_SUCCESS;
     int ret = AWS_OP_SUCCESS;
 
-    if (AWS_LIKELY(scan_succeeded)) {
-        decoder->method = aws_http_str_to_method(aws_byte_cursor_from_buf(&decoder->working_buffer));
-        s_aws_http_decoder_working_buffer_clean_up(decoder);
-        decoder->state_cb = s_aws_http_decoder_state_uri;
-    } else {
+    if (AWS_UNLIKELY((!scan_succeeded | s_aws_http_decoder_is_using_working_buffer(decoder)))) {
         ret = s_aws_http_decoder_working_buffer_cat(decoder, processed);
+    }
+
+    if (AWS_LIKELY(scan_succeeded)) {
+        if (s_aws_http_decoder_is_using_working_buffer(decoder)) {
+            decoder->method = aws_http_str_to_method(aws_byte_cursor_from_buf(&decoder->working_buffer));
+            s_aws_http_decoder_working_buffer_clean_up(decoder);
+        } else {
+            decoder->method = aws_http_str_to_method(processed);
+        }
+        decoder->state_cb = s_aws_http_decoder_state_uri;
     }
 
     *bytes_processed = processed.len;
@@ -558,8 +603,7 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
     int ret = AWS_OP_SUCCESS;
     while (ret == AWS_OP_SUCCESS && data_bytes) {
         size_t bytes_processed = 0;
-        struct aws_byte_cursor input;
-        aws_byte_cursor_from_array(data, data_bytes);
+        struct aws_byte_cursor input = aws_byte_cursor_from_array(data, data_bytes);
         ret = decoder->state_cb(decoder, input, &bytes_processed);
         data_bytes -= bytes_processed;
     }
