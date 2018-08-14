@@ -23,6 +23,7 @@
 static bool s_on_header(struct aws_http_header *header, void *user_data) {
     (void)header;
     (void)user_data;
+    printf("%.*s:%.*s\n", (int)header->name_data.len, header->name_data.ptr, (int)header->value_data.len, header->value_data.ptr);
     return true;
 }
 
@@ -99,18 +100,21 @@ static int http_parse_lots_of_headers_fn(struct aws_allocator *alloc, void *ctx)
         "123456";
     size_t request_len = strlen(request);
 
+    struct aws_byte_buf scratch_space;
+    aws_byte_buf_init(alloc, &scratch_space, 1024);
+
     struct aws_http_decoder_params params;
     params.alloc = alloc;
+    params.scratch_space = scratch_space;
     params.on_header = s_on_header;
     params.on_body = s_on_body;
     params.true_for_request_false_for_response = true;
     params.user_data = NULL;
 
-    struct aws_http_decoder decoder;
-    aws_http_decode_init(&decoder, &params);
+    struct aws_http_decoder *decoder = aws_http_decode_init(&params);
 
     for (int i = 0; i < (int)request_len; ++i) {
-        ASSERT_SUCCESS(aws_http_decode(&decoder, request + i, 1));
+        ASSERT_SUCCESS(aws_http_decode(decoder, request + i, 1));
     }
 
     return 0;

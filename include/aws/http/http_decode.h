@@ -53,7 +53,8 @@ typedef bool (aws_http_decoder_on_body_fn)(struct aws_byte_cursor *data, bool fi
  * Structure used to initialize an `aws_http_decoder`.
  */
 struct aws_http_decoder_params {
-    struct aws_allocator *alloc;
+    struct aws_allocator* alloc;
+    struct aws_byte_buf scratch_space;
     aws_http_decoder_on_header_fn *on_header;
     aws_http_decoder_on_body_fn *on_body;
     bool true_for_request_false_for_response;
@@ -62,40 +63,11 @@ struct aws_http_decoder_params {
 
 struct aws_http_decoder;
 
-/* For internal use. */
-typedef int (s_aws_http_decoder_state_fn)(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed);
-
-/*
- * Streaming decoder for parsing messages from a segmented input stream (a series of buffers).
- */
-struct aws_http_decoder {
-    /* Implementation data. */
-    struct aws_allocator *alloc;
-    s_aws_http_decoder_state_fn *state_cb;
-    struct aws_byte_buf working_buffer;
-
-    /* Common HTTP header data. */
-    enum aws_http_method method;
-    enum aws_http_version version;
-    struct aws_byte_buf uri_data;
-    enum aws_http_code code;
-
-    /* User callbacks and settings. */
-    aws_http_decoder_on_header_fn *on_header;
-    aws_http_decoder_on_body_fn *on_body;
-    bool true_for_request_false_for_response;
-    void *user_data;
-
-    /* General purpose work space to avoid many unnecessary allocations. */
-    #define AWS_HTTP_DECODER_WORKING_BYTES (256)
-    uint8_t working_space[AWS_HTTP_DECODER_WORKING_BYTES];
-};
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-AWS_HTTP_API void aws_http_decode_init(struct aws_http_decoder* decoder, struct aws_http_decoder_params *params);
+AWS_HTTP_API struct aws_http_decoder *aws_http_decode_init(struct aws_http_decoder_params *params);
 AWS_HTTP_API void aws_http_decode_clean_up(struct aws_http_decoder* decoder);
 AWS_HTTP_API int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t data_bytes);
 
