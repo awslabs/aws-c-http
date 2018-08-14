@@ -34,15 +34,6 @@ struct aws_http_header {
     struct aws_byte_cursor data;
 };
 
-struct aws_http_decoder;
-
-/**
- * Called from `aws_http_decode` when an http response code has been recieved.
- * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
- * Return true to keep decoding, false to signal an error and immediately return from `aws_http_decode`.
- */
-typedef bool (aws_http_decoder_on_code_fn)(struct aws_byte_cursor data, enum aws_http_code code, void *user_data);
-
 /**
  * Called from `aws_http_decode` when an http header has been recieved.
  * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
@@ -59,53 +50,45 @@ typedef bool (aws_http_decoder_on_header_fn)(struct aws_http_header *header, voi
 typedef bool (aws_http_decoder_on_body_fn)(struct aws_byte_cursor *data, bool finished, void *user_data);
 
 /**
- * Called from `aws_http_decode` when an http version has been recieved.
- * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
- * Return true to keep decoding, false to immediately return from `aws_http_decode`.
- */
-typedef bool (aws_http_decoder_on_version_fn)(enum aws_http_version version, void *user_data);
-
-/**
- * Called from `aws_http_decode` when an http uri has been recieved.
- * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
- * Return true to keep decoding, false to immediately return from `aws_http_decode`.
- */
-typedef bool (aws_http_decoder_on_uri_fn)(struct aws_byte_cursor *uri_data, void *user_data);
-
-/**
- * Structure used to initialize an `aws_http_decoder`. Each function pointer can be NULL to opt-out of recieving
- * callbacks for particular events.
+ * Structure used to initialize an `aws_http_decoder`.
  */
 struct aws_http_decoder_params {
     struct aws_allocator *alloc;
-    aws_http_decoder_on_code_fn *on_code;
     aws_http_decoder_on_header_fn *on_header;
     aws_http_decoder_on_body_fn *on_body;
-    aws_http_decoder_on_version_fn *on_version;
-    aws_http_decoder_on_uri_fn *on_uri;
     bool true_for_request_false_for_response;
     void *user_data;
 };
 
+struct aws_http_decoder;
+
 /* For internal use. */
-typedef int (s_aws_http_decoder_state_fn)(struct aws_http_decoder *decoder, const uint8_t *data, size_t data_bytes, size_t *bytes_processed);
+typedef int (s_aws_http_decoder_state_fn)(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed);
 
 /*
- * Streaming decoder for parsing HTTP 1.1 messages from a segmented input stream (a series of buffers).
+ * Streaming decoder for parsing messages from a segmented input stream (a series of buffers).
  */
-struct AWS_CACHE_ALIGN aws_http_decoder {
+struct aws_http_decoder {
     /* Implementation data. */
     struct aws_allocator *alloc;
     s_aws_http_decoder_state_fn *state_cb;
+    struct aws_byte_buf working_buffer;
+
+    /* Common HTTP header data. */
+    enum aws_http_method method;
+    enum aws_http_version version;
+    struct aws_byte_buf uri_data;
+    enum aws_http_code code;
 
     /* User callbacks and settings. */
-    aws_http_decoder_on_code_fn *on_code;
     aws_http_decoder_on_header_fn *on_header;
     aws_http_decoder_on_body_fn *on_body;
-    aws_http_decoder_on_version_fn *on_version;
-    aws_http_decoder_on_uri_fn *on_uri;
     bool true_for_request_false_for_response;
     void *user_data;
+
+    /* General purpose work space to avoid many unnecessary allocations. */
+    #define AWS_HTTP_DECODER_WORKING_BYTES (256)
+    uint8_t working_space[AWS_HTTP_DECODER_WORKING_BYTES];
 };
 
 #ifdef __cplusplus
@@ -115,6 +98,10 @@ extern "C" {
 AWS_HTTP_API void aws_http_decode_init(struct aws_http_decoder* decoder, struct aws_http_decoder_params *params);
 AWS_HTTP_API void aws_http_decode_clean_up(struct aws_http_decoder* decoder);
 AWS_HTTP_API int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t data_bytes);
+
+AWS_HTTP_API int aws_http_decode_version_get(struct aws_http_decoder *decoder, enum aws_http_version *version);
+AWS_HTTP_API int aws_http_decode_uri_get(struct aws_http_decoder *decoder, struct aws_byte_cursor *uri_data);
+AWS_HTTP_API int aws_http_decode_code_get(struct aws_http_decoder *decoder, enum aws_http_code *code, struct aws_byte_cursor *code_data);
 
 #ifdef __cplusplus
 }

@@ -58,6 +58,17 @@ static inline uint32_t s_aws_FNV1a(struct aws_byte_cursor str) {
     return h;
 }
 
+/* Works like memcmp or strcmp, except is case-agonstic. */
+static inline int s_aws_http_strcmp_case_insensitive(const char *a, const char *b, size_t key_len) {
+    for (size_t i = 0; i < key_len; ++i) {
+        int d = toupper(a[i]) - toupper(b[i]);
+        if (d) {
+            return d;
+        }
+    }
+    return 0;
+}
+
 /*
  * The next four functions were generated from a small program in C, that takes a text-file as
  * input, reads in header keys as strings, and their corresponding enums as strings. The program
@@ -119,6 +130,7 @@ static inline uint32_t s_aws_FNV1a(struct aws_byte_cursor str) {
 
         printf("\n\nstatic enum %s s_aws_http_str_to_enum_type(struct aws_http_str str) {\n", enum_type);
         printf("    uint32_t h = s_aws_FNV1a(str);\n");
+        printf("    char *ptr = (char *)str.ptr;\n");
         printf("    size_t len = str.end - str.begin;\n");
         printf("    bool match = false;\n");
         printf("    int ret = 0;\n\n");
@@ -127,7 +139,7 @@ static inline uint32_t s_aws_FNV1a(struct aws_byte_cursor str) {
         for (int i = 0; i < count; ++i) {
             uint64_t h = s_aws_FNV1a(strings[i]);
             printf("    case %lu:\n", h);
-            printf("        match = !s_aws_http_strcmp_case_insensitive(\"%s\", str.begin, len);\n", strings[i]);
+            printf("        match = !s_aws_http_strcmp_case_insensitive(\"%s\", ptr, len);\n", strings[i]);
             printf("        ret = %s;\n", enums[i]);
             printf("        break;%s", i == count - 1 ? "\n" : "\n\n");
         }
@@ -141,81 +153,83 @@ static inline uint32_t s_aws_FNV1a(struct aws_byte_cursor str) {
     }
 #endif
 
-enum aws_http_request_method aws_http_str_to_method(struct aws_byte_cursor str) {
+enum aws_http_method aws_http_str_to_method(struct aws_byte_cursor str) {
     uint32_t h = s_aws_FNV1a(str);
+    char *ptr = (char *)str.ptr;
     size_t len = str.len;
     bool match = false;
     int ret = 0;
 
     switch (h) {
     case 2016099545:
-        match = !s_aws_http_strcmp_case_insensitive("CONNECT", str.ptr, len);
+        match = !s_aws_http_strcmp_case_insensitive("CONNECT", ptr, len);
         ret = AWS_HTTP_METHOD_CONNECT;
         break;
 
     case 4168191690:
-        match = !s_aws_http_strcmp_case_insensitive("DELETE", str.ptr, len);
+        match = !s_aws_http_strcmp_case_insensitive("DELETE", ptr, len);
         ret = AWS_HTTP_METHOD_DELETE;
         break;
 
     case 2531704439:
-        match = !s_aws_http_strcmp_case_insensitive("GET", str.ptr, len);
+        match = !s_aws_http_strcmp_case_insensitive("GET", ptr, len);
         ret = AWS_HTTP_METHOD_GET;
         break;
 
     case 811237315:
-        match = !s_aws_http_strcmp_case_insensitive("HEAD", str.ptr, len);
+        match = !s_aws_http_strcmp_case_insensitive("HEAD", ptr, len);
         ret = AWS_HTTP_METHOD_HEAD;
         break;
 
     case 827600069:
-        match = !s_aws_http_strcmp_case_insensitive("OPTIONS", str.ptr, len);
+        match = !s_aws_http_strcmp_case_insensitive("OPTIONS", ptr, len);
         ret = AWS_HTTP_METHOD_OPTIONS;
         break;
 
     case 3498819145:
-        match = !s_aws_http_strcmp_case_insensitive("PATCH", str.ptr, len);
+        match = !s_aws_http_strcmp_case_insensitive("PATCH", ptr, len);
         ret = AWS_HTTP_METHOD_PATCH;
         break;
 
     case 1929554311:
-        match = !s_aws_http_strcmp_case_insensitive("POST", str.ptr, len);
+        match = !s_aws_http_strcmp_case_insensitive("POST", ptr, len);
         ret = AWS_HTTP_METHOD_POST;
         break;
 
     case 3995708942:
-        match = !s_aws_http_strcmp_case_insensitive("PUT", str.ptr, len);
+        match = !s_aws_http_strcmp_case_insensitive("PUT", ptr, len);
         ret = AWS_HTTP_METHOD_PUT;
         break;
 
     case 746199118:
-        match = !s_aws_http_strcmp_case_insensitive("TRACE", str.ptr, len);
+        match = !s_aws_http_strcmp_case_insensitive("TRACE", ptr, len);
         ret = AWS_HTTP_METHOD_TRACE;
         break;
     }
 
-    return match ? (enum aws_http_request_method)ret : AWS_HTTP_METHOD_UNKNOWN;
+    return match ? (enum aws_http_method)ret : AWS_HTTP_METHOD_UNKNOWN;
 }
 
 enum aws_http_version aws_http_str_to_version(struct aws_byte_cursor str) {
     uint32_t h = s_aws_FNV1a(str);
+    char *ptr = (char *)str.ptr;
     size_t len = str.len;
     bool match = false;
     int ret = 0;
 
     switch (h) {
     case 4137103867:
-        match = !s_aws_http_strcmp_case_insensitive("HTTP/1.0", str.ptr, len);
+        match = !s_aws_http_strcmp_case_insensitive("HTTP/1.0", ptr, len);
         ret = AWS_HTTP_VERSION_1_0;
         break;
 
     case 4120326248:
-        match = !s_aws_http_strcmp_case_insensitive("HTTP/1.1", str.ptr, len);
+        match = !s_aws_http_strcmp_case_insensitive("HTTP/1.1", ptr, len);
         ret = AWS_HTTP_VERSION_1_1;
         break;
 
     case 3110833482:
-        match = !s_aws_http_strcmp_case_insensitive("HTTP/2.0", str.ptr, len);
+        match = !s_aws_http_strcmp_case_insensitive("HTTP/2.0", ptr, len);
         ret = AWS_HTTP_VERSION_2_0;
         break;
     }
@@ -238,7 +252,7 @@ const char *aws_http_header_name_to_str(enum aws_http_header_name name) {
     return "AWS_HTTP_HEADER_UNKNOWN";
 }
 
-const char *aws_http_request_method_to_str(enum aws_http_request_method method) {
+const char *aws_http_request_method_to_str(enum aws_http_method method) {
     switch (method) {
     case AWS_HTTP_METHOD_UNKNOWN: return "AWS_HTTP_METHOD_UNKNOWN";
     case AWS_HTTP_METHOD_CONNECT: return "AWS_HTTP_METHOD_CONNECT";
