@@ -42,7 +42,7 @@ static int http_parse_lots_of_headers_fn(struct aws_allocator *alloc, void *ctx)
         "GET / HTTP/1.1\r\n"
         "Host: developer.mozilla.org\r\n"
         "Accept-Language: fr\r\n"
-        "Content-Length : 6\r\n"
+        "Content-Length: 6\r\n"
         "\r\n"
         "123456",
 
@@ -91,13 +91,30 @@ static int http_parse_lots_of_headers_fn(struct aws_allocator *alloc, void *ctx)
         "X\r\n",
     };*/
 
+#if 1
     const char* request = 
         "GET / HTTP/1.1\r\n"
         "Host: developer.mozilla.org\r\n"
         "Accept-Language: fr\r\n"
-        "Content-Length : 6\r\n"
+        "Content-Length: 6\r\n"
         "\r\n"
         "123456";
+#else
+    const char* request = 
+        "GET / HTTP/1.1\r\n"
+        "Host: developer.mozilla.org\r\n"
+        "Accept-Language: fr\r\n"
+        "Transfer-Encoding:   chunked     \r\n"
+        "\r\n"
+        "7\r\n"
+        "Mozilla\r\n"
+        "9\r\n"
+        "Developer\r\n"
+        "7\r\n"
+        "Network\r\n"
+        "0\r\n"
+        "\r\n";
+#endif
     size_t request_len = strlen(request);
 
     struct aws_byte_buf scratch_space;
