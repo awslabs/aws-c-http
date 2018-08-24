@@ -481,20 +481,16 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
 }
 
 int aws_http_decode_get_version(struct aws_http_decoder *decoder, enum aws_http_version *version) {
-    (void)decoder;
-    (void)version;
-    return AWS_OP_ERR;
+    *version = decoder->version;
+    return AWS_OP_SUCCESS;
 }
 
 int aws_http_decode_get_uri(struct aws_http_decoder *decoder, struct aws_byte_cursor *uri_data) {
-    (void)decoder;
-    (void)uri_data;
-    return AWS_OP_ERR;
+    *uri_data = aws_byte_cursor_from_buf(&decoder->uri_data);
+    return AWS_OP_SUCCESS;
 }
 
-int aws_http_decode_get_code(struct aws_http_decoder *decoder, enum aws_http_code *code, struct aws_byte_cursor *code_data) {
-    (void)decoder;
-    (void)code;
-    (void)code_data;
+int aws_http_decode_get_code(struct aws_http_decoder *decoder, enum aws_http_code *code) {
+    *code = decoder->code;
     return AWS_OP_ERR;
 }
