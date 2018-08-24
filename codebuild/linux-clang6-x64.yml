@@ -16,10 +16,9 @@ phases:
   build:
     commands:
       - echo Build started on `date`
-      - ./codebuild/common-linux.sh -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DENABLE_FUZZ_TESTS=ON
+      - ./codebuild/common-linux.sh -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
       - clang-tidy-6.0 -p=build **/*.c
       - ./format-check.sh
   post_build:
     commands:
       - echo Build completed on `date`
-

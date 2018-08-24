@@ -7,10 +7,6 @@ include(AwsCFlags)
 include(Sanitizers)
 include(CheckCCompilerFlag)
 
-option(BUILD_PORTABLE_BINARIES
-        "Build Relocatable Binaries, this will turn off features that will fail on older kernels than used for the build."
-        OFF)
-
 file(GLOB AWS_HTTP_HEADERS
         "include/aws/http/*.h"
         )
