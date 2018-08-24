@@ -5,7 +5,7 @@ mkdir install
 
 CALL :install_library aws-c-common
 
-cd aws-c-io
+cd aws-c-http
 mkdir build
 cd build
 cmake %CMAKE_ARGS% -DCMAKE_BUILD_TYPE="Release" -DCMAKE_INSTALL_PREFIX=../../install ../ || goto error
