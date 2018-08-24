@@ -17,13 +17,9 @@
 
 #include "http_tests.h"
 
-static int run_tests(int argc, char *argv[]) {
+int main(int argc, char *argv[]) {
     AWS_RUN_TEST_CASES(
         &http_parse_lots_of_headers,
+        &http_parse_lots_of_headers,
         );
-}
-
-int main(int argc, char *argv[]) {
-    int ret_val = run_tests(argc, argv);
-    return ret_val;
 }
