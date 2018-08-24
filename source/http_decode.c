@@ -35,7 +35,10 @@ struct aws_http_decoder {
     struct aws_byte_cursor cursor;
     bool found_carriage;
     int transfer_encoding;
-    int content_length;
+    size_t content_processed;
+    size_t content_length;
+    size_t chunk_processed;
+    size_t chunk_size;
 
     /* Common HTTP header data. */
     enum aws_http_method method;
@@ -99,7 +102,6 @@ static bool s_scan_for_newline(struct aws_http_decoder *decoder, struct aws_byte
     } else {
         ptr = (uint8_t *)memchr(input.ptr, '\n', input.len);
         if (ptr) {
-            decoder->found_carriage = true;
             decoder->found_carriage = false;
             done = true;
         }
@@ -115,7 +117,7 @@ static bool s_scan_for_newline(struct aws_http_decoder *decoder, struct aws_byte
     return done;
 }
 
-static int s_aws_http_cat(struct aws_byte_buf* buffer, uint8_t *data, size_t len) {
+static int s_cat(struct aws_byte_buf* buffer, uint8_t *data, size_t len) {
     struct aws_byte_cursor to_append = aws_byte_cursor_from_array(data, len);
     if (AWS_LIKELY(aws_byte_buf_append(buffer, &to_append) == AWS_OP_SUCCESS)) {
         return AWS_OP_SUCCESS;
@@ -135,9 +137,9 @@ static int s_aws_http_cat(struct aws_byte_buf* buffer, uint8_t *data, size_t len
     }
 }
 
-static inline int s_read_int(struct aws_byte_cursor str, int* val) {
+static inline int s_read_int64(struct aws_byte_cursor str, int64_t* val) {
     char *end;
-    *val = strtol((const char *)str.ptr, &end, 10);
+    *val = (int64_t)strtoll((const char *)str.ptr, &end, 10);
     if ((char *)str.ptr != end) {
         return AWS_OP_SUCCESS;
     } else {
@@ -145,7 +147,17 @@ static inline int s_read_int(struct aws_byte_cursor str, int* val) {
     }
 }
 
-static int s_get_header_line(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
+static inline int s_read_hex_int64(struct aws_byte_cursor str, int64_t* val) {
+    char *end;
+    *val = (int64_t)strtoll((const char *)str.ptr, &end, 16);
+    if ((char *)str.ptr != end) {
+        return AWS_OP_SUCCESS;
+    } else {
+        return AWS_OP_ERR;
+    }
+}
+
+static int s_state_getline(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     int ret = AWS_OP_SUCCESS;
     bool done = s_scan_for_newline(decoder, input, bytes_processed);
 
@@ -154,7 +166,7 @@ static int s_get_header_line(struct aws_http_decoder *decoder, struct aws_byte_c
     bool needs_cat = needs_split | was_split_before;
 
     if (AWS_UNLIKELY(needs_cat)) {
-        ret = s_aws_http_cat(&decoder->scratch_space, input.ptr, *bytes_processed);
+        ret = s_cat(&decoder->scratch_space, input.ptr, *bytes_processed);
     }
 
     if (AWS_LIKELY(done)) {
@@ -190,26 +202,133 @@ static inline void s_set_next_state(struct aws_http_decoder *decoder, s_aws_http
 }
 
 static int s_state_body(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
-    (void)decoder;
+    size_t processed_bytes = 0;
+
+    if (decoder->content_processed < decoder->content_length) {
+        if ((decoder->content_processed + input.len) > decoder->content_length) {
+            processed_bytes = decoder->content_length - decoder->content_processed;
+        } else {
+            processed_bytes = input.len;
+        }
+
+        decoder->content_processed += processed_bytes;
+
+        bool finished = decoder->content_processed == decoder->content_length;
+        if (!decoder->on_body(input, finished, decoder->user_data)) {
+            return AWS_OP_ERR;
+        }
+
+        if (finished) {
+            s_set_next_state(decoder, NULL, NULL);
+        }
+    }
+
+    *bytes_processed = processed_bytes;
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_state_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed);
+
+static int s_state_chunk_terminator(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
+    /*
+     * Input params are unused here. This state operates on `decoder->cursor`, which has been setup to contain
+     * and entire line of input by the `s_state_getline` state.
+     */
     (void)input;
     (void)bytes_processed;
-    return AWS_OP_ERR;
+
+    /* Expecting an empty line ending in CRLF for chunk termination. */
+    /* RFC-7230 section 4.1 Chunked Transfer Encoding */
+    if (decoder->cursor.len != 0) {
+        return aws_raise_error(AWS_HTTP_ERROR_PARSE);
+    }
+
+    s_set_next_state(decoder, s_state_getline, s_state_chunk_size);
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_state_chunk(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
+    size_t processed_bytes = 0;
+
+    if (decoder->chunk_processed < decoder->chunk_size) {
+        if ((decoder->chunk_processed + input.len) > decoder->chunk_size) {
+            processed_bytes = decoder->chunk_size - decoder->chunk_processed;
+        } else {
+            processed_bytes = input.len;
+        }
+
+        decoder->chunk_processed += processed_bytes;
+
+        bool finished = decoder->chunk_processed == decoder->chunk_size;
+        if (finished) {
+            s_set_next_state(decoder, s_state_getline, s_state_chunk_terminator);
+        }
+    }
+
+    *bytes_processed = processed_bytes;
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_state_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
+    /*
+     * Input params are unused here. This state operates on `decoder->cursor`, which has been setup to contain
+     * and entire line of input by the `s_state_getline` state.
+     */
+    (void)input;
+    (void)bytes_processed;
+
+    if (s_read_hex_int64(decoder->cursor, (int64_t*)&decoder->chunk_size) != AWS_OP_SUCCESS) {
+        return AWS_OP_ERR;
+    }
+    decoder->chunk_processed = 0;
+
+    /* Empty chunk signifies all chunks have been read. */
+    if (decoder->chunk_size == 0) {
+        struct aws_byte_cursor cursor;
+        cursor.ptr = NULL;
+        cursor.len = 0;
+        decoder->on_body(cursor, true, decoder->user_data);
+        s_set_next_state(decoder, s_state_getline, NULL);
+        return AWS_OP_SUCCESS;
+    }
+
+    /* Skip all chunk extensions, as they are optional. */
+    /* RFC-7230 section 4.1.1 Chunk Extensions */
+
+    s_set_next_state(decoder, s_state_chunk, NULL);
+
+    return AWS_OP_SUCCESS;
 }
 
 static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
-    (void)decoder;
+    /*
+     * Input params are unused here. This state operates on `decoder->cursor`, which has been setup to contain
+     * and entire line of input by the `s_state_getline` state.
+     */
     (void)input;
     (void)bytes_processed;
 
     struct aws_byte_cursor cursors[2];
     if (AWS_UNLIKELY(s_byte_buf_split(decoder->cursor, cursors, ':', 2) != 2)) {
-        /* The \r\n was just processed by `s_get_header_line`. */
+        /* The \r\n was just processed by `s_state_getline`. */
         /* Empty line signifies end of headers, and beginning of body. */
         /* RFC-7230 section 3 Message Format */
 
-        // TODO: Set next state conditionally, whether there's a content-length or transfer encodings.
         if (decoder->cursor.len == 0) {
-            s_set_next_state(decoder, s_state_body, NULL);
+            /* TODO: Actually handle DEFLATE and gzip flags. */
+            if (decoder->transfer_encoding & (S_TRANSFER_ENCODING_GZIP | S_TRANSFER_ENCODING_DEFLATE)) {
+                return AWS_OP_ERR;
+            }
+
+            if (decoder->transfer_encoding & S_TRANSFER_ENCODING_CHUNKED) {
+                s_set_next_state(decoder, s_state_getline, s_state_chunk_size);
+            } else {
+                s_set_next_state(decoder, s_state_body, NULL);
+            }
+
             return AWS_OP_SUCCESS;
         } else {
             return AWS_OP_ERR;
@@ -227,13 +346,15 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
 
     switch (header.name) {
     case AWS_HTTP_HEADER_CONTENT_LENGTH:
-        if (s_read_int(header.value_data, &decoder->content_length) != AWS_OP_SUCCESS) {
+        if (s_read_int64(header.value_data, (int64_t*)&decoder->content_length) != AWS_OP_SUCCESS) {
             return AWS_OP_ERR;
         }
         break;
 
     case AWS_HTTP_HEADER_TRANSFER_ENCODING:
     {
+        /* Is 8 a good cap? Typically only 2, max of 3, could be realistic, afaik. */
+        /* RFC-7230 section 4.2 Compression Codings */
         struct aws_byte_cursor codings[8];
         int flags = 0;
         int n = (int)s_byte_buf_split(header.value_data, codings, ',', 8);
@@ -253,11 +374,11 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
     }   break;
     }
 
-    if (!decoder->on_header(&header, decoder->user_data)) {
+    if (!decoder->on_header(header, decoder->user_data)) {
         return AWS_OP_ERR;
     }
 
-    s_set_next_state(decoder, s_get_header_line, s_state_header);
+    s_set_next_state(decoder, s_state_getline, s_state_header);
 
     return AWS_OP_SUCCESS;
 }
@@ -281,7 +402,7 @@ static int s_state_method(struct aws_http_decoder *decoder, struct aws_byte_curs
         return AWS_OP_ERR;
     }
 
-    s_set_next_state(decoder, s_get_header_line, s_state_header);
+    s_set_next_state(decoder, s_state_getline, s_state_header);
 
     return AWS_OP_SUCCESS;
 }
@@ -298,13 +419,18 @@ struct aws_http_decoder *aws_http_decode_init(struct aws_http_decoder_params *pa
     decoder->alloc = params->alloc;
     decoder->scratch_space = params->scratch_space;
     if (params->true_for_request_false_for_response) {
-        decoder->state_cb = s_get_header_line;
+        decoder->state_cb = s_state_getline;
         decoder->next_state_cb = s_state_method;
     } else {
         decoder->state_cb = NULL;
         decoder->next_state_cb = NULL;
     }
     decoder->found_carriage = false;
+    decoder->transfer_encoding = 0;
+    decoder->content_processed = 0;
+    decoder->content_length = 0;
+    decoder->chunk_processed = 0;
+    decoder->chunk_size = 0;
     decoder->on_header = params->on_header;
     decoder->on_body = params->on_body;
     decoder->user_data = params->user_data;
@@ -321,6 +447,12 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
 
     int ret = AWS_OP_SUCCESS;
     while (ret == AWS_OP_SUCCESS && data_bytes) {
+        if (!decoder->state_cb) {
+            /* Attempted to call decoder on an invalid decoder state. */
+            ret = AWS_OP_ERR;
+            break;
+        }
+
         size_t bytes_processed = 0;
         struct aws_byte_cursor input = aws_byte_cursor_from_array(data, data_bytes);
         ret = decoder->state_cb(decoder, input, &bytes_processed);

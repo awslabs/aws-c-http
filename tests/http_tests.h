@@ -20,14 +20,14 @@
 #include <ctype.h>
 #include <stdio.h>
 
-static bool s_on_header(struct aws_http_header *header, void *user_data) {
+static bool s_on_header(struct aws_http_header header, void *user_data) {
     (void)header;
     (void)user_data;
-    printf("%.*s:%.*s\n", (int)header->name_data.len, header->name_data.ptr, (int)header->value_data.len, header->value_data.ptr);
+    printf("%.*s:%.*s\n", (int)header.name_data.len, header.name_data.ptr, (int)header.value_data.len, header.value_data.ptr);
     return true;
 }
 
-bool s_on_body(struct aws_byte_cursor *data, bool finished, void *user_data) {
+bool s_on_body(struct aws_byte_cursor data, bool finished, void *user_data) {
     (void)data;
     (void)finished;
     (void)user_data;
@@ -91,7 +91,7 @@ static int http_parse_lots_of_headers_fn(struct aws_allocator *alloc, void *ctx)
         "X\r\n",
     };*/
 
-#if 1
+#if 0
     const char* request = 
         "GET / HTTP/1.1\r\n"
         "Host: developer.mozilla.org\r\n"
