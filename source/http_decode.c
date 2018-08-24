@@ -16,6 +16,7 @@
 #include <aws/http/http_decode.h>
 
 #include <assert.h>
+#include <stdlib.h>
 
 /* RFC-7230 section 4.2 Message Format */
 #define S_TRANSFER_ENCODING_CHUNKED             (1 << 0)
@@ -387,6 +388,9 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
         }
         decoder->transfer_encoding = flags;
     }   break;
+
+    default:
+        break;
     }
 
     if (!decoder->on_header(header, decoder->user_data)) {
@@ -422,12 +426,15 @@ static int s_state_method(struct aws_http_decoder *decoder, struct aws_byte_curs
     return AWS_OP_SUCCESS;
 }
 
+/* To be implemented soon - disabled to avoid gcc warnings. */
+#if 0
 static int s_state_response(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     (void)decoder;
     (void)input;
     (void)bytes_processed;
     return AWS_OP_ERR;
 }
+#endif
 
 struct aws_http_decoder *aws_http_decode_new(struct aws_http_decoder_params *params) {
     struct aws_http_decoder *decoder = (struct aws_http_decoder *)aws_mem_acquire(params->alloc, sizeof(struct aws_http_decoder));
