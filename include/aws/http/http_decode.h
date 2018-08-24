@@ -69,7 +69,7 @@ AWS_HTTP_API struct aws_http_decoder *aws_http_decode_new(struct aws_http_decode
 AWS_HTTP_API void aws_http_decode_destroy(struct aws_http_decoder* decoder);
 AWS_HTTP_API int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t data_bytes);
 
-/*
+/**
  * These functions can only be called once the decoder has called `on_header` at least once. It would be
  * simplest to call these functions once decoding is completely finished, just before calling `aws_http_decode_destroy`.
  */
