@@ -105,6 +105,7 @@ static int http_parse_lots_of_headers_fn(struct aws_allocator *alloc, void *ctx)
         "Host: developer.mozilla.org\r\n"
         "Accept-Language: fr\r\n"
         "Transfer-Encoding:   chunked     \r\n"
+        "Trailer: Expires\r\n"
         "\r\n"
         "7\r\n"
         "Mozilla\r\n"
@@ -113,6 +114,7 @@ static int http_parse_lots_of_headers_fn(struct aws_allocator *alloc, void *ctx)
         "7\r\n"
         "Network\r\n"
         "0\r\n"
+        "Expires: Wed, 21 Oct 2015 07:28:00 GMT\r\n"
         "\r\n";
 #endif
     size_t request_len = strlen(request);

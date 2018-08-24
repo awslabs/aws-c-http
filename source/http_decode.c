@@ -39,6 +39,7 @@ struct aws_http_decoder {
     size_t content_length;
     size_t chunk_processed;
     size_t chunk_size;
+    bool doing_trailers;
 
     /* Common HTTP header data. */
     enum aws_http_method method;
@@ -229,6 +230,7 @@ static int s_state_body(struct aws_http_decoder *decoder, struct aws_byte_cursor
 }
 
 static int s_state_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed);
+static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed);
 
 static int s_state_chunk_terminator(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     /*
@@ -291,7 +293,10 @@ static int s_state_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_
         cursor.ptr = NULL;
         cursor.len = 0;
         decoder->on_body(cursor, true, decoder->user_data);
-        s_set_next_state(decoder, s_state_getline, NULL);
+
+        /* Expected empty newline and end of message. */
+        decoder->doing_trailers = true;
+        s_set_next_state(decoder, s_state_getline, s_state_header);
         return AWS_OP_SUCCESS;
     }
 
@@ -314,19 +319,24 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
     struct aws_byte_cursor cursors[2];
     if (AWS_UNLIKELY(s_byte_buf_split(decoder->cursor, cursors, ':', 2) != 2)) {
         /* The \r\n was just processed by `s_state_getline`. */
-        /* Empty line signifies end of headers, and beginning of body. */
+        /* Empty line signifies end of headers, and beginning of body or end of trailers. */
         /* RFC-7230 section 3 Message Format */
 
         if (decoder->cursor.len == 0) {
-            /* TODO: Actually handle DEFLATE and gzip flags. */
-            if (decoder->transfer_encoding & (S_TRANSFER_ENCODING_GZIP | S_TRANSFER_ENCODING_DEFLATE)) {
-                return AWS_OP_ERR;
-            }
+            if (!decoder->doing_trailers) {
+                /* TODO: Actually handle DEFLATE and gzip flags. */
+                if (decoder->transfer_encoding & (S_TRANSFER_ENCODING_GZIP | S_TRANSFER_ENCODING_DEFLATE)) {
+                    return AWS_OP_ERR;
+                }
 
-            if (decoder->transfer_encoding & S_TRANSFER_ENCODING_CHUNKED) {
-                s_set_next_state(decoder, s_state_getline, s_state_chunk_size);
+                if (decoder->transfer_encoding & S_TRANSFER_ENCODING_CHUNKED) {
+                    s_set_next_state(decoder, s_state_getline, s_state_chunk_size);
+                } else {
+                    s_set_next_state(decoder, s_state_body, NULL);
+                }
             } else {
-                s_set_next_state(decoder, s_state_body, NULL);
+                /* Expected empty newline and end of message. */
+                s_set_next_state(decoder, s_state_getline, NULL);
             }
 
             return AWS_OP_SUCCESS;
@@ -431,6 +441,7 @@ struct aws_http_decoder *aws_http_decode_init(struct aws_http_decoder_params *pa
     decoder->content_length = 0;
     decoder->chunk_processed = 0;
     decoder->chunk_size = 0;
+    decoder->doing_trailers = false;
     decoder->on_header = params->on_header;
     decoder->on_body = params->on_body;
     decoder->user_data = params->user_data;
