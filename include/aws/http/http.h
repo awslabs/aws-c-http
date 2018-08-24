@@ -202,7 +202,7 @@ AWS_HTTP_API const char *aws_http_version_code_to_str(enum aws_http_version vers
 
 AWS_HTTP_API enum aws_http_method aws_http_str_to_method(struct aws_byte_cursor str);
 AWS_HTTP_API enum aws_http_version aws_http_str_to_version(struct aws_byte_cursor str);
-AWS_HTTP_API enum aws_http_version aws_http_str_to_header_name(struct aws_byte_cursor str);
+AWS_HTTP_API enum aws_http_header_name aws_http_str_to_header_name(struct aws_byte_cursor str);
 AWS_HTTP_API enum aws_http_code aws_http_int_to_code(int code);
 
 #ifdef __cplusplus
