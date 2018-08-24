@@ -27,13 +27,13 @@
 /* clang-format off */
 static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_HTTP_ERROR_UNKNOWN,
+        AWS_ERROR_HTTP_UNKNOWN,
         "Encountered an unknown error."),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_HTTP_ERROR_PARSE,
+        AWS_ERROR_HTTP_PARSE,
         "Encountered an unexpected form when parsing an http message."),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_HTTP_ERROR_END_RANGE,
+        AWS_ERROR_HTTP_END_RANGE,
         "Not a real error and should never be seen."),
 };
 /* clang-format on */

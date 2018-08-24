@@ -21,9 +21,9 @@
 #include <aws/common/byte_buf.h>
 
 enum aws_http_errors {
-    AWS_HTTP_ERROR_UNKNOWN = 0x0800,
-    AWS_HTTP_ERROR_PARSE,
-    AWS_HTTP_ERROR_END_RANGE = 0x0C00,
+    AWS_ERROR_HTTP_UNKNOWN = 0x0800,
+    AWS_ERROR_HTTP_PARSE,
+    AWS_ERROR_HTTP_END_RANGE = 0x0C00,
 };
 
 enum aws_http_version {

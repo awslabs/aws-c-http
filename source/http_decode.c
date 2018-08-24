@@ -249,7 +249,7 @@ static int s_state_chunk_terminator(struct aws_http_decoder *decoder, struct aws
     /* Expecting an empty line ending in CRLF for chunk termination. */
     /* RFC-7230 section 4.1 Chunked Transfer Encoding */
     if (AWS_UNLIKELY(decoder->cursor.len != 0)) {
-        return aws_raise_error(AWS_HTTP_ERROR_PARSE);
+        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
     s_set_next_state(decoder, s_state_getline, s_state_chunk_size);
