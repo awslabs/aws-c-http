@@ -18,8 +18,6 @@
 
 #include <aws/http/http.h>
 
-#include <aws/common/byte_buf.h>
-
 struct aws_http_header {
     /* Name of the header. If the type is `AWS_HTTP_HEADER_NAME_UNKNOWN` then `name_data` must be parsed manually. */
     enum aws_http_header_name name;
@@ -35,15 +33,15 @@ struct aws_http_header {
 };
 
 /**
- * Called from `aws_http_decode` when an http header has been recieved.
+ * Called from `aws_http_decode` when an http header has been received.
  * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
  * Return true to keep decoding, false to immediately return from `aws_http_decode`.
  */
 typedef bool (aws_http_decoder_on_header_fn)(struct aws_http_header header, void *user_data);
 
 /**
- * Called from `aws_http_decode` when a portion of the http body has been recieved.
- * `finished` is true if this is the last section of the http body, and false if more body data is yet to be recieved.
+ * Called from `aws_http_decode` when a portion of the http body has been received.
+ * `finished` is true if this is the last section of the http body, and false if more body data is yet to be received.
  * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
  * Return true to keep decoding, false to return from `aws_http_decode`.
  */
@@ -67,13 +65,13 @@ struct aws_http_decoder;
 extern "C" {
 #endif
 
-AWS_HTTP_API struct aws_http_decoder *aws_http_decode_init(struct aws_http_decoder_params *params);
-AWS_HTTP_API void aws_http_decode_clean_up(struct aws_http_decoder* decoder);
+AWS_HTTP_API struct aws_http_decoder *aws_http_decode_new(struct aws_http_decoder_params *params);
+AWS_HTTP_API void aws_http_decode_destroy(struct aws_http_decoder* decoder);
 AWS_HTTP_API int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t data_bytes);
 
-AWS_HTTP_API int aws_http_decode_version_get(struct aws_http_decoder *decoder, enum aws_http_version *version);
-AWS_HTTP_API int aws_http_decode_uri_get(struct aws_http_decoder *decoder, struct aws_byte_cursor *uri_data);
-AWS_HTTP_API int aws_http_decode_code_get(struct aws_http_decoder *decoder, enum aws_http_code *code, struct aws_byte_cursor *code_data);
+AWS_HTTP_API int aws_http_decode_get_version(struct aws_http_decoder *decoder, enum aws_http_version *version);
+AWS_HTTP_API int aws_http_decode_get_uri(struct aws_http_decoder *decoder, struct aws_byte_cursor *uri_data);
+AWS_HTTP_API int aws_http_decode_get_code(struct aws_http_decoder *decoder, enum aws_http_code *code, struct aws_byte_cursor *code_data);
 
 #ifdef __cplusplus
 }

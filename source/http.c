@@ -19,7 +19,6 @@
 #include <aws/common/byte_buf.h>
 #include <aws/common/error.h>
 
-#include <stdlib.h>
 #include <assert.h>
 #include <ctype.h>
 
@@ -28,8 +27,14 @@
 /* clang-format off */
 static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_HTTP_ERROR_UNKNOWN,
+        "Encountered an unknown error."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_HTTP_ERROR_PARSE,
         "Encountered an unexpected form when parsing an http message."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_HTTP_ERROR_END_RANGE,
+        "Not a real error and should never be seen."),
 };
 /* clang-format on */
 
@@ -47,11 +52,18 @@ void aws_http_load_error_strings(void) {
     }
 }
 
+static inline char s_upper(char c) {
+    if (c >= 'a' && c <= 'z') {
+        c += ('A' - 'a');
+    }
+    return c;
+}
+
 /* https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function */
 static inline uint32_t s_aws_FNV1a(struct aws_byte_cursor str) {
     uint32_t h = (uint32_t)0x811C9DC5;
     while (str.len--) {
-        char c = (char)toupper(*str.ptr++);
+        char c = (char)s_upper(*str.ptr++);
         h = h ^ (uint32_t)c;
         h = h * (uint32_t)16777619;
     }
@@ -61,7 +73,7 @@ static inline uint32_t s_aws_FNV1a(struct aws_byte_cursor str) {
 /* Works like memcmp or strcmp, except is case-agonstic. */
 static inline int s_strcmp_case_insensitive(const char *a, const char *b, size_t key_len) {
     for (size_t i = 0; i < key_len; ++i) {
-        int d = toupper(a[i]) - toupper(b[i]);
+        int d = s_upper(a[i]) - s_upper(b[i]);
         if (d) {
             return d;
         }
@@ -96,7 +108,7 @@ uint32_t s_aws_FNV1a(const char* text) {
 char *s_upper(char *s) {
     char *orig = s;
     while (*s) {
-        *s = (char)toupper(*s);
+        *s = (char)s_upper(*s);
         ++s;
     }
     return orig;
@@ -519,7 +531,7 @@ const char *aws_http_header_name_to_str(enum aws_http_header_name name) {
     return "UNKNOWN";
 }
 
-const char *aws_http_request_method_to_str(enum aws_http_method method) {
+const char *aws_http_method_to_str(enum aws_http_method method) {
     switch (method) {
     case AWS_HTTP_METHOD_UNKNOWN: return "UNKNOWN";
     case AWS_HTTP_METHOD_CONNECT: return "CONNECT";

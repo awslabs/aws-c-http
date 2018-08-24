@@ -54,6 +54,13 @@ struct aws_http_decoder {
     void *user_data;
 };
 
+static inline char s_upper(char c) {
+    if (c >= 'a' && c <= 'z') {
+        c += ('A' - 'a');
+    }
+    return c;
+}
+
 /* Works like memcmp or strcmp, except is case-agnostic. */
 static inline int s_strcmp_case_insensitive(const char *a, size_t len_a, const char *b, size_t len_b) {
     if (len_a != len_b) {
@@ -61,7 +68,7 @@ static inline int s_strcmp_case_insensitive(const char *a, size_t len_a, const c
     }
 
     for (size_t i = 0; i < len_a; ++i) {
-        int d = toupper(a[i]) - toupper(b[i]);
+        int d = s_upper(a[i]) - s_upper(b[i]);
         if (d) {
             return d;
         }
@@ -424,7 +431,7 @@ static int s_state_begin_response(struct aws_http_decoder *decoder, struct aws_b
     return AWS_OP_ERR;
 }
 
-struct aws_http_decoder *aws_http_decode_init(struct aws_http_decoder_params *params) {
+struct aws_http_decoder *aws_http_decode_new(struct aws_http_decoder_params *params) {
     struct aws_http_decoder *decoder = (struct aws_http_decoder *)aws_mem_acquire(params->alloc, sizeof(struct aws_http_decoder));
     decoder->alloc = params->alloc;
     decoder->scratch_space = params->scratch_space;
@@ -448,7 +455,7 @@ struct aws_http_decoder *aws_http_decode_init(struct aws_http_decoder_params *pa
     return decoder;
 }
 
-void aws_http_decode_clean_up(struct aws_http_decoder* decoder) {
+void aws_http_decode_destroy(struct aws_http_decoder* decoder) {
     (void)decoder;
 }
 
@@ -473,19 +480,19 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
     return ret;
 }
 
-int aws_http_decode_version_get(struct aws_http_decoder *decoder, enum aws_http_version *version) {
+int aws_http_decode_get_version(struct aws_http_decoder *decoder, enum aws_http_version *version) {
     (void)decoder;
     (void)version;
     return AWS_OP_ERR;
 }
 
-int aws_http_decode_uri_get(struct aws_http_decoder *decoder, struct aws_byte_cursor *uri_data) {
+int aws_http_decode_get_uri(struct aws_http_decoder *decoder, struct aws_byte_cursor *uri_data) {
     (void)decoder;
     (void)uri_data;
     return AWS_OP_ERR;
 }
 
-int aws_http_decode_code_get(struct aws_http_decoder *decoder, enum aws_http_code *code, struct aws_byte_cursor *code_data) {
+int aws_http_decode_get_code(struct aws_http_decoder *decoder, enum aws_http_code *code, struct aws_byte_cursor *code_data) {
     (void)decoder;
     (void)code;
     (void)code_data;

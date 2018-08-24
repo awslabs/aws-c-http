@@ -130,7 +130,7 @@ static int http_parse_lots_of_headers_fn(struct aws_allocator *alloc, void *ctx)
     params.true_for_request_false_for_response = true;
     params.user_data = NULL;
 
-    struct aws_http_decoder *decoder = aws_http_decode_init(&params);
+    struct aws_http_decoder *decoder = aws_http_decode_new(&params);
 
     for (int i = 0; i < (int)request_len; ++i) {
         ASSERT_SUCCESS(aws_http_decode(decoder, request + i, 1));
