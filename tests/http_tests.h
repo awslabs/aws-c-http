@@ -34,8 +34,7 @@ bool s_on_body(struct aws_byte_cursor data, bool finished, void *user_data) {
     return true;
 }
 
-AWS_TEST_CASE(http_parse_lots_of_headers, http_parse_lots_of_headers_fn)
-static int http_parse_lots_of_headers_fn(struct aws_allocator *alloc, void *ctx) {
+static int s_http_parse_lots_of_headers(struct aws_allocator *alloc, void *ctx) {
     (void)ctx;
 
     /*const char *request_strs[] = {
@@ -138,3 +137,9 @@ static int http_parse_lots_of_headers_fn(struct aws_allocator *alloc, void *ctx)
 
     return 0;
 }
+
+AWS_TEST_CASE_FIXTURE(
+    http_parse_lots_of_headers,
+    s_http_parse_lots_of_headers,
+    NULL
+);
