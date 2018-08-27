@@ -42,7 +42,7 @@ if [ "$BUILD_32BIT" = true ]; then
     make -j 12
     make install
     cd ..
-    git clone git@github.com:awslabs/s2n.git
+    git clone https://github.com/awslabs/s2n.git
     mkdir s2n-build
     cmake -DCMAKE_C_FLAGS="-m32" -DCMAKE_INSTALL_PREFIX="../../install" ../s2n
     make -j 12
