@@ -2,11 +2,6 @@
 
 set -e
 
-for path in "$@"
-do
-    INCLUDE_PATHS="$INCLUDE_PATHS -I $path"
-done
-
 cppcheck                                                    \
                                                             \
 --enable=all --std=c99 --language=c                         \
@@ -14,11 +9,12 @@ cppcheck                                                    \
 --force --error-exitcode=-1                                 \
                                                             \
 -I include                                                  \
-$INCLUDE_PATHS                                              \
 -USELF_TEST  -UCLOCK_MONOTONIC_RAW                          \
                                                             \
---suppress=missingIncludeSystem                             \
 --suppress=unusedFunction                                   \
---suppress=allocaCalled --suppress=obsoleteFunctionsalloca  \
+--suppress=missingInclude                                   \
+--suppress=memleak:tests/hash_table_test.c                  \
+--suppress=staticStringCompare:tests/assert_test.c          \
+--suppress=*:build/tests/test_runner.c                      \
                                                             \
 -q .
