@@ -12,12 +12,11 @@ phases:
   pre_build:
     commands:
       - export CC=clang-6.0
-      - export CXX=clang++-6.0
       - export CLANG_FORMAT=clang-format-6.0
   build:
     commands:
       - echo Build started on `date`
-      - ./codebuild/common-linux.sh -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DENABLE_FUZZ_TESTS=ON
+      - ./codebuild/common-linux.sh -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
       - clang-tidy-6.0 -p=build **/*.c
       - ./format-check.sh
   post_build:

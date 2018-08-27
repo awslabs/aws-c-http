@@ -38,3 +38,4 @@ cd ..
 mkdir build && cd build
 cmake -Ds2n_DIR="../s2n-build" -Daws-c-common_DIR="../common-build" $PROJECT_DIR
 make && make test
+
