@@ -2,6 +2,12 @@
 
 set -e
 
+BUILD_32BIT = false
+if [ $1 = '32bit' ]; then
+    BUILD_32BIT = true
+    shift
+fi
+
 CMAKE_ARGS="$@"
 
 function install_library {
@@ -21,7 +27,30 @@ cd ../
 
 mkdir install
 
-install_library s2n
+# Special instructions for 32bit s2n.
+# As per: https://github.com/awslabs/s2n/blob/master/docs/USAGE-GUIDE.md
+if BUILD_32BIT; then
+    curl -LO https://www.openssl.org/source/openssl-1.1.0-latest.tar.gz
+    tar -xzvf openssl-1.1.0-latest.tar.gz
+    cd openssl-1.1.0e
+    setarch i386 ./config -fPIC no-shared     \
+            -m32 no-md2 no-rc5 no-rfc3779 no-sctp no-ssl-trace no-zlib     \
+            no-hw no-mdc2 no-seed no-idea no-camellia\
+            no-bf no-ripemd no-dsa no-ssl2 no-ssl3 no-capieng     \
+            -DSSL_FORBID_ENULL -DOPENSSL_NO_DTLS1 -DOPENSSL_NO_HEARTBEATS   \
+            --prefix=`pwd`../../install
+    make -j 12
+    make install
+    cd ..
+    git clone git@github.com:awslabs/s2n.git
+    mkdir s2n-build
+    cmake -DCMAKE_C_FLAGS="-m32" -DCMAKE_INSTALL_PREFIX="../../install" ../s2n
+    make -j 12
+    make install
+else
+    install_library s2n
+fi
+
 install_library aws-c-common
 
 cd aws-c-http
