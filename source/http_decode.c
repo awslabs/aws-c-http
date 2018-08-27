@@ -214,7 +214,7 @@ static int s_state_body(struct aws_http_decoder *decoder, struct aws_byte_cursor
     size_t processed_bytes = 0;
     assert(decoder->content_processed < decoder->content_length);
 
-    if (AWS_LIKELY((decoder->content_processed + input.len) > decoder->content_length)) {
+    if ((decoder->content_processed + input.len) > decoder->content_length) {
         processed_bytes = decoder->content_length - decoder->content_processed;
     } else {
         processed_bytes = input.len;
@@ -263,7 +263,7 @@ static int s_state_chunk(struct aws_http_decoder *decoder, struct aws_byte_curso
     size_t processed_bytes = 0;
     assert(decoder->chunk_processed < decoder->chunk_size);
 
-    if (AWS_LIKELY((decoder->chunk_processed + input.len) > decoder->chunk_size)) {
+    if ((decoder->chunk_processed + input.len) > decoder->chunk_size) {
         processed_bytes = decoder->chunk_size - decoder->chunk_processed;
     } else {
         processed_bytes = input.len;

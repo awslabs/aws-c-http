@@ -2,9 +2,9 @@
 
 set -e
 
-BUILD_32BIT = false
+BUILD_32BIT=false
 if [ $1 = '32bit' ]; then
-    BUILD_32BIT = true
+    BUILD_32BIT=true
     shift
 fi
 
