@@ -60,10 +60,10 @@ static inline char s_upper(char c) {
 }
 
 /* https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function */
-static inline uint32_t s_aws_FNV1a(struct aws_byte_cursor str) {
+static inline uint32_t s_aws_FNV1a(struct aws_byte_cursor cursor) {
     uint32_t h = (uint32_t)0x811C9DC5;
-    while (str.len--) {
-        char c = (char)s_upper(*str.ptr++);
+    while (cursor.len--) {
+        char c = (char)s_upper(*cursor.ptr++);
         h = h ^ (uint32_t)c;
         h = h * (uint32_t)16777619;
     }
@@ -165,10 +165,10 @@ int main(int argc, char **argv) {
 }
 #endif
 
-enum aws_http_method aws_http_str_to_method(struct aws_byte_cursor str) {
-    uint32_t h = s_aws_FNV1a(str);
-    char *ptr = (char *)str.ptr;
-    size_t len = str.len;
+enum aws_http_method aws_http_str_to_method(struct aws_byte_cursor cursor) {
+    uint32_t h = s_aws_FNV1a(cursor);
+    char *ptr = (char *)cursor.ptr;
+    size_t len = cursor.len;
     bool match = false;
     int ret = 0;
 
@@ -494,10 +494,10 @@ enum aws_http_header_name aws_http_str_to_header_name(struct aws_byte_cursor cur
     return match ? (enum aws_http_header_name)ret : AWS_HTTP_HEADER_UNKNOWN;
 }
 
-enum aws_http_version aws_http_str_to_version(struct aws_byte_cursor str) {
-    uint32_t h = s_aws_FNV1a(str);
-    char *ptr = (char *)str.ptr;
-    size_t len = str.len;
+enum aws_http_version aws_http_str_to_version(struct aws_byte_cursor cursor) {
+    uint32_t h = s_aws_FNV1a(cursor);
+    char *ptr = (char *)cursor.ptr;
+    size_t len = cursor.len;
     bool match = false;
     int ret = 0;
 

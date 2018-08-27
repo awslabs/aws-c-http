@@ -146,20 +146,20 @@ static int s_cat(struct aws_byte_buf* buffer, uint8_t *data, size_t len) {
     }
 }
 
-static inline int s_read_int64(struct aws_byte_cursor str, int64_t* val) {
+static inline int s_read_int64(struct aws_byte_cursor cursor, int64_t* val) {
     char *end;
-    *val = (int64_t)strtoll((const char *)str.ptr, &end, 10);
-    if ((char *)str.ptr != end) {
+    *val = (int64_t)strtoll((const char *)cursor.ptr, &end, 10);
+    if ((char *)cursor.ptr != end) {
         return AWS_OP_SUCCESS;
     } else {
         return AWS_OP_ERR;
     }
 }
 
-static inline int s_read_hex_int64(struct aws_byte_cursor str, int64_t* val) {
+static inline int s_read_hex_int64(struct aws_byte_cursor cursor, int64_t* val) {
     char *end;
-    *val = (int64_t)strtoll((const char *)str.ptr, &end, 16);
-    if ((char *)str.ptr != end) {
+    *val = (int64_t)strtoll((const char *)cursor.ptr, &end, 16);
+    if ((char *)cursor.ptr != end) {
         return AWS_OP_SUCCESS;
     } else {
         return AWS_OP_ERR;
@@ -239,6 +239,7 @@ static int s_state_body(struct aws_http_decoder *decoder, struct aws_byte_cursor
 static int s_state_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed);
 static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed);
 
+/* NOLINTNEXTLINE(readability-non-const-parameter) */
 static int s_state_chunk_terminator(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     /*
      * Input params are unused here. This state operates on `decoder->cursor`, which has been setup to contain
@@ -280,6 +281,7 @@ static int s_state_chunk(struct aws_http_decoder *decoder, struct aws_byte_curso
     return AWS_OP_SUCCESS;
 }
 
+/* NOLINTNEXTLINE(readability-non-const-parameter) */
 static int s_state_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     /*
      * Input params are unused here. This state operates on `decoder->cursor`, which has been setup to contain
@@ -314,6 +316,7 @@ static int s_state_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_
     return AWS_OP_SUCCESS;
 }
 
+/* NOLINTNEXTLINE(readability-non-const-parameter) */
 static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     /*
      * Input params are unused here. This state operates on `decoder->cursor`, which has been setup to contain
@@ -402,6 +405,7 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
     return AWS_OP_SUCCESS;
 }
 
+/* NOLINTNEXTLINE(readability-non-const-parameter) */
 static int s_state_method(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     (void)input;
     (void)bytes_processed;
