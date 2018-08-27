@@ -135,6 +135,8 @@ static int s_http_parse_lots_of_headers(struct aws_allocator *alloc, void *ctx) 
         ASSERT_SUCCESS(aws_http_decode(decoder, request + i, 1));
     }
 
+    aws_http_decode_destroy(decoder);
+
     return 0;
 }
 
