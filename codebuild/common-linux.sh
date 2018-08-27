@@ -42,15 +42,9 @@ if [ "$BUILD_32BIT" = true ]; then
     make -j 12
     make install
     cd ..
-    git clone https://github.com/awslabs/s2n.git
-    mkdir s2n-build
-    cmake -DCMAKE_C_FLAGS="-m32" -DCMAKE_INSTALL_PREFIX="../../install" ../s2n
-    make -j 12
-    make install
-else
-    install_library s2n
 fi
 
+install_library s2n
 install_library aws-c-common
 
 cd aws-c-http
