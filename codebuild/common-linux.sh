@@ -24,7 +24,7 @@ mkdir install
 install_library s2n
 install_library aws-c-common
 
-cd aws-c-io
+cd aws-c-http
 mkdir build
 cd build
 cmake -DCMAKE_INSTALL_PREFIX=../../install -DENABLE_SANITIZERS=ON $CMAKE_ARGS ../
