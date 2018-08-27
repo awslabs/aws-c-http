@@ -29,7 +29,7 @@ mkdir install
 
 # Special instructions for 32bit s2n.
 # As per: https://github.com/awslabs/s2n/blob/master/docs/USAGE-GUIDE.md
-if BUILD_32BIT; then
+if [ "$BUILD_32BIT" = true ]; then
     curl -LO https://www.openssl.org/source/openssl-1.1.0-latest.tar.gz
     tar -xzvf openssl-1.1.0-latest.tar.gz
     cd openssl-1.1.0e
