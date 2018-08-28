@@ -38,7 +38,7 @@ if [ "$BUILD_32BIT" = true ]; then
             no-hw no-mdc2 no-seed no-idea no-camellia \
             no-bf no-ripemd no-dsa no-ssl2 no-ssl3 no-capieng \
             -DSSL_FORBID_ENULL -DOPENSSL_NO_DTLS1 -DOPENSSL_NO_HEARTBEATS \
-            --prefix=`pwd` ../install
+            --prefix=`pwd`/../install
     make
     make install
     cd ..
