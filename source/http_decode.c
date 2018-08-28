@@ -261,11 +261,10 @@ static int s_state_unchunked(struct aws_http_decoder *decoder, struct aws_byte_c
 static int s_state_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed);
 static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed);
 
-/* NOLINTNEXTLINE(readability-non-const-parameter) */
 static int s_state_chunk_terminator(
     struct aws_http_decoder *decoder,
     struct aws_byte_cursor input,
-    size_t *bytes_processed) {
+    size_t *bytes_processed) { /* NOLINT */
     /*
      * Input params are unused here. This state operates on `decoder->cursor`, which has been setup to contain
      * and entire line of input by the `s_state_getline` state.
@@ -363,11 +362,11 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
         if (decoder->cursor.len == 0) {
             if (AWS_LIKELY(!decoder->doing_trailers)) {
                 /* TODO: Actually handle DEFLATE and gzip flags. */
-                if (decoder->transfer_encoding & (S_TRANSFER_ENCODING_GZIP | S_TRANSFER_ENCODING_DEFLATE)) {
+                if (decoder->transfer_encoding & (AWS_HTTP_TRANSFER_ENCODING_GZIP | AWS_HTTP_TRANSFER_ENCODING_DEFLATE)) {
                     return AWS_OP_ERR;
                 }
 
-                if (decoder->transfer_encoding & S_TRANSFER_ENCODING_CHUNKED) {
+                if (decoder->transfer_encoding & AWS_HTTP_TRANSFER_ENCODING_CHUNKED) {
                     s_set_next_state(decoder, s_state_getline, s_state_chunk_size);
                 } else {
                     s_set_next_state(decoder, s_state_unchunked, NULL);
@@ -408,15 +407,15 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
             for (int i = 0; i < n; ++i) {
                 struct aws_byte_cursor coding = s_trim_whitespace(codings[i]);
                 if (!s_strcmp_case_insensitive((const char *)coding.ptr, coding.len, "chunked", strlen("chunked"))) {
-                    flags |= S_TRANSFER_ENCODING_CHUNKED;
+                    flags |= AWS_HTTP_TRANSFER_ENCODING_CHUNKED;
                 } else if (!s_strcmp_case_insensitive(
                                (const char *)coding.ptr, coding.len, "compress", strlen("compress"))) {
-                    flags |= S_TRANSFER_ENCODING_DEPRECATED_COMPRESS;
+                    flags |= AWS_HTTP_TRANSFER_ENCODING_DEPRECATED_COMPRESS;
                 } else if (!s_strcmp_case_insensitive(
                                (const char *)coding.ptr, coding.len, "deflate", strlen("deflate"))) {
-                    flags |= S_TRANSFER_ENCODING_DEFLATE;
+                    flags |= AWS_HTTP_TRANSFER_ENCODING_DEFLATE;
                 } else if (!s_strcmp_case_insensitive((const char *)coding.ptr, coding.len, "gzip", strlen("gzip"))) {
-                    flags |= S_TRANSFER_ENCODING_GZIP;
+                    flags |= AWS_HTTP_TRANSFER_ENCODING_GZIP;
                 }
             }
             decoder->transfer_encoding = flags;

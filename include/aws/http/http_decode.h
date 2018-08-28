@@ -85,10 +85,10 @@ AWS_HTTP_API int aws_http_decoder_get_uri(struct aws_http_decoder *decoder, stru
 AWS_HTTP_API int aws_http_decoder_get_code(struct aws_http_decoder *decoder, enum aws_http_code *code);
 
 /* RFC-7230 section 4.2 Message Format */
-#define TRANSFER_ENCODING_CHUNKED (1 << 0)
-#define TRANSFER_ENCODING_GZIP (1 << 1)
-#define TRANSFER_ENCODING_DEFLATE (1 << 2)
-#define TRANSFER_ENCODING_DEPRECATED_COMPRESS (1 << 3)
+#define AWS_HTTP_TRANSFER_ENCODING_CHUNKED (1 << 0)
+#define AWS_HTTP_TRANSFER_ENCODING_GZIP (1 << 1)
+#define AWS_HTTP_TRANSFER_ENCODING_DEFLATE (1 << 2)
+#define AWS_HTTP_TRANSFER_ENCODING_DEPRECATED_COMPRESS (1 << 3)
 AWS_HTTP_API int aws_http_decoder_get_encoding_flags(struct aws_http_decoder *decoder, int *flags);
 
 #ifdef __cplusplus
