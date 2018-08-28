@@ -33,12 +33,12 @@ if [ "$BUILD_32BIT" = true ]; then
     curl -LO https://www.openssl.org/source/openssl-1.1.0-latest.tar.gz
     tar -xzvf openssl-1.1.0-latest.tar.gz
     cd openssl-1.1.0i
-    setarch i386 ./config -fPIC no-shared     \
-            -m32 no-md2 no-rc5 no-rfc3779 no-sctp no-ssl-trace no-zlib     \
-            no-hw no-mdc2 no-seed no-idea no-camellia\
-            no-bf no-ripemd no-dsa no-ssl2 no-ssl3 no-capieng     \
-            -DSSL_FORBID_ENULL -DOPENSSL_NO_DTLS1 -DOPENSSL_NO_HEARTBEATS   \
-            --prefix=../install
+    setarch i386 ./config -fPIC no-shared \
+            -m32 no-md2 no-rc5 no-rfc3779 no-sctp no-ssl-trace no-zlib \
+            no-hw no-mdc2 no-seed no-idea no-camellia \
+            no-bf no-ripemd no-dsa no-ssl2 no-ssl3 no-capieng \
+            -DSSL_FORBID_ENULL -DOPENSSL_NO_DTLS1 -DOPENSSL_NO_HEARTBEATS \
+            --prefix=`pwd` ../install
     make
     make install
     cd ..
