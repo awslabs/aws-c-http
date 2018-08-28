@@ -23,6 +23,7 @@
 enum aws_http_errors {
     AWS_ERROR_HTTP_UNKNOWN = 0x0800,
     AWS_ERROR_HTTP_PARSE,
+    AWS_ERROR_HTTP_INVALID_PARSE_STATE,
     AWS_ERROR_HTTP_END_RANGE = 0x0C00,
 };
 
@@ -197,7 +198,7 @@ AWS_HTTP_API void aws_http_load_error_strings(void);
 
 AWS_HTTP_API const char *aws_http_header_name_to_str(enum aws_http_header_name name);
 AWS_HTTP_API const char *aws_http_method_to_str(enum aws_http_method method);
-AWS_HTTP_API const char *aws_http_version_code_to_str(enum aws_http_version version);
+AWS_HTTP_API const char *aws_http_version_to_str(enum aws_http_version version);
 
 AWS_HTTP_API enum aws_http_method aws_http_str_to_method(struct aws_byte_cursor cursor);
 AWS_HTTP_API enum aws_http_version aws_http_str_to_version(struct aws_byte_cursor cursor);

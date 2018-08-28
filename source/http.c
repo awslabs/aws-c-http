@@ -33,6 +33,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_PARSE,
         "Encountered an unexpected form when parsing an http message."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_INVALID_PARSE_STATE,
+        "Decoding/parsing was ran while the decoder object was in a poor state -- make sure to properly check for error codes before running the decoder."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_END_RANGE,
         "Not a real error and should never be seen."),
 };
@@ -40,7 +43,7 @@ static struct aws_error_info s_errors[] = {
 
 static struct aws_error_info_list s_list = {
     .error_list = s_errors,
-    .count = sizeof(s_errors) / sizeof(struct aws_error_info),
+    .count = AWS_ARRAY_SIZE(s_errors),
 };
 
 static bool s_error_strings_loaded = false;
@@ -558,7 +561,7 @@ const char *aws_http_method_to_str(enum aws_http_method method) {
     }
 }
 
-const char *aws_http_version_code_to_str(enum aws_http_version version) {
+const char *aws_http_version_to_str(enum aws_http_version version) {
     switch (version) {
         case AWS_HTTP_VERSION_UNKNOWN:
             return "UNKNOWN";

@@ -133,13 +133,14 @@ static int s_http_parse_lots_of_headers(struct aws_allocator *allocator, void *c
     params.true_for_request_false_for_response = true;
     params.user_data = NULL;
 
-    struct aws_http_decoder *decoder = aws_http_decode_new(&params);
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     for (int i = 0; i < (int)request_len; ++i) {
         ASSERT_SUCCESS(aws_http_decode(decoder, request + i, 1));
     }
 
-    aws_http_decode_destroy(decoder);
+    aws_http_decoder_destroy(decoder);
+    aws_byte_buf_clean_up(&scratch_space);
 
     return 0;
 }
