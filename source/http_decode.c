@@ -18,12 +18,6 @@
 #include <assert.h>
 #include <stdlib.h>
 
-/* RFC-7230 section 4.2 Message Format */
-#define S_TRANSFER_ENCODING_CHUNKED (1 << 0)
-#define S_TRANSFER_ENCODING_GZIP (1 << 1)
-#define S_TRANSFER_ENCODING_DEFLATE (1 << 2)
-#define S_TRANSFER_ENCODING_DEPRECATED_COMPRESS (1 << 3)
-
 struct aws_http_decoder;
 typedef int(s_aws_http_decoder_state_fn)(
     struct aws_http_decoder *decoder,
@@ -541,5 +535,10 @@ int aws_http_decoder_get_uri(struct aws_http_decoder *decoder, struct aws_byte_c
 
 int aws_http_decoder_get_code(struct aws_http_decoder *decoder, enum aws_http_code *code) {
     *code = decoder->code;
-    return AWS_OP_ERR;
+    return AWS_OP_SUCCESS;
+}
+
+AWS_HTTP_API int aws_http_decoder_get_encoding_flags(struct aws_http_decoder *decoder, int *flags) {
+    *flags = decoder->transfer_encoding;
+    return AWS_OP_SUCCESS;
 }
