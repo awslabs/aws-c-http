@@ -23,7 +23,12 @@
 static bool s_on_header(struct aws_http_header header, void *user_data) {
     (void)header;
     (void)user_data;
-    printf("%.*s:%.*s\n", (int)header.name_data.len, header.name_data.ptr, (int)header.value_data.len, header.value_data.ptr);
+    printf(
+        "%.*s:%.*s\n",
+        (int)header.name_data.len,
+        header.name_data.ptr,
+        (int)header.value_data.len,
+        header.value_data.ptr);
     return true;
 }
 
@@ -99,22 +104,21 @@ static int s_http_parse_lots_of_headers(struct aws_allocator *allocator, void *c
         "\r\n"
         "123456";
 #else
-    const char* request = 
-        "GET / HTTP/1.1\r\n"
-        "Host: developer.mozilla.org\r\n"
-        "Accept-Language: fr\r\n"
-        "Transfer-Encoding:   chunked     \r\n"
-        "Trailer: Expires\r\n"
-        "\r\n"
-        "7\r\n"
-        "Mozilla\r\n"
-        "9\r\n"
-        "Developer\r\n"
-        "7\r\n"
-        "Network\r\n"
-        "0\r\n"
-        "Expires: Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        "\r\n";
+    const char *request = "GET / HTTP/1.1\r\n"
+                          "Host: developer.mozilla.org\r\n"
+                          "Accept-Language: fr\r\n"
+                          "Transfer-Encoding:   chunked     \r\n"
+                          "Trailer: Expires\r\n"
+                          "\r\n"
+                          "7\r\n"
+                          "Mozilla\r\n"
+                          "9\r\n"
+                          "Developer\r\n"
+                          "7\r\n"
+                          "Network\r\n"
+                          "0\r\n"
+                          "Expires: Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+                          "\r\n";
 #endif
     size_t request_len = strlen(request);
 

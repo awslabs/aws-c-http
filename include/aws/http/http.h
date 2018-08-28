@@ -47,7 +47,7 @@ enum aws_http_method {
 };
 
 enum aws_http_header_name {
-    /* 
+    /*
      * Valid request header key, but not mapped to an enum (e.g. uncommon headers are
      * not apart of this enum.
      */
@@ -107,8 +107,7 @@ enum aws_http_header_name {
     AWS_HTTP_HEADER_WWW_AUTHENTICATE,
 };
 
-enum aws_http_code
-{
+enum aws_http_code {
     AWS_HTTP_CODE_UNKNOWN, /* Invalid status code. */
     AWS_HTTP_CODE_REQUEST_NOT_MADE = -1,
     AWS_HTTP_CODE_CONTINUE = 100,
