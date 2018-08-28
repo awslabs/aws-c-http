@@ -34,7 +34,7 @@ bool s_on_body(struct aws_byte_cursor data, bool finished, void *user_data) {
     return true;
 }
 
-static int s_http_parse_lots_of_headers(struct aws_allocator *alloc, void *ctx) {
+static int s_http_parse_lots_of_headers(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
     /*const char *request_strs[] = {
@@ -119,10 +119,10 @@ static int s_http_parse_lots_of_headers(struct aws_allocator *alloc, void *ctx) 
     size_t request_len = strlen(request);
 
     struct aws_byte_buf scratch_space;
-    aws_byte_buf_init(alloc, &scratch_space, 1024);
+    aws_byte_buf_init(allocator, &scratch_space, 1024);
 
     struct aws_http_decoder_params params;
-    params.alloc = alloc;
+    params.alloc = allocator;
     params.scratch_space = scratch_space;
     params.on_header = s_on_header;
     params.on_body = s_on_body;
