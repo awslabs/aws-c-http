@@ -42,9 +42,21 @@ if [ "$BUILD_32BIT" = true ]; then
     make
     make install
     cd ..
+
+    # Install s2n with specific lib crypto root
+    git clone https://github.com/awslabs/s2n.git
+    cd s2n
+    mkdir build
+    cd build
+
+    cmake -DLibCrypto_ROOT_DIR=../../install -DCMAKE_INSTALL_PREFIX=../../install -DENABLE_SANITIZERS=ON $CMAKE_ARGS ../
+    make install
+
+    cd ../..
+else
+    install_library s2n
 fi
 
-install_library s2n
 install_library aws-c-common
 
 cd aws-c-http
