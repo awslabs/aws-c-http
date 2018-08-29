@@ -502,6 +502,8 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
     assert(decoder);
     assert(data);
 
+    struct aws_byte_cursor input = aws_byte_cursor_from_array(data, data_bytes);
+
     int ret = AWS_OP_SUCCESS;
     while (ret == AWS_OP_SUCCESS && data_bytes) {
         if (!decoder->state_cb) {
@@ -511,9 +513,9 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
         }
 
         size_t bytes_processed = 0;
-        struct aws_byte_cursor input = aws_byte_cursor_from_array(data, data_bytes);
         ret = decoder->state_cb(decoder, input, &bytes_processed);
         data_bytes -= bytes_processed;
+        aws_byte_cursor_advance(&input, bytes_processed);
     }
 
     return ret;
