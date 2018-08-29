@@ -35,17 +35,15 @@ struct aws_http_header {
 /**
  * Called from `aws_http_decode` when an http header has been received.
  * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
- * Return true to keep decoding, false to immediately return from `aws_http_decode`.
  */
-typedef bool(aws_http_decoder_on_header_fn)(struct aws_http_header header, void *user_data);
+typedef void(aws_http_decoder_on_header_fn)(struct aws_http_header header, void *user_data);
 
 /**
  * Called from `aws_http_decode` when a portion of the http body has been received.
  * `finished` is true if this is the last section of the http body, and false if more body data is yet to be received.
  * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
- * Return true to keep decoding, false to return from `aws_http_decode`.
  */
-typedef bool(aws_http_decoder_on_body_fn)(struct aws_byte_cursor data, bool finished, void *user_data);
+typedef void(aws_http_decoder_on_body_fn)(struct aws_byte_cursor data, bool finished, void *user_data);
 
 /**
  * Structure used to initialize an `aws_http_decoder`.

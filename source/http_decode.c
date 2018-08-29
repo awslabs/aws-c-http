@@ -134,16 +134,13 @@ static int s_cat(struct aws_http_decoder *decoder, uint8_t *data, size_t len) {
     if (AWS_LIKELY(aws_byte_buf_append(buffer, &to_append) == AWS_OP_SUCCESS)) {
         return AWS_OP_SUCCESS;
     } else {
-        size_t new_size = 0;
-
-        size_t tentative_new_space = (buffer->len - buffer->capacity) + buffer->capacity;
-        if (tentative_new_space >= len) {
-            /* Capacity is doubled. */
-            new_size = tentative_new_space;
-        } else {
-            /* `len` is larger than doubled capacity, so incorporate enough space for it. Should be unlikely to happen. */
-            new_size = buffer->capacity + len;
-        }
+        size_t new_size = buffer->capacity;
+        do {
+            new_size <<= 1;      /* new_size *= 2 */
+            if (new_size == 0) { /* check for overflow */
+                return aws_raise_error(AWS_ERROR_OOM);
+            }
+        } while (new_size < (buffer->len + len));
 
         uint8_t *new_data = aws_mem_acquire(buffer->allocator, new_size);
         if (!new_data) {
@@ -245,9 +242,7 @@ static int s_state_unchunked(struct aws_http_decoder *decoder, struct aws_byte_c
     decoder->content_processed += processed_bytes;
 
     bool finished = decoder->content_processed == decoder->content_length;
-    if (AWS_UNLIKELY(!decoder->on_body(input, finished, decoder->user_data))) {
-        return AWS_OP_ERR;
-    }
+    decoder->on_body(input, finished, decoder->user_data);
 
     if (AWS_LIKELY(finished)) {
         s_set_next_state(decoder, NULL, NULL);
@@ -296,9 +291,7 @@ static int s_state_chunk(struct aws_http_decoder *decoder, struct aws_byte_curso
     decoder->chunk_processed += processed_bytes;
 
     bool finished = decoder->chunk_processed == decoder->chunk_size;
-    if (AWS_UNLIKELY(!decoder->on_body(input, finished, decoder->user_data))) {
-        return AWS_OP_ERR;
-    }
+    decoder->on_body(input, false, decoder->user_data);
 
     if (AWS_LIKELY(finished)) {
         s_set_next_state(decoder, s_state_getline, s_state_chunk_terminator);
@@ -362,7 +355,8 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
         if (decoder->cursor.len == 0) {
             if (AWS_LIKELY(!decoder->doing_trailers)) {
                 /* TODO: Actually handle DEFLATE and gzip flags. */
-                if (decoder->transfer_encoding & (AWS_HTTP_TRANSFER_ENCODING_GZIP | AWS_HTTP_TRANSFER_ENCODING_DEFLATE)) {
+                if (decoder->transfer_encoding &
+                    (AWS_HTTP_TRANSFER_ENCODING_GZIP | AWS_HTTP_TRANSFER_ENCODING_DEFLATE)) {
                     return AWS_OP_ERR;
                 }
 
@@ -378,7 +372,7 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
 
             return AWS_OP_SUCCESS;
         } else {
-            return AWS_OP_ERR;
+            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
         }
     }
 
@@ -425,9 +419,7 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
             break;
     }
 
-    if (!decoder->on_header(header, decoder->user_data)) {
-        return AWS_OP_ERR;
-    }
+    decoder->on_header(header, decoder->user_data);
 
     s_set_next_state(decoder, s_state_getline, s_state_header);
 
@@ -441,7 +433,7 @@ static int s_state_method(struct aws_http_decoder *decoder, struct aws_byte_curs
 
     struct aws_byte_cursor cursors[3];
     if (s_byte_buf_split(decoder->cursor, cursors, ' ', 3) != 3) {
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
     struct aws_byte_cursor method = cursors[0];
     struct aws_byte_cursor uri = cursors[1];
@@ -476,6 +468,11 @@ struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *pa
 
     struct aws_http_decoder *decoder =
         (struct aws_http_decoder *)aws_mem_acquire(params->alloc, sizeof(struct aws_http_decoder));
+
+    if (!decoder) {
+        return NULL;
+    }
+
     AWS_ZERO_STRUCT(*decoder);
     decoder->alloc = params->alloc;
     decoder->scratch_space = params->scratch_space;

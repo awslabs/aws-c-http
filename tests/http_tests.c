@@ -20,7 +20,7 @@
 #include <ctype.h>
 #include <stdio.h>
 
-static bool s_on_header(struct aws_http_header header, void *user_data) {
+static void s_on_header(struct aws_http_header header, void *user_data) {
     (void)header;
     (void)user_data;
     printf(
@@ -29,14 +29,12 @@ static bool s_on_header(struct aws_http_header header, void *user_data) {
         header.name_data.ptr,
         (int)header.value_data.len,
         header.value_data.ptr);
-    return true;
 }
 
-bool s_on_body(struct aws_byte_cursor data, bool finished, void *user_data) {
+static void s_on_body(struct aws_byte_cursor data, bool finished, void *user_data) {
     (void)data;
     (void)finished;
     (void)user_data;
-    return true;
 }
 
 static int s_http_parse_lots_of_headers(struct aws_allocator *allocator, void *ctx) {
