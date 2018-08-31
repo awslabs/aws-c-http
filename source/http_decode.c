@@ -451,15 +451,32 @@ static int s_state_method(struct aws_http_decoder *decoder, struct aws_byte_curs
     return AWS_OP_SUCCESS;
 }
 
-/* To be implemented soon - disabled to avoid gcc warnings. */
-#if 0
 static int s_state_response(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
-    (void)decoder;
     (void)input;
     (void)bytes_processed;
-    return AWS_OP_ERR;
+
+    struct aws_byte_cursor cursors[3];
+    if (s_byte_buf_split(decoder->cursor, cursors, ' ', 3) != 3) {
+        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+    }
+
+    struct aws_byte_cursor version = cursors[0];
+    struct aws_byte_cursor code = cursors[1];
+    struct aws_byte_cursor phrase = cursors[2];
+    (void)phrase; /* Unused for now. */
+
+    decoder->version = aws_http_str_to_version(version);
+    int code_val;
+    int ret = s_read_int64(code, &code_val);
+    if (ret != AWS_OP_SUCCESS) {
+        return ret;
+    }
+    decoder->code = aws_http_int_to_code(code_val);
+
+    s_set_next_state(decoder, s_state_getline, s_state_header);
+
+    return AWS_OP_SUCCESS;
 }
-#endif
 
 struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *params) {
     if (!params) {
@@ -481,8 +498,8 @@ struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *pa
         decoder->state_cb = s_state_getline;
         decoder->next_state_cb = s_state_method;
     } else {
-        decoder->state_cb = NULL;
-        decoder->next_state_cb = NULL;
+        decoder->state_cb = s_state_getline;
+        decoder->next_state_cb = s_state_response;
     }
     decoder->on_header = params->on_header;
     decoder->on_body = params->on_body;
