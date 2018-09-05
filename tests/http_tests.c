@@ -389,7 +389,7 @@ static int s_http_decode_one_byte_at_a_time_and_trailers(struct aws_allocator *a
     struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, true);
 
     size_t len = strlen(request);
-    for (int i = 0; i < len; ++i) {
+    for (int i = 0; i < (int)len; ++i) {
         ASSERT_SUCCESS(aws_http_decode(decoder, request + i, 1, NULL));
     }
 
