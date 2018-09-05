@@ -136,11 +136,15 @@ static int s_http_test_overflow_scratch_space(struct aws_allocator *allocator, v
     const char *msg = s_typical_response;
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, false);
-
-    /* Undo the init in the common setup func, resize custom tiny buffer. */
-    aws_byte_buf_clean_up(&scratch_space);
     aws_byte_buf_init(allocator, &scratch_space, 4);
+
+    params.alloc = allocator;
+    params.scratch_space = scratch_space;
+    params.on_header = s_on_header_stub;
+    params.on_body = s_on_body_stub;
+    params.true_for_request_false_for_response = false;
+    params.user_data = NULL;
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(msg);
     ASSERT_SUCCESS(aws_http_decode(decoder, msg, len, NULL));

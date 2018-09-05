@@ -142,13 +142,15 @@ static int s_cat(struct aws_http_decoder *decoder, uint8_t *data, size_t len) {
             }
         } while (new_size < (buffer->len + len));
 
-        uint8_t *new_data = aws_mem_acquire(buffer->allocator, new_size);
+        uint8_t *new_data = aws_mem_acquire(decoder->alloc, new_size);
         if (!new_data) {
             return AWS_OP_ERR;
         }
 
         memcpy(new_data, buffer->buffer, buffer->len);
-        aws_mem_release(buffer->allocator, buffer);
+        if (decoder->cleanup_scratch) {
+            aws_mem_release(decoder->alloc, buffer->buffer);
+        }
         buffer->capacity = new_size;
         buffer->buffer = new_data;
 
