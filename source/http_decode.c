@@ -467,6 +467,7 @@ static int s_state_method(struct aws_http_decoder *decoder, struct aws_byte_curs
     return AWS_OP_SUCCESS;
 }
 
+/* NOLINTNEXTLINE(readability-non-const-parameter) */
 static int s_state_response(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     (void)input;
     (void)bytes_processed;
