@@ -76,10 +76,15 @@ extern "C" {
 
 AWS_HTTP_API struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *params);
 AWS_HTTP_API void aws_http_decoder_destroy(struct aws_http_decoder *decoder);
-AWS_HTTP_API int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t data_bytes, size_t *bytes_read);
+AWS_HTTP_API int aws_http_decode(
+    struct aws_http_decoder *decoder,
+    const void *data,
+    size_t data_bytes,
+    size_t *bytes_read);
 
 /**
- * These functions can only be called once decoding is completely finished, just before calling `aws_http_decode_destroy`.
+ * These functions can only be called once decoding is completely finished, just before calling
+ * `aws_http_decode_destroy`.
  */
 AWS_HTTP_API int aws_http_decoder_get_version(struct aws_http_decoder *decoder, enum aws_http_version *version);
 AWS_HTTP_API int aws_http_decoder_get_uri(struct aws_http_decoder *decoder, struct aws_byte_cursor *uri_data);
