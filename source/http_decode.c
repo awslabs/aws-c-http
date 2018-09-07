@@ -495,18 +495,7 @@ static int s_state_response(struct aws_http_decoder *decoder, struct aws_byte_cu
     return AWS_OP_SUCCESS;
 }
 
-struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *params) {
-    if (!params) {
-        return NULL;
-    }
-
-    struct aws_http_decoder *decoder =
-        (struct aws_http_decoder *)aws_mem_acquire(params->alloc, sizeof(struct aws_http_decoder));
-
-    if (!decoder) {
-        return NULL;
-    }
-
+void aws_http_reset(struct aws_http_decoder *decoder, struct aws_http_decoder_params *params) {
     AWS_ZERO_STRUCT(*decoder);
     decoder->alloc = params->alloc;
     decoder->scratch_space = params->scratch_space;
@@ -521,6 +510,22 @@ struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *pa
     decoder->on_header = params->on_header;
     decoder->on_body = params->on_body;
     decoder->user_data = params->user_data;
+}
+
+struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *params) {
+    if (!params) {
+        return NULL;
+    }
+
+    struct aws_http_decoder *decoder =
+        (struct aws_http_decoder *)aws_mem_acquire(params->alloc, sizeof(struct aws_http_decoder));
+
+    if (!decoder) {
+        return NULL;
+    }
+
+    aws_http_reset(decoder, params);
+
     return decoder;
 }
 

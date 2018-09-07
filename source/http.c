@@ -528,268 +528,67 @@ enum aws_http_version aws_http_str_to_version(struct aws_byte_cursor cursor) {
 }
 
 enum aws_http_code aws_http_int_to_code(int code) {
-    switch (code) {
-        case -1:
-            return AWS_HTTP_CODE_REQUEST_NOT_MADE;
-        case 100:
-            return AWS_HTTP_CODE_CONTINUE;
-        case 101:
-            return AWS_HTTP_CODE_SWITCHING_PROTOCOLS;
-        case 102:
-            return AWS_HTTP_CODE_PROCESSING;
-        case 200:
-            return AWS_HTTP_CODE_OK;
-        case 201:
-            return AWS_HTTP_CODE_CREATED;
-        case 202:
-            return AWS_HTTP_CODE_ACCEPTED;
-        case 203:
-            return AWS_HTTP_CODE_NON_AUTHORITATIVE_INFORMATION;
-        case 204:
-            return AWS_HTTP_CODE_NO_CONTENT;
-        case 205:
-            return AWS_HTTP_CODE_RESET_CONTENT;
-        case 206:
-            return AWS_HTTP_CODE_PARTIAL_CONTENT;
-        case 207:
-            return AWS_HTTP_CODE_MULTI_STATUS;
-        case 208:
-            return AWS_HTTP_CODE_ALREADY_REPORTED;
-        case 226:
-            return AWS_HTTP_CODE_IM_USED;
-        case 300:
-            return AWS_HTTP_CODE_MULTIPLE_CHOICES;
-        case 301:
-            return AWS_HTTP_CODE_MOVED_PERMANENTLY;
-        case 302:
-            return AWS_HTTP_CODE_FOUND;
-        case 303:
-            return AWS_HTTP_CODE_SEE_OTHER;
-        case 304:
-            return AWS_HTTP_CODE_NOT_MODIFIED;
-        case 305:
-            return AWS_HTTP_CODE_USE_PROXY;
-        case 306:
-            return AWS_HTTP_CODE_SWITCH_PROXY;
-        case 307:
-            return AWS_HTTP_CODE_TEMPORARY_REDIRECT;
-        case 308:
-            return AWS_HTTP_CODE_PERMANENT_REDIRECT;
-        case 400:
-            return AWS_HTTP_CODE_BAD_REQUEST;
-        case 401:
-            return AWS_HTTP_CODE_UNAUTHORIZED;
-        case 402:
-            return AWS_HTTP_CODE_PAYMENT_REQUIRED;
-        case 403:
-            return AWS_HTTP_CODE_FORBIDDEN;
-        case 404:
-            return AWS_HTTP_CODE_NOT_FOUND;
-        case 405:
-            return AWS_HTTP_CODE_METHOD_NOT_ALLOWED;
-        case 406:
-            return AWS_HTTP_CODE_NOT_ACCEPTABLE;
-        case 407:
-            return AWS_HTTP_CODE_PROXY_AUTHENTICATION_REQUIRED;
-        case 408:
-            return AWS_HTTP_CODE_REQUEST_TIMEOUT;
-        case 409:
-            return AWS_HTTP_CODE_CONFLICT;
-        case 410:
-            return AWS_HTTP_CODE_GONE;
-        case 411:
-            return AWS_HTTP_CODE_LENGTH_REQUIRED;
-        case 412:
-            return AWS_HTTP_CODE_PRECONDITION_FAILED;
-        case 413:
-            return AWS_HTTP_CODE_REQUEST_ENTITY_TOO_LARGE;
-        case 414:
-            return AWS_HTTP_CODE_REQUEST_URI_TOO_LONG;
-        case 415:
-            return AWS_HTTP_CODE_UNSUPPORTED_MEDIA_TYPE;
-        case 416:
-            return AWS_HTTP_CODE_REQUESTED_RANGE_NOT_SATISFIABLE;
-        case 417:
-            return AWS_HTTP_CODE_EXPECTATION_FAILED;
-        case 418:
-            return AWS_HTTP_CODE_IM_A_TEAPOT;
-        case 419:
-            return AWS_HTTP_CODE_AUTHENTICATION_TIMEOUT;
-        case 420:
-            return AWS_HTTP_CODE_METHOD_FAILURE;
-        case 422:
-            return AWS_HTTP_CODE_UNPROC_ENTITY;
-        case 423:
-            return AWS_HTTP_CODE_LOCKED;
-        case 424:
-            return AWS_HTTP_CODE_FAILED_DEPENDENCY;
-        case 426:
-            return AWS_HTTP_CODE_UPGRADE_REQUIRED;
-        case 427:
-            return AWS_HTTP_CODE_PRECONDITION_REQUIRED;
-        case 429:
-            return AWS_HTTP_CODE_TOO_MANY_REQUESTS;
-        case 431:
-            return AWS_HTTP_CODE_REQUEST_HEADER_FIELDS_TOO_LARGE;
-        case 440:
-            return AWS_HTTP_CODE_LOGIN_TIMEOUT;
-        case 444:
-            return AWS_HTTP_CODE_NO_RESPONSE;
-        case 449:
-            return AWS_HTTP_CODE_RETRY_WITH;
-        case 450:
-            return AWS_HTTP_CODE_BLOCKED;
-        case 451:
-            return AWS_HTTP_CODE_REDIRECT;
-        case 494:
-            return AWS_HTTP_CODE_REQUEST_HEADER_TOO_LARGE;
-        case 495:
-            return AWS_HTTP_CODE_CERT_ERROR;
-        case 496:
-            return AWS_HTTP_CODE_NO_CERT;
-        case 497:
-            return AWS_HTTP_CODE_HTTP_TO_HTTPS;
-        case 499:
-            return AWS_HTTP_CODE_CLIENT_CLOSED_TO_REQUEST;
-        case 500:
-            return AWS_HTTP_CODE_INTERNAL_SERVER_ERROR;
-        case 501:
-            return AWS_HTTP_CODE_NOT_IMPLEMENTED;
-        case 502:
-            return AWS_HTTP_CODE_BAD_GATEWAY;
-        case 503:
-            return AWS_HTTP_CODE_SERVICE_UNAVAILABLE;
-        case 504:
-            return AWS_HTTP_CODE_GATEWAY_TIMEOUT;
-        case 505:
-            return AWS_HTTP_CODE_HTTP_VERSION_NOT_SUPPORTED;
-        case 506:
-            return AWS_HTTP_CODE_VARIANT_ALSO_NEGOTIATES;
-        case 507:
-            return AWS_HTTP_CODE_INSUFFICIENT_STORAGE;
-        case 508:
-            return AWS_HTTP_CODE_LOOP_DETECTED;
-        case 509:
-            return AWS_HTTP_CODE_BANDWIDTH_LIMIT_EXCEEDED;
-        case 510:
-            return AWS_HTTP_CODE_NOT_EXTENDED;
-        case 511:
-            return AWS_HTTP_CODE_NETWORK_AUTHENTICATION_REQUIRED;
-        case 598:
-            return AWS_HTTP_CODE_NETWORK_READ_TIMEOUT;
-        case 59:
-            return AWS_HTTP_CODE_NETWORK_CONNECT_TIMEOUT;
-        default:
-            return AWS_HTTP_CODE_UNKNOWN;
-    }
+    return (enum aws_http_code)code;
 }
+
+#define AWS_HTTP_CHECK_CODE(code)                                                                                      \
+    case AWS_HTTP_HEADER_##code:                                                                                       \
+        return #code
 
 const char *aws_http_header_name_to_str(enum aws_http_header_name name) {
     switch (name) {
-        case AWS_HTTP_HEADER_ACCEPT:
-            return "ACCEPT";
-        case AWS_HTTP_HEADER_ACCEPT_CHARSET:
-            return "ACCEPT_CHARSET";
-        case AWS_HTTP_HEADER_ACCEPT_ENCODING:
-            return "ACCEPT_ENCODING";
-        case AWS_HTTP_HEADER_ACCEPT_LANGUAGE:
-            return "ACCEPT_LANGUAGE";
-        case AWS_HTTP_HEADER_ACCEPT_RANGES:
-            return "ACCEPT_RANGES";
-        case AWS_HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN:
-            return "ACCESS_CONTROL_ALLOW_ORIGIN";
-        case AWS_HTTP_HEADER_AGE:
-            return "AGE";
-        case AWS_HTTP_HEADER_ALLOW:
-            return "ALLOW";
-        case AWS_HTTP_HEADER_AUTHORIZATION:
-            return "AUTHORIZATION";
-        case AWS_HTTP_HEADER_CACHE_CONTROL:
-            return "CACHE_CONTROL";
-        case AWS_HTTP_HEADER_CONNECTION:
-            return "CONNECTION";
-        case AWS_HTTP_HEADER_CONTENT_DISPOSITION:
-            return "CONTENT_DISPOSITION";
-        case AWS_HTTP_HEADER_CONTENT_ENCODING:
-            return "CONTENT_ENCODING";
-        case AWS_HTTP_HEADER_CONTENT_LANGUAGE:
-            return "CONTENT_LANGUAGE";
-        case AWS_HTTP_HEADER_CONTENT_LENGTH:
-            return "CONTENT_LENGTH";
-        case AWS_HTTP_HEADER_CONTENT_LOCATION:
-            return "CONTENT_LOCATION";
-        case AWS_HTTP_HEADER_CONTENT_RANGE:
-            return "CONTENT_RANGE";
-        case AWS_HTTP_HEADER_CONTENT_TYPE:
-            return "CONTENT_TYPE";
-        case AWS_HTTP_HEADER_COOKIE:
-            return "COOKIE";
-        case AWS_HTTP_HEADER_DATE:
-            return "DATE";
-        case AWS_HTTP_HEADER_ETAG:
-            return "ETAG";
-        case AWS_HTTP_HEADER_EXPECT:
-            return "EXPECT";
-        case AWS_HTTP_HEADER_EXPIRES:
-            return "EXPIRES";
-        case AWS_HTTP_HEADER_FORWARDED:
-            return "FORWARDED";
-        case AWS_HTTP_HEADER_FROM:
-            return "FROM";
-        case AWS_HTTP_HEADER_HOST:
-            return "HOST";
-        case AWS_HTTP_HEADER_IF_MATCH:
-            return "IF_MATCH";
-        case AWS_HTTP_HEADER_IF_MODIFIED_SINCE:
-            return "IF_MODIFIED_SINCE";
-        case AWS_HTTP_HEADER_IF_NONE_MATCH:
-            return "IF_NONE_MATCH";
-        case AWS_HTTP_HEADER_IF_RANGE:
-            return "IF_RANGE";
-        case AWS_HTTP_HEADER_IF_UNMODIFIED_SINCE:
-            return "IF_UNMODIFIED_SINCE";
-        case AWS_HTTP_HEADER_KEEP_ALIVE:
-            return "KEEP_ALIVE";
-        case AWS_HTTP_HEADER_LAST_MODIFIED:
-            return "LAST_MODIFIED";
-        case AWS_HTTP_HEADER_LINK:
-            return "LINK";
-        case AWS_HTTP_HEADER_LOCATION:
-            return "LOCATION";
-        case AWS_HTTP_HEADER_MAX_FORWARDS:
-            return "MAX_FORWARDS";
-        case AWS_HTTP_HEADER_ORIGIN:
-            return "ORIGIN";
-        case AWS_HTTP_HEADER_PROXY_AUTHENTICATE:
-            return "PROXY_AUTHENTICATE";
-        case AWS_HTTP_HEADER_PROXY_AUTHORIZATION:
-            return "PROXY_AUTHORIZATION";
-        case AWS_HTTP_HEADER_RANGE:
-            return "RANGE";
-        case AWS_HTTP_HEADER_REFERRER:
-            return "REFERRER";
-        case AWS_HTTP_HEADER_REFRESH:
-            return "REFRESH";
-        case AWS_HTTP_HEADER_RETRY_AFTER:
-            return "RETRY_AFTER";
-        case AWS_HTTP_HEADER_SERVER:
-            return "SERVER";
-        case AWS_HTTP_HEADER_SET_COOKIE:
-            return "SET_COOKIE";
-        case AWS_HTTP_HEADER_STRICT_TRANSPORT_SECURITY:
-            return "STRICT_TRANSPORT_SECURITY";
-        case AWS_HTTP_HEADER_TRANSFER_ENCODING:
-            return "TRANSFER_ENCODING";
-        case AWS_HTTP_HEADER_UPGRADE:
-            return "UPGRADE";
-        case AWS_HTTP_HEADER_USER_AGENT:
-            return "USER_AGENT";
-        case AWS_HTTP_HEADER_VARY:
-            return "VARY";
-        case AWS_HTTP_HEADER_VIA:
-            return "VIA";
-        case AWS_HTTP_HEADER_WWW_AUTHENTICATE:
-            return "WWW_AUTHENTICATE";
+        AWS_HTTP_CHECK_CODE(ACCEPT);
+        AWS_HTTP_CHECK_CODE(ACCEPT_CHARSET);
+        AWS_HTTP_CHECK_CODE(ACCEPT_ENCODING);
+        AWS_HTTP_CHECK_CODE(ACCEPT_LANGUAGE);
+        AWS_HTTP_CHECK_CODE(ACCEPT_RANGES);
+        AWS_HTTP_CHECK_CODE(ACCESS_CONTROL_ALLOW_ORIGIN);
+        AWS_HTTP_CHECK_CODE(AGE);
+        AWS_HTTP_CHECK_CODE(ALLOW);
+        AWS_HTTP_CHECK_CODE(AUTHORIZATION);
+        AWS_HTTP_CHECK_CODE(CACHE_CONTROL);
+        AWS_HTTP_CHECK_CODE(CONNECTION);
+        AWS_HTTP_CHECK_CODE(CONTENT_DISPOSITION);
+        AWS_HTTP_CHECK_CODE(CONTENT_ENCODING);
+        AWS_HTTP_CHECK_CODE(CONTENT_LANGUAGE);
+        AWS_HTTP_CHECK_CODE(CONTENT_LENGTH);
+        AWS_HTTP_CHECK_CODE(CONTENT_LOCATION);
+        AWS_HTTP_CHECK_CODE(CONTENT_RANGE);
+        AWS_HTTP_CHECK_CODE(CONTENT_TYPE);
+        AWS_HTTP_CHECK_CODE(COOKIE);
+        AWS_HTTP_CHECK_CODE(DATE);
+        AWS_HTTP_CHECK_CODE(ETAG);
+        AWS_HTTP_CHECK_CODE(EXPECT);
+        AWS_HTTP_CHECK_CODE(EXPIRES);
+        AWS_HTTP_CHECK_CODE(FORWARDED);
+        AWS_HTTP_CHECK_CODE(FROM);
+        AWS_HTTP_CHECK_CODE(HOST);
+        AWS_HTTP_CHECK_CODE(IF_MATCH);
+        AWS_HTTP_CHECK_CODE(IF_MODIFIED_SINCE);
+        AWS_HTTP_CHECK_CODE(IF_NONE_MATCH);
+        AWS_HTTP_CHECK_CODE(IF_RANGE);
+        AWS_HTTP_CHECK_CODE(IF_UNMODIFIED_SINCE);
+        AWS_HTTP_CHECK_CODE(KEEP_ALIVE);
+        AWS_HTTP_CHECK_CODE(LAST_MODIFIED);
+        AWS_HTTP_CHECK_CODE(LINK);
+        AWS_HTTP_CHECK_CODE(LOCATION);
+        AWS_HTTP_CHECK_CODE(MAX_FORWARDS);
+        AWS_HTTP_CHECK_CODE(ORIGIN);
+        AWS_HTTP_CHECK_CODE(PROXY_AUTHENTICATE);
+        AWS_HTTP_CHECK_CODE(PROXY_AUTHORIZATION);
+        AWS_HTTP_CHECK_CODE(RANGE);
+        AWS_HTTP_CHECK_CODE(REFERRER);
+        AWS_HTTP_CHECK_CODE(REFRESH);
+        AWS_HTTP_CHECK_CODE(RETRY_AFTER);
+        AWS_HTTP_CHECK_CODE(SERVER);
+        AWS_HTTP_CHECK_CODE(SET_COOKIE);
+        AWS_HTTP_CHECK_CODE(STRICT_TRANSPORT_SECURITY);
+        AWS_HTTP_CHECK_CODE(TRANSFER_ENCODING);
+        AWS_HTTP_CHECK_CODE(UPGRADE);
+        AWS_HTTP_CHECK_CODE(USER_AGENT);
+        AWS_HTTP_CHECK_CODE(VARY);
+        AWS_HTTP_CHECK_CODE(VIA);
+        AWS_HTTP_CHECK_CODE(WWW_AUTHENTICATE);
         default:
             return "UNKNOWN";
     }
