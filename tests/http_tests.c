@@ -20,7 +20,7 @@
 #include <ctype.h>
 #include <stdio.h>
 
-static void s_on_header(struct aws_http_header header, void *user_data) {
+static void s_on_header(struct aws_http_decoded_header header, void *user_data) {
     (void)header;
     (void)user_data;
     printf(

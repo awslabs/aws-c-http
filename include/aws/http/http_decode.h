@@ -18,7 +18,7 @@
 
 #include <aws/http/http.h>
 
-struct aws_http_header {
+struct aws_http_decoded_header {
     /* Name of the header. If the type is `AWS_HTTP_HEADER_NAME_UNKNOWN` then `name_data` must be parsed manually. */
     enum aws_http_header_name name;
 
@@ -36,7 +36,7 @@ struct aws_http_header {
  * Called from `aws_http_decode` when an http header has been received.
  * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
  */
-typedef void(aws_http_decoder_on_header_fn)(struct aws_http_header header, void *user_data);
+typedef void(aws_http_decoder_on_header_fn)(struct aws_http_decoded_header header, void *user_data);
 
 /**
  * Called from `aws_http_decode` when a portion of the http body has been received.

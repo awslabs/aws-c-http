@@ -43,9 +43,9 @@ target_include_directories(${CMAKE_PROJECT_NAME} PUBLIC
         $<INSTALL_INTERFACE:include>)
 
 find_package(aws-c-common REQUIRED)
-#find_package(aws-c-io REQUIRED)
+find_package(aws-c-io REQUIRED)
 target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC aws-c-common ${PLATFORM_LIBS})
-#target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC aws-c-io ${PLATFORM_LIBS})
+target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC aws-c-io ${PLATFORM_LIBS})
 
 install(FILES ${AWS_HTTP_HEADERS} DESTINATION "include/aws/HTTP")
 install(FILES ${AWS_HTTP_TESTING_HEADERS} DESTINATION "include/aws/testing/HTTP")
