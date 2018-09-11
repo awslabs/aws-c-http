@@ -89,7 +89,8 @@ static int s_http_test_get_version(struct aws_allocator *allocator, void *ctx) {
 
 static inline int s_strcmp_cursor(struct aws_byte_cursor cursor, const char *str) {
     size_t len = strlen(str);
-    if (len != cursor.len) return 1;
+    if (len != cursor.len)
+        return 1;
     return strncmp((const char *)cursor.ptr, str, len);
 }
 

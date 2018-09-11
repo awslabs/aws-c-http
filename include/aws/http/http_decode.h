@@ -77,8 +77,9 @@ extern "C" {
 AWS_HTTP_API struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *params);
 
 /**
- * Places the decoder in a usable state, assuming the `params` are properly setup, or a previous call to `aws_http_decoder` was
- * made with a proper `params` setup. `params` can be NULL in order to re-use a previous valid set of `params` values.
+ * Places the decoder in a usable state, assuming the `params` are properly setup, or a previous call to
+ * `aws_http_decoder` was made with a proper `params` setup. `params` can be NULL in order to re-use a previous valid
+ * set of `params` values.
  */
 AWS_HTTP_API void aws_http_decoder_reset(struct aws_http_decoder *decoder, struct aws_http_decoder_params *params);
 AWS_HTTP_API void aws_http_decoder_destroy(struct aws_http_decoder *decoder);
