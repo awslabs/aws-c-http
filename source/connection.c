@@ -15,6 +15,10 @@
 
 #include <aws/http/connection.h>
 
+
+#include <aws/io/channel.h>
+#include <aws/io/event_loop.h>
+
 struct aws_http_connection {
     struct aws_channel_handler handler;
     struct aws_channel_slot *slot;
@@ -22,5 +26,24 @@ struct aws_http_connection {
     aws_http_on_response_fn *on_response;
     aws_http_on_header_fn *on_header;
     aws_http_on_body_fn *on_body;
+    struct aws_socket_endpoint *endpoint;
     void *user_data;
 };
+
+struct aws_http_connection aws_http_connection_new(
+    struct aws_allocator *alloc,
+    struct aws_socket_endpoint *endpoint,
+    struct aws_tls_connection_options *tls_options,
+    aws_http_on_header_fn *on_header,
+    aws_http_on_body_fn *on_body,
+    void *user_data) {
+    struct aws_http_connection *connection = (struct aws_http_connection *)aws_mem_acquire(alloc, sizeof(struct aws_http_connection));
+
+    if (tls_options) {
+
+    } else {
+    }
+}
+
+void aws_http_connection_destroy(struct aws_http_connection *connection) {
+}
