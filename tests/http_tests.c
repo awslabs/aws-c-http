@@ -23,7 +23,7 @@
 #include <stdio.h>
 
 static const char *s_typical_request = "GET / HTTP/1.1\r\n"
-                                       "Host: developer.mozilla.org\r\n"
+                                       "Host: amazon.com\r\n"
                                        "Accept-Language: fr\r\n";
 
 static const char *s_typical_response = "HTTP/1.1 200 OK\r\n"
@@ -32,7 +32,7 @@ static const char *s_typical_response = "HTTP/1.1 200 OK\r\n"
                                         "\r\n"
                                         "Hello noob.";
 
-static bool s_on_header_stub(struct aws_http_header header, void *user_data) {
+static bool s_on_header_stub(struct aws_http_header *header, void *user_data) {
     (void)header;
     (void)user_data;
     return true;
@@ -84,12 +84,13 @@ static int s_http_test_get_version(struct aws_allocator *allocator, void *ctx) {
 
     s_common_teardown(decoder, &scratch_space);
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
 static inline int s_strcmp_cursor(struct aws_byte_cursor cursor, const char *str) {
     size_t len = strlen(str);
-    return strncmp((const char *)cursor.ptr, str, len < cursor.len ? len : cursor.len);
+    if (len != cursor.len) return 1;
+    return strncmp((const char *)cursor.ptr, str, len);
 }
 
 AWS_TEST_CASE(http_test_get_uri, s_http_test_get_uri);
@@ -108,7 +109,7 @@ static int s_http_test_get_uri(struct aws_allocator *allocator, void *ctx) {
 
     s_common_teardown(decoder, &scratch_space);
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
 AWS_TEST_CASE(http_test_get_status_code, s_http_test_get_status_code);
@@ -123,11 +124,11 @@ static int s_http_test_get_status_code(struct aws_allocator *allocator, void *ct
     ASSERT_SUCCESS(aws_http_decode(decoder, msg, len, NULL));
     enum aws_http_code code;
     ASSERT_SUCCESS(aws_http_decoder_get_code(decoder, &code));
-    ASSERT_TRUE(code == AWS_HTTP_CODE_OK);
+    ASSERT_INT_EQUALS(AWS_HTTP_CODE_OK, code);
 
     s_common_teardown(decoder, &scratch_space);
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
 AWS_TEST_CASE(http_test_overflow_scratch_space, s_http_test_overflow_scratch_space);
@@ -154,7 +155,7 @@ static int s_http_test_overflow_scratch_space(struct aws_allocator *allocator, v
 
     s_common_teardown(decoder, &scratch_space);
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
 struct s_header_params {
@@ -164,12 +165,12 @@ struct s_header_params {
     const char **header_names;
 };
 
-static inline bool s_got_header(struct aws_http_header header, void *user_data) {
+static inline bool s_got_header(struct aws_http_header *header, void *user_data) {
     struct s_header_params *params = (struct s_header_params *)user_data;
     if (params->index < params->max_index) {
         if (params->first_error == AWS_OP_SUCCESS) {
             params->first_error =
-                s_strcmp_cursor(header.name_data, params->header_names[params->index]) ? AWS_OP_ERR : AWS_OP_SUCCESS;
+                s_strcmp_cursor(header->name_data, params->header_names[params->index]) ? AWS_OP_ERR : AWS_OP_SUCCESS;
         }
         params->index++;
     } else {
@@ -179,8 +180,8 @@ static inline bool s_got_header(struct aws_http_header header, void *user_data) 
     return true;
 }
 
-AWS_TEST_CASE(http_test_recieve_request_headers, s_http_test_recieve_request_headers);
-static int s_http_test_recieve_request_headers(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(http_test_receive_request_headers, s_http_test_receive_request_headers);
+static int s_http_test_receive_request_headers(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     const char *msg = s_typical_request;
     struct aws_byte_buf scratch_space;
@@ -209,11 +210,11 @@ static int s_http_test_recieve_request_headers(struct aws_allocator *allocator, 
 
     s_common_teardown(decoder, &scratch_space);
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(http_test_recieve_response_headers, s_http_test_recieve_response_headers);
-static int s_http_test_recieve_response_headers(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(http_test_receive_response_headers, s_http_test_receive_response_headers);
+static int s_http_test_receive_response_headers(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     const char *msg = s_typical_response;
     struct aws_byte_buf scratch_space;
@@ -242,7 +243,7 @@ static int s_http_test_recieve_response_headers(struct aws_allocator *allocator,
 
     s_common_teardown(decoder, &scratch_space);
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
 AWS_TEST_CASE(http_test_get_transfer_encoding_flags, s_http_test_get_transfer_encoding_flags);
@@ -274,7 +275,7 @@ static int s_http_test_get_transfer_encoding_flags(struct aws_allocator *allocat
 
     s_common_teardown(decoder, &scratch_space);
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
 struct s_body_params {
@@ -318,7 +319,7 @@ static int s_http_test_body_unchunked(struct aws_allocator *allocator, void *ctx
     s_common_teardown(decoder, &scratch_space);
     aws_array_list_clean_up(&body_params.body_data);
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
 AWS_TEST_CASE(http_test_body_chunked, s_http_test_body_chunked);
@@ -361,15 +362,15 @@ static int s_http_test_body_chunked(struct aws_allocator *allocator, void *ctx) 
     s_common_teardown(decoder, &scratch_space);
     aws_array_list_clean_up(&body_params.body_data);
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(http_decode_one_byte_at_a_time_and_trailers, s_http_decode_one_byte_at_a_time_and_trailers);
-static int s_http_decode_one_byte_at_a_time_and_trailers(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(http_decode_trailers, s_http_decode_trailers);
+static int s_http_decode_trailers(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
     const char *request = "GET / HTTP/1.1\r\n"
-                          "Host: developer.mozilla.org\r\n"
+                          "Host: amazon.com\r\n"
                           "Accept-Language: fr\r\n"
                           "Transfer-Encoding:   chunked     \r\n"
                           "Trailer: Expires\r\n"
@@ -389,13 +390,31 @@ static int s_http_decode_one_byte_at_a_time_and_trailers(struct aws_allocator *a
     struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, true);
 
     size_t len = strlen(request);
+    ASSERT_SUCCESS(aws_http_decode(decoder, request, len, NULL));
+
+    s_common_teardown(decoder, &scratch_space);
+
+    return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(http_decode_one_byte_at_a_time, s_http_decode_one_byte_at_a_time);
+static int s_http_decode_one_byte_at_a_time(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    const char *request = s_typical_request;
+
+    struct aws_byte_buf scratch_space;
+    struct aws_http_decoder_params params;
+    struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, true);
+
+    size_t len = strlen(request);
     for (int i = 0; i < (int)len; ++i) {
         ASSERT_SUCCESS(aws_http_decode(decoder, request + i, 1, NULL));
     }
 
     s_common_teardown(decoder, &scratch_space);
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
 static inline int s_rand(int lo, int hi) {
@@ -408,7 +427,7 @@ static int s_http_decode_messages_at_random_intervals(struct aws_allocator *allo
 
     const char *requests[] = {
         "GET / HTTP/1.1\r\n"
-        "Host: developer.mozilla.org\r\n"
+        "Host: amazon.com\r\n"
         "Accept-Language: fr\r\n"
         "Content-Length: 6\r\n"
         "\r\n"
@@ -485,7 +504,7 @@ static int s_http_decode_messages_at_random_intervals(struct aws_allocator *allo
         s_common_teardown(decoder, &scratch_space);
     }
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
 AWS_TEST_CASE(http_decode_bad_messages_and_assert_failure, s_http_decode_bad_messages_and_assert_failure);
@@ -546,7 +565,7 @@ static int s_http_decode_bad_messages_and_assert_failure(struct aws_allocator *a
         s_common_teardown(decoder, &scratch_space);
     }
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
 AWS_TEST_CASE(
@@ -569,7 +588,7 @@ static int s_http_test_extraneous_buffer_data_ensure_not_processed(struct aws_al
 
     s_common_teardown(decoder, &scratch_space);
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
 AWS_TEST_CASE(http_test_ignore_transfer_extensions, s_http_test_ignore_transfer_extensions);
@@ -588,7 +607,7 @@ static int s_http_test_ignore_transfer_extensions(struct aws_allocator *allocato
 
     s_common_teardown(decoder, &scratch_space);
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }
 
 AWS_TEST_CASE(http_test_ignore_chunk_extensions, s_http_test_ignore_chunk_extensions);
@@ -596,7 +615,7 @@ static int s_http_test_ignore_chunk_extensions(struct aws_allocator *allocator, 
     (void)ctx;
 
     const char *request = "GET / HTTP/1.1\r\n"
-                          "Host: developer.mozilla.org\r\n"
+                          "Host: amazon.com\r\n"
                           "Accept-Language: fr\r\n"
                           "Transfer-Encoding:   chunked     \r\n"
                           "Trailer: Expires\r\n"
@@ -620,5 +639,5 @@ static int s_http_test_ignore_chunk_extensions(struct aws_allocator *allocator, 
 
     s_common_teardown(decoder, &scratch_space);
 
-    return 0;
+    return AWS_OP_SUCCESS;
 }

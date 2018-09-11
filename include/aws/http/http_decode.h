@@ -38,7 +38,7 @@ struct aws_http_header {
  * Return true to keep decoding, or false to immediately stop decoding and place the decoder in an invalid state, where
  * the only valid operation is to destroy the decoder with `aws_http_decoder_destroy`.
  */
-typedef bool(aws_http_decoder_on_header_fn)(struct aws_http_header header, void *user_data);
+typedef bool(aws_http_decoder_on_header_fn)(struct aws_http_header *header, void *user_data);
 
 /**
  * Called from `aws_http_decode` when a portion of the http body has been received.
@@ -75,7 +75,12 @@ extern "C" {
 #endif
 
 AWS_HTTP_API struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *params);
-AWS_HTTP_API void aws_http_reset(struct aws_http_decoder *decoder, struct aws_http_decoder_params *params);
+
+/**
+ * Places the decoder in a usable state, assuming the `params` are properly setup, or a previous call to `aws_http_decoder` was
+ * made with a proper `params` setup. `params` can be NULL in order to re-use a previous valid set of `params` values.
+ */
+AWS_HTTP_API void aws_http_decoder_reset(struct aws_http_decoder *decoder, struct aws_http_decoder_params *params);
 AWS_HTTP_API void aws_http_decoder_destroy(struct aws_http_decoder *decoder);
 AWS_HTTP_API int aws_http_decode(
     struct aws_http_decoder *decoder,
