@@ -13,7 +13,7 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/http_decode.h>
+#include <aws/http/decode.h>
 
 #include <assert.h>
 #include <stdlib.h>

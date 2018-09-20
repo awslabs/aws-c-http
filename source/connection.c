@@ -13,10 +13,13 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/common/byte_buf.h>
+
 #include <aws/http/connection.h>
-#include <aws/http/http_decode.h>
+#include <aws/http/decode.h>
 
 struct aws_http_connection {
+    struct aws_byte_buf scratch_space;
     struct aws_channel_handler handler;
     struct aws_channel_slot *slot;
     struct aws_http_decoder *decoder;
@@ -34,7 +37,16 @@ static int s_handler_process_read_message(
     (void)handler;
     (void)slot;
     (void)message;
-    return AWS_OP_SUCCESS;
+
+    if (message->message_type != AWS_IO_MESSAGE_APPLICATION_DATA || message->message_data.len < 1) {
+        return AWS_OP_ERR;
+    }
+
+    struct aws_http_connection *connection = (struct aws_http_connection *)handler->impl;
+    struct aws_http_decoder *decoder = connection->decoder;
+    int ret = aws_http_decode(decoder, (const void*)message->message_data.buffer, message->message_data.len);
+
+    return ret;
 }
 
 int s_handler_process_write_message(
@@ -166,11 +178,31 @@ struct aws_http_connection *aws_http_client_connection_new(
         return NULL;
     }
 
+    /* Scratch space for the streaming decoder. */
+    if (aws_byte_buf_init(alloc, &connection->scratch_space, 1024) != AWS_OP_SUCCESS) {
+        goto cleanup;
+    }
+
+    /* Setup channel handler. */
     struct aws_channel_handler handler;
     handler.vtable = s_channel_handler;
     handler.alloc = alloc;
     handler.impl = (void*)connection;
     connection->handler = handler;
+
+    /* Create http streaming decoder. */
+    struct aws_http_decoder_params params;
+    params.alloc = alloc;
+    params.scratch_space = connection->scratch_space;
+    params.on_header = NULL;
+    params.on_body = NULL;
+    params.true_for_request_false_for_response = true;
+    params.user_data = NULL;
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
+    if (!decoder) {
+        goto cleanup;
+    }
+    connection->decoder = decoder;
 
     if (tls_options) {
         if (aws_client_bootstrap_new_tls_socket_channel(
@@ -180,7 +212,7 @@ struct aws_http_connection *aws_http_client_connection_new(
             tls_options,
             s_client_channel_setup,
             s_client_channel_shutdown,
-            (void*)connection)) {
+            (void*)connection) != AWS_OP_SUCCESS) {
             goto cleanup;
         }
     } else {
@@ -190,7 +222,7 @@ struct aws_http_connection *aws_http_client_connection_new(
             socket_options,
             s_client_channel_setup,
             s_client_channel_shutdown,
-            (void*)connection)) {
+            (void*)connection) != AWS_OP_SUCCESS) {
             goto cleanup;
         }
     }
@@ -229,7 +261,7 @@ struct aws_http_connection *aws_http_server_connection_new(
             tls_options,
             s_server_channel_setup,
             s_server_channel_shutdown,
-            NULL)) {
+            NULL) != AWS_OP_SUCCESS) {
             goto cleanup;
         }
     } else {
@@ -239,7 +271,7 @@ struct aws_http_connection *aws_http_server_connection_new(
             socket_options,
             s_server_channel_setup,
             s_server_channel_shutdown,
-            NULL)) {
+            NULL) != AWS_OP_SUCCESS) {
             goto cleanup;
         }
     }
