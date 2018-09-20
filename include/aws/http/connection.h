@@ -20,13 +20,15 @@
 #include <aws/http/http_decode.h>
 
 #include <aws/io/channel.h>
+#include <aws/io/channel_bootstrap.h>
+#include <aws/io/socket.h>
+#include <aws/io/tls_channel_handler.h>
 
 struct aws_http_message;
 
 /* Automatically handle 100-continue? */
 /* Detect expect-continue header, stop writing the body to socket, wait for the 100-continue response. */
 
-/* Async callbacks??? Is that OK? If not, what should be our sync and memory strategy? */
 typedef void(aws_http_on_response_fn)(enum aws_http_code code, void *user_data);
 typedef void(aws_http_on_header_fn)(enum aws_http_header_name name, struct aws_byte_cursor *name_str, struct aws_byte_cursor *value_str, void *user_data);
 typedef void(aws_http_on_body_fn)(struct aws_byte_cursor data, bool finished, void *user_data);
@@ -40,10 +42,21 @@ struct aws_http_connection;
 extern "C" {
 #endif
 
-AWS_HTTP_API struct aws_http_connection aws_http_connection_new(
+AWS_HTTP_API struct aws_http_connection *aws_http_client_connection_new(
     struct aws_allocator *alloc,
     struct aws_socket_endpoint *endpoint,
+    struct aws_socket_options *socket_options,
     struct aws_tls_connection_options *tls_options,
+    struct aws_client_bootstrap *bootstrap,
+    aws_http_on_header_fn *on_header,
+    aws_http_on_body_fn *on_body,
+    void *user_data);
+AWS_HTTP_API struct aws_http_connection *aws_http_server_connection_new(
+    struct aws_allocator *alloc,
+    struct aws_socket_endpoint *endpoint,
+    struct aws_socket_options *socket_options,
+    struct aws_tls_connection_options *tls_options,
+    struct aws_server_bootstrap *bootstrap,
     aws_http_on_header_fn *on_header,
     aws_http_on_body_fn *on_body,
     void *user_data);
