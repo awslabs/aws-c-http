@@ -594,6 +594,8 @@ const char *aws_http_header_name_to_str(enum aws_http_header_name name) {
     }
 }
 
+#undef AWS_HTTP_CHECK_CODE
+
 const char *aws_http_method_to_str(enum aws_http_method method) {
     switch (method) {
         case AWS_HTTP_METHOD_UNKNOWN:

@@ -45,7 +45,8 @@ typedef bool(aws_http_decoder_on_header_fn)(struct aws_http_header *header, void
  * `finished` is true if this is the last section of the http body, and false if more body data is yet to be received.
  * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
  * Return true to keep decoding, or false to immediately stop decoding and place the decoder in an invalid state, where
- * the only valid operation is to destroy or reset the decoder with `aws_http_decoder_destroy` or `aws_http_reset`.
+ * the only valid operation is to destroy or reset the decoder with `aws_http_decoder_destroy` or
+ * `aws_http_decoder_reset`.
  */
 typedef bool(aws_http_decoder_on_body_fn)(struct aws_byte_cursor data, bool finished, void *user_data);
 

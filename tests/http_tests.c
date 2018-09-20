@@ -80,7 +80,7 @@ static int s_http_test_get_version(struct aws_allocator *allocator, void *ctx) {
     ASSERT_SUCCESS(aws_http_decode(decoder, msg, len, NULL));
     enum aws_http_version version;
     ASSERT_SUCCESS(aws_http_decoder_get_version(decoder, &version));
-    ASSERT_TRUE(version == AWS_HTTP_VERSION_1_1);
+    ASSERT_INT_EQUALS(AWS_HTTP_VERSION_1_1, version);
 
     s_common_teardown(decoder, &scratch_space);
 
@@ -271,9 +271,10 @@ static int s_http_test_get_transfer_encoding_flags(struct aws_allocator *allocat
     ASSERT_SUCCESS(aws_http_decode(decoder, msg, len, NULL));
     int flags;
     ASSERT_SUCCESS(aws_http_decoder_get_encoding_flags(decoder, &flags));
-    ASSERT_TRUE(
-        flags == (AWS_HTTP_TRANSFER_ENCODING_CHUNKED | AWS_HTTP_TRANSFER_ENCODING_GZIP |
-                  AWS_HTTP_TRANSFER_ENCODING_DEFLATE | AWS_HTTP_TRANSFER_ENCODING_DEPRECATED_COMPRESS));
+    ASSERT_INT_EQUALS(
+        (AWS_HTTP_TRANSFER_ENCODING_CHUNKED | AWS_HTTP_TRANSFER_ENCODING_GZIP | AWS_HTTP_TRANSFER_ENCODING_DEFLATE |
+         AWS_HTTP_TRANSFER_ENCODING_DEPRECATED_COMPRESS),
+        flags);
 
     s_common_teardown(decoder, &scratch_space);
 
@@ -586,7 +587,7 @@ static int s_http_test_extraneous_buffer_data_ensure_not_processed(struct aws_al
     size_t len = strlen("GET / HTTP/1.1\r\n");
     size_t size_read;
     ASSERT_SUCCESS(aws_http_decode(decoder, request, len, &size_read));
-    ASSERT_TRUE(size_read == len);
+    ASSERT_INT_EQUALS(len, size_read);
 
     s_common_teardown(decoder, &scratch_space);
 
