@@ -33,6 +33,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_PARSE,
         "Encountered an unexpected form when parsing an http message."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_USER_CALLBACK_EXIT,
+        "User forced decoder to early quit by returning false from a callback."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_PARSE_STATE,
         "Decoding/parsing was ran while the decoder object was in a poor state -- make sure to properly check for error codes before running the decoder."),
     AWS_DEFINE_ERROR_INFO_HTTP(
@@ -525,14 +528,73 @@ enum aws_http_version aws_http_str_to_version(struct aws_byte_cursor cursor) {
 }
 
 enum aws_http_code aws_http_int_to_code(int code) {
-    (void)code;
-    return AWS_HTTP_CODE_UNKNOWN;
+    return (enum aws_http_code)code;
 }
 
+#define AWS_HTTP_CHECK_CODE(code)                                                                                      \
+    case AWS_HTTP_HEADER_##code:                                                                                       \
+        return #code
+
 const char *aws_http_header_name_to_str(enum aws_http_header_name name) {
-    (void)name;
-    return "UNKNOWN";
+    switch (name) {
+        AWS_HTTP_CHECK_CODE(ACCEPT);
+        AWS_HTTP_CHECK_CODE(ACCEPT_CHARSET);
+        AWS_HTTP_CHECK_CODE(ACCEPT_ENCODING);
+        AWS_HTTP_CHECK_CODE(ACCEPT_LANGUAGE);
+        AWS_HTTP_CHECK_CODE(ACCEPT_RANGES);
+        AWS_HTTP_CHECK_CODE(ACCESS_CONTROL_ALLOW_ORIGIN);
+        AWS_HTTP_CHECK_CODE(AGE);
+        AWS_HTTP_CHECK_CODE(ALLOW);
+        AWS_HTTP_CHECK_CODE(AUTHORIZATION);
+        AWS_HTTP_CHECK_CODE(CACHE_CONTROL);
+        AWS_HTTP_CHECK_CODE(CONNECTION);
+        AWS_HTTP_CHECK_CODE(CONTENT_DISPOSITION);
+        AWS_HTTP_CHECK_CODE(CONTENT_ENCODING);
+        AWS_HTTP_CHECK_CODE(CONTENT_LANGUAGE);
+        AWS_HTTP_CHECK_CODE(CONTENT_LENGTH);
+        AWS_HTTP_CHECK_CODE(CONTENT_LOCATION);
+        AWS_HTTP_CHECK_CODE(CONTENT_RANGE);
+        AWS_HTTP_CHECK_CODE(CONTENT_TYPE);
+        AWS_HTTP_CHECK_CODE(COOKIE);
+        AWS_HTTP_CHECK_CODE(DATE);
+        AWS_HTTP_CHECK_CODE(ETAG);
+        AWS_HTTP_CHECK_CODE(EXPECT);
+        AWS_HTTP_CHECK_CODE(EXPIRES);
+        AWS_HTTP_CHECK_CODE(FORWARDED);
+        AWS_HTTP_CHECK_CODE(FROM);
+        AWS_HTTP_CHECK_CODE(HOST);
+        AWS_HTTP_CHECK_CODE(IF_MATCH);
+        AWS_HTTP_CHECK_CODE(IF_MODIFIED_SINCE);
+        AWS_HTTP_CHECK_CODE(IF_NONE_MATCH);
+        AWS_HTTP_CHECK_CODE(IF_RANGE);
+        AWS_HTTP_CHECK_CODE(IF_UNMODIFIED_SINCE);
+        AWS_HTTP_CHECK_CODE(KEEP_ALIVE);
+        AWS_HTTP_CHECK_CODE(LAST_MODIFIED);
+        AWS_HTTP_CHECK_CODE(LINK);
+        AWS_HTTP_CHECK_CODE(LOCATION);
+        AWS_HTTP_CHECK_CODE(MAX_FORWARDS);
+        AWS_HTTP_CHECK_CODE(ORIGIN);
+        AWS_HTTP_CHECK_CODE(PROXY_AUTHENTICATE);
+        AWS_HTTP_CHECK_CODE(PROXY_AUTHORIZATION);
+        AWS_HTTP_CHECK_CODE(RANGE);
+        AWS_HTTP_CHECK_CODE(REFERRER);
+        AWS_HTTP_CHECK_CODE(REFRESH);
+        AWS_HTTP_CHECK_CODE(RETRY_AFTER);
+        AWS_HTTP_CHECK_CODE(SERVER);
+        AWS_HTTP_CHECK_CODE(SET_COOKIE);
+        AWS_HTTP_CHECK_CODE(STRICT_TRANSPORT_SECURITY);
+        AWS_HTTP_CHECK_CODE(TRANSFER_ENCODING);
+        AWS_HTTP_CHECK_CODE(UPGRADE);
+        AWS_HTTP_CHECK_CODE(USER_AGENT);
+        AWS_HTTP_CHECK_CODE(VARY);
+        AWS_HTTP_CHECK_CODE(VIA);
+        AWS_HTTP_CHECK_CODE(WWW_AUTHENTICATE);
+        default:
+            return "UNKNOWN";
+    }
 }
+
+#undef AWS_HTTP_CHECK_CODE
 
 const char *aws_http_method_to_str(enum aws_http_method method) {
     switch (method) {

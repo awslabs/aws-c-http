@@ -44,10 +44,7 @@ if [ "$BUILD_32BIT" = true ]; then
     cd ..
 
     # Install s2n with specific lib crypto root
-    # For now we are grabbing Henso's workaround for gcc4 32bit build where some inline asm
-    # was using the ebx register, which is not allowed with the -fPIC flag (set in the above
-    # setarch command). Workaround in the more_x86_fixes pull request.
-    git clone https://github.com/awslabs/s2n.git -b more_x86_fixes
+    git clone https://github.com/awslabs/s2n.git
     cd s2n
     mkdir build
     cd build
