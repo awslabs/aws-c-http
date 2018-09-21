@@ -32,7 +32,7 @@ static const char *s_typical_response = "HTTP/1.1 200 OK\r\n"
                                         "\r\n"
                                         "Hello noob.";
 
-static bool s_on_header_stub(struct aws_http_header *header, void *user_data) {
+static bool s_on_header_stub(const struct aws_http_header *header, void *user_data) {
     (void)header;
     (void)user_data;
     return true;
@@ -167,7 +167,7 @@ struct s_header_params {
     const char **header_names;
 };
 
-static inline bool s_got_header(struct aws_http_header *header, void *user_data) {
+static inline bool s_got_header(const struct aws_http_header *header, void *user_data) {
     struct s_header_params *params = (struct s_header_params *)user_data;
     if (params->index < params->max_index) {
         if (params->first_error == AWS_OP_SUCCESS) {

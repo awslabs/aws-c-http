@@ -383,7 +383,7 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
     struct aws_byte_cursor header_name = cursors[0];
     struct aws_byte_cursor header_value = cursors[1];
 
-    struct aws_http_decoded_header header;
+    struct aws_http_header header;
     header.name = aws_http_str_to_header_name(header_name);
     header.name_data = header_name;
     header.value_data = header_value;

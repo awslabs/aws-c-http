@@ -31,9 +31,9 @@ struct aws_http_connection {
 };
 
 static int s_handler_process_read_message(
-        struct aws_channel_handler *handler,
-        struct aws_channel_slot *slot,
-        struct aws_io_message *message) {
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    struct aws_io_message *message) {
     (void)handler;
     (void)slot;
     (void)message;
@@ -44,15 +44,17 @@ static int s_handler_process_read_message(
 
     struct aws_http_connection *connection = (struct aws_http_connection *)handler->impl;
     struct aws_http_decoder *decoder = connection->decoder;
-    int ret = aws_http_decode(decoder, (const void*)message->message_data.buffer, message->message_data.len);
+    size_t bytes_read;
+    int ret =
+        aws_http_decode(decoder, (const void *)message->message_data.buffer, message->message_data.len, &bytes_read);
 
     return ret;
 }
 
 int s_handler_process_write_message(
-        struct aws_channel_handler *handler,
-        struct aws_channel_slot *slot,
-        struct aws_io_message *message) {
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    struct aws_io_message *message) {
     (void)handler;
     (void)slot;
     (void)message;
@@ -66,7 +68,6 @@ int s_handler_increment_read_window(struct aws_channel_handler *handler, struct 
     return AWS_OP_SUCCESS;
 }
 
-
 size_t s_handler_initial_window_size(struct aws_channel_handler *handler) {
     (void)handler;
     return 0;
@@ -77,11 +78,11 @@ void s_handler_destroy(struct aws_channel_handler *handler) {
 }
 
 int s_handler_shutdown(
-        struct aws_channel_handler *handler,
-        struct aws_channel_slot *slot,
-        enum aws_channel_direction dir,
-        int error_code,
-        bool free_scarce_resources_immediately) {
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    enum aws_channel_direction dir,
+    int error_code,
+    bool free_scarce_resources_immediately) {
     (void)handler;
     (void)slot;
     (void)dir;
@@ -90,14 +91,12 @@ int s_handler_shutdown(
     return AWS_OP_SUCCESS;
 }
 
-struct aws_channel_handler_vtable s_channel_handler = {
-    s_handler_process_read_message,
-    s_handler_process_write_message,
-    s_handler_increment_read_window,
-    s_handler_shutdown,
-    s_handler_initial_window_size,
-    s_handler_destroy
-};
+struct aws_channel_handler_vtable s_channel_handler = {s_handler_process_read_message,
+                                                       s_handler_process_write_message,
+                                                       s_handler_increment_read_window,
+                                                       s_handler_shutdown,
+                                                       s_handler_initial_window_size,
+                                                       s_handler_destroy};
 
 int s_client_channel_setup(
     struct aws_client_bootstrap *bootstrap,
@@ -173,7 +172,8 @@ struct aws_http_connection *aws_http_client_connection_new(
     (void)on_body;
     (void)user_data;
 
-    struct aws_http_connection *connection = (struct aws_http_connection *)aws_mem_acquire(alloc, sizeof(struct aws_http_connection));
+    struct aws_http_connection *connection =
+        (struct aws_http_connection *)aws_mem_acquire(alloc, sizeof(struct aws_http_connection));
     if (!connection) {
         return NULL;
     }
@@ -187,7 +187,7 @@ struct aws_http_connection *aws_http_client_connection_new(
     struct aws_channel_handler handler;
     handler.vtable = s_channel_handler;
     handler.alloc = alloc;
-    handler.impl = (void*)connection;
+    handler.impl = (void *)connection;
     connection->handler = handler;
 
     /* Create http streaming decoder. */
@@ -206,23 +206,23 @@ struct aws_http_connection *aws_http_client_connection_new(
 
     if (tls_options) {
         if (aws_client_bootstrap_new_tls_socket_channel(
-            bootstrap,
-            endpoint,
-            socket_options,
-            tls_options,
-            s_client_channel_setup,
-            s_client_channel_shutdown,
-            (void*)connection) != AWS_OP_SUCCESS) {
+                bootstrap,
+                endpoint,
+                socket_options,
+                tls_options,
+                s_client_channel_setup,
+                s_client_channel_shutdown,
+                (void *)connection) != AWS_OP_SUCCESS) {
             goto cleanup;
         }
     } else {
         if (aws_client_bootstrap_new_socket_channel(
-            bootstrap,
-            endpoint,
-            socket_options,
-            s_client_channel_setup,
-            s_client_channel_shutdown,
-            (void*)connection) != AWS_OP_SUCCESS) {
+                bootstrap,
+                endpoint,
+                socket_options,
+                s_client_channel_setup,
+                s_client_channel_shutdown,
+                (void *)connection) != AWS_OP_SUCCESS) {
             goto cleanup;
         }
     }
@@ -247,7 +247,8 @@ struct aws_http_connection *aws_http_server_connection_new(
     (void)on_body;
     (void)user_data;
 
-    struct aws_http_connection *connection = (struct aws_http_connection *)aws_mem_acquire(alloc, sizeof(struct aws_http_connection));
+    struct aws_http_connection *connection =
+        (struct aws_http_connection *)aws_mem_acquire(alloc, sizeof(struct aws_http_connection));
 
     if (!connection) {
         return NULL;
@@ -255,23 +256,19 @@ struct aws_http_connection *aws_http_server_connection_new(
 
     if (tls_options) {
         if (aws_server_bootstrap_add_tls_socket_listener(
-            bootstrap,
-            endpoint,
-            socket_options,
-            tls_options,
-            s_server_channel_setup,
-            s_server_channel_shutdown,
-            NULL) != AWS_OP_SUCCESS) {
+                bootstrap,
+                endpoint,
+                socket_options,
+                tls_options,
+                s_server_channel_setup,
+                s_server_channel_shutdown,
+                NULL) != AWS_OP_SUCCESS) {
             goto cleanup;
         }
     } else {
         if (aws_server_bootstrap_add_socket_listener(
-            bootstrap,
-            endpoint,
-            socket_options,
-            s_server_channel_setup,
-            s_server_channel_shutdown,
-            NULL) != AWS_OP_SUCCESS) {
+                bootstrap, endpoint, socket_options, s_server_channel_setup, s_server_channel_shutdown, NULL) !=
+            AWS_OP_SUCCESS) {
             goto cleanup;
         }
     }

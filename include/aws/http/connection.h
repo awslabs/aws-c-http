@@ -16,8 +16,8 @@
 #ifndef AWS_HTTP_CONNECTION_H
 #define AWS_HTTP_CONNECTION_H
 
+#include <aws/http/decode.h>
 #include <aws/http/http.h>
-#include <aws/http/http_decode.h>
 
 #include <aws/io/channel.h>
 #include <aws/io/channel_bootstrap.h>
@@ -30,7 +30,11 @@ struct aws_http_message;
 /* Detect expect-continue header, stop writing the body to socket, wait for the 100-continue response. */
 
 typedef void(aws_http_on_response_fn)(enum aws_http_code code, void *user_data);
-typedef void(aws_http_on_header_fn)(enum aws_http_header_name name, struct aws_byte_cursor *name_str, struct aws_byte_cursor *value_str, void *user_data);
+typedef void(aws_http_on_header_fn)(
+    enum aws_http_header_name name,
+    struct aws_byte_cursor *name_str,
+    struct aws_byte_cursor *value_str,
+    void *user_data);
 typedef void(aws_http_on_body_fn)(struct aws_byte_cursor data, bool finished, void *user_data);
 
 typedef bool(aws_http_get_body_bytes_fn)(void *buffer, int requested_bytes, int *bytes_written, void *user_data);
