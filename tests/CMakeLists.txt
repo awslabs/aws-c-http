@@ -22,4 +22,12 @@ add_test_case(http_test_extraneous_buffer_data_ensure_not_processed)
 add_test_case(http_test_ignore_transfer_extensions)
 add_test_case(http_test_ignore_chunk_extensions)
 
-generate_test_driver(${CMAKE_PROJECT_NAME}-tests)
+add_test_case(http_test_connection)
+
+set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
+generate_test_driver(${TEST_BINARY_NAME})
+
+#SSL certificates to use for testing.
+add_custom_command(TARGET ${TEST_BINARY_NAME} PRE_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources ${CMAKE_CURRENT_BINARY_DIR})

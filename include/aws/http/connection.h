@@ -29,16 +29,13 @@ struct aws_http_message;
 /* Automatically handle 100-continue? */
 /* Detect expect-continue header, stop writing the body to socket, wait for the 100-continue response. */
 
-typedef void(aws_http_on_response_fn)(enum aws_http_code code, void *user_data);
-typedef void(aws_http_on_header_fn)(
+typedef bool(aws_http_on_response_fn)(enum aws_http_code code, void *user_data);
+typedef bool(aws_http_on_header_fn)(
     enum aws_http_header_name name,
-    struct aws_byte_cursor *name_str,
-    struct aws_byte_cursor *value_str,
+    const struct aws_byte_cursor *name_str,
+    const struct aws_byte_cursor *value_str,
     void *user_data);
-typedef void(aws_http_on_body_fn)(struct aws_byte_cursor data, bool finished, void *user_data);
-
-typedef bool(aws_http_get_body_bytes_fn)(void *buffer, int requested_bytes, int *bytes_written, void *user_data);
-typedef int(aws_http_on_sent_fn)(struct aws_http_message *msg, void *ctx);
+typedef bool(aws_http_on_body_fn)(struct aws_byte_cursor data, bool finished, void *user_data);
 
 struct aws_http_connection;
 
@@ -65,6 +62,9 @@ AWS_HTTP_API struct aws_http_connection *aws_http_server_connection_new(
     aws_http_on_body_fn *on_body,
     void *user_data);
 AWS_HTTP_API void aws_http_connection_destroy(struct aws_http_connection *connection);
+
+typedef bool(aws_http_get_body_bytes_fn)(void *buffer, int requested_bytes, int *bytes_written, void *user_data);
+typedef int(aws_http_on_sent_fn)(struct aws_http_message *msg, void *ctx);
 
 AWS_HTTP_API struct aws_http_message *aws_http_create_message(
     struct aws_http_connection *connection,
