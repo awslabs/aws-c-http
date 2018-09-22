@@ -19,7 +19,6 @@
 #include <aws/http/decode.h>
 #include <aws/http/http.h>
 
-#include <aws/io/channel.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
@@ -38,6 +37,7 @@ typedef bool(aws_http_on_header_fn)(
 typedef bool(aws_http_on_body_fn)(struct aws_byte_cursor data, bool finished, void *user_data);
 
 struct aws_http_connection;
+struct aws_http_message;
 
 #ifdef __cplusplus
 extern "C" {
@@ -63,22 +63,27 @@ AWS_HTTP_API struct aws_http_connection *aws_http_server_connection_new(
     void *user_data);
 AWS_HTTP_API void aws_http_connection_destroy(struct aws_http_connection *connection);
 
+typedef bool(
+    aws_http_get_header_fn)(const struct aws_byte_cursor **name, const struct aws_byte_cursor **value, void *user_data);
 typedef bool(aws_http_get_body_bytes_fn)(void *buffer, int requested_bytes, int *bytes_written, void *user_data);
-typedef int(aws_http_on_sent_fn)(struct aws_http_message *msg, void *ctx);
+typedef int(aws_http_on_sent_fn)(struct aws_http_message *msg, void *user_data);
 
-AWS_HTTP_API struct aws_http_message *aws_http_create_message(
+AWS_HTTP_API int aws_http_send_request(
     struct aws_http_connection *connection,
+    aws_http_get_header_fn *get_header,
     aws_http_get_body_bytes_fn *get_body,
     aws_http_on_sent_fn *on_sent,
-    void *ctx);
-AWS_HTTP_API int aws_http_message_set_response_code(struct aws_http_message *msg, enum aws_http_code code);
-AWS_HTTP_API int aws_http_message_set_method(struct aws_http_message *msg, enum aws_http_method method);
-AWS_HTTP_API int aws_http_message_set_uri(struct aws_http_message *msg, struct aws_byte_cursor uri);
-AWS_HTTP_API int aws_http_message_add_header(
-    struct aws_http_message *msg,
-    struct aws_byte_cursor name,
-    struct aws_byte_cursor value);
-AWS_HTTP_API int aws_http_message_send(struct aws_http_message *msg, void *user_data);
+    enum aws_http_method method,
+    const struct aws_byte_cursor *uri,
+    void *user_data);
+
+AWS_HTTP_API int aws_http_send_response(
+    struct aws_http_connection *connection,
+    aws_http_get_header_fn *get_header,
+    aws_http_get_body_bytes_fn *get_body,
+    aws_http_on_sent_fn *on_sent,
+    enum aws_http_code code,
+    void *user_data);
 
 #ifdef __cplusplus
 }

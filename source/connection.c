@@ -15,12 +15,17 @@
 
 #include <aws/common/byte_buf.h>
 
+#include <aws/io/channel.h>
+#include <aws/io/message_pool.h>
+
 #include <aws/http/connection.h>
 #include <aws/http/decode.h>
 
 struct aws_http_connection {
     struct aws_byte_buf scratch_space;
+    struct aws_memory_pool message_pool;
     struct aws_channel_handler handler;
+    struct aws_channel *channel;
     struct aws_channel_slot *slot;
     struct aws_http_decoder *decoder;
     aws_http_on_response_fn *on_response;
@@ -28,6 +33,27 @@ struct aws_http_connection {
     aws_http_on_body_fn *on_body;
     struct aws_socket_endpoint *endpoint;
     struct aws_socket *listener;
+    void *user_data;
+};
+
+struct aws_http_send_request_args {
+    struct aws_http_connection *connection;
+    struct aws_task task;
+    aws_http_get_header_fn *get_header;
+    aws_http_get_body_bytes_fn *get_body;
+    aws_http_on_sent_fn *on_sent;
+    enum aws_http_method method;
+    const struct aws_byte_cursor *uri;
+    void *user_data;
+};
+
+struct aws_http_send_response_args {
+    struct aws_http_connection *connection;
+    struct aws_task task;
+    aws_http_get_header_fn *get_header;
+    aws_http_get_body_bytes_fn *get_body;
+    aws_http_on_sent_fn *on_sent;
+    enum aws_http_code code;
     void *user_data;
 };
 
@@ -144,6 +170,7 @@ int s_client_channel_setup(
         return AWS_OP_ERR;
     }
     connection->slot = slot;
+    connection->channel = slot->channel;
 
     aws_channel_slot_insert_end(channel, connection->slot);
     aws_channel_slot_set_handler(connection->slot, &connection->handler);
@@ -248,6 +275,11 @@ struct aws_http_connection *aws_http_client_connection_new(
         return NULL;
     }
 
+    if (aws_memory_pool_init(
+            &connection->message_pool, alloc, 32, sizeof(struct aws_http_send_request_args) != AWS_OP_SUCCESS)) {
+        goto cleanup;
+    }
+
     if (tls_options) {
         if (aws_client_bootstrap_new_tls_socket_channel(
                 bootstrap,
@@ -294,6 +326,11 @@ struct aws_http_connection *aws_http_server_connection_new(
         return NULL;
     }
 
+    if (aws_memory_pool_init(
+            &connection->message_pool, alloc, 32, sizeof(struct aws_http_send_response_args) != AWS_OP_SUCCESS)) {
+        goto cleanup;
+    }
+
     struct aws_socket *listener;
     if (tls_options) {
         listener = aws_server_bootstrap_add_tls_socket_listener(
@@ -318,10 +355,81 @@ struct aws_http_connection *aws_http_server_connection_new(
 
 cleanup:
     aws_byte_buf_clean_up(&connection->scratch_space);
+    aws_memory_pool_clean_up(&connection->message_pool);
     aws_mem_release(alloc, connection);
     return NULL;
 }
 
 void aws_http_connection_destroy(struct aws_http_connection *connection) {
     (void)connection;
+}
+
+static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        return;
+    }
+
+    /*
+     * Set up and buffer the method/uri/version
+     * Gather up all the headers until the callback says stop
+     *  track if it's chunked or not
+     * Gather up the body until says stop
+     * Ask for headers once more
+     */
+
+    struct aws_http_send_request_args *request_args = (struct aws_http_send_request_args *)arg;
+    struct aws_http_connection *connection = request_args->connection;
+
+    struct aws_io_message *msg =
+        aws_channel_acquire_message_from_pool(connection->channel, AWS_IO_MESSAGE_APPLICATION_DATA, 10);
+    struct aws_byte_cursor msg_data = aws_byte_cursor_from_array(msg->message_data.buffer, msg->message_data.capacity);
+    (void)msg_data;
+
+    /* In a loop pump headers into io messages and send them along. */
+
+    aws_channel_slot_send_message(connection->slot, msg, AWS_CHANNEL_DIR_WRITE);
+}
+
+int aws_http_send_request(
+    struct aws_http_connection *connection,
+    aws_http_get_header_fn *get_header,
+    aws_http_get_body_bytes_fn *get_body,
+    aws_http_on_sent_fn *on_sent,
+    enum aws_http_method method,
+    const struct aws_byte_cursor *uri,
+    void *user_data) {
+
+    struct aws_http_send_request_args *request_args =
+        (struct aws_http_send_request_args *)aws_memory_pool_acquire(&connection->message_pool);
+    if (!request_args) {
+        return AWS_OP_ERR;
+    }
+
+    request_args->connection = connection;
+    request_args->get_header = get_header;
+    request_args->get_body = get_body;
+    request_args->on_sent = on_sent;
+    request_args->method = method;
+    request_args->uri = uri;
+    request_args->user_data = user_data;
+    aws_task_init(&request_args->task, s_send_request_task, (void *)&request_args);
+
+    if (!aws_channel_thread_is_callers_thread(connection->channel)) {
+        aws_channel_schedule_task_now(connection->channel, &request_args->task);
+    } else {
+        s_send_request_task(&request_args->task, (void *)request_args, AWS_TASK_STATUS_RUN_READY);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+AWS_HTTP_API int aws_http_send_response(
+    struct aws_http_connection *connection,
+    aws_http_get_header_fn *get_header,
+    aws_http_get_body_bytes_fn *get_body,
+    aws_http_on_sent_fn *on_sent,
+    enum aws_http_code code,
+    void *user_data) {
+    (void)connection;
+    return AWS_OP_SUCCESS;
 }
