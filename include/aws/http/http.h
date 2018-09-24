@@ -188,6 +188,11 @@ enum aws_http_code {
     AWS_HTTP_CODE_NETWORK_CONNECT_TIMEOUT = 599
 };
 
+struct aws_http_header {
+    struct aws_byte_cursor name;
+    struct aws_byte_cursor value;
+};
+
 #ifdef __cplusplus
 extern "C" {
 #endif

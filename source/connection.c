@@ -25,7 +25,6 @@ struct aws_http_connection {
     struct aws_http_connection_callbacks callbacks;
     struct aws_byte_buf scratch_space;
     struct aws_memory_pool message_pool;
-    uint64_t msg_id_gen;
     struct aws_channel_handler handler;
     struct aws_channel *channel;
     struct aws_channel_slot *slot;
@@ -50,16 +49,20 @@ struct aws_http_send_response_args {
     enum aws_http_code code;
 };
 
-bool s_decoder_on_header(const struct aws_http_header *header, void *user_data) {
+bool s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
     struct aws_http_connection *connection = (struct aws_http_connection *)user_data;
-    connection->callbacks.on_read_header(header->name, &header->name_data, &header->value_data, connection->user_data);
+    struct aws_http_header h;
+    h.name = header->name_data;
+    h.value = header->value_data;
+    connection->callbacks.on_read_header(&h, connection->user_data);
     return true;
 }
 
 bool s_decoder_on_body(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
     struct aws_http_connection *connection = (struct aws_http_connection *)user_data;
-    connection->callbacks.on_read_body(data, last_segment, connection->user_data);
-    return true;
+    bool can_release;
+    bool dont_terminate = connection->callbacks.on_read_body(data, last_segment, &can_release, connection->user_data);
+    return dont_terminate;
 }
 
 static int s_handler_process_read_message(
@@ -173,6 +176,7 @@ int s_client_channel_setup(
     return AWS_OP_SUCCESS;
 }
 
+/* TODO (randgaul): Implement this. */
 int s_client_channel_shutdown(
     struct aws_client_bootstrap *bootstrap,
     int error_code,
@@ -185,6 +189,7 @@ int s_client_channel_shutdown(
     return 0;
 }
 
+/* TODO (randgaul): Implement this. */
 int s_server_channel_setup(
     struct aws_server_bootstrap *bootstrap,
     int error_code,
@@ -197,6 +202,7 @@ int s_server_channel_setup(
     return AWS_OP_SUCCESS;
 }
 
+/* TODO (randgaul): Implement this. */
 int s_server_channel_shutdown(
     struct aws_server_bootstrap *bootstrap,
     int error_code,
@@ -220,7 +226,6 @@ static struct aws_http_connection *s_connection_new(
     }
 
     connection->callbacks = *user_callbacks;
-    connection->msg_id_gen = 0;
 
     /* Scratch space for the streaming decoder. */
     if (aws_byte_buf_init(alloc, &connection->scratch_space, 1024) != AWS_OP_SUCCESS) {
@@ -352,6 +357,7 @@ cleanup:
     return NULL;
 }
 
+/* TODO (randgaul): Implement this. */
 void aws_http_connection_destroy(struct aws_http_connection *connection) {
     (void)connection;
 }
@@ -393,8 +399,7 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
 int aws_http_send_request(
     struct aws_http_connection *connection,
     enum aws_http_method method,
-    const struct aws_byte_cursor *uri,
-    uint64_t *msg_id) {
+    const struct aws_byte_cursor *uri) {
 
     struct aws_http_send_request_args *request_args =
         (struct aws_http_send_request_args *)aws_memory_pool_acquire(&connection->message_pool);
@@ -403,7 +408,6 @@ int aws_http_send_request(
     }
 
     request_args->connection = connection;
-    *msg_id = request_args->msg_id = connection->msg_id_gen++;
     request_args->method = method;
     request_args->uri = uri;
     aws_task_init(&request_args->task, s_send_request_task, (void *)&request_args);
@@ -417,12 +421,33 @@ int aws_http_send_request(
     return AWS_OP_SUCCESS;
 }
 
-AWS_HTTP_API int aws_http_send_response(
-    struct aws_http_connection *connection,
-    enum aws_http_code code,
-    uint64_t *msg_id) {
+/* TODO (randgaul): Implement this. */
+int aws_http_send_response(struct aws_http_connection *connection, enum aws_http_code code) {
     (void)connection;
     (void)code;
-    (void)msg_id;
+    return AWS_OP_SUCCESS;
+}
+
+/* TODO (randgaul): Implement this. */
+void aws_http_send_headers(const struct aws_http_header *headers, int header_count) {
+    (void)headers;
+    (void)header_count;
+}
+
+/* TODO (randgaul): Implement this. */
+int aws_http_send_body_segment(
+    struct aws_byte_cursor *segment,
+    bool final_segment,
+    void (*on_segment_written)(void *user_data)) {
+    (void)segment;
+    (void)final_segment;
+    (void)on_segment_written;
+    return AWS_OP_SUCCESS;
+}
+
+/* TODO (randgaul): Implement this. */
+int aws_http_release_body_data(struct aws_http_connection *connection, size_t bytes) {
+    (void)connection;
+    (void)bytes;
     return AWS_OP_SUCCESS;
 }

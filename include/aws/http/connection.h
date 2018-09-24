@@ -42,45 +42,18 @@ struct aws_http_connection_callbacks {
 
     /**
      * Called when a header is available for reading from the connection.
-     * The `name` and `value` pointers are not valid after this callback returns.
+     * The `headers` pointer is not valid after this callback returns.
      */
-    void (*on_read_header)(
-        enum aws_http_header_name name_enum,
-        const struct aws_byte_cursor *name,
-        const struct aws_byte_cursor *value,
-        void *user_data);
+    void (*on_read_header)(const struct aws_http_header *headers, void *user_data);
 
     /**
-     * Called when body data is ready for reading. Return true to let the underlying io you have finished reading
-     * `data`, and false for the io to hold onto the buffered data until `aws_http_release_body_data` is called.
-     * `last_segment` is true if this is the final chunk of the body data for the http message.
+     * Called when body data is ready for reading. Set `release_message` to true to let the connection know you are done
+     * reading from the `data` pointer, and false for the connection to hold onto the buffered data until
+     * `aws_http_release_body_data` is called. `last_segment` is true if this is the final chunk of the body data for
+     * the http message. Return false to immediately terminate and place the connection in an invalid state, ready for
+     * `aws_http_connection_destroy`.
      */
-    void (*on_read_body)(const struct aws_byte_cursor *data, bool last_segment, void *user_data);
-
-    /**
-     * Called when the underlying io is ready to write headers after a call to `aws_http_send_request` or
-     * `aws_http_send_response` is called. Set `*names`, and `*values` to point to two different arrays.
-     * Set `*count` to the length of the arrays.
-     */
-    void (*on_write_headers)(
-        const struct aws_byte_cursor **names,
-        const struct aws_byte_cursor **values,
-        int *count,
-        void *user_data);
-
-    /**
-     * Called when the underlying io is ready to write headers after a call to `aws_http_send_request` or
-     * `aws_http_send_response` is called, and the underlying io is ready to write body data, up to `buffer_size`
-     * bytes. Copy in data to the `buffer` pointer`, and specify how many bytes were written with `bytes_written`.
-     * Let the io know if this callback has written the final chunk of body data returning true.
-     */
-    bool (*on_write_body)(void *buffer, int buffer_size, int *bytes_written, void *user_data);
-
-    /**
-     * Called when the underlying io has completely finished writing the final byte of an http message to the
-     * underlying io.
-     */
-    int (*on_sent)(uint64_t msg_id, void *user_data);
+    bool (*on_read_body)(const struct aws_byte_cursor *data, bool last_segment, bool *release_message, void *user_data);
 };
 
 struct aws_http_connection;
@@ -111,13 +84,18 @@ AWS_HTTP_API void aws_http_connection_destroy(struct aws_http_connection *connec
 AWS_HTTP_API int aws_http_send_request(
     struct aws_http_connection *connection,
     enum aws_http_method method,
-    const struct aws_byte_cursor *uri,
-    uint64_t *msg_id);
+    const struct aws_byte_cursor *uri);
 
-AWS_HTTP_API int aws_http_send_response(
-    struct aws_http_connection *connection,
-    enum aws_http_code code,
-    uint64_t *msg_id);
+AWS_HTTP_API int aws_http_send_response(struct aws_http_connection *connection, enum aws_http_code code);
+
+AWS_HTTP_API void aws_http_send_headers(const struct aws_http_header *headers, int header_count);
+
+AWS_HTTP_API int aws_http_send_body_segment(
+    struct aws_byte_cursor *segment,
+    bool final_segment,
+    void (*on_segment_written)(void *user_data));
+
+AWS_HTTP_API int aws_http_release_body_data(struct aws_http_connection *connection, size_t bytes);
 
 #ifdef __cplusplus
 }

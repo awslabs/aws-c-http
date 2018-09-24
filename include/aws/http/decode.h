@@ -18,7 +18,7 @@
 
 #include <aws/http/http.h>
 
-struct aws_http_header {
+struct aws_http_decoded_header {
     /* Name of the header. If the type is `AWS_HTTP_HEADER_NAME_UNKNOWN` then `name_data` must be parsed manually. */
     enum aws_http_header_name name;
 
@@ -38,7 +38,7 @@ struct aws_http_header {
  * Return true to keep decoding, or false to immediately stop decoding and place the decoder in an invalid state, where
  * the only valid operation is to destroy the decoder with `aws_http_decoder_destroy`.
  */
-typedef bool(aws_http_decoder_on_header_fn)(const struct aws_http_header *header, void *user_data);
+typedef bool(aws_http_decoder_on_header_fn)(const struct aws_http_decoded_header *header, void *user_data);
 
 /**
  * Called from `aws_http_decode` when a portion of the http body has been received.
