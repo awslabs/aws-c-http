@@ -41,9 +41,9 @@ bool s_on_header_stub(
     return true;
 }
 
-bool s_on_body_stub(struct aws_byte_cursor data, bool finished, void *user_data) {
+bool s_on_body_stub(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
     (void)data;
-    (void)finished;
+    (void)last_segment;
     (void)user_data;
     return true;
 }
@@ -104,26 +104,14 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     ASSERT_SUCCESS(aws_server_bootstrap_set_tls_ctx(&server_bootstrap, server_tls_ctx));
 
     /* Setup HTTP connections. */
+    struct aws_http_connection_callbacks callbacks;
+
     struct aws_http_connection *server_connection = aws_http_server_connection_new(
-        allocator,
-        &endpoint,
-        &socket_options,
-        &tls_server_conn_options,
-        &server_bootstrap,
-        s_on_header_stub,
-        s_on_body_stub,
-        NULL);
+        allocator, &endpoint, &socket_options, &tls_server_conn_options, &server_bootstrap, &callbacks, NULL);
     (void)server_connection;
 
     struct aws_http_connection *client_connection = aws_http_client_connection_new(
-        allocator,
-        &endpoint,
-        &socket_options,
-        &tls_client_conn_options,
-        &client_bootstrap,
-        s_on_header_stub,
-        s_on_body_stub,
-        NULL);
+        allocator, &endpoint, &socket_options, &tls_client_conn_options, &client_bootstrap, &callbacks, NULL);
     (void)client_connection;
 
     /* Cleanup. */

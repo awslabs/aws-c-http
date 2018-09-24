@@ -22,15 +22,14 @@
 #include <aws/http/decode.h>
 
 struct aws_http_connection {
+    struct aws_http_connection_callbacks callbacks;
     struct aws_byte_buf scratch_space;
     struct aws_memory_pool message_pool;
+    uint64_t msg_id_gen;
     struct aws_channel_handler handler;
     struct aws_channel *channel;
     struct aws_channel_slot *slot;
     struct aws_http_decoder *decoder;
-    aws_http_on_response_fn *on_response;
-    aws_http_on_header_fn *on_header;
-    aws_http_on_body_fn *on_body;
     struct aws_socket_endpoint *endpoint;
     struct aws_socket *listener;
     void *user_data;
@@ -38,33 +37,29 @@ struct aws_http_connection {
 
 struct aws_http_send_request_args {
     struct aws_http_connection *connection;
+    uint64_t msg_id;
     struct aws_task task;
-    aws_http_get_header_fn *get_header;
-    aws_http_get_body_bytes_fn *get_body;
-    aws_http_on_sent_fn *on_sent;
     enum aws_http_method method;
     const struct aws_byte_cursor *uri;
-    void *user_data;
 };
 
 struct aws_http_send_response_args {
     struct aws_http_connection *connection;
+    uint64_t msg_id;
     struct aws_task task;
-    aws_http_get_header_fn *get_header;
-    aws_http_get_body_bytes_fn *get_body;
-    aws_http_on_sent_fn *on_sent;
     enum aws_http_code code;
-    void *user_data;
 };
 
 bool s_decoder_on_header(const struct aws_http_header *header, void *user_data) {
     struct aws_http_connection *connection = (struct aws_http_connection *)user_data;
-    return connection->on_header(header->name, &header->name_data, &header->value_data, connection->user_data);
+    connection->callbacks.on_read_header(header->name, &header->name_data, &header->value_data, connection->user_data);
+    return true;
 }
 
-bool s_decoder_on_body(struct aws_byte_cursor data, bool finished, void *user_data) {
+bool s_decoder_on_body(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
     struct aws_http_connection *connection = (struct aws_http_connection *)user_data;
-    return connection->on_body(data, finished, connection->user_data);
+    connection->callbacks.on_read_body(data, last_segment, connection->user_data);
+    return true;
 }
 
 static int s_handler_process_read_message(
@@ -216,8 +211,7 @@ int s_server_channel_shutdown(
 
 static struct aws_http_connection *s_connection_new(
     struct aws_allocator *alloc,
-    aws_http_on_header_fn *on_header,
-    aws_http_on_body_fn *on_body,
+    struct aws_http_connection_callbacks *user_callbacks,
     void *user_data) {
     struct aws_http_connection *connection =
         (struct aws_http_connection *)aws_mem_acquire(alloc, sizeof(struct aws_http_connection));
@@ -225,8 +219,8 @@ static struct aws_http_connection *s_connection_new(
         return NULL;
     }
 
-    connection->on_header = on_header;
-    connection->on_body = on_body;
+    connection->callbacks = *user_callbacks;
+    connection->msg_id_gen = 0;
 
     /* Scratch space for the streaming decoder. */
     if (aws_byte_buf_init(alloc, &connection->scratch_space, 1024) != AWS_OP_SUCCESS) {
@@ -244,8 +238,8 @@ static struct aws_http_connection *s_connection_new(
     struct aws_http_decoder_params params;
     params.alloc = alloc;
     params.scratch_space = connection->scratch_space;
-    params.on_header = NULL;
-    params.on_body = NULL;
+    params.on_header = s_decoder_on_header; /* TODO (randgaul): Can't be null, hookup to user_callbacks. */
+    params.on_body = s_decoder_on_body;
     params.true_for_request_false_for_response = true;
     params.user_data = (void *)connection;
     struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
@@ -266,11 +260,10 @@ struct aws_http_connection *aws_http_client_connection_new(
     struct aws_socket_options *socket_options,
     struct aws_tls_connection_options *tls_options,
     struct aws_client_bootstrap *bootstrap,
-    aws_http_on_header_fn *on_header,
-    aws_http_on_body_fn *on_body,
+    struct aws_http_connection_callbacks *user_callbacks,
     void *user_data) {
 
-    struct aws_http_connection *connection = s_connection_new(alloc, on_header, on_body, user_data);
+    struct aws_http_connection *connection = s_connection_new(alloc, user_callbacks, user_data);
     if (!connection) {
         return NULL;
     }
@@ -317,11 +310,10 @@ struct aws_http_connection *aws_http_server_connection_new(
     struct aws_socket_options *socket_options,
     struct aws_tls_connection_options *tls_options,
     struct aws_server_bootstrap *bootstrap,
-    aws_http_on_header_fn *on_header,
-    aws_http_on_body_fn *on_body,
+    struct aws_http_connection_callbacks *user_callbacks,
     void *user_data) {
 
-    struct aws_http_connection *connection = s_connection_new(alloc, on_header, on_body, user_data);
+    struct aws_http_connection *connection = s_connection_new(alloc, user_callbacks, user_data);
     if (!connection) {
         return NULL;
     }
@@ -369,12 +361,20 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
         return;
     }
 
+    (void)task;
+
     /*
      * Set up and buffer the method/uri/version
      * Gather up all the headers until the callback says stop
      *  track if it's chunked or not
      * Gather up the body until says stop
      * Ask for headers once more
+     */
+
+    /*
+     * Some open questions
+     * Should the API automagically handle chunked encoding
+     * Where does this update-window stuff come into play?
      */
 
     struct aws_http_send_request_args *request_args = (struct aws_http_send_request_args *)arg;
@@ -392,12 +392,9 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
 
 int aws_http_send_request(
     struct aws_http_connection *connection,
-    aws_http_get_header_fn *get_header,
-    aws_http_get_body_bytes_fn *get_body,
-    aws_http_on_sent_fn *on_sent,
     enum aws_http_method method,
     const struct aws_byte_cursor *uri,
-    void *user_data) {
+    uint64_t *msg_id) {
 
     struct aws_http_send_request_args *request_args =
         (struct aws_http_send_request_args *)aws_memory_pool_acquire(&connection->message_pool);
@@ -406,12 +403,9 @@ int aws_http_send_request(
     }
 
     request_args->connection = connection;
-    request_args->get_header = get_header;
-    request_args->get_body = get_body;
-    request_args->on_sent = on_sent;
+    *msg_id = request_args->msg_id = connection->msg_id_gen++;
     request_args->method = method;
     request_args->uri = uri;
-    request_args->user_data = user_data;
     aws_task_init(&request_args->task, s_send_request_task, (void *)&request_args);
 
     if (!aws_channel_thread_is_callers_thread(connection->channel)) {
@@ -425,11 +419,10 @@ int aws_http_send_request(
 
 AWS_HTTP_API int aws_http_send_response(
     struct aws_http_connection *connection,
-    aws_http_get_header_fn *get_header,
-    aws_http_get_body_bytes_fn *get_body,
-    aws_http_on_sent_fn *on_sent,
     enum aws_http_code code,
-    void *user_data) {
+    uint64_t *msg_id) {
     (void)connection;
+    (void)code;
+    (void)msg_id;
     return AWS_OP_SUCCESS;
 }

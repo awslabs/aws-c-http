@@ -48,7 +48,7 @@ typedef bool(aws_http_decoder_on_header_fn)(const struct aws_http_header *header
  * the only valid operation is to destroy or reset the decoder with `aws_http_decoder_destroy` or
  * `aws_http_decoder_reset`.
  */
-typedef bool(aws_http_decoder_on_body_fn)(struct aws_byte_cursor data, bool finished, void *user_data);
+typedef bool(aws_http_decoder_on_body_fn)(const struct aws_byte_cursor *data, bool finished, void *user_data);
 
 /**
  * Structure used to initialize an `aws_http_decoder`.

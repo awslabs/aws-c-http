@@ -38,7 +38,7 @@ static bool s_on_header_stub(const struct aws_http_header *header, void *user_da
     return true;
 }
 
-static bool s_on_body_stub(struct aws_byte_cursor data, bool finished, void *user_data) {
+static bool s_on_body_stub(const struct aws_byte_cursor *data, bool finished, void *user_data) {
     (void)data;
     (void)finished;
     (void)user_data;
@@ -285,12 +285,12 @@ struct s_body_params {
     struct aws_array_list body_data;
 };
 
-static bool s_on_body(struct aws_byte_cursor data, bool finished, void *user_data) {
+static bool s_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data) {
     (void)finished;
 
     struct s_body_params *params = (struct s_body_params *)user_data;
-    for (int i = 0; i < (int)data.len; ++i) {
-        aws_array_list_push_back(&params->body_data, data.ptr + i);
+    for (int i = 0; i < (int)data->len; ++i) {
+        aws_array_list_push_back(&params->body_data, data->ptr + i);
     }
 
     return true;

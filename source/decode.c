@@ -245,7 +245,7 @@ static int s_state_unchunked(struct aws_http_decoder *decoder, struct aws_byte_c
 
     bool finished = decoder->content_processed == decoder->content_length;
     struct aws_byte_cursor body = aws_byte_cursor_from_array(input.ptr, decoder->content_length);
-    if (!decoder->on_body(body, finished, decoder->user_data)) {
+    if (!decoder->on_body(&body, finished, decoder->user_data)) {
         return aws_raise_error(AWS_ERROR_HTTP_USER_CALLBACK_EXIT);
     }
 
@@ -297,7 +297,7 @@ static int s_state_chunk(struct aws_http_decoder *decoder, struct aws_byte_curso
 
     bool finished = decoder->chunk_processed == decoder->chunk_size;
     struct aws_byte_cursor body = aws_byte_cursor_from_array(input.ptr, decoder->chunk_size);
-    if (!decoder->on_body(body, false, decoder->user_data)) {
+    if (!decoder->on_body(&body, false, decoder->user_data)) {
         return aws_raise_error(AWS_ERROR_HTTP_USER_CALLBACK_EXIT);
     }
 
@@ -329,7 +329,7 @@ static int s_state_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_
         struct aws_byte_cursor cursor;
         cursor.ptr = NULL;
         cursor.len = 0;
-        if (!decoder->on_body(cursor, true, decoder->user_data)) {
+        if (!decoder->on_body(&cursor, true, decoder->user_data)) {
             return aws_raise_error(AWS_ERROR_HTTP_USER_CALLBACK_EXIT);
         }
 
