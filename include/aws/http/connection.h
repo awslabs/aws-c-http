@@ -100,6 +100,7 @@ AWS_HTTP_API int aws_http_send_headers(
     struct aws_http_connection *connection,
     const struct aws_http_header *headers,
     int header_count,
+    bool final_headers,
     aws_http_promise_fn *on_headers_written);
 
 AWS_HTTP_API int aws_http_send_body_segment(
@@ -109,6 +110,8 @@ AWS_HTTP_API int aws_http_send_body_segment(
     aws_http_promise_fn *on_segment_written);
 
 AWS_HTTP_API int aws_http_release_body_data(struct aws_http_connection *connection, size_t bytes);
+
+AWS_HTTP_API int aws_http_flush(struct aws_http_connection *connection);
 
 #ifdef __cplusplus
 }

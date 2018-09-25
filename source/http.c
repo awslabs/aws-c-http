@@ -39,6 +39,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_INVALID_PARSE_STATE,
         "Decoding/parsing was ran while the decoder object was in a poor state -- make sure to properly check for error codes before running the decoder."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_NO_DATA_BUFFERED,
+        "`aws_http_release_body_data` cannot be called if there is no readable data buffered on the http connection."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_END_RANGE,
         "Not a real error and should never be seen."),
 };

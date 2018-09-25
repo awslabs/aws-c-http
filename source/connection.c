@@ -21,6 +21,8 @@
 #include <aws/http/connection.h>
 #include <aws/http/decode.h>
 
+#include <stdio.h>
+
 struct aws_http_connection {
     struct aws_http_connection_callbacks callbacks;
     struct aws_byte_buf decoder_scratch_space;
@@ -29,6 +31,8 @@ struct aws_http_connection {
     struct aws_channel *channel;
     struct aws_channel_slot *slot;
     struct aws_http_decoder *decoder;
+    size_t bytes_unreleased;
+    struct aws_array_list backpressure_messages;
     struct aws_socket_endpoint *endpoint;
     struct aws_socket *listener;
     size_t initial_window_size;
@@ -38,6 +42,11 @@ struct aws_http_connection {
 struct aws_http_body_segment {
     struct aws_byte_cursor data;
     bool final_segment;
+};
+
+struct aws_http_header_batch {
+    struct aws_array_list headers;
+    bool final_headers;
 };
 
 struct aws_http_task_args {
@@ -51,12 +60,17 @@ struct aws_http_task_args {
         enum aws_http_method method;
         const struct aws_byte_cursor *uri;
         enum aws_http_code code;
-        struct aws_array_list headers;
         struct aws_http_body_segment body_segment;
+        struct aws_http_header_batch header_batch;
     } u;
 };
 
-bool s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
+struct aws_http_backpressure_message {
+    struct aws_io_message *msg;
+    size_t bytes_unreleased;
+};
+
+static bool s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
     struct aws_http_connection *connection = (struct aws_http_connection *)user_data;
     struct aws_http_header h;
     h.name = header->name_data;
@@ -65,10 +79,13 @@ bool s_decoder_on_header(const struct aws_http_decoded_header *header, void *use
     return true;
 }
 
-bool s_decoder_on_body(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
+static bool s_decoder_on_body(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
     struct aws_http_connection *connection = (struct aws_http_connection *)user_data;
     bool can_release;
     bool dont_terminate = connection->callbacks.on_body(data, last_segment, &can_release, connection->user_data);
+    if (!can_release) {
+        connection->bytes_unreleased += data->len;
+    }
     return dont_terminate;
 }
 
@@ -89,56 +106,66 @@ static int s_handler_process_read_message(
     struct aws_http_decoder *decoder = connection->decoder;
 
     struct aws_byte_cursor data = aws_byte_cursor_from_buf(&message->message_data);
-    int ret;
     size_t total = 0;
     while (total < data.len) {
         size_t bytes_read;
-        ret = aws_http_decode(decoder, (const void *)data.ptr, data.len, &bytes_read);
+        int ret = aws_http_decode(decoder, (const void *)data.ptr, data.len, &bytes_read);
         total += bytes_read;
         if (ret != AWS_OP_SUCCESS) {
-            /* TODO (randgaul): Figure out what to do here on decode error. */
-            break;
+            return ret;
         }
     }
 
     /* Cleanup channel message. */
-    aws_channel_slot_increment_read_window(slot, message->message_data.len);
-    if (ret == AWS_OP_SUCCESS) {
+    if (connection->bytes_unreleased == 0) {
+        aws_channel_slot_increment_read_window(slot, message->message_data.len);
         aws_channel_release_message_to_pool(slot->channel, message);
+    } else {
+        /* Queue message up until the user calls `aws_http_release_body_data`. */
+        struct aws_http_backpressure_message backpressure_message;
+        backpressure_message.msg = message;
+        backpressure_message.bytes_unreleased = connection->bytes_unreleased;
+        aws_array_list_push_back(&connection->backpressure_messages, &backpressure_message);
     }
+
+    connection->bytes_unreleased = 0;
 
     return AWS_OP_SUCCESS;
 }
 
-int s_handler_process_write_message(
+static int s_handler_process_write_message(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
     struct aws_io_message *message) {
     (void)handler;
     (void)slot;
     (void)message;
-    return AWS_OP_SUCCESS;
+    assert(false); /* Should not be called until websocket stuff comes along. */
+    return AWS_OP_ERR;
 }
 
-/* TODO (randgaul): Implement this. */
-int s_handler_increment_read_window(struct aws_channel_handler *handler, struct aws_channel_slot *slot, size_t size) {
+static int s_handler_increment_read_window(
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    size_t size) {
     (void)handler;
     (void)slot;
     (void)size;
-    return AWS_OP_SUCCESS;
+    assert(false); /* Should not be called until websocket stuff comes along. */
+    return AWS_OP_ERR;
 }
 
-size_t s_handler_initial_window_size(struct aws_channel_handler *handler) {
+static size_t s_handler_initial_window_size(struct aws_channel_handler *handler) {
     struct aws_http_connection *connection = (struct aws_http_connection *)handler->impl;
     return connection->initial_window_size;
 }
 
 /* TODO (randgaul): Implement this. */
-void s_handler_destroy(struct aws_channel_handler *handler) {
+static void s_handler_destroy(struct aws_channel_handler *handler) {
     (void)handler;
 }
 
-int s_handler_shutdown(
+static int s_handler_shutdown(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
     enum aws_channel_direction dir,
@@ -152,28 +179,22 @@ int s_handler_shutdown(
     return AWS_OP_SUCCESS;
 }
 
-struct aws_channel_handler_vtable s_channel_handler = {s_handler_process_read_message,
-                                                       s_handler_process_write_message,
-                                                       s_handler_increment_read_window,
-                                                       s_handler_shutdown,
-                                                       s_handler_initial_window_size,
-                                                       s_handler_destroy};
+static struct aws_channel_handler_vtable s_channel_handler = {s_handler_process_read_message,
+                                                              s_handler_process_write_message,
+                                                              s_handler_increment_read_window,
+                                                              s_handler_shutdown,
+                                                              s_handler_initial_window_size,
+                                                              s_handler_destroy};
 
-int s_client_channel_setup(
-    struct aws_client_bootstrap *bootstrap,
-    int error_code,
-    struct aws_channel *channel,
-    void *user_data) {
-    (void)bootstrap;
-    (void)error_code;
-    (void)channel;
-    (void)user_data;
+static int s_channel_setup(int error_code, struct aws_channel *channel, void *user_data) {
+    if (error_code != AWS_OP_SUCCESS) {
+        return AWS_OP_ERR;
+    }
 
     struct aws_http_connection *connection = (struct aws_http_connection *)user_data;
 
     struct aws_channel_slot *slot = aws_channel_slot_new(channel);
     if (!slot) {
-        /* TODO (randgaul): Report error somehow. */
         return AWS_OP_ERR;
     }
     connection->slot = slot;
@@ -185,22 +206,18 @@ int s_client_channel_setup(
     return AWS_OP_SUCCESS;
 }
 
-/* TODO (randgaul): Implement this. */
-int s_client_channel_shutdown(
+static int s_client_channel_setup(
     struct aws_client_bootstrap *bootstrap,
     int error_code,
     struct aws_channel *channel,
     void *user_data) {
     (void)bootstrap;
-    (void)error_code;
-    (void)channel;
-    (void)user_data;
-    return 0;
+    return s_channel_setup(error_code, channel, user_data);
 }
 
 /* TODO (randgaul): Implement this. */
-int s_server_channel_setup(
-    struct aws_server_bootstrap *bootstrap,
+static int s_client_channel_shutdown(
+    struct aws_client_bootstrap *bootstrap,
     int error_code,
     struct aws_channel *channel,
     void *user_data) {
@@ -211,8 +228,17 @@ int s_server_channel_setup(
     return AWS_OP_SUCCESS;
 }
 
+static int s_server_channel_setup(
+    struct aws_server_bootstrap *bootstrap,
+    int error_code,
+    struct aws_channel *channel,
+    void *user_data) {
+    (void)bootstrap;
+    return s_channel_setup(error_code, channel, user_data);
+}
+
 /* TODO (randgaul): Implement this. */
-int s_server_channel_shutdown(
+static int s_server_channel_shutdown(
     struct aws_server_bootstrap *bootstrap,
     int error_code,
     struct aws_channel *channel,
@@ -250,6 +276,12 @@ static struct aws_http_connection *s_connection_new(
         goto error_and_cleanup;
     }
 
+    if (aws_array_list_init_dynamic(
+            &connection->backpressure_messages, alloc, 16, sizeof(struct aws_http_backpressure_message)) !=
+        AWS_OP_SUCCESS) {
+        goto error_and_cleanup;
+    }
+
     /* Setup channel handler. */
     struct aws_channel_handler handler;
     handler.vtable = s_channel_handler;
@@ -261,7 +293,7 @@ static struct aws_http_connection *s_connection_new(
     struct aws_http_decoder_params params;
     params.alloc = alloc;
     params.scratch_space = connection->decoder_scratch_space;
-    params.on_header = s_decoder_on_header; /* TODO (randgaul): Can't be null, hookup to user_callbacks. */
+    params.on_header = s_decoder_on_header;
     params.on_body = s_decoder_on_body;
     params.true_for_request_false_for_response = true;
     params.user_data = (void *)connection;
@@ -281,6 +313,7 @@ error_and_cleanup:
     }
     aws_byte_buf_clean_up(&connection->decoder_scratch_space);
     aws_memory_pool_clean_up(&connection->message_pool);
+    aws_array_list_clean_up(&connection->backpressure_messages);
     aws_mem_release(alloc, connection);
     return NULL;
 }
@@ -459,8 +492,8 @@ static void s_send_headers_task(struct aws_task *task, void *arg, enum aws_task_
     }
 
     struct aws_http_task_args *args = (struct aws_http_task_args *)arg;
-    struct aws_http_header *headers = (struct aws_http_header *)args->u.headers.data;
-    int header_count = (int)(args->u.headers.length / args->u.headers.item_size);
+    struct aws_http_header *headers = (struct aws_http_header *)args->u.header_batch.headers.data;
+    int header_count = (int)(args->u.header_batch.headers.length / args->u.header_batch.headers.item_size);
     struct aws_byte_cursor colon = aws_byte_cursor_from_array(": ", 2);
     struct aws_byte_cursor newline = aws_byte_cursor_from_array("\r\n", 2);
     for (int i = 0; i < header_count; ++i) {
@@ -471,6 +504,41 @@ static void s_send_headers_task(struct aws_task *task, void *arg, enum aws_task_
         s_write_to_msg(args, &value);
         s_write_to_msg(args, &newline);
     }
+
+    if (args->u.header_batch.final_headers) {
+        s_write_to_msg(args, &newline);
+    }
+
+    args->promise(args->user_data);
+}
+
+static void s_send_body_segment_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        return;
+    }
+
+    struct aws_http_task_args *args = (struct aws_http_task_args *)arg;
+    struct aws_byte_cursor data = args->u.body_segment.data;
+    bool final_segment = args->u.body_segment.final_segment;
+    struct aws_byte_cursor newline = aws_byte_cursor_from_array("\r\n", 2);
+    if (args->chunked) {
+        char buf[128];
+        unsigned len = (unsigned)data.len;
+        snprintf(buf, AWS_ARRAY_SIZE(buf), "%x", len);
+        struct aws_byte_cursor hex_len = aws_byte_cursor_from_array(buf, AWS_ARRAY_SIZE(buf));
+        s_write_to_msg(args, &hex_len);
+        s_write_to_msg(args, &newline);
+        s_write_to_msg(args, &data);
+        s_write_to_msg(args, &newline);
+    } else {
+        s_write_to_msg(args, &data);
+    }
+
+    if (final_segment) {
+        aws_http_flush(args->connection);
+    }
+
     args->promise(args->user_data);
 }
 
@@ -547,6 +615,7 @@ int aws_http_send_headers(
     struct aws_http_connection *connection,
     const struct aws_http_header *headers,
     int header_count,
+    bool final_headers,
     aws_http_promise_fn *on_headers_written) {
     struct aws_http_task_args *args = (struct aws_http_task_args *)aws_memory_pool_acquire(&connection->message_pool);
     if (!args) {
@@ -557,7 +626,9 @@ int aws_http_send_headers(
     args->connection = connection;
     args->user_data = connection->user_data;
     args->promise = on_headers_written;
-    aws_array_list_init_static(&args->u.headers, (void *)headers, header_count, sizeof(struct aws_http_header));
+    aws_array_list_init_static(
+        &args->u.header_batch.headers, (void *)headers, header_count, sizeof(struct aws_http_header));
+    args->u.header_batch.final_headers = final_headers;
     aws_task_init(&args->task, s_send_headers_task, (void *)args);
 
     if (!aws_channel_thread_is_callers_thread(connection->channel)) {
@@ -569,22 +640,57 @@ int aws_http_send_headers(
     return AWS_OP_SUCCESS;
 }
 
-/* TODO (randgaul): Implement this. */
 int aws_http_send_body_segment(
     struct aws_http_connection *connection,
     struct aws_byte_cursor *segment,
     bool final_segment,
     aws_http_promise_fn *on_segment_written) {
-    (void)connection;
-    (void)segment;
-    (void)final_segment;
-    (void)on_segment_written;
+    struct aws_http_task_args *args = (struct aws_http_task_args *)aws_memory_pool_acquire(&connection->message_pool);
+    if (!args) {
+        return AWS_OP_ERR;
+    }
+
+    AWS_ZERO_STRUCT(*args);
+    args->connection = connection;
+    args->user_data = connection->user_data;
+    args->promise = on_segment_written;
+    args->u.body_segment.data = *segment;
+    args->u.body_segment.final_segment = final_segment;
+    aws_task_init(&args->task, s_send_body_segment_task, (void *)args);
+
+    if (!aws_channel_thread_is_callers_thread(connection->channel)) {
+        aws_channel_schedule_task_now(connection->channel, &args->task);
+    } else {
+        s_send_body_segment_task(&args->task, (void *)args, AWS_TASK_STATUS_RUN_READY);
+    }
+
     return AWS_OP_SUCCESS;
 }
 
-/* TODO (randgaul): Implement this. */
 int aws_http_release_body_data(struct aws_http_connection *connection, size_t bytes) {
+    while (bytes) {
+        if (aws_array_list_length(&connection->backpressure_messages)) {
+            struct aws_http_backpressure_message msg;
+            aws_array_list_front(&connection->backpressure_messages, &msg);
+
+            if (msg.bytes_unreleased < bytes) {
+                bytes -= msg.bytes_unreleased;
+                aws_channel_slot_increment_read_window(connection->slot, msg.msg->message_data.len);
+                aws_channel_release_message_to_pool(connection->slot->channel, msg.msg);
+                aws_array_list_pop_front(&connection->backpressure_messages);
+            } else {
+                msg.bytes_unreleased -= bytes;
+                aws_array_list_set_at(&connection->backpressure_messages, &msg, 0);
+            }
+        } else {
+            return aws_raise_error(AWS_ERROR_HTTP_NO_BODY_DATA_BUFFERED);
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+int aws_http_flush(struct aws_http_connection *connection) {
     (void)connection;
-    (void)bytes;
     return AWS_OP_SUCCESS;
 }
