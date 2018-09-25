@@ -29,26 +29,44 @@
 #include <mach-o/dyld.h>
 #include <unistd.h>
 
-bool s_on_header_stub(
-    enum aws_http_header_name name,
-    const struct aws_byte_cursor *name_str,
-    const struct aws_byte_cursor *value_str,
-    void *user_data) {
-    (void)name;
-    (void)name_str;
-    (void)value_str;
+void s_on_request_stub(enum aws_http_method method, const struct aws_byte_cursor *uri, void *user_data) {
+    (void)method;
+    (void)uri;
     (void)user_data;
-    return true;
+    printf("Got request. Method: %s, Uri: %.*s\n", aws_http_method_to_str(method), (int)uri->len, uri->ptr);
 }
 
-bool s_on_body_stub(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
+void s_on_response_stub(enum aws_http_code code, void *user_data) {
+    (void)code;
+    (void)user_data;
+    printf("Got response. Code: %d\n", (int)code);
+}
+
+void s_on_header_stub(const struct aws_http_header *header, void *user_data) {
+    (void)header;
+    (void)user_data;
+    printf(
+        "Got header: %.*s: %*s\n", (int)header->name.len, header->name.ptr, (int)header->value.len, header->value.ptr);
+}
+
+bool s_on_body_stub(const struct aws_byte_cursor *data, bool last_segment, bool *release_message, void *user_data) {
     (void)data;
     (void)last_segment;
+    (void)release_message;
     (void)user_data;
+    *release_message = true;
+    printf("%.*s", (int)data->len, data->ptr);
     return true;
 }
 
-/* Embed unit test crt in */
+static struct aws_http_connection_callbacks s_stub_callbacks() {
+    struct aws_http_connection_callbacks cb;
+    cb.on_request = s_on_request_stub;
+    cb.on_response = s_on_response_stub;
+    cb.on_header = s_on_header_stub;
+    cb.on_body = s_on_body_stub;
+    return cb;
+}
 
 AWS_TEST_CASE(http_test_connection, s_http_test_connection);
 static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
@@ -105,14 +123,26 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
 
     /* Setup HTTP connections. */
     struct aws_http_connection_callbacks callbacks;
+    callbacks = s_stub_callbacks();
 
-    struct aws_http_connection *server_connection = aws_http_server_connection_new(
+    struct aws_http_connection *server = aws_http_server_connection_new(
         allocator, &endpoint, &socket_options, &tls_server_conn_options, &server_bootstrap, &callbacks, 1024, NULL);
-    (void)server_connection;
+    (void)server;
 
-    struct aws_http_connection *client_connection = aws_http_client_connection_new(
+    struct aws_http_connection *client = aws_http_client_connection_new(
         allocator, &endpoint, &socket_options, &tls_client_conn_options, &client_bootstrap, &callbacks, 1024, NULL);
-    (void)client_connection;
+    (void)client;
+
+#define aws_byte_cursor_from_string(s) aws_byte_cursor_from_array(s, strlen(s))
+    struct aws_http_header headers;
+    headers.name = aws_byte_cursor_from_string("Host");
+    headers.value = aws_byte_cursor_from_string("amazon.com");
+    struct aws_byte_cursor uri = aws_byte_cursor_from_string("/");
+
+    aws_http_send_request(client, AWS_HTTP_METHOD_GET, false);
+    aws_http_send_uri(client, &uri, NULL);
+    aws_http_send_headers(client, &headers, 1, true, NULL);
+    aws_http_flush(client);
 
     /* Cleanup. */
 

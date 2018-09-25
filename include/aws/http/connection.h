@@ -44,7 +44,7 @@ struct aws_http_connection_callbacks {
      * Called when a header is available for reading from the connection.
      * The `headers` pointer is not valid after this callback returns.
      */
-    void (*on_header)(const struct aws_http_header *headers, void *user_data);
+    void (*on_header)(const struct aws_http_header *header, void *user_data);
 
     /**
      * Called when body data is ready for reading. Set `release_message` to true to let the connection know you are done

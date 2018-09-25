@@ -470,7 +470,9 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
 
     const char *code_str = aws_http_version_to_str(args->u.code);
     struct aws_byte_cursor code = aws_byte_cursor_from_array(code_str, strlen(code_str));
+    struct aws_byte_cursor space = aws_byte_cursor_from_array(" ", 1);
     s_write_to_msg(args, &code);
+    s_write_to_msg(args, &space);
 }
 
 static void s_send_uri_task(struct aws_task *task, void *arg, enum aws_task_status status) {
@@ -481,8 +483,13 @@ static void s_send_uri_task(struct aws_task *task, void *arg, enum aws_task_stat
 
     struct aws_http_task_args *args = (struct aws_http_task_args *)arg;
     struct aws_byte_cursor *uri = (struct aws_byte_cursor *)args->u.uri;
+    struct aws_byte_cursor space_version_newline = aws_byte_cursor_from_array(" HTTP/1.1\r\n", 13);
     s_write_to_msg(args, uri);
-    args->promise(args->user_data);
+    s_write_to_msg(args, &space_version_newline);
+
+    if (args->promise) {
+        args->promise(args->user_data);
+    }
 }
 
 static void s_send_headers_task(struct aws_task *task, void *arg, enum aws_task_status status) {
@@ -509,7 +516,9 @@ static void s_send_headers_task(struct aws_task *task, void *arg, enum aws_task_
         s_write_to_msg(args, &newline);
     }
 
-    args->promise(args->user_data);
+    if (args->promise) {
+        args->promise(args->user_data);
+    }
 }
 
 static void s_send_body_segment_task(struct aws_task *task, void *arg, enum aws_task_status status) {
@@ -539,7 +548,9 @@ static void s_send_body_segment_task(struct aws_task *task, void *arg, enum aws_
         aws_http_flush(args->connection);
     }
 
-    args->promise(args->user_data);
+    if (args->promise) {
+        args->promise(args->user_data);
+    }
 }
 
 int aws_http_send_request(struct aws_http_connection *connection, enum aws_http_method method, bool chunked) {
