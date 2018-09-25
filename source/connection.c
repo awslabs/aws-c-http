@@ -23,7 +23,7 @@
 
 struct aws_http_connection {
     struct aws_http_connection_callbacks callbacks;
-    struct aws_byte_buf scratch_space;
+    struct aws_byte_buf decoder_scratch_space;
     struct aws_memory_pool message_pool;
     struct aws_channel_handler handler;
     struct aws_channel *channel;
@@ -31,22 +31,29 @@ struct aws_http_connection {
     struct aws_http_decoder *decoder;
     struct aws_socket_endpoint *endpoint;
     struct aws_socket *listener;
+    size_t initial_window_size;
     void *user_data;
 };
 
-struct aws_http_send_request_args {
-    struct aws_http_connection *connection;
-    uint64_t msg_id;
-    struct aws_task task;
-    enum aws_http_method method;
-    const struct aws_byte_cursor *uri;
+struct aws_http_body_segment {
+    struct aws_byte_cursor data;
+    bool final_segment;
 };
 
-struct aws_http_send_response_args {
+struct aws_http_task_args {
     struct aws_http_connection *connection;
-    uint64_t msg_id;
+    struct aws_io_message *msg;
+    bool chunked;
     struct aws_task task;
-    enum aws_http_code code;
+    void *user_data;
+    aws_http_promise_fn *promise;
+    union {
+        enum aws_http_method method;
+        const struct aws_byte_cursor *uri;
+        enum aws_http_code code;
+        struct aws_array_list headers;
+        struct aws_http_body_segment body_segment;
+    } u;
 };
 
 bool s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
@@ -54,14 +61,14 @@ bool s_decoder_on_header(const struct aws_http_decoded_header *header, void *use
     struct aws_http_header h;
     h.name = header->name_data;
     h.value = header->value_data;
-    connection->callbacks.on_read_header(&h, connection->user_data);
+    connection->callbacks.on_header(&h, connection->user_data);
     return true;
 }
 
 bool s_decoder_on_body(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
     struct aws_http_connection *connection = (struct aws_http_connection *)user_data;
     bool can_release;
-    bool dont_terminate = connection->callbacks.on_read_body(data, last_segment, &can_release, connection->user_data);
+    bool dont_terminate = connection->callbacks.on_body(data, last_segment, &can_release, connection->user_data);
     return dont_terminate;
 }
 
@@ -113,6 +120,7 @@ int s_handler_process_write_message(
     return AWS_OP_SUCCESS;
 }
 
+/* TODO (randgaul): Implement this. */
 int s_handler_increment_read_window(struct aws_channel_handler *handler, struct aws_channel_slot *slot, size_t size) {
     (void)handler;
     (void)slot;
@@ -121,10 +129,11 @@ int s_handler_increment_read_window(struct aws_channel_handler *handler, struct 
 }
 
 size_t s_handler_initial_window_size(struct aws_channel_handler *handler) {
-    (void)handler;
-    return SIZE_MAX;
+    struct aws_http_connection *connection = (struct aws_http_connection *)handler->impl;
+    return connection->initial_window_size;
 }
 
+/* TODO (randgaul): Implement this. */
 void s_handler_destroy(struct aws_channel_handler *handler) {
     (void)handler;
 }
@@ -218,6 +227,7 @@ int s_server_channel_shutdown(
 static struct aws_http_connection *s_connection_new(
     struct aws_allocator *alloc,
     struct aws_http_connection_callbacks *user_callbacks,
+    size_t initial_window_size,
     void *user_data) {
     struct aws_http_connection *connection =
         (struct aws_http_connection *)aws_mem_acquire(alloc, sizeof(struct aws_http_connection));
@@ -225,11 +235,19 @@ static struct aws_http_connection *s_connection_new(
         return NULL;
     }
 
+    AWS_ZERO_STRUCT(*connection);
     connection->callbacks = *user_callbacks;
+    connection->initial_window_size = initial_window_size;
+    struct aws_http_decoder *decoder = NULL;
 
     /* Scratch space for the streaming decoder. */
-    if (aws_byte_buf_init(alloc, &connection->scratch_space, 1024) != AWS_OP_SUCCESS) {
-        return NULL;
+    if (aws_byte_buf_init(alloc, &connection->decoder_scratch_space, 1024) != AWS_OP_SUCCESS) {
+        goto error_and_cleanup;
+    }
+
+    if (aws_memory_pool_init(&connection->message_pool, alloc, 32, sizeof(struct aws_http_task_args)) !=
+        AWS_OP_SUCCESS) {
+        goto error_and_cleanup;
     }
 
     /* Setup channel handler. */
@@ -242,21 +260,29 @@ static struct aws_http_connection *s_connection_new(
     /* Create http streaming decoder. */
     struct aws_http_decoder_params params;
     params.alloc = alloc;
-    params.scratch_space = connection->scratch_space;
+    params.scratch_space = connection->decoder_scratch_space;
     params.on_header = s_decoder_on_header; /* TODO (randgaul): Can't be null, hookup to user_callbacks. */
     params.on_body = s_decoder_on_body;
     params.true_for_request_false_for_response = true;
     params.user_data = (void *)connection;
-    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
+    decoder = aws_http_decoder_new(&params);
     if (!decoder) {
-        aws_byte_buf_clean_up(&connection->scratch_space);
-        return NULL;
+        goto error_and_cleanup;
     }
     connection->decoder = decoder;
     connection->user_data = user_data;
     connection->listener = NULL;
 
     return connection;
+
+error_and_cleanup:
+    if (decoder) {
+        aws_http_decoder_destroy(decoder);
+    }
+    aws_byte_buf_clean_up(&connection->decoder_scratch_space);
+    aws_memory_pool_clean_up(&connection->message_pool);
+    aws_mem_release(alloc, connection);
+    return NULL;
 }
 
 struct aws_http_connection *aws_http_client_connection_new(
@@ -266,16 +292,12 @@ struct aws_http_connection *aws_http_client_connection_new(
     struct aws_tls_connection_options *tls_options,
     struct aws_client_bootstrap *bootstrap,
     struct aws_http_connection_callbacks *user_callbacks,
+    size_t initial_window_size,
     void *user_data) {
 
-    struct aws_http_connection *connection = s_connection_new(alloc, user_callbacks, user_data);
+    struct aws_http_connection *connection = s_connection_new(alloc, user_callbacks, initial_window_size, user_data);
     if (!connection) {
         return NULL;
-    }
-
-    if (aws_memory_pool_init(
-            &connection->message_pool, alloc, 32, sizeof(struct aws_http_send_request_args) != AWS_OP_SUCCESS)) {
-        goto cleanup;
     }
 
     if (tls_options) {
@@ -304,7 +326,7 @@ struct aws_http_connection *aws_http_client_connection_new(
     return connection;
 
 cleanup:
-    aws_byte_buf_clean_up(&connection->scratch_space);
+    aws_byte_buf_clean_up(&connection->decoder_scratch_space);
     aws_mem_release(alloc, connection);
     return NULL;
 }
@@ -316,16 +338,12 @@ struct aws_http_connection *aws_http_server_connection_new(
     struct aws_tls_connection_options *tls_options,
     struct aws_server_bootstrap *bootstrap,
     struct aws_http_connection_callbacks *user_callbacks,
+    size_t initial_window_size,
     void *user_data) {
 
-    struct aws_http_connection *connection = s_connection_new(alloc, user_callbacks, user_data);
+    struct aws_http_connection *connection = s_connection_new(alloc, user_callbacks, initial_window_size, user_data);
     if (!connection) {
         return NULL;
-    }
-
-    if (aws_memory_pool_init(
-            &connection->message_pool, alloc, 32, sizeof(struct aws_http_send_response_args) != AWS_OP_SUCCESS)) {
-        goto cleanup;
     }
 
     struct aws_socket *listener;
@@ -351,7 +369,7 @@ struct aws_http_connection *aws_http_server_connection_new(
     return connection;
 
 cleanup:
-    aws_byte_buf_clean_up(&connection->scratch_space);
+    aws_byte_buf_clean_up(&connection->decoder_scratch_space);
     aws_memory_pool_clean_up(&connection->message_pool);
     aws_mem_release(alloc, connection);
     return NULL;
@@ -362,83 +380,202 @@ void aws_http_connection_destroy(struct aws_http_connection *connection) {
     (void)connection;
 }
 
+/* TODO (randgaul): What should this be? */
+#define AWS_HTTP_MESSAGE_SIZE_HINT 1024
+
+static int s_write_to_msg(struct aws_http_task_args *args, struct aws_byte_cursor *data) {
+    struct aws_http_connection *connection = args->connection;
+    struct aws_io_message *msg = args->msg;
+    int ret = aws_byte_buf_append(&msg->message_data, data);
+    if (ret == AWS_ERROR_DEST_COPY_TOO_SMALL) {
+        aws_channel_slot_send_message(connection->slot, msg, AWS_CHANNEL_DIR_WRITE);
+        msg = aws_channel_acquire_message_from_pool(
+            connection->channel, AWS_IO_MESSAGE_APPLICATION_DATA, AWS_HTTP_MESSAGE_SIZE_HINT);
+        args->msg = msg;
+        ret = aws_byte_buf_append(&msg->message_data, data);
+        if (ret != AWS_OP_SUCCESS) {
+            /* TODO (randgaul): Figure out what to do here. */
+            return ret;
+        }
+        return AWS_OP_SUCCESS;
+    } else {
+        /* TODO (randgaul): Figure out what to do here. */
+        return ret;
+    }
+}
+
 static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;
     }
 
-    (void)task;
+    struct aws_http_task_args *args = (struct aws_http_task_args *)arg;
+    struct aws_http_connection *connection = args->connection;
 
-    /*
-     * Set up and buffer the method/uri/version
-     * Gather up all the headers until the callback says stop
-     *  track if it's chunked or not
-     * Gather up the body until says stop
-     * Ask for headers once more
-     */
+    struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
+        connection->channel, AWS_IO_MESSAGE_APPLICATION_DATA, AWS_HTTP_MESSAGE_SIZE_HINT);
+    args->msg = msg;
 
-    /*
-     * Some open questions
-     * Should the API automagically handle chunked encoding
-     * Where does this update-window stuff come into play?
-     */
-
-    struct aws_http_send_request_args *request_args = (struct aws_http_send_request_args *)arg;
-    struct aws_http_connection *connection = request_args->connection;
-
-    struct aws_io_message *msg =
-        aws_channel_acquire_message_from_pool(connection->channel, AWS_IO_MESSAGE_APPLICATION_DATA, 10);
-    struct aws_byte_cursor msg_data = aws_byte_cursor_from_array(msg->message_data.buffer, msg->message_data.capacity);
-    (void)msg_data;
-
-    /* In a loop pump headers into io messages and send them along. */
-
-    aws_channel_slot_send_message(connection->slot, msg, AWS_CHANNEL_DIR_WRITE);
+    const char *method_str = aws_http_method_to_str(args->u.method);
+    struct aws_byte_cursor method = aws_byte_cursor_from_array(method_str, strlen(method_str));
+    s_write_to_msg(args, &method);
 }
 
-int aws_http_send_request(
-    struct aws_http_connection *connection,
-    enum aws_http_method method,
-    const struct aws_byte_cursor *uri) {
+static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        return;
+    }
 
-    struct aws_http_send_request_args *request_args =
-        (struct aws_http_send_request_args *)aws_memory_pool_acquire(&connection->message_pool);
-    if (!request_args) {
+    struct aws_http_task_args *args = (struct aws_http_task_args *)arg;
+    struct aws_http_connection *connection = args->connection;
+
+    struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
+        connection->channel, AWS_IO_MESSAGE_APPLICATION_DATA, AWS_HTTP_MESSAGE_SIZE_HINT);
+    args->msg = msg;
+
+    const char *code_str = aws_http_version_to_str(args->u.code);
+    struct aws_byte_cursor code = aws_byte_cursor_from_array(code_str, strlen(code_str));
+    s_write_to_msg(args, &code);
+}
+
+static void s_send_uri_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        return;
+    }
+
+    struct aws_http_task_args *args = (struct aws_http_task_args *)arg;
+    struct aws_byte_cursor *uri = (struct aws_byte_cursor *)args->u.uri;
+    s_write_to_msg(args, uri);
+    args->promise(args->user_data);
+}
+
+static void s_send_headers_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        return;
+    }
+
+    struct aws_http_task_args *args = (struct aws_http_task_args *)arg;
+    struct aws_http_header *headers = (struct aws_http_header *)args->u.headers.data;
+    int header_count = (int)(args->u.headers.length / args->u.headers.item_size);
+    struct aws_byte_cursor colon = aws_byte_cursor_from_array(": ", 2);
+    struct aws_byte_cursor newline = aws_byte_cursor_from_array("\r\n", 2);
+    for (int i = 0; i < header_count; ++i) {
+        struct aws_byte_cursor name = headers->name;
+        struct aws_byte_cursor value = headers->value;
+        s_write_to_msg(args, &name);
+        s_write_to_msg(args, &colon);
+        s_write_to_msg(args, &value);
+        s_write_to_msg(args, &newline);
+    }
+    args->promise(args->user_data);
+}
+
+int aws_http_send_request(struct aws_http_connection *connection, enum aws_http_method method, bool chunked) {
+    struct aws_http_task_args *args = (struct aws_http_task_args *)aws_memory_pool_acquire(&connection->message_pool);
+    if (!args) {
         return AWS_OP_ERR;
     }
 
-    request_args->connection = connection;
-    request_args->method = method;
-    request_args->uri = uri;
-    aws_task_init(&request_args->task, s_send_request_task, (void *)&request_args);
+    AWS_ZERO_STRUCT(args);
+    args->connection = connection;
+    args->chunked = chunked;
+    args->u.method = method;
+    args->user_data = connection->user_data;
+    aws_task_init(&args->task, s_send_request_task, (void *)args);
 
     if (!aws_channel_thread_is_callers_thread(connection->channel)) {
-        aws_channel_schedule_task_now(connection->channel, &request_args->task);
+        aws_channel_schedule_task_now(connection->channel, &args->task);
     } else {
-        s_send_request_task(&request_args->task, (void *)request_args, AWS_TASK_STATUS_RUN_READY);
+        s_send_request_task(&args->task, (void *)args, AWS_TASK_STATUS_RUN_READY);
     }
 
     return AWS_OP_SUCCESS;
 }
 
-/* TODO (randgaul): Implement this. */
-int aws_http_send_response(struct aws_http_connection *connection, enum aws_http_code code) {
-    (void)connection;
-    (void)code;
+int aws_http_send_response(struct aws_http_connection *connection, enum aws_http_code code, bool chunked) {
+    struct aws_http_task_args *args = (struct aws_http_task_args *)aws_memory_pool_acquire(&connection->message_pool);
+    if (!args) {
+        return AWS_OP_ERR;
+    }
+
+    AWS_ZERO_STRUCT(*args);
+    args->connection = connection;
+    args->chunked = chunked;
+    args->u.code = code;
+    args->user_data = connection->user_data;
+    aws_task_init(&args->task, s_send_response_task, (void *)args);
+
+    if (!aws_channel_thread_is_callers_thread(connection->channel)) {
+        aws_channel_schedule_task_now(connection->channel, &args->task);
+    } else {
+        s_send_response_task(&args->task, (void *)args, AWS_TASK_STATUS_RUN_READY);
+    }
+
     return AWS_OP_SUCCESS;
 }
 
-/* TODO (randgaul): Implement this. */
-void aws_http_send_headers(const struct aws_http_header *headers, int header_count) {
-    (void)headers;
-    (void)header_count;
+int aws_http_send_uri(
+    struct aws_http_connection *connection,
+    const struct aws_byte_cursor *uri,
+    aws_http_promise_fn *on_uri_written) {
+    struct aws_http_task_args *args = (struct aws_http_task_args *)aws_memory_pool_acquire(&connection->message_pool);
+    if (!args) {
+        return AWS_OP_ERR;
+    }
+
+    AWS_ZERO_STRUCT(*args);
+    args->connection = connection;
+    args->u.uri = uri;
+    args->user_data = connection->user_data;
+    args->promise = on_uri_written;
+    aws_task_init(&args->task, s_send_uri_task, (void *)args);
+
+    if (!aws_channel_thread_is_callers_thread(connection->channel)) {
+        aws_channel_schedule_task_now(connection->channel, &args->task);
+    } else {
+        s_send_uri_task(&args->task, (void *)args, AWS_TASK_STATUS_RUN_READY);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+int aws_http_send_headers(
+    struct aws_http_connection *connection,
+    const struct aws_http_header *headers,
+    int header_count,
+    aws_http_promise_fn *on_headers_written) {
+    struct aws_http_task_args *args = (struct aws_http_task_args *)aws_memory_pool_acquire(&connection->message_pool);
+    if (!args) {
+        return AWS_OP_ERR;
+    }
+
+    AWS_ZERO_STRUCT(*args);
+    args->connection = connection;
+    args->user_data = connection->user_data;
+    args->promise = on_headers_written;
+    aws_array_list_init_static(&args->u.headers, (void *)headers, header_count, sizeof(struct aws_http_header));
+    aws_task_init(&args->task, s_send_headers_task, (void *)args);
+
+    if (!aws_channel_thread_is_callers_thread(connection->channel)) {
+        aws_channel_schedule_task_now(connection->channel, &args->task);
+    } else {
+        s_send_headers_task(&args->task, (void *)args, AWS_TASK_STATUS_RUN_READY);
+    }
+
+    return AWS_OP_SUCCESS;
 }
 
 /* TODO (randgaul): Implement this. */
 int aws_http_send_body_segment(
+    struct aws_http_connection *connection,
     struct aws_byte_cursor *segment,
     bool final_segment,
-    void (*on_segment_written)(void *user_data)) {
+    aws_http_promise_fn *on_segment_written) {
+    (void)connection;
     (void)segment;
     (void)final_segment;
     (void)on_segment_written;

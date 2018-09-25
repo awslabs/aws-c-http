@@ -107,11 +107,11 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     struct aws_http_connection_callbacks callbacks;
 
     struct aws_http_connection *server_connection = aws_http_server_connection_new(
-        allocator, &endpoint, &socket_options, &tls_server_conn_options, &server_bootstrap, &callbacks, NULL);
+        allocator, &endpoint, &socket_options, &tls_server_conn_options, &server_bootstrap, &callbacks, 1024, NULL);
     (void)server_connection;
 
     struct aws_http_connection *client_connection = aws_http_client_connection_new(
-        allocator, &endpoint, &socket_options, &tls_client_conn_options, &client_bootstrap, &callbacks, NULL);
+        allocator, &endpoint, &socket_options, &tls_client_conn_options, &client_bootstrap, &callbacks, 1024, NULL);
     (void)client_connection;
 
     /* Cleanup. */

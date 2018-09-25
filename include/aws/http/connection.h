@@ -44,7 +44,7 @@ struct aws_http_connection_callbacks {
      * Called when a header is available for reading from the connection.
      * The `headers` pointer is not valid after this callback returns.
      */
-    void (*on_read_header)(const struct aws_http_header *headers, void *user_data);
+    void (*on_header)(const struct aws_http_header *headers, void *user_data);
 
     /**
      * Called when body data is ready for reading. Set `release_message` to true to let the connection know you are done
@@ -53,11 +53,13 @@ struct aws_http_connection_callbacks {
      * the http message. Return false to immediately terminate and place the connection in an invalid state, ready for
      * `aws_http_connection_destroy`.
      */
-    bool (*on_read_body)(const struct aws_byte_cursor *data, bool last_segment, bool *release_message, void *user_data);
+    bool (*on_body)(const struct aws_byte_cursor *data, bool last_segment, bool *release_message, void *user_data);
 };
 
 struct aws_http_connection;
 struct aws_http_message;
+
+typedef void(aws_http_promise_fn)(void *user_data);
 
 #ifdef __cplusplus
 extern "C" {
@@ -70,6 +72,7 @@ AWS_HTTP_API struct aws_http_connection *aws_http_client_connection_new(
     struct aws_tls_connection_options *tls_options,
     struct aws_client_bootstrap *bootstrap,
     struct aws_http_connection_callbacks *user_callbacks,
+    size_t initial_window_size,
     void *user_data);
 AWS_HTTP_API struct aws_http_connection *aws_http_server_connection_new(
     struct aws_allocator *alloc,
@@ -78,22 +81,32 @@ AWS_HTTP_API struct aws_http_connection *aws_http_server_connection_new(
     struct aws_tls_connection_options *tls_options,
     struct aws_server_bootstrap *bootstrap,
     struct aws_http_connection_callbacks *user_callbacks,
+    size_t initial_window_size,
     void *user_data);
 AWS_HTTP_API void aws_http_connection_destroy(struct aws_http_connection *connection);
 
 AWS_HTTP_API int aws_http_send_request(
     struct aws_http_connection *connection,
     enum aws_http_method method,
-    const struct aws_byte_cursor *uri);
+    bool chunked);
+AWS_HTTP_API int aws_http_send_response(struct aws_http_connection *connection, enum aws_http_code code, bool chunked);
 
-AWS_HTTP_API int aws_http_send_response(struct aws_http_connection *connection, enum aws_http_code code);
+AWS_HTTP_API int aws_http_send_uri(
+    struct aws_http_connection *connection,
+    const struct aws_byte_cursor *uri,
+    aws_http_promise_fn *on_uri_written);
 
-AWS_HTTP_API void aws_http_send_headers(const struct aws_http_header *headers, int header_count);
+AWS_HTTP_API int aws_http_send_headers(
+    struct aws_http_connection *connection,
+    const struct aws_http_header *headers,
+    int header_count,
+    aws_http_promise_fn *on_headers_written);
 
 AWS_HTTP_API int aws_http_send_body_segment(
+    struct aws_http_connection *connection,
     struct aws_byte_cursor *segment,
     bool final_segment,
-    void (*on_segment_written)(void *user_data));
+    aws_http_promise_fn *on_segment_written);
 
 AWS_HTTP_API int aws_http_release_body_data(struct aws_http_connection *connection, size_t bytes);
 

@@ -637,3 +637,232 @@ const char *aws_http_version_to_str(enum aws_http_version version) {
             return NULL;
     }
 }
+
+const char *aws_http_code_to_str(enum aws_http_code code) {
+    switch (code) {
+        case AWS_HTTP_CODE_CONTINUE:
+            return "Continue";
+
+        case AWS_HTTP_CODE_SWITCHING_PROTOCOLS:
+            return "Switching Protocols";
+
+        case AWS_HTTP_CODE_PROCESSING:
+            return "Processing";
+
+        case AWS_HTTP_CODE_OK:
+            return "OK";
+
+        case AWS_HTTP_CODE_CREATED:
+            return "Creaetd";
+
+        case AWS_HTTP_CODE_ACCEPTED:
+            return "Accepted";
+
+        case AWS_HTTP_CODE_NON_AUTHORITATIVE_INFORMATION:
+            return "Non-Authoritative Information";
+
+        case AWS_HTTP_CODE_NO_CONTENT:
+            return "No Content";
+
+        case AWS_HTTP_CODE_RESET_CONTENT:
+            return "Reset Content";
+
+        case AWS_HTTP_CODE_PARTIAL_CONTENT:
+            return "Partial Content";
+
+        case AWS_HTTP_CODE_MULTI_STATUS:
+            return "Multi-Status";
+
+        case AWS_HTTP_CODE_ALREADY_REPORTED:
+            return "Already Reported";
+
+        case AWS_HTTP_CODE_IM_USED:
+            return "IM Used";
+
+        case AWS_HTTP_CODE_MULTIPLE_CHOICES:
+            return "Multiple Choice";
+
+        case AWS_HTTP_CODE_MOVED_PERMANENTLY:
+            return "Moved Permantently";
+
+        case AWS_HTTP_CODE_FOUND:
+            return "Found";
+
+        case AWS_HTTP_CODE_SEE_OTHER:
+            return "See Other";
+
+        case AWS_HTTP_CODE_NOT_MODIFIED:
+            return "Not Modified";
+
+        case AWS_HTTP_CODE_USE_PROXY:
+            return "Use Proxy";
+
+        case AWS_HTTP_CODE_SWITCH_PROXY:
+            return "Switch Proxy";
+
+        case AWS_HTTP_CODE_TEMPORARY_REDIRECT:
+            return "Temporary Redirect";
+
+        case AWS_HTTP_CODE_PERMANENT_REDIRECT:
+            return "Permament Redirect";
+
+        case AWS_HTTP_CODE_BAD_REQUEST:
+            return "Bad Request";
+
+        case AWS_HTTP_CODE_UNAUTHORIZED:
+            return "Unauthorized";
+
+        case AWS_HTTP_CODE_PAYMENT_REQUIRED:
+            return "Payment Required";
+
+        case AWS_HTTP_CODE_FORBIDDEN:
+            return "Forbidden";
+
+        case AWS_HTTP_CODE_NOT_FOUND:
+            return "Not Found";
+
+        case AWS_HTTP_CODE_METHOD_NOT_ALLOWED:
+            return "Method Not Allowed";
+
+        case AWS_HTTP_CODE_NOT_ACCEPTABLE:
+            return "Not Acceptable";
+
+        case AWS_HTTP_CODE_PROXY_AUTHENTICATION_REQUIRED:
+            return "Proxy Authentication Required";
+
+        case AWS_HTTP_CODE_REQUEST_TIMEOUT:
+            return "Request Timeout";
+
+        case AWS_HTTP_CODE_CONFLICT:
+            return "Conflict";
+
+        case AWS_HTTP_CODE_GONE:
+            return "Gone";
+
+        case AWS_HTTP_CODE_LENGTH_REQUIRED:
+            return "Length Required";
+
+        case AWS_HTTP_CODE_PRECONDITION_FAILED:
+            return "Precondition Failed";
+
+        case AWS_HTTP_CODE_REQUEST_ENTITY_TOO_LARGE:
+            return "Payload Too Large";
+
+        case AWS_HTTP_CODE_REQUEST_URI_TOO_LONG:
+            return "URI Too Long";
+
+        case AWS_HTTP_CODE_UNSUPPORTED_MEDIA_TYPE:
+            return "Unsupported Media Type";
+
+        case AWS_HTTP_CODE_REQUESTED_RANGE_NOT_SATISFIABLE:
+            return "Request Range Not Satisfiable";
+
+        case AWS_HTTP_CODE_EXPECTATION_FAILED:
+            return "Expectation Failed";
+
+        case AWS_HTTP_CODE_IM_A_TEAPOT:
+            return "I'm a teapot";
+
+        case AWS_HTTP_CODE_AUTHENTICATION_TIMEOUT:
+            return "Authentication Timeout";
+
+        case AWS_HTTP_CODE_METHOD_FAILURE:
+            return "Method Failuer";
+
+        case AWS_HTTP_CODE_UNPROCESSABLE_ENTITY:
+            return "Unprocessable Entity";
+
+        case AWS_HTTP_CODE_LOCKED:
+            return "Locked";
+
+        case AWS_HTTP_CODE_FAILED_DEPENDENCY:
+            return "Failed Dependency";
+
+        case AWS_HTTP_CODE_UPGRADE_REQUIRED:
+            return "Upgrade Required";
+
+        case AWS_HTTP_CODE_PRECONDITION_REQUIRED:
+            return "Precondition Required";
+
+        case AWS_HTTP_CODE_TOO_MANY_REQUESTS:
+            return "Too Many Requests";
+
+        case AWS_HTTP_CODE_REQUEST_HEADER_FIELDS_TOO_LARGE:
+            return "Request Header Fields Too Large";
+
+        case AWS_HTTP_CODE_LOGIN_TIMEOUT:
+            return "Login Timeout";
+
+        case AWS_HTTP_CODE_NO_RESPONSE:
+            return "No Response";
+
+        case AWS_HTTP_CODE_RETRY_WITH:
+            return "Retry With";
+
+        case AWS_HTTP_CODE_BLOCKED:
+            return "Blocked";
+
+        case AWS_HTTP_CODE_REDIRECT:
+            return "Redirect";
+
+        case AWS_HTTP_CODE_REQUEST_HEADER_TOO_LARGE:
+            return "Request Header Too Large";
+
+        case AWS_HTTP_CODE_CERT_ERROR:
+            return "Certification Error";
+
+        case AWS_HTTP_CODE_NO_CERT:
+            return "No Certification";
+
+        case AWS_HTTP_CODE_HTTP_TO_HTTPS:
+            return "HTTP To HTTPS";
+
+        case AWS_HTTP_CODE_CLIENT_CLOSED_TO_REQUEST:
+            return "Client Closed To Request";
+
+        case AWS_HTTP_CODE_INTERNAL_SERVER_ERROR:
+            return "Internal Server Error";
+
+        case AWS_HTTP_CODE_NOT_IMPLEMENTED:
+            return "Not Implemented";
+
+        case AWS_HTTP_CODE_BAD_GATEWAY:
+            return "Bad Gateway";
+
+        case AWS_HTTP_CODE_SERVICE_UNAVAILABLE:
+            return "Service Unavailable";
+
+        case AWS_HTTP_CODE_GATEWAY_TIMEOUT:
+            return "Gateway Timeout";
+
+        case AWS_HTTP_CODE_HTTP_VERSION_NOT_SUPPORTED:
+            return "HTTP Version Not Supported";
+
+        case AWS_HTTP_CODE_VARIANT_ALSO_NEGOTIATES:
+            return "Variant Also Negotiates";
+
+        case AWS_HTTP_CODE_INSUFFICIENT_STORAGE:
+            return "Insufficient Storage";
+
+        case AWS_HTTP_CODE_LOOP_DETECTED:
+            return "Loop Detected";
+
+        case AWS_HTTP_CODE_BANDWIDTH_LIMIT_EXCEEDED:
+            return "Bandwidth Limit Exceeded";
+
+        case AWS_HTTP_CODE_NOT_EXTENDED:
+            return "Not Extended";
+
+        case AWS_HTTP_CODE_NETWORK_AUTHENTICATION_REQUIRED:
+            return "Authentication Required";
+
+        case AWS_HTTP_CODE_NETWORK_READ_TIMEOUT:
+            return "Read Timeout";
+
+        case AWS_HTTP_CODE_NETWORK_CONNECT_TIMEOUT:
+            return "Network Connect Timeout";
+
+        default:
+            return NULL;
+    }
+}
