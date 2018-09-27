@@ -28,90 +28,112 @@ struct aws_http_message;
 /* Automatically handle 100-continue? */
 /* Detect expect-continue header, stop writing the body to socket, wait for the 100-continue response. */
 
-struct aws_http_connection_callbacks {
-    /**
-     * Called when a request is received and the method + uri have been parsed and are ready to read.
-     * The `uri` pointer is not valid after this callback returns.
-     */
-    void (*on_request)(enum aws_http_method method, const struct aws_byte_cursor *uri, void *user_data);
+struct aws_http_client_connection;
+struct aws_http_server_connection;
+struct aws_http_listener;
+struct aws_http_request;
+struct aws_http_response;
 
-    /**
-     * Called when a response is received and parsed.
-     */
-    void (*on_response)(enum aws_http_code code, void *user_data);
+struct aws_http_request_callbacks {
+    void (*on_write_body_segment)(
+        void *buffer,
+        size_t buffer_size,
+        size_t *bytes_written,
+        bool *last_segment,
+        void *user_data);
 
-    /**
-     * Called when a header is available for reading from the connection.
-     * The `headers` pointer is not valid after this callback returns.
-     */
-    void (*on_header)(const struct aws_http_header *header, void *user_data);
+    // user expected to set a on_body cb and new user data pointer on the request
+    void (*on_response)(struct aws_http_response *response, struct aws_http_request *request, void *user_data);
 
-    /**
-     * Called when body data is ready for reading. Set `release_message` to true to let the connection know you are done
-     * reading from the `data` pointer, and false for the connection to hold onto the buffered data until
-     * `aws_http_release_body_data` is called. `last_segment` is true if this is the final chunk of the body data for
-     * the http message. Return false to immediately terminate and place the connection in an invalid state, ready for
-     * `aws_http_connection_destroy`.
-     */
-    bool (*on_body)(const struct aws_byte_cursor *data, bool last_segment, bool *release_message, void *user_data);
+    // done when gave user the response body + trailer headers
+    void (*on_request_completed)(void *user_data);
 };
 
-struct aws_http_connection;
-struct aws_http_message;
+struct aws_http_response_callbacks {
+    void (*on_write_body_segment)(
+        void *buffer,
+        size_t buffer_size,
+        size_t *bytes_written,
+        bool *last_segment,
+        void *user_data);
 
-typedef void(aws_http_promise_fn)(void *user_data);
+    // done when sent to io
+    void (*on_response_sent)(void *user_data);
+};
+
+struct aws_http_client_callbacks {
+    int (*on_connected)(struct aws_http_client_connection *connection, void *user_data);
+    void (*on_disconnected)(struct aws_http_client_connection *connection, void *user_data);
+
+    /* HTTP2 Only -- Not implemented yet. */
+    void (*on_push_response)(struct aws_http_client_connection *connection, struct aws_http_request *request, void *user_data);
+};
+
+struct aws_http_server_callbacks {
+    void (*on_request)(struct aws_http_server_connection *connection, struct aws_http_request *request, void *user_data);
+    void (*on_connection_closed)(struct aws_http_server_connection *connection, void *user_data);
+};
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-AWS_HTTP_API struct aws_http_connection *aws_http_client_connection_new(
+AWS_HTTP_API int aws_http_client_connect(
     struct aws_allocator *alloc,
     struct aws_socket_endpoint *endpoint,
     struct aws_socket_options *socket_options,
     struct aws_tls_connection_options *tls_options,
     struct aws_client_bootstrap *bootstrap,
-    struct aws_http_connection_callbacks *user_callbacks,
     size_t initial_window_size,
+    struct aws_http_client_callbacks *callbacks,
     void *user_data);
-AWS_HTTP_API struct aws_http_connection *aws_http_server_connection_new(
+AWS_HTTP_API void aws_http_client_connection_destroy(struct aws_http_client_connection *connection);
+
+/* TODO (randgaul): This needs to be make a new listener, and listener hands back new connections. */
+AWS_HTTP_API struct aws_http_listener *aws_http_listener_new(
     struct aws_allocator *alloc,
     struct aws_socket_endpoint *endpoint,
     struct aws_socket_options *socket_options,
     struct aws_tls_connection_options *tls_options,
     struct aws_server_bootstrap *bootstrap,
-    struct aws_http_connection_callbacks *user_callbacks,
     size_t initial_window_size,
+    struct aws_http_server_callbacks *callbacks,
+    int (*on_connection_created)(struct aws_http_server_connection *connection, void *user_data),
     void *user_data);
-AWS_HTTP_API void aws_http_connection_destroy(struct aws_http_connection *connection);
+AWS_HTTP_API void aws_http_server_connection_destroy(struct aws_http_server_connection *connection);
+AWS_HTTP_API void aws_http_listener_destroy(struct aws_http_listener *listener);
 
-AWS_HTTP_API int aws_http_send_request(
-    struct aws_http_connection *connection,
-    enum aws_http_method method,
-    bool chunked);
-AWS_HTTP_API int aws_http_send_response(struct aws_http_connection *connection, enum aws_http_code code, bool chunked);
+AWS_HTTP_API struct aws_http_request *aws_http_request_new(struct aws_http_client_connection *connection);
+AWS_HTTP_API int aws_http_request_set_method(struct aws_http_request *request, enum aws_http_method method);
+AWS_HTTP_API int aws_http_request_get_method(struct aws_http_request *request, enum aws_http_method *method);
+AWS_HTTP_API int aws_http_request_set_uri(struct aws_http_request *request, const struct aws_byte_cursor *uri);
+AWS_HTTP_API int aws_http_request_get_uri(struct aws_http_request *request, const struct aws_byte_cursor **uri);
+AWS_HTTP_API int aws_http_request_set_chunked(struct aws_http_request *request);
+AWS_HTTP_API int aws_http_request_get_chunked(struct aws_http_request *request, bool *true_for_chunked);
+AWS_HTTP_API int aws_http_request_set_headers(
+    struct aws_http_request *request,
+    struct aws_http_header *headers,
+    int header_count);
+/* TODO (randgaul): Figure out and implement get headers. Hopefully no memory needs to be buffered at all. */
+AWS_HTTP_API int aws_http_request_send(struct aws_http_request *request, struct aws_http_request_callbacks *callbacks);
+AWS_HTTP_API int aws_http_request_destroy(struct aws_http_request *request);
 
-AWS_HTTP_API int aws_http_send_uri(
-    struct aws_http_connection *connection,
-    const struct aws_byte_cursor *uri,
-    aws_http_promise_fn *on_uri_written);
-
-AWS_HTTP_API int aws_http_send_headers(
-    struct aws_http_connection *connection,
-    const struct aws_http_header *headers,
-    int header_count,
-    bool final_headers,
-    aws_http_promise_fn *on_headers_written);
-
-AWS_HTTP_API int aws_http_send_body_segment(
-    struct aws_http_connection *connection,
-    struct aws_byte_cursor *segment,
-    bool final_segment,
-    aws_http_promise_fn *on_segment_written);
-
-AWS_HTTP_API int aws_http_release_body_data(struct aws_http_connection *connection, size_t bytes);
-
-AWS_HTTP_API int aws_http_flush(struct aws_http_connection *connection);
+AWS_HTTP_API struct aws_http_response *aws_http_response_new(
+    struct aws_http_server_connection *connection,
+    struct aws_http_request *request);
+AWS_HTTP_API int aws_http_response_set_code(struct aws_http_response *response, enum aws_http_code code);
+AWS_HTTP_API int aws_http_response_get_code(struct aws_http_response *response, enum aws_http_code *code);
+AWS_HTTP_API int aws_http_response_set_chunked(struct aws_http_response *response);
+AWS_HTTP_API int aws_http_response_get_chunked(struct aws_http_response *response, bool *true_for_chunked);
+AWS_HTTP_API int aws_http_response_set_headers(
+    struct aws_http_response *response,
+    struct aws_http_header *headers,
+    int header_count);
+/* TODO (randgaul): Figure out and implement get headers. Hopefully no memory needs to be buffered at all. */
+AWS_HTTP_API int aws_http_response_send(
+    struct aws_http_response *response,
+    struct aws_http_request_callbacks *callbacks);
+AWS_HTTP_API int aws_http_response_destroy(struct aws_http_response *response);
 
 #ifdef __cplusplus
 }

@@ -33,20 +33,25 @@ void s_on_request_stub(enum aws_http_method method, const struct aws_byte_cursor
     (void)method;
     (void)uri;
     (void)user_data;
-    printf("Got request. Method: %s, Uri: %.*s\n", aws_http_method_to_str(method), (int)uri->len, uri->ptr);
+    fprintf(stderr, "Got request. Method: %s, Uri: %.*s\n", aws_http_method_to_str(method), (int)uri->len, uri->ptr);
 }
 
 void s_on_response_stub(enum aws_http_code code, void *user_data) {
     (void)code;
     (void)user_data;
-    printf("Got response. Code: %d\n", (int)code);
+    fprintf(stderr, "Got response. Code: %d\n", (int)code);
 }
 
 void s_on_header_stub(const struct aws_http_header *header, void *user_data) {
     (void)header;
     (void)user_data;
-    printf(
-        "Got header: %.*s: %*s\n", (int)header->name.len, header->name.ptr, (int)header->value.len, header->value.ptr);
+    fprintf(
+        stderr,
+        "Got header: %.*s: %*s\n",
+        (int)header->name.len,
+        header->name.ptr,
+        (int)header->value.len,
+        header->value.ptr);
 }
 
 bool s_on_body_stub(const struct aws_byte_cursor *data, bool last_segment, bool *release_message, void *user_data) {
@@ -132,6 +137,12 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     struct aws_http_connection *client = aws_http_client_connection_new(
         allocator, &endpoint, &socket_options, &tls_client_conn_options, &client_bootstrap, &callbacks, 1024, NULL);
     (void)client;
+
+    while (1) {
+        if (aws_http_is_connected(server) && aws_http_is_connected(client)) {
+            break;
+        }
+    }
 
 #define aws_byte_cursor_from_string(s) aws_byte_cursor_from_array(s, strlen(s))
     struct aws_http_header headers;
