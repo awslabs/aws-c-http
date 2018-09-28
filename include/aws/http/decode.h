@@ -50,6 +50,11 @@ typedef bool(aws_http_decoder_on_header_fn)(const struct aws_http_decoded_header
  */
 typedef bool(aws_http_decoder_on_body_fn)(const struct aws_byte_cursor *data, bool finished, void *user_data);
 
+typedef void(aws_http_decoder_on_version_fn)(enum aws_http_version version, void *user_data);
+typedef void(aws_http_decoder_on_uri_fn)(struct aws_byte_cursor *uri, void *user_data);
+typedef void(aws_http_decoder_on_response_code_fn)(enum aws_http_code code, void *user_data);
+typedef void(aws_http_decoder_on_method_fn)(enum aws_http_method method, void *user_data);
+
 /**
  * Structure used to initialize an `aws_http_decoder`.
  */
@@ -63,10 +68,19 @@ struct aws_http_decoder_params {
      * is always ignored.
      */
     struct aws_byte_buf scratch_space;
-    aws_http_decoder_on_header_fn *on_header;
-    aws_http_decoder_on_body_fn *on_body;
     bool true_for_request_false_for_response;
     void *user_data;
+
+    aws_http_decoder_on_header_fn *on_header;
+    aws_http_decoder_on_body_fn *on_body;
+    aws_http_decoder_on_version_fn *on_version;
+
+    /* Only needed for requests, can be NULL for responses. */
+    aws_http_decoder_on_uri_fn *on_uri;
+    aws_http_decoder_on_method_fn *on_method;
+
+    /* Only needed for responses, can be NULL for requests. */
+    aws_http_decoder_on_response_code_fn *on_code;
 };
 
 struct aws_http_decoder;
@@ -89,14 +103,6 @@ AWS_HTTP_API int aws_http_decode(
     const void *data,
     size_t data_bytes,
     size_t *bytes_read);
-
-/**
- * These functions can only be called once decoding is completely finished, just before calling
- * `aws_http_decode_destroy`.
- */
-AWS_HTTP_API int aws_http_decoder_get_version(struct aws_http_decoder *decoder, enum aws_http_version *version);
-AWS_HTTP_API int aws_http_decoder_get_uri(struct aws_http_decoder *decoder, struct aws_byte_cursor *uri_data);
-AWS_HTTP_API int aws_http_decoder_get_code(struct aws_http_decoder *decoder, enum aws_http_code *code);
 
 /* RFC-7230 section 4.2 Message Format */
 #define AWS_HTTP_TRANSFER_ENCODING_CHUNKED (1 << 0)

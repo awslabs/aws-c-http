@@ -40,15 +40,13 @@ struct aws_http_decoder {
     size_t chunk_size;
     bool doing_trailers;
 
-    /* Common HTTP header data. */
-    enum aws_http_method method;
-    enum aws_http_version version;
-    struct aws_byte_buf uri_data;
-    enum aws_http_code code;
-
     /* User callbacks and settings. */
     aws_http_decoder_on_header_fn *on_header;
     aws_http_decoder_on_body_fn *on_body;
+    aws_http_decoder_on_version_fn *on_version;
+    aws_http_decoder_on_uri_fn *on_uri;
+    aws_http_decoder_on_method_fn *on_method;
+    aws_http_decoder_on_response_code_fn *on_code;
     bool true_for_request_false_for_response;
     void *user_data;
 };
@@ -451,11 +449,16 @@ static int s_state_method(struct aws_http_decoder *decoder, struct aws_byte_curs
     struct aws_byte_cursor uri = cursors[1];
     struct aws_byte_cursor version = cursors[2];
 
-    decoder->method = aws_http_str_to_method(method);
-    decoder->version = aws_http_str_to_version(version);
-    struct aws_byte_buf uri_data = aws_byte_buf_from_array(uri.ptr, uri.len);
-    if (aws_byte_buf_init_copy(decoder->alloc, &decoder->uri_data, &uri_data) != AWS_OP_SUCCESS) {
-        return AWS_OP_ERR;
+    if (decoder->on_method) {
+        decoder->on_method(aws_http_str_to_method(method), decoder->user_data);
+    }
+
+    if (decoder->on_version) {
+        decoder->on_version(aws_http_str_to_version(version), decoder->user_data);
+    }
+
+    if (decoder->on_uri) {
+        decoder->on_uri(&uri, decoder->user_data);
     }
 
     s_set_next_state(decoder, s_state_getline, s_state_header);
@@ -478,13 +481,19 @@ static int s_state_response(struct aws_http_decoder *decoder, struct aws_byte_cu
     struct aws_byte_cursor phrase = cursors[2];
     (void)phrase; /* Unused for now. */
 
-    decoder->version = aws_http_str_to_version(version);
+    if (decoder->on_version) {
+        decoder->on_version(aws_http_str_to_version(version), decoder->user_data);
+    }
+
     int64_t code_val;
     int ret = s_read_int64(code, &code_val);
     if (ret != AWS_OP_SUCCESS) {
         return ret;
     }
-    decoder->code = aws_http_int_to_code((int)code_val);
+
+    if (decoder->on_code) {
+        decoder->on_code(aws_http_int_to_code((int)code_val), decoder->user_data);
+    }
 
     s_set_next_state(decoder, s_state_getline, s_state_header);
 
@@ -494,36 +503,56 @@ static int s_state_response(struct aws_http_decoder *decoder, struct aws_byte_cu
 void aws_http_decoder_reset(struct aws_http_decoder *decoder, struct aws_http_decoder_params *params) {
     struct aws_allocator *alloc;
     struct aws_byte_buf buffer;
-    aws_http_decoder_on_header_fn *on_header;
-    aws_http_decoder_on_body_fn *on_body;
     bool true_for_request_false_for_response;
     void *user_data;
+
+    aws_http_decoder_on_header_fn *on_header;
+    aws_http_decoder_on_body_fn *on_body;
+    aws_http_decoder_on_version_fn *on_version;
+    aws_http_decoder_on_uri_fn *on_uri;
+    aws_http_decoder_on_method_fn *on_method;
+    aws_http_decoder_on_response_code_fn *on_code;
 
     if (params) {
         alloc = params->alloc;
         buffer = params->scratch_space;
         buffer.allocator = params->alloc;
-        on_header = params->on_header;
-        on_body = params->on_body;
         true_for_request_false_for_response = params->true_for_request_false_for_response;
         user_data = params->user_data;
+
+        on_header = params->on_header;
+        on_body = params->on_body;
+        on_version = params->on_version;
+        on_uri = params->on_uri;
+        on_method = params->on_method;
+        on_code = params->on_code;
     } else {
         alloc = decoder->alloc;
         buffer = decoder->scratch_space;
-        on_header = decoder->on_header;
-        on_body = decoder->on_body;
         true_for_request_false_for_response = decoder->true_for_request_false_for_response;
         user_data = decoder->user_data;
+
+        on_header = decoder->on_header;
+        on_body = decoder->on_body;
+        on_version = decoder->on_version;
+        on_uri = decoder->on_uri;
+        on_method = decoder->on_method;
+        on_code = decoder->on_code;
     }
 
     AWS_ZERO_STRUCT(*decoder);
 
     decoder->alloc = alloc;
     decoder->scratch_space = buffer;
-    decoder->on_header = on_header;
-    decoder->on_body = on_body;
     decoder->user_data = user_data;
     decoder->true_for_request_false_for_response = true_for_request_false_for_response;
+
+    decoder->on_header = on_header;
+    decoder->on_body = on_body;
+    decoder->on_version = on_version;
+    decoder->on_uri = on_uri;
+    decoder->on_method = on_method;
+    decoder->on_code = on_code;
 
     if (true_for_request_false_for_response) {
         decoder->state_cb = s_state_getline;
@@ -555,7 +584,6 @@ void aws_http_decoder_destroy(struct aws_http_decoder *decoder) {
     if (decoder->cleanup_scratch) {
         aws_byte_buf_clean_up(&decoder->scratch_space);
     }
-    aws_byte_buf_clean_up(&decoder->uri_data);
     aws_mem_release(decoder->alloc, decoder);
 }
 
@@ -586,21 +614,6 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
     }
 
     return ret;
-}
-
-int aws_http_decoder_get_version(struct aws_http_decoder *decoder, enum aws_http_version *version) {
-    *version = decoder->version;
-    return AWS_OP_SUCCESS;
-}
-
-int aws_http_decoder_get_uri(struct aws_http_decoder *decoder, struct aws_byte_cursor *uri_data) {
-    *uri_data = aws_byte_cursor_from_buf(&decoder->uri_data);
-    return AWS_OP_SUCCESS;
-}
-
-int aws_http_decoder_get_code(struct aws_http_decoder *decoder, enum aws_http_code *code) {
-    *code = decoder->code;
-    return AWS_OP_SUCCESS;
 }
 
 AWS_HTTP_API int aws_http_decoder_get_encoding_flags(struct aws_http_decoder *decoder, int *flags) {
