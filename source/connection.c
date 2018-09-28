@@ -312,7 +312,7 @@ static int s_client_channel_shutdown(
     return AWS_OP_SUCCESS;
 }
 
-static struct aws_http_connection_data *s_connection_data_init(
+static int s_connection_data_init(
     struct aws_http_connection_data *data,
     struct aws_allocator *alloc,
     size_t initial_window_size,
@@ -364,7 +364,7 @@ static struct aws_http_connection_data *s_connection_data_init(
     data->decoder = decoder;
     data->user_data = user_data;
 
-    return data;
+    return AWS_OP_SUCCESS;
 
 error_and_cleanup:
     if (decoder) {
@@ -372,7 +372,7 @@ error_and_cleanup:
     }
     aws_byte_buf_clean_up(&data->decoder_scratch_space);
     aws_mem_release(alloc, data);
-    return NULL;
+    return AWS_OP_ERR;
 }
 
 static int s_on_incoming_channel(

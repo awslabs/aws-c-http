@@ -115,10 +115,10 @@ static void s_on_disconnected(struct aws_http_client_connection *connection, voi
 }
 
 static void s_request_on_write_body_segment(
-        struct aws_http_request *request,
-        struct aws_byte_cursor **segment,
-        bool *last_segment,
-        void *user_data) {
+    struct aws_http_request *request,
+    struct aws_byte_cursor **segment,
+    bool *last_segment,
+    void *user_data) {
     (void)request;
     *last_segment = true;
     const char *body_data = (const char *)user_data;
@@ -133,28 +133,28 @@ static void s_request_on_response(struct aws_http_request *request, enum aws_htt
 }
 
 static void s_request_on_response_header(
-        struct aws_http_request *request,
-        enum aws_http_header_name header_name,
-        const struct aws_http_header *header,
-        void *user_data) {
+    struct aws_http_request *request,
+    enum aws_http_header_name header_name,
+    const struct aws_http_header *header,
+    void *user_data) {
     (void)request;
     (void)header_name;
     (void)user_data;
     fprintf(
-            stderr,
-            "Got response header: %.*s: %*s\n",
-            (int)header->name.len,
-            header->name.ptr,
-            (int)header->value.len,
-            header->value.ptr);
+        stderr,
+        "Got response header: %.*s: %*s\n",
+        (int)header->name.len,
+        header->name.ptr,
+        (int)header->value.len,
+        header->value.ptr);
 }
 
 void s_request_on_response_body_segment(
-        struct aws_http_request *request,
-        const struct aws_byte_cursor *data,
-        bool last_segment,
-        bool *release_segment,
-        void *user_data) {
+    struct aws_http_request *request,
+    const struct aws_byte_cursor *data,
+    bool last_segment,
+    bool *release_segment,
+    void *user_data) {
     (void)request;
     (void)last_segment;
     (void)user_data;
@@ -260,9 +260,10 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     }
 
     const char *body_data = "E\r\nThe Body Data.\r\n0\r\n\r\n";
-    struct aws_http_header headers;
-    headers.name = aws_byte_cursor_from_str("Host");
-    headers.value = aws_byte_cursor_from_str("amazon.com");
+    struct aws_http_header headers[] = {
+        {.name = aws_byte_cursor_from_str("Host"), .value = aws_byte_cursor_from_str("amazon.com")},
+        {.name = aws_byte_cursor_from_str("transfer-encoding"), .value = aws_byte_cursor_from_str("chunked")},
+    };
     struct aws_byte_cursor uri = aws_byte_cursor_from_str("/");
     struct aws_http_request_callbacks request_callbacks;
     request_callbacks.on_write_body_segment = s_request_on_write_body_segment;
@@ -270,8 +271,19 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     request_callbacks.on_response_header = s_request_on_response_header;
     request_callbacks.on_response_body_segment = s_request_on_response_body_segment;
     request_callbacks.on_request_completed = s_request_on_request_completed;
-    struct aws_http_request *request = aws_http_request_new(s_client_connection, AWS_HTTP_METHOD_GET, &uri, true, &headers, 1, &request_callbacks, (void *)body_data);
+    struct aws_http_request *request = aws_http_request_new(
+        s_client_connection,
+        AWS_HTTP_METHOD_GET,
+        &uri,
+        true,
+        headers,
+        AWS_ARRAY_SIZE(headers),
+        &request_callbacks,
+        (void *)body_data);
     aws_http_request_send(request);
+
+    while (1) {
+    }
 
     /* Cleanup. */
 

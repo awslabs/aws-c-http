@@ -231,7 +231,9 @@ static inline void s_set_next_state(
 
 static int s_state_unchunked(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     size_t processed_bytes = 0;
-    assert(decoder->content_processed < decoder->content_length);
+    if (decoder->content_processed < decoder->content_length) {
+        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+    }
 
     if ((decoder->content_processed + input.len) > decoder->content_length) {
         processed_bytes = decoder->content_length - decoder->content_processed;
