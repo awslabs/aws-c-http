@@ -44,11 +44,11 @@ struct aws_http_request_callbacks {
     void (*on_response_header)(
         struct aws_http_request *request,
         enum aws_http_header_name header_name,
-        const struct *aws_http_header header,
+        const struct aws_http_header *header,
         void *user_data);
     void (*on_response_body_segment)(
         struct aws_http_request *request,
-        const struct aws_byte_cursor data,
+        const struct aws_byte_cursor *data,
         bool last_segment,
         bool *release_segment,
         void *user_data);
@@ -68,7 +68,7 @@ struct aws_http_response_callbacks {
 };
 
 struct aws_http_client_callbacks {
-    int (*on_connected)(struct aws_http_client_connection *connection, void *user_data);
+    void (*on_connected)(struct aws_http_client_connection *connection, void *user_data);
     void (*on_disconnected)(struct aws_http_client_connection *connection, void *user_data);
 
     /* HTTP2 Only -- Not implemented yet. */
@@ -82,20 +82,21 @@ struct aws_http_server_callbacks {
     void (*on_request)(
         struct aws_http_server_connection *connection,
         enum aws_http_method method,
-        const struct aws_byte_cursor *uri,
         void *user_data);
-    void (*on_response_header)(
+    void (*on_uri)(struct aws_http_server_connection *connection, const struct aws_byte_cursor *uri, void *user_data);
+    void (*on_request_header)(
         struct aws_http_server_connection *connection,
         enum aws_http_header_name header_name,
-        const struct *aws_http_header header,
+        const struct aws_http_header *header,
         void *user_data);
-    void (*on_response_body_segment)(
+    void (*on_request_body_segment)(
         struct aws_http_server_connection *connection,
-        const struct aws_byte_cursor data,
+        const struct aws_byte_cursor *data,
         bool last_segment,
         bool *release_segment,
         void *user_data);
 
+    void (*on_connection_created)(struct aws_http_server_connection *connection, void *user_data);
     void (*on_connection_closed)(struct aws_http_server_connection *connection, void *user_data);
 };
 
@@ -123,7 +124,6 @@ AWS_HTTP_API struct aws_http_listener *aws_http_listener_new(
     struct aws_server_bootstrap *bootstrap,
     size_t initial_window_size,
     struct aws_http_server_callbacks *callbacks,
-    int (*on_connection_created)(struct aws_http_server_connection *connection, void *user_data),
     void *user_data);
 AWS_HTTP_API void aws_http_server_connection_destroy(struct aws_http_server_connection *connection);
 AWS_HTTP_API void aws_http_listener_destroy(struct aws_http_listener *listener);

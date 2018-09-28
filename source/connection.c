@@ -51,7 +51,6 @@ struct aws_http_listener {
     size_t initial_window_size;
     struct aws_http_server_callbacks callbacks;
     struct aws_socket *listener_socket;
-    int (*on_connection_created)(struct aws_http_server_connection *connection, void *user_data);
     void *user_data;
 };
 
@@ -90,15 +89,14 @@ static bool s_response_decoder_on_header(const struct aws_http_decoded_header *h
 static bool s_response_decoder_on_body(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
     struct aws_http_request *request = (struct aws_http_request *)user_data;
     bool can_release;
-    bool dont_terminate =
-        request->callbacks.on_response_body_segment(data, last_segment, &can_release, request->user_data);
+            request->callbacks.on_response_body_segment(request, data, last_segment, &can_release, request->user_data);
     if (!can_release) {
         request->connection->data.bytes_unreleased += data->len;
     }
     if (last_segment) {
         request->callbacks.on_request_completed(request, request->user_data);
     }
-    return dont_terminate;
+    return true;
 }
 
 static void s_response_decoder_on_version(enum aws_http_version version, void *user_data) {
@@ -125,6 +123,48 @@ static void s_response_decoder_on_method(enum aws_http_method method, void *user
     (void)request;
     (void)method;
     (void)user_data;
+}
+
+static bool s_request_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
+    struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
+    struct aws_http_header h;
+    h.name = header->name_data;
+    h.value = header->value_data;
+    connection->callbacks.on_request_header(connection, header->name, &h, connection->data.user_data);
+    return true;
+}
+
+static bool s_request_decoder_on_body(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
+    struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
+    bool can_release;
+            connection->callbacks.on_request_body_segment(connection, data, last_segment, &can_release, connection->data.user_data);
+    if (!can_release) {
+        connection->data.bytes_unreleased += data->len;
+    }
+    return true;
+}
+
+static void s_request_decoder_on_version(enum aws_http_version version, void *user_data) {
+    struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
+    (void)connection;
+    (void)version;
+    (void)user_data;
+}
+
+static void s_request_decoder_on_uri(struct aws_byte_cursor *uri, void *user_data) {
+    struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
+    connection->callbacks.on_uri(connection, uri, connection->data.user_data);
+}
+
+static void s_request_decoder_on_response_code(enum aws_http_code code, void *user_data) {
+    struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
+    (void)connection;
+    (void)code;
+}
+
+static void s_request_decoder_on_method(enum aws_http_method method, void *user_data) {
+    struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
+    connection->callbacks.on_request(connection, method, connection->data.user_data);
 }
 
 static int s_handler_process_read_message(
@@ -276,6 +316,7 @@ static struct aws_http_connection_data *s_connection_data_init(
     struct aws_http_connection_data *data,
     struct aws_allocator *alloc,
     size_t initial_window_size,
+    bool true_for_client_false_for_server,
     void *user_data) {
 
     AWS_ZERO_STRUCT(*data);
@@ -301,12 +342,21 @@ static struct aws_http_connection_data *s_connection_data_init(
     params.scratch_space = data->decoder_scratch_space;
     params.true_for_request_false_for_response = true;
     params.user_data = (void *)data;
-    params.on_header = s_response_decoder_on_header;
-    params.on_body = s_response_decoder_on_body;
-    params.on_version = s_response_decoder_on_version;
-    params.on_uri = s_response_decoder_on_uri;
-    params.on_method = s_response_decoder_on_method;
-    params.on_code = s_response_decoder_on_response_code;
+    if (true_for_client_false_for_server) {
+        params.on_header = s_response_decoder_on_header;
+        params.on_body = s_response_decoder_on_body;
+        params.on_version = s_response_decoder_on_version;
+        params.on_uri = s_response_decoder_on_uri;
+        params.on_method = s_response_decoder_on_method;
+        params.on_code = s_response_decoder_on_response_code;
+    } else {
+        params.on_header = s_request_decoder_on_header;
+        params.on_body = s_request_decoder_on_body;
+        params.on_version = s_request_decoder_on_version;
+        params.on_uri = s_request_decoder_on_uri;
+        params.on_method = s_request_decoder_on_method;
+        params.on_code = s_request_decoder_on_response_code;
+    }
     decoder = aws_http_decoder_new(&params);
     if (!decoder) {
         goto error_and_cleanup;
@@ -344,14 +394,14 @@ static int s_on_incoming_channel(
     }
 
     if (s_connection_data_init(
-            &connection->data, listener->alloc, listener->initial_window_size, (void *)listener->user_data) !=
+            &connection->data, listener->alloc, listener->initial_window_size, false, (void *)listener->user_data) !=
         AWS_OP_SUCCESS) {
         return AWS_OP_ERR;
     }
     s_add_backchannel_slot_and_handler(channel, &connection->data);
     connection->callbacks = listener->callbacks;
     connection->listener = listener;
-    listener->on_connection_created(connection, listener->user_data);
+    listener->callbacks.on_connection_created(connection, listener->user_data);
 
     return AWS_OP_SUCCESS;
 }
@@ -391,7 +441,7 @@ int aws_http_client_connect(
         return AWS_OP_ERR;
     }
 
-    if (s_connection_data_init(&connection->data, alloc, initial_window_size, user_data) != AWS_OP_SUCCESS) {
+    if (s_connection_data_init(&connection->data, alloc, initial_window_size, true, user_data) != AWS_OP_SUCCESS) {
         return AWS_OP_ERR;
     }
     connection->callbacks = *callbacks;
@@ -444,7 +494,6 @@ struct aws_http_listener *aws_http_listener_new(
     struct aws_server_bootstrap *bootstrap,
     size_t initial_window_size,
     struct aws_http_server_callbacks *callbacks,
-    int (*on_connection_created)(struct aws_http_server_connection *connection, void *user_data),
     void *user_data) {
 
     struct aws_http_listener *listener =
@@ -457,7 +506,6 @@ struct aws_http_listener *aws_http_listener_new(
     listener->alloc = alloc;
     listener->initial_window_size = initial_window_size;
     listener->callbacks = *callbacks;
-    listener->on_connection_created = on_connection_created;
     listener->user_data = user_data;
 
     struct aws_socket *listener_socket;

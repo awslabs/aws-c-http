@@ -16,6 +16,8 @@
 #include <aws/http/connection.h>
 
 #include <aws/common/clock.h>
+#include <aws/common/condition_variable.h>
+#include <aws/common/mutex.h>
 
 #include <aws/io/channel.h>
 #include <aws/io/channel_bootstrap.h>
@@ -29,48 +31,141 @@
 #include <mach-o/dyld.h>
 #include <unistd.h>
 
-void s_on_request_stub(enum aws_http_method method, const struct aws_byte_cursor *uri, void *user_data) {
-    (void)method;
-    (void)uri;
+#define aws_byte_cursor_from_str(s) aws_byte_cursor_from_array(s, strlen(s))
+
+static struct aws_http_server_connection *s_server_connection;
+
+static void s_on_request(struct aws_http_server_connection *connection, enum aws_http_method method, void *user_data) {
+    (void)connection;
     (void)user_data;
-    fprintf(stderr, "Got request. Method: %s, Uri: %.*s\n", aws_http_method_to_str(method), (int)uri->len, uri->ptr);
+    fprintf(stderr, "Got request. Method: %s\n", aws_http_method_to_str(method));
 }
 
-void s_on_response_stub(enum aws_http_code code, void *user_data) {
-    (void)code;
+static void s_on_uri(
+    struct aws_http_server_connection *connection,
+    const struct aws_byte_cursor *uri,
+    void *user_data) {
+    (void)connection;
     (void)user_data;
-    fprintf(stderr, "Got response. Code: %d\n", (int)code);
+    fprintf(stderr, "Got URI: %.*s\n", (int)uri->len, uri->ptr);
 }
 
-void s_on_header_stub(const struct aws_http_header *header, void *user_data) {
-    (void)header;
+static void s_on_request_header(
+    struct aws_http_server_connection *connection,
+    enum aws_http_header_name header_name,
+    const struct aws_http_header *header,
+    void *user_data) {
+    (void)connection;
+    (void)header_name;
     (void)user_data;
     fprintf(
         stderr,
-        "Got header: %.*s: %*s\n",
+        "Got request header: %.*s: %*s\n",
         (int)header->name.len,
         header->name.ptr,
         (int)header->value.len,
         header->value.ptr);
 }
 
-bool s_on_body_stub(const struct aws_byte_cursor *data, bool last_segment, bool *release_message, void *user_data) {
-    (void)data;
+static void s_on_request_body_segment(
+    struct aws_http_server_connection *connection,
+    const struct aws_byte_cursor *data,
+    bool last_segment,
+    bool *release_segment,
+    void *user_data) {
+    (void)connection;
     (void)last_segment;
-    (void)release_message;
     (void)user_data;
-    *release_message = true;
+    *release_segment = true;
     printf("%.*s", (int)data->len, data->ptr);
-    return true;
 }
 
-static struct aws_http_connection_callbacks s_stub_callbacks() {
-    struct aws_http_connection_callbacks cb;
-    cb.on_request = s_on_request_stub;
-    cb.on_response = s_on_response_stub;
-    cb.on_header = s_on_header_stub;
-    cb.on_body = s_on_body_stub;
-    return cb;
+void s_on_connection_created(struct aws_http_server_connection *connection, void *user_data) {
+    (void)user_data;
+    s_server_connection = connection;
+    fprintf(stderr, "Server connection created.\n");
+}
+
+void s_on_connection_closed(struct aws_http_server_connection *connection, void *user_data) {
+    (void)connection;
+    (void)user_data;
+    s_server_connection = NULL;
+    fprintf(stderr, "Server connection created.\n");
+}
+
+static struct aws_http_client_connection *s_client_connection;
+static struct aws_mutex s_mutex;
+static struct aws_condition_variable s_cv;
+
+static void s_on_connected(struct aws_http_client_connection *connection, void *user_data) {
+    (void)user_data;
+    s_client_connection = connection;
+    fprintf(stderr, "Client connected.\n");
+
+    aws_mutex_lock(&s_mutex);
+    aws_condition_variable_notify_one(&s_cv);
+    aws_mutex_unlock(&s_mutex);
+}
+
+static void s_on_disconnected(struct aws_http_client_connection *connection, void *user_data) {
+    (void)connection;
+    (void)user_data;
+    s_client_connection = NULL;
+    fprintf(stderr, "Client disconnected.\n");
+}
+
+static void s_request_on_write_body_segment(
+        struct aws_http_request *request,
+        struct aws_byte_cursor **segment,
+        bool *last_segment,
+        void *user_data) {
+    (void)request;
+    *last_segment = true;
+    const char *body_data = (const char *)user_data;
+    struct aws_byte_cursor data = aws_byte_cursor_from_str(body_data);
+    *segment = &data;
+}
+
+static void s_request_on_response(struct aws_http_request *request, enum aws_http_code code, void *user_data) {
+    (void)request;
+    (void)user_data;
+    fprintf(stderr, "Got response code: %d\n", (int)code);
+}
+
+static void s_request_on_response_header(
+        struct aws_http_request *request,
+        enum aws_http_header_name header_name,
+        const struct aws_http_header *header,
+        void *user_data) {
+    (void)request;
+    (void)header_name;
+    (void)user_data;
+    fprintf(
+            stderr,
+            "Got response header: %.*s: %*s\n",
+            (int)header->name.len,
+            header->name.ptr,
+            (int)header->value.len,
+            header->value.ptr);
+}
+
+void s_request_on_response_body_segment(
+        struct aws_http_request *request,
+        const struct aws_byte_cursor *data,
+        bool last_segment,
+        bool *release_segment,
+        void *user_data) {
+    (void)request;
+    (void)last_segment;
+    (void)user_data;
+    *release_segment = true;
+    printf("%.*s", (int)data->len, data->ptr);
+}
+
+void s_request_on_request_completed(struct aws_http_request *request, void *user_data) {
+    (void)user_data;
+    fprintf(stderr, "Request received a response and fully completed.\n");
+    aws_http_request_destroy(request);
 }
 
 AWS_TEST_CASE(http_test_connection, s_http_test_connection);
@@ -127,33 +222,56 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     ASSERT_SUCCESS(aws_server_bootstrap_set_tls_ctx(&server_bootstrap, server_tls_ctx));
 
     /* Setup HTTP connections. */
-    struct aws_http_connection_callbacks callbacks;
-    callbacks = s_stub_callbacks();
+    struct aws_http_server_callbacks server_callbacks;
+    server_callbacks.on_request = s_on_request;
+    server_callbacks.on_uri = s_on_uri;
+    server_callbacks.on_request_header = s_on_request_header;
+    server_callbacks.on_request_body_segment = s_on_request_body_segment;
+    server_callbacks.on_connection_created = s_on_connection_created;
+    server_callbacks.on_connection_closed = s_on_connection_closed;
+    struct aws_http_listener *server_listener = aws_http_listener_new(
+        allocator,
+        &endpoint,
+        &socket_options,
+        &tls_server_conn_options,
+        &server_bootstrap,
+        1024,
+        &server_callbacks,
+        NULL);
+    (void)server_listener;
 
-    struct aws_http_connection *server = aws_http_server_connection_new(
-        allocator, &endpoint, &socket_options, &tls_server_conn_options, &server_bootstrap, &callbacks, 1024, NULL);
-    (void)server;
+    struct aws_http_client_callbacks client_callbacks;
+    client_callbacks.on_connected = s_on_connected;
+    client_callbacks.on_disconnected = s_on_disconnected;
+    aws_http_client_connect(
+        allocator,
+        &endpoint,
+        &socket_options,
+        &tls_client_conn_options,
+        &client_bootstrap,
+        1024,
+        &client_callbacks,
+        NULL);
 
-    struct aws_http_connection *client = aws_http_client_connection_new(
-        allocator, &endpoint, &socket_options, &tls_client_conn_options, &client_bootstrap, &callbacks, 1024, NULL);
-    (void)client;
-
-    while (1) {
-        if (aws_http_is_connected(server) && aws_http_is_connected(client)) {
-            break;
-        }
+    while (!s_client_connection) {
+        aws_mutex_lock(&s_mutex);
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+        aws_mutex_unlock(&s_mutex);
     }
 
-#define aws_byte_cursor_from_string(s) aws_byte_cursor_from_array(s, strlen(s))
+    const char *body_data = "E\r\nThe Body Data.\r\n0\r\n\r\n";
     struct aws_http_header headers;
-    headers.name = aws_byte_cursor_from_string("Host");
-    headers.value = aws_byte_cursor_from_string("amazon.com");
-    struct aws_byte_cursor uri = aws_byte_cursor_from_string("/");
-
-    aws_http_send_request(client, AWS_HTTP_METHOD_GET, false);
-    aws_http_send_uri(client, &uri, NULL);
-    aws_http_send_headers(client, &headers, 1, true, NULL);
-    aws_http_flush(client);
+    headers.name = aws_byte_cursor_from_str("Host");
+    headers.value = aws_byte_cursor_from_str("amazon.com");
+    struct aws_byte_cursor uri = aws_byte_cursor_from_str("/");
+    struct aws_http_request_callbacks request_callbacks;
+    request_callbacks.on_write_body_segment = s_request_on_write_body_segment;
+    request_callbacks.on_response = s_request_on_response;
+    request_callbacks.on_response_header = s_request_on_response_header;
+    request_callbacks.on_response_body_segment = s_request_on_response_body_segment;
+    request_callbacks.on_request_completed = s_request_on_request_completed;
+    struct aws_http_request *request = aws_http_request_new(s_client_connection, AWS_HTTP_METHOD_GET, &uri, true, &headers, 1, &request_callbacks, (void *)body_data);
+    aws_http_request_send(request);
 
     /* Cleanup. */
 
