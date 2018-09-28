@@ -590,7 +590,7 @@ static int s_write_to_msg(
 
     struct aws_io_message *msg = *msg_ptr;
     int ret = aws_byte_buf_append(&msg->message_data, data);
-    if (ret == AWS_ERROR_DEST_COPY_TOO_SMALL) {
+    if (ret != AWS_OP_SUCCESS) {
         aws_channel_slot_send_message(slot, msg, AWS_CHANNEL_DIR_WRITE);
         msg =
             aws_channel_acquire_message_from_pool(channel, AWS_IO_MESSAGE_APPLICATION_DATA, AWS_HTTP_MESSAGE_SIZE_HINT);
@@ -653,24 +653,29 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
     bool done = false;
     if (request->chunked) {
         while (!done) {
-            struct aws_byte_cursor *segment;
+            struct aws_byte_cursor segment;
             request->callbacks.on_write_body_segment(request, &segment, &done, request->user_data);
 
             char buf[128];
-            unsigned len = (unsigned)segment->len;
+            unsigned len = (unsigned)segment.len;
             snprintf(buf, AWS_ARRAY_SIZE(buf), "%x", len);
             struct aws_byte_cursor hex_len = aws_byte_cursor_from_array(buf, AWS_ARRAY_SIZE(buf));
 
             s_write_to_msg(&msg, channel, slot, &hex_len);
             s_write_to_msg(&msg, channel, slot, &newline);
-            s_write_to_msg(&msg, channel, slot, segment);
+            s_write_to_msg(&msg, channel, slot, &segment);
             s_write_to_msg(&msg, channel, slot, &newline);
         }
+
+        struct aws_byte_cursor zero = aws_byte_cursor_from_array("0", 1);
+        s_write_to_msg(&msg, channel, slot, &zero);
+        s_write_to_msg(&msg, channel, slot, &newline);
+        s_write_to_msg(&msg, channel, slot, &newline);
     } else {
         while (!done) {
-            struct aws_byte_cursor *segment;
+            struct aws_byte_cursor segment;
             request->callbacks.on_write_body_segment(request, &segment, &done, request->user_data);
-            s_write_to_msg(&msg, channel, slot, segment);
+            s_write_to_msg(&msg, channel, slot, &segment);
         }
     }
 
@@ -754,24 +759,24 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
     bool done = false;
     if (response->chunked) {
         while (!done) {
-            struct aws_byte_cursor *segment;
+            struct aws_byte_cursor segment;
             response->callbacks.on_write_body_segment(response, &segment, &done, response->user_data);
 
             char buf[128];
-            unsigned len = (unsigned)segment->len;
+            unsigned len = (unsigned)segment.len;
             snprintf(buf, AWS_ARRAY_SIZE(buf), "%x", len);
             struct aws_byte_cursor hex_len = aws_byte_cursor_from_array(buf, AWS_ARRAY_SIZE(buf));
 
             s_write_to_msg(&msg, channel, slot, &hex_len);
             s_write_to_msg(&msg, channel, slot, &newline);
-            s_write_to_msg(&msg, channel, slot, segment);
+            s_write_to_msg(&msg, channel, slot, &segment);
             s_write_to_msg(&msg, channel, slot, &newline);
         }
     } else {
         while (!done) {
-            struct aws_byte_cursor *segment;
+            struct aws_byte_cursor segment;
             response->callbacks.on_write_body_segment(response, &segment, &done, response->user_data);
-            s_write_to_msg(&msg, channel, slot, segment);
+            s_write_to_msg(&msg, channel, slot, &segment);
         }
     }
 

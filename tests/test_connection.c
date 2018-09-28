@@ -60,7 +60,7 @@ static void s_on_request_header(
     (void)user_data;
     fprintf(
         stderr,
-        "Got request header: %.*s: %*s\n",
+        "Got request header: %.*s: %.*s\n",
         (int)header->name.len,
         header->name.ptr,
         (int)header->value.len,
@@ -116,14 +116,14 @@ static void s_on_disconnected(struct aws_http_client_connection *connection, voi
 
 static void s_request_on_write_body_segment(
     struct aws_http_request *request,
-    struct aws_byte_cursor **segment,
+    struct aws_byte_cursor *segment,
     bool *last_segment,
     void *user_data) {
     (void)request;
     *last_segment = true;
     const char *body_data = (const char *)user_data;
     struct aws_byte_cursor data = aws_byte_cursor_from_str(body_data);
-    *segment = &data;
+    *segment = data;
 }
 
 static void s_request_on_response(struct aws_http_request *request, enum aws_http_code code, void *user_data) {
@@ -142,7 +142,7 @@ static void s_request_on_response_header(
     (void)user_data;
     fprintf(
         stderr,
-        "Got response header: %.*s: %*s\n",
+        "Got response header: %.*s: %.*s\n",
         (int)header->name.len,
         header->name.ptr,
         (int)header->value.len,
@@ -259,7 +259,7 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
         aws_mutex_unlock(&s_mutex);
     }
 
-    const char *body_data = "E\r\nThe Body Data.\r\n0\r\n\r\n";
+    const char *body_data = "The body data.";
     struct aws_http_header headers[] = {
         {.name = aws_byte_cursor_from_str("Host"), .value = aws_byte_cursor_from_str("amazon.com")},
         {.name = aws_byte_cursor_from_str("transfer-encoding"), .value = aws_byte_cursor_from_str("chunked")},

@@ -36,7 +36,7 @@ struct aws_http_response;
 struct aws_http_request_callbacks {
     void (*on_write_body_segment)(
         struct aws_http_request *request,
-        struct aws_byte_cursor **segment,
+        struct aws_byte_cursor *segment,
         bool *last_segment,
         void *user_data);
 
@@ -59,7 +59,7 @@ struct aws_http_request_callbacks {
 struct aws_http_response_callbacks {
     void (*on_write_body_segment)(
         struct aws_http_response *response,
-        struct aws_byte_cursor **segment,
+        struct aws_byte_cursor *segment,
         bool *last_segment,
         void *user_data);
 
