@@ -5,6 +5,11 @@ file(GLOB TEST_HDRS "*.h")
 file(GLOB TEST_SRC "*.c")
 file(GLOB TESTS ${TEST_HDRS} ${TEST_SRC})
 
+add_test_case(http_test_queue_typical_usecase)
+add_test_case(http_test_queue_static)
+add_test_case(http_test_queue_overflow)
+add_test_case(http_test_queue_resize)
+
 add_test_case(http_test_get_version)
 add_test_case(http_test_get_uri)
 add_test_case(http_test_get_status_code)

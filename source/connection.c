@@ -113,6 +113,11 @@ static void s_response_decoder_on_uri(struct aws_byte_cursor *uri, void *user_da
     (void)user_data;
 }
 
+// WORKING HERE
+// Need to change user_data to the client connection
+// The client needs to store a queue of request pointers
+// This function will be operating on the "active" one
+// Once a request is processed, the queue is popped
 static void s_response_decoder_on_response_code(enum aws_http_code code, void *user_data) {
     struct aws_http_request *request = (struct aws_http_request *)user_data;
     request->callbacks.on_response(request, code, request->user_data);
@@ -340,7 +345,7 @@ static int s_connection_data_init(
     struct aws_http_decoder_params params;
     params.alloc = alloc;
     params.scratch_space = data->decoder_scratch_space;
-    params.true_for_request_false_for_response = true;
+    params.true_for_request_false_for_response = !true_for_client_false_for_server;
     params.user_data = (void *)data;
     if (true_for_client_false_for_server) {
         params.on_header = s_response_decoder_on_header;
@@ -588,6 +593,10 @@ static int s_write_to_msg(
     struct aws_channel_slot *slot,
     struct aws_byte_cursor *data) {
 
+    if (data->len == 0) {
+        return AWS_OP_SUCCESS;
+    }
+
     struct aws_io_message *msg = *msg_ptr;
     int ret = aws_byte_buf_append(&msg->message_data, data);
     if (ret != AWS_OP_SUCCESS) {
@@ -739,7 +748,7 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
     struct aws_io_message *msg =
         aws_channel_acquire_message_from_pool(channel, AWS_IO_MESSAGE_APPLICATION_DATA, AWS_HTTP_MESSAGE_SIZE_HINT);
 
-    const char *code_str = aws_http_version_to_str(response->code);
+    const char *code_str = aws_http_code_to_str(response->code);
     struct aws_byte_cursor code = aws_byte_cursor_from_array(code_str, strlen(code_str));
     struct aws_byte_cursor version = aws_byte_cursor_from_array("HTTP/1.1 ", 9);
     struct aws_byte_cursor space = aws_byte_cursor_from_array(" ", 1);
@@ -772,6 +781,11 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
             s_write_to_msg(&msg, channel, slot, &segment);
             s_write_to_msg(&msg, channel, slot, &newline);
         }
+
+        struct aws_byte_cursor zero = aws_byte_cursor_from_array("0", 1);
+        s_write_to_msg(&msg, channel, slot, &zero);
+        s_write_to_msg(&msg, channel, slot, &newline);
+        s_write_to_msg(&msg, channel, slot, &newline);
     } else {
         while (!done) {
             struct aws_byte_cursor segment;
