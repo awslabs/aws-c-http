@@ -20,6 +20,7 @@
 
 #include <aws/http/connection.h>
 #include <aws/http/decode.h>
+#include <aws/http/queue.h>
 
 #include <stdio.h>
 
@@ -32,6 +33,7 @@ struct aws_http_connection_data {
     struct aws_http_decoder *decoder;
     size_t initial_window_size;
     size_t bytes_unreleased;
+    bool connected;
     void *user_data;
 };
 
@@ -44,10 +46,14 @@ struct aws_http_server_connection {
 struct aws_http_client_connection {
     struct aws_http_connection_data data;
     struct aws_http_client_callbacks callbacks;
+    struct aws_client_bootstrap *bootstrap;
+    struct aws_http_request *request;
+    struct aws_queue request_queue;
 };
 
 struct aws_http_listener {
     struct aws_allocator *alloc;
+    struct aws_server_bootstrap *bootstrap;
     size_t initial_window_size;
     struct aws_http_server_callbacks callbacks;
     struct aws_socket *listener_socket;
@@ -78,7 +84,9 @@ struct aws_http_response {
 };
 
 static bool s_response_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
-    struct aws_http_request *request = (struct aws_http_request *)user_data;
+    struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
+    struct aws_http_request *request = connection->request;
+
     struct aws_http_header h;
     h.name = header->name_data;
     h.value = header->value_data;
@@ -86,48 +94,61 @@ static bool s_response_decoder_on_header(const struct aws_http_decoded_header *h
     return true;
 }
 
+static void s_complete_request(struct aws_http_request *request) {
+    struct aws_http_client_connection *connection = request->connection;
+    request->callbacks.on_request_completed(request, request->user_data);
+    if (!aws_queue_is_empty(&connection->request_queue)) {
+        aws_queue_pull(&connection->request_queue, &connection->request, sizeof(struct aws_request *));
+    } else  {
+        connection->request = NULL;
+    }
+}
+
 static bool s_response_decoder_on_body(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
-    struct aws_http_request *request = (struct aws_http_request *)user_data;
+    struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
+    struct aws_http_request *request = connection->request;
     bool can_release;
             request->callbacks.on_response_body_segment(request, data, last_segment, &can_release, request->user_data);
     if (!can_release) {
         request->connection->data.bytes_unreleased += data->len;
     }
-    if (last_segment) {
-        request->callbacks.on_request_completed(request, request->user_data);
-    }
     return true;
 }
 
 static void s_response_decoder_on_version(enum aws_http_version version, void *user_data) {
-    struct aws_http_request *request = (struct aws_http_request *)user_data;
+    struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
+    struct aws_http_request *request = connection->request;
     (void)request;
     (void)version;
     (void)user_data;
 }
 
 static void s_response_decoder_on_uri(struct aws_byte_cursor *uri, void *user_data) {
-    struct aws_http_request *request = (struct aws_http_request *)user_data;
+    struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
+    struct aws_http_request *request = connection->request;
     (void)request;
     (void)uri;
     (void)user_data;
 }
 
-// WORKING HERE
-// Need to change user_data to the client connection
-// The client needs to store a queue of request pointers
-// This function will be operating on the "active" one
-// Once a request is processed, the queue is popped
 static void s_response_decoder_on_response_code(enum aws_http_code code, void *user_data) {
-    struct aws_http_request *request = (struct aws_http_request *)user_data;
+    struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
+    struct aws_http_request *request = connection->request;
     request->callbacks.on_response(request, code, request->user_data);
 }
 
 static void s_response_decoder_on_method(enum aws_http_method method, void *user_data) {
-    struct aws_http_request *request = (struct aws_http_request *)user_data;
+    struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
+    struct aws_http_request *request = connection->request;
     (void)request;
     (void)method;
     (void)user_data;
+}
+
+static void s_response_decoder_on_done(void *user_data) {
+    struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
+    struct aws_http_request *request = connection->request;
+    s_complete_request(request);
 }
 
 static bool s_request_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
@@ -172,6 +193,11 @@ static void s_request_decoder_on_method(enum aws_http_method method, void *user_
     connection->callbacks.on_request(connection, method, connection->data.user_data);
 }
 
+static void s_request_decoder_on_done(void *user_data) {
+    struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
+    connection->callbacks.on_request_end(connection->data.user_data);
+}
+
 static int s_handler_process_read_message(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
@@ -192,7 +218,7 @@ static int s_handler_process_read_message(
     size_t total = 0;
     while (total < msg_data.len) {
         size_t bytes_read;
-        int ret = aws_http_decode(decoder, (const void *)msg_data.ptr, msg_data.len, &bytes_read);
+        int ret = aws_http_decode(decoder, (const void *) msg_data.ptr, msg_data.len, &bytes_read);
         total += bytes_read;
         if (ret != AWS_OP_SUCCESS) {
             return ret;
@@ -238,7 +264,6 @@ static size_t s_handler_initial_window_size(struct aws_channel_handler *handler)
     return data->initial_window_size;
 }
 
-/* TODO (randgaul): Implement this. */
 static void s_handler_destroy(struct aws_channel_handler *handler) {
     (void)handler;
 }
@@ -317,6 +342,19 @@ static int s_client_channel_shutdown(
     return AWS_OP_SUCCESS;
 }
 
+static void s_disconnect(struct aws_http_connection_data *data) {
+    if (data->connected) {
+        data->connected = false;
+        aws_channel_shutdown(data->channel, AWS_OP_SUCCESS);
+    }
+}
+
+static void s_connection_data_clean_up(struct aws_http_connection_data *data) {
+    s_disconnect(data);
+    aws_http_decoder_destroy(data->decoder);
+    aws_byte_buf_clean_up(&data->decoder_scratch_space);
+}
+
 static int s_connection_data_init(
     struct aws_http_connection_data *data,
     struct aws_allocator *alloc,
@@ -354,6 +392,7 @@ static int s_connection_data_init(
         params.on_uri = s_response_decoder_on_uri;
         params.on_method = s_response_decoder_on_method;
         params.on_code = s_response_decoder_on_response_code;
+        params.on_done = s_response_decoder_on_done;
     } else {
         params.on_header = s_request_decoder_on_header;
         params.on_body = s_request_decoder_on_body;
@@ -361,6 +400,7 @@ static int s_connection_data_init(
         params.on_uri = s_request_decoder_on_uri;
         params.on_method = s_request_decoder_on_method;
         params.on_code = s_request_decoder_on_response_code;
+        params.on_done = s_request_decoder_on_done;
     }
     decoder = aws_http_decoder_new(&params);
     if (!decoder) {
@@ -376,7 +416,6 @@ error_and_cleanup:
         aws_http_decoder_destroy(decoder);
     }
     aws_byte_buf_clean_up(&data->decoder_scratch_space);
-    aws_mem_release(alloc, data);
     return AWS_OP_ERR;
 }
 
@@ -441,7 +480,7 @@ int aws_http_client_connect(
     void *user_data) {
 
     struct aws_http_client_connection *connection =
-        (struct aws_http_client_connection *)aws_mem_acquire(alloc, sizeof(struct aws_http_client_connection));
+            (struct aws_http_client_connection *) aws_mem_acquire(alloc, sizeof(struct aws_http_client_connection));
     if (!connection) {
         return AWS_OP_ERR;
     }
@@ -450,6 +489,12 @@ int aws_http_client_connect(
         return AWS_OP_ERR;
     }
     connection->callbacks = *callbacks;
+    connection->request = NULL;
+
+    if (aws_queue_init(&connection->request_queue, sizeof(struct aws_http_request *) * 8, alloc) != AWS_OP_SUCCESS) {
+        aws_mem_release(alloc, connection);
+        return AWS_OP_ERR;
+    }
 
     if (tls_options) {
         if (aws_client_bootstrap_new_tls_socket_channel(
@@ -477,7 +522,8 @@ int aws_http_client_connect(
     return AWS_OP_SUCCESS;
 
 cleanup:
-    /* TODO (randgaul): Implement proper cleanup. */
+    s_connection_data_clean_up(&connection->data);
+    aws_queue_clean_up(&connection->request_queue);
     aws_mem_release(alloc, connection);
     return AWS_OP_ERR;
 }
@@ -486,9 +532,15 @@ void aws_http_client_connection_release_bytes(struct aws_http_client_connection 
     aws_channel_handler_increment_read_window(&connection->data.handler, connection->data.slot, bytes);
 }
 
-/* TODO (randgaul): Implement this. */
+void aws_http_client_connection_disconnect(struct aws_http_client_connection *connection) {
+    s_disconnect(&connection->data);
+}
+
 void aws_http_client_connection_destroy(struct aws_http_client_connection *connection) {
-    (void)connection;
+    aws_queue_clean_up(&connection->request_queue);
+    s_connection_data_clean_up(&connection->data);
+    aws_client_bootstrap_clean_up(connection->bootstrap);
+    aws_mem_release(connection->data.alloc, connection);
 }
 
 struct aws_http_listener *aws_http_listener_new(
@@ -542,18 +594,22 @@ struct aws_http_listener *aws_http_listener_new(
     return listener;
 
 cleanup:
-    /* TODO (randgaul): Implement this. */
+    aws_mem_release(alloc, listener);
     return NULL;
 }
 
-/* TODO (randgaul): Implement this. */
-void aws_http_server_connection_destroy(struct aws_http_server_connection *connection) {
-    (void)connection;
+void aws_http_server_connection_disconnect(struct aws_http_server_connection *connection) {
+    s_disconnect(&connection->data);
 }
 
-/* TODO (randgaul): Implement this. */
+void aws_http_server_connection_destroy(struct aws_http_server_connection *connection) {
+    s_connection_data_clean_up(&connection->data);
+    aws_mem_release(connection->data.alloc, connection);
+}
+
 void aws_http_listener_destroy(struct aws_http_listener *listener) {
-    (void)listener;
+    aws_server_bootstrap_remove_socket_listener(listener->bootstrap, listener->listener_socket);
+    aws_server_bootstrap_clean_up(listener->bootstrap);
 }
 
 struct aws_http_request *aws_http_request_new(
@@ -640,6 +696,12 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
     struct aws_channel *channel = request->connection->data.channel;
     struct aws_channel_slot *slot = request->connection->data.slot;
 
+    if (request->connection->request) {
+        aws_queue_push(&request->connection->request_queue, &request, sizeof(struct aws_http_request *));
+    } else {
+        request->connection->request = request;
+    }
+
     struct aws_io_message *msg =
         aws_channel_acquire_message_from_pool(channel, AWS_IO_MESSAGE_APPLICATION_DATA, AWS_HTTP_MESSAGE_SIZE_HINT);
 
@@ -704,9 +766,8 @@ int aws_http_request_send(struct aws_http_request *request) {
     return AWS_OP_SUCCESS;
 }
 
-/* TODO (randgaul): Implement this. */
 void aws_http_request_destroy(struct aws_http_request *request) {
-    (void)request;
+    aws_mem_release(request->connection->data.alloc, request);
 }
 
 struct aws_http_response *aws_http_response_new(
@@ -814,7 +875,6 @@ int aws_http_response_send(struct aws_http_response *response) {
     return AWS_OP_SUCCESS;
 }
 
-/* TODO (randgaul): Implement this. */
 void aws_http_response_destroy(struct aws_http_response *response) {
-    (void)response;
+    aws_mem_release(response->connection->data.alloc, response);
 }

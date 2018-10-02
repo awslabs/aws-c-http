@@ -54,6 +54,7 @@ typedef void(aws_http_decoder_on_version_fn)(enum aws_http_version version, void
 typedef void(aws_http_decoder_on_uri_fn)(struct aws_byte_cursor *uri, void *user_data);
 typedef void(aws_http_decoder_on_response_code_fn)(enum aws_http_code code, void *user_data);
 typedef void(aws_http_decoder_on_method_fn)(enum aws_http_method method, void *user_data);
+typedef void(aws_http_decoder_done_fn)(void *user_data);
 
 /**
  * Structure used to initialize an `aws_http_decoder`.
@@ -81,6 +82,8 @@ struct aws_http_decoder_params {
 
     /* Only needed for responses, can be NULL for requests. */
     aws_http_decoder_on_response_code_fn *on_code;
+
+    aws_http_decoder_done_fn *on_done;
 };
 
 struct aws_http_decoder;

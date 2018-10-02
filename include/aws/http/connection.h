@@ -24,7 +24,7 @@
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 
-/* Automatically handle 100-continue? */
+/* TODO (randgaul): utomatically handle 100-continue. */
 /* Detect expect-continue header, stop writing the body to socket, wait for the 100-continue response. */
 
 struct aws_http_client_connection;
@@ -95,6 +95,7 @@ struct aws_http_server_callbacks {
         bool last_segment,
         bool *release_segment,
         void *user_data);
+    void (*on_request_end)(void *user_data);
 
     void (*on_connection_created)(struct aws_http_server_connection *connection, void *user_data);
     void (*on_connection_closed)(struct aws_http_server_connection *connection, void *user_data);
@@ -114,6 +115,7 @@ AWS_HTTP_API int aws_http_client_connect(
     struct aws_http_client_callbacks *callbacks,
     void *user_data);
 AWS_HTTP_API void aws_http_client_connection_release_bytes(struct aws_http_client_connection *connection, size_t bytes);
+AWS_HTTP_API void aws_http_client_connection_disconnect(struct aws_http_client_connection *connection);
 AWS_HTTP_API void aws_http_client_connection_destroy(struct aws_http_client_connection *connection);
 
 AWS_HTTP_API struct aws_http_listener *aws_http_listener_new(
@@ -125,6 +127,7 @@ AWS_HTTP_API struct aws_http_listener *aws_http_listener_new(
     size_t initial_window_size,
     struct aws_http_server_callbacks *callbacks,
     void *user_data);
+AWS_HTTP_API void aws_http_server_connection_disconnect(struct aws_http_server_connection *connection);
 AWS_HTTP_API void aws_http_server_connection_destroy(struct aws_http_server_connection *connection);
 AWS_HTTP_API void aws_http_listener_destroy(struct aws_http_listener *listener);
 

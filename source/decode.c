@@ -39,6 +39,7 @@ struct aws_http_decoder {
     size_t chunk_processed;
     size_t chunk_size;
     bool doing_trailers;
+    bool found_double_newline;
 
     /* User callbacks and settings. */
     aws_http_decoder_on_header_fn *on_header;
@@ -47,6 +48,7 @@ struct aws_http_decoder {
     aws_http_decoder_on_uri_fn *on_uri;
     aws_http_decoder_on_method_fn *on_method;
     aws_http_decoder_on_response_code_fn *on_code;
+    aws_http_decoder_done_fn *on_done;
     bool true_for_request_false_for_response;
     void *user_data;
 };
@@ -203,6 +205,10 @@ static int s_state_getline(struct aws_http_decoder *decoder, struct aws_byte_cur
         decoder->cursor.len -= 2;
         decoder->state_cb = decoder->next_state_cb;
         decoder->next_state_cb = NULL;
+
+        if (decoder->cursor.len == 0) {
+            decoder->found_double_newline = true;
+        }
     }
 
     return ret;
@@ -250,6 +256,9 @@ static int s_state_unchunked(struct aws_http_decoder *decoder, struct aws_byte_c
     }
 
     if (AWS_LIKELY(finished)) {
+        if (decoder->on_done) {
+            decoder->on_done(decoder->user_data);
+        }
         s_set_next_state(decoder, NULL, NULL);
     }
 
@@ -331,6 +340,11 @@ static int s_state_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_
         cursor.len = 0;
         if (!decoder->on_body(&cursor, true, decoder->user_data)) {
             return aws_raise_error(AWS_ERROR_HTTP_USER_CALLBACK_EXIT);
+        }
+
+        /* Since trailers aren't officially supported yet, signal done here. */
+        if (decoder->on_done) {
+            decoder->on_done(decoder->user_data);
         }
 
         /* Expected empty newline and end of message. */
@@ -514,6 +528,7 @@ void aws_http_decoder_reset(struct aws_http_decoder *decoder, struct aws_http_de
     aws_http_decoder_on_uri_fn *on_uri;
     aws_http_decoder_on_method_fn *on_method;
     aws_http_decoder_on_response_code_fn *on_code;
+    aws_http_decoder_done_fn *on_done;
 
     if (params) {
         alloc = params->alloc;
@@ -528,6 +543,7 @@ void aws_http_decoder_reset(struct aws_http_decoder *decoder, struct aws_http_de
         on_uri = params->on_uri;
         on_method = params->on_method;
         on_code = params->on_code;
+        on_done = params->on_done;
     } else {
         alloc = decoder->alloc;
         buffer = decoder->scratch_space;
@@ -540,6 +556,7 @@ void aws_http_decoder_reset(struct aws_http_decoder *decoder, struct aws_http_de
         on_uri = decoder->on_uri;
         on_method = decoder->on_method;
         on_code = decoder->on_code;
+        on_done = decoder->on_done;
     }
 
     AWS_ZERO_STRUCT(*decoder);
@@ -555,6 +572,7 @@ void aws_http_decoder_reset(struct aws_http_decoder *decoder, struct aws_http_de
     decoder->on_uri = on_uri;
     decoder->on_method = on_method;
     decoder->on_code = on_code;
+    decoder->on_done = on_done;
 
     if (true_for_request_false_for_response) {
         decoder->state_cb = s_state_getline;
@@ -615,10 +633,14 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
         *bytes_read = total_bytes_processed;
     }
 
+    if (decoder->on_done && decoder->found_double_newline) {
+        decoder->on_done(decoder->user_data);
+    }
+
     return ret;
 }
 
-AWS_HTTP_API int aws_http_decoder_get_encoding_flags(struct aws_http_decoder *decoder, int *flags) {
+int aws_http_decoder_get_encoding_flags(struct aws_http_decoder *decoder, int *flags) {
     *flags = decoder->transfer_encoding;
     return AWS_OP_SUCCESS;
 }

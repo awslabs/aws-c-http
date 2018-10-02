@@ -31,6 +31,12 @@
 #include <mach-o/dyld.h>
 #include <unistd.h>
 
+#if 1
+#   define AWS_HTTP_TEST_PRINT(...) fprintf(stderr, __VA_ARGS__)
+#else
+#   define AWS_HTTP_TEST_PRINT(...)
+#endif
+
 #define aws_byte_cursor_from_str(s) aws_byte_cursor_from_array(s, strlen(s))
 
 static struct aws_http_server_connection *s_server_connection;
@@ -43,7 +49,7 @@ static bool s_client_received_response;
 static void s_on_request(struct aws_http_server_connection *connection, enum aws_http_method method, void *user_data) {
     (void)connection;
     (void)user_data;
-    fprintf(stderr, "Got request. Method: %s\n", aws_http_method_to_str(method));
+    AWS_HTTP_TEST_PRINT("Got request. Method: %s\n", aws_http_method_to_str(method));
 }
 
 static void s_on_uri(
@@ -52,7 +58,7 @@ static void s_on_uri(
     void *user_data) {
     (void)connection;
     (void)user_data;
-    fprintf(stderr, "Got URI: %.*s\n", (int)uri->len, uri->ptr);
+    AWS_HTTP_TEST_PRINT("Got URI: %.*s\n", (int)uri->len, uri->ptr);
 }
 
 static void s_on_request_header(
@@ -63,8 +69,7 @@ static void s_on_request_header(
     (void)connection;
     (void)header_name;
     (void)user_data;
-    fprintf(
-        stderr,
+    AWS_HTTP_TEST_PRINT(
         "Got request header: %.*s: %.*s\n",
         (int)header->name.len,
         header->name.ptr,
@@ -82,7 +87,7 @@ static void s_on_request_body_segment(
     (void)last_segment;
     (void)user_data;
     *release_segment = true;
-    printf("%.*s", (int)data->len, data->ptr);
+    AWS_HTTP_TEST_PRINT("%.*s", (int)data->len, data->ptr);
 
     if (last_segment) {
         aws_mutex_lock(&s_mutex);
@@ -92,23 +97,32 @@ static void s_on_request_body_segment(
     }
 }
 
+static void s_on_request_end(void *user_data) {
+    (void)user_data;
+}
+
 void s_on_connection_created(struct aws_http_server_connection *connection, void *user_data) {
     (void)user_data;
     s_server_connection = connection;
-    fprintf(stderr, "Server connection created.\n");
+    AWS_HTTP_TEST_PRINT("Server connection created.\n");
 }
 
 void s_on_connection_closed(struct aws_http_server_connection *connection, void *user_data) {
     (void)connection;
     (void)user_data;
+    aws_mutex_lock(&s_mutex);
+    aws_http_server_connection_destroy(s_server_connection);
     s_server_connection = NULL;
-    fprintf(stderr, "Server connection created.\n");
+    aws_condition_variable_notify_one(&s_cv);
+    aws_mutex_unlock(&s_mutex);
+    AWS_HTTP_TEST_PRINT("Server connection closed.\n");
+    aws_http_server_connection_destroy(connection);
 }
 
 static void s_on_connected(struct aws_http_client_connection *connection, void *user_data) {
     (void)user_data;
     s_client_connection = connection;
-    fprintf(stderr, "Client connected.\n");
+    AWS_HTTP_TEST_PRINT("Client connected.\n");
 
     aws_mutex_lock(&s_mutex);
     aws_condition_variable_notify_one(&s_cv);
@@ -118,8 +132,12 @@ static void s_on_connected(struct aws_http_client_connection *connection, void *
 static void s_on_disconnected(struct aws_http_client_connection *connection, void *user_data) {
     (void)connection;
     (void)user_data;
+    aws_mutex_lock(&s_mutex);
     s_client_connection = NULL;
-    fprintf(stderr, "Client disconnected.\n");
+    aws_condition_variable_notify_one(&s_cv);
+    aws_mutex_unlock(&s_mutex);
+    AWS_HTTP_TEST_PRINT("Client disconnected.\n");
+    aws_http_client_connection_destroy(connection);
 }
 
 static void s_request_on_write_body_segment(
@@ -137,12 +155,7 @@ static void s_request_on_write_body_segment(
 static void s_request_on_response(struct aws_http_request *request, enum aws_http_code code, void *user_data) {
     (void)request;
     (void)user_data;
-    fprintf(stderr, "Got response code: %d\n", (int)code);
-
-    aws_mutex_lock(&s_mutex);
-    s_client_received_response = true;
-    aws_condition_variable_notify_one(&s_cv);
-    aws_mutex_lock(&s_mutex);
+    AWS_HTTP_TEST_PRINT("Got response code: %d\n", (int)code);
 }
 
 static void s_request_on_response_header(
@@ -153,8 +166,7 @@ static void s_request_on_response_header(
     (void)request;
     (void)header_name;
     (void)user_data;
-    fprintf(
-        stderr,
+    AWS_HTTP_TEST_PRINT(
         "Got response header: %.*s: %.*s\n",
         (int)header->name.len,
         header->name.ptr,
@@ -172,13 +184,18 @@ static void s_request_on_response_body_segment(
     (void)last_segment;
     (void)user_data;
     *release_segment = true;
-    printf("%.*s", (int)data->len, data->ptr);
+    AWS_HTTP_TEST_PRINT("%.*s", (int)data->len, data->ptr);
 }
 
 static void s_request_on_request_completed(struct aws_http_request *request, void *user_data) {
     (void)user_data;
     fprintf(stderr, "Request received a response and fully completed.\n");
     aws_http_request_destroy(request);
+
+    aws_mutex_lock(&s_mutex);
+    s_client_received_response = true;
+    aws_condition_variable_notify_one(&s_cv);
+    aws_mutex_lock(&s_mutex);
 }
 
 static void s_on_write_body_segment(
@@ -196,7 +213,7 @@ static void s_on_write_body_segment(
 static void s_on_response_sent(struct aws_http_response *response, void *user_data) {
     (void)response;
     (void)user_data;
-    fprintf(stderr, "Response sent.\n");
+    AWS_HTTP_TEST_PRINT("Response sent.\n");
 }
 
 AWS_TEST_CASE(http_test_connection, s_http_test_connection);
@@ -258,6 +275,7 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     server_callbacks.on_uri = s_on_uri;
     server_callbacks.on_request_header = s_on_request_header;
     server_callbacks.on_request_body_segment = s_on_request_body_segment;
+    server_callbacks.on_request_end = s_on_request_end;
     server_callbacks.on_connection_created = s_on_connection_created;
     server_callbacks.on_connection_closed = s_on_connection_closed;
     struct aws_http_listener *server_listener = aws_http_listener_new(
@@ -336,23 +354,38 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
             NULL);
     aws_http_response_send(response);
 
-    /* Wait for response from the server. */
+    /* Wait for until entire response from the server is received and parsed. */
     while (!s_client_received_response) {
         aws_mutex_lock(&s_mutex);
         aws_condition_variable_wait(&s_cv, &s_mutex);
         aws_mutex_unlock(&s_mutex);
     }
 
-    fprintf(stderr, "End of control flow.\n");
+    /* Cleanup. */
+    aws_http_request_destroy(request);
+    aws_http_response_destroy(response);
 
-    while (1) {
+    aws_http_client_connection_disconnect(s_client_connection);
+    aws_http_server_connection_disconnect(s_server_connection);
+    aws_http_listener_destroy(server_listener);
+
+    /* Wait until server finishes cleaning itself up. */
+    while (s_server_connection) {
+        aws_mutex_lock(&s_mutex);
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+        aws_mutex_unlock(&s_mutex);
     }
 
-    /* Cleanup. */
+    /* Wait until client finishes cleaning itself up. */
+    while (s_client_connection) {
+        aws_mutex_lock(&s_mutex);
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+        aws_mutex_unlock(&s_mutex);
+    }
 
-    aws_client_bootstrap_clean_up(&client_bootstrap);
     aws_event_loop_group_clean_up(&el_group);
     aws_tls_ctx_destroy(client_tls_ctx);
+    aws_tls_ctx_destroy(server_tls_ctx);
     aws_tls_clean_up_static_state();
 
     return AWS_OP_SUCCESS;

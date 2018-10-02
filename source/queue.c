@@ -128,3 +128,7 @@ int aws_queue_resize(struct aws_queue *queue, size_t new_size) {
 
     return AWS_OP_SUCCESS;
 }
+
+bool aws_queue_is_empty(struct aws_queue *queue) {
+    return queue->bytes_remaining == queue->capacity;
+}

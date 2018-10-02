@@ -74,6 +74,10 @@ static void s_on_method(enum aws_http_method method, void *user_data) {
     }
 }
 
+static void s_on_done(void *user_data) {
+    (void)user_data;
+}
+
 static struct aws_http_decoder *s_common_test_setup(
     struct aws_allocator *allocator,
     struct aws_byte_buf *scratch_space,
@@ -92,6 +96,7 @@ static struct aws_http_decoder *s_common_test_setup(
     params->on_uri = s_on_uri;
     params->on_code = s_on_response_code;
     params->on_method = s_on_method;
+    params->on_done = s_on_done;
     struct aws_http_decoder *decoder = aws_http_decoder_new(params);
 
     return decoder;

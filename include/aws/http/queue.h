@@ -71,6 +71,11 @@ AWS_HTTP_API int aws_queue_pull(struct aws_queue *queue, void *data, size_t size
  */
 AWS_HTTP_API int aws_queue_resize(struct aws_queue *queue, size_t new_size);
 
+/**
+ * Returns trues if the queue has no data within it.
+ */
+AWS_HTTP_API bool aws_queue_is_empty(struct aws_queue *queue);
+
 #ifdef __cplusplus
 }
 #endif
