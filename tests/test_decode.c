@@ -32,6 +32,9 @@ static const char *s_typical_response = "HTTP/1.1 200 OK\r\n"
                                         "\r\n"
                                         "Hello noob.";
 
+static const bool s_request = true;
+static const bool s_response = false;
+
 static bool s_on_header_stub(const struct aws_http_decoded_header *header, void *user_data) {
     (void)header;
     (void)user_data;
@@ -52,19 +55,35 @@ static void s_on_version(enum aws_http_version version, void *user_data) {
     }
 }
 
+static void s_on_version_stub(enum aws_http_version version, void *user_data) {
+    (void)version;
+    (void)user_data;
+}
+
 static void s_on_uri(struct aws_byte_cursor *uri, void *user_data) {
     struct aws_byte_cursor *ptr = (struct aws_byte_cursor *)user_data;
     if (ptr) {
-        *ptr = *uri;
+        size_t len = ptr->len < uri->len ? ptr->len : uri->len;
+        memcpy(ptr->ptr, uri->ptr, len);
+        ptr->len = len;
     }
 }
 
-static void s_on_response_code(enum aws_http_code code, void *user_data) {
+static void s_on_uri_stub(struct aws_byte_cursor *uri, void *user_data) {
+    (void)uri;
+    (void)user_data;
+}
+
+static void s_on_code(enum aws_http_code code, void *user_data) {
     enum aws_http_code *ptr = (enum aws_http_code *)user_data;
     if (ptr) {
         *ptr = code;
     }
+}
 
+static void s_on_code_stub(enum aws_http_code code, void *user_data) {
+    (void)code;
+    (void)user_data;
 }
 
 static void s_on_method(enum aws_http_method method, void *user_data) {
@@ -74,37 +93,60 @@ static void s_on_method(enum aws_http_method method, void *user_data) {
     }
 }
 
+static void s_on_method_stub(enum aws_http_method method, void *user_data) {
+    (void)method;
+    (void)user_data;
+}
+
 static void s_on_done(void *user_data) {
     (void)user_data;
 }
 
-static struct aws_http_decoder *s_common_test_setup(
+static void s_common_test_setup(
     struct aws_allocator *allocator,
     struct aws_byte_buf *scratch_space,
     struct aws_http_decoder_params *params,
     bool type,
     void *user_data) {
-    aws_byte_buf_init(allocator, scratch_space, 1024);
-
     params->alloc = allocator;
     params->scratch_space = *scratch_space;
     params->true_for_request_false_for_response = type;
     params->user_data = user_data;
     params->on_header = s_on_header_stub;
     params->on_body = s_on_body_stub;
-    params->on_version = s_on_version;
-    params->on_uri = s_on_uri;
-    params->on_code = s_on_response_code;
-    params->on_method = s_on_method;
+    params->on_version = s_on_version_stub;
+    params->on_uri = s_on_uri_stub;
+    params->on_code = s_on_code_stub;
+    params->on_method = s_on_method_stub;
     params->on_done = s_on_done;
-    struct aws_http_decoder *decoder = aws_http_decoder_new(params);
-
-    return decoder;
 }
 
 static void s_common_teardown(struct aws_http_decoder *decoder, struct aws_byte_buf *scratch_space) {
     aws_http_decoder_destroy(decoder);
     aws_byte_buf_clean_up(scratch_space);
+}
+
+AWS_TEST_CASE(http_test_get_method, s_http_test_get_method);
+static int s_http_test_get_method(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    enum aws_http_method method;
+
+    const char *msg = s_typical_request;
+    struct aws_byte_buf scratch_space;
+    struct aws_http_decoder_params params;
+    aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_request, &method);
+    params.on_method = s_on_method;
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
+
+    size_t len = strlen(msg);
+    ASSERT_SUCCESS(aws_http_decode(decoder, msg, len, NULL));
+    ASSERT_INT_EQUALS(AWS_HTTP_METHOD_GET, method);
+
+    s_common_teardown(decoder, &scratch_space);
+
+    return AWS_OP_SUCCESS;
 }
 
 AWS_TEST_CASE(http_test_get_version, s_http_test_get_version);
@@ -116,7 +158,10 @@ static int s_http_test_get_version(struct aws_allocator *allocator, void *ctx) {
     const char *msg = s_typical_request;
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, true, &version);
+    aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_request, &version);
+    params.on_version = s_on_version;
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(msg);
     ASSERT_SUCCESS(aws_http_decode(decoder, msg, len, NULL));
@@ -139,12 +184,16 @@ AWS_TEST_CASE(http_test_get_uri, s_http_test_get_uri);
 static int s_http_test_get_uri(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    struct aws_byte_cursor uri_data;
+    uint8_t buf[128];
+    struct aws_byte_cursor uri_data = aws_byte_cursor_from_array(buf, 128);
 
     const char *msg = s_typical_request;
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, true, &uri_data);
+    aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_request, &uri_data);
+    params.on_uri = s_on_uri;
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(msg);
     ASSERT_SUCCESS(aws_http_decode(decoder, msg, len, NULL));
@@ -164,7 +213,10 @@ static int s_http_test_get_status_code(struct aws_allocator *allocator, void *ct
     const char *msg = s_typical_response;
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, false, &code);
+    aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_response, &code);
+    params.on_code = s_on_code;
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(msg);
     ASSERT_SUCCESS(aws_http_decode(decoder, msg, len, NULL));
@@ -181,15 +233,8 @@ static int s_http_test_overflow_scratch_space(struct aws_allocator *allocator, v
     const char *msg = s_typical_response;
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    AWS_ZERO_STRUCT(params);
     aws_byte_buf_init(allocator, &scratch_space, 4);
-
-    params.alloc = allocator;
-    params.scratch_space = scratch_space;
-    params.on_header = s_on_header_stub;
-    params.on_body = s_on_body_stub;
-    params.true_for_request_false_for_response = false;
-    params.user_data = NULL;
+    s_common_test_setup(allocator, &scratch_space, &params, s_response, NULL);
     struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(msg);
@@ -228,10 +273,9 @@ static int s_http_test_receive_request_headers(struct aws_allocator *allocator, 
     const char *msg = s_typical_request;
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    AWS_ZERO_STRUCT(params);
     struct s_header_params header_params;
-
     aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_request, &header_params);
 
     const char *header_names[] = {"Host", "Accept-Language"};
     header_params.index = 0;
@@ -239,12 +283,7 @@ static int s_http_test_receive_request_headers(struct aws_allocator *allocator, 
     header_params.first_error = AWS_OP_SUCCESS;
     header_params.header_names = header_names;
 
-    params.alloc = allocator;
-    params.scratch_space = scratch_space;
     params.on_header = s_got_header;
-    params.on_body = s_on_body_stub;
-    params.true_for_request_false_for_response = true;
-    params.user_data = &header_params;
     struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(msg);
@@ -262,10 +301,9 @@ static int s_http_test_receive_response_headers(struct aws_allocator *allocator,
     const char *msg = s_typical_response;
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    AWS_ZERO_STRUCT(params);
     struct s_header_params header_params;
-
     aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_response, &header_params);
 
     const char *header_names[] = {"Server", "Content-Length"};
     header_params.index = 0;
@@ -273,12 +311,7 @@ static int s_http_test_receive_response_headers(struct aws_allocator *allocator,
     header_params.first_error = AWS_OP_SUCCESS;
     header_params.header_names = header_names;
 
-    params.alloc = allocator;
-    params.scratch_space = scratch_space;
     params.on_header = s_got_header;
-    params.on_body = s_on_body_stub;
-    params.true_for_request_false_for_response = false;
-    params.user_data = &header_params;
     struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(msg);
@@ -304,7 +337,9 @@ static int s_http_test_get_transfer_encoding_flags(struct aws_allocator *allocat
                       "Hello noob.";
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, false, NULL);
+    aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_response, NULL);
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(msg);
     /* Not a valid HTTP1.1 message, but not the job of decoder to return error here. */
@@ -344,11 +379,11 @@ static int s_http_test_body_unchunked(struct aws_allocator *allocator, void *ctx
     const char *msg = s_typical_response;
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    AWS_ZERO_STRUCT(params);
     struct s_body_params body_params;
+    aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_response, NULL);
 
     aws_array_list_init_dynamic(&body_params.body_data, allocator, 256, sizeof(uint8_t));
-    aws_byte_buf_init(allocator, &scratch_space, 1024);
 
     params.alloc = allocator;
     params.scratch_space = scratch_space;
@@ -385,18 +420,13 @@ static int s_http_test_body_chunked(struct aws_allocator *allocator, void *ctx) 
                       "\r\n";
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    AWS_ZERO_STRUCT(params);
     struct s_body_params body_params;
+    aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_request, &body_params);
 
     aws_array_list_init_dynamic(&body_params.body_data, allocator, 256, sizeof(uint8_t));
-    aws_byte_buf_init(allocator, &scratch_space, 1024);
 
-    params.alloc = allocator;
-    params.scratch_space = scratch_space;
-    params.on_header = s_on_header_stub;
     params.on_body = s_on_body;
-    params.true_for_request_false_for_response = true;
-    params.user_data = &body_params;
     struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(msg);
@@ -434,7 +464,9 @@ static int s_http_decode_trailers(struct aws_allocator *allocator, void *ctx) {
 
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, true, NULL);
+    aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_request, NULL);
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(request);
     ASSERT_SUCCESS(aws_http_decode(decoder, request, len, NULL));
@@ -452,7 +484,9 @@ static int s_http_decode_one_byte_at_a_time(struct aws_allocator *allocator, voi
 
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, true, NULL);
+    aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_request, NULL);
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(request);
     for (int i = 0; i < (int)len; ++i) {
@@ -532,7 +566,9 @@ static int s_http_decode_messages_at_random_intervals(struct aws_allocator *allo
 
         struct aws_byte_buf scratch_space;
         struct aws_http_decoder_params params;
-        struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, true, NULL);
+        aws_byte_buf_init(allocator, &scratch_space, 1024);
+        s_common_test_setup(allocator, &scratch_space, &params, s_request, NULL);
+        struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
         /* Decode message at randomized input buffer sizes from 0 to 10 bytes. */
         size_t len = strlen(request);
@@ -604,7 +640,9 @@ static int s_http_decode_bad_messages_and_assert_failure(struct aws_allocator *a
 
         struct aws_byte_buf scratch_space;
         struct aws_http_decoder_params params;
-        struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, true, NULL);
+        aws_byte_buf_init(allocator, &scratch_space, 1024);
+        s_common_test_setup(allocator, &scratch_space, &params, s_request, NULL);
+        struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
         size_t len = strlen(request);
         ASSERT_FAILS(aws_http_decode(decoder, request, len, NULL));
@@ -626,7 +664,9 @@ static int s_http_test_extraneous_buffer_data_ensure_not_processed(struct aws_al
 
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, true, NULL);
+    aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_request, NULL);
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen("GET / HTTP/1.1\r\n");
     size_t size_read;
@@ -647,7 +687,9 @@ static int s_http_test_ignore_transfer_extensions(struct aws_allocator *allocato
 
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, true, NULL);
+    aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_request, NULL);
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(request);
     ASSERT_SUCCESS(aws_http_decode(decoder, request, len, NULL));
@@ -679,7 +721,9 @@ static int s_http_test_ignore_chunk_extensions(struct aws_allocator *allocator, 
 
     struct aws_byte_buf scratch_space;
     struct aws_http_decoder_params params;
-    struct aws_http_decoder *decoder = s_common_test_setup(allocator, &scratch_space, &params, true, NULL);
+    aws_byte_buf_init(allocator, &scratch_space, 1024);
+    s_common_test_setup(allocator, &scratch_space, &params, s_request, NULL);
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(request);
     ASSERT_SUCCESS(aws_http_decode(decoder, request, len, NULL));

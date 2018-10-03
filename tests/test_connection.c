@@ -111,12 +111,10 @@ void s_on_connection_closed(struct aws_http_server_connection *connection, void 
     (void)connection;
     (void)user_data;
     aws_mutex_lock(&s_mutex);
-    aws_http_server_connection_destroy(s_server_connection);
     s_server_connection = NULL;
     aws_condition_variable_notify_one(&s_cv);
     aws_mutex_unlock(&s_mutex);
     AWS_HTTP_TEST_PRINT("Server connection closed.\n");
-    aws_http_server_connection_destroy(connection);
 }
 
 static void s_on_connected(struct aws_http_client_connection *connection, void *user_data) {
@@ -137,7 +135,6 @@ static void s_on_disconnected(struct aws_http_client_connection *connection, voi
     aws_condition_variable_notify_one(&s_cv);
     aws_mutex_unlock(&s_mutex);
     AWS_HTTP_TEST_PRINT("Client disconnected.\n");
-    aws_http_client_connection_destroy(connection);
 }
 
 static void s_request_on_write_body_segment(
@@ -214,6 +211,7 @@ static void s_on_response_sent(struct aws_http_response *response, void *user_da
     (void)response;
     (void)user_data;
     AWS_HTTP_TEST_PRINT("Response sent.\n");
+    aws_http_response_destroy(response);
 }
 
 AWS_TEST_CASE(http_test_connection, s_http_test_connection);
@@ -362,12 +360,12 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     }
 
     /* Cleanup. */
-    aws_http_request_destroy(request);
-    aws_http_response_destroy(response);
-
-    aws_http_client_connection_disconnect(s_client_connection);
-    aws_http_server_connection_disconnect(s_server_connection);
-    aws_http_listener_destroy(server_listener);
+    if (s_client_connection) {
+        aws_http_client_connection_disconnect(s_client_connection);
+    }
+    if (s_server_connection) {
+        aws_http_server_connection_disconnect(s_server_connection);
+    }
 
     /* Wait until server finishes cleaning itself up. */
     while (s_server_connection) {
@@ -382,6 +380,11 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
         aws_condition_variable_wait(&s_cv, &s_mutex);
         aws_mutex_unlock(&s_mutex);
     }
+
+    aws_http_listener_destroy(server_listener);
+
+    aws_client_bootstrap_clean_up(&client_bootstrap);
+    aws_server_bootstrap_clean_up(&server_bootstrap);
 
     aws_event_loop_group_clean_up(&el_group);
     aws_tls_ctx_destroy(client_tls_ctx);

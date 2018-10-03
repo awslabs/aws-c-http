@@ -33,7 +33,7 @@ struct aws_http_connection_data {
     struct aws_http_decoder *decoder;
     size_t initial_window_size;
     size_t bytes_unreleased;
-    bool connected;
+    bool is_server;
     void *user_data;
 };
 
@@ -46,7 +46,6 @@ struct aws_http_server_connection {
 struct aws_http_client_connection {
     struct aws_http_connection_data data;
     struct aws_http_client_callbacks callbacks;
-    struct aws_client_bootstrap *bootstrap;
     struct aws_http_request *request;
     struct aws_queue request_queue;
 };
@@ -264,8 +263,23 @@ static size_t s_handler_initial_window_size(struct aws_channel_handler *handler)
     return data->initial_window_size;
 }
 
+static void s_connection_data_clean_up(struct aws_http_connection_data *data) {
+    aws_http_decoder_destroy(data->decoder);
+    aws_byte_buf_clean_up(&data->decoder_scratch_space);
+}
+
 static void s_handler_destroy(struct aws_channel_handler *handler) {
-    (void)handler;
+    struct aws_http_connection_data *data = (struct aws_http_connection_data *)handler->impl;
+    s_connection_data_clean_up(data);
+
+    if (data->is_server) {
+        struct aws_http_server_connection *connection = (struct aws_http_server_connection *)data;
+        aws_mem_release(connection->data.alloc, connection);
+    } else {
+        struct aws_http_client_connection *connection = (struct aws_http_client_connection *)data;
+        aws_queue_clean_up(&connection->request_queue);
+        aws_mem_release(connection->data.alloc, connection);
+    }
 }
 
 static int s_handler_shutdown(
@@ -274,12 +288,18 @@ static int s_handler_shutdown(
     enum aws_channel_direction dir,
     int error_code,
     bool free_scarce_resources_immediately) {
-    (void)handler;
-    (void)slot;
-    (void)dir;
-    (void)error_code;
-    (void)free_scarce_resources_immediately;
-    return AWS_OP_SUCCESS;
+    struct aws_http_connection_data *data = (struct aws_http_connection_data *)handler->impl;
+
+    if (dir == AWS_CHANNEL_DIR_WRITE) {
+        if (data->is_server) {
+            struct aws_http_server_connection *connection = (struct aws_http_server_connection *)data;
+            connection->callbacks.on_connection_closed(connection, connection->listener->user_data);
+        } else {
+            struct aws_http_client_connection *connection = (struct aws_http_client_connection *)data;
+            connection->callbacks.on_disconnected(connection, connection->data.user_data);
+        }
+    }
+    return aws_channel_slot_on_handler_shutdown_complete(slot, dir, error_code, free_scarce_resources_immediately);
 }
 
 static struct aws_channel_handler_vtable s_channel_handler = {s_handler_process_read_message,
@@ -323,7 +343,6 @@ static int s_client_channel_setup(
     return ret;
 }
 
-/* Client channel was forcefully or otherwise shutdown. */
 static int s_client_channel_shutdown(
     struct aws_client_bootstrap *bootstrap,
     int error_code,
@@ -331,28 +350,13 @@ static int s_client_channel_shutdown(
     void *user_data) {
     (void)bootstrap;
     (void)channel;
+    (void)user_data;
 
     if (error_code != AWS_OP_SUCCESS) {
         return AWS_OP_ERR;
     }
 
-    struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
-    connection->callbacks.on_disconnected(connection, connection->data.user_data);
-
     return AWS_OP_SUCCESS;
-}
-
-static void s_disconnect(struct aws_http_connection_data *data) {
-    if (data->connected) {
-        data->connected = false;
-        aws_channel_shutdown(data->channel, AWS_OP_SUCCESS);
-    }
-}
-
-static void s_connection_data_clean_up(struct aws_http_connection_data *data) {
-    s_disconnect(data);
-    aws_http_decoder_destroy(data->decoder);
-    aws_byte_buf_clean_up(&data->decoder_scratch_space);
 }
 
 static int s_connection_data_init(
@@ -365,6 +369,7 @@ static int s_connection_data_init(
     AWS_ZERO_STRUCT(*data);
     data->alloc = alloc;
     data->initial_window_size = initial_window_size;
+    data->is_server = !true_for_client_false_for_server;
     struct aws_http_decoder *decoder = NULL;
 
     /* Scratch space for the streaming decoder. */
@@ -457,14 +462,11 @@ static int s_on_shutdown_incoming_channel(
     void *user_data) {
     (void)bootstrap;
     (void)channel;
+    (void)user_data;
 
     if (error_code != AWS_OP_SUCCESS) {
         return error_code;
     }
-
-    struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
-    struct aws_http_listener *listener = (struct aws_http_listener *)connection->data.user_data;
-    listener->callbacks.on_connection_closed(connection, listener->user_data);
 
     return AWS_OP_SUCCESS;
 }
@@ -533,14 +535,7 @@ void aws_http_client_connection_release_bytes(struct aws_http_client_connection 
 }
 
 void aws_http_client_connection_disconnect(struct aws_http_client_connection *connection) {
-    s_disconnect(&connection->data);
-}
-
-void aws_http_client_connection_destroy(struct aws_http_client_connection *connection) {
-    aws_queue_clean_up(&connection->request_queue);
-    s_connection_data_clean_up(&connection->data);
-    aws_client_bootstrap_clean_up(connection->bootstrap);
-    aws_mem_release(connection->data.alloc, connection);
+    aws_channel_shutdown(connection->data.channel, AWS_OP_SUCCESS);
 }
 
 struct aws_http_listener *aws_http_listener_new(
@@ -561,6 +556,7 @@ struct aws_http_listener *aws_http_listener_new(
     AWS_ZERO_STRUCT(*listener);
 
     listener->alloc = alloc;
+    listener->bootstrap = bootstrap;
     listener->initial_window_size = initial_window_size;
     listener->callbacks = *callbacks;
     listener->user_data = user_data;
@@ -599,17 +595,12 @@ cleanup:
 }
 
 void aws_http_server_connection_disconnect(struct aws_http_server_connection *connection) {
-    s_disconnect(&connection->data);
-}
-
-void aws_http_server_connection_destroy(struct aws_http_server_connection *connection) {
-    s_connection_data_clean_up(&connection->data);
-    aws_mem_release(connection->data.alloc, connection);
+    aws_channel_shutdown(connection->data.channel, AWS_OP_SUCCESS);
 }
 
 void aws_http_listener_destroy(struct aws_http_listener *listener) {
     aws_server_bootstrap_remove_socket_listener(listener->bootstrap, listener->listener_socket);
-    aws_server_bootstrap_clean_up(listener->bootstrap);
+    aws_mem_release(listener->alloc, listener);
 }
 
 struct aws_http_request *aws_http_request_new(

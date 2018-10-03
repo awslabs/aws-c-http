@@ -38,14 +38,23 @@ add_library(${CMAKE_PROJECT_NAME} ${LIBTYPE} ${HTTP_HEADERS} ${HTTP_SRC})
 aws_set_common_properties(${CMAKE_PROJECT_NAME})
 aws_add_sanitizers(${CMAKE_PROJECT_NAME})
 
+get_target_property(MY_CFLAGS ${CMAKE_PROJECT_NAME} COMPILE_OPTIONS)
+message(STATUS "1 ${MY_CFLAGS}")
+
 target_include_directories(${CMAKE_PROJECT_NAME} PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>)
+
+get_target_property(MY_CFLAGS ${CMAKE_PROJECT_NAME} COMPILE_OPTIONS)
+message(STATUS "2 ${MY_CFLAGS}")
 
 find_package(aws-c-common REQUIRED)
 find_package(aws-c-io REQUIRED)
 target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC aws-c-common ${PLATFORM_LIBS})
 target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC aws-c-io ${PLATFORM_LIBS})
+
+get_target_property(MY_CFLAGS ${CMAKE_PROJECT_NAME} COMPILE_OPTIONS)
+message(STATUS "3 ${MY_CFLAGS}")
 
 install(FILES ${AWS_HTTP_HEADERS} DESTINATION "include/aws/HTTP")
 install(FILES ${AWS_HTTP_TESTING_HEADERS} DESTINATION "include/aws/testing/HTTP")
@@ -59,6 +68,9 @@ install(
 
 export(TARGETS ${CMAKE_PROJECT_NAME} FILE ${CMAKE_PROJECT_NAME}-config.cmake)
 install(EXPORT ${CMAKE_PROJECT_NAME}-config DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/${CMAKE_PROJECT_NAME}/cmake/")
+
+get_target_property(MY_CFLAGS ${CMAKE_PROJECT_NAME} COMPILE_OPTIONS)
+message(STATUS "4 ${MY_CFLAGS}")
 
 include(CTest)
 add_subdirectory(tests)

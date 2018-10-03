@@ -116,7 +116,6 @@ AWS_HTTP_API int aws_http_client_connect(
     void *user_data);
 AWS_HTTP_API void aws_http_client_connection_release_bytes(struct aws_http_client_connection *connection, size_t bytes);
 AWS_HTTP_API void aws_http_client_connection_disconnect(struct aws_http_client_connection *connection);
-AWS_HTTP_API void aws_http_client_connection_destroy(struct aws_http_client_connection *connection);
 
 AWS_HTTP_API struct aws_http_listener *aws_http_listener_new(
     struct aws_allocator *alloc,
@@ -128,7 +127,6 @@ AWS_HTTP_API struct aws_http_listener *aws_http_listener_new(
     struct aws_http_server_callbacks *callbacks,
     void *user_data);
 AWS_HTTP_API void aws_http_server_connection_disconnect(struct aws_http_server_connection *connection);
-AWS_HTTP_API void aws_http_server_connection_destroy(struct aws_http_server_connection *connection);
 AWS_HTTP_API void aws_http_listener_destroy(struct aws_http_listener *listener);
 
 AWS_HTTP_API struct aws_http_request *aws_http_request_new(

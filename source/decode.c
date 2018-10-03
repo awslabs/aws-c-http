@@ -17,6 +17,7 @@
 
 #include <assert.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 struct aws_http_decoder;
 typedef int(s_aws_http_decoder_state_fn)(
@@ -131,10 +132,15 @@ static bool s_scan_for_newline(
 static int s_cat(struct aws_http_decoder *decoder, uint8_t *data, size_t len) {
     struct aws_byte_buf *buffer = &decoder->scratch_space;
     struct aws_byte_cursor to_append = aws_byte_cursor_from_array(data, len);
-    if (AWS_LIKELY(aws_byte_buf_append(buffer, &to_append) == AWS_OP_SUCCESS)) {
-        return AWS_OP_SUCCESS;
-    } else {
-        size_t new_size = buffer->capacity;
+    int op = AWS_OP_ERR;
+    if (buffer->buffer != NULL) {
+        if ((aws_byte_buf_append(buffer, &to_append) == AWS_OP_SUCCESS)) {
+            op = AWS_OP_SUCCESS;
+        }
+    }
+
+    if (op != AWS_OP_SUCCESS) {
+        size_t new_size = buffer->capacity ? buffer->capacity : 128;
         do {
             new_size <<= 1;      /* new_size *= 2 */
             if (new_size == 0) { /* check for overflow */
@@ -158,6 +164,8 @@ static int s_cat(struct aws_http_decoder *decoder, uint8_t *data, size_t len) {
 
         return aws_byte_buf_append(buffer, &to_append);
     }
+
+    return op;
 }
 
 static inline int s_read_int64(struct aws_byte_cursor cursor, int64_t *val) {
@@ -237,7 +245,7 @@ static inline void s_set_next_state(
 
 static int s_state_unchunked(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     size_t processed_bytes = 0;
-    if (decoder->content_processed < decoder->content_length) {
+    if (decoder->content_processed > decoder->content_length) {
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 

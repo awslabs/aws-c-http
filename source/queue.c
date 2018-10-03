@@ -41,7 +41,9 @@ int aws_queue_init_static(struct aws_queue *queue, void *memory, size_t size) {
 }
 
 void aws_queue_clean_up(struct aws_queue *queue) {
-    aws_mem_release(queue->alloc, queue->memory);
+    if (queue->alloc) {
+        aws_mem_release(queue->alloc, queue->memory);
+    }
     AWS_ZERO_STRUCT(*queue);
 }
 
