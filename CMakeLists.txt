@@ -50,8 +50,14 @@ message(STATUS "2 ${MY_CFLAGS}")
 
 find_package(aws-c-common REQUIRED)
 find_package(aws-c-io REQUIRED)
-target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC aws-c-common ${PLATFORM_LIBS})
-target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC aws-c-io ${PLATFORM_LIBS})
+
+#fix me this should be transitive
+if (NOT APPLE AND NOT WIN32)
+find_package(s2n REQUIRED)
+endif()
+
+target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC aws-c-common)
+target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC aws-c-io)
 
 get_target_property(MY_CFLAGS ${CMAKE_PROJECT_NAME} COMPILE_OPTIONS)
 message(STATUS "3 ${MY_CFLAGS}")

@@ -28,7 +28,6 @@
 
 #include <aws/testing/aws_test_harness.h>
 
-#include <mach-o/dyld.h>
 #include <unistd.h>
 
 #if 1
@@ -192,7 +191,7 @@ static void s_request_on_request_completed(struct aws_http_request *request, voi
     aws_mutex_lock(&s_mutex);
     s_client_received_response = true;
     aws_condition_variable_notify_one(&s_cv);
-    aws_mutex_lock(&s_mutex);
+    aws_mutex_unlock(&s_mutex);
 }
 
 static void s_on_write_body_segment(
@@ -225,7 +224,7 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
 
     struct aws_socket_options socket_options;
     AWS_ZERO_STRUCT(socket_options);
-    socket_options.connect_timeout = 3000;
+    socket_options.connect_timeout_ms = 3000;
     socket_options.type = AWS_SOCKET_STREAM;
     socket_options.domain = AWS_SOCKET_LOCAL;
 
@@ -233,7 +232,7 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     AWS_ZERO_STRUCT(endpoint);
     uint64_t timestamp = 0;
     ASSERT_SUCCESS(aws_sys_clock_get_ticks(&timestamp));
-    sprintf(endpoint.socket_name, "testsock%llu.sock", (long long unsigned)timestamp);
+    sprintf(endpoint.address, "testsock%llu.sock", (long long unsigned)timestamp);
 
     /* Client io setup. */
     struct aws_tls_ctx_options client_tls_ctx_options;
@@ -244,6 +243,7 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
 
     struct aws_tls_connection_options tls_client_conn_options;
     aws_tls_connection_options_init_from_ctx_options(&tls_client_conn_options, &client_tls_ctx_options);
+    aws_tls_connection_options_set_server_name(&tls_client_conn_options, "localhost");
 
     struct aws_client_bootstrap client_bootstrap;
     ASSERT_SUCCESS(aws_client_bootstrap_init(&client_bootstrap, allocator, &el_group));
