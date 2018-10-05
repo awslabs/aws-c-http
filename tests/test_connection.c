@@ -301,11 +301,11 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
         NULL);
 
     /* Wait for connection to complete setup. */
+    aws_mutex_lock(&s_mutex);
     while (!s_client_connection) {
-        aws_mutex_lock(&s_mutex);
         aws_condition_variable_wait(&s_cv, &s_mutex);
-        aws_mutex_unlock(&s_mutex);
     }
+    aws_mutex_unlock(&s_mutex);
 
     /* Make a request from the client. */
     const char *body_data = "The body data.";
@@ -332,11 +332,11 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     aws_http_request_send(request);
 
     /* Wait for server to get request. */
+    aws_mutex_lock(&s_mutex);
     while (!s_server_finished_getting_request) {
-        aws_mutex_lock(&s_mutex);
         aws_condition_variable_wait(&s_cv, &s_mutex);
-        aws_mutex_unlock(&s_mutex);
     }
+    aws_mutex_unlock(&s_mutex);
 
     /* Make a response from the server. */
     struct aws_http_response_callbacks response_callbacks;
@@ -353,11 +353,11 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     aws_http_response_send(response);
 
     /* Wait for until entire response from the server is received and parsed. */
+    aws_mutex_lock(&s_mutex);
     while (!s_client_received_response) {
-        aws_mutex_lock(&s_mutex);
         aws_condition_variable_wait(&s_cv, &s_mutex);
-        aws_mutex_unlock(&s_mutex);
     }
+    aws_mutex_unlock(&s_mutex);
 
     /* Cleanup. */
     if (s_client_connection) {
@@ -368,18 +368,18 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     }
 
     /* Wait until server finishes cleaning itself up. */
+    aws_mutex_lock(&s_mutex);
     while (s_server_connection) {
-        aws_mutex_lock(&s_mutex);
         aws_condition_variable_wait(&s_cv, &s_mutex);
-        aws_mutex_unlock(&s_mutex);
     }
+    aws_mutex_unlock(&s_mutex);
 
     /* Wait until client finishes cleaning itself up. */
+    aws_mutex_lock(&s_mutex);
     while (s_client_connection) {
-        aws_mutex_lock(&s_mutex);
         aws_condition_variable_wait(&s_cv, &s_mutex);
-        aws_mutex_unlock(&s_mutex);
     }
+    aws_mutex_unlock(&s_mutex);
 
     aws_http_listener_destroy(server_listener);
 
@@ -390,6 +390,8 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     aws_tls_ctx_destroy(client_tls_ctx);
     aws_tls_ctx_destroy(server_tls_ctx);
     aws_tls_clean_up_static_state();
+
+    aws_mem_print_leaks_from_default_allocator();
 
     return AWS_OP_SUCCESS;
 }

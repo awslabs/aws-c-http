@@ -34,7 +34,6 @@ set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})
 
 get_target_property(MY_CFLAGS ${TEST_BINARY_NAME} COMPILE_OPTIONS)
-message(STATUS "tests ${MY_CFLAGS}")
 
 #SSL certificates to use for testing.
 add_custom_command(TARGET ${TEST_BINARY_NAME} PRE_BUILD
