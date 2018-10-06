@@ -30,7 +30,7 @@
 
 #include <unistd.h>
 
-#if 1
+#if 0
 #   define AWS_HTTP_TEST_PRINT(...) fprintf(stderr, __VA_ARGS__)
 #else
 #   define AWS_HTTP_TEST_PRINT(...)
@@ -44,11 +44,21 @@ static struct aws_mutex s_mutex;
 static struct aws_condition_variable s_cv;
 static bool s_server_finished_getting_request;
 static bool s_client_received_response;
+static enum aws_http_method s_method;
+static size_t s_uri_len;
+static uint8_t s_uri[128];
+static uint8_t s_body_data_memory[128];
+static struct aws_byte_buf s_body_data;
+static bool s_body_data_init;
+int s_header_count;
+bool s_headers_ok;
+static enum aws_http_code s_code;
 
 static void s_on_request(struct aws_http_server_connection *connection, enum aws_http_method method, void *user_data) {
     (void)connection;
     (void)user_data;
     AWS_HTTP_TEST_PRINT("Got request. Method: %s\n", aws_http_method_to_str(method));
+    s_method = method;
 }
 
 static void s_on_uri(
@@ -58,6 +68,15 @@ static void s_on_uri(
     (void)connection;
     (void)user_data;
     AWS_HTTP_TEST_PRINT("Got URI: %.*s\n", (int)uri->len, uri->ptr);
+    assert(uri->len < AWS_ARRAY_SIZE(s_uri));
+    memcpy(s_uri, uri->ptr,  uri->len);
+    s_uri_len = uri->len;
+}
+
+static int s_test_header(const char *expected, const struct aws_byte_cursor *got) {
+    struct aws_byte_cursor host = aws_byte_cursor_from_str(expected);
+    ASSERT_BIN_ARRAYS_EQUALS(host.ptr, host.len, got->ptr, got->len);
+    return AWS_OP_SUCCESS;
 }
 
 static void s_on_request_header(
@@ -74,6 +93,16 @@ static void s_on_request_header(
         header->name.ptr,
         (int)header->value.len,
         header->value.ptr);
+
+    if (s_header_count == 0) {
+        s_headers_ok |= s_test_header("Host", &header->name);
+        s_headers_ok |= s_test_header("amazon.com", &header->value);
+    } else {
+        s_headers_ok |= s_test_header("transfer-encoding", &header->name);
+        s_headers_ok |= s_test_header("chunked", &header->value);
+    }
+
+    ++s_header_count;
 }
 
 static void s_on_request_body_segment(
@@ -93,6 +122,17 @@ static void s_on_request_body_segment(
         s_server_finished_getting_request = true;
         aws_condition_variable_notify_one(&s_cv);
         aws_mutex_unlock(&s_mutex);
+    }
+
+    if (!s_body_data_init) {
+        s_body_data = aws_byte_buf_from_array(s_body_data_memory, AWS_ARRAY_SIZE(s_body_data_memory));
+        s_body_data.len = 0;
+        s_body_data_init = true;
+    }
+
+    if (data->len) {
+        struct aws_byte_cursor data_not_const = *data;
+        aws_byte_buf_append(&s_body_data, &data_not_const);
     }
 }
 
@@ -152,6 +192,7 @@ static void s_request_on_response(struct aws_http_request *request, enum aws_htt
     (void)request;
     (void)user_data;
     AWS_HTTP_TEST_PRINT("Got response code: %d\n", (int)code);
+    s_code = code;
 }
 
 static void s_request_on_response_header(
@@ -168,6 +209,7 @@ static void s_request_on_response_header(
         header->name.ptr,
         (int)header->value.len,
         header->value.ptr);
+    (void)header;
 }
 
 static void s_request_on_response_body_segment(
@@ -181,11 +223,12 @@ static void s_request_on_response_body_segment(
     (void)user_data;
     *release_segment = true;
     AWS_HTTP_TEST_PRINT("%.*s", (int)data->len, data->ptr);
+    (void)data;
 }
 
 static void s_request_on_request_completed(struct aws_http_request *request, void *user_data) {
     (void)user_data;
-    fprintf(stderr, "Request received a response and fully completed.\n");
+    AWS_HTTP_TEST_PRINT("Request received a response and fully completed.\n");
     aws_http_request_destroy(request);
 
     aws_mutex_lock(&s_mutex);
@@ -286,11 +329,12 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
         &server_callbacks,
         NULL);
     (void)server_listener;
+    ASSERT_NOT_NULL(server_listener);
 
     struct aws_http_client_callbacks client_callbacks;
     client_callbacks.on_connected = s_on_connected;
     client_callbacks.on_disconnected = s_on_disconnected;
-    aws_http_client_connect(
+    ASSERT_SUCCESS(aws_http_client_connect(
         allocator,
         &endpoint,
         &socket_options,
@@ -298,7 +342,7 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
         &client_bootstrap,
         1024,
         &client_callbacks,
-        NULL);
+        NULL));
 
     /* Wait for connection to complete setup. */
     aws_mutex_lock(&s_mutex);
@@ -329,6 +373,7 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
         AWS_ARRAY_SIZE(headers),
         &request_callbacks,
         (void *)body_data);
+    ASSERT_NOT_NULL(request);
     aws_http_request_send(request);
 
     /* Wait for server to get request. */
@@ -350,6 +395,7 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
             0,
             &response_callbacks,
             NULL);
+    ASSERT_NOT_NULL(response);
     aws_http_response_send(response);
 
     /* Wait for until entire response from the server is received and parsed. */
@@ -391,7 +437,14 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     aws_tls_ctx_destroy(server_tls_ctx);
     aws_tls_clean_up_static_state();
 
-    aws_mem_print_leaks_from_default_allocator();
+    ASSERT_PTR_EQUALS(NULL, s_server_connection);
+    ASSERT_PTR_EQUALS(NULL, s_client_connection);
+    ASSERT_INT_EQUALS(AWS_HTTP_METHOD_GET, s_method);
+    ASSERT_TRUE(!strncmp((char *)s_uri, "/", s_uri_len));
+    struct aws_byte_cursor body_cursor = aws_byte_cursor_from_str("The body data.");
+    ASSERT_BIN_ARRAYS_EQUALS(body_cursor.ptr, body_cursor.len, s_body_data.buffer, s_body_data.len,);
+    ASSERT_INT_EQUALS(AWS_HTTP_CODE_OK, s_code);
+    ASSERT_INT_EQUALS(AWS_OP_SUCCESS, s_headers_ok);
 
     return AWS_OP_SUCCESS;
 }

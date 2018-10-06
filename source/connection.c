@@ -16,7 +16,10 @@
 #include <aws/common/byte_buf.h>
 
 #include <aws/io/channel.h>
+#include <aws/io/channel_bootstrap.h>
 #include <aws/io/message_pool.h>
+#include <aws/io/socket.h>
+#include <aws/io/tls_channel_handler.h>
 
 #include <aws/http/connection.h>
 #include <aws/http/decode.h>
@@ -592,6 +595,10 @@ struct aws_http_listener *aws_http_listener_new(
 cleanup:
     aws_mem_release(alloc, listener);
     return NULL;
+}
+
+void aws_http_server_connection_release_bytes(struct aws_http_server_connection *connection, size_t bytes) {
+    aws_channel_handler_increment_read_window(&connection->data.handler, connection->data.slot, bytes);
 }
 
 void aws_http_server_connection_disconnect(struct aws_http_server_connection *connection) {
