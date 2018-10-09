@@ -56,6 +56,21 @@ typedef void(aws_http_decoder_on_response_code_fn)(enum aws_http_code code, void
 typedef void(aws_http_decoder_on_method_fn)(enum aws_http_method method, void *user_data);
 typedef void(aws_http_decoder_done_fn)(void *user_data);
 
+struct aws_http_decoder_vtable {
+    aws_http_decoder_on_header_fn *on_header;
+    aws_http_decoder_on_body_fn *on_body;
+    aws_http_decoder_on_version_fn *on_version;
+
+    /* Only needed for requests, can be NULL for responses. */
+    aws_http_decoder_on_uri_fn *on_uri;
+    aws_http_decoder_on_method_fn *on_method;
+
+    /* Only needed for responses, can be NULL for requests. */
+    aws_http_decoder_on_response_code_fn *on_code;
+
+    aws_http_decoder_done_fn *on_done;
+};
+
 /**
  * Structure used to initialize an `aws_http_decoder`.
  */
@@ -71,19 +86,7 @@ struct aws_http_decoder_params {
     struct aws_byte_buf scratch_space;
     bool true_for_request_false_for_response;
     void *user_data;
-
-    aws_http_decoder_on_header_fn *on_header;
-    aws_http_decoder_on_body_fn *on_body;
-    aws_http_decoder_on_version_fn *on_version;
-
-    /* Only needed for requests, can be NULL for responses. */
-    aws_http_decoder_on_uri_fn *on_uri;
-    aws_http_decoder_on_method_fn *on_method;
-
-    /* Only needed for responses, can be NULL for requests. */
-    aws_http_decoder_on_response_code_fn *on_code;
-
-    aws_http_decoder_done_fn *on_done;
+    struct aws_http_decoder_vtable vtable;
 };
 
 struct aws_http_decoder;
@@ -106,6 +109,7 @@ AWS_HTTP_API int aws_http_decode(
     const void *data,
     size_t data_bytes,
     size_t *bytes_read);
+AWS_HTTP_API void aws_http_decoder_set_vtable(struct aws_http_decoder *decoder, const struct aws_http_decoder_vtable *vtable);
 
 /* RFC-7230 section 4.2 Message Format */
 #define AWS_HTTP_TRANSFER_ENCODING_CHUNKED (1 << 0)

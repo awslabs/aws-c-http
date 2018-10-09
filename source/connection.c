@@ -111,6 +111,8 @@ struct aws_http_request {
     bool has_cached_segment;
     struct aws_byte_buf cached_segment;
     bool last_segment;
+    volatile bool expect_100_continue;
+    bool got_100_continue;
     void *user_data;
 };
 
@@ -136,6 +138,16 @@ struct aws_http_response {
     void *user_data;
 };
 
+static struct aws_http_decoder_vtable s_get_client_decoder_vtable(void);
+static struct aws_http_decoder_vtable s_get_client_decoder_vtable_100_continue(void);
+static struct aws_http_decoder_vtable s_get_server_decoder_vtable(void);
+
+static bool s_response_decoder_stub(const struct aws_http_decoded_header *header, void *user_data) {
+    (void)header;
+    (void)user_data;
+    return true;
+}
+
 static bool s_response_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
     struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
     struct aws_http_request *request = connection->request;
@@ -157,6 +169,13 @@ static void s_complete_request(struct aws_http_request *request) {
     }
 }
 
+static bool s_response_decoder_on_body_stub(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
+    (void)data;
+    (void)last_segment;
+    (void)user_data;
+    return true;
+}
+
 static bool s_response_decoder_on_body(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
     struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
     struct aws_http_request *request = connection->request;
@@ -168,7 +187,7 @@ static bool s_response_decoder_on_body(const struct aws_byte_cursor *data, bool 
     return true;
 }
 
-static void s_response_decoder_on_version(enum aws_http_version version, void *user_data) {
+static void s_response_decoder_on_version_stub(enum aws_http_version version, void *user_data) {
     struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
     struct aws_http_request *request = connection->request;
     (void)request;
@@ -176,7 +195,7 @@ static void s_response_decoder_on_version(enum aws_http_version version, void *u
     (void)user_data;
 }
 
-static void s_response_decoder_on_uri(struct aws_byte_cursor *uri, void *user_data) {
+static void s_response_decoder_on_uri_stub(struct aws_byte_cursor *uri, void *user_data) {
     struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
     struct aws_http_request *request = connection->request;
     (void)request;
@@ -190,12 +209,36 @@ static void s_response_decoder_on_response_code(enum aws_http_code code, void *u
     request->callbacks.on_response(request, code, request->user_data);
 }
 
-static void s_response_decoder_on_method(enum aws_http_method method, void *user_data) {
+static void s_response_decoder_on_response_code_100_continue(enum aws_http_code code, void *user_data) {
+    struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
+    struct aws_http_request *request = connection->request;
+    if (code == AWS_HTTP_CODE_CONTINUE) {
+        request->got_100_continue = true;
+    } else {
+        // TODO randgaul: Expected continue, but got something else. Close connection.
+    }
+}
+
+static void s_response_decoder_on_method_stub(enum aws_http_method method, void *user_data) {
     struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
     struct aws_http_request *request = connection->request;
     (void)request;
     (void)method;
     (void)user_data;
+}
+
+static void s_response_decoder_on_done_100_continue(void *user_data) {
+    struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
+    struct aws_http_request *request = connection->request;
+
+    /* Got continue, reschedule task to send the rest of the body data. */
+    if (request->got_100_continue) {
+        request->expect_100_continue = false;
+        request->got_100_continue = false;
+        struct aws_http_decoder_vtable vtable = s_get_client_decoder_vtable();
+        aws_http_decoder_set_vtable(connection->data.decoder, &vtable);
+        aws_channel_schedule_task_now(connection->data.channel, &request->task);
+    }
 }
 
 static void s_response_decoder_on_done(void *user_data) {
@@ -250,6 +293,42 @@ static void s_request_decoder_on_method(enum aws_http_method method, void *user_
 static void s_request_decoder_on_done(void *user_data) {
     struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
     connection->callbacks.on_request_end(connection->data.user_data);
+}
+
+static struct aws_http_decoder_vtable s_get_client_decoder_vtable(void) {
+    struct aws_http_decoder_vtable vtable;
+    vtable.on_header = s_response_decoder_on_header;
+    vtable.on_body = s_response_decoder_on_body;
+    vtable.on_version = s_response_decoder_on_version_stub;
+    vtable.on_uri = s_response_decoder_on_uri_stub;
+    vtable.on_method = s_response_decoder_on_method_stub;
+    vtable.on_code = s_response_decoder_on_response_code;
+    vtable.on_done = s_response_decoder_on_done;
+    return vtable;
+}
+
+static struct aws_http_decoder_vtable s_get_client_decoder_vtable_100_continue(void) {
+    struct aws_http_decoder_vtable vtable;
+    vtable.on_header = s_response_decoder_stub;
+    vtable.on_body = s_response_decoder_on_body_stub;
+    vtable.on_version = s_response_decoder_on_version_stub;
+    vtable.on_uri = s_response_decoder_on_uri_stub;
+    vtable.on_method = s_response_decoder_on_method_stub;
+    vtable.on_code = s_response_decoder_on_response_code_100_continue;
+    vtable.on_done = s_response_decoder_on_done_100_continue;
+    return vtable;
+}
+
+static struct aws_http_decoder_vtable s_get_server_decoder_vtable(void) {
+    struct aws_http_decoder_vtable vtable;
+    vtable.on_header = s_request_decoder_on_header;
+    vtable.on_body = s_request_decoder_on_body;
+    vtable.on_version = s_request_decoder_on_version;
+    vtable.on_uri = s_request_decoder_on_uri;
+    vtable.on_method = s_request_decoder_on_method;
+    vtable.on_code = s_request_decoder_on_response_code;
+    vtable.on_done = s_request_decoder_on_done;
+    return vtable;
 }
 
 static int s_handler_process_read_message(
@@ -446,21 +525,9 @@ static int s_connection_data_init(
     params.true_for_request_false_for_response = !true_for_client_false_for_server;
     params.user_data = (void *)data;
     if (true_for_client_false_for_server) {
-        params.on_header = s_response_decoder_on_header;
-        params.on_body = s_response_decoder_on_body;
-        params.on_version = s_response_decoder_on_version;
-        params.on_uri = s_response_decoder_on_uri;
-        params.on_method = s_response_decoder_on_method;
-        params.on_code = s_response_decoder_on_response_code;
-        params.on_done = s_response_decoder_on_done;
+        params.vtable = s_get_client_decoder_vtable();
     } else {
-        params.on_header = s_request_decoder_on_header;
-        params.on_body = s_request_decoder_on_body;
-        params.on_version = s_request_decoder_on_version;
-        params.on_uri = s_request_decoder_on_uri;
-        params.on_method = s_request_decoder_on_method;
-        params.on_code = s_request_decoder_on_response_code;
-        params.on_done = s_request_decoder_on_done;
+        params.vtable = s_get_server_decoder_vtable();
     }
     decoder = aws_http_decoder_new(&params);
     if (!decoder) {
@@ -715,6 +782,28 @@ static inline int s_write_to_msg_implementation(struct aws_io_message *msg, stru
     }                                                                                                                  \
     AWS_COROUTINE_CASE_END()
 
+static inline char s_lower(char c) {
+    if (c >= 'A' && c <= 'Z') {
+        c -= ('A' - 'a');
+    }
+    return c;
+}
+
+/* Works like memcmp or strcmp, except is case-agnostic. */
+static inline int s_strcmp_case_insensitive(const char *a, size_t len_a, const char *b, size_t len_b) {
+    if (len_a != len_b) {
+        return 1;
+    }
+
+    for (size_t i = 0; i < len_a; ++i) {
+        int d = s_lower(a[i]) - s_lower(b[i]);
+        if (d) {
+            return d;
+        }
+    }
+    return 0;
+}
+
 static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_status status) {
     (void)task;
     if (status != AWS_TASK_STATUS_RUN_READY) {
@@ -740,16 +829,17 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
         /* TODO (randgaul): Close connection. */
     }
 
+    /* WORKING HERE. Need to implement 100-continue. Where the client waits for 100-continue response
+     * before sending body. */
+
+    AWS_COROUTINE_START(&request->co);
+
+    /* Occurs only once. */
     if (request->connection->request) {
         aws_queue_push(&request->connection->request_queue, &request, sizeof(struct aws_http_request *));
     } else {
         request->connection->request = request;
     }
-
-    /* WORKING HERE. Need to  implement 100-continue. Where the client waits for 100-continue response
-     * before sending body. */
-
-    AWS_COROUTINE_START(&request->co);
 
     s_write_to_msg(msg, &method);
     s_write_to_msg(msg, &space);
@@ -758,10 +848,18 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
     s_write_to_msg(msg, &version);
     s_write_to_msg(msg, &newline);
 
+    /* Write headers. Detect content presence. Detect expect 100-continue. */
     while (request->header_index < request->header_count) {
         enum aws_http_header_name name = aws_http_str_to_header_name(request->headers[request->header_index].name);
         if (name == AWS_HTTP_HEADER_CONTENT_LENGTH || name == AWS_HTTP_HEADER_TRANSFER_ENCODING) {
             request->has_body = true;
+        } else if (name == AWS_HTTP_HEADER_EXPECT) {
+            struct aws_byte_cursor cursor = request->headers[request->header_index].value;
+            if (s_strcmp_case_insensitive("100-continue", 12, (const char *)cursor.ptr, cursor.len)) {
+                struct aws_http_decoder_vtable vtable = s_get_client_decoder_vtable_100_continue();
+                aws_http_decoder_set_vtable(request->connection->data.decoder, &vtable);
+                request->expect_100_continue = true;
+            }
         }
         s_write_to_msg(msg, &request->headers[request->header_index].name);
         s_write_to_msg(msg, &colon_space);
@@ -772,6 +870,13 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
     s_write_to_msg(msg, &newline);
 
     if (request->has_body) {
+        /* Wait here for a 100-continue response. */
+        AWS_COROUTINE_CASE();
+        if (request->expect_100_continue) {
+            AWS_COROUTINE_YIELD();
+        }
+        AWS_COROUTINE_CASE_END();
+
         while (!request->last_segment) {
             request->callbacks.on_write_body_segment(
                     request, &request->segment, &request->last_segment, request->user_data);
@@ -801,7 +906,7 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
     AWS_COROUTINE_END();
 
     /* Buffer up the segment memory if needed and schedule a followup task. */
-    if (request->has_body && !request->last_segment) {
+    if (request->has_body && !request->last_segment && !request->expect_100_continue) {
         if (request->has_cached_segment) {
             aws_byte_buf_clean_up(&request->cached_segment);
         }
@@ -973,6 +1078,7 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
         uint64_t t;
         aws_channel_current_clock_time(channel, &t);
         aws_channel_schedule_task_future(channel, &response->task, t + 200);
+        /* TODO (randgaul): Ask Henso what he thinks a good time would be. */
     } else {
         if (response->callbacks.on_response_sent) {
             response->callbacks.on_response_sent(response, response->user_data);

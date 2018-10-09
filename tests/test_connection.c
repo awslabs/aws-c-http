@@ -122,6 +122,7 @@ static void s_on_request_body_segment(
         s_server_finished_getting_request = true;
         aws_condition_variable_notify_one(&s_cv);
         aws_mutex_unlock(&s_mutex);
+        AWS_HTTP_TEST_PRINT("\n");
     }
 
     if (!s_body_data_init) {
