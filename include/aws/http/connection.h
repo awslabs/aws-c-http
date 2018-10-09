@@ -138,10 +138,7 @@ struct aws_http_server_callbacks {
      * Called when a request has been received from the underlying io, and parsing has begun.
      * `method` is the request method.
      */
-    void (*on_request)(
-        struct aws_http_server_connection *connection,
-        enum aws_http_method method,
-        void *user_data);
+    void (*on_request)(struct aws_http_server_connection *connection, enum aws_http_method method, void *user_data);
 
     /**
      * Called the URI has been parsed. `uri` memory is not valid after this function returns, so be sure
@@ -219,8 +216,8 @@ AWS_HTTP_API int aws_http_client_connect(
 AWS_HTTP_API void aws_http_client_connection_release_bytes(struct aws_http_client_connection *connection, size_t bytes);
 
 /**
- * Signals to the underlying io to disconnect the client connection. Will invoke `aws_http_client_callbacks::on_disconnected`
- * once the client has been disconnected.
+ * Signals to the underlying io to disconnect the client connection. Will invoke
+ * `aws_http_client_callbacks::on_disconnected` once the client has been disconnected.
  */
 AWS_HTTP_API void aws_http_client_connection_disconnect(struct aws_http_client_connection *connection);
 
@@ -246,8 +243,8 @@ AWS_HTTP_API struct aws_http_listener *aws_http_listener_new(
 AWS_HTTP_API void aws_http_server_connection_release_bytes(struct aws_http_server_connection *connection, size_t bytes);
 
 /**
- * Signals to the underlying io to disconnect the server connection. Will invoke `aws_http_server_callbacks::on_connection_closed`
- * once the server has been disconnected.
+ * Signals to the underlying io to disconnect the server connection. Will invoke
+ * `aws_http_server_callbacks::on_connection_closed` once the server has been disconnected.
  */
 AWS_HTTP_API void aws_http_server_connection_disconnect(struct aws_http_server_connection *connection);
 

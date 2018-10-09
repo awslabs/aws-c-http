@@ -30,10 +30,10 @@
 
 #include <unistd.h>
 
-#if 0
-#   define AWS_HTTP_TEST_PRINT(...) fprintf(stderr, __VA_ARGS__)
+#if 1
+#    define AWS_HTTP_TEST_PRINT(...) fprintf(stderr, __VA_ARGS__)
 #else
-#   define AWS_HTTP_TEST_PRINT(...)
+#    define AWS_HTTP_TEST_PRINT(...)
 #endif
 
 #define aws_byte_cursor_from_str(s) aws_byte_cursor_from_array(s, strlen(s))
@@ -69,7 +69,7 @@ static void s_on_uri(
     (void)user_data;
     AWS_HTTP_TEST_PRINT("Got URI: %.*s\n", (int)uri->len, uri->ptr);
     assert(uri->len < AWS_ARRAY_SIZE(s_uri));
-    memcpy(s_uri, uri->ptr,  uri->len);
+    memcpy(s_uri, uri->ptr, uri->len);
     s_uri_len = uri->len;
 }
 
@@ -238,10 +238,10 @@ static void s_request_on_request_completed(struct aws_http_request *request, voi
 }
 
 static void s_on_write_body_segment(
-        struct aws_http_response *response,
-        struct aws_byte_cursor *segment,
-        bool *last_segment,
-        void *user_data) {
+    struct aws_http_response *response,
+    struct aws_byte_cursor *segment,
+    bool *last_segment,
+    void *user_data) {
     (void)response;
     (void)user_data;
     struct aws_byte_cursor no_data = {.ptr = NULL, .len = 0};
@@ -256,59 +256,110 @@ static void s_on_response_sent(struct aws_http_response *response, void *user_da
     aws_http_response_destroy(response);
 }
 
+static int s_init_stuff(
+    struct aws_allocator *allocator,
+    struct aws_event_loop_group *el_group,
+    struct aws_socket_options *socket_options,
+    struct aws_socket_endpoint *endpoint,
+    struct aws_tls_ctx_options *client_tls_ctx_options,
+    struct aws_tls_ctx **client_tls_ctx,
+    struct aws_tls_connection_options *tls_client_conn_options,
+    struct aws_client_bootstrap *client_bootstrap,
+    struct aws_tls_ctx_options *server_tls_ctx_options,
+    struct aws_tls_ctx **server_tls_ctx,
+    struct aws_tls_connection_options *tls_server_conn_options,
+    struct aws_server_bootstrap *server_bootstrap) {
+    aws_tls_init_static_state(allocator);
+
+    ASSERT_SUCCESS(aws_event_loop_group_default_init(el_group, allocator, 2));
+
+    AWS_ZERO_STRUCT(*socket_options);
+    socket_options->connect_timeout_ms = 3000;
+    socket_options->type = AWS_SOCKET_STREAM;
+    socket_options->domain = AWS_SOCKET_LOCAL;
+
+    AWS_ZERO_STRUCT(*endpoint);
+    uint64_t timestamp = 0;
+    ASSERT_SUCCESS(aws_sys_clock_get_ticks(&timestamp));
+    sprintf(endpoint->address, "testsock%llu.sock", (long long unsigned)timestamp);
+
+    /* Client io setup. */
+    aws_tls_ctx_options_init_default_client(client_tls_ctx_options);
+    aws_tls_ctx_options_override_default_trust_store(client_tls_ctx_options, NULL, "./unittests.crt");
+    *client_tls_ctx = aws_tls_client_ctx_new(allocator, client_tls_ctx_options);
+    ASSERT_NOT_NULL(*client_tls_ctx);
+
+    aws_tls_connection_options_init_from_ctx_options(tls_client_conn_options, client_tls_ctx_options);
+    aws_tls_connection_options_set_server_name(tls_client_conn_options, "localhost");
+
+    ASSERT_SUCCESS(aws_client_bootstrap_init(client_bootstrap, allocator, el_group));
+    aws_client_bootstrap_set_tls_ctx(client_bootstrap, *client_tls_ctx);
+
+    /* Server io setup. */
+#ifdef __APPLE__
+    aws_tls_ctx_options_init_server_pkcs12(server_tls_ctx_options, "./unittests.p12", "1234");
+#else
+    aws_tls_ctx_options_init_default_server(server_tls_ctx_options, "./unittests.crt", "./unittests.key");
+#endif /* __APPLE__ */
+
+    *server_tls_ctx = aws_tls_server_ctx_new(allocator, server_tls_ctx_options);
+    ASSERT_NOT_NULL(*server_tls_ctx);
+
+    aws_tls_connection_options_init_from_ctx_options(tls_server_conn_options, server_tls_ctx_options);
+
+    ASSERT_SUCCESS(aws_server_bootstrap_init(server_bootstrap, allocator, el_group));
+    ASSERT_SUCCESS(aws_server_bootstrap_set_tls_ctx(server_bootstrap, *server_tls_ctx));
+
+    return AWS_OP_SUCCESS;
+}
+
+static void s_clean_up_stuff(
+    struct aws_tls_ctx *client_tls_ctx,
+    struct aws_tls_ctx *server_tls_ctx,
+    struct aws_event_loop_group *el_group,
+    struct aws_client_bootstrap *client_bootstrap,
+    struct aws_server_bootstrap *server_bootstrap,
+    struct aws_http_listener *server_listener) {
+    aws_http_listener_destroy(server_listener);
+
+    aws_client_bootstrap_clean_up(client_bootstrap);
+    aws_server_bootstrap_clean_up(server_bootstrap);
+
+    aws_event_loop_group_clean_up(el_group);
+    aws_tls_ctx_destroy(client_tls_ctx);
+    aws_tls_ctx_destroy(server_tls_ctx);
+    aws_tls_clean_up_static_state();
+}
+
 AWS_TEST_CASE(http_test_connection, s_http_test_connection);
 static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    aws_tls_init_static_state(allocator);
-
     struct aws_event_loop_group el_group;
-    ASSERT_SUCCESS(aws_event_loop_group_default_init(&el_group, allocator, 2));
-
     struct aws_socket_options socket_options;
-    AWS_ZERO_STRUCT(socket_options);
-    socket_options.connect_timeout_ms = 3000;
-    socket_options.type = AWS_SOCKET_STREAM;
-    socket_options.domain = AWS_SOCKET_LOCAL;
-
     struct aws_socket_endpoint endpoint;
-    AWS_ZERO_STRUCT(endpoint);
-    uint64_t timestamp = 0;
-    ASSERT_SUCCESS(aws_sys_clock_get_ticks(&timestamp));
-    sprintf(endpoint.address, "testsock%llu.sock", (long long unsigned)timestamp);
-
-    /* Client io setup. */
     struct aws_tls_ctx_options client_tls_ctx_options;
-    aws_tls_ctx_options_init_default_client(&client_tls_ctx_options);
-    aws_tls_ctx_options_override_default_trust_store(&client_tls_ctx_options, NULL, "./unittests.crt");
-    struct aws_tls_ctx *client_tls_ctx = aws_tls_client_ctx_new(allocator, &client_tls_ctx_options);
-    ASSERT_NOT_NULL(client_tls_ctx);
-
+    struct aws_tls_ctx *client_tls_ctx;
     struct aws_tls_connection_options tls_client_conn_options;
-    aws_tls_connection_options_init_from_ctx_options(&tls_client_conn_options, &client_tls_ctx_options);
-    aws_tls_connection_options_set_server_name(&tls_client_conn_options, "localhost");
-
     struct aws_client_bootstrap client_bootstrap;
-    ASSERT_SUCCESS(aws_client_bootstrap_init(&client_bootstrap, allocator, &el_group));
-    aws_client_bootstrap_set_tls_ctx(&client_bootstrap, client_tls_ctx);
-
-    /* Server io setup. */
     struct aws_tls_ctx_options server_tls_ctx_options;
-#ifdef __APPLE__
-    aws_tls_ctx_options_init_server_pkcs12(&server_tls_ctx_options, "./unittests.p12", "1234");
-#else
-    aws_tls_ctx_options_init_default_server(&server_tls_ctx_options, "./unittests.crt", "./unittests.key");
-#endif /* __APPLE__ */
-
-    struct aws_tls_ctx *server_tls_ctx = aws_tls_server_ctx_new(allocator, &server_tls_ctx_options);
-    ASSERT_NOT_NULL(server_tls_ctx);
-
+    struct aws_tls_ctx *server_tls_ctx;
     struct aws_tls_connection_options tls_server_conn_options;
-    aws_tls_connection_options_init_from_ctx_options(&tls_server_conn_options, &server_tls_ctx_options);
-
     struct aws_server_bootstrap server_bootstrap;
-    ASSERT_SUCCESS(aws_server_bootstrap_init(&server_bootstrap, allocator, &el_group));
-    ASSERT_SUCCESS(aws_server_bootstrap_set_tls_ctx(&server_bootstrap, server_tls_ctx));
+
+    s_init_stuff(
+        allocator,
+        &el_group,
+        &socket_options,
+        &endpoint,
+        &client_tls_ctx_options,
+        &client_tls_ctx,
+        &tls_client_conn_options,
+        &client_bootstrap,
+        &server_tls_ctx_options,
+        &server_tls_ctx,
+        &tls_server_conn_options,
+        &server_bootstrap);
 
     /* Setup HTTP connections. */
     struct aws_http_server_callbacks server_callbacks;
@@ -387,14 +438,8 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     struct aws_http_response_callbacks response_callbacks;
     response_callbacks.on_write_body_segment = s_on_write_body_segment;
     response_callbacks.on_response_sent = s_on_response_sent;
-    struct aws_http_response *response = aws_http_response_new(
-            s_server_connection,
-            AWS_HTTP_CODE_OK,
-            false,
-            NULL,
-            0,
-            &response_callbacks,
-            NULL);
+    struct aws_http_response *response =
+        aws_http_response_new(s_server_connection, AWS_HTTP_CODE_OK, false, NULL, 0, &response_callbacks, NULL);
     ASSERT_NOT_NULL(response);
     aws_http_response_send(response);
 
@@ -427,24 +472,297 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     }
     aws_mutex_unlock(&s_mutex);
 
-    aws_http_listener_destroy(server_listener);
-
-    aws_client_bootstrap_clean_up(&client_bootstrap);
-    aws_server_bootstrap_clean_up(&server_bootstrap);
-
-    aws_event_loop_group_clean_up(&el_group);
-    aws_tls_ctx_destroy(client_tls_ctx);
-    aws_tls_ctx_destroy(server_tls_ctx);
-    aws_tls_clean_up_static_state();
+    s_clean_up_stuff(client_tls_ctx, server_tls_ctx, &el_group, &client_bootstrap, &server_bootstrap, server_listener);
 
     ASSERT_PTR_EQUALS(NULL, s_server_connection);
     ASSERT_PTR_EQUALS(NULL, s_client_connection);
     ASSERT_INT_EQUALS(AWS_HTTP_METHOD_GET, s_method);
     ASSERT_TRUE(!strncmp((char *)s_uri, "/", s_uri_len));
     struct aws_byte_cursor body_cursor = aws_byte_cursor_from_str("The body data.");
-    ASSERT_BIN_ARRAYS_EQUALS(body_cursor.ptr, body_cursor.len, s_body_data.buffer, s_body_data.len,);
+    ASSERT_BIN_ARRAYS_EQUALS(body_cursor.ptr, body_cursor.len, s_body_data.buffer, s_body_data.len, );
     ASSERT_INT_EQUALS(AWS_HTTP_CODE_OK, s_code);
     ASSERT_INT_EQUALS(AWS_OP_SUCCESS, s_headers_ok);
 
     return AWS_OP_SUCCESS;
 }
+
+#if 0
+static void s_on_request_100_continue(
+    struct aws_http_server_connection *connection,
+    enum aws_http_method method,
+    void *user_data) {
+    (void)connection;
+    (void)method;
+    (void)user_data;
+}
+
+static void s_on_uri_100_continue(
+    struct aws_http_server_connection *connection,
+    const struct aws_byte_cursor *uri,
+    void *user_data) {
+    (void)connection;
+    (void)uri;
+    (void)user_data;
+}
+
+static void s_on_request_header_100_continue(
+    struct aws_http_server_connection *connection,
+    enum aws_http_header_name header_name,
+    const struct aws_http_header *header,
+    void *user_data) {
+    (void)connection;
+    (void)header_name;
+    (void)header;
+    (void)user_data;
+}
+
+static void s_on_request_body_segment_100_continue(
+    struct aws_http_server_connection *connection,
+    const struct aws_byte_cursor *data,
+    bool last_segment,
+    bool *release_segment,
+    void *user_data) {
+    (void)connection;
+    (void)data;
+    (void)last_segment;
+    (void)release_segment;
+    (void)user_data;
+}
+
+static void s_on_request_end_100_continue(void *user_data) {
+    (void)user_data;
+}
+
+void s_on_connection_created_100_continue(struct aws_http_server_connection *connection, void *user_data) {
+    (void)connection;
+    (void)user_data;
+}
+
+void s_on_connection_closed_100_continue(struct aws_http_server_connection *connection, void *user_data) {
+    (void)connection;
+    (void)user_data;
+}
+
+static void s_on_connected_100_continue(struct aws_http_client_connection *connection, void *user_data) {
+    (void)connection;
+    (void)user_data;
+}
+
+static void s_on_disconnected_100_continue(struct aws_http_client_connection *connection, void *user_data) {
+    (void)connection;
+    (void)user_data;
+}
+
+static void s_request_on_write_body_segment_100_continue(
+    struct aws_http_request *request,
+    struct aws_byte_cursor *segment,
+    bool *last_segment,
+    void *user_data) {
+    (void)request;
+    (void)segment;
+    (void)last_segment;
+    (void)user_data;
+}
+
+static void s_request_on_response_100_continue(
+    struct aws_http_request *request,
+    enum aws_http_code code,
+    void *user_data) {
+    (void)request;
+    (void)code;
+    (void)user_data;
+}
+
+static void s_request_on_response_header_100_continue(
+    struct aws_http_request *request,
+    enum aws_http_header_name header_name,
+    const struct aws_http_header *header,
+    void *user_data) {
+    (void)request;
+    (void)header_name;
+    (void)user_data;
+    (void)header;
+}
+
+static void s_request_on_response_body_segment_100_continue(
+    struct aws_http_request *request,
+    const struct aws_byte_cursor *data,
+    bool last_segment,
+    bool *release_segment,
+    void *user_data) {
+    (void)request;
+    (void)last_segment;
+    (void)user_data;
+    (void)release_segment;
+    (void)data;
+}
+
+static void s_request_on_request_completed_100_continue(struct aws_http_request *request, void *user_data) {
+    (void)request;
+    (void)user_data;
+}
+
+static void s_on_write_body_segment_100_continue(
+    struct aws_http_response *response,
+    struct aws_byte_cursor *segment,
+    bool *last_segment,
+    void *user_data) {
+    (void)response;
+    (void)segment;
+    (void)last_segment;
+    (void)user_data;
+}
+
+static void s_on_response_sent_100_continue(struct aws_http_response *response, void *user_data) {
+    (void)response;
+    (void)user_data;
+}
+
+AWS_TEST_CASE(http_test_100_continue, s_http_test_100_continue);
+static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) {
+    (void)allocator;
+    (void)ctx;
+
+    struct aws_event_loop_group el_group;
+    struct aws_socket_options socket_options;
+    struct aws_socket_endpoint endpoint;
+    struct aws_tls_ctx_options client_tls_ctx_options;
+    struct aws_tls_ctx *client_tls_ctx;
+    struct aws_tls_connection_options tls_client_conn_options;
+    struct aws_client_bootstrap client_bootstrap;
+    struct aws_tls_ctx_options server_tls_ctx_options;
+    struct aws_tls_ctx *server_tls_ctx;
+    struct aws_tls_connection_options tls_server_conn_options;
+    struct aws_server_bootstrap server_bootstrap;
+
+    s_init_stuff(
+        allocator,
+        &el_group,
+        &socket_options,
+        &endpoint,
+        &client_tls_ctx_options,
+        &client_tls_ctx,
+        &tls_client_conn_options,
+        &client_bootstrap,
+        &server_tls_ctx_options,
+        &server_tls_ctx,
+        &tls_server_conn_options,
+        &server_bootstrap);
+
+    /* Setup HTTP connections. */
+    struct aws_http_server_callbacks server_callbacks;
+    server_callbacks.on_request = s_on_request_100_continue;
+    server_callbacks.on_uri = s_on_uri_100_continue;
+    server_callbacks.on_request_header = s_on_request_header_100_continue;
+    server_callbacks.on_request_body_segment = s_on_request_body_segment_100_continue;
+    server_callbacks.on_request_end = s_on_request_end_100_continue;
+    server_callbacks.on_connection_created = s_on_connection_created_100_continue;
+    server_callbacks.on_connection_closed = s_on_connection_closed_100_continue;
+    struct aws_http_listener *server_listener = aws_http_listener_new(
+        allocator,
+        &endpoint,
+        &socket_options,
+        &tls_server_conn_options,
+        &server_bootstrap,
+        1024,
+        &server_callbacks,
+        NULL);
+    (void)server_listener;
+    ASSERT_NOT_NULL(server_listener);
+
+    struct aws_http_client_callbacks client_callbacks;
+    client_callbacks.on_connected = s_on_connected_100_continue;
+    client_callbacks.on_disconnected = s_on_disconnected_100_continue;
+    ASSERT_SUCCESS(aws_http_client_connect(
+        allocator,
+        &endpoint,
+        &socket_options,
+        &tls_client_conn_options,
+        &client_bootstrap,
+        1024,
+        &client_callbacks,
+        NULL));
+
+    /* Wait for connection to complete setup. */
+    aws_mutex_lock(&s_mutex);
+    while (!s_client_connection) {
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+    }
+    aws_mutex_unlock(&s_mutex);
+
+    /* Make a request from the client. */
+    const char *body_data = "Here's some body data for you! Hahaha.\n";
+    struct aws_http_header headers[] = {
+        {.name = aws_byte_cursor_from_str("Host"), .value = aws_byte_cursor_from_str("amazon.com")},
+        {.name = aws_byte_cursor_from_str("transfer-encoding"), .value = aws_byte_cursor_from_str("chunked")},
+        {.name = aws_byte_cursor_from_str("Expect"), .value = aws_byte_cursor_from_str("100-continue")},
+    };
+    struct aws_byte_cursor uri = aws_byte_cursor_from_str("/");
+    struct aws_http_request_callbacks request_callbacks;
+    request_callbacks.on_write_body_segment = s_request_on_write_body_segment_100_continue;
+    request_callbacks.on_response = s_request_on_response_100_continue;
+    request_callbacks.on_response_header = s_request_on_response_header_100_continue;
+    request_callbacks.on_response_body_segment = s_request_on_response_body_segment_100_continue;
+    request_callbacks.on_request_completed = s_request_on_request_completed_100_continue;
+    struct aws_http_request *request = aws_http_request_new(
+        s_client_connection,
+        AWS_HTTP_METHOD_GET,
+        &uri,
+        true,
+        headers,
+        AWS_ARRAY_SIZE(headers),
+        &request_callbacks,
+        (void *)body_data);
+    ASSERT_NOT_NULL(request);
+    aws_http_request_send(request);
+
+    /* Wait for server to get headers. */
+    aws_mutex_lock(&s_mutex);
+    while (!s_server_got_request_headers) {
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+    }
+    aws_mutex_unlock(&s_mutex);
+
+    /* Say no to expectations. */
+    struct aws_http_response_callbacks response_callbacks;
+    response_callbacks.on_write_body_segment = s_on_write_body_segment_100_continue;
+    response_callbacks.on_response_sent = s_on_response_sent_100_continue;
+    struct aws_http_response *response =
+        aws_http_response_new(s_server_connection, AWS_HTTP_CODE_EXPECTATION_FAILED, false, NULL, 0, &response_callbacks, NULL);
+    ASSERT_NOT_NULL(response);
+    aws_http_response_send(response);
+
+    /* Wait for until entire response from the server is received and parsed. */
+    aws_mutex_lock(&s_mutex);
+    while (!s_client_got_expectation_failed) {
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+    }
+    aws_mutex_unlock(&s_mutex);
+
+    /* Cleanup. */
+    if (s_client_connection) {
+        aws_http_client_connection_disconnect(s_client_connection);
+    }
+    if (s_server_connection) {
+        aws_http_server_connection_disconnect(s_server_connection);
+    }
+
+    /* Wait until server finishes cleaning itself up. */
+    aws_mutex_lock(&s_mutex);
+    while (s_server_connection) {
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+    }
+    aws_mutex_unlock(&s_mutex);
+
+    /* Wait until client finishes cleaning itself up. */
+    aws_mutex_lock(&s_mutex);
+    while (s_client_connection) {
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+    }
+    aws_mutex_unlock(&s_mutex);
+
+    s_clean_up_stuff(client_tls_ctx, server_tls_ctx, &el_group, &client_bootstrap, &server_bootstrap, server_listener);
+
+    return AWS_OP_SUCCESS;
+}
+#endif
