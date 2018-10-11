@@ -29,6 +29,8 @@ add_test_case(http_test_ignore_transfer_extensions)
 add_test_case(http_test_ignore_chunk_extensions)
 
 add_test_case(http_test_connection)
+add_test_case(http_test_100_continue)
+add_test_case(http_test_100_continue_failed_expectations)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})

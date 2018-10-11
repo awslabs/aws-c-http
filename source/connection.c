@@ -214,8 +214,6 @@ static void s_response_decoder_on_response_code_100_continue(enum aws_http_code 
     struct aws_http_request *request = connection->request;
     if (code == AWS_HTTP_CODE_CONTINUE) {
         request->got_100_continue = true;
-    } else {
-        // TODO randgaul: Expected continue, but got something else. Close connection.
     }
 }
 
@@ -238,7 +236,11 @@ static void s_response_decoder_on_done_100_continue(void *user_data) {
         struct aws_http_decoder_vtable vtable = s_get_client_decoder_vtable();
         aws_http_decoder_set_vtable(connection->data.decoder, &vtable);
         aws_channel_schedule_task_now(connection->data.channel, &request->task);
+    } else {
+        s_complete_request(request);
     }
+
+    aws_http_decoder_reset(connection->data.decoder, NULL);
 }
 
 static void s_response_decoder_on_done(void *user_data) {
@@ -293,6 +295,7 @@ static void s_request_decoder_on_method(enum aws_http_method method, void *user_
 static void s_request_decoder_on_done(void *user_data) {
     struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
     connection->callbacks.on_request_end(connection->data.user_data);
+    aws_http_decoder_reset(connection->data.decoder, NULL);
 }
 
 static struct aws_http_decoder_vtable s_get_client_decoder_vtable(void) {
@@ -349,12 +352,14 @@ static int s_handler_process_read_message(
 
     struct aws_byte_cursor msg_data = aws_byte_cursor_from_buf(&message->message_data);
     size_t total = 0;
+    int ret = AWS_OP_SUCCESS;
     while (total < msg_data.len) {
         size_t bytes_read;
-        int ret = aws_http_decode(decoder, (const void *)msg_data.ptr, msg_data.len, &bytes_read);
+        ret = aws_http_decode(decoder, (const void *)msg_data.ptr, msg_data.len, &bytes_read);
         total += bytes_read;
+
         if (ret != AWS_OP_SUCCESS) {
-            return ret;
+            break;
         }
     }
 
@@ -367,7 +372,7 @@ static int s_handler_process_read_message(
     }
     aws_channel_release_message_to_pool(slot->channel, message);
 
-    return AWS_OP_SUCCESS;
+    return ret;
 }
 
 static int s_handler_process_write_message(
@@ -829,9 +834,6 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
         /* TODO (randgaul): Close connection. */
     }
 
-    /* WORKING HERE. Need to implement 100-continue. Where the client waits for 100-continue response
-     * before sending body. */
-
     AWS_COROUTINE_START(&request->co);
 
     /* Occurs only once. */
@@ -855,7 +857,7 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
             request->has_body = true;
         } else if (name == AWS_HTTP_HEADER_EXPECT) {
             struct aws_byte_cursor cursor = request->headers[request->header_index].value;
-            if (s_strcmp_case_insensitive("100-continue", 12, (const char *)cursor.ptr, cursor.len)) {
+            if (!s_strcmp_case_insensitive("100-continue", 12, (const char *)cursor.ptr, cursor.len)) {
                 struct aws_http_decoder_vtable vtable = s_get_client_decoder_vtable_100_continue();
                 aws_http_decoder_set_vtable(request->connection->data.decoder, &vtable);
                 request->expect_100_continue = true;
@@ -906,6 +908,7 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
     AWS_COROUTINE_END();
 
     /* Buffer up the segment memory if needed and schedule a followup task. */
+    /* Don't queue up a task when waiting for 100-continue -- will be rescheduled upon server response. */
     if (request->has_body && !request->last_segment && !request->expect_100_continue) {
         if (request->has_cached_segment) {
             aws_byte_buf_clean_up(&request->cached_segment);
@@ -920,10 +923,7 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
 
         request->segment = aws_byte_cursor_from_buf(&request->cached_segment);
 
-        uint64_t t;
-        aws_channel_current_clock_time(channel, &t);
-        aws_channel_schedule_task_future(channel, &request->task, t + 200);
-        /* TODO (randgaul): Ask Henso what he thinks a good time would be. */
+        aws_channel_schedule_task_now(channel, &request->task);
     }
 
     aws_channel_slot_send_message(slot, msg, AWS_CHANNEL_DIR_WRITE);
@@ -1075,10 +1075,7 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
 
         response->segment = aws_byte_cursor_from_buf(&response->cached_segment);
 
-        uint64_t t;
-        aws_channel_current_clock_time(channel, &t);
-        aws_channel_schedule_task_future(channel, &response->task, t + 200);
-        /* TODO (randgaul): Ask Henso what he thinks a good time would be. */
+        aws_channel_schedule_task_now(channel, &response->task);
     } else {
         if (response->callbacks.on_response_sent) {
             response->callbacks.on_response_sent(response, response->user_data);

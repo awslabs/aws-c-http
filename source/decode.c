@@ -41,6 +41,7 @@ struct aws_http_decoder {
     size_t chunk_size;
     bool doing_trailers;
     bool found_double_newline;
+    bool expect_100_continue_skip_on_done;
 
     /* User callbacks and settings. */
     struct aws_http_decoder_vtable vtable;
@@ -258,9 +259,6 @@ static int s_state_unchunked(struct aws_http_decoder *decoder, struct aws_byte_c
     }
 
     if (AWS_LIKELY(finished)) {
-        if (decoder->vtable.on_done) {
-            decoder->vtable.on_done(decoder->user_data);
-        }
         s_set_next_state(decoder, NULL, NULL);
     }
 
@@ -344,11 +342,6 @@ static int s_state_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_
             return aws_raise_error(AWS_ERROR_HTTP_USER_CALLBACK_EXIT);
         }
 
-        /* Since trailers aren't officially supported yet, signal done here. */
-        if (decoder->vtable.on_done) {
-            decoder->vtable.on_done(decoder->user_data);
-        }
-
         /* Expected empty newline and end of message. */
         decoder->doing_trailers = true;
         s_set_next_state(decoder, s_state_getline, s_state_header);
@@ -380,6 +373,9 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
 
         if (decoder->cursor.len == 0) {
             if (AWS_LIKELY(!decoder->doing_trailers)) {
+                /* Clear this flag now that body data is arriving. */
+                decoder->expect_100_continue_skip_on_done = false;
+
                 if (decoder->transfer_encoding & AWS_HTTP_TRANSFER_ENCODING_CHUNKED) {
                     s_set_next_state(decoder, s_state_getline, s_state_chunk_size);
                 } else {
@@ -440,6 +436,12 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
             }
             decoder->transfer_encoding |= flags;
         } break;
+
+        case AWS_HTTP_HEADER_EXPECT:
+            if (!s_strcmp_case_insensitive((const char *)header.value_data.ptr, header.value_data.len, "100-continue", 12)) {
+                decoder->expect_100_continue_skip_on_done = true;
+            }
+            break;
 
         default:
             break;
@@ -611,7 +613,7 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
         *bytes_read = total_bytes_processed;
     }
 
-    if (decoder->vtable.on_done && decoder->found_double_newline) {
+    if (decoder->vtable.on_done && decoder->found_double_newline && !decoder->expect_100_continue_skip_on_done) {
         decoder->vtable.on_done(decoder->user_data);
     }
 

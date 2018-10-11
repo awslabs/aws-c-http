@@ -487,136 +487,71 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     return AWS_OP_SUCCESS;
 }
 
-#if 0
-static void s_on_request_100_continue(
-    struct aws_http_server_connection *connection,
-    enum aws_http_method method,
-    void *user_data) {
-    (void)connection;
-    (void)method;
-    (void)user_data;
-}
-
-static void s_on_uri_100_continue(
-    struct aws_http_server_connection *connection,
-    const struct aws_byte_cursor *uri,
-    void *user_data) {
-    (void)connection;
-    (void)uri;
-    (void)user_data;
-}
-
-static void s_on_request_header_100_continue(
-    struct aws_http_server_connection *connection,
-    enum aws_http_header_name header_name,
-    const struct aws_http_header *header,
-    void *user_data) {
-    (void)connection;
-    (void)header_name;
-    (void)header;
-    (void)user_data;
-}
-
-static void s_on_request_body_segment_100_continue(
-    struct aws_http_server_connection *connection,
-    const struct aws_byte_cursor *data,
-    bool last_segment,
-    bool *release_segment,
-    void *user_data) {
-    (void)connection;
-    (void)data;
-    (void)last_segment;
-    (void)release_segment;
-    (void)user_data;
-}
+static bool s_server_got_entire_request;
 
 static void s_on_request_end_100_continue(void *user_data) {
     (void)user_data;
+    aws_mutex_lock(&s_mutex);
+    s_server_got_entire_request = true;
+    aws_mutex_unlock(&s_mutex);
+    AWS_HTTP_TEST_PRINT("Entire request received by server.\n");
 }
 
-void s_on_connection_created_100_continue(struct aws_http_server_connection *connection, void *user_data) {
+static inline char s_lower(char c) {
+    if (c >= 'A' && c <= 'Z') {
+        c -= ('A' - 'a');
+    }
+    return c;
+}
+
+/* Works like memcmp or strcmp, except is case-agnostic. */
+static inline int s_strcmp_case_insensitive(const char *a, size_t len_a, const char *b, size_t len_b) {
+    if (len_a != len_b) {
+        return 1;
+    }
+
+    for (size_t i = 0; i < len_a; ++i) {
+        int d = s_lower(a[i]) - s_lower(b[i]);
+        if (d) {
+            return d;
+        }
+    }
+    return 0;
+}
+
+static bool s_server_got_expect_100_continue;
+
+static void s_on_request_header_100_continue(
+        struct aws_http_server_connection *connection,
+        enum aws_http_header_name header_name,
+        const struct aws_http_header *header,
+        void *user_data) {
     (void)connection;
-    (void)user_data;
-}
-
-void s_on_connection_closed_100_continue(struct aws_http_server_connection *connection, void *user_data) {
-    (void)connection;
-    (void)user_data;
-}
-
-static void s_on_connected_100_continue(struct aws_http_client_connection *connection, void *user_data) {
-    (void)connection;
-    (void)user_data;
-}
-
-static void s_on_disconnected_100_continue(struct aws_http_client_connection *connection, void *user_data) {
-    (void)connection;
-    (void)user_data;
-}
-
-static void s_request_on_write_body_segment_100_continue(
-    struct aws_http_request *request,
-    struct aws_byte_cursor *segment,
-    bool *last_segment,
-    void *user_data) {
-    (void)request;
-    (void)segment;
-    (void)last_segment;
-    (void)user_data;
-}
-
-static void s_request_on_response_100_continue(
-    struct aws_http_request *request,
-    enum aws_http_code code,
-    void *user_data) {
-    (void)request;
-    (void)code;
-    (void)user_data;
-}
-
-static void s_request_on_response_header_100_continue(
-    struct aws_http_request *request,
-    enum aws_http_header_name header_name,
-    const struct aws_http_header *header,
-    void *user_data) {
-    (void)request;
     (void)header_name;
-    (void)user_data;
     (void)header;
+    (void)user_data;
+
+    if (header_name == AWS_HTTP_HEADER_EXPECT) {
+        if (!s_strcmp_case_insensitive((const char *)header->value.ptr, header->value.len, "100-continue", 12)) {
+            aws_mutex_lock(&s_mutex);
+            s_server_got_expect_100_continue = true;
+            aws_mutex_unlock(&s_mutex);
+            AWS_HTTP_TEST_PRINT("Server got the expect: 100-continue.\n");
+        }
+    }
 }
 
-static void s_request_on_response_body_segment_100_continue(
-    struct aws_http_request *request,
-    const struct aws_byte_cursor *data,
-    bool last_segment,
-    bool *release_segment,
-    void *user_data) {
-    (void)request;
-    (void)last_segment;
-    (void)user_data;
-    (void)release_segment;
-    (void)data;
-}
+static bool s_client_got_entire_response;
 
 static void s_request_on_request_completed_100_continue(struct aws_http_request *request, void *user_data) {
     (void)request;
     (void)user_data;
-}
+    aws_http_request_destroy(request);
 
-static void s_on_write_body_segment_100_continue(
-    struct aws_http_response *response,
-    struct aws_byte_cursor *segment,
-    bool *last_segment,
-    void *user_data) {
-    (void)response;
-    (void)segment;
-    (void)last_segment;
-    (void)user_data;
-}
-
-static void s_on_response_sent_100_continue(struct aws_http_response *response, void *user_data) {
-    (void)response;
-    (void)user_data;
+    aws_mutex_lock(&s_mutex);
+    s_client_got_entire_response = true;
+    aws_mutex_unlock(&s_mutex);
+    AWS_HTTP_TEST_PRINT("Entire response received by client.\n");
 }
 
 AWS_TEST_CASE(http_test_100_continue, s_http_test_100_continue);
@@ -652,13 +587,13 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
 
     /* Setup HTTP connections. */
     struct aws_http_server_callbacks server_callbacks;
-    server_callbacks.on_request = s_on_request_100_continue;
-    server_callbacks.on_uri = s_on_uri_100_continue;
+    server_callbacks.on_request = s_on_request;
+    server_callbacks.on_uri = s_on_uri;
     server_callbacks.on_request_header = s_on_request_header_100_continue;
-    server_callbacks.on_request_body_segment = s_on_request_body_segment_100_continue;
+    server_callbacks.on_request_body_segment = s_on_request_body_segment;
     server_callbacks.on_request_end = s_on_request_end_100_continue;
-    server_callbacks.on_connection_created = s_on_connection_created_100_continue;
-    server_callbacks.on_connection_closed = s_on_connection_closed_100_continue;
+    server_callbacks.on_connection_created = s_on_connection_created;
+    server_callbacks.on_connection_closed = s_on_connection_closed;
     struct aws_http_listener *server_listener = aws_http_listener_new(
         allocator,
         &endpoint,
@@ -672,8 +607,8 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
     ASSERT_NOT_NULL(server_listener);
 
     struct aws_http_client_callbacks client_callbacks;
-    client_callbacks.on_connected = s_on_connected_100_continue;
-    client_callbacks.on_disconnected = s_on_disconnected_100_continue;
+    client_callbacks.on_connected = s_on_connected;
+    client_callbacks.on_disconnected = s_on_disconnected;
     ASSERT_SUCCESS(aws_http_client_connect(
         allocator,
         &endpoint,
@@ -700,10 +635,10 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
     };
     struct aws_byte_cursor uri = aws_byte_cursor_from_str("/");
     struct aws_http_request_callbacks request_callbacks;
-    request_callbacks.on_write_body_segment = s_request_on_write_body_segment_100_continue;
-    request_callbacks.on_response = s_request_on_response_100_continue;
-    request_callbacks.on_response_header = s_request_on_response_header_100_continue;
-    request_callbacks.on_response_body_segment = s_request_on_response_body_segment_100_continue;
+    request_callbacks.on_write_body_segment = s_request_on_write_body_segment;
+    request_callbacks.on_response = s_request_on_response;
+    request_callbacks.on_response_header = s_request_on_response_header;
+    request_callbacks.on_response_body_segment = s_request_on_response_body_segment;
     request_callbacks.on_request_completed = s_request_on_request_completed_100_continue;
     struct aws_http_request *request = aws_http_request_new(
         s_client_connection,
@@ -717,25 +652,38 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
     ASSERT_NOT_NULL(request);
     aws_http_request_send(request);
 
-    /* Wait for server to get headers. */
+    /* Wait until server gets expect: 100-continue. */
     aws_mutex_lock(&s_mutex);
-    while (!s_server_got_request_headers) {
+    while (!s_server_got_expect_100_continue) {
         aws_condition_variable_wait(&s_cv, &s_mutex);
     }
     aws_mutex_unlock(&s_mutex);
 
-    /* Say no to expectations. */
+    /* Say yes to expectations. */
     struct aws_http_response_callbacks response_callbacks;
-    response_callbacks.on_write_body_segment = s_on_write_body_segment_100_continue;
-    response_callbacks.on_response_sent = s_on_response_sent_100_continue;
+    response_callbacks.on_write_body_segment = s_on_write_body_segment;
+    response_callbacks.on_response_sent = s_on_response_sent;
     struct aws_http_response *response =
-        aws_http_response_new(s_server_connection, AWS_HTTP_CODE_EXPECTATION_FAILED, false, NULL, 0, &response_callbacks, NULL);
+        aws_http_response_new(s_server_connection, AWS_HTTP_CODE_CONTINUE, false, NULL, 0, &response_callbacks, NULL);
     ASSERT_NOT_NULL(response);
     aws_http_response_send(response);
 
-    /* Wait for until entire response from the server is received and parsed. */
+    /* Wait for body data from client. */
     aws_mutex_lock(&s_mutex);
-    while (!s_client_got_expectation_failed) {
+    while (!s_server_got_entire_request) {
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+    }
+    aws_mutex_unlock(&s_mutex);
+
+    /* Confirm to client the full request was received. */
+    response =
+            aws_http_response_new(s_server_connection, AWS_HTTP_CODE_OK, false, NULL, 0, &response_callbacks, NULL);
+    ASSERT_NOT_NULL(response);
+    aws_http_response_send(response);
+
+    /* Wait for until entire response from the server is received and parsed by the client. */
+    aws_mutex_lock(&s_mutex);
+    while (!s_client_got_entire_response) {
         aws_condition_variable_wait(&s_cv, &s_mutex);
     }
     aws_mutex_unlock(&s_mutex);
@@ -764,6 +712,168 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
 
     s_clean_up_stuff(client_tls_ctx, server_tls_ctx, &el_group, &client_bootstrap, &server_bootstrap, server_listener);
 
+    ASSERT_PTR_EQUALS(NULL, s_server_connection);
+    ASSERT_PTR_EQUALS(NULL, s_client_connection);
+    ASSERT_INT_EQUALS(AWS_HTTP_METHOD_GET, s_method);
+    ASSERT_TRUE(!strncmp((char *)s_uri, "/", s_uri_len));
+    struct aws_byte_cursor body_cursor = aws_byte_cursor_from_str("Here's some body data for you! Hahaha.\n");
+    ASSERT_BIN_ARRAYS_EQUALS(body_cursor.ptr, body_cursor.len, s_body_data.buffer, s_body_data.len);
+    ASSERT_INT_EQUALS(AWS_HTTP_CODE_OK, s_code);
+
     return AWS_OP_SUCCESS;
 }
-#endif
+
+AWS_TEST_CASE(http_test_100_continue_failed_expectations, s_http_test_100_continue_failed_expectations);
+static int s_http_test_100_continue_failed_expectations(struct aws_allocator *allocator, void *ctx) {
+    (void)allocator;
+    (void)ctx;
+
+    struct aws_event_loop_group el_group;
+    struct aws_socket_options socket_options;
+    struct aws_socket_endpoint endpoint;
+    struct aws_tls_ctx_options client_tls_ctx_options;
+    struct aws_tls_ctx *client_tls_ctx;
+    struct aws_tls_connection_options tls_client_conn_options;
+    struct aws_client_bootstrap client_bootstrap;
+    struct aws_tls_ctx_options server_tls_ctx_options;
+    struct aws_tls_ctx *server_tls_ctx;
+    struct aws_tls_connection_options tls_server_conn_options;
+    struct aws_server_bootstrap server_bootstrap;
+
+    s_init_stuff(
+            allocator,
+            &el_group,
+            &socket_options,
+            &endpoint,
+            &client_tls_ctx_options,
+            &client_tls_ctx,
+            &tls_client_conn_options,
+            &client_bootstrap,
+            &server_tls_ctx_options,
+            &server_tls_ctx,
+            &tls_server_conn_options,
+            &server_bootstrap);
+
+    /* Setup HTTP connections. */
+    struct aws_http_server_callbacks server_callbacks;
+    server_callbacks.on_request = s_on_request;
+    server_callbacks.on_uri = s_on_uri;
+    server_callbacks.on_request_header = s_on_request_header_100_continue;
+    server_callbacks.on_request_body_segment = s_on_request_body_segment;
+    server_callbacks.on_request_end = s_on_request_end_100_continue;
+    server_callbacks.on_connection_created = s_on_connection_created;
+    server_callbacks.on_connection_closed = s_on_connection_closed;
+    struct aws_http_listener *server_listener = aws_http_listener_new(
+            allocator,
+            &endpoint,
+            &socket_options,
+            &tls_server_conn_options,
+            &server_bootstrap,
+            1024,
+            &server_callbacks,
+            NULL);
+    (void)server_listener;
+    ASSERT_NOT_NULL(server_listener);
+
+    struct aws_http_client_callbacks client_callbacks;
+    client_callbacks.on_connected = s_on_connected;
+    client_callbacks.on_disconnected = s_on_disconnected;
+    ASSERT_SUCCESS(aws_http_client_connect(
+            allocator,
+            &endpoint,
+            &socket_options,
+            &tls_client_conn_options,
+            &client_bootstrap,
+            1024,
+            &client_callbacks,
+            NULL));
+
+    /* Wait for connection to complete setup. */
+    aws_mutex_lock(&s_mutex);
+    while (!s_client_connection) {
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+    }
+    aws_mutex_unlock(&s_mutex);
+
+    /* Make a request from the client. */
+    const char *body_data = "This message will never see the light of day.";
+    struct aws_http_header headers[] = {
+            {.name = aws_byte_cursor_from_str("Host"), .value = aws_byte_cursor_from_str("amazon.com")},
+            {.name = aws_byte_cursor_from_str("transfer-encoding"), .value = aws_byte_cursor_from_str("chunked")},
+            {.name = aws_byte_cursor_from_str("Expect"), .value = aws_byte_cursor_from_str("100-continue")},
+    };
+    struct aws_byte_cursor uri = aws_byte_cursor_from_str("/");
+    struct aws_http_request_callbacks request_callbacks;
+    request_callbacks.on_write_body_segment = s_request_on_write_body_segment;
+    request_callbacks.on_response = s_request_on_response;
+    request_callbacks.on_response_header = s_request_on_response_header;
+    request_callbacks.on_response_body_segment = s_request_on_response_body_segment;
+    request_callbacks.on_request_completed = s_request_on_request_completed_100_continue;
+    struct aws_http_request *request = aws_http_request_new(
+            s_client_connection,
+            AWS_HTTP_METHOD_GET,
+            &uri,
+            true,
+            headers,
+            AWS_ARRAY_SIZE(headers),
+            &request_callbacks,
+            (void *)body_data);
+    ASSERT_NOT_NULL(request);
+    aws_http_request_send(request);
+
+    /* Wait until server gets expect: 100-continue. */
+    aws_mutex_lock(&s_mutex);
+    while (!s_server_got_expect_100_continue) {
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+    }
+    aws_mutex_unlock(&s_mutex);
+
+    /* Say no to expectations. */
+    struct aws_http_response_callbacks response_callbacks;
+    response_callbacks.on_write_body_segment = s_on_write_body_segment;
+    response_callbacks.on_response_sent = s_on_response_sent;
+    struct aws_http_response *response =
+            aws_http_response_new(s_server_connection, AWS_HTTP_CODE_EXPECTATION_FAILED, false, NULL, 0, &response_callbacks, NULL);
+    ASSERT_NOT_NULL(response);
+    aws_http_response_send(response);
+
+    /* Wait for until entire response from the server is received and parsed by the client. */
+    aws_mutex_lock(&s_mutex);
+    while (!s_client_got_entire_response) {
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+    }
+    aws_mutex_unlock(&s_mutex);
+
+    /* Cleanup. */
+    if (s_client_connection) {
+        aws_http_client_connection_disconnect(s_client_connection);
+    }
+    if (s_server_connection) {
+        aws_http_server_connection_disconnect(s_server_connection);
+    }
+
+    /* Wait until server finishes cleaning itself up. */
+    aws_mutex_lock(&s_mutex);
+    while (s_server_connection) {
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+    }
+    aws_mutex_unlock(&s_mutex);
+
+    /* Wait until client finishes cleaning itself up. */
+    aws_mutex_lock(&s_mutex);
+    while (s_client_connection) {
+        aws_condition_variable_wait(&s_cv, &s_mutex);
+    }
+    aws_mutex_unlock(&s_mutex);
+
+    s_clean_up_stuff(client_tls_ctx, server_tls_ctx, &el_group, &client_bootstrap, &server_bootstrap, server_listener);
+
+    ASSERT_PTR_EQUALS(NULL, s_server_connection);
+    ASSERT_PTR_EQUALS(NULL, s_client_connection);
+    ASSERT_INT_EQUALS(AWS_HTTP_METHOD_GET, s_method);
+    ASSERT_TRUE(!strncmp((char *)s_uri, "/", s_uri_len));
+    ASSERT_INT_EQUALS(0, s_body_data.len);
+    ASSERT_INT_EQUALS(0, s_code);
+
+    return AWS_OP_SUCCESS;
+}

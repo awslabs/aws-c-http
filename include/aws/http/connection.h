@@ -35,6 +35,7 @@ struct aws_http_response;
  * event loop thread.
  */
 struct aws_http_request_callbacks {
+    /* TODO (randgaul): Probably need to specify buffer size, and bytes written. */
     /**
      * Called when the request is being written to the underlying io, and needs to write
      * out the segments of the body data. Specify if a segment is the final one by assigning
