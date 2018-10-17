@@ -35,11 +35,12 @@ struct aws_http_response;
  * event loop thread.
  */
 struct aws_http_request_callbacks {
-    /* TODO (randgaul): Probably need to specify buffer size, and bytes written. */
     /**
      * Called when the request is being written to the underlying io, and needs to write
      * out the segments of the body data. Specify if a segment is the final one by assigning
-     * `last_segment` to true, and false otherwise.
+     * `last_segment` to true, and false otherwise. The initial value of `segment->len` specifies
+     * the length of the internal buffer; the number of bytes that will be written is equal to
+     * the min of `segment->len`'s initial value, and the value set by the user.
      */
     void (*on_write_body_segment)(
         struct aws_http_request *request,
@@ -93,7 +94,9 @@ struct aws_http_response_callbacks {
     /**
      * Called when the response is being written to the underlying io, and needs to write
      * out the segments of the body data. Specify if a segment is the final one by assigning
-     * `last_segment` to true, and false otherwise.
+     * `last_segment` to true, and false otherwise. The initial value of `segment->len` specifies
+     * the length of the internal buffer; the number of bytes that will be written is equal to
+     * the min of `segment->len`'s initial value, and the value set by the user.
      */
     void (*on_write_body_segment)(
         struct aws_http_response *response,

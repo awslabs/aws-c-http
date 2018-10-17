@@ -167,6 +167,7 @@ static void s_complete_request(struct aws_http_request *request) {
     } else {
         connection->request = NULL;
     }
+    aws_http_decoder_reset(connection->data.decoder, NULL);
 }
 
 static bool s_response_decoder_on_body_stub(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
@@ -236,11 +237,10 @@ static void s_response_decoder_on_done_100_continue(void *user_data) {
         struct aws_http_decoder_vtable vtable = s_get_client_decoder_vtable();
         aws_http_decoder_set_vtable(connection->data.decoder, &vtable);
         aws_channel_schedule_task_now(connection->data.channel, &request->task);
+        aws_http_decoder_reset(connection->data.decoder, NULL);
     } else {
         s_complete_request(request);
     }
-
-    aws_http_decoder_reset(connection->data.decoder, NULL);
 }
 
 static void s_response_decoder_on_done(void *user_data) {
@@ -359,11 +359,11 @@ static int s_handler_process_read_message(
         total += bytes_read;
 
         if (ret != AWS_OP_SUCCESS) {
+            /* Any additional error handling needed here? Returning AWS_OP_ERR from
+             * this function doesn't seem to do much. */
             break;
         }
     }
-
-    assert(total == message->message_data.len);
 
     /* Cleanup channel message. */
     if (data->bytes_unreleased == 0) {
@@ -768,8 +768,7 @@ struct aws_http_request *aws_http_request_new(
     return request;
 }
 
-/* TODO (randgaul): What should this be? */
-#define AWS_HTTP_MESSAGE_SIZE_HINT 1024
+#define AWS_HTTP_MESSAGE_SIZE_HINT (16 * 1024)
 
 static inline int s_write_to_msg_implementation(struct aws_io_message *msg, struct aws_byte_cursor *data) {
 
@@ -831,7 +830,7 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
     struct aws_io_message *msg =
         aws_channel_acquire_message_from_pool(channel, AWS_IO_MESSAGE_APPLICATION_DATA, AWS_HTTP_MESSAGE_SIZE_HINT);
     if (!msg) {
-        /* TODO (randgaul): Close connection. */
+        aws_http_client_connection_disconnect(request->connection);
     }
 
     AWS_COROUTINE_START(&request->co);
@@ -880,6 +879,8 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
         AWS_COROUTINE_CASE_END();
 
         while (!request->last_segment) {
+            request->segment.ptr = NULL;
+            request->segment.len = msg->message_data.capacity - msg->message_data.len;
             request->callbacks.on_write_body_segment(
                     request, &request->segment, &request->last_segment, request->user_data);
 
@@ -994,7 +995,7 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
     struct aws_io_message *msg =
         aws_channel_acquire_message_from_pool(channel, AWS_IO_MESSAGE_APPLICATION_DATA, AWS_HTTP_MESSAGE_SIZE_HINT);
     if (!msg) {
-        /* TODO (randgaul): Close connection. */
+        aws_http_server_connection_disconnect(response->connection);
     }
 
     const char *code_str = aws_http_code_to_str(response->code);
@@ -1030,6 +1031,8 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
 
     if (response->has_body) {
         while (!response->last_segment) {
+            response->segment.ptr = NULL;
+            response->segment.len = msg->message_data.capacity - msg->message_data.len;
             response->callbacks.on_write_body_segment(
                     response, &response->segment, &response->last_segment, response->user_data);
 

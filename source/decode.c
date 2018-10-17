@@ -546,6 +546,7 @@ void aws_http_decoder_reset(struct aws_http_decoder *decoder, struct aws_http_de
     }
 
     AWS_ZERO_STRUCT(*decoder);
+    buffer.len = 0;
 
     decoder->alloc = alloc;
     decoder->scratch_space = buffer;
