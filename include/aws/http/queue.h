@@ -16,8 +16,8 @@
 #ifndef AWS_RING_BUFFER
 #define AWS_RING_BUFFER
 
-#include <aws/http/exports.h>
 #include <aws/common/common.h>
+#include <aws/http/exports.h>
 
 struct aws_allocator;
 

@@ -16,8 +16,8 @@
 #include <aws/http/decode.h>
 
 #include <assert.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 struct aws_http_decoder;
 typedef int(s_aws_http_decoder_state_fn)(
@@ -438,7 +438,8 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
         } break;
 
         case AWS_HTTP_HEADER_EXPECT:
-            if (!s_strcmp_case_insensitive((const char *)header.value_data.ptr, header.value_data.len, "100-continue", 12)) {
+            if (!s_strcmp_case_insensitive(
+                    (const char *)header.value_data.ptr, header.value_data.len, "100-continue", 12)) {
                 decoder->expect_100_continue_skip_on_done = true;
             }
             break;

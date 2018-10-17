@@ -19,7 +19,7 @@
 
 int aws_queue_init(struct aws_queue *queue, size_t initial_size, struct aws_allocator *alloc) {
     queue->alloc = alloc;
-    queue->memory = (uint8_t*)aws_mem_acquire(alloc, initial_size);
+    queue->memory = (uint8_t *)aws_mem_acquire(alloc, initial_size);
     if (!queue->memory) {
         return AWS_OP_ERR;
     }
@@ -32,7 +32,7 @@ int aws_queue_init(struct aws_queue *queue, size_t initial_size, struct aws_allo
 
 int aws_queue_init_static(struct aws_queue *queue, void *memory, size_t size) {
     queue->alloc = NULL;
-    queue->memory = (uint8_t*)memory;
+    queue->memory = (uint8_t *)memory;
     queue->index0 = 0;
     queue->index1 = 0;
     queue->capacity = size;
