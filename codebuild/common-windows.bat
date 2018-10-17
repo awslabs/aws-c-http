@@ -4,6 +4,7 @@ set CMAKE_ARGS=%*
 mkdir install
 
 CALL :install_library aws-c-common
+CALL :install_library aws-c-io
 
 cd aws-c-http
 mkdir build

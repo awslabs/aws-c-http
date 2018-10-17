@@ -23,6 +23,7 @@ cd ../
 mkdir install
 
 install_library aws-c-common
+install_library aws-c-io
 
 cd aws-c-http
 mkdir build
