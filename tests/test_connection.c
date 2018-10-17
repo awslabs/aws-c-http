@@ -417,8 +417,8 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
         /* Make a request from the client. */
         const char *body_data = "The body data.";
         struct aws_http_header headers[] = {
-                {.name = aws_byte_cursor_from_str("Host"), .value = aws_byte_cursor_from_str("amazon.com")},
-                {.name = aws_byte_cursor_from_str("transfer-encoding"), .value = aws_byte_cursor_from_str("chunked")},
+            {.name = aws_byte_cursor_from_str("Host"), .value = aws_byte_cursor_from_str("amazon.com")},
+            {.name = aws_byte_cursor_from_str("transfer-encoding"), .value = aws_byte_cursor_from_str("chunked")},
         };
         struct aws_byte_cursor uri = aws_byte_cursor_from_str("/");
         struct aws_http_request_callbacks request_callbacks;
@@ -428,14 +428,14 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
         request_callbacks.on_response_body_segment = s_request_on_response_body_segment;
         request_callbacks.on_request_completed = s_request_on_request_completed;
         struct aws_http_request *request = aws_http_request_new(
-                s_client_connection,
-                AWS_HTTP_METHOD_GET,
-                &uri,
-                true,
-                headers,
-                AWS_ARRAY_SIZE(headers),
-                &request_callbacks,
-                (void *)body_data);
+            s_client_connection,
+            AWS_HTTP_METHOD_GET,
+            &uri,
+            true,
+            headers,
+            AWS_ARRAY_SIZE(headers),
+            &request_callbacks,
+            (void *)body_data);
         ASSERT_NOT_NULL(request);
         aws_http_request_send(request);
 
@@ -451,7 +451,7 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
         response_callbacks.on_write_body_segment = s_on_write_body_segment;
         response_callbacks.on_response_sent = s_on_response_sent;
         struct aws_http_response *response =
-                aws_http_response_new(s_server_connection, AWS_HTTP_CODE_OK, false, NULL, 0, &response_callbacks, NULL);
+            aws_http_response_new(s_server_connection, AWS_HTTP_CODE_OK, false, NULL, 0, &response_callbacks, NULL);
         ASSERT_NOT_NULL(response);
         aws_http_response_send(response);
 
@@ -537,10 +537,10 @@ static inline int s_strcmp_case_insensitive(const char *a, size_t len_a, const c
 static bool s_server_got_expect_100_continue;
 
 static void s_on_request_header_100_continue(
-        struct aws_http_server_connection *connection,
-        enum aws_http_header_name header_name,
-        const struct aws_http_header *header,
-        void *user_data) {
+    struct aws_http_server_connection *connection,
+    enum aws_http_header_name header_name,
+    const struct aws_http_header *header,
+    void *user_data) {
     (void)connection;
     (void)header_name;
     (void)header;
@@ -647,9 +647,9 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
         /* Make a request from the client. */
         const char *body_data = "Here's some body data for you! Hahaha.\n";
         struct aws_http_header headers[] = {
-                {.name = aws_byte_cursor_from_str("Host"), .value = aws_byte_cursor_from_str("amazon.com")},
-                {.name = aws_byte_cursor_from_str("transfer-encoding"), .value = aws_byte_cursor_from_str("chunked")},
-                {.name = aws_byte_cursor_from_str("Expect"), .value = aws_byte_cursor_from_str("100-continue")},
+            {.name = aws_byte_cursor_from_str("Host"), .value = aws_byte_cursor_from_str("amazon.com")},
+            {.name = aws_byte_cursor_from_str("transfer-encoding"), .value = aws_byte_cursor_from_str("chunked")},
+            {.name = aws_byte_cursor_from_str("Expect"), .value = aws_byte_cursor_from_str("100-continue")},
         };
         struct aws_byte_cursor uri = aws_byte_cursor_from_str("/");
         struct aws_http_request_callbacks request_callbacks;
@@ -659,14 +659,14 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
         request_callbacks.on_response_body_segment = s_request_on_response_body_segment;
         request_callbacks.on_request_completed = s_request_on_request_completed_100_continue;
         struct aws_http_request *request = aws_http_request_new(
-                s_client_connection,
-                AWS_HTTP_METHOD_GET,
-                &uri,
-                true,
-                headers,
-                AWS_ARRAY_SIZE(headers),
-                &request_callbacks,
-                (void *) body_data);
+            s_client_connection,
+            AWS_HTTP_METHOD_GET,
+            &uri,
+            true,
+            headers,
+            AWS_ARRAY_SIZE(headers),
+            &request_callbacks,
+            (void *)body_data);
         ASSERT_NOT_NULL(request);
         aws_http_request_send(request);
 
@@ -681,9 +681,8 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
         struct aws_http_response_callbacks response_callbacks;
         response_callbacks.on_write_body_segment = s_on_write_body_segment;
         response_callbacks.on_response_sent = s_on_response_sent;
-        struct aws_http_response *response =
-                aws_http_response_new(s_server_connection, AWS_HTTP_CODE_CONTINUE, false, NULL, 0, &response_callbacks,
-                                      NULL);
+        struct aws_http_response *response = aws_http_response_new(
+            s_server_connection, AWS_HTTP_CODE_CONTINUE, false, NULL, 0, &response_callbacks, NULL);
         ASSERT_NOT_NULL(response);
         aws_http_response_send(response);
 
@@ -696,7 +695,7 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
 
         /* Confirm to client the full request was received. */
         response =
-                aws_http_response_new(s_server_connection, AWS_HTTP_CODE_OK, false, NULL, 0, &response_callbacks, NULL);
+            aws_http_response_new(s_server_connection, AWS_HTTP_CODE_OK, false, NULL, 0, &response_callbacks, NULL);
         ASSERT_NOT_NULL(response);
         aws_http_response_send(response);
 
@@ -767,18 +766,18 @@ static int s_http_test_100_continue_failed_expectations(struct aws_allocator *al
     struct aws_server_bootstrap server_bootstrap;
 
     s_init_stuff(
-            allocator,
-            &el_group,
-            &socket_options,
-            &endpoint,
-            &client_tls_ctx_options,
-            &client_tls_ctx,
-            &tls_client_conn_options,
-            &client_bootstrap,
-            &server_tls_ctx_options,
-            &server_tls_ctx,
-            &tls_server_conn_options,
-            &server_bootstrap);
+        allocator,
+        &el_group,
+        &socket_options,
+        &endpoint,
+        &client_tls_ctx_options,
+        &client_tls_ctx,
+        &tls_client_conn_options,
+        &client_bootstrap,
+        &server_tls_ctx_options,
+        &server_tls_ctx,
+        &tls_server_conn_options,
+        &server_bootstrap);
 
     /* Setup HTTP connections. */
     struct aws_http_server_callbacks server_callbacks;
@@ -790,14 +789,14 @@ static int s_http_test_100_continue_failed_expectations(struct aws_allocator *al
     server_callbacks.on_connection_created = s_on_connection_created;
     server_callbacks.on_connection_closed = s_on_connection_closed;
     struct aws_http_listener *server_listener = aws_http_listener_new(
-            allocator,
-            &endpoint,
-            &socket_options,
-            &tls_server_conn_options,
-            &server_bootstrap,
-            1024,
-            &server_callbacks,
-            NULL);
+        allocator,
+        &endpoint,
+        &socket_options,
+        &tls_server_conn_options,
+        &server_bootstrap,
+        1024,
+        &server_callbacks,
+        NULL);
     (void)server_listener;
     ASSERT_NOT_NULL(server_listener);
 
@@ -805,14 +804,14 @@ static int s_http_test_100_continue_failed_expectations(struct aws_allocator *al
     client_callbacks.on_connected = s_on_connected;
     client_callbacks.on_disconnected = s_on_disconnected;
     ASSERT_SUCCESS(aws_http_client_connect(
-            allocator,
-            &endpoint,
-            &socket_options,
-            &tls_client_conn_options,
-            &client_bootstrap,
-            1024,
-            &client_callbacks,
-            NULL));
+        allocator,
+        &endpoint,
+        &socket_options,
+        &tls_client_conn_options,
+        &client_bootstrap,
+        1024,
+        &client_callbacks,
+        NULL));
 
     /* Wait for connection to complete setup. */
     aws_mutex_lock(&s_mutex);
@@ -824,9 +823,9 @@ static int s_http_test_100_continue_failed_expectations(struct aws_allocator *al
     /* Make a request from the client. */
     const char *body_data = "This message will never see the light of day.";
     struct aws_http_header headers[] = {
-            {.name = aws_byte_cursor_from_str("Host"), .value = aws_byte_cursor_from_str("amazon.com")},
-            {.name = aws_byte_cursor_from_str("transfer-encoding"), .value = aws_byte_cursor_from_str("chunked")},
-            {.name = aws_byte_cursor_from_str("Expect"), .value = aws_byte_cursor_from_str("100-continue")},
+        {.name = aws_byte_cursor_from_str("Host"), .value = aws_byte_cursor_from_str("amazon.com")},
+        {.name = aws_byte_cursor_from_str("transfer-encoding"), .value = aws_byte_cursor_from_str("chunked")},
+        {.name = aws_byte_cursor_from_str("Expect"), .value = aws_byte_cursor_from_str("100-continue")},
     };
     struct aws_byte_cursor uri = aws_byte_cursor_from_str("/");
     struct aws_http_request_callbacks request_callbacks;
@@ -836,14 +835,14 @@ static int s_http_test_100_continue_failed_expectations(struct aws_allocator *al
     request_callbacks.on_response_body_segment = s_request_on_response_body_segment;
     request_callbacks.on_request_completed = s_request_on_request_completed_100_continue;
     struct aws_http_request *request = aws_http_request_new(
-            s_client_connection,
-            AWS_HTTP_METHOD_GET,
-            &uri,
-            true,
-            headers,
-            AWS_ARRAY_SIZE(headers),
-            &request_callbacks,
-            (void *)body_data);
+        s_client_connection,
+        AWS_HTTP_METHOD_GET,
+        &uri,
+        true,
+        headers,
+        AWS_ARRAY_SIZE(headers),
+        &request_callbacks,
+        (void *)body_data);
     ASSERT_NOT_NULL(request);
     aws_http_request_send(request);
 
@@ -858,8 +857,8 @@ static int s_http_test_100_continue_failed_expectations(struct aws_allocator *al
     struct aws_http_response_callbacks response_callbacks;
     response_callbacks.on_write_body_segment = s_on_write_body_segment;
     response_callbacks.on_response_sent = s_on_response_sent;
-    struct aws_http_response *response =
-            aws_http_response_new(s_server_connection, AWS_HTTP_CODE_EXPECTATION_FAILED, false, NULL, 0, &response_callbacks, NULL);
+    struct aws_http_response *response = aws_http_response_new(
+        s_server_connection, AWS_HTTP_CODE_EXPECTATION_FAILED, false, NULL, 0, &response_callbacks, NULL);
     ASSERT_NOT_NULL(response);
     aws_http_response_send(response);
 

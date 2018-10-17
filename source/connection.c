@@ -55,7 +55,10 @@ struct aws_coroutine {
         }                                                                                                              \
         while (0)
 
-#define AWS_COROUTINE_INIT(co) do { (co)->line = 0; } while (0)
+#define AWS_COROUTINE_INIT(co)                                                                                         \
+    do {                                                                                                               \
+        (co)->line = 0;                                                                                                \
+    } while (0)
 
 struct aws_http_connection_data {
     struct aws_allocator *alloc;
@@ -781,7 +784,7 @@ static inline int s_write_to_msg_implementation(struct aws_io_message *msg, stru
 
 #define s_write_to_msg(msg, data)                                                                                      \
     AWS_COROUTINE_CASE();                                                                                              \
-    if (s_write_to_msg_implementation(msg, data) != AWS_OP_SUCCESS) {                                               \
+    if (s_write_to_msg_implementation(msg, data) != AWS_OP_SUCCESS) {                                                  \
         AWS_COROUTINE_YIELD();                                                                                         \
     }                                                                                                                  \
     AWS_COROUTINE_CASE_END()
@@ -882,13 +885,13 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
             request->segment.ptr = NULL;
             request->segment.len = msg->message_data.capacity - msg->message_data.len;
             request->callbacks.on_write_body_segment(
-                    request, &request->segment, &request->last_segment, request->user_data);
+                request, &request->segment, &request->last_segment, request->user_data);
 
             if (request->chunked) {
                 unsigned len = (unsigned)request->segment.len;
                 snprintf(request->segment_len_buffer, AWS_ARRAY_SIZE(request->segment_len_buffer), "%x", len);
                 request->hex_len = aws_byte_cursor_from_array(
-                        request->segment_len_buffer, AWS_ARRAY_SIZE(request->segment_len_buffer));
+                    request->segment_len_buffer, AWS_ARRAY_SIZE(request->segment_len_buffer));
 
                 s_write_to_msg(msg, &request->hex_len);
                 s_write_to_msg(msg, &newline);
@@ -1034,13 +1037,13 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
             response->segment.ptr = NULL;
             response->segment.len = msg->message_data.capacity - msg->message_data.len;
             response->callbacks.on_write_body_segment(
-                    response, &response->segment, &response->last_segment, response->user_data);
+                response, &response->segment, &response->last_segment, response->user_data);
 
             if (response->chunked) {
                 unsigned len = (unsigned)response->segment.len;
                 snprintf(response->segment_len_buffer, AWS_ARRAY_SIZE(response->segment_len_buffer), "%x", len);
                 response->hex_len = aws_byte_cursor_from_array(
-                        response->segment_len_buffer, AWS_ARRAY_SIZE(response->segment_len_buffer));
+                    response->segment_len_buffer, AWS_ARRAY_SIZE(response->segment_len_buffer));
 
                 s_write_to_msg(msg, &response->hex_len);
                 s_write_to_msg(msg, &newline);
