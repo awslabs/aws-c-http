@@ -44,6 +44,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_END_RANGE,
         "Not a real error and should never be seen."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_CONNECTION_CLOSED,
+        "Message not sent, as the connection has closed."),
 };
 /* clang-format on */
 

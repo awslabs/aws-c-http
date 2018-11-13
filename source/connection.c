@@ -14,6 +14,7 @@
  */
 
 #include <aws/common/byte_buf.h>
+#include <aws/common/linked_list.h>
 
 #include <aws/io/channel.h>
 #include <aws/io/channel_bootstrap.h>
@@ -23,7 +24,6 @@
 
 #include <aws/http/connection.h>
 #include <aws/http/decode.h>
-#include <aws/http/queue.h>
 
 #include <stdio.h>
 
@@ -31,6 +31,8 @@ struct aws_coroutine {
     int line;
 };
 
+/* Coroutine for implementing state machines in a linear and simple way. */
+/* https://www.chiark.greenend.org.uk/~sgtatham/coroutines.html */
 #define AWS_COROUTINE_START(c)                                                                                         \
     do {                                                                                                               \
         struct aws_coroutine *__co = (c);                                                                              \
@@ -55,10 +57,9 @@ struct aws_coroutine {
         }                                                                                                              \
         while (0)
 
-#define AWS_COROUTINE_INIT(co)                                                                                         \
-    do {                                                                                                               \
-        (co)->line = 0;                                                                                                \
-    } while (0)
+static inline void s_co_init(struct aws_coroutine *co) {
+    co->line = 0;
+}
 
 struct aws_http_connection_data {
     struct aws_allocator *alloc;
@@ -69,7 +70,9 @@ struct aws_http_connection_data {
     struct aws_http_decoder *decoder;
     size_t initial_window_size;
     size_t bytes_unreleased;
+    struct aws_linked_list msg_list;
     bool is_server;
+    bool connection_closed;
     void *user_data;
 };
 
@@ -83,7 +86,6 @@ struct aws_http_client_connection {
     struct aws_http_connection_data data;
     struct aws_http_client_callbacks callbacks;
     struct aws_http_request *request;
-    struct aws_queue request_queue;
 };
 
 struct aws_http_listener {
@@ -96,49 +98,48 @@ struct aws_http_listener {
 };
 
 struct aws_http_request {
+    struct aws_linked_list_node node;
     struct aws_allocator *alloc;
     struct aws_http_client_connection *connection;
     enum aws_http_method method;
     const struct aws_byte_cursor *uri;
-    bool chunked;
     struct aws_http_header *headers;
     int header_count;
-    struct aws_http_request_callbacks callbacks;
     struct aws_task task;
     struct aws_coroutine co;
-    bool has_body;
     int header_index;
     char segment_len_buffer[128];
     struct aws_byte_cursor hex_len;
-    struct aws_byte_cursor segment;
-    bool has_cached_segment;
+    struct aws_byte_buf segment;
     struct aws_byte_buf cached_segment;
-    bool last_segment;
-    volatile bool expect_100_continue;
-    bool got_100_continue;
     void *user_data;
+    bool chunked;
+    bool has_body;
+    bool has_cached_segment;
+    bool last_segment;
+    bool expect_100_continue;
+    bool got_100_continue;
 };
 
 struct aws_http_response {
     struct aws_allocator *alloc;
     struct aws_http_server_connection *connection;
     enum aws_http_code code;
-    bool chunked;
     struct aws_http_header *headers;
     int header_count;
-    struct aws_http_response_callbacks callbacks;
     struct aws_task task;
     struct aws_coroutine co;
     char code_buffer[128];
     char segment_len_buffer[128];
     struct aws_byte_cursor hex_len;
-    bool has_body;
     int header_index;
-    struct aws_byte_cursor segment;
-    bool has_cached_segment;
+    struct aws_byte_buf segment;
     struct aws_byte_buf cached_segment;
-    bool last_segment;
     void *user_data;
+    bool has_cached_segment;
+    bool has_body;
+    bool chunked;
+    bool last_segment;
 };
 
 static struct aws_http_decoder_vtable s_get_client_decoder_vtable(void);
@@ -158,18 +159,27 @@ static bool s_response_decoder_on_header(const struct aws_http_decoded_header *h
     struct aws_http_header h;
     h.name = header->name_data;
     h.value = header->value_data;
-    request->callbacks.on_response_header(request, header->name, &h, request->user_data);
+    connection->callbacks.on_response_callbacks.on_message_callbacks.on_header(header->name, &h, request->user_data);
     return true;
 }
 
 static void s_complete_request(struct aws_http_request *request) {
     struct aws_http_client_connection *connection = request->connection;
-    request->callbacks.on_request_completed(request, request->user_data);
-    if (!aws_queue_is_empty(&connection->request_queue)) {
-        aws_queue_pull(&connection->request_queue, &connection->request, sizeof(struct aws_request *));
+    connection->callbacks.on_response_callbacks.on_message_callbacks.on_completed(AWS_OP_SUCCESS, request->user_data);
+
+    /* Unhook request from client request queue, and clean it up. */
+    if (!aws_linked_list_empty(&connection->data.msg_list)) {
+        connection->request =
+            AWS_CONTAINER_OF(aws_linked_list_pop_front(&connection->data.msg_list), struct aws_http_request, node);
     } else {
         connection->request = NULL;
     }
+
+    if (request->has_cached_segment) {
+        aws_byte_buf_clean_up(&request->cached_segment);
+    }
+    aws_mem_release(request->connection->data.alloc, request);
+
     aws_http_decoder_reset(connection->data.decoder, NULL);
 }
 
@@ -184,7 +194,8 @@ static bool s_response_decoder_on_body(const struct aws_byte_cursor *data, bool 
     struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
     struct aws_http_request *request = connection->request;
     bool can_release;
-    request->callbacks.on_response_body_segment(request, data, last_segment, &can_release, request->user_data);
+    connection->callbacks.on_response_callbacks.on_message_callbacks.on_body_segment(
+        data, last_segment, &can_release, request->user_data);
     if (!can_release) {
         request->connection->data.bytes_unreleased += data->len;
     }
@@ -210,7 +221,7 @@ static void s_response_decoder_on_uri_stub(struct aws_byte_cursor *uri, void *us
 static void s_response_decoder_on_response_code(enum aws_http_code code, void *user_data) {
     struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
     struct aws_http_request *request = connection->request;
-    request->callbacks.on_response(request, code, request->user_data);
+    connection->callbacks.on_response_callbacks.on_response(connection, code, request->user_data);
 }
 
 static void s_response_decoder_on_response_code_100_continue(enum aws_http_code code, void *user_data) {
@@ -257,15 +268,16 @@ static bool s_request_decoder_on_header(const struct aws_http_decoded_header *he
     struct aws_http_header h;
     h.name = header->name_data;
     h.value = header->value_data;
-    connection->callbacks.on_request_header(connection, header->name, &h, connection->data.user_data);
+    connection->callbacks.on_request_callbacks.on_message_callbacks.on_header(
+        header->name, &h, connection->data.user_data);
     return true;
 }
 
 static bool s_request_decoder_on_body(const struct aws_byte_cursor *data, bool last_segment, void *user_data) {
     struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
     bool can_release;
-    connection->callbacks.on_request_body_segment(
-        connection, data, last_segment, &can_release, connection->data.user_data);
+    connection->callbacks.on_request_callbacks.on_message_callbacks.on_body_segment(
+        data, last_segment, &can_release, connection->data.user_data);
     if (!can_release) {
         connection->data.bytes_unreleased += data->len;
     }
@@ -281,7 +293,7 @@ static void s_request_decoder_on_version(enum aws_http_version version, void *us
 
 static void s_request_decoder_on_uri(struct aws_byte_cursor *uri, void *user_data) {
     struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
-    connection->callbacks.on_uri(connection, uri, connection->data.user_data);
+    connection->callbacks.on_request_callbacks.on_uri(uri, connection->data.user_data);
 }
 
 static void s_request_decoder_on_response_code(enum aws_http_code code, void *user_data) {
@@ -292,12 +304,13 @@ static void s_request_decoder_on_response_code(enum aws_http_code code, void *us
 
 static void s_request_decoder_on_method(enum aws_http_method method, void *user_data) {
     struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
-    connection->callbacks.on_request(connection, method, connection->data.user_data);
+    connection->callbacks.on_request_callbacks.on_request(connection, method, connection->data.user_data);
 }
 
 static void s_request_decoder_on_done(void *user_data) {
     struct aws_http_server_connection *connection = (struct aws_http_server_connection *)user_data;
-    connection->callbacks.on_request_end(connection->data.user_data);
+    connection->callbacks.on_request_callbacks.on_message_callbacks.on_completed(
+        AWS_OP_SUCCESS, connection->data.user_data);
     aws_http_decoder_reset(connection->data.decoder, NULL);
 }
 
@@ -364,8 +377,11 @@ static int s_handler_process_read_message(
         if (ret != AWS_OP_SUCCESS) {
             /* Any additional error handling needed here? Returning AWS_OP_ERR from
              * this function doesn't seem to do much. */
+            /* TODO (randgaul): Disconnect, but don't clean up. */
             break;
         }
+
+        aws_byte_cursor_advance(&msg_data, bytes_read);
     }
 
     /* Cleanup channel message. */
@@ -411,17 +427,7 @@ static void s_connection_data_clean_up(struct aws_http_connection_data *data) {
 }
 
 static void s_handler_destroy(struct aws_channel_handler *handler) {
-    struct aws_http_connection_data *data = (struct aws_http_connection_data *)handler->impl;
-    s_connection_data_clean_up(data);
-
-    if (data->is_server) {
-        struct aws_http_server_connection *connection = (struct aws_http_server_connection *)data;
-        aws_mem_release(connection->data.alloc, connection);
-    } else {
-        struct aws_http_client_connection *connection = (struct aws_http_client_connection *)data;
-        aws_queue_clean_up(&connection->request_queue);
-        aws_mem_release(connection->data.alloc, connection);
-    }
+    (void)handler;
 }
 
 static int s_handler_shutdown(
@@ -431,6 +437,7 @@ static int s_handler_shutdown(
     int error_code,
     bool free_scarce_resources_immediately) {
     struct aws_http_connection_data *data = (struct aws_http_connection_data *)handler->impl;
+    data->connection_closed = true;
 
     if (dir == AWS_CHANNEL_DIR_WRITE) {
         if (data->is_server) {
@@ -510,7 +517,7 @@ static int s_connection_data_init(
 
     AWS_ZERO_STRUCT(*data);
     data->alloc = alloc;
-    data->initial_window_size = initial_window_size;
+    data->initial_window_size = initial_window_size ? initial_window_size : SIZE_MAX;
     data->is_server = !true_for_client_false_for_server;
     struct aws_http_decoder *decoder = NULL;
 
@@ -543,6 +550,9 @@ static int s_connection_data_init(
     }
     data->decoder = decoder;
     data->user_data = user_data;
+    data->connection_closed = false;
+
+    aws_linked_list_init(&data->msg_list);
 
     return AWS_OP_SUCCESS;
 
@@ -601,6 +611,50 @@ static int s_on_shutdown_incoming_channel(
     return AWS_OP_SUCCESS;
 }
 
+void aws_http_request_def_set_method(struct aws_http_request_def *def, enum aws_http_method method) {
+    def->method = method;
+}
+
+void aws_http_request_def_set_uri(struct aws_http_request_def *def, const struct aws_byte_cursor *uri) {
+    def->uri = uri;
+}
+
+void aws_http_request_def_set_headers(
+        struct aws_http_request_def *def,
+        const struct aws_http_header *headers,
+        int count) {
+    def->headers = headers;
+    def->header_count = count;
+}
+
+void aws_http_request_def_set_chunked(struct aws_http_request_def *def, bool is_chunked) {
+    def->is_chunked = is_chunked;
+}
+
+void aws_http_request_def_set_userdata(struct aws_http_request_def *def, void *userdata) {
+    def->userdata = userdata;
+}
+
+void aws_http_response_def_set_code(struct aws_http_response_def *def, enum aws_http_code code) {
+    def->code = code;
+}
+
+void aws_http_response_def_set_headers(
+        struct aws_http_response_def *def,
+        const struct aws_http_header *headers,
+        int count) {
+    def->headers = headers;
+    def->header_count = count;
+}
+
+void aws_http_response_def_set_chunked(struct aws_http_response_def *def, bool is_chunked) {
+    def->is_chunked = is_chunked;
+}
+
+void aws_http_response_def_set_userdata(struct aws_http_response_def *def, void *userdata) {
+    def->userdata = userdata;
+}
+
 int aws_http_client_connect(
     struct aws_allocator *alloc,
     struct aws_socket_endpoint *endpoint,
@@ -622,11 +676,6 @@ int aws_http_client_connect(
     }
     connection->callbacks = *callbacks;
     connection->request = NULL;
-
-    if (aws_queue_init(&connection->request_queue, sizeof(struct aws_http_request *) * 8, alloc) != AWS_OP_SUCCESS) {
-        aws_mem_release(alloc, connection);
-        return AWS_OP_ERR;
-    }
 
     if (tls_options) {
         if (aws_client_bootstrap_new_tls_socket_channel(
@@ -655,7 +704,6 @@ int aws_http_client_connect(
 
 cleanup:
     s_connection_data_clean_up(&connection->data);
-    aws_queue_clean_up(&connection->request_queue);
     aws_mem_release(alloc, connection);
     return AWS_OP_ERR;
 }
@@ -666,6 +714,11 @@ void aws_http_client_connection_release_bytes(struct aws_http_client_connection 
 
 void aws_http_client_connection_disconnect(struct aws_http_client_connection *connection) {
     aws_channel_shutdown(connection->data.channel, AWS_OP_SUCCESS);
+}
+
+void aws_http_client_connection_destroy(struct aws_http_client_connection *connection) {
+    s_connection_data_clean_up(&connection->data);
+    aws_mem_release(connection->data.alloc, connection);
 }
 
 struct aws_http_listener *aws_http_listener_new(
@@ -732,43 +785,14 @@ void aws_http_server_connection_disconnect(struct aws_http_server_connection *co
     aws_channel_shutdown(connection->data.channel, AWS_OP_SUCCESS);
 }
 
+void aws_http_server_connection_destroy(struct aws_http_server_connection *connection) {
+    s_connection_data_clean_up(&connection->data);
+    aws_mem_release(connection->data.alloc, connection);
+}
+
 void aws_http_listener_destroy(struct aws_http_listener *listener) {
     aws_server_bootstrap_remove_socket_listener(listener->bootstrap, listener->listener_socket);
     aws_mem_release(listener->alloc, listener);
-}
-
-struct aws_http_request *aws_http_request_new(
-    struct aws_http_client_connection *connection,
-    enum aws_http_method method,
-    const struct aws_byte_cursor *uri,
-    bool chunked,
-    struct aws_http_header *headers,
-    int header_count,
-    struct aws_http_request_callbacks *callbacks,
-    void *user_data) {
-
-    struct aws_http_request *request =
-        (struct aws_http_request *)aws_mem_acquire(connection->data.alloc, sizeof(struct aws_http_request));
-    if (!request) {
-        return NULL;
-    }
-
-    request->alloc = connection->data.alloc;
-    request->connection = connection;
-    request->method = method;
-    request->uri = uri;
-    request->chunked = chunked;
-    request->headers = headers;
-    request->header_count = header_count;
-    request->callbacks = *callbacks;
-    AWS_COROUTINE_INIT(&request->co);
-    request->has_body = false;
-    request->header_index = 0;
-    request->has_cached_segment = false;
-    request->last_segment = false;
-    request->user_data = user_data;
-
-    return request;
 }
 
 #define AWS_HTTP_MESSAGE_SIZE_HINT (16 * 1024)
@@ -818,6 +842,14 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
     }
 
     struct aws_http_request *request = (struct aws_http_request *)arg;
+    struct aws_http_client_connection *connection = request->connection;
+    assert(connection);
+
+    if (connection->data.connection_closed) {
+        connection->callbacks.write_request_callbacks.on_sent(AWS_ERROR_HTTP_CONNECTION_CLOSED, request->user_data);
+        return;
+    }
+
     struct aws_channel *channel = request->connection->data.channel;
     struct aws_channel_slot *slot = request->connection->data.slot;
 
@@ -839,11 +871,7 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
     AWS_COROUTINE_START(&request->co);
 
     /* Occurs only once. */
-    if (request->connection->request) {
-        aws_queue_push(&request->connection->request_queue, &request, sizeof(struct aws_http_request *));
-    } else {
-        request->connection->request = request;
-    }
+    aws_linked_list_push_back(&request->connection->data.msg_list, &request->node);
 
     s_write_to_msg(msg, &method);
     s_write_to_msg(msg, &space);
@@ -882,10 +910,16 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
         AWS_COROUTINE_CASE_END();
 
         while (!request->last_segment) {
-            request->segment.ptr = NULL;
-            request->segment.len = msg->message_data.capacity - msg->message_data.len;
-            request->callbacks.on_write_body_segment(
-                request, &request->segment, &request->last_segment, request->user_data);
+            request->segment.buffer = NULL;
+            request->segment.capacity = msg->message_data.capacity - msg->message_data.len;
+            size_t capacity = request->segment.capacity;
+            (void)capacity;
+            request->segment.allocator = NULL;
+            request->segment.len = 0;
+            connection->callbacks.write_request_callbacks.on_write_body_segment(
+                &request->segment, &request->last_segment, request->user_data);
+            assert(request->segment.len <= request->segment.capacity);
+            assert(capacity == request->segment.capacity);
 
             if (request->chunked) {
                 unsigned len = (unsigned)request->segment.len;
@@ -895,7 +929,14 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
 
                 s_write_to_msg(msg, &request->hex_len);
                 s_write_to_msg(msg, &newline);
-                s_write_to_msg(msg, &request->segment);
+
+                AWS_COROUTINE_CASE();
+                struct aws_byte_cursor segment = aws_byte_cursor_from_buf(&request->segment);
+                if (s_write_to_msg_implementation(msg, &segment) != AWS_OP_SUCCESS) {
+                    AWS_COROUTINE_YIELD();
+                }
+                AWS_COROUTINE_CASE_END();
+
                 s_write_to_msg(msg, &newline);
 
                 if (request->last_segment) {
@@ -904,7 +945,12 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
                     s_write_to_msg(msg, &newline);
                 }
             } else {
-                s_write_to_msg(msg, &request->segment);
+                AWS_COROUTINE_CASE();
+                struct aws_byte_cursor segment = aws_byte_cursor_from_buf(&request->segment);
+                if (s_write_to_msg_implementation(msg, &segment) != AWS_OP_SUCCESS) {
+                    AWS_COROUTINE_YIELD();
+                }
+                AWS_COROUTINE_CASE_END();
             }
         }
     }
@@ -922,18 +968,47 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
         segment.len = request->segment.len;
         segment.capacity = segment.len;
         segment.allocator = NULL;
-        segment.buffer = request->segment.ptr;
+        segment.buffer = request->segment.buffer;
         aws_byte_buf_init_copy(request->alloc, &request->cached_segment, &segment);
+        request->has_cached_segment = true;
 
-        request->segment = aws_byte_cursor_from_buf(&request->cached_segment);
+        request->segment = request->cached_segment;
 
         aws_channel_schedule_task_now(channel, &request->task);
+    } else {
+        /* Finished encoding the request. Notify user. Cleanup happens upon response receival. */
+        connection->callbacks.write_request_callbacks.on_sent(AWS_OP_SUCCESS, request->user_data);
     }
 
     aws_channel_slot_send_message(slot, msg, AWS_CHANNEL_DIR_WRITE);
 }
 
-int aws_http_request_send(struct aws_http_request *request) {
+int aws_http_request_send(struct aws_http_client_connection *connection, const struct aws_http_request_def *def) {
+
+    if (connection->data.connection_closed) {
+        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    }
+
+    struct aws_http_request *request =
+        (struct aws_http_request *)aws_mem_acquire(connection->data.alloc, sizeof(struct aws_http_request));
+    if (!request) {
+        return AWS_OP_ERR;
+    }
+
+    request->alloc = connection->data.alloc;
+    request->connection = connection;
+    request->method = def->method;
+    request->uri = def->uri;
+    request->chunked = def->is_chunked;
+    request->headers = (struct aws_http_header *)def->headers;
+    request->header_count = def->header_count;
+    s_co_init(&request->co);
+    request->has_body = false;
+    request->header_index = 0;
+    request->has_cached_segment = false;
+    request->last_segment = false;
+    request->user_data = def->userdata;
+
     aws_task_init(&request->task, s_send_request_task, (void *)request);
 
     struct aws_channel *channel = request->connection->data.channel;
@@ -946,45 +1021,6 @@ int aws_http_request_send(struct aws_http_request *request) {
     return AWS_OP_SUCCESS;
 }
 
-void aws_http_request_destroy(struct aws_http_request *request) {
-    if (request->has_cached_segment) {
-        aws_byte_buf_clean_up(&request->cached_segment);
-    }
-    aws_mem_release(request->connection->data.alloc, request);
-}
-
-struct aws_http_response *aws_http_response_new(
-    struct aws_http_server_connection *connection,
-    enum aws_http_code code,
-    bool chunked,
-    struct aws_http_header *headers,
-    int header_count,
-    struct aws_http_response_callbacks *callbacks,
-    void *user_data) {
-
-    struct aws_http_response *response =
-        (struct aws_http_response *)aws_mem_acquire(connection->data.alloc, sizeof(struct aws_http_response));
-    if (!response) {
-        return NULL;
-    }
-
-    response->alloc = connection->data.alloc;
-    response->connection = connection;
-    response->code = code;
-    response->chunked = chunked;
-    response->headers = headers;
-    response->header_count = header_count;
-    response->callbacks = *callbacks;
-    AWS_COROUTINE_INIT(&response->co);
-    response->has_body = false;
-    response->header_index = 0;
-    response->has_cached_segment = false;
-    response->last_segment = false;
-    response->user_data = user_data;
-
-    return response;
-}
-
 static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task_status status) {
     (void)task;
     if (status != AWS_TASK_STATUS_RUN_READY) {
@@ -992,13 +1028,21 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
     }
 
     struct aws_http_response *response = (struct aws_http_response *)arg;
-    struct aws_channel *channel = response->connection->data.channel;
-    struct aws_channel_slot *slot = response->connection->data.slot;
+    struct aws_http_server_connection *connection = response->connection;
+    assert(connection);
+
+    if (response->connection->data.connection_closed) {
+        connection->callbacks.write_response_callbacks.on_sent(AWS_ERROR_HTTP_CONNECTION_CLOSED, response->user_data);
+        return;
+    }
+
+    struct aws_channel *channel = connection->data.channel;
+    struct aws_channel_slot *slot = connection->data.slot;
 
     struct aws_io_message *msg =
         aws_channel_acquire_message_from_pool(channel, AWS_IO_MESSAGE_APPLICATION_DATA, AWS_HTTP_MESSAGE_SIZE_HINT);
     if (!msg) {
-        aws_http_server_connection_disconnect(response->connection);
+        aws_http_server_connection_disconnect(connection);
     }
 
     const char *code_str = aws_http_code_to_str(response->code);
@@ -1034,10 +1078,16 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
 
     if (response->has_body) {
         while (!response->last_segment) {
-            response->segment.ptr = NULL;
-            response->segment.len = msg->message_data.capacity - msg->message_data.len;
-            response->callbacks.on_write_body_segment(
-                response, &response->segment, &response->last_segment, response->user_data);
+            response->segment.buffer = NULL;
+            response->segment.len = 0;
+            response->segment.allocator = NULL;
+            response->segment.capacity = msg->message_data.capacity - msg->message_data.len;
+            size_t capacity = response->segment.capacity;
+            (void)capacity;
+            connection->callbacks.write_response_callbacks.on_write_body_segment(
+                &response->segment, &response->last_segment, response->user_data);
+            assert(response->segment.len <= response->segment.capacity);
+            assert(capacity == response->segment.capacity);
 
             if (response->chunked) {
                 unsigned len = (unsigned)response->segment.len;
@@ -1047,7 +1097,14 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
 
                 s_write_to_msg(msg, &response->hex_len);
                 s_write_to_msg(msg, &newline);
-                s_write_to_msg(msg, &response->segment);
+
+                AWS_COROUTINE_CASE();
+                struct aws_byte_cursor segment = aws_byte_cursor_from_buf(&response->segment);
+                if (s_write_to_msg_implementation(msg, &segment) != AWS_OP_SUCCESS) {
+                    AWS_COROUTINE_YIELD();
+                }
+                AWS_COROUTINE_CASE_END();
+
                 s_write_to_msg(msg, &newline);
 
                 if (response->last_segment) {
@@ -1057,7 +1114,12 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
                 }
 
             } else {
-                s_write_to_msg(msg, &response->segment);
+                AWS_COROUTINE_CASE();
+                struct aws_byte_cursor segment = aws_byte_cursor_from_buf(&response->segment);
+                if (s_write_to_msg_implementation(msg, &segment) != AWS_OP_SUCCESS) {
+                    AWS_COROUTINE_YIELD();
+                }
+                AWS_COROUTINE_CASE_END();
             }
         }
     }
@@ -1076,35 +1138,60 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
         segment.len = response->segment.len;
         segment.capacity = segment.len;
         segment.allocator = NULL;
-        segment.buffer = response->segment.ptr;
+        segment.buffer = response->segment.buffer;
         aws_byte_buf_init_copy(response->alloc, &response->cached_segment, &segment);
+        response->has_cached_segment = true;
 
-        response->segment = aws_byte_cursor_from_buf(&response->cached_segment);
+        response->segment = response->cached_segment;
 
         aws_channel_schedule_task_now(channel, &response->task);
     } else {
-        if (response->callbacks.on_response_sent) {
-            response->callbacks.on_response_sent(response, response->user_data);
+        /* Finished encoding the response. Notify user and cleanup the response object. */
+        connection->callbacks.write_response_callbacks.on_sent(AWS_OP_SUCCESS, response->user_data);
+
+        if (response->has_cached_segment) {
+            aws_byte_buf_clean_up(&response->cached_segment);
         }
+        aws_mem_release(response->connection->data.alloc, response);
     }
 }
 
-int aws_http_response_send(struct aws_http_response *response) {
+int aws_http_response_send(struct aws_http_server_connection *connection, const struct aws_http_response_def *def) {
+
+    if (connection->data.connection_closed) {
+        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    }
+
+    struct aws_http_response *response =
+        (struct aws_http_response *)aws_mem_acquire(connection->data.alloc, sizeof(struct aws_http_response));
+    if (!response) {
+        return AWS_OP_ERR;
+    }
+
+    response->alloc = connection->data.alloc;
+    response->connection = connection;
+    response->code = def->code;
+    response->chunked = def->is_chunked;
+    response->headers = (struct aws_http_header *)def->headers;
+    response->header_count = def->header_count;
+    s_co_init(&response->co);
+    response->has_body = false;
+    response->header_index = 0;
+    response->has_cached_segment = false;
+    response->last_segment = false;
+    response->user_data = def->userdata;
+
     aws_task_init(&response->task, s_send_response_task, (void *)response);
 
     struct aws_channel *channel = response->connection->data.channel;
-    if (!aws_channel_thread_is_callers_thread(channel)) {
-        aws_channel_schedule_task_now(channel, &response->task);
-    } else {
-        s_send_response_task(&response->task, (void *)response, AWS_TASK_STATUS_RUN_READY);
+    if (connection->data.connection_closed) {
+        /* This is not an atomic op, and state can change here at any moment. */
+        if (!aws_channel_thread_is_callers_thread(channel)) {
+            aws_channel_schedule_task_now(channel, &response->task);
+        } else {
+            s_send_response_task(&response->task, (void *)response, AWS_TASK_STATUS_RUN_READY);
+        }
     }
 
     return AWS_OP_SUCCESS;
-}
-
-void aws_http_response_destroy(struct aws_http_response *response) {
-    if (response->has_cached_segment) {
-        aws_byte_buf_clean_up(&response->cached_segment);
-    }
-    aws_mem_release(response->connection->data.alloc, response);
 }
