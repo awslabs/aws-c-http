@@ -169,8 +169,13 @@ static void s_complete_request(struct aws_http_request *request) {
 
     /* Unhook request from client request queue, and clean it up. */
     if (!aws_linked_list_empty(&connection->data.msg_list)) {
-        connection->request =
-            AWS_CONTAINER_OF(aws_linked_list_pop_front(&connection->data.msg_list), struct aws_http_request, node);
+        AWS_CONTAINER_OF(aws_linked_list_pop_front(&connection->data.msg_list), struct aws_http_request, node);
+        if (!aws_linked_list_empty(&connection->data.msg_list)) {
+            connection->request =
+                    AWS_CONTAINER_OF(aws_linked_list_back(&connection->data.msg_list), struct aws_http_request, node);
+        } else {
+            connection->request = NULL;
+        }
     } else {
         connection->request = NULL;
     }
@@ -620,9 +625,9 @@ void aws_http_request_def_set_uri(struct aws_http_request_def *def, const struct
 }
 
 void aws_http_request_def_set_headers(
-        struct aws_http_request_def *def,
-        const struct aws_http_header *headers,
-        int count) {
+    struct aws_http_request_def *def,
+    const struct aws_http_header *headers,
+    int count) {
     def->headers = headers;
     def->header_count = count;
 }
@@ -640,9 +645,9 @@ void aws_http_response_def_set_code(struct aws_http_response_def *def, enum aws_
 }
 
 void aws_http_response_def_set_headers(
-        struct aws_http_response_def *def,
-        const struct aws_http_header *headers,
-        int count) {
+    struct aws_http_response_def *def,
+    const struct aws_http_header *headers,
+    int count) {
     def->headers = headers;
     def->header_count = count;
 }
@@ -719,6 +724,9 @@ void aws_http_client_connection_disconnect(struct aws_http_client_connection *co
 void aws_http_client_connection_destroy(struct aws_http_client_connection *connection) {
     s_connection_data_clean_up(&connection->data);
     aws_mem_release(connection->data.alloc, connection);
+    // WORKING HERE
+    // Gotta do a task for proper shutdown
+    // bleh
 }
 
 struct aws_http_listener *aws_http_listener_new(
@@ -871,7 +879,10 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
     AWS_COROUTINE_START(&request->co);
 
     /* Occurs only once. */
-    aws_linked_list_push_back(&request->connection->data.msg_list, &request->node);
+    aws_linked_list_push_back(&connection->data.msg_list, &request->node);
+    if (!connection->request) {
+        connection->request = request;
+    }
 
     s_write_to_msg(msg, &method);
     s_write_to_msg(msg, &space);
@@ -904,7 +915,7 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
     if (request->has_body) {
         /* Wait here for a 100-continue response. */
         AWS_COROUTINE_CASE();
-        if (request->expect_100_continue) {
+        if (!!request->expect_100_continue) {
             AWS_COROUTINE_YIELD();
         }
         AWS_COROUTINE_CASE_END();
@@ -1012,13 +1023,17 @@ int aws_http_request_send(struct aws_http_client_connection *connection, const s
     aws_task_init(&request->task, s_send_request_task, (void *)request);
 
     struct aws_channel *channel = request->connection->data.channel;
-    if (!aws_channel_thread_is_callers_thread(channel)) {
-        aws_channel_schedule_task_now(channel, &request->task);
-    } else {
-        s_send_request_task(&request->task, (void *)request, AWS_TASK_STATUS_RUN_READY);
-    }
+    if (!connection->data.connection_closed) {
+        if (!aws_channel_thread_is_callers_thread(channel)) {
+            aws_channel_schedule_task_now(channel, &request->task);
+        } else {
+            s_send_request_task(&request->task, (void *)request, AWS_TASK_STATUS_RUN_READY);
+        }
 
-    return AWS_OP_SUCCESS;
+        return AWS_OP_SUCCESS;
+    } else {
+        return AWS_OP_ERR;
+    }
 }
 
 static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task_status status) {
@@ -1184,14 +1199,16 @@ int aws_http_response_send(struct aws_http_server_connection *connection, const 
     aws_task_init(&response->task, s_send_response_task, (void *)response);
 
     struct aws_channel *channel = response->connection->data.channel;
-    if (connection->data.connection_closed) {
+    if (!connection->data.connection_closed) {
         /* This is not an atomic op, and state can change here at any moment. */
         if (!aws_channel_thread_is_callers_thread(channel)) {
             aws_channel_schedule_task_now(channel, &response->task);
         } else {
             s_send_response_task(&response->task, (void *)response, AWS_TASK_STATUS_RUN_READY);
         }
-    }
 
-    return AWS_OP_SUCCESS;
+        return AWS_OP_SUCCESS;
+    } else {
+        return AWS_OP_ERR;
+    }
 }

@@ -329,6 +329,7 @@ static void s_reset_global_state_for_looped_predicates() {
     s_server_finished_getting_request = false;
     s_client_received_response = false;
     s_header_count = 0;
+    AWS_HTTP_TEST_PRINT("---\n");
 }
 
 AWS_TEST_CASE(http_test_connection, s_http_test_connection);
