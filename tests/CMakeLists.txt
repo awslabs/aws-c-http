@@ -5,11 +5,6 @@ file(GLOB TEST_HDRS "*.h")
 file(GLOB TEST_SRC "*.c")
 file(GLOB TESTS ${TEST_HDRS} ${TEST_SRC})
 
-add_test_case(http_test_queue_typical_usecase)
-add_test_case(http_test_queue_static)
-add_test_case(http_test_queue_overflow)
-add_test_case(http_test_queue_resize)
-
 add_test_case(http_test_get_method)
 add_test_case(http_test_get_version)
 add_test_case(http_test_get_uri)
@@ -34,8 +29,6 @@ add_test_case(http_test_100_continue_failed_expectations)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})
-
-get_target_property(MY_CFLAGS ${TEST_BINARY_NAME} COMPILE_OPTIONS)
 
 #SSL certificates to use for testing.
 add_custom_command(TARGET ${TEST_BINARY_NAME} PRE_BUILD

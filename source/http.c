@@ -64,7 +64,7 @@ void aws_http_load_error_strings(void) {
     }
 }
 
-static inline char s_upper(char c) {
+static char s_upper(char c) {
     if (c >= 'a' && c <= 'z') {
         c += ('A' - 'a');
     }
@@ -72,7 +72,7 @@ static inline char s_upper(char c) {
 }
 
 /* https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function */
-static inline uint32_t s_aws_FNV1a(struct aws_byte_cursor cursor) {
+static uint32_t s_aws_FNV1a(struct aws_byte_cursor cursor) {
     uint32_t h = (uint32_t)0x811C9DC5;
     while (cursor.len--) {
         char c = (char)s_upper(*cursor.ptr++);
@@ -83,7 +83,7 @@ static inline uint32_t s_aws_FNV1a(struct aws_byte_cursor cursor) {
 }
 
 /* Works like memcmp or strcmp, except is case-agonstic. */
-static inline int s_strcmp_case_insensitive(const char *a, const char *b, size_t key_len) {
+static int s_strcmp_case_insensitive(const char *a, const char *b, size_t key_len) {
     for (size_t i = 0; i < key_len; ++i) {
         int d = s_upper(a[i]) - s_upper(b[i]);
         if (d) {

@@ -256,11 +256,11 @@ static int s_init_stuff(
     struct aws_tls_ctx_options *client_tls_ctx_options,
     struct aws_tls_ctx **client_tls_ctx,
     struct aws_tls_connection_options *tls_client_conn_options,
-    struct aws_client_bootstrap *client_bootstrap,
+    struct aws_client_bootstrap **client_bootstrap,
     struct aws_tls_ctx_options *server_tls_ctx_options,
     struct aws_tls_ctx **server_tls_ctx,
     struct aws_tls_connection_options *tls_server_conn_options,
-    struct aws_server_bootstrap *server_bootstrap) {
+    struct aws_server_bootstrap **server_bootstrap) {
     aws_tls_init_static_state(allocator);
 
     ASSERT_SUCCESS(aws_event_loop_group_default_init(el_group, allocator, 2));
@@ -281,11 +281,11 @@ static int s_init_stuff(
     *client_tls_ctx = aws_tls_client_ctx_new(allocator, client_tls_ctx_options);
     ASSERT_NOT_NULL(*client_tls_ctx);
 
-    aws_tls_connection_options_init_from_ctx_options(tls_client_conn_options, client_tls_ctx_options);
+    aws_tls_connection_options_init_from_ctx(tls_client_conn_options, *client_tls_ctx);
     aws_tls_connection_options_set_server_name(tls_client_conn_options, "localhost");
 
-    ASSERT_SUCCESS(aws_client_bootstrap_init(client_bootstrap, allocator, el_group));
-    aws_client_bootstrap_set_tls_ctx(client_bootstrap, *client_tls_ctx);
+    *client_bootstrap = aws_client_bootstrap_new(allocator, el_group, NULL, NULL);
+    ASSERT_NOT_NULL(*client_bootstrap);
 
     /* Server io setup. */
 #ifdef __APPLE__
@@ -297,10 +297,10 @@ static int s_init_stuff(
     *server_tls_ctx = aws_tls_server_ctx_new(allocator, server_tls_ctx_options);
     ASSERT_NOT_NULL(*server_tls_ctx);
 
-    aws_tls_connection_options_init_from_ctx_options(tls_server_conn_options, server_tls_ctx_options);
+    aws_tls_connection_options_init_from_ctx(tls_server_conn_options, *server_tls_ctx);
 
-    ASSERT_SUCCESS(aws_server_bootstrap_init(server_bootstrap, allocator, el_group));
-    ASSERT_SUCCESS(aws_server_bootstrap_set_tls_ctx(server_bootstrap, *server_tls_ctx));
+    *server_bootstrap = aws_server_bootstrap_new(allocator, el_group);
+    ASSERT_NOT_NULL(*server_bootstrap);
 
     return AWS_OP_SUCCESS;
 }
@@ -314,8 +314,8 @@ static void s_clean_up_stuff(
     struct aws_http_listener *server_listener) {
     aws_http_listener_destroy(server_listener);
 
-    aws_client_bootstrap_clean_up(client_bootstrap);
-    aws_server_bootstrap_clean_up(server_bootstrap);
+    aws_client_bootstrap_destroy(client_bootstrap);
+    aws_server_bootstrap_destroy(server_bootstrap);
 
     aws_event_loop_group_clean_up(el_group);
     aws_tls_ctx_destroy(client_tls_ctx);
@@ -342,11 +342,11 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     struct aws_tls_ctx_options client_tls_ctx_options;
     struct aws_tls_ctx *client_tls_ctx;
     struct aws_tls_connection_options tls_client_conn_options;
-    struct aws_client_bootstrap client_bootstrap;
+    struct aws_client_bootstrap *client_bootstrap;
     struct aws_tls_ctx_options server_tls_ctx_options;
     struct aws_tls_ctx *server_tls_ctx;
     struct aws_tls_connection_options tls_server_conn_options;
-    struct aws_server_bootstrap server_bootstrap;
+    struct aws_server_bootstrap *server_bootstrap;
 
     s_init_stuff(
         allocator,
@@ -379,7 +379,7 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
         &endpoint,
         &socket_options,
         &tls_server_conn_options,
-        &server_bootstrap,
+        server_bootstrap,
         1024,
         &server_callbacks,
         NULL);
@@ -401,7 +401,7 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
         &endpoint,
         &socket_options,
         &tls_client_conn_options,
-        &client_bootstrap,
+        client_bootstrap,
         1024,
         &client_callbacks,
         NULL));
@@ -487,7 +487,7 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     }
     aws_mutex_unlock(&s_mutex);
 
-    s_clean_up_stuff(client_tls_ctx, server_tls_ctx, &el_group, &client_bootstrap, &server_bootstrap, server_listener);
+    s_clean_up_stuff(client_tls_ctx, server_tls_ctx, &el_group, client_bootstrap, server_bootstrap, server_listener);
 
     ASSERT_PTR_EQUALS(NULL, s_server_connection);
     ASSERT_PTR_EQUALS(NULL, s_client_connection);
@@ -506,7 +506,7 @@ static void s_on_request_end_100_continue(int error_code, void *user_data) {
     AWS_HTTP_TEST_PRINT("Entire request received by server.\n");
 }
 
-static inline char s_lower(char c) {
+static char s_lower(char c) {
     if (c >= 'A' && c <= 'Z') {
         c -= ('A' - 'a');
     }
@@ -514,7 +514,7 @@ static inline char s_lower(char c) {
 }
 
 /* Works like memcmp or strcmp, except is case-agnostic. */
-static inline int s_strcmp_case_insensitive(const char *a, size_t len_a, const char *b, size_t len_b) {
+static int s_strcmp_case_insensitive(const char *a, size_t len_a, const char *b, size_t len_b) {
     if (len_a != len_b) {
         return 1;
     }
@@ -570,11 +570,11 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
     struct aws_tls_ctx_options client_tls_ctx_options;
     struct aws_tls_ctx *client_tls_ctx;
     struct aws_tls_connection_options tls_client_conn_options;
-    struct aws_client_bootstrap client_bootstrap;
+    struct aws_client_bootstrap *client_bootstrap;
     struct aws_tls_ctx_options server_tls_ctx_options;
     struct aws_tls_ctx *server_tls_ctx;
     struct aws_tls_connection_options tls_server_conn_options;
-    struct aws_server_bootstrap server_bootstrap;
+    struct aws_server_bootstrap *server_bootstrap;
 
     s_init_stuff(
         allocator,
@@ -607,7 +607,7 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
         &endpoint,
         &socket_options,
         &tls_server_conn_options,
-        &server_bootstrap,
+        server_bootstrap,
         1024,
         &server_callbacks,
         NULL);
@@ -629,7 +629,7 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
         &endpoint,
         &socket_options,
         &tls_client_conn_options,
-        &client_bootstrap,
+        client_bootstrap,
         1024,
         &client_callbacks,
         NULL));
@@ -733,7 +733,7 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
     }
     aws_mutex_unlock(&s_mutex);
 
-    s_clean_up_stuff(client_tls_ctx, server_tls_ctx, &el_group, &client_bootstrap, &server_bootstrap, server_listener);
+    s_clean_up_stuff(client_tls_ctx, server_tls_ctx, &el_group, client_bootstrap, server_bootstrap, server_listener);
 
     ASSERT_PTR_EQUALS(NULL, s_server_connection);
     ASSERT_PTR_EQUALS(NULL, s_client_connection);
@@ -752,11 +752,11 @@ static int s_http_test_100_continue_failed_expectations(struct aws_allocator *al
     struct aws_tls_ctx_options client_tls_ctx_options;
     struct aws_tls_ctx *client_tls_ctx;
     struct aws_tls_connection_options tls_client_conn_options;
-    struct aws_client_bootstrap client_bootstrap;
+    struct aws_client_bootstrap *client_bootstrap;
     struct aws_tls_ctx_options server_tls_ctx_options;
     struct aws_tls_ctx *server_tls_ctx;
     struct aws_tls_connection_options tls_server_conn_options;
-    struct aws_server_bootstrap server_bootstrap;
+    struct aws_server_bootstrap *server_bootstrap;
 
     s_init_stuff(
         allocator,
@@ -790,7 +790,7 @@ static int s_http_test_100_continue_failed_expectations(struct aws_allocator *al
         &endpoint,
         &socket_options,
         &tls_server_conn_options,
-        &server_bootstrap,
+        server_bootstrap,
         1024,
         &server_callbacks,
         NULL);
@@ -812,7 +812,7 @@ static int s_http_test_100_continue_failed_expectations(struct aws_allocator *al
         &endpoint,
         &socket_options,
         &tls_client_conn_options,
-        &client_bootstrap,
+        client_bootstrap,
         1024,
         &client_callbacks,
         NULL));
@@ -886,7 +886,7 @@ static int s_http_test_100_continue_failed_expectations(struct aws_allocator *al
     }
     aws_mutex_unlock(&s_mutex);
 
-    s_clean_up_stuff(client_tls_ctx, server_tls_ctx, &el_group, &client_bootstrap, &server_bootstrap, server_listener);
+    s_clean_up_stuff(client_tls_ctx, server_tls_ctx, &el_group, client_bootstrap, server_bootstrap, server_listener);
 
     ASSERT_PTR_EQUALS(NULL, s_server_connection);
     ASSERT_PTR_EQUALS(NULL, s_client_connection);

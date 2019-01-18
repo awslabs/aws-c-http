@@ -91,9 +91,7 @@ struct aws_http_decoder_params {
 
 struct aws_http_decoder;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *params);
 
@@ -120,8 +118,6 @@ AWS_HTTP_API void aws_http_decoder_set_vtable(
 #define AWS_HTTP_TRANSFER_ENCODING_DEPRECATED_COMPRESS (1 << 3)
 AWS_HTTP_API int aws_http_decoder_get_encoding_flags(struct aws_http_decoder *decoder, int *flags);
 
-#ifdef __cplusplus
-}
-#endif
+AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_DECODE_H */

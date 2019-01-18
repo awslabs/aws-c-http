@@ -16,7 +16,6 @@
 #include <aws/common/byte_buf.h>
 #include <aws/common/linked_list.h>
 
-#include <aws/io/channel.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/message_pool.h>
 #include <aws/io/socket.h>
@@ -57,7 +56,7 @@ struct aws_coroutine {
         }                                                                                                              \
         while (0)
 
-static inline void s_co_init(struct aws_coroutine *co) {
+static void s_co_init(struct aws_coroutine *co) {
     co->line = 0;
 }
 
@@ -105,7 +104,7 @@ struct aws_http_request {
     const struct aws_byte_cursor *uri;
     struct aws_http_header *headers;
     int header_count;
-    struct aws_task task;
+    struct aws_channel_task task;
     struct aws_coroutine co;
     int header_index;
     char segment_len_buffer[128];
@@ -127,7 +126,7 @@ struct aws_http_response {
     enum aws_http_code code;
     struct aws_http_header *headers;
     int header_count;
-    struct aws_task task;
+    struct aws_channel_task task;
     struct aws_coroutine co;
     char code_buffer[128];
     char segment_len_buffer[128];
@@ -172,7 +171,7 @@ static void s_complete_request(struct aws_http_request *request) {
         AWS_CONTAINER_OF(aws_linked_list_pop_front(&connection->data.msg_list), struct aws_http_request, node);
         if (!aws_linked_list_empty(&connection->data.msg_list)) {
             connection->request =
-                    AWS_CONTAINER_OF(aws_linked_list_back(&connection->data.msg_list), struct aws_http_request, node);
+                AWS_CONTAINER_OF(aws_linked_list_back(&connection->data.msg_list), struct aws_http_request, node);
         } else {
             connection->request = NULL;
         }
@@ -382,7 +381,7 @@ static int s_handler_process_read_message(
         if (ret != AWS_OP_SUCCESS) {
             /* Any additional error handling needed here? Returning AWS_OP_ERR from
              * this function doesn't seem to do much. */
-            /* TODO (randgaul): Disconnect, but don't clean up. */
+            /* TODO: Disconnect, but don't clean up. */
             break;
         }
 
@@ -394,7 +393,7 @@ static int s_handler_process_read_message(
         /* Only release headers, and body data the user did not specify as released. */
         aws_channel_slot_increment_read_window(slot, total - data->bytes_unreleased);
     }
-    aws_channel_release_message_to_pool(slot->channel, message);
+    aws_mem_release(message->allocator, message);
 
     return ret;
 }
@@ -424,6 +423,11 @@ static int s_handler_increment_read_window(
 static size_t s_handler_initial_window_size(struct aws_channel_handler *handler) {
     struct aws_http_connection_data *data = (struct aws_http_connection_data *)handler->impl;
     return data->initial_window_size;
+}
+
+static size_t s_handler_message_overhead(struct aws_channel_handler *handler) {
+    (void)handler;
+    return 0;
 }
 
 static void s_connection_data_clean_up(struct aws_http_connection_data *data) {
@@ -456,12 +460,15 @@ static int s_handler_shutdown(
     return aws_channel_slot_on_handler_shutdown_complete(slot, dir, error_code, free_scarce_resources_immediately);
 }
 
-static struct aws_channel_handler_vtable s_channel_handler = {s_handler_process_read_message,
-                                                              s_handler_process_write_message,
-                                                              s_handler_increment_read_window,
-                                                              s_handler_shutdown,
-                                                              s_handler_initial_window_size,
-                                                              s_handler_destroy};
+static struct aws_channel_handler_vtable s_channel_handler = {
+    s_handler_process_read_message,
+    s_handler_process_write_message,
+    s_handler_increment_read_window,
+    s_handler_shutdown,
+    s_handler_initial_window_size,
+    s_handler_message_overhead,
+    s_handler_destroy,
+};
 
 static int s_add_backchannel_slot_and_handler(struct aws_channel *channel, struct aws_http_connection_data *data) {
 
@@ -479,38 +486,42 @@ static int s_add_backchannel_slot_and_handler(struct aws_channel *channel, struc
 }
 
 /* New client connection is ready to go. */
-static int s_client_channel_setup(
+static void s_client_channel_setup(
     struct aws_client_bootstrap *bootstrap,
     int error_code,
     struct aws_channel *channel,
     void *user_data) {
+
     (void)bootstrap;
+    struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
 
     if (error_code != AWS_OP_SUCCESS) {
-        return AWS_OP_ERR;
+        // TODO: inform user
+        return;
     }
 
-    struct aws_http_client_connection *connection = (struct aws_http_client_connection *)user_data;
-    int ret = s_add_backchannel_slot_and_handler(channel, &connection->data);
-    connection->callbacks.on_connected(connection, connection->data.user_data);
+    if (s_add_backchannel_slot_and_handler(channel, &connection->data)) {
+        goto error;
+    }
 
-    return ret;
+    connection->callbacks.on_connected(connection, connection->data.user_data);
+    return;
+
+error:
+    // TODO: inform user
+    aws_channel_shutdown(channel, aws_last_error());
 }
 
-static int s_client_channel_shutdown(
+static void s_client_channel_shutdown(
     struct aws_client_bootstrap *bootstrap,
     int error_code,
     struct aws_channel *channel,
     void *user_data) {
+
     (void)bootstrap;
+    (void)error_code;
     (void)channel;
     (void)user_data;
-
-    if (error_code != AWS_OP_SUCCESS) {
-        return AWS_OP_ERR;
-    }
-
-    return AWS_OP_SUCCESS;
 }
 
 static int s_connection_data_init(
@@ -527,13 +538,13 @@ static int s_connection_data_init(
     struct aws_http_decoder *decoder = NULL;
 
     /* Scratch space for the streaming decoder. */
-    if (aws_byte_buf_init(alloc, &data->decoder_scratch_space, 1024) != AWS_OP_SUCCESS) {
+    if (aws_byte_buf_init(&data->decoder_scratch_space, alloc, 1024) != AWS_OP_SUCCESS) {
         goto error_and_cleanup;
     }
 
     /* Setup channel handler. */
     struct aws_channel_handler handler;
-    handler.vtable = s_channel_handler;
+    handler.vtable = &s_channel_handler;
     handler.alloc = alloc;
     handler.impl = (void *)data;
     data->handler = handler;
@@ -569,51 +580,66 @@ error_and_cleanup:
     return AWS_OP_ERR;
 }
 
-static int s_on_incoming_channel(
+static void s_on_incoming_channel(
     struct aws_server_bootstrap *bootstrap,
     int error_code,
     struct aws_channel *channel,
     void *user_data) {
+
     (void)bootstrap;
+    struct aws_http_listener *listener = (struct aws_http_listener *)user_data;
 
     if (error_code != AWS_OP_SUCCESS) {
-        return error_code;
+        // TODO: inform user
+        return;
     }
 
-    struct aws_http_listener *listener = (struct aws_http_listener *)user_data;
-    struct aws_http_server_connection *connection = (struct aws_http_server_connection *)aws_mem_acquire(
-        listener->alloc, sizeof(struct aws_http_server_connection));
+    struct aws_http_server_connection *connection = NULL;
+    bool connection_inited = false;
+
+    connection = aws_mem_acquire(listener->alloc, sizeof(struct aws_http_server_connection));
     if (!connection) {
-        return AWS_OP_ERR;
+        goto error;
     }
 
-    if (s_connection_data_init(
-            &connection->data, listener->alloc, listener->initial_window_size, false, (void *)listener->user_data) !=
-        AWS_OP_SUCCESS) {
-        return AWS_OP_ERR;
+    int err = s_connection_data_init(
+        &connection->data, listener->alloc, listener->initial_window_size, false, (void *)listener->user_data);
+    if (err) {
+        goto error;
     }
-    s_add_backchannel_slot_and_handler(channel, &connection->data);
+    connection_inited = true;
+
+    err = s_add_backchannel_slot_and_handler(channel, &connection->data);
+    if (err) {
+        goto error;
+    }
+
     connection->callbacks = listener->callbacks;
     connection->listener = listener;
     listener->callbacks.on_connection_created(connection, listener->user_data);
+    return;
 
-    return AWS_OP_SUCCESS;
+error:
+    if (connection) {
+        if (connection_inited) {
+            s_connection_data_clean_up(&connection->data);
+        }
+        aws_mem_release(listener->alloc, connection);
+    }
+
+    // TODO: inform user
 }
 
-static int s_on_shutdown_incoming_channel(
+static void s_on_shutdown_incoming_channel(
     struct aws_server_bootstrap *bootstrap,
     int error_code,
     struct aws_channel *channel,
     void *user_data) {
+
     (void)bootstrap;
+    (void)error_code;
     (void)channel;
     (void)user_data;
-
-    if (error_code != AWS_OP_SUCCESS) {
-        return error_code;
-    }
-
-    return AWS_OP_SUCCESS;
 }
 
 void aws_http_request_def_set_method(struct aws_http_request_def *def, enum aws_http_method method) {
@@ -685,7 +711,8 @@ int aws_http_client_connect(
     if (tls_options) {
         if (aws_client_bootstrap_new_tls_socket_channel(
                 bootstrap,
-                endpoint,
+                endpoint->address,
+                endpoint->port,
                 socket_options,
                 tls_options,
                 s_client_channel_setup,
@@ -696,7 +723,8 @@ int aws_http_client_connect(
     } else {
         if (aws_client_bootstrap_new_socket_channel(
                 bootstrap,
-                endpoint,
+                endpoint->address,
+                endpoint->port,
                 socket_options,
                 s_client_channel_setup,
                 s_client_channel_shutdown,
@@ -742,7 +770,7 @@ struct aws_http_listener *aws_http_listener_new(
     struct aws_http_listener *listener =
         (struct aws_http_listener *)aws_mem_acquire(alloc, sizeof(struct aws_http_listener));
     if (!listener) {
-        goto cleanup;
+        return NULL;
     }
     AWS_ZERO_STRUCT(*listener);
 
@@ -754,7 +782,7 @@ struct aws_http_listener *aws_http_listener_new(
 
     struct aws_socket *listener_socket;
     if (tls_options) {
-        listener_socket = aws_server_bootstrap_add_tls_socket_listener(
+        listener_socket = aws_server_bootstrap_new_tls_socket_listener(
             bootstrap,
             endpoint,
             socket_options,
@@ -763,7 +791,7 @@ struct aws_http_listener *aws_http_listener_new(
             s_on_shutdown_incoming_channel,
             (void *)listener);
     } else {
-        listener_socket = aws_server_bootstrap_add_socket_listener(
+        listener_socket = aws_server_bootstrap_new_socket_listener(
             bootstrap,
             endpoint,
             socket_options,
@@ -799,13 +827,13 @@ void aws_http_server_connection_destroy(struct aws_http_server_connection *conne
 }
 
 void aws_http_listener_destroy(struct aws_http_listener *listener) {
-    aws_server_bootstrap_remove_socket_listener(listener->bootstrap, listener->listener_socket);
+    aws_server_bootstrap_destroy_socket_listener(listener->bootstrap, listener->listener_socket);
     aws_mem_release(listener->alloc, listener);
 }
 
 #define AWS_HTTP_MESSAGE_SIZE_HINT (16 * 1024)
 
-static inline int s_write_to_msg_implementation(struct aws_io_message *msg, struct aws_byte_cursor *data) {
+static int s_write_to_msg_implementation(struct aws_io_message *msg, struct aws_byte_cursor *data) {
 
     if (data->len == 0) {
         return AWS_OP_SUCCESS;
@@ -821,7 +849,7 @@ static inline int s_write_to_msg_implementation(struct aws_io_message *msg, stru
     }                                                                                                                  \
     AWS_COROUTINE_CASE_END()
 
-static inline char s_lower(char c) {
+static char s_lower(char c) {
     if (c >= 'A' && c <= 'Z') {
         c -= ('A' - 'a');
     }
@@ -829,7 +857,7 @@ static inline char s_lower(char c) {
 }
 
 /* Works like memcmp or strcmp, except is case-agnostic. */
-static inline int s_strcmp_case_insensitive(const char *a, size_t len_a, const char *b, size_t len_b) {
+static int s_strcmp_case_insensitive(const char *a, size_t len_a, const char *b, size_t len_b) {
     if (len_a != len_b) {
         return 1;
     }
@@ -843,7 +871,7 @@ static inline int s_strcmp_case_insensitive(const char *a, size_t len_a, const c
     return 0;
 }
 
-static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+static void s_send_request_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
     (void)task;
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;
@@ -980,7 +1008,7 @@ static void s_send_request_task(struct aws_task *task, void *arg, enum aws_task_
         segment.capacity = segment.len;
         segment.allocator = NULL;
         segment.buffer = request->segment.buffer;
-        aws_byte_buf_init_copy(request->alloc, &request->cached_segment, &segment);
+        aws_byte_buf_init_copy(&request->cached_segment, request->alloc, &segment);
         request->has_cached_segment = true;
 
         request->segment = request->cached_segment;
@@ -1020,7 +1048,7 @@ int aws_http_request_send(struct aws_http_client_connection *connection, const s
     request->last_segment = false;
     request->user_data = def->userdata;
 
-    aws_task_init(&request->task, s_send_request_task, (void *)request);
+    aws_channel_task_init(&request->task, s_send_request_task, (void *)request);
 
     struct aws_channel *channel = request->connection->data.channel;
     if (!connection->data.connection_closed) {
@@ -1036,7 +1064,7 @@ int aws_http_request_send(struct aws_http_client_connection *connection, const s
     }
 }
 
-static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+static void s_send_response_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
     (void)task;
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;
@@ -1154,7 +1182,7 @@ static void s_send_response_task(struct aws_task *task, void *arg, enum aws_task
         segment.capacity = segment.len;
         segment.allocator = NULL;
         segment.buffer = response->segment.buffer;
-        aws_byte_buf_init_copy(response->alloc, &response->cached_segment, &segment);
+        aws_byte_buf_init_copy(&response->cached_segment, response->alloc, &segment);
         response->has_cached_segment = true;
 
         response->segment = response->cached_segment;
@@ -1196,7 +1224,7 @@ int aws_http_response_send(struct aws_http_server_connection *connection, const 
     response->last_segment = false;
     response->user_data = def->userdata;
 
-    aws_task_init(&response->task, s_send_response_task, (void *)response);
+    aws_channel_task_init(&response->task, s_send_response_task, (void *)response);
 
     struct aws_channel *channel = response->connection->data.channel;
     if (!connection->data.connection_closed) {

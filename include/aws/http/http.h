@@ -195,9 +195,7 @@ struct aws_http_header {
     struct aws_byte_cursor value;
 };
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+AWS_EXTERN_C_BEGIN
 
 /**
  * Loads error strings for this API so that aws_last_error_str etc. will return useful debug strings.
@@ -214,8 +212,6 @@ AWS_HTTP_API enum aws_http_version aws_http_str_to_version(struct aws_byte_curso
 AWS_HTTP_API enum aws_http_header_name aws_http_str_to_header_name(struct aws_byte_cursor cursor);
 AWS_HTTP_API enum aws_http_code aws_http_int_to_code(int code);
 
-#ifdef __cplusplus
-}
-#endif
+AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_H */

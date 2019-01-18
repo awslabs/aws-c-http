@@ -21,18 +21,14 @@
 
 struct aws_http_request;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+AWS_EXTERN_C_BEGIN
 
-AWS_HTTP_API enum aws_http_method method_aws_http_request_get_method(struct aws_http_request *request);
+AWS_HTTP_API enum aws_http_method aws_http_request_get_method(struct aws_http_request *request);
 AWS_HTTP_API const struct aws_byte_cursor *aws_http_request_get_uri(struct aws_http_request *request);
 AWS_HTTP_API void aws_http_request_get_headers(struct aws_http_request *request, const struct aws_http_header **headers, int *count);
 AWS_HTTP_API bool aws_http_request_get_chunked(struct aws_http_request *request);
 AWS_HTTP_API void *aws_http_request_get_userdata(struct aws_http_request *request);
 
-#ifdef __cplusplus
-}
-#endif
+AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_CONNECTION_BUFFERED_H */

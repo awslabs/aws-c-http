@@ -46,7 +46,7 @@
  *     `aws_http_client_callbacks::on_push_response_callbacks` callbacks. Setting these callbacks to NULL means HTTP2
  *     support is *not* opted-into. Setting these callbacks up means opting-into HTTP2 support.
  *
- *     Servers can enable sending push-promises and push-responses by setitng up the callbacks
+ *     Servers can enable sending push-promises and push-responses by setting up the callbacks
  *     `aws_http_server_callbacks::write_push_response_callbacks`, and
  *     `aws_http_server_callbacks::write_push_promise_callbacks`. Setting these callbacks to NULL means HTTP2 support
  *     is *not* opted-into. Setting these callbacks up means opting-into HTTP2 support.
@@ -61,14 +61,6 @@
  *     level API is desired, one that performs some minimal buffering of headers/URI, the aws/http/connection_buffered.h
  *     header might be a better option. The connection_buffered.h header is an optional wrapper around the asynchronous
  *     API implemented by this header.
- *
- * CLIENT EXAMPLE
- *
- *     TODO (randgaul): Write out a basic client example with callbacks stubbed out.
- *
- * SERVER EXAMPLE
- *
- *     TODO (randgaul): Write out a basic server example with callbacks stubbed out.
  */
 
 struct aws_socket_endpoint;
@@ -269,9 +261,7 @@ struct aws_http_response_def {
     bool is_chunked;
 };
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API void aws_http_request_def_set_method(struct aws_http_request_def *def, enum aws_http_method method);
 AWS_HTTP_API void aws_http_request_def_set_uri(struct aws_http_request_def *def, const struct aws_byte_cursor *uri);
@@ -389,8 +379,6 @@ AWS_HTTP_API int aws_http_push_response_send(
     int header_count,
     void *user_data);
 
-#ifdef __cplusplus
-}
-#endif
+AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_CONNECTION_H */

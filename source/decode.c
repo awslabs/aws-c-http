@@ -16,8 +16,6 @@
 #include <aws/http/decode.h>
 
 #include <assert.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 struct aws_http_decoder;
 typedef int(s_aws_http_decoder_state_fn)(
@@ -49,7 +47,7 @@ struct aws_http_decoder {
     void *user_data;
 };
 
-static inline char s_upper(char c) {
+static char s_upper(char c) {
     if (c >= 'a' && c <= 'z') {
         c += ('A' - 'a');
     }
@@ -57,7 +55,7 @@ static inline char s_upper(char c) {
 }
 
 /* Works like memcmp or strcmp, except is case-agnostic. */
-static inline int s_strcmp_case_insensitive(const char *a, size_t len_a, const char *b, size_t len_b) {
+static int s_strcmp_case_insensitive(const char *a, size_t len_a, const char *b, size_t len_b) {
     if (len_a != len_b) {
         return 1;
     }
@@ -71,14 +69,14 @@ static inline int s_strcmp_case_insensitive(const char *a, size_t len_a, const c
     return 0;
 }
 
-static inline struct aws_byte_cursor s_trim_trailing_whitespace(struct aws_byte_cursor cursor) {
+static struct aws_byte_cursor s_trim_trailing_whitespace(struct aws_byte_cursor cursor) {
     while (cursor.len && cursor.ptr[cursor.len - 1] == (uint8_t)' ') {
         cursor.len--;
     }
     return cursor;
 }
 
-static inline struct aws_byte_cursor s_trim_leading_whitespace(struct aws_byte_cursor cursor) {
+static struct aws_byte_cursor s_trim_leading_whitespace(struct aws_byte_cursor cursor) {
     while (cursor.len && *cursor.ptr == (uint8_t)' ') {
         cursor.ptr++;
         cursor.len--;
@@ -86,7 +84,7 @@ static inline struct aws_byte_cursor s_trim_leading_whitespace(struct aws_byte_c
     return cursor;
 }
 
-static inline struct aws_byte_cursor s_trim_whitespace(struct aws_byte_cursor cursor) {
+static struct aws_byte_cursor s_trim_whitespace(struct aws_byte_cursor cursor) {
     cursor = s_trim_leading_whitespace(cursor);
     cursor = s_trim_trailing_whitespace(cursor);
     return cursor;
@@ -163,7 +161,7 @@ static int s_cat(struct aws_http_decoder *decoder, uint8_t *data, size_t len) {
     return op;
 }
 
-static inline int s_read_int64(struct aws_byte_cursor cursor, int64_t *val) {
+static int s_read_int64(struct aws_byte_cursor cursor, int64_t *val) {
     char *end;
     *val = (int64_t)strtoll((const char *)cursor.ptr, &end, 10);
     if ((char *)cursor.ptr != end) {
@@ -173,7 +171,7 @@ static inline int s_read_int64(struct aws_byte_cursor cursor, int64_t *val) {
     }
 }
 
-static inline int s_read_hex_int64(struct aws_byte_cursor cursor, int64_t *val) {
+static int s_read_hex_int64(struct aws_byte_cursor cursor, int64_t *val) {
     char *end;
     *val = (int64_t)strtoll((const char *)cursor.ptr, &end, 16);
     if ((char *)cursor.ptr != end) {
@@ -217,19 +215,19 @@ static int s_state_getline(struct aws_http_decoder *decoder, struct aws_byte_cur
     return ret;
 }
 
-static inline size_t s_byte_buf_split(
+static size_t s_byte_buf_split(
     struct aws_byte_cursor line,
     struct aws_byte_cursor *cursors,
     char split_on,
     size_t n) {
-    struct aws_byte_buf line_buf = aws_byte_buf_from_array(line.ptr, line.len);
+
     struct aws_array_list string_list;
     aws_array_list_init_static(&string_list, cursors, n, sizeof(struct aws_byte_cursor));
-    aws_byte_buf_split_on_char_n(&line_buf, split_on, &string_list, n);
+    aws_byte_cursor_split_on_char_n(&line, split_on, n, &string_list);
     return string_list.length;
 }
 
-static inline void s_set_next_state(
+static void s_set_next_state(
     struct aws_http_decoder *decoder,
     s_aws_http_decoder_state_fn *state,
     s_aws_http_decoder_state_fn *next) {
