@@ -73,29 +73,12 @@ struct aws_http_client_connection;
 struct aws_http_listener;
 struct aws_http_server_connection;
 
-struct aws_http_request;
-
-typedef void aws_http_on_body_segment_fn(
-    const struct aws_byte_cursor *data,
-    bool last_segment,
-    bool *release_segment,
-    void *user_data);
-
-typedef void aws_http_on_header_fn(
-    enum aws_http_header_name header_name,
-    const struct aws_http_header *header,
-    void *user_data);
-
-typedef void aws_http_on_message_completed_fn(int error_code, void *user_data);
-
-typedef void aws_http_on_write_body_fn(struct aws_byte_buf *segment_to_write, bool *is_last_segment, void *user_data);
-
 struct aws_http_on_message_callbacks {
     /**
      * Called once for each header. The memory at `header` is not valid after this function returns,
      * so be sure to store a copy of it as necessary.
      */
-    aws_http_on_header_fn *on_header;
+    void (*on_header)(enum aws_http_header_name header_name, const struct aws_http_header *header, void *user_data);
 
     /**
      * Called once for each contiguous segment of body data received. The `last_segment` bool is set
@@ -106,12 +89,16 @@ struct aws_http_on_message_callbacks {
      * thread before queueing. A future call to `aws_http_client_connection_release_bytes` is needed
      * to relieve backpressure by setting `release_segment` to false.
      */
-    aws_http_on_body_segment_fn *on_body_segment;
+    void (*on_body_segment)(
+        const struct aws_byte_cursor *data,
+        bool last_segment,
+        bool *release_segment,
+        void *user_data);
 
     /**
      * Notification sent when the final byte of the response has been received.
      */
-    aws_http_on_message_completed_fn *on_completed;
+    void (*on_completed)(int error_code, void *user_data);
 };
 
 /**
@@ -161,12 +148,12 @@ struct aws_http_write_message_callbacks {
      * `is_last_segment` to true, and false otherwise. `segment_to_write` needs to have the `buffer`,
      * and the `len` parameters filled out. `len` must not be set as larger than `capacity`.
      */
-    aws_http_on_write_body_fn *on_write_body_segment;
+    void (*on_write_body_segment)(struct aws_byte_buf *segment_to_write, bool *is_last_segment, void *user_data);
 
     /**
      * Notification sent when the final byte of the message has been sent to the underlying io.
      */
-    aws_http_on_message_completed_fn *on_sent;
+    void (*on_sent)(int error_code, void *user_data);
 };
 
 /**

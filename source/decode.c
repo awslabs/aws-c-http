@@ -568,9 +568,7 @@ struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *pa
         return NULL;
     }
 
-    struct aws_http_decoder *decoder =
-        (struct aws_http_decoder *)aws_mem_acquire(params->alloc, sizeof(struct aws_http_decoder));
-
+    struct aws_http_decoder *decoder = aws_mem_acquire(params->alloc, sizeof(struct aws_http_decoder));
     if (!decoder) {
         return NULL;
     }

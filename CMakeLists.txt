@@ -38,7 +38,7 @@ file(GLOB HTTP_SRC
 add_library(${CMAKE_PROJECT_NAME} ${HTTP_HEADERS} ${HTTP_SRC})
 aws_set_common_properties(${CMAKE_PROJECT_NAME})
 aws_prepare_symbol_visibility_args(${CMAKE_PROJECT_NAME} "AWS_HTTP")
-aws_add_sanitizers(${CMAKE_PROJECT_NAME})
+aws_add_sanitizers(${CMAKE_PROJECT_NAME} BLACKLIST "sanitizer-blacklist.txt")
 
 # We are not ABI stable yet
 set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES VERSION 1.0.0)

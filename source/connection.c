@@ -168,7 +168,7 @@ static void s_complete_request(struct aws_http_request *request) {
 
     /* Unhook request from client request queue, and clean it up. */
     if (!aws_linked_list_empty(&connection->data.msg_list)) {
-        AWS_CONTAINER_OF(aws_linked_list_pop_front(&connection->data.msg_list), struct aws_http_request, node);
+        aws_linked_list_pop_front(&connection->data.msg_list);
         if (!aws_linked_list_empty(&connection->data.msg_list)) {
             connection->request =
                 AWS_CONTAINER_OF(aws_linked_list_back(&connection->data.msg_list), struct aws_http_request, node);
@@ -531,7 +531,6 @@ static int s_connection_data_init(
     bool true_for_client_false_for_server,
     void *user_data) {
 
-    AWS_ZERO_STRUCT(*data);
     data->alloc = alloc;
     data->initial_window_size = initial_window_size ? initial_window_size : SIZE_MAX;
     data->is_server = !true_for_client_false_for_server;
@@ -546,7 +545,7 @@ static int s_connection_data_init(
     struct aws_channel_handler handler;
     handler.vtable = &s_channel_handler;
     handler.alloc = alloc;
-    handler.impl = (void *)data;
+    handler.impl = data;
     data->handler = handler;
 
     /* Create http streaming decoder. */
@@ -554,7 +553,7 @@ static int s_connection_data_init(
     params.alloc = alloc;
     params.scratch_space = data->decoder_scratch_space;
     params.true_for_request_false_for_response = !true_for_client_false_for_server;
-    params.user_data = (void *)data;
+    params.user_data = data;
     if (true_for_client_false_for_server) {
         params.vtable = s_get_client_decoder_vtable();
     } else {
@@ -601,9 +600,10 @@ static void s_on_incoming_channel(
     if (!connection) {
         goto error;
     }
+    AWS_ZERO_STRUCT(*connection);
 
     int err = s_connection_data_init(
-        &connection->data, listener->alloc, listener->initial_window_size, false, (void *)listener->user_data);
+        &connection->data, listener->alloc, listener->initial_window_size, false, listener->user_data);
     if (err) {
         goto error;
     }
@@ -696,47 +696,57 @@ int aws_http_client_connect(
     struct aws_http_client_callbacks *callbacks,
     void *user_data) {
 
-    struct aws_http_client_connection *connection =
-        (struct aws_http_client_connection *)aws_mem_acquire(alloc, sizeof(struct aws_http_client_connection));
+    struct aws_http_client_connection *connection = NULL;
+    bool data_inited = false;
+
+    connection = aws_mem_acquire(alloc, sizeof(struct aws_http_client_connection));
     if (!connection) {
         return AWS_OP_ERR;
     }
+    AWS_ZERO_STRUCT(*connection);
 
-    if (s_connection_data_init(&connection->data, alloc, initial_window_size, true, user_data) != AWS_OP_SUCCESS) {
-        return AWS_OP_ERR;
+    int err = s_connection_data_init(&connection->data, alloc, initial_window_size, true, user_data);
+    if (err) {
+        goto error;
     }
+    data_inited = true;
+
     connection->callbacks = *callbacks;
     connection->request = NULL;
 
     if (tls_options) {
-        if (aws_client_bootstrap_new_tls_socket_channel(
-                bootstrap,
-                endpoint->address,
-                endpoint->port,
-                socket_options,
-                tls_options,
-                s_client_channel_setup,
-                s_client_channel_shutdown,
-                (void *)connection) != AWS_OP_SUCCESS) {
-            goto cleanup;
+        err = aws_client_bootstrap_new_tls_socket_channel(
+            bootstrap,
+            endpoint->address,
+            endpoint->port,
+            socket_options,
+            tls_options,
+            s_client_channel_setup,
+            s_client_channel_shutdown,
+            connection);
+        if (err) {
+            goto error;
         }
     } else {
-        if (aws_client_bootstrap_new_socket_channel(
-                bootstrap,
-                endpoint->address,
-                endpoint->port,
-                socket_options,
-                s_client_channel_setup,
-                s_client_channel_shutdown,
-                (void *)connection) != AWS_OP_SUCCESS) {
-            goto cleanup;
+        err = aws_client_bootstrap_new_socket_channel(
+            bootstrap,
+            endpoint->address,
+            endpoint->port,
+            socket_options,
+            s_client_channel_setup,
+            s_client_channel_shutdown,
+            connection);
+        if (err) {
+            goto error;
         }
     }
 
     return AWS_OP_SUCCESS;
 
-cleanup:
-    s_connection_data_clean_up(&connection->data);
+error:
+    if (data_inited) {
+        s_connection_data_clean_up(&connection->data);
+    }
     aws_mem_release(alloc, connection);
     return AWS_OP_ERR;
 }
@@ -767,8 +777,7 @@ struct aws_http_listener *aws_http_listener_new(
     struct aws_http_server_callbacks *callbacks,
     void *user_data) {
 
-    struct aws_http_listener *listener =
-        (struct aws_http_listener *)aws_mem_acquire(alloc, sizeof(struct aws_http_listener));
+    struct aws_http_listener *listener = aws_mem_acquire(alloc, sizeof(struct aws_http_listener));
     if (!listener) {
         return NULL;
     }
@@ -789,15 +798,10 @@ struct aws_http_listener *aws_http_listener_new(
             tls_options,
             s_on_incoming_channel,
             s_on_shutdown_incoming_channel,
-            (void *)listener);
+            listener);
     } else {
         listener_socket = aws_server_bootstrap_new_socket_listener(
-            bootstrap,
-            endpoint,
-            socket_options,
-            s_on_incoming_channel,
-            s_on_shutdown_incoming_channel,
-            (void *)listener);
+            bootstrap, endpoint, socket_options, s_on_incoming_channel, s_on_shutdown_incoming_channel, listener);
     }
 
     if (!listener_socket) {
@@ -1028,8 +1032,7 @@ int aws_http_request_send(struct aws_http_client_connection *connection, const s
         return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
     }
 
-    struct aws_http_request *request =
-        (struct aws_http_request *)aws_mem_acquire(connection->data.alloc, sizeof(struct aws_http_request));
+    struct aws_http_request *request = aws_mem_acquire(connection->data.alloc, sizeof(struct aws_http_request));
     if (!request) {
         return AWS_OP_ERR;
     }
@@ -1048,14 +1051,14 @@ int aws_http_request_send(struct aws_http_client_connection *connection, const s
     request->last_segment = false;
     request->user_data = def->userdata;
 
-    aws_channel_task_init(&request->task, s_send_request_task, (void *)request);
+    aws_channel_task_init(&request->task, s_send_request_task, request);
 
     struct aws_channel *channel = request->connection->data.channel;
     if (!connection->data.connection_closed) {
         if (!aws_channel_thread_is_callers_thread(channel)) {
             aws_channel_schedule_task_now(channel, &request->task);
         } else {
-            s_send_request_task(&request->task, (void *)request, AWS_TASK_STATUS_RUN_READY);
+            s_send_request_task(&request->task, request, AWS_TASK_STATUS_RUN_READY);
         }
 
         return AWS_OP_SUCCESS;
@@ -1205,8 +1208,7 @@ int aws_http_response_send(struct aws_http_server_connection *connection, const 
         return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
     }
 
-    struct aws_http_response *response =
-        (struct aws_http_response *)aws_mem_acquire(connection->data.alloc, sizeof(struct aws_http_response));
+    struct aws_http_response *response = aws_mem_acquire(connection->data.alloc, sizeof(struct aws_http_response));
     if (!response) {
         return AWS_OP_ERR;
     }
@@ -1224,7 +1226,7 @@ int aws_http_response_send(struct aws_http_server_connection *connection, const 
     response->last_segment = false;
     response->user_data = def->userdata;
 
-    aws_channel_task_init(&response->task, s_send_response_task, (void *)response);
+    aws_channel_task_init(&response->task, s_send_response_task, response);
 
     struct aws_channel *channel = response->connection->data.channel;
     if (!connection->data.connection_closed) {
@@ -1232,7 +1234,7 @@ int aws_http_response_send(struct aws_http_server_connection *connection, const 
         if (!aws_channel_thread_is_callers_thread(channel)) {
             aws_channel_schedule_task_now(channel, &response->task);
         } else {
-            s_send_response_task(&response->task, (void *)response, AWS_TASK_STATUS_RUN_READY);
+            s_send_response_task(&response->task, response, AWS_TASK_STATUS_RUN_READY);
         }
 
         return AWS_OP_SUCCESS;

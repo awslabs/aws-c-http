@@ -38,8 +38,8 @@
 
 #define aws_byte_cursor_from_str(s) aws_byte_cursor_from_array(s, strlen(s))
 
-static struct aws_http_server_connection *s_server_connection;
-static struct aws_http_client_connection *s_client_connection;
+static struct aws_http_server_connection *s_server_connection = NULL;
+static struct aws_http_client_connection *s_client_connection = NULL;
 static struct aws_mutex s_mutex;
 static struct aws_condition_variable s_cv;
 static bool s_server_finished_getting_request;
@@ -61,9 +61,7 @@ static void s_on_request(struct aws_http_server_connection *connection, enum aws
     s_method = method;
 }
 
-static void s_on_uri(
-    const struct aws_byte_cursor *uri,
-    void *user_data) {
+static void s_on_uri(const struct aws_byte_cursor *uri, void *user_data) {
     (void)user_data;
     AWS_HTTP_TEST_PRINT("Got URI: %.*s\n", (int)uri->len, uri->ptr);
     assert(uri->len < AWS_ARRAY_SIZE(s_uri));
@@ -172,10 +170,7 @@ static void s_on_disconnected(struct aws_http_client_connection *connection, voi
     AWS_HTTP_TEST_PRINT("Client disconnected.\n");
 }
 
-static void s_request_on_write_body_segment(
-    struct aws_byte_buf *segment,
-    bool *last_segment,
-    void *user_data) {
+static void s_request_on_write_body_segment(struct aws_byte_buf *segment, bool *last_segment, void *user_data) {
     *last_segment = true;
     const char *body_data = (const char *)user_data;
     struct aws_byte_buf data = aws_byte_buf_from_c_str(body_data);
@@ -188,7 +183,10 @@ static void s_on_request_sent(int error_code, void *user_data) {
     (void)user_data;
 }
 
-static void s_request_on_response(struct aws_http_client_connection *connection, enum aws_http_code code, void *user_data) {
+static void s_request_on_response(
+    struct aws_http_client_connection *connection,
+    enum aws_http_code code,
+    void *user_data) {
     (void)connection;
     (void)user_data;
     AWS_HTTP_TEST_PRINT("Got response code: %d\n", (int)code);
@@ -233,10 +231,7 @@ static void s_request_on_request_completed(int error_code, void *user_data) {
     aws_mutex_unlock(&s_mutex);
 }
 
-static void s_on_write_body_segment(
-    struct aws_byte_buf *segment,
-    bool *last_segment,
-    void *user_data) {
+static void s_on_write_body_segment(struct aws_byte_buf *segment, bool *last_segment, void *user_data) {
     (void)segment;
     (void)user_data;
     *last_segment = true;
@@ -340,15 +335,15 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
     struct aws_socket_options socket_options;
     struct aws_socket_endpoint endpoint;
     struct aws_tls_ctx_options client_tls_ctx_options;
-    struct aws_tls_ctx *client_tls_ctx;
+    struct aws_tls_ctx *client_tls_ctx = NULL;
     struct aws_tls_connection_options tls_client_conn_options;
-    struct aws_client_bootstrap *client_bootstrap;
+    struct aws_client_bootstrap *client_bootstrap = NULL;
     struct aws_tls_ctx_options server_tls_ctx_options;
-    struct aws_tls_ctx *server_tls_ctx;
+    struct aws_tls_ctx *server_tls_ctx = NULL;
     struct aws_tls_connection_options tls_server_conn_options;
-    struct aws_server_bootstrap *server_bootstrap;
+    struct aws_server_bootstrap *server_bootstrap = NULL;
 
-    s_init_stuff(
+    ASSERT_SUCCESS(s_init_stuff(
         allocator,
         &el_group,
         &socket_options,
@@ -360,7 +355,7 @@ static int s_http_test_connection(struct aws_allocator *allocator, void *ctx) {
         &server_tls_ctx_options,
         &server_tls_ctx,
         &tls_server_conn_options,
-        &server_bootstrap);
+        &server_bootstrap));
 
     /* Setup HTTP connections. */
     struct aws_http_server_callbacks server_callbacks;
@@ -568,15 +563,15 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
     struct aws_socket_options socket_options;
     struct aws_socket_endpoint endpoint;
     struct aws_tls_ctx_options client_tls_ctx_options;
-    struct aws_tls_ctx *client_tls_ctx;
+    struct aws_tls_ctx *client_tls_ctx = NULL;
     struct aws_tls_connection_options tls_client_conn_options;
-    struct aws_client_bootstrap *client_bootstrap;
+    struct aws_client_bootstrap *client_bootstrap = NULL;
     struct aws_tls_ctx_options server_tls_ctx_options;
-    struct aws_tls_ctx *server_tls_ctx;
+    struct aws_tls_ctx *server_tls_ctx = NULL;
     struct aws_tls_connection_options tls_server_conn_options;
-    struct aws_server_bootstrap *server_bootstrap;
+    struct aws_server_bootstrap *server_bootstrap = NULL;
 
-    s_init_stuff(
+    ASSERT_SUCCESS(s_init_stuff(
         allocator,
         &el_group,
         &socket_options,
@@ -588,7 +583,7 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
         &server_tls_ctx_options,
         &server_tls_ctx,
         &tls_server_conn_options,
-        &server_bootstrap);
+        &server_bootstrap));
 
     /* Setup HTTP connections. */
     struct aws_http_server_callbacks server_callbacks;
@@ -621,7 +616,8 @@ static int s_http_test_100_continue(struct aws_allocator *allocator, void *ctx) 
     client_callbacks.on_response_callbacks.on_response = s_request_on_response;
     client_callbacks.on_response_callbacks.on_message_callbacks.on_header = s_request_on_response_header;
     client_callbacks.on_response_callbacks.on_message_callbacks.on_body_segment = s_request_on_response_body_segment;
-    client_callbacks.on_response_callbacks.on_message_callbacks.on_completed = s_request_on_request_completed_100_continue;
+    client_callbacks.on_response_callbacks.on_message_callbacks.on_completed =
+        s_request_on_request_completed_100_continue;
     client_callbacks.write_request_callbacks.on_write_body_segment = s_request_on_write_body_segment;
     client_callbacks.write_request_callbacks.on_sent = NULL;
     ASSERT_SUCCESS(aws_http_client_connect(
@@ -750,15 +746,15 @@ static int s_http_test_100_continue_failed_expectations(struct aws_allocator *al
     struct aws_socket_options socket_options;
     struct aws_socket_endpoint endpoint;
     struct aws_tls_ctx_options client_tls_ctx_options;
-    struct aws_tls_ctx *client_tls_ctx;
+    struct aws_tls_ctx *client_tls_ctx = NULL;
     struct aws_tls_connection_options tls_client_conn_options;
-    struct aws_client_bootstrap *client_bootstrap;
+    struct aws_client_bootstrap *client_bootstrap = NULL;
     struct aws_tls_ctx_options server_tls_ctx_options;
-    struct aws_tls_ctx *server_tls_ctx;
+    struct aws_tls_ctx *server_tls_ctx = NULL;
     struct aws_tls_connection_options tls_server_conn_options;
-    struct aws_server_bootstrap *server_bootstrap;
+    struct aws_server_bootstrap *server_bootstrap = NULL;
 
-    s_init_stuff(
+    ASSERT_SUCCESS(s_init_stuff(
         allocator,
         &el_group,
         &socket_options,
@@ -770,7 +766,7 @@ static int s_http_test_100_continue_failed_expectations(struct aws_allocator *al
         &server_tls_ctx_options,
         &server_tls_ctx,
         &tls_server_conn_options,
-        &server_bootstrap);
+        &server_bootstrap));
 
     /* Setup HTTP connections. */
     struct aws_http_server_callbacks server_callbacks;
@@ -804,7 +800,8 @@ static int s_http_test_100_continue_failed_expectations(struct aws_allocator *al
     client_callbacks.on_response_callbacks.on_response = s_request_on_response;
     client_callbacks.on_response_callbacks.on_message_callbacks.on_header = s_request_on_response_header;
     client_callbacks.on_response_callbacks.on_message_callbacks.on_body_segment = s_request_on_response_body_segment;
-    client_callbacks.on_response_callbacks.on_message_callbacks.on_completed = s_request_on_request_completed_100_continue;
+    client_callbacks.on_response_callbacks.on_message_callbacks.on_completed =
+        s_request_on_request_completed_100_continue;
     client_callbacks.write_request_callbacks.on_write_body_segment = s_request_on_write_body_segment;
     client_callbacks.write_request_callbacks.on_sent = NULL;
     ASSERT_SUCCESS(aws_http_client_connect(
