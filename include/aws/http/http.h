@@ -25,7 +25,6 @@ enum aws_http_errors {
     AWS_ERROR_HTTP_PARSE,
     AWS_ERROR_HTTP_USER_CALLBACK_EXIT,
     AWS_ERROR_HTTP_INVALID_PARSE_STATE,
-    AWS_ERROR_HTTP_NO_BODY_DATA_BUFFERED,
     AWS_ERROR_HTTP_CONNECTION_CLOSED,
     AWS_ERROR_HTTP_END_RANGE = 0x0C00,
 };
@@ -35,6 +34,7 @@ enum aws_http_version {
     AWS_HTTP_VERSION_1_0,
     AWS_HTTP_VERSION_1_1,
     AWS_HTTP_VERSION_2_0,
+    AWS_HTTP_VERSION_COUNT, /* Max enum value */
 };
 
 enum aws_http_method {
@@ -48,6 +48,7 @@ enum aws_http_method {
     AWS_HTTP_METHOD_POST,
     AWS_HTTP_METHOD_PUT,
     AWS_HTTP_METHOD_TRACE,
+    AWS_HTTP_METHOD_COUNT, /* Max enum value */
 };
 
 enum aws_http_header_name {
