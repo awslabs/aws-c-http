@@ -192,7 +192,8 @@ enum aws_http_code {
 };
 
 struct aws_http_header {
-    struct aws_byte_cursor name;
+    enum aws_http_header_name name;
+    struct aws_byte_cursor name_str;
     struct aws_byte_cursor value;
 };
 
