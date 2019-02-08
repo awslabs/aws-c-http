@@ -5,14 +5,14 @@ phases:
     commands:
       - sudo add-apt-repository ppa:ubuntu-toolchain-r/test
       - sudo apt-get update -y
-      - sudo apt-get install gcc-6 cmake3 cppcheck -y
+      - sudo apt-get install gcc-6 cmake3 -y
   pre_build:
     commands:
       - export CC=gcc-6
   build:
     commands:
       - echo Build started on `date`
-      - ./codebuild/common-linux.sh
+      - ./codebuild/common-posix.sh
   post_build:
     commands:
       - echo Build completed on `date`

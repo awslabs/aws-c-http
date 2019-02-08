@@ -13,10 +13,9 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/http_decode.h>
+#include <aws/http/decode.h>
 
 #include <assert.h>
-#include <stdlib.h>
 
 struct aws_http_decoder;
 typedef int(s_aws_http_decoder_state_fn)(
@@ -39,29 +38,24 @@ struct aws_http_decoder {
     size_t chunk_processed;
     size_t chunk_size;
     bool doing_trailers;
-
-    /* Common HTTP header data. */
-    enum aws_http_method method;
-    enum aws_http_version version;
-    struct aws_byte_buf uri_data;
-    enum aws_http_code code;
+    bool found_double_newline;
+    bool expect_100_continue_skip_on_done;
 
     /* User callbacks and settings. */
-    aws_http_decoder_on_header_fn *on_header;
-    aws_http_decoder_on_body_fn *on_body;
+    struct aws_http_decoder_vtable vtable;
     bool true_for_request_false_for_response;
     void *user_data;
 };
 
-static inline char s_upper(char c) {
+static char s_upper(char c) {
     if (c >= 'a' && c <= 'z') {
-        c += ('A' - 'a');
+        c = (char)(c - ('a' - 'A'));
     }
     return c;
 }
 
 /* Works like memcmp or strcmp, except is case-agnostic. */
-static inline int s_strcmp_case_insensitive(const char *a, size_t len_a, const char *b, size_t len_b) {
+static int s_strcmp_case_insensitive(const char *a, size_t len_a, const char *b, size_t len_b) {
     if (len_a != len_b) {
         return 1;
     }
@@ -75,14 +69,14 @@ static inline int s_strcmp_case_insensitive(const char *a, size_t len_a, const c
     return 0;
 }
 
-static inline struct aws_byte_cursor s_trim_trailing_whitespace(struct aws_byte_cursor cursor) {
+static struct aws_byte_cursor s_trim_trailing_whitespace(struct aws_byte_cursor cursor) {
     while (cursor.len && cursor.ptr[cursor.len - 1] == (uint8_t)' ') {
         cursor.len--;
     }
     return cursor;
 }
 
-static inline struct aws_byte_cursor s_trim_leading_whitespace(struct aws_byte_cursor cursor) {
+static struct aws_byte_cursor s_trim_leading_whitespace(struct aws_byte_cursor cursor) {
     while (cursor.len && *cursor.ptr == (uint8_t)' ') {
         cursor.ptr++;
         cursor.len--;
@@ -90,7 +84,7 @@ static inline struct aws_byte_cursor s_trim_leading_whitespace(struct aws_byte_c
     return cursor;
 }
 
-static inline struct aws_byte_cursor s_trim_whitespace(struct aws_byte_cursor cursor) {
+static struct aws_byte_cursor s_trim_whitespace(struct aws_byte_cursor cursor) {
     cursor = s_trim_leading_whitespace(cursor);
     cursor = s_trim_trailing_whitespace(cursor);
     return cursor;
@@ -131,10 +125,15 @@ static bool s_scan_for_newline(
 static int s_cat(struct aws_http_decoder *decoder, uint8_t *data, size_t len) {
     struct aws_byte_buf *buffer = &decoder->scratch_space;
     struct aws_byte_cursor to_append = aws_byte_cursor_from_array(data, len);
-    if (AWS_LIKELY(aws_byte_buf_append(buffer, &to_append) == AWS_OP_SUCCESS)) {
-        return AWS_OP_SUCCESS;
-    } else {
-        size_t new_size = buffer->capacity;
+    int op = AWS_OP_ERR;
+    if (buffer->buffer != NULL) {
+        if ((aws_byte_buf_append(buffer, &to_append) == AWS_OP_SUCCESS)) {
+            op = AWS_OP_SUCCESS;
+        }
+    }
+
+    if (op != AWS_OP_SUCCESS) {
+        size_t new_size = buffer->capacity ? buffer->capacity : 128;
         do {
             new_size <<= 1;      /* new_size *= 2 */
             if (new_size == 0) { /* check for overflow */
@@ -147,7 +146,10 @@ static int s_cat(struct aws_http_decoder *decoder, uint8_t *data, size_t len) {
             return AWS_OP_ERR;
         }
 
-        memcpy(new_data, buffer->buffer, buffer->len);
+        if (buffer->buffer != NULL) {
+            memcpy(new_data, buffer->buffer, buffer->len);
+        }
+
         if (decoder->cleanup_scratch) {
             aws_mem_release(decoder->alloc, buffer->buffer);
         }
@@ -158,9 +160,11 @@ static int s_cat(struct aws_http_decoder *decoder, uint8_t *data, size_t len) {
 
         return aws_byte_buf_append(buffer, &to_append);
     }
+
+    return op;
 }
 
-static inline int s_read_int64(struct aws_byte_cursor cursor, int64_t *val) {
+static int s_read_int64(struct aws_byte_cursor cursor, int64_t *val) {
     char *end;
     *val = (int64_t)strtoll((const char *)cursor.ptr, &end, 10);
     if ((char *)cursor.ptr != end) {
@@ -170,7 +174,7 @@ static inline int s_read_int64(struct aws_byte_cursor cursor, int64_t *val) {
     }
 }
 
-static inline int s_read_hex_int64(struct aws_byte_cursor cursor, int64_t *val) {
+static int s_read_hex_int64(struct aws_byte_cursor cursor, int64_t *val) {
     char *end;
     *val = (int64_t)strtoll((const char *)cursor.ptr, &end, 16);
     if ((char *)cursor.ptr != end) {
@@ -205,24 +209,24 @@ static int s_state_getline(struct aws_http_decoder *decoder, struct aws_byte_cur
         decoder->cursor.len -= 2;
         decoder->state_cb = decoder->next_state_cb;
         decoder->next_state_cb = NULL;
+
+        if (decoder->cursor.len == 0) {
+            decoder->found_double_newline = true;
+        }
     }
 
     return ret;
 }
 
-static inline size_t s_byte_buf_split(
-    struct aws_byte_cursor line,
-    struct aws_byte_cursor *cursors,
-    char split_on,
-    size_t n) {
-    struct aws_byte_buf line_buf = aws_byte_buf_from_array(line.ptr, line.len);
+static size_t s_byte_buf_split(struct aws_byte_cursor line, struct aws_byte_cursor *cursors, char split_on, size_t n) {
+
     struct aws_array_list string_list;
     aws_array_list_init_static(&string_list, cursors, n, sizeof(struct aws_byte_cursor));
-    aws_byte_buf_split_on_char_n(&line_buf, split_on, &string_list, n);
+    aws_byte_cursor_split_on_char_n(&line, split_on, n, &string_list);
     return string_list.length;
 }
 
-static inline void s_set_next_state(
+static void s_set_next_state(
     struct aws_http_decoder *decoder,
     s_aws_http_decoder_state_fn *state,
     s_aws_http_decoder_state_fn *next) {
@@ -233,7 +237,9 @@ static inline void s_set_next_state(
 
 static int s_state_unchunked(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     size_t processed_bytes = 0;
-    assert(decoder->content_processed < decoder->content_length);
+    if (decoder->content_processed > decoder->content_length) {
+        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+    }
 
     if ((decoder->content_processed + input.len) > decoder->content_length) {
         processed_bytes = decoder->content_length - decoder->content_processed;
@@ -245,7 +251,7 @@ static int s_state_unchunked(struct aws_http_decoder *decoder, struct aws_byte_c
 
     bool finished = decoder->content_processed == decoder->content_length;
     struct aws_byte_cursor body = aws_byte_cursor_from_array(input.ptr, decoder->content_length);
-    if (!decoder->on_body(body, finished, decoder->user_data)) {
+    if (!decoder->vtable.on_body(&body, finished, decoder->user_data)) {
         return aws_raise_error(AWS_ERROR_HTTP_USER_CALLBACK_EXIT);
     }
 
@@ -297,7 +303,7 @@ static int s_state_chunk(struct aws_http_decoder *decoder, struct aws_byte_curso
 
     bool finished = decoder->chunk_processed == decoder->chunk_size;
     struct aws_byte_cursor body = aws_byte_cursor_from_array(input.ptr, decoder->chunk_size);
-    if (!decoder->on_body(body, false, decoder->user_data)) {
+    if (!decoder->vtable.on_body(&body, false, decoder->user_data)) {
         return aws_raise_error(AWS_ERROR_HTTP_USER_CALLBACK_EXIT);
     }
 
@@ -329,7 +335,7 @@ static int s_state_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_
         struct aws_byte_cursor cursor;
         cursor.ptr = NULL;
         cursor.len = 0;
-        if (!decoder->on_body(cursor, true, decoder->user_data)) {
+        if (!decoder->vtable.on_body(&cursor, true, decoder->user_data)) {
             return aws_raise_error(AWS_ERROR_HTTP_USER_CALLBACK_EXIT);
         }
 
@@ -364,6 +370,9 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
 
         if (decoder->cursor.len == 0) {
             if (AWS_LIKELY(!decoder->doing_trailers)) {
+                /* Clear this flag now that body data is arriving. */
+                decoder->expect_100_continue_skip_on_done = false;
+
                 if (decoder->transfer_encoding & AWS_HTTP_TRANSFER_ENCODING_CHUNKED) {
                     s_set_next_state(decoder, s_state_getline, s_state_chunk_size);
                 } else {
@@ -380,10 +389,10 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
         }
     }
 
-    struct aws_byte_cursor header_name = cursors[0];
-    struct aws_byte_cursor header_value = cursors[1];
+    struct aws_byte_cursor header_name = s_trim_whitespace(cursors[0]);
+    struct aws_byte_cursor header_value = s_trim_whitespace(cursors[1]);
 
-    struct aws_http_header header;
+    struct aws_http_decoded_header header;
     header.name = aws_http_str_to_header_name(header_name);
     header.name_data = header_name;
     header.value_data = header_value;
@@ -425,11 +434,18 @@ static int s_state_header(struct aws_http_decoder *decoder, struct aws_byte_curs
             decoder->transfer_encoding |= flags;
         } break;
 
+        case AWS_HTTP_HEADER_EXPECT:
+            if (!s_strcmp_case_insensitive(
+                    (const char *)header.value_data.ptr, header.value_data.len, "100-continue", 12)) {
+                decoder->expect_100_continue_skip_on_done = true;
+            }
+            break;
+
         default:
             break;
     }
 
-    if (!decoder->on_header(&header, decoder->user_data)) {
+    if (!decoder->vtable.on_header(&header, decoder->user_data)) {
         return aws_raise_error(AWS_ERROR_HTTP_USER_CALLBACK_EXIT);
     }
 
@@ -451,11 +467,16 @@ static int s_state_method(struct aws_http_decoder *decoder, struct aws_byte_curs
     struct aws_byte_cursor uri = cursors[1];
     struct aws_byte_cursor version = cursors[2];
 
-    decoder->method = aws_http_str_to_method(method);
-    decoder->version = aws_http_str_to_version(version);
-    struct aws_byte_buf uri_data = aws_byte_buf_from_array(uri.ptr, uri.len);
-    if (aws_byte_buf_init_copy(decoder->alloc, &decoder->uri_data, &uri_data) != AWS_OP_SUCCESS) {
-        return AWS_OP_ERR;
+    if (decoder->vtable.on_method) {
+        decoder->vtable.on_method(aws_http_str_to_method(method), decoder->user_data);
+    }
+
+    if (decoder->vtable.on_version) {
+        decoder->vtable.on_version(aws_http_str_to_version(version), decoder->user_data);
+    }
+
+    if (decoder->vtable.on_uri) {
+        decoder->vtable.on_uri(&uri, decoder->user_data);
     }
 
     s_set_next_state(decoder, s_state_getline, s_state_header);
@@ -478,13 +499,19 @@ static int s_state_response(struct aws_http_decoder *decoder, struct aws_byte_cu
     struct aws_byte_cursor phrase = cursors[2];
     (void)phrase; /* Unused for now. */
 
-    decoder->version = aws_http_str_to_version(version);
+    if (decoder->vtable.on_version) {
+        decoder->vtable.on_version(aws_http_str_to_version(version), decoder->user_data);
+    }
+
     int64_t code_val;
     int ret = s_read_int64(code, &code_val);
     if (ret != AWS_OP_SUCCESS) {
         return ret;
     }
-    decoder->code = aws_http_int_to_code((int)code_val);
+
+    if (decoder->vtable.on_code) {
+        decoder->vtable.on_code(aws_http_int_to_code((int)code_val), decoder->user_data);
+    }
 
     s_set_next_state(decoder, s_state_getline, s_state_header);
 
@@ -494,36 +521,37 @@ static int s_state_response(struct aws_http_decoder *decoder, struct aws_byte_cu
 void aws_http_decoder_reset(struct aws_http_decoder *decoder, struct aws_http_decoder_params *params) {
     struct aws_allocator *alloc;
     struct aws_byte_buf buffer;
-    aws_http_decoder_on_header_fn *on_header;
-    aws_http_decoder_on_body_fn *on_body;
     bool true_for_request_false_for_response;
     void *user_data;
+
+    struct aws_http_decoder_vtable vtable;
 
     if (params) {
         alloc = params->alloc;
         buffer = params->scratch_space;
         buffer.allocator = params->alloc;
-        on_header = params->on_header;
-        on_body = params->on_body;
         true_for_request_false_for_response = params->true_for_request_false_for_response;
         user_data = params->user_data;
+
+        vtable = params->vtable;
     } else {
         alloc = decoder->alloc;
         buffer = decoder->scratch_space;
-        on_header = decoder->on_header;
-        on_body = decoder->on_body;
         true_for_request_false_for_response = decoder->true_for_request_false_for_response;
         user_data = decoder->user_data;
+
+        vtable = decoder->vtable;
     }
 
     AWS_ZERO_STRUCT(*decoder);
+    buffer.len = 0;
 
     decoder->alloc = alloc;
     decoder->scratch_space = buffer;
-    decoder->on_header = on_header;
-    decoder->on_body = on_body;
     decoder->user_data = user_data;
     decoder->true_for_request_false_for_response = true_for_request_false_for_response;
+
+    decoder->vtable = vtable;
 
     if (true_for_request_false_for_response) {
         decoder->state_cb = s_state_getline;
@@ -539,9 +567,7 @@ struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *pa
         return NULL;
     }
 
-    struct aws_http_decoder *decoder =
-        (struct aws_http_decoder *)aws_mem_acquire(params->alloc, sizeof(struct aws_http_decoder));
-
+    struct aws_http_decoder *decoder = aws_mem_acquire(params->alloc, sizeof(struct aws_http_decoder));
     if (!decoder) {
         return NULL;
     }
@@ -555,7 +581,6 @@ void aws_http_decoder_destroy(struct aws_http_decoder *decoder) {
     if (decoder->cleanup_scratch) {
         aws_byte_buf_clean_up(&decoder->scratch_space);
     }
-    aws_byte_buf_clean_up(&decoder->uri_data);
     aws_mem_release(decoder->alloc, decoder);
 }
 
@@ -585,25 +610,18 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
         *bytes_read = total_bytes_processed;
     }
 
+    if (decoder->vtable.on_done && decoder->found_double_newline && !decoder->expect_100_continue_skip_on_done) {
+        decoder->vtable.on_done(decoder->user_data);
+    }
+
     return ret;
 }
 
-int aws_http_decoder_get_version(struct aws_http_decoder *decoder, enum aws_http_version *version) {
-    *version = decoder->version;
-    return AWS_OP_SUCCESS;
+void aws_http_decoder_set_vtable(struct aws_http_decoder *decoder, const struct aws_http_decoder_vtable *vtable) {
+    decoder->vtable = *vtable;
 }
 
-int aws_http_decoder_get_uri(struct aws_http_decoder *decoder, struct aws_byte_cursor *uri_data) {
-    *uri_data = aws_byte_cursor_from_buf(&decoder->uri_data);
-    return AWS_OP_SUCCESS;
-}
-
-int aws_http_decoder_get_code(struct aws_http_decoder *decoder, enum aws_http_code *code) {
-    *code = decoder->code;
-    return AWS_OP_SUCCESS;
-}
-
-AWS_HTTP_API int aws_http_decoder_get_encoding_flags(struct aws_http_decoder *decoder, int *flags) {
+int aws_http_decoder_get_encoding_flags(struct aws_http_decoder *decoder, int *flags) {
     *flags = decoder->transfer_encoding;
     return AWS_OP_SUCCESS;
 }

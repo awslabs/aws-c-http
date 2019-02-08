@@ -25,6 +25,7 @@ enum aws_http_errors {
     AWS_ERROR_HTTP_PARSE,
     AWS_ERROR_HTTP_USER_CALLBACK_EXIT,
     AWS_ERROR_HTTP_INVALID_PARSE_STATE,
+    AWS_ERROR_HTTP_CONNECTION_CLOSED,
     AWS_ERROR_HTTP_END_RANGE = 0x0C00,
 };
 
@@ -33,6 +34,7 @@ enum aws_http_version {
     AWS_HTTP_VERSION_1_0,
     AWS_HTTP_VERSION_1_1,
     AWS_HTTP_VERSION_2_0,
+    AWS_HTTP_VERSION_COUNT, /* Max enum value */
 };
 
 enum aws_http_method {
@@ -46,6 +48,7 @@ enum aws_http_method {
     AWS_HTTP_METHOD_POST,
     AWS_HTTP_METHOD_PUT,
     AWS_HTTP_METHOD_TRACE,
+    AWS_HTTP_METHOD_COUNT, /* Max enum value */
 };
 
 enum aws_http_header_name {
@@ -155,7 +158,7 @@ enum aws_http_code {
     AWS_HTTP_CODE_IM_A_TEAPOT = 418,
     AWS_HTTP_CODE_AUTHENTICATION_TIMEOUT = 419,
     AWS_HTTP_CODE_METHOD_FAILURE = 420,
-    AWS_HTTP_CODE_UNPROC_ENTITY = 422,
+    AWS_HTTP_CODE_UNPROCESSABLE_ENTITY = 422,
     AWS_HTTP_CODE_LOCKED = 423,
     AWS_HTTP_CODE_FAILED_DEPENDENCY = 424,
     AWS_HTTP_CODE_UPGRADE_REQUIRED = 426,
@@ -188,9 +191,13 @@ enum aws_http_code {
     AWS_HTTP_CODE_NETWORK_CONNECT_TIMEOUT = 599
 };
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+struct aws_http_header {
+    enum aws_http_header_name name;
+    struct aws_byte_cursor name_str;
+    struct aws_byte_cursor value;
+};
+
+AWS_EXTERN_C_BEGIN
 
 /**
  * Loads error strings for this API so that aws_last_error_str etc. will return useful debug strings.
@@ -200,14 +207,13 @@ AWS_HTTP_API void aws_http_load_error_strings(void);
 AWS_HTTP_API const char *aws_http_header_name_to_str(enum aws_http_header_name name);
 AWS_HTTP_API const char *aws_http_method_to_str(enum aws_http_method method);
 AWS_HTTP_API const char *aws_http_version_to_str(enum aws_http_version version);
+AWS_HTTP_API const char *aws_http_code_to_str(enum aws_http_code code);
 
 AWS_HTTP_API enum aws_http_method aws_http_str_to_method(struct aws_byte_cursor cursor);
 AWS_HTTP_API enum aws_http_version aws_http_str_to_version(struct aws_byte_cursor cursor);
 AWS_HTTP_API enum aws_http_header_name aws_http_str_to_header_name(struct aws_byte_cursor cursor);
 AWS_HTTP_API enum aws_http_code aws_http_int_to_code(int code);
 
-#ifdef __cplusplus
-}
-#endif
+AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_H */
