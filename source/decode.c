@@ -146,7 +146,10 @@ static int s_cat(struct aws_http_decoder *decoder, uint8_t *data, size_t len) {
             return AWS_OP_ERR;
         }
 
-        memcpy(new_data, buffer->buffer, buffer->len);
+        if (buffer->buffer != NULL) {
+            memcpy(new_data, buffer->buffer, buffer->len);
+        }
+
         if (decoder->cleanup_scratch) {
             aws_mem_release(decoder->alloc, buffer->buffer);
         }

@@ -25,15 +25,11 @@ struct aws_server_bootstrap;
 struct aws_socket_options;
 struct aws_tls_connection_options;
 
-typedef void(aws_http_on_client_connection_setup_fn)(
-    struct aws_http_connection *connection,
-    int error_code,
-    void *user_data);
+typedef void(
+    aws_http_on_client_connection_setup_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
-typedef void(aws_http_on_client_connection_shutdown_fn)(
-    struct aws_http_connection *connection,
-    int error_code,
-    void *user_data);
+typedef void(
+    aws_http_on_client_connection_shutdown_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
 struct aws_http_client_connection_def {
     /* Set to sizeof() this struct, used for versioning. */
