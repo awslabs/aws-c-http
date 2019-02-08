@@ -63,7 +63,7 @@ void aws_http_load_error_strings(void) {
 
 static char s_upper(char c) {
     if (c >= 'a' && c <= 'z') {
-        c += ('A' - 'a');
+        c = (char)(c - ('a' - 'A'));
     }
     return c;
 }

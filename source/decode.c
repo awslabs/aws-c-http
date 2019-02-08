@@ -49,7 +49,7 @@ struct aws_http_decoder {
 
 static char s_upper(char c) {
     if (c >= 'a' && c <= 'z') {
-        c += ('A' - 'a');
+        c = (char)(c - ('a' - 'A'));
     }
     return c;
 }
@@ -215,11 +215,7 @@ static int s_state_getline(struct aws_http_decoder *decoder, struct aws_byte_cur
     return ret;
 }
 
-static size_t s_byte_buf_split(
-    struct aws_byte_cursor line,
-    struct aws_byte_cursor *cursors,
-    char split_on,
-    size_t n) {
+static size_t s_byte_buf_split(struct aws_byte_cursor line, struct aws_byte_cursor *cursors, char split_on, size_t n) {
 
     struct aws_array_list string_list;
     aws_array_list_init_static(&string_list, cursors, n, sizeof(struct aws_byte_cursor));
