@@ -28,16 +28,17 @@ struct aws_tls_connection_options;
 typedef void(aws_http_on_client_connection_setup_fn)(
     struct aws_http_connection *connection,
     int error_code,
-    enum aws_http_version http_version, // needed? or just query connection?
     void *user_data);
 
 typedef void(aws_http_on_client_connection_shutdown_fn)(
     struct aws_http_connection *connection,
     int error_code,
-    enum aws_http_code http_code,
     void *user_data);
 
 struct aws_http_client_connection_def {
+    /* Set to sizeof() this struct, used for versioning. */
+    size_t self_size;
+
     struct aws_allocator *allocator;
     struct aws_client_bootstrap *bootstrap;
     struct aws_byte_cursor host_name;
@@ -68,6 +69,9 @@ typedef void(aws_http_server_on_incoming_connection_fn)(
     void *user_data);
 
 struct aws_http_server_def {
+    /* Set to sizeof() this struct, used for versioning. */
+    size_t self_size;
+
     struct aws_allocator *allocator;
     struct aws_server_bootstrap *bootstrap;
     struct aws_byte_cursor host_name;
@@ -86,10 +90,12 @@ typedef void(aws_http_on_incoming_request_fn)(struct aws_http_connection *connec
 typedef void(aws_http_on_server_connection_shutdown_fn)(
     struct aws_http_connection *connection,
     int error_code,
-    enum aws_http_code http_code,
     void *connection_user_data);
 
 struct aws_server_connection_def {
+    /* Set to sizeof() this struct, used for versioning. */
+    size_t self_size;
+
     size_t initial_window_size;
 
     void *connection_user_data;
@@ -128,7 +134,6 @@ AWS_HTTP_API
 int aws_http_connection_shutdown(
     struct aws_http_connection *connection,
     int error_code,
-    enum aws_http_code http_code,
     aws_http_connection_result_fn *on_complete,
     void *user_data);
 

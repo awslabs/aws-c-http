@@ -57,6 +57,12 @@ typedef void(aws_http_on_exchange_complete_fn)(struct aws_http_exchange *exchang
 
 struct aws_http_request_def {
     /**
+     * Set to sizeof() this struct, used for versioning.
+     * Required.
+     */
+    size_t self_size;
+
+    /**
      * Required.
      */
     struct aws_http_connection *client_connection;
@@ -122,6 +128,9 @@ struct aws_http_request_def {
 };
 
 struct aws_http_request_handler_def {
+    /* Set to sizeof() this struct, used for versioning. */
+    size_t self_size;
+
     struct aws_http_connection *server_connection;
     void *user_data;
 
@@ -132,6 +141,9 @@ struct aws_http_request_handler_def {
 };
 
 struct aws_http_response_def {
+    /* Set to sizeof() this struct, used for versioning. */
+    size_t self_size;
+
     int status;
     struct aws_http_header *header_array;
     size_t num_headers;
