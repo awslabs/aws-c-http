@@ -55,7 +55,7 @@ typedef void(aws_http_on_incoming_body_fn)(
 
 typedef void(aws_http_on_exchange_complete_fn)(struct aws_http_exchange *exchange, int error_code, void *user_data);
 
-struct aws_http_request_def {
+struct aws_http_request_options {
     /**
      * Set to sizeof() this struct, used for versioning.
      * Required.
@@ -127,7 +127,7 @@ struct aws_http_request_def {
     aws_http_on_exchange_complete_fn *on_complete;
 };
 
-struct aws_http_request_handler_def {
+struct aws_http_request_handler_options {
     /* Set to sizeof() this struct, used for versioning. */
     size_t self_size;
 
@@ -140,7 +140,7 @@ struct aws_http_request_handler_def {
     aws_http_on_exchange_complete_fn *on_complete;
 };
 
-struct aws_http_response_def {
+struct aws_http_response_options {
     /* Set to sizeof() this struct, used for versioning. */
     size_t self_size;
 
@@ -158,14 +158,14 @@ AWS_EXTERN_C_BEGIN
  * The `def`, and all memory it references, is copied during this call.
  */
 AWS_HTTP_API
-struct aws_http_exchange *aws_http_exchange_new_request(const struct aws_http_request_def *def);
+struct aws_http_exchange *aws_http_exchange_new_request(const struct aws_http_request_options *options);
 
 /**
  * Create an exchange, with a server connection receiving and responding to a request.
  * aws_http_exchange_send_response() should be used to send a response.
  */
 AWS_HTTP_API
-struct aws_http_exchange *aws_http_exchange_new_request_handler(const struct aws_http_request_handler_def *def);
+struct aws_http_exchange *aws_http_exchange_new_request_handler(const struct aws_http_request_handler_options *options);
 
 AWS_HTTP_API
 void aws_http_exchange_destroy(struct aws_http_exchange *exchange);
@@ -195,7 +195,9 @@ int aws_http_exchange_get_incoming_request_uri(
 
 /* only callable from "request handler" exchanges */
 AWS_HTTP_API
-int aws_http_exchange_send_response(struct aws_http_exchange *exchange, const struct aws_http_response_def *def);
+int aws_http_exchange_send_response(
+    struct aws_http_exchange *exchange,
+    const struct aws_http_response_options *options);
 
 /* Manually issue a window update.
  * This should only be called if the body reader is reducing the automatic window update size */
