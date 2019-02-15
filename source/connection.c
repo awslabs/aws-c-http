@@ -64,9 +64,6 @@ struct aws_http_connection *s_connection_new(
         struct aws_channel_handler *tls_handler = tls_slot->handler;
         struct aws_byte_buf protocol = aws_tls_handler_protocol(tls_handler);
         if (protocol.len) {
-            assert(
-                protocol.allocator == NULL); // ??? can this ever have allocator. should probably be cursor instead ???
-
             const char protocol_1_1[] = {'h', 't', 't', 'p', '/', '1', '.', '1'};
             const char protocol_2[] = {'h', '2'};
 
