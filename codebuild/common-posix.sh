@@ -4,25 +4,23 @@ set -e
 
 echo "Using CC=$CC CXX=$CXX"
 
-PROJECT_PATH="$PWD"
-pushd ../
-BASE_PATH="$PWD"
-INSTALL_PATH="$BASE_PATH/install"
+BUILD_PATH=/tmp/builds
+mkdir -p $BUILD_PATH
+INSTALL_PATH=$BUILD_PATH/install
+mkdir -p $INSTALL_PATH
 CMAKE_ARGS="-DCMAKE_PREFIX_PATH=$INSTALL_PATH -DCMAKE_INSTALL_PREFIX=$INSTALL_PATH -DENABLE_SANITIZERS=ON $@"
 
 # install_library <git_repo> [<commit>]
 function install_library {
+    pushd $BUILD_PATH
     git clone https://github.com/awslabs/$1.git
-    pushd $1
 
+    cd $1
     if [ -n "$2" ]; then
         git checkout $2
     fi
 
-    mkdir build
-    cd build
-
-    cmake $CMAKE_ARGS ../
+    cmake $CMAKE_ARGS ./
     cmake --build . --target install
 
     popd
@@ -36,9 +34,8 @@ fi
 install_library aws-c-common
 install_library aws-c-io
 
-cd $PROJECT_PATH
-mkdir build
-cd build
+mkdir -p build
+pushd build
 cmake $CMAKE_ARGS ../
 cmake --build . --target install
 

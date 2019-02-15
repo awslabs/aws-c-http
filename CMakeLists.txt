@@ -1,13 +1,21 @@
 cmake_minimum_required(VERSION 3.1)
 project(aws-c-http C)
 
+if (DEFINED CMAKE_PREFIX_PATH)
+    file(TO_CMAKE_PATH ${CMAKE_PREFIX_PATH} CMAKE_PREFIX_PATH)
+endif()
+
+if (DEFINED CMAKE_INSTALL_PREFIX)
+    file(TO_CMAKE_PATH ${CMAKE_INSTALL_PREFIX} CMAKE_INSTALL_PREFIX)
+endif()
+
 if (UNIX AND NOT APPLE)
     include(GNUInstallDirs)
 elseif(NOT DEFINED CMAKE_INSTALL_LIBDIR)
     set(CMAKE_INSTALL_LIBDIR "lib")
 endif()
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/cmake")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_PREFIX_PATH}/${CMAKE_INSTALL_LIBDIR}/cmake")
 
 include(AwsCFlags)
 include(AwsSharedLibSetup)
