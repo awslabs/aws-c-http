@@ -27,7 +27,6 @@
 #    define LOCAL_SOCK_TEST_FORMAT "testsock-%s.sock"
 #endif
 
-
 static void s_void_on_incoming_connection_fn(
     struct aws_http_server *server,
     struct aws_http_connection *connection,
@@ -56,9 +55,9 @@ static int s_test_server_new_destroy(struct aws_allocator *allocator, void *ctx)
     };
 
     /* Generate random address for endpoint */
-    const char uuid_str[AWS_UUID_STR_LEN];
     struct aws_uuid uuid;
     ASSERT_SUCCESS(aws_uuid_init(&uuid));
+    char uuid_str[AWS_UUID_STR_LEN];
     struct aws_byte_buf uuid_buf = aws_byte_buf_from_empty_array(uuid_str, sizeof(uuid_str));
     ASSERT_SUCCESS(aws_uuid_to_str(&uuid, &uuid_buf));
     struct aws_socket_endpoint endpoint;
