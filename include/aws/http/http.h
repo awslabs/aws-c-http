@@ -1,3 +1,6 @@
+#ifndef AWS_HTTP_H
+#define AWS_HTTP_H
+
 /*
  * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
@@ -12,9 +15,6 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
-#ifndef AWS_HTTP_H
-#define AWS_HTTP_H
 
 #include <aws/http/exports.h>
 

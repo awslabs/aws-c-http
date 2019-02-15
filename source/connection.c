@@ -64,12 +64,12 @@ struct aws_http_connection *s_connection_new(
         struct aws_channel_handler *tls_handler = tls_slot->handler;
         struct aws_byte_buf protocol = aws_tls_handler_protocol(tls_handler);
         if (protocol.len) {
-            const char protocol_1_1[] = {'h', 't', 't', 'p', '/', '1', '.', '1'};
-            const char protocol_2[] = {'h', '2'};
+            struct aws_byte_cursor http_1_1 = aws_byte_cursor_from_array("http/1.1", 8);
+            struct aws_byte_cursor h2 = aws_byte_cursor_from_array("h2", 2);
 
-            if (protocol.len == sizeof(protocol_1_1) && memcmp(protocol.buffer, protocol_1_1, protocol.len) == 0) {
+            if (aws_byte_cursor_eq_byte_buf(&http_1_1, &protocol)) {
                 version = AWS_HTTP_VERSION_1_1;
-            } else if (protocol.len == sizeof(protocol_2) && memcmp(protocol.buffer, protocol_2, protocol.len) == 0) {
+            } else if (aws_byte_cursor_eq_byte_buf(&h2, &protocol)) {
                 version = AWS_HTTP_VERSION_2_0;
             } else {
                 aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
@@ -309,6 +309,7 @@ static void s_client_connection_on_shutdown(
     (void)error_code;
     (void)channel;
     (void)user_data;
+    /* Channel handler implementation deals with shutdown logic and user callbacks. */
 }
 
 int aws_http_client_connect(const struct aws_http_client_connection_options *options) {
