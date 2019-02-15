@@ -4,9 +4,9 @@ set -e
 
 echo "Using CC=$CC CXX=$CXX"
 
-BUILD_PATH="/tmp/builds"
+BUILD_PATH=/tmp/builds
 mkdir -p $BUILD_PATH
-INSTALL_PATH="$BUILD_PATH/install"
+INSTALL_PATH=$BUILD_PATH/install
 mkdir -p $INSTALL_PATH
 CMAKE_ARGS="-DCMAKE_PREFIX_PATH=$INSTALL_PATH -DCMAKE_INSTALL_PREFIX=$INSTALL_PATH -DENABLE_SANITIZERS=ON $@"
 
@@ -14,7 +14,7 @@ CMAKE_ARGS="-DCMAKE_PREFIX_PATH=$INSTALL_PATH -DCMAKE_INSTALL_PREFIX=$INSTALL_PA
 function install_library {
     pushd $BUILD_PATH
     git clone https://github.com/awslabs/$1.git
-    
+
     cd $1
     if [ -n "$2" ]; then
         git checkout $2
