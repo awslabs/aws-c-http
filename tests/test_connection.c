@@ -14,6 +14,7 @@
  */
 
 #include <aws/http/connection.h>
+#include <aws/http/server.h>
 
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>

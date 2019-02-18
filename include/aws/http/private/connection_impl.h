@@ -17,6 +17,7 @@
  */
 
 #include <aws/http/connection.h>
+#include <aws/http/server.h>
 
 #include <aws/io/channel.h>
 
@@ -49,19 +50,21 @@ struct aws_http_connection {
     void *user_data;
     size_t initial_window_size;
 
-    bool is_server;
-
-    /* Union for data specific to client or server */
     union {
-        struct {
+        struct client_data {
+            aws_http_on_client_connection_shutdown_fn *user_cb_on_shutdown;
+        } client;
+
+        struct server_data {
             aws_http_on_incoming_request_fn *user_cb_on_incoming_request;
             aws_http_on_server_connection_shutdown_fn *user_cb_on_shutdown;
         } server;
+    } client_or_server_data;
 
-        struct {
-            aws_http_on_client_connection_shutdown_fn *user_cb_on_shutdown;
-        } client;
-    } data;
+    /* On client connections, `client_data` points to client_or_server_data.client and `server_data` is null.
+     * Opposite is true on server connections */
+    struct client_data *client_data;
+    struct server_data *server_data;
 };
 
 struct aws_http_connection *aws_http_connection_new_http1_1_server(

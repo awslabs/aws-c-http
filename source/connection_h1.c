@@ -84,7 +84,7 @@ struct aws_http_connection *aws_http_connection_new_http1_1_server(
     }
 
     impl->base.initial_window_size = options->initial_window_size;
-    impl->base.is_server = true;
+    impl->base.server_data = &impl->base.client_or_server_data.server;
 
     return &impl->base;
 }
@@ -99,7 +99,8 @@ struct aws_http_connection *aws_http_connection_new_http1_1_client(
 
     impl->base.initial_window_size = options->initial_window_size;
     impl->base.user_data = options->user_data;
-    impl->base.data.client.user_cb_on_shutdown = options->user_cb_on_shutdown;
+    impl->base.client_data = &impl->base.client_or_server_data.client;
+    impl->base.client_data->user_cb_on_shutdown = options->user_cb_on_shutdown;
 
     return &impl->base;
 }

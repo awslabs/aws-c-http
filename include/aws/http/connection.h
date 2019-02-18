@@ -19,11 +19,15 @@
 #include <aws/http/http.h>
 
 struct aws_client_bootstrap;
-struct aws_http_connection;
-struct aws_http_server;
-struct aws_server_bootstrap;
 struct aws_socket_options;
 struct aws_tls_connection_options;
+
+/**
+ * An HTTP connection.
+ * This type is used by both server-side and client-side connections.
+ * This type is also used by all supported versions of HTTP.
+ */
+struct aws_http_connection;
 
 typedef void(
     aws_http_on_client_connection_setup_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
@@ -106,125 +110,11 @@ struct aws_http_client_connection_options {
 
 typedef void(aws_http_connection_result_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
-typedef void(aws_http_server_on_incoming_connection_fn)(
-    struct aws_http_server *server,
-    struct aws_http_connection *connection,
-    int error_code,
-    void *user_data);
-
-/**
- * Options for creating an HTTP server.
- */
-struct aws_http_server_options {
-    /**
-     * Set to sizeof() this struct, used for versioning.
-     */
-    size_t self_size;
-
-    /**
-     * Required.
-     * Must outlive server.
-     */
-    struct aws_allocator *allocator;
-
-    /**
-     * Required.
-     * Must outlive server.
-     */
-    struct aws_server_bootstrap *bootstrap;
-
-    /**
-     * Required.
-     * Server makes copy.
-     */
-    struct aws_socket_endpoint *endpoint;
-
-    /**
-     * Required.
-     * Server makes a copy.
-     */
-    struct aws_socket_options *socket_options;
-
-    /**
-     * Optional.
-     * Server copies all contents except the `aws_tls_ctx`, which must outlive the server.
-     */
-    struct aws_tls_connection_options *tls_options;
-
-    /**
-     * Initial window size for incoming connections.
-     * Optional.
-     * A default size is used if nothing is set.
-     */
-    size_t initial_window_size;
-
-    /**
-     * User data passed to callbacks.
-     * Optional.
-     */
-    void *server_user_data;
-
-    /**
-     * Invoked when an incoming connection has been set up, or when setup has failed.
-     * Required.
-     * If setup succeeds, the user must call aws_http_connection_configure_server().
-     */
-    aws_http_server_on_incoming_connection_fn *on_incoming_connection;
-};
-
-typedef void(aws_http_on_incoming_request_fn)(struct aws_http_connection *connection, void *user_data);
-
-typedef void(aws_http_on_server_connection_shutdown_fn)(
-    struct aws_http_connection *connection,
-    int error_code,
-    void *connection_user_data);
-
-struct aws_http_server_connection_options {
-    /**
-     * Set to sizeof() this struct, used for versioning.
-     */
-    size_t self_size;
-
-    /**
-     * User data specific to this connection.
-     * Optional.
-     */
-    void *connection_user_data;
-
-    /**
-     * Invoked at the start of an incoming request.
-     * Required.
-     * From this callback, user must call aws_http_create_request_handler().
-     */
-    aws_http_on_incoming_request_fn *on_incoming_request;
-
-    /**
-     * Invoked when the connection is shut down.
-     * Optional.
-     */
-    aws_http_on_server_connection_shutdown_fn *on_shutdown;
-};
-
 AWS_EXTERN_C_BEGIN
 
 /**
- * Create server, a listening socket that accepts incoming connections.
- */
-AWS_HTTP_API
-struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options);
-
-/**
- * Destroy server.
- *
- * Note: this function should be called by either a user thread (like the main entry point, or from the event-loop the
- * server is assigned to. Otherwise a deadlock is possible. If you call this function from outside the assigned
- * event-loop, this function will block waiting on the assigned event-loop runs the close sequence in its thread.
- */
-AWS_HTTP_API
-void aws_http_server_destroy(struct aws_http_server *server);
-
-/**
  * Asynchronously establish a client connection.
+ * The on_setup callback is invoked when the operation has created a connection or failed.
  */
 AWS_HTTP_API
 int aws_http_client_connect(const struct aws_http_client_connection_options *options);
@@ -240,15 +130,6 @@ void aws_http_connection_release(struct aws_http_connection *connection, int err
 
 AWS_HTTP_API
 enum aws_http_version aws_http_connection_get_version(const struct aws_http_connection *connection);
-
-/**
- * Configure a server connection.
- * This must be called from the server's on_incoming_connection callback.
- */
-AWS_HTTP_API
-int aws_http_connection_configure_server(
-    struct aws_http_connection *connection,
-    const struct aws_http_server_connection_options *options);
 
 AWS_EXTERN_C_END
 

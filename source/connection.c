@@ -130,7 +130,9 @@ void aws_http_connection_release(struct aws_http_connection *connection, int err
     aws_channel_shutdown(connection->channel_slot->channel, error_code);
 }
 
-static void s_server_on_accept_connection_setup(
+/* At this point, the server bootstrapper has accepted an incoming connection from a client and set up a channel.
+ * Now we need to create an aws_http_connection and insert it into the channel as a channel-handler. */
+static void s_server_bootstrap_on_accept_channel_setup(
     struct aws_server_bootstrap *bootstrap,
     int error_code,
     struct aws_channel *channel,
@@ -161,7 +163,7 @@ static void s_server_on_accept_connection_setup(
     user_cb_invoked = true;
 
     /* If user failed to configure the server during callback, shut down the channel. */
-    if (!connection->data.server.user_cb_on_incoming_request) {
+    if (!connection->server_data->user_cb_on_incoming_request) {
         aws_raise_error(AWS_ERROR_HTTP_REACTION_REQUIRED);
         goto error;
     }
@@ -181,7 +183,8 @@ error:
     }
 }
 
-static void s_server_on_accept_connection_shutdown(
+/* At this point, the channel for a server connection has completed shutdown, but hasn't been destroyed yet. */
+static void s_server_bootstrap_on_accept_channel_shutdown(
     struct aws_server_bootstrap *bootstrap,
     int error_code,
     struct aws_channel *channel,
@@ -191,6 +194,8 @@ static void s_server_on_accept_connection_shutdown(
     (void)error_code;
     (void)channel;
     (void)user_data;
+
+    /* No implementation because channel handler currently deals with shutdown logic and user callbacks. */
 }
 
 struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options) {
@@ -224,8 +229,8 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             options->endpoint,
             options->socket_options,
             options->tls_options,
-            s_server_on_accept_connection_setup,
-            s_server_on_accept_connection_shutdown,
+            s_server_bootstrap_on_accept_channel_setup,
+            s_server_bootstrap_on_accept_channel_shutdown,
             server);
 
         if (!server->socket) {
@@ -236,8 +241,8 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             options->bootstrap,
             options->endpoint,
             options->socket_options,
-            s_server_on_accept_connection_setup,
-            s_server_on_accept_connection_shutdown,
+            s_server_bootstrap_on_accept_channel_setup,
+            s_server_bootstrap_on_accept_channel_shutdown,
             server);
 
         if (!server->socket) {
@@ -264,8 +269,9 @@ void aws_http_server_destroy(struct aws_http_server *server) {
     aws_mem_release(server->alloc, server);
 }
 
-/* On connection setup */
-static void s_client_connection_on_setup(
+/* At this point, the client bootstrapper has established a connection to the server and set up a channel.
+ * Now we need to create the aws_http_connection and insert it into the channel as a channel-handler. */
+static void s_client_bootstrap_on_channel_setup(
     struct aws_client_bootstrap *bootstrap,
     int error_code,
     struct aws_channel *channel,
@@ -305,7 +311,8 @@ error:
     aws_mem_release(options->alloc, options);
 }
 
-static void s_client_connection_on_shutdown(
+/* At this point, the channel for a client connection has complete shutdown, but hasn't been destroyed yet. */
+static void s_client_bootstrap_on_channel_shutdown(
     struct aws_client_bootstrap *bootstrap,
     int error_code,
     struct aws_channel *channel,
@@ -315,7 +322,8 @@ static void s_client_connection_on_shutdown(
     (void)error_code;
     (void)channel;
     (void)user_data;
-    /* Channel handler implementation deals with shutdown logic and user callbacks. */
+
+    /* No implementation because channel handler currently deals with shutdown logic and user callbacks. */
 }
 
 int aws_http_client_connect(const struct aws_http_client_connection_options *options) {
@@ -348,8 +356,8 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
             options->port,
             options->socket_options,
             options->tls_options,
-            s_client_connection_on_setup,
-            s_client_connection_on_shutdown,
+            s_client_bootstrap_on_channel_setup,
+            s_client_bootstrap_on_channel_shutdown,
             impl_options);
         if (err) {
             goto error;
@@ -360,8 +368,8 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
             options->host_name,
             options->port,
             options->socket_options,
-            s_client_connection_on_setup,
-            s_client_connection_on_shutdown,
+            s_client_bootstrap_on_channel_setup,
+            s_client_bootstrap_on_channel_shutdown,
             impl_options);
         if (err) {
             goto error;
@@ -390,13 +398,13 @@ int aws_http_connection_configure_server(
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    if (!connection->is_server || connection->data.server.user_cb_on_incoming_request) {
+    if (!connection->server_data || !connection->server_data->user_cb_on_incoming_request) {
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
     connection->user_data = options->connection_user_data;
-    connection->data.server.user_cb_on_incoming_request = options->on_incoming_request;
-    connection->data.server.user_cb_on_shutdown = options->on_shutdown;
+    connection->server_data->user_cb_on_incoming_request = options->on_incoming_request;
+    connection->server_data->user_cb_on_shutdown = options->on_shutdown;
 
     return AWS_OP_SUCCESS;
 }
