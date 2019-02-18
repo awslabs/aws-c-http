@@ -22,6 +22,7 @@ add_test_case(http_decode_bad_messages_and_assert_failure)
 add_test_case(http_test_extraneous_buffer_data_ensure_not_processed)
 add_test_case(http_test_ignore_transfer_extensions)
 add_test_case(http_test_ignore_chunk_extensions)
+add_test_case(server_new_destroy)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})

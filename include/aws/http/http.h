@@ -1,3 +1,6 @@
+#ifndef AWS_HTTP_H
+#define AWS_HTTP_H
+
 /*
  * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
@@ -13,9 +16,6 @@
  * permissions and limitations under the License.
  */
 
-#ifndef AWS_HTTP_H
-#define AWS_HTTP_H
-
 #include <aws/http/exports.h>
 
 #include <aws/common/byte_buf.h>
@@ -26,6 +26,8 @@ enum aws_http_errors {
     AWS_ERROR_HTTP_USER_CALLBACK_EXIT,
     AWS_ERROR_HTTP_INVALID_PARSE_STATE,
     AWS_ERROR_HTTP_CONNECTION_CLOSED,
+    AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL,
+    AWS_ERROR_HTTP_REACTION_REQUIRED,
     AWS_ERROR_HTTP_END_RANGE = 0x0C00,
 };
 
