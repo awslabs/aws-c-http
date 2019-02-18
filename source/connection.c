@@ -158,7 +158,7 @@ static void s_server_on_accept_connection_setup(
     user_cb_invoked = true;
 
     /* If user failed to configure the server during callback, shut down the channel. */
-    if (!connection->data.server.user_cb_on_incoming_request) {
+    if (!connection->server_data->user_cb_on_incoming_request) {
         aws_raise_error(AWS_ERROR_HTTP_REACTION_REQUIRED);
         goto error;
     }
@@ -378,20 +378,20 @@ enum aws_http_version aws_http_connection_get_version(const struct aws_http_conn
 
 int aws_http_connection_configure_server(
     struct aws_http_connection *connection,
-    const struct aws_server_connection_options *options) {
+    const struct aws_http_server_connection_options *options) {
 
     if (!connection || !options || !options->on_incoming_request) {
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    if (!connection->is_server || connection->data.server.user_cb_on_incoming_request) {
+    if (!connection->server_data || !connection->server_data->user_cb_on_incoming_request) {
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
     connection->user_data = options->connection_user_data;
     connection->initial_window_size = options->initial_window_size;
-    connection->data.server.user_cb_on_incoming_request = options->on_incoming_request;
-    connection->data.server.user_cb_on_shutdown = options->on_shutdown;
+    connection->server_data->user_cb_on_incoming_request = options->on_incoming_request;
+    connection->server_data->user_cb_on_shutdown = options->on_shutdown;
 
     return AWS_OP_SUCCESS;
 }

@@ -72,6 +72,7 @@ struct aws_http_connection *aws_http_connection_new_http1_1_server(
     impl->base.channel_handler.vtable = &s_vtable.channel_handler_vtable;
     impl->base.channel_handler.impl = impl;
     impl->base.http_version = AWS_HTTP_VERSION_1_1;
+    impl->base.server_data = &impl->base.client_or_server_data.server;
 
     return &impl->base;
 }
