@@ -37,7 +37,6 @@ typedef void(
 struct aws_http_client_connection_options {
     /**
      * Set to sizeof() this struct, used for versioning.
-     * Required, but set automatically when AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT is used.
      */
     size_t self_size;
 
@@ -119,7 +118,6 @@ typedef void(aws_http_server_on_incoming_connection_fn)(
 struct aws_http_server_options {
     /**
      * Set to sizeof() this struct, used for versioning.
-     * Required, but set automatically when AWS_HTTP_SERVER_OPTIONS_INIT is used.
      */
     size_t self_size;
 
@@ -154,6 +152,13 @@ struct aws_http_server_options {
     struct aws_tls_connection_options *tls_options;
 
     /**
+     * Initial window size for incoming connections.
+     * Optional.
+     * A default size is used if nothing is set.
+     */
+    size_t initial_window_size;
+
+    /**
      * User data passed to callbacks.
      * Optional.
      */
@@ -174,18 +179,11 @@ typedef void(aws_http_on_server_connection_shutdown_fn)(
     int error_code,
     void *connection_user_data);
 
-struct aws_server_connection_options {
+struct aws_http_server_connection_options {
     /**
      * Set to sizeof() this struct, used for versioning.
-     * Required, but set automatically when AWS_SERVER_CONNECTION_OPTIONS_INIT is used.
      */
     size_t self_size;
-
-    /**
-     * Optional.
-     * A default size is used if nothing is set.
-     */
-    size_t initial_window_size;
 
     /**
      * User data specific to this connection.
@@ -250,7 +248,7 @@ enum aws_http_version aws_http_connection_get_version(const struct aws_http_conn
 AWS_HTTP_API
 int aws_http_connection_configure_server(
     struct aws_http_connection *connection,
-    const struct aws_server_connection_options *options);
+    const struct aws_http_server_connection_options *options);
 
 AWS_EXTERN_C_END
 

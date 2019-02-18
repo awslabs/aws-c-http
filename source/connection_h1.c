@@ -58,20 +58,33 @@ struct h1_connection {
     struct aws_http_connection base;
 };
 
-struct aws_http_connection *aws_http_connection_new_http1_1_server(
-    const struct aws_http_server_connection_impl_options *options) {
-
-    struct h1_connection *impl = aws_mem_acquire(options->alloc, sizeof(struct h1_connection));
+/* Common new() logic for server & client */
+static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
+    struct h1_connection *impl = aws_mem_acquire(alloc, sizeof(struct h1_connection));
     if (!impl) {
         return NULL;
     }
     AWS_ZERO_STRUCT(*impl);
 
     impl->base.vtable = &s_vtable;
-    impl->base.alloc = options->alloc;
+    impl->base.alloc = alloc;
     impl->base.channel_handler.vtable = &s_vtable.channel_handler_vtable;
     impl->base.channel_handler.impl = impl;
     impl->base.http_version = AWS_HTTP_VERSION_1_1;
+
+    return impl;
+}
+
+struct aws_http_connection *aws_http_connection_new_http1_1_server(
+    const struct aws_http_server_connection_impl_options *options) {
+
+    struct h1_connection *impl = s_connection_new(options->alloc);
+    if (!impl) {
+        return NULL;
+    }
+
+    impl->base.initial_window_size = options->initial_window_size;
+    impl->base.is_server = true;
 
     return &impl->base;
 }
@@ -79,9 +92,16 @@ struct aws_http_connection *aws_http_connection_new_http1_1_server(
 struct aws_http_connection *aws_http_connection_new_http1_1_client(
     const struct aws_http_client_connection_impl_options *options) {
 
-    (void)options;
-    aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
-    return NULL;
+    struct h1_connection *impl = s_connection_new(options->alloc);
+    if (!impl) {
+        return NULL;
+    }
+
+    impl->base.initial_window_size = options->initial_window_size;
+    impl->base.user_data = options->user_data;
+    impl->base.data.client.user_cb_on_shutdown = options->user_cb_on_shutdown;
+
+    return &impl->base;
 }
 
 static void s_handler_destroy(struct aws_channel_handler *handler) {

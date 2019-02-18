@@ -15,6 +15,8 @@
 
 #include <aws/http/connection.h>
 
+#include <aws/common/clock.h>
+#include <aws/common/condition_variable.h>
 #include <aws/common/uuid.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
@@ -27,26 +29,100 @@
 #    define LOCAL_SOCK_TEST_FORMAT "testsock-%s.sock"
 #endif
 
-static void s_void_on_incoming_connection_fn(
+struct tester_options {
+    struct aws_allocator *alloc;
+    bool no_tls;
+    bool no_connection; /* don't connect server to client */
+};
+
+enum {
+    TESTER_TIMEOUT = AWS_TIMESTAMP_NANOS * 1, /* 1 second */
+};
+
+struct tester {
+    struct aws_allocator *alloc;
+    struct aws_event_loop_group event_loop_group;
+    struct aws_server_bootstrap *server_bootstrap;
+    struct aws_http_server *server;
+    struct aws_client_bootstrap *client_bootstrap;
+    struct aws_http_connection *server_connection;
+    struct aws_http_connection *client_connection;
+
+    /* If we need to wait for some async process*/
+    struct aws_mutex wait_lock;
+    struct aws_condition_variable wait_cvar;
+    int wait_result;
+};
+
+static void s_tester_on_incoming_request(struct aws_http_connection *connection, void *user_data) {
+    (void)connection;
+    (void)user_data;
+}
+
+static void s_tester_on_incoming_connection(
     struct aws_http_server *server,
     struct aws_http_connection *connection,
     int error_code,
     void *user_data) {
 
     (void)server;
-    (void)connection;
-    (void)error_code;
-    (void)user_data;
+    struct tester *tester = user_data;
+
+    if (error_code) {
+        tester->wait_result = error_code;
+        goto done;
+    }
+
+    struct aws_http_server_connection_options options = {
+        .self_size = sizeof(options),
+        .connection_user_data = tester,
+        .on_incoming_request = s_tester_on_incoming_request,
+    };
+
+    int err = aws_http_connection_configure_server(connection, &options);
+    if (err) {
+        tester->wait_result = aws_last_error();
+        goto done;
+    }
+
+    tester->server_connection = connection;
+done:
+    aws_condition_variable_notify_one(&tester->wait_cvar);
 }
 
-static int s_test_server_new_destroy(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+static void s_tester_on_client_connection_setup(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
 
-    struct aws_event_loop_group event_loop_group;
-    ASSERT_SUCCESS(aws_event_loop_group_default_init(&event_loop_group, allocator, 1));
+    struct tester *tester = user_data;
+    if (error_code) {
+        tester->wait_result = error_code;
+        goto done;
+    }
 
-    struct aws_server_bootstrap *bootstrap = aws_server_bootstrap_new(allocator, &event_loop_group);
-    ASSERT_NOT_NULL(bootstrap);
+    tester->client_connection = connection;
+done:
+    aws_condition_variable_notify_one(&tester->wait_cvar);
+}
+
+static bool s_tester_connection_setup_pred(void *user_data) {
+    struct tester *tester = user_data;
+    return tester->wait_result || (tester->client_connection && tester->server_connection);
+}
+
+static int s_tester_init(struct tester *tester, const struct tester_options *options) {
+    AWS_ZERO_STRUCT(*tester);
+
+    tester->alloc = options->alloc;
+
+    ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
+    ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
+
+    ASSERT_SUCCESS(aws_event_loop_group_default_init(&tester->event_loop_group, tester->alloc, 1));
+
+    tester->server_bootstrap = aws_server_bootstrap_new(tester->alloc, &tester->event_loop_group);
+    ASSERT_NOT_NULL(tester->server_bootstrap);
 
     struct aws_socket_options socket_options = {
         .type = AWS_SOCKET_STREAM,
@@ -65,22 +141,98 @@ static int s_test_server_new_destroy(struct aws_allocator *allocator, void *ctx)
 
     snprintf(endpoint.address, sizeof(endpoint.address), LOCAL_SOCK_TEST_FORMAT, uuid_str);
 
-    struct aws_http_server_options options = {
+    struct aws_http_server_options server_options = {
         .self_size = sizeof(options),
-        .allocator = allocator,
-        .bootstrap = bootstrap,
+        .allocator = tester->alloc,
+        .bootstrap = tester->server_bootstrap,
         .endpoint = &endpoint,
         .socket_options = &socket_options,
-        .on_incoming_connection = s_void_on_incoming_connection_fn,
+        .server_user_data = tester,
+        .on_incoming_connection = s_tester_on_incoming_connection,
     };
 
-    struct aws_http_server *server = aws_http_server_new(&options);
-    ASSERT_NOT_NULL(server);
+    tester->server = aws_http_server_new(&server_options);
+    ASSERT_NOT_NULL(tester->server);
 
-    aws_http_server_destroy(server);
-    aws_server_bootstrap_destroy(bootstrap);
-    aws_event_loop_group_clean_up(&event_loop_group);
+    /* If test doesn't need a connection, we're done setting up. */
+    if (options->no_connection) {
+        return AWS_OP_SUCCESS;
+    }
+
+    tester->client_bootstrap = aws_client_bootstrap_new(tester->alloc, &tester->event_loop_group, NULL, NULL);
+    ASSERT_NOT_NULL(tester->client_bootstrap);
+
+    struct aws_http_client_connection_options client_options = {
+        .self_size = sizeof(client_options),
+        .allocator = tester->alloc,
+        .bootstrap = tester->client_bootstrap,
+        .host_name = endpoint.address,
+        .port = endpoint.port,
+        .socket_options = &socket_options,
+        .user_data = tester,
+        .on_setup = s_tester_on_client_connection_setup,
+    };
+
+    ASSERT_SUCCESS(aws_http_client_connect(&client_options));
+
+    /* Wait for both connections to finish setup */
+    ASSERT_SUCCESS(aws_mutex_lock(&tester->wait_lock));
+    ASSERT_SUCCESS(aws_condition_variable_wait_for_pred(
+        &tester->wait_cvar, &tester->wait_lock, TESTER_TIMEOUT, s_tester_connection_setup_pred, tester));
+    ASSERT_SUCCESS(aws_mutex_unlock(&tester->wait_lock));
+
+    ASSERT_NOT_NULL(tester->client_connection);
+    ASSERT_NOT_NULL(tester->server_connection);
+    ASSERT_SUCCESS(tester->wait_result);
+
     return AWS_OP_SUCCESS;
 }
 
+static int s_tester_clean_up(struct tester *tester) {
+    if (tester->client_connection) {
+        aws_http_connection_release(tester->client_connection, AWS_ERROR_SUCCESS);
+    }
+
+    if (tester->server_connection) {
+        aws_http_connection_release(tester->server_connection, AWS_ERROR_SUCCESS);
+    }
+
+    if (tester->client_bootstrap) {
+        aws_client_bootstrap_destroy(tester->client_bootstrap);
+    }
+
+    aws_http_server_destroy(tester->server);
+    aws_server_bootstrap_destroy(tester->server_bootstrap);
+    aws_event_loop_group_clean_up(&tester->event_loop_group);
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_test_server_new_destroy(struct aws_allocator *alloc, void *ctx) {
+    (void)ctx;
+    struct tester_options options = {
+        .alloc = alloc,
+        .no_tls = true,
+        .no_connection = true,
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, &options));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
 AWS_TEST_CASE(server_new_destroy, s_test_server_new_destroy);
+
+static int s_test_connection_setup_shutdown(struct aws_allocator *alloc, void *ctx) {
+    (void)ctx;
+    struct tester_options options = {
+        .alloc = alloc,
+        .no_tls = true,
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, &options));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(connection_setup_shutdown, s_test_connection_setup_shutdown);
