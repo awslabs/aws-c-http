@@ -17,6 +17,7 @@
  */
 
 #include <aws/http/connection.h>
+#include <aws/http/server.h>
 
 #include <aws/io/channel.h>
 

@@ -14,6 +14,7 @@
  */
 
 #include <aws/http/connection.h>
+#include <aws/http/server.h>
 
 #include <aws/common/uuid.h>
 #include <aws/io/channel_bootstrap.h>
