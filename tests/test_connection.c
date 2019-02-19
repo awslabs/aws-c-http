@@ -22,6 +22,7 @@
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
 #include <aws/io/socket.h>
+#include <aws/io/tls_channel_handler.h>
 #include <aws/testing/aws_test_harness.h>
 
 #ifdef _WIN32
@@ -32,12 +33,11 @@
 
 struct tester_options {
     struct aws_allocator *alloc;
-    bool no_tls;
     bool no_connection; /* don't connect server to client */
 };
 
 enum {
-    TESTER_TIMEOUT = AWS_TIMESTAMP_NANOS * 1, /* 1 second */
+    TESTER_TIMEOUT_SEC = 60, /* Give enough time for non-sudo users to enter password */
 };
 
 struct tester {
@@ -46,8 +46,15 @@ struct tester {
     struct aws_server_bootstrap *server_bootstrap;
     struct aws_http_server *server;
     struct aws_client_bootstrap *client_bootstrap;
+
+    struct aws_tls_ctx *server_tls_ctx;
+    struct aws_tls_ctx *client_tls_ctx;
+
     struct aws_http_connection *server_connection;
     struct aws_http_connection *client_connection;
+
+    bool client_connection_is_shutdown;
+    bool server_connection_is_shutdown;
 
     /* If we need to wait for some async process*/
     struct aws_mutex wait_lock;
@@ -60,7 +67,18 @@ static void s_tester_on_incoming_request(struct aws_http_connection *connection,
     (void)user_data;
 }
 
-static void s_tester_on_incoming_connection(
+static void s_tester_on_server_connection_shutdown(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
+
+    struct tester *tester = user_data;
+
+    tester->server_connection_is_shutdown = true;
+    aws_condition_variable_notify_one(&tester->wait_cvar);
+}
+
+static void s_tester_on_server_connection_setup(
     struct aws_http_server *server,
     struct aws_http_connection *connection,
     int error_code,
@@ -78,6 +96,7 @@ static void s_tester_on_incoming_connection(
         .self_size = sizeof(options),
         .connection_user_data = tester,
         .on_incoming_request = s_tester_on_incoming_request,
+        .on_shutdown = s_tester_on_server_connection_shutdown,
     };
 
     int err = aws_http_connection_configure_server(connection, &options);
@@ -107,9 +126,38 @@ done:
     aws_condition_variable_notify_one(&tester->wait_cvar);
 }
 
+static void s_tester_on_client_connection_shutdown(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
+
+    struct tester *tester = user_data;
+
+    tester->client_connection_is_shutdown = true;
+    aws_condition_variable_notify_one(&tester->wait_cvar);
+}
+
+static int s_tester_wait(struct tester *tester, bool (*pred)(void *user_data)) {
+    ASSERT_SUCCESS(aws_mutex_lock(&tester->wait_lock));
+    ASSERT_SUCCESS(aws_condition_variable_wait_for_pred(
+        &tester->wait_cvar,
+        &tester->wait_lock,
+        aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL),
+        pred,
+        tester));
+    ASSERT_SUCCESS(aws_mutex_unlock(&tester->wait_lock));
+
+    return tester->wait_result;
+}
+
 static bool s_tester_connection_setup_pred(void *user_data) {
     struct tester *tester = user_data;
     return tester->wait_result || (tester->client_connection && tester->server_connection);
+}
+
+static bool s_tester_connection_shutdown_pred(void *user_data) {
+    struct tester *tester = user_data;
+    return tester->wait_result || (tester->client_connection_is_shutdown && tester->server_connection_is_shutdown);
 }
 
 static int s_tester_init(struct tester *tester, const struct tester_options *options) {
@@ -128,7 +176,8 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     struct aws_socket_options socket_options = {
         .type = AWS_SOCKET_STREAM,
         .domain = AWS_SOCKET_LOCAL,
-        .connect_timeout_ms = 1000,
+        .connect_timeout_ms =
+            (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
     };
 
     /* Generate random address for endpoint */
@@ -142,14 +191,30 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 
     snprintf(endpoint.address, sizeof(endpoint.address), LOCAL_SOCK_TEST_FORMAT, uuid_str);
 
+    /* Set up server TLS */
+    struct aws_tls_ctx_options server_tls_ctx_options;
+#ifdef __APPLE__
+    aws_tls_ctx_options_init_server_pkcs12(&server_tls_ctx_options, "./unittests.p12", "1234");
+#else
+    aws_tls_ctx_options_init_default_server(&server_tls_ctx_options, "./unittests.crt", "./unittests.key");
+#endif /* __APPLE__ */
+
+    tester->server_tls_ctx = aws_tls_server_ctx_new(tester->alloc, &server_tls_ctx_options);
+    ASSERT_NOT_NULL(tester->server_tls_ctx);
+
+    struct aws_tls_connection_options server_tls_connection_options;
+    aws_tls_connection_options_init_from_ctx(&server_tls_connection_options, tester->server_tls_ctx);
+
+    /* Create server (listening socket) */
     struct aws_http_server_options server_options = {
         .self_size = sizeof(options),
         .allocator = tester->alloc,
         .bootstrap = tester->server_bootstrap,
         .endpoint = &endpoint,
         .socket_options = &socket_options,
+        .tls_options = &server_tls_connection_options,
         .server_user_data = tester,
-        .on_incoming_connection = s_tester_on_incoming_connection,
+        .on_incoming_connection = s_tester_on_server_connection_setup,
     };
 
     tester->server = aws_http_server_new(&server_options);
@@ -163,6 +228,18 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     tester->client_bootstrap = aws_client_bootstrap_new(tester->alloc, &tester->event_loop_group, NULL, NULL);
     ASSERT_NOT_NULL(tester->client_bootstrap);
 
+    /* Set up client TLS */
+    struct aws_tls_ctx_options client_tls_ctx_options;
+    aws_tls_ctx_options_init_default_client(&client_tls_ctx_options);
+    aws_tls_ctx_options_override_default_trust_store(&client_tls_ctx_options, NULL, "./unittests.crt");
+    tester->client_tls_ctx = aws_tls_client_ctx_new(tester->alloc, &client_tls_ctx_options);
+    ASSERT_NOT_NULL(tester->client_tls_ctx);
+
+    struct aws_tls_connection_options client_tls_connection_options;
+    aws_tls_connection_options_init_from_ctx(&client_tls_connection_options, tester->client_tls_ctx);
+    aws_tls_connection_options_set_server_name(&client_tls_connection_options, "localhost");
+
+    /* Connect */
     struct aws_http_client_connection_options client_options = {
         .self_size = sizeof(client_options),
         .allocator = tester->alloc,
@@ -170,41 +247,36 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
         .host_name = endpoint.address,
         .port = endpoint.port,
         .socket_options = &socket_options,
+        .tls_options = &client_tls_connection_options,
         .user_data = tester,
         .on_setup = s_tester_on_client_connection_setup,
+        .on_shutdown = s_tester_on_client_connection_shutdown,
     };
 
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
 
-    /* Wait for both connections to finish setup */
-    ASSERT_SUCCESS(aws_mutex_lock(&tester->wait_lock));
-    ASSERT_SUCCESS(aws_condition_variable_wait_for_pred(
-        &tester->wait_cvar, &tester->wait_lock, TESTER_TIMEOUT, s_tester_connection_setup_pred, tester));
-    ASSERT_SUCCESS(aws_mutex_unlock(&tester->wait_lock));
-
-    ASSERT_NOT_NULL(tester->client_connection);
-    ASSERT_NOT_NULL(tester->server_connection);
-    ASSERT_SUCCESS(tester->wait_result);
+    /* Wait for server & client connections to finish setup */
+    ASSERT_SUCCESS(s_tester_wait(tester, s_tester_connection_setup_pred));
 
     return AWS_OP_SUCCESS;
 }
 
 static int s_tester_clean_up(struct tester *tester) {
+    /* If there's a connection, shut down the server and client side. */
     if (tester->client_connection) {
         aws_http_connection_release(tester->client_connection, AWS_ERROR_SUCCESS);
-    }
-
-    if (tester->server_connection) {
         aws_http_connection_release(tester->server_connection, AWS_ERROR_SUCCESS);
-    }
 
-    if (tester->client_bootstrap) {
+        ASSERT_SUCCESS(s_tester_wait(tester, s_tester_connection_shutdown_pred));
+
         aws_client_bootstrap_destroy(tester->client_bootstrap);
+        aws_tls_ctx_destroy(tester->client_tls_ctx);
     }
 
     aws_http_server_destroy(tester->server);
     aws_server_bootstrap_destroy(tester->server_bootstrap);
     aws_event_loop_group_clean_up(&tester->event_loop_group);
+    aws_tls_ctx_destroy(tester->server_tls_ctx);
 
     return AWS_OP_SUCCESS;
 }
@@ -213,7 +285,6 @@ static int s_test_server_new_destroy(struct aws_allocator *alloc, void *ctx) {
     (void)ctx;
     struct tester_options options = {
         .alloc = alloc,
-        .no_tls = true,
         .no_connection = true,
     };
     struct tester tester;
@@ -228,7 +299,6 @@ static int s_test_connection_setup_shutdown(struct aws_allocator *alloc, void *c
     (void)ctx;
     struct tester_options options = {
         .alloc = alloc,
-        .no_tls = true,
     };
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, &options));

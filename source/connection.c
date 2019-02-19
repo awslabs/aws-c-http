@@ -398,7 +398,7 @@ int aws_http_connection_configure_server(
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    if (!connection->server_data || !connection->server_data->user_cb_on_incoming_request) {
+    if (!connection->server_data || connection->server_data->user_cb_on_incoming_request) {
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
