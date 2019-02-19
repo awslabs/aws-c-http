@@ -31,15 +31,17 @@
 #    define LOCAL_SOCK_TEST_FORMAT "testsock-%s.sock"
 #endif
 
+enum {
+    TESTER_TIMEOUT_SEC = 60, /* Give enough time for non-sudo users to enter password */
+};
+
+/* Options for setting up `tester` singleton */
 struct tester_options {
     struct aws_allocator *alloc;
     bool no_connection; /* don't connect server to client */
 };
 
-enum {
-    TESTER_TIMEOUT_SEC = 60, /* Give enough time for non-sudo users to enter password */
-};
-
+/* Singleton used by tests in this file */
 struct tester {
     struct aws_allocator *alloc;
     struct aws_event_loop_group event_loop_group;
