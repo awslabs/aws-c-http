@@ -262,10 +262,10 @@ static int s_tester_clean_up(struct tester *tester) {
     return AWS_OP_SUCCESS;
 }
 
-static int s_test_server_new_destroy(struct aws_allocator *alloc, void *ctx) {
+static int s_test_server_new_destroy(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     struct tester_options options = {
-        .alloc = alloc,
+        .alloc = allocator,
         .no_connection = true,
     };
     struct tester tester;
@@ -276,10 +276,10 @@ static int s_test_server_new_destroy(struct aws_allocator *alloc, void *ctx) {
 }
 AWS_TEST_CASE(server_new_destroy, s_test_server_new_destroy);
 
-static int s_test_connection_setup_shutdown(struct aws_allocator *alloc, void *ctx) {
+static int s_test_connection_setup_shutdown(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     struct tester_options options = {
-        .alloc = alloc,
+        .alloc = allocator,
     };
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, &options));
