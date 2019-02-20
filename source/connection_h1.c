@@ -165,8 +165,7 @@ static int s_handler_shutdown(
     if (dir == AWS_CHANNEL_DIR_WRITE) {
         if (impl->base.server_data && impl->base.server_data->user_cb_on_shutdown) {
             impl->base.server_data->user_cb_on_shutdown(&impl->base, error_code, impl->base.user_data);
-        }
-        else if (impl->base.client_data && impl->base.client_data->user_cb_on_shutdown) {
+        } else if (impl->base.client_data && impl->base.client_data->user_cb_on_shutdown) {
             impl->base.client_data->user_cb_on_shutdown(&impl->base, error_code, impl->base.user_data);
         }
     }
