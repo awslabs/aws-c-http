@@ -53,9 +53,6 @@ struct tester {
     struct aws_http_server *server;
     struct aws_client_bootstrap *client_bootstrap;
 
-    struct aws_tls_ctx *server_tls_ctx;
-    struct aws_tls_ctx *client_tls_ctx;
-
     struct aws_http_connection *server_connection;
     struct aws_http_connection *client_connection;
 
@@ -204,21 +201,6 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 
     snprintf(endpoint.address, sizeof(endpoint.address), LOCAL_SOCK_TEST_FORMAT, uuid_str);
 
-    /* Set up server TLS */
-    struct aws_tls_ctx_options server_tls_ctx_options;
-#ifdef __APPLE__
-    aws_tls_ctx_options_init_server_pkcs12(&server_tls_ctx_options, "./unittests.p12", "1234");
-#else
-    aws_tls_ctx_options_init_default_server(&server_tls_ctx_options, "./unittests.crt", "./unittests.key");
-#endif /* __APPLE__ */
-    aws_tls_ctx_options_set_alpn_list(&server_tls_ctx_options, "http/1.1");
-
-    tester->server_tls_ctx = aws_tls_server_ctx_new(tester->alloc, &server_tls_ctx_options);
-    ASSERT_NOT_NULL(tester->server_tls_ctx);
-
-    struct aws_tls_connection_options server_tls_connection_options;
-    aws_tls_connection_options_init_from_ctx(&server_tls_connection_options, tester->server_tls_ctx);
-
     /* Create server (listening socket) */
     struct aws_http_server_options server_options = {
         .self_size = sizeof(options),
@@ -226,7 +208,6 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
         .bootstrap = tester->server_bootstrap,
         .endpoint = &endpoint,
         .socket_options = &socket_options,
-        .tls_options = &server_tls_connection_options,
         .server_user_data = tester,
         .on_incoming_connection = s_tester_on_server_connection_setup,
     };
@@ -242,18 +223,6 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     tester->client_bootstrap = aws_client_bootstrap_new(tester->alloc, &tester->event_loop_group, NULL, NULL);
     ASSERT_NOT_NULL(tester->client_bootstrap);
 
-    /* Set up client TLS */
-    struct aws_tls_ctx_options client_tls_ctx_options;
-    aws_tls_ctx_options_init_default_client(&client_tls_ctx_options);
-    aws_tls_ctx_options_override_default_trust_store(&client_tls_ctx_options, NULL, "./unittests.crt");
-    tester->client_tls_ctx = aws_tls_client_ctx_new(tester->alloc, &client_tls_ctx_options);
-    ASSERT_NOT_NULL(tester->client_tls_ctx);
-
-    struct aws_tls_connection_options client_tls_connection_options;
-    aws_tls_connection_options_init_from_ctx(&client_tls_connection_options, tester->client_tls_ctx);
-    aws_tls_connection_options_set_alpn_list(&client_tls_connection_options, "http/1.1");
-    aws_tls_connection_options_set_server_name(&client_tls_connection_options, "localhost");
-
     /* Connect */
     struct aws_http_client_connection_options client_options = {
         .self_size = sizeof(client_options),
@@ -262,7 +231,6 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
         .host_name = endpoint.address,
         .port = endpoint.port,
         .socket_options = &socket_options,
-        .tls_options = &client_tls_connection_options,
         .user_data = tester,
         .on_setup = s_tester_on_client_connection_setup,
         .on_shutdown = s_tester_on_client_connection_shutdown,
@@ -285,13 +253,11 @@ static int s_tester_clean_up(struct tester *tester) {
         ASSERT_SUCCESS(s_tester_wait(tester, s_tester_connection_shutdown_pred));
 
         aws_client_bootstrap_destroy(tester->client_bootstrap);
-        aws_tls_ctx_destroy(tester->client_tls_ctx);
     }
 
     aws_http_server_destroy(tester->server);
     aws_server_bootstrap_destroy(tester->server_bootstrap);
     aws_event_loop_group_clean_up(&tester->event_loop_group);
-    aws_tls_ctx_destroy(tester->server_tls_ctx);
 
     return AWS_OP_SUCCESS;
 }
