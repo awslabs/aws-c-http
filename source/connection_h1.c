@@ -58,20 +58,32 @@ struct h1_connection {
     struct aws_http_connection base;
 };
 
-struct aws_http_connection *aws_http_connection_new_http1_1_server(
-    const struct aws_http_server_connection_impl_options *options) {
-
-    struct h1_connection *impl = aws_mem_acquire(options->alloc, sizeof(struct h1_connection));
+/* Common new() logic for server & client */
+static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
+    struct h1_connection *impl = aws_mem_acquire(alloc, sizeof(struct h1_connection));
     if (!impl) {
         return NULL;
     }
     AWS_ZERO_STRUCT(*impl);
 
     impl->base.vtable = &s_vtable;
-    impl->base.alloc = options->alloc;
+    impl->base.alloc = alloc;
     impl->base.channel_handler.vtable = &s_vtable.channel_handler_vtable;
     impl->base.channel_handler.impl = impl;
     impl->base.http_version = AWS_HTTP_VERSION_1_1;
+
+    return impl;
+}
+
+struct aws_http_connection *aws_http_connection_new_http1_1_server(
+    const struct aws_http_server_connection_impl_options *options) {
+
+    struct h1_connection *impl = s_connection_new(options->alloc);
+    if (!impl) {
+        return NULL;
+    }
+
+    impl->base.initial_window_size = options->initial_window_size;
     impl->base.server_data = &impl->base.client_or_server_data.server;
 
     return &impl->base;
@@ -80,9 +92,17 @@ struct aws_http_connection *aws_http_connection_new_http1_1_server(
 struct aws_http_connection *aws_http_connection_new_http1_1_client(
     const struct aws_http_client_connection_impl_options *options) {
 
-    (void)options;
-    aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
-    return NULL;
+    struct h1_connection *impl = s_connection_new(options->alloc);
+    if (!impl) {
+        return NULL;
+    }
+
+    impl->base.initial_window_size = options->initial_window_size;
+    impl->base.user_data = options->user_data;
+    impl->base.client_data = &impl->base.client_or_server_data.client;
+    impl->base.client_data->user_cb_on_shutdown = options->user_cb_on_shutdown;
+
+    return &impl->base;
 }
 
 static void s_handler_destroy(struct aws_channel_handler *handler) {
@@ -134,8 +154,16 @@ static int s_handler_shutdown(
     int error_code,
     bool free_scarce_resources_immediately) {
 
-    /* TODO: implement function */
-    (void)handler;
+    struct h1_connection *impl = handler->impl;
+
+    /* Invoke user shutdown callback */
+    if (dir == AWS_CHANNEL_DIR_WRITE) {
+        if (impl->base.server_data && impl->base.server_data->user_cb_on_shutdown) {
+            impl->base.server_data->user_cb_on_shutdown(&impl->base, error_code, impl->base.user_data);
+        } else if (impl->base.client_data && impl->base.client_data->user_cb_on_shutdown) {
+            impl->base.client_data->user_cb_on_shutdown(&impl->base, error_code, impl->base.user_data);
+        }
+    }
 
     aws_channel_slot_on_handler_shutdown_complete(slot, dir, error_code, free_scarce_resources_immediately);
     return AWS_OP_SUCCESS;

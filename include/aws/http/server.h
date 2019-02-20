@@ -36,10 +36,12 @@ typedef void(aws_http_server_on_incoming_connection_fn)(
 
 /**
  * Options for creating an HTTP server.
+ * Initialize with AWS_HTTP_SERVER_OPTIONS_INIT to set default values.
  */
 struct aws_http_server_options {
     /**
-     * Set to sizeof() this struct, used for versioning.
+     * The sizeof() this struct, used for versioning.
+     * Set by AWS_HTTP_SERVER_OPTIONS_INIT.
      */
     size_t self_size;
 
@@ -74,6 +76,13 @@ struct aws_http_server_options {
     struct aws_tls_connection_options *tls_options;
 
     /**
+     * Initial window size for incoming connections.
+     * Optional.
+     * A default size is set by AWS_HTTP_SERVER_OPTIONS_INIT.
+     */
+    size_t initial_window_size;
+
+    /**
      * User data passed to callbacks.
      * Optional.
      */
@@ -87,6 +96,12 @@ struct aws_http_server_options {
     aws_http_server_on_incoming_connection_fn *on_incoming_connection;
 };
 
+/**
+ * Initializes aws_http_server_options with default values.
+ */
+#define AWS_HTTP_SERVER_OPTIONS_INIT                                                                                   \
+    { .self_size = sizeof(struct aws_http_server_options), .initial_window_size = SIZE_MAX }
+
 typedef void(aws_http_on_incoming_request_fn)(struct aws_http_connection *connection, void *user_data);
 
 typedef void(aws_http_on_server_connection_shutdown_fn)(
@@ -96,18 +111,14 @@ typedef void(aws_http_on_server_connection_shutdown_fn)(
 
 /**
  * Options for configuring a server-side aws_http_connection.
+ * Initialized with AWS_HTTP_SERVER_CONNECTION_OPTIONS_INIT to set default values.
  */
 struct aws_http_server_connection_options {
     /**
-     * Set to sizeof() this struct, used for versioning.
+     * The sizeof() this struct, used for versioning.
+     * Set by AWS_HTTP_SERVER_CONNECTION_OPTIONS_INIT.
      */
     size_t self_size;
-
-    /**
-     * Optional.
-     * A default size is used if nothing is set.
-     */
-    size_t initial_window_size;
 
     /**
      * User data specific to this connection.
@@ -128,6 +139,12 @@ struct aws_http_server_connection_options {
      */
     aws_http_on_server_connection_shutdown_fn *on_shutdown;
 };
+
+/**
+ * Initializes aws_http_server_connection_options with default values.
+ */
+#define AWS_HTTP_SERVER_CONNECTION_OPTIONS_INIT                                                                        \
+    { .self_size = sizeof(struct aws_http_server_connection_options) }
 
 AWS_EXTERN_C_BEGIN
 

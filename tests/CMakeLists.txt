@@ -23,6 +23,7 @@ add_test_case(http_test_extraneous_buffer_data_ensure_not_processed)
 add_test_case(http_test_ignore_transfer_extensions)
 add_test_case(http_test_ignore_chunk_extensions)
 add_test_case(server_new_destroy)
+add_test_case(connection_setup_shutdown)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})

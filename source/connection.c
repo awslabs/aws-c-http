@@ -19,10 +19,15 @@
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#endif
+
 struct aws_http_server {
     struct aws_allocator *alloc;
     struct aws_server_bootstrap *bootstrap;
     bool is_using_tls;
+    size_t initial_window_size;
     void *user_data;
     aws_http_server_on_incoming_connection_fn *user_cb_on_incoming_connection;
 
@@ -30,7 +35,7 @@ struct aws_http_server {
 };
 
 /* Determine the http-version, create appropriate type of connection, and insert it into the channel. */
-struct aws_http_connection *s_connection_new(
+static struct aws_http_connection *s_connection_new(
     struct aws_channel *channel,
     bool is_server,
     bool is_using_tls,
@@ -46,7 +51,7 @@ struct aws_http_connection *s_connection_new(
     }
 
     int err = aws_channel_slot_insert_end(channel, connection_slot);
-    if (!err) {
+    if (err) {
         goto error;
     }
 
@@ -147,8 +152,10 @@ static void s_server_bootstrap_on_accept_channel_setup(
     }
 
     /* Create connection */
-    struct aws_http_server_connection_impl_options options;
-    options.alloc = server->alloc;
+    struct aws_http_server_connection_impl_options options = {
+        .alloc = server->alloc,
+        .initial_window_size = server->initial_window_size,
+    };
 
     struct aws_http_connection *connection = s_connection_new(channel, true, server->is_using_tls, &options);
     if (!connection) {
@@ -214,6 +221,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     server->alloc = options->allocator;
     server->bootstrap = options->bootstrap;
     server->is_using_tls = options->tls_options != NULL;
+    server->initial_window_size = options->initial_window_size;
     server->user_data = options->server_user_data;
     server->user_cb_on_incoming_connection = options->on_incoming_connection;
 
@@ -249,14 +257,14 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     return server;
 
 error:
-    aws_http_server_destroy(server);
+    if (server) {
+        aws_http_server_destroy(server);
+    }
     return NULL;
 }
 
 void aws_http_server_destroy(struct aws_http_server *server) {
-    if (!server) {
-        return;
-    }
+    assert(server);
 
     if (server->socket) {
         aws_server_bootstrap_destroy_socket_listener(server->bootstrap, server->socket);
@@ -286,6 +294,7 @@ static void s_client_bootstrap_on_channel_setup(
         goto error;
     }
 
+    /* Tell user of successful connection. */
     options->user_cb_on_setup(connection, AWS_ERROR_SUCCESS, options->user_data);
 
     aws_mem_release(options->alloc, options);
@@ -300,6 +309,7 @@ error:
         aws_channel_shutdown(channel, error_code);
     }
 
+    /* Tell user of failed connection. */
     options->user_cb_on_setup(NULL, error_code, options->user_data);
 
     aws_mem_release(options->alloc, options);
@@ -392,12 +402,11 @@ int aws_http_connection_configure_server(
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    if (!connection->server_data || !connection->server_data->user_cb_on_incoming_request) {
+    if (!connection->server_data || connection->server_data->user_cb_on_incoming_request) {
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
     connection->user_data = options->connection_user_data;
-    connection->initial_window_size = options->initial_window_size;
     connection->server_data->user_cb_on_incoming_request = options->on_incoming_request;
     connection->server_data->user_cb_on_shutdown = options->on_shutdown;
 

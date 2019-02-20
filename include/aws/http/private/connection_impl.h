@@ -23,6 +23,7 @@
 
 struct aws_http_server_connection_impl_options {
     struct aws_allocator *alloc;
+    size_t initial_window_size;
 };
 
 struct aws_http_client_connection_impl_options {
