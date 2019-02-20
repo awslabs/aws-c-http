@@ -19,6 +19,10 @@
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#endif
+
 struct aws_http_server {
     struct aws_allocator *alloc;
     struct aws_server_bootstrap *bootstrap;

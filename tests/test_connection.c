@@ -25,6 +25,10 @@
 #include <aws/io/tls_channel_handler.h>
 #include <aws/testing/aws_test_harness.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#endif
+
 #ifdef _WIN32
 #    define LOCAL_SOCK_TEST_FORMAT "\\\\.\\pipe\\testsock-%s"
 #else
@@ -74,6 +78,8 @@ static void s_tester_on_server_connection_shutdown(
     int error_code,
     void *user_data) {
 
+    (void)connection;
+    (void)error_code;
     struct tester *tester = user_data;
 
     tester->server_connection_is_shutdown = true;
@@ -133,6 +139,8 @@ static void s_tester_on_client_connection_shutdown(
     int error_code,
     void *user_data) {
 
+    (void)connection;
+    (void)error_code;
     struct tester *tester = user_data;
 
     tester->client_connection_is_shutdown = true;
@@ -149,7 +157,10 @@ static int s_tester_wait(struct tester *tester, bool (*pred)(void *user_data)) {
         tester));
     ASSERT_SUCCESS(aws_mutex_unlock(&tester->wait_lock));
 
-    return tester->wait_result;
+    if (tester->wait_result) {
+        return aws_raise_error(tester->wait_result);
+    }
+    return AWS_OP_SUCCESS;
 }
 
 static bool s_tester_connection_setup_pred(void *user_data) {
@@ -200,6 +211,7 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 #else
     aws_tls_ctx_options_init_default_server(&server_tls_ctx_options, "./unittests.crt", "./unittests.key");
 #endif /* __APPLE__ */
+    aws_tls_ctx_options_set_alpn_list(&server_tls_ctx_options, "http/1.1");
 
     tester->server_tls_ctx = aws_tls_server_ctx_new(tester->alloc, &server_tls_ctx_options);
     ASSERT_NOT_NULL(tester->server_tls_ctx);
@@ -239,6 +251,7 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 
     struct aws_tls_connection_options client_tls_connection_options;
     aws_tls_connection_options_init_from_ctx(&client_tls_connection_options, tester->client_tls_ctx);
+    aws_tls_connection_options_set_alpn_list(&client_tls_connection_options, "http/1.1");
     aws_tls_connection_options_set_server_name(&client_tls_connection_options, "localhost");
 
     /* Connect */
