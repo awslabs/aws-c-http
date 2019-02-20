@@ -105,11 +105,6 @@ struct aws_http_connection *aws_http_connection_new_http1_1_client(
     return &impl->base;
 }
 
-static struct h1_connection *s_connection_from_handler(struct aws_channel_handler *handler) {
-    struct aws_http_connection *connection = AWS_CONTAINER_OF(handler, struct aws_http_connection, channel_handler);
-    return AWS_CONTAINER_OF(connection, struct h1_connection, base);
-}
-
 static void s_handler_destroy(struct aws_channel_handler *handler) {
     struct h1_connection *impl = handler->impl;
 
@@ -159,7 +154,7 @@ static int s_handler_shutdown(
     int error_code,
     bool free_scarce_resources_immediately) {
 
-    struct h1_connection *impl = s_connection_from_handler(handler);
+    struct h1_connection *impl = handler->impl;
 
     /* Invoke user shutdown callback */
     if (dir == AWS_CHANNEL_DIR_WRITE) {
