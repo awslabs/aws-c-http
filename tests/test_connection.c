@@ -97,12 +97,10 @@ static void s_tester_on_server_connection_setup(
         goto done;
     }
 
-    struct aws_http_server_connection_options options = {
-        .self_size = sizeof(options),
-        .connection_user_data = tester,
-        .on_incoming_request = s_tester_on_incoming_request,
-        .on_shutdown = s_tester_on_server_connection_shutdown,
-    };
+    struct aws_http_server_connection_options options = AWS_HTTP_SERVER_CONNECTION_OPTIONS_INIT;
+    options.connection_user_data = tester;
+    options.on_incoming_request = s_tester_on_incoming_request;
+    options.on_shutdown = s_tester_on_server_connection_shutdown;
 
     int err = aws_http_connection_configure_server(connection, &options);
     if (err) {
@@ -202,15 +200,13 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     snprintf(endpoint.address, sizeof(endpoint.address), LOCAL_SOCK_TEST_FORMAT, uuid_str);
 
     /* Create server (listening socket) */
-    struct aws_http_server_options server_options = {
-        .self_size = sizeof(options),
-        .allocator = tester->alloc,
-        .bootstrap = tester->server_bootstrap,
-        .endpoint = &endpoint,
-        .socket_options = &socket_options,
-        .server_user_data = tester,
-        .on_incoming_connection = s_tester_on_server_connection_setup,
-    };
+    struct aws_http_server_options server_options = AWS_HTTP_SERVER_OPTIONS_INIT;
+    server_options.allocator = tester->alloc;
+    server_options.bootstrap = tester->server_bootstrap;
+    server_options.endpoint = &endpoint;
+    server_options.socket_options = &socket_options;
+    server_options.server_user_data = tester;
+    server_options.on_incoming_connection = s_tester_on_server_connection_setup;
 
     tester->server = aws_http_server_new(&server_options);
     ASSERT_NOT_NULL(tester->server);
@@ -224,17 +220,15 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     ASSERT_NOT_NULL(tester->client_bootstrap);
 
     /* Connect */
-    struct aws_http_client_connection_options client_options = {
-        .self_size = sizeof(client_options),
-        .allocator = tester->alloc,
-        .bootstrap = tester->client_bootstrap,
-        .host_name = endpoint.address,
-        .port = endpoint.port,
-        .socket_options = &socket_options,
-        .user_data = tester,
-        .on_setup = s_tester_on_client_connection_setup,
-        .on_shutdown = s_tester_on_client_connection_shutdown,
-    };
+    struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
+    client_options.allocator = tester->alloc;
+    client_options.bootstrap = tester->client_bootstrap;
+    client_options.host_name = endpoint.address;
+    client_options.port = endpoint.port;
+    client_options.socket_options = &socket_options;
+    client_options.user_data = tester;
+    client_options.on_setup = s_tester_on_client_connection_setup;
+    client_options.on_shutdown = s_tester_on_client_connection_shutdown;
 
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
 

@@ -221,7 +221,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     server->alloc = options->allocator;
     server->bootstrap = options->bootstrap;
     server->is_using_tls = options->tls_options != NULL;
-    server->initial_window_size = options->initial_window_size ? options->initial_window_size : SIZE_MAX;
+    server->initial_window_size = options->initial_window_size;
     server->user_data = options->server_user_data;
     server->user_cb_on_incoming_connection = options->on_incoming_connection;
 
@@ -348,7 +348,7 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
 
     impl_options->alloc = options->allocator;
     impl_options->is_using_tls = options->tls_options != NULL;
-    impl_options->initial_window_size = options->initial_window_size ? options->initial_window_size : SIZE_MAX;
+    impl_options->initial_window_size = options->initial_window_size;
     impl_options->user_data = options->user_data;
     impl_options->user_cb_on_setup = options->on_setup;
     impl_options->user_cb_on_shutdown = options->on_shutdown;

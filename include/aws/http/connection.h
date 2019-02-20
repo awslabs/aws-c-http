@@ -37,10 +37,12 @@ typedef void(
 
 /**
  * Options for creating an HTTP client connection.
+ * Initialize with AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT to set default values.
  */
 struct aws_http_client_connection_options {
     /**
-     * Set to sizeof() this struct, used for versioning.
+     * The sizeof() this struct, used for versioning.
+     * Set by AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT.
      */
     size_t self_size;
 
@@ -82,7 +84,7 @@ struct aws_http_client_connection_options {
 
     /**
      * Optional.
-     * A default size is used if nothing is set.
+     * A default size is set by AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT.
      */
     size_t initial_window_size;
 
@@ -107,6 +109,12 @@ struct aws_http_client_connection_options {
      */
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
 };
+
+/**
+ * Initializes aws_http_client_connection_options with default values.
+ */
+#define AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT                                                                        \
+    { .self_size = sizeof(struct aws_http_client_connection_options), .initial_window_size = SIZE_MAX }
 
 typedef void(aws_http_connection_result_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
