@@ -60,10 +60,14 @@ typedef void(aws_http_on_incoming_body_fn)(
 
 typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
 
+/**
+ * Options for creating a stream which sends a request from the client and receives a response from the server.
+ * Initialize with AWS_HTTP_REQUEST_OPTIONS_INIT to set default values.
+ */
 struct aws_http_request_options {
     /**
-     * Set to sizeof() this struct, used for versioning.
-     * Required.
+     * The sizeof() this struct, used for versioning.
+     * Set by AWS_HTTP_REQUEST_OPTIONS_INIT.
      */
     size_t self_size;
 
@@ -132,6 +136,12 @@ struct aws_http_request_options {
     aws_http_on_stream_complete_fn *on_complete;
 };
 
+/**
+ * Initializes aws_http_request_options with default values.
+ */
+#define AWS_HTTP_REQUEST_OPTIONS_INIT                                                                                  \
+    { .self_size = sizeof(struct aws_http_request_options) }
+
 struct aws_http_request_handler_options {
     /* Set to sizeof() this struct, used for versioning. */
     size_t self_size;
@@ -144,6 +154,9 @@ struct aws_http_request_handler_options {
     aws_http_on_incoming_body_fn *on_request_body;
     aws_http_on_stream_complete_fn *on_complete;
 };
+
+#define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
+    { .self_size = sizeof(struct aws_http_request_handler_options) }
 
 struct aws_http_response_options {
     /* Set to sizeof() this struct, used for versioning. */
@@ -173,8 +186,10 @@ AWS_HTTP_API
 struct aws_http_stream *aws_http_stream_new_server_request_handler(
     const struct aws_http_request_handler_options *options);
 
+#if 0 // still figuring out lifecycle
 AWS_HTTP_API
-void aws_http_stream_destroy(struct aws_http_stream *stream);
+void aws_http_stream_release(struct aws_http_stream *stream);
+#endif
 
 AWS_HTTP_API
 struct aws_http_connection *aws_http_stream_get_connection(const struct aws_http_stream *stream);
