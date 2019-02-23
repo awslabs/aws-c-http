@@ -241,8 +241,8 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 static int s_tester_clean_up(struct tester *tester) {
     /* If there's a connection, shut down the server and client side. */
     if (tester->client_connection) {
-        aws_http_connection_release(tester->client_connection, AWS_ERROR_SUCCESS);
-        aws_http_connection_release(tester->server_connection, AWS_ERROR_SUCCESS);
+        aws_http_connection_release(tester->client_connection);
+        aws_http_connection_release(tester->server_connection);
 
         ASSERT_SUCCESS(s_tester_wait(tester, s_tester_connection_shutdown_pred));
 

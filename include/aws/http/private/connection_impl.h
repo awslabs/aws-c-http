@@ -19,7 +19,11 @@
 #include <aws/http/connection.h>
 #include <aws/http/server.h>
 
+#include <aws/common/atomics.h>
 #include <aws/io/channel.h>
+
+struct aws_http_request_options;
+struct aws_http_stream;
 
 struct aws_http_server_connection_impl_options {
     struct aws_allocator *alloc;
@@ -38,9 +42,13 @@ struct aws_http_client_connection_impl_options {
 struct aws_http_connection_vtable {
     struct aws_channel_handler_vtable channel_handler_vtable;
 
-    /* TODO: more functions for aws_http_connection */
+    struct aws_http_stream *(*new_client_request_stream)(const struct aws_http_request_options *options);
 };
 
+/**
+ * Base class for connections.
+ * There are specific implementations for each HTTP version.
+ */
 struct aws_http_connection {
     const struct aws_http_connection_vtable *vtable;
     struct aws_channel_handler channel_handler;
@@ -49,6 +57,10 @@ struct aws_http_connection {
     enum aws_http_version http_version;
     void *user_data;
     size_t initial_window_size;
+
+    /* Connection starts with 1 hold for the user.
+     * aws_http_streams will also acquire holds on their connection for the duration of their lifetime */
+    struct aws_atomic_var refcount;
 
     union {
         struct client_data {

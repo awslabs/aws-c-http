@@ -28,12 +28,19 @@ struct aws_http_connection;
  */
 struct aws_http_stream;
 
+enum aws_http_body_sender_state {
+    AWS_HTTP_BODY_SENDER_IN_PROGRESS,
+    AWS_HTTP_BODY_SENDER_DONE,
+};
+
 /**
  * Called repeatedly whenever body data can be sent.
- * Write up to `size` bytes to the `buffer` and return the number of bytes written.
- * Return 0 to end the body.
+ * User should write body to buffer using aws_byte_buf_write_X functions.
+ * Note that the buffer might already be partially full.
+ * Return AWS_HTTP_BODY_SENDER_DONE when the body has been written to its end.
  */
-typedef size_t(aws_http_body_sender_fn)(struct aws_http_stream *stream, uint8_t *buffer, size_t size, void *user_data);
+typedef enum aws_http_body_sender_state(
+    aws_http_body_sender_fn)(struct aws_http_stream *stream, struct aws_byte_buf *buf, void *user_data);
 
 typedef void(aws_http_on_incoming_headers_fn)(
     struct aws_http_stream *stream,
@@ -186,10 +193,16 @@ AWS_HTTP_API
 struct aws_http_stream *aws_http_stream_new_server_request_handler(
     const struct aws_http_request_handler_options *options);
 
-#if 0 // still figuring out lifecycle
+/**
+ * Users must release the stream when they are done with it, or its memory will never be cleaned up.
+ * This will not cancel the stream, its callbacks will still fire if the stream is still in progress.
+ *
+ * Tips for language bindings:
+ * - Invoke this from the wrapper class's finalizer/destructor.
+ * - Do not let the wrapper class be destroyed until on_complete() has fired.
+ */
 AWS_HTTP_API
 void aws_http_stream_release(struct aws_http_stream *stream);
-#endif
 
 AWS_HTTP_API
 struct aws_http_connection *aws_http_stream_get_connection(const struct aws_http_stream *stream);

@@ -130,11 +130,11 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
 /**
  * Users must release the connection when they are done with it.
  * The connection's memory cannot be reclaimed until this is done.
- * If the connection was not already shutting down, it will be shut down
- * with the provided error_code.
+ * If the connection was not already shutting down, it will be shut down.
+ * A language binding will likely invoke this from the wrapper class's finalizer/destructor.
  */
 AWS_HTTP_API
-void aws_http_connection_release(struct aws_http_connection *connection, int error_code);
+void aws_http_connection_release(struct aws_http_connection *connection);
 
 AWS_HTTP_API
 enum aws_http_version aws_http_connection_get_version(const struct aws_http_connection *connection);

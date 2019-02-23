@@ -127,11 +127,17 @@ error:
     return NULL;
 }
 
-void aws_http_connection_release(struct aws_http_connection *connection, int error_code) {
-    /* TODO: ensure this is only called once */
+void aws_http_connection_release(struct aws_http_connection *connection) {
+    assert(connection);
+    size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
+    if (prev_refcount == 1) {
 
-    aws_channel_release_hold(connection->channel_slot->channel);
-    aws_channel_shutdown(connection->channel_slot->channel, error_code);
+        /* Channel might already be shut down, but make sure */
+        aws_channel_shutdown(connection->channel_slot->channel, AWS_ERROR_SUCCESS);
+
+        /* When the channel's refcount reaches 0, it destroys its slots/handlers, which will destroy the connection */
+        aws_channel_release_hold(connection->channel_slot->channel);
+    }
 }
 
 /* At this point, the server bootstrapper has accepted an incoming connection from a client and set up a channel.
