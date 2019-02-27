@@ -45,3 +45,59 @@ void aws_http_stream_release(struct aws_http_stream *stream) {
         aws_http_connection_release(stream->owning_connection);
     }
 }
+
+struct aws_http_connection *aws_http_stream_get_connection(const struct aws_http_stream *stream) {
+    assert(stream);
+    return stream->owning_connection;
+}
+
+int aws_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status) {
+    assert(stream);
+
+    /* TODO: 0 is actually legal. Also, rename enum "_status" instead of "_code" */
+    if (stream->incoming_response_status == (int)AWS_HTTP_CODE_UNKNOWN) {
+        return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
+    }
+
+    *out_status = stream->incoming_response_status;
+    return AWS_OP_SUCCESS;
+}
+
+int aws_http_stream_get_incoming_request_method(
+    const struct aws_http_stream *stream,
+    enum aws_http_method *out_method) {
+
+    assert(stream);
+
+    if (!stream->incoming_request_method_str.ptr) {
+        return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
+    }
+
+    *out_method = stream->incoming_request_method;
+    return AWS_OP_SUCCESS;
+}
+
+int aws_http_stream_get_incoming_request_method_str(
+    const struct aws_http_stream *stream,
+    struct aws_byte_cursor *out_method) {
+
+    assert(stream);
+
+    if (!stream->incoming_request_method_str.ptr) {
+        return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
+    }
+
+    *out_method = stream->incoming_request_method_str;
+    return AWS_OP_SUCCESS;
+}
+
+int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *stream, struct aws_byte_cursor *out_uri) {
+    assert(stream);
+
+    if (!stream->incoming_request_uri.ptr) {
+        return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
+    }
+
+    *out_uri = stream->incoming_request_uri;
+    return AWS_OP_SUCCESS;
+}

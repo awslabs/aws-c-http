@@ -43,6 +43,11 @@ struct aws_http_stream {
     aws_http_on_stream_complete_fn *user_cb_on_complete;
 
     struct aws_atomic_var refcount;
+
+    int incoming_response_status;
+    enum aws_http_method incoming_request_method;
+    struct aws_byte_cursor incoming_request_method_str;
+    struct aws_byte_cursor incoming_request_uri;
 };
 
 #endif /* AWS_HTTP_REQUEST_RESPONSE_IMPL_H */
