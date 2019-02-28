@@ -282,15 +282,16 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     /* Stream refcount starts at 2. 1 for user and 1 for connection to release it's done with the stream */
     aws_atomic_init_int(&stream->base.refcount, 2);
 
-    struct aws_byte_cursor method_cursor;
+    struct aws_byte_cursor method;
     if (options->method_str.len > 0) {
-        method_cursor = options->method_str;
+        method = options->method_str;
     } else {
         /* TODO: make _to_cursor() versions of these _to_str() functions to avoid runtime strlen() */
-        method_cursor = aws_byte_cursor_from_c_str(aws_http_method_to_str(options->method));
+        method = aws_byte_cursor_from_c_str(aws_http_method_to_str(options->method));
     }
 
-    struct aws_byte_cursor version_cursor = aws_byte_cursor_from_c_str(aws_http_version_to_str(AWS_HTTP_VERSION_1_1));
+    struct aws_byte_cursor version_str = aws_byte_cursor_from_array("HTTP/", 5);
+    struct aws_byte_cursor version_num = aws_byte_cursor_from_c_str(aws_http_version_to_str(AWS_HTTP_VERSION_1_1));
 
     /**
      * Calculate total size needed for outgoing_head_buffer, then write to buffer.
@@ -299,7 +300,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
      * header-line: "{name}: {value}\r\n"
      * head-end: "\r\n"
      */
-    size_t request_line_len = method_cursor.len + 1 + options->uri.len + 1 + version_cursor.len + 2;
+    size_t request_line_len = method.len + 1 + options->uri.len + 1 + version_str.len + version_num.len + 2;
     size_t header_lines_len;
     int err = s_stream_scan_outgoing_headers(stream, options->header_array, options->num_headers, &header_lines_len);
     if (err) {
@@ -316,11 +317,12 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     bool wrote_all = true;
 
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, method_cursor);
+    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, method);
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, ' ');
     wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, options->uri);
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, ' ');
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, version_cursor);
+    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, version_str);
+    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, version_num);
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\r');
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\n');
 
@@ -844,7 +846,8 @@ static int s_handler_process_read_message(
     struct h1_connection *connection = handler->impl;
 
     if (connection->thread_data.is_shutting_down) {
-        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+        aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+        goto error;
     }
 
     if (!connection->thread_data.incoming_stream) {
@@ -876,8 +879,10 @@ static int s_handler_process_read_message(
         }
     }
 
+    aws_mem_release(message->allocator, message);
     return AWS_OP_SUCCESS;
 error:
+    aws_mem_release(message->allocator, message);
     s_shutdown_connection(connection, aws_last_error());
     return AWS_OP_ERR;
 }

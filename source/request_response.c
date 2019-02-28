@@ -39,10 +39,11 @@ void aws_http_stream_release(struct aws_http_stream *stream) {
     assert(stream);
 
     if (aws_atomic_fetch_sub(&stream->refcount, 1) == 1) {
+        struct aws_http_connection *owning_connection = stream->owning_connection;
         stream->vtable->destroy(stream);
 
         /* Connection needed to outlive stream, but it's free to go now */
-        aws_http_connection_release(stream->owning_connection);
+        aws_http_connection_release(owning_connection);
     }
 }
 
