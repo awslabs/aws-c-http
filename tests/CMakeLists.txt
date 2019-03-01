@@ -35,7 +35,11 @@ add_test_case(h1_client_response_get_1liner)
 add_test_case(h1_client_response_get_headers)
 add_test_case(h1_client_response_get_body)
 add_test_case(h1_client_response_get_1_from_multiple_io_messages)
-#add_test_case(h1_client_response_get_multiple_from_1_io_message)
+#add_test_case(h1_client_response_get_multiple_from_1_io_message) TODO: fix
+add_test_case(h1_client_window_reopens_by_default)
+add_test_case(h1_client_window_shrinks_if_user_says_so)
+add_test_case(h1_client_window_manual_update)
+add_test_case(h1_client_window_manual_update_off_thread)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})

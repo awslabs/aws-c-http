@@ -230,7 +230,7 @@ int aws_http_stream_send_response(struct aws_http_stream *stream, const struct a
 /* Manually issue a window update.
  * This should only be called if the body reader is reducing the automatic window update size */
 AWS_HTTP_API
-int aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
+void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 
 AWS_EXTERN_C_END
 

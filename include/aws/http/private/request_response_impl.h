@@ -21,9 +21,8 @@
 #include <aws/common/atomics.h>
 
 struct aws_http_stream_vtable {
-    /* TODO: more functions to come */
-
     void (*destroy)(struct aws_http_stream *stream);
+    void (*update_window)(struct aws_http_stream *stream, size_t increment_size);
 };
 
 /**

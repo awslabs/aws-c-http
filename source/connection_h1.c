@@ -53,6 +53,7 @@ static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
 static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
 static void s_stream_destroy(struct aws_http_stream *stream_base);
+static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 static void s_decoder_on_method(enum aws_http_method method, void *user_data);
 static void s_decoder_on_uri(struct aws_byte_cursor *uri, void *user_data);
 static void s_decoder_on_version(enum aws_http_version version, void *user_data);
@@ -78,6 +79,7 @@ static struct aws_http_connection_vtable s_connection_vtable = {
 
 const static struct aws_http_stream_vtable s_stream_vtable = {
     .destroy = s_stream_destroy,
+    .update_window = s_stream_update_window,
 };
 
 const static struct aws_http_decoder_vtable s_decoder_vtable = {
@@ -379,6 +381,42 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     aws_byte_buf_clean_up(&stream->incoming_storage_buf);
     aws_byte_buf_clean_up(&stream->outgoing_head_buf);
     aws_mem_release(stream->base.alloc, stream);
+}
+
+struct update_window_task_data {
+    struct aws_channel_task task;
+    size_t increment_size;
+    struct h1_connection *connection;
+};
+
+static void s_update_window_task(struct aws_channel_task *channel_task, void *arg, enum aws_task_status status) {
+    (void)arg;
+    struct update_window_task_data *data = AWS_CONTAINER_OF(channel_task, struct update_window_task_data, task);
+
+    if (status == AWS_TASK_STATUS_RUN_READY) {
+        aws_channel_slot_increment_read_window(data->connection->base.channel_slot, data->increment_size);
+    }
+
+    aws_mem_release(data->connection->base.alloc, data);
+}
+
+static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
+    /* TODO: log error? shutdown? if anything here fails */
+
+    /* Just do it if we're on the thread, otherwise schedule a task */
+    if (aws_channel_thread_is_callers_thread(stream->owning_connection->channel_slot->channel)) {
+        aws_channel_slot_increment_read_window(stream->owning_connection->channel_slot, increment_size);
+        return;
+    }
+
+    struct update_window_task_data *data = aws_mem_acquire(stream->alloc, sizeof(struct update_window_task_data));
+    if (!data) {
+        return;
+    }
+    aws_channel_task_init(&data->task, s_update_window_task, NULL);
+    data->increment_size = increment_size;
+    data->connection = AWS_CONTAINER_OF(stream->owning_connection, struct h1_connection, base);
+    aws_channel_schedule_task_now(stream->owning_connection->channel_slot->channel, &data->task);
 }
 
 /**

@@ -102,3 +102,7 @@ int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *strea
     *out_uri = stream->incoming_request_uri;
     return AWS_OP_SUCCESS;
 }
+
+void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
+    stream->vtable->update_window(stream, increment_size);
+}

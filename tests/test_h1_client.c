@@ -452,6 +452,8 @@ struct response_tester {
     size_t on_complete_cb_count;
 
     int on_complete_error_code;
+
+    bool stop_auto_window_update;
 };
 
 void s_response_tester_on_headers(
@@ -508,6 +510,11 @@ void s_response_tester_on_body(
     response->body.len += data->len;
 
     AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(&response->storage, *data));
+
+    /* Stop the window size from auto updating */
+    if (response->stop_auto_window_update) {
+        *out_window_update_size = 0;
+    }
 }
 
 void s_response_tester_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
@@ -786,6 +793,127 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
+}
+
+/* By default, after reading an aws_io_message of N bytes, the connection should issue window update of N bytes */
+H1_CLIENT_TEST_CASE(h1_client_window_reopens_by_default) {
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+
+    struct response_tester response;
+    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* send response */
+    const char *response_str = "HTTP/1.1 200 OK\r\n"
+                               "Content-Length: 9\r\n"
+                               "\r\n"
+                               "Call Momo";
+    s_send_response_str(&tester, response_str);
+
+    /* check result */
+    size_t window_update = testing_channel_last_window_update(&tester.testing_channel);
+    ASSERT_TRUE(window_update == strlen(response_str));
+
+    /* clean up */
+    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* The user's body reading callback can prevent the window from fully re-opening. */
+H1_CLIENT_TEST_CASE(h1_client_window_shrinks_if_user_says_so) {
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+
+    struct response_tester response;
+    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+    response.stop_auto_window_update = true;
+
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* send response */
+    const char *response_str = "HTTP/1.1 200 OK\r\n"
+                               "Content-Length: 9\r\n"
+                               "\r\n"
+                               "Call Momo";
+    s_send_response_str(&tester, response_str);
+
+    /* check result */
+    size_t window_update = testing_channel_last_window_update(&tester.testing_channel);
+    size_t message_sans_body = strlen(response_str) - 9;
+    ASSERT_TRUE(window_update == message_sans_body);
+
+    /* clean up */
+    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Stop window from fully re-opening, then open it manually afterwards*/
+static int s_window_update(struct aws_allocator *allocator, bool on_thread) {
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+
+    struct response_tester response;
+    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+    response.stop_auto_window_update = true;
+
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* send response */
+    const char *response_str = "HTTP/1.1 200 OK\r\n"
+                               "Content-Length: 9\r\n"
+                               "\r\n"
+                               "Call Momo";
+    s_send_response_str(&tester, response_str);
+
+    /* check result */
+    if (!on_thread) {
+        testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+    }
+
+    aws_http_stream_update_window(response.stream, 9);
+
+    if (!on_thread) {
+        testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
+        testing_channel_execute_queued_tasks(&tester.testing_channel);
+    }
+
+    size_t window_update = testing_channel_last_window_update(&tester.testing_channel);
+    ASSERT_TRUE(window_update == 9);
+
+    /* clean up */
+    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_window_manual_update) {
+    return s_window_update(allocator, true);
+}
+
+H1_CLIENT_TEST_CASE(h1_client_window_manual_update_off_thread) {
+    return s_window_update(allocator, false);
 }
 
 /* Tests TODO
