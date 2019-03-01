@@ -24,7 +24,6 @@
 #endif
 
 #define H1_CLIENT_TEST_CASE(NAME)                                                                                      \
-    static int s_test_##NAME(struct aws_allocator *allocator, void *ctx);                                              \
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
@@ -430,6 +429,359 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_multiple_in_1_io_message) {
     /* clean up */
     for (size_t i = 0; i < num_streams; ++i) {
         aws_http_stream_release(streams[i]);
+    }
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+struct response_tester {
+    struct aws_http_stream *stream;
+
+    enum aws_http_code status;
+    struct aws_http_header headers[100];
+    size_t num_headers;
+    struct aws_byte_cursor body;
+
+    /* All cursors in response_tester point into here */
+    struct aws_byte_buf storage;
+
+    size_t on_response_headers_cb_count;
+    size_t on_response_header_block_done_cb_count;
+    size_t on_response_body_cb_count;
+    size_t on_complete_cb_count;
+
+    int on_complete_error_code;
+};
+
+void s_response_tester_on_headers(
+    struct aws_http_stream *stream,
+    const struct aws_http_header *header_array,
+    size_t num_headers,
+    void *user_data) {
+
+    struct response_tester *response = user_data;
+    response->on_response_headers_cb_count++;
+
+    struct aws_byte_buf *storage = &response->storage;
+    const struct aws_http_header *in_header = header_array;
+    struct aws_http_header *my_header = response->headers + response->num_headers;
+    for (size_t i = 0; i < num_headers; ++i) {
+        /* copy-by-value, then update cursors to point into permanent storage */
+        *my_header = *in_header;
+
+        my_header->name_str.ptr = storage->buffer + storage->len;
+        AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(storage, in_header->name_str));
+
+        my_header->value.ptr = storage->buffer + storage->len;
+        AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(storage, in_header->value));
+
+        in_header++;
+        my_header++;
+        response->num_headers++;
+    }
+}
+
+void s_response_tester_on_header_block_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
+    struct response_tester *response = user_data;
+    response->on_response_header_block_done_cb_count++;
+
+    AWS_FATAL_ASSERT(!aws_http_stream_get_incoming_response_status(response->stream, &response->status));
+}
+
+void s_response_tester_on_body(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    size_t *out_window_update_size,
+    void *user_data) {
+
+    struct response_tester *response = user_data;
+    response->on_response_body_cb_count++;
+
+    /* Header block should finish before body */
+    AWS_FATAL_ASSERT(response->on_response_header_block_done_cb_count > 0);
+
+    /* Copy data into storage, and point body cursor at that */
+    if (!response->body.ptr) {
+        response->body.ptr = response->storage.buffer + response->storage.len;
+    }
+    response->body.len += data->len;
+
+    AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(&response->storage, *data));
+}
+
+void s_response_tester_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    struct response_tester *response = user_data;
+    response->on_complete_cb_count++;
+    response->on_complete_error_code = error_code;
+}
+
+/* Create request stream and hook it up so callbacks feed data to the response_tester */
+int s_response_tester_init(
+    struct response_tester *response,
+    struct aws_allocator *alloc,
+    struct aws_http_request_options *opt) {
+
+    AWS_ZERO_STRUCT(*response);
+    ASSERT_SUCCESS(aws_byte_buf_init(&response->storage, alloc, 1024 * 1024 * 1)); /* big enough */
+
+    opt->user_data = response;
+    opt->on_response_headers = s_response_tester_on_headers;
+    opt->on_response_header_block_done = s_response_tester_on_header_block_done;
+    opt->on_response_body = s_response_tester_on_body;
+    opt->on_complete = s_response_tester_on_complete;
+
+    response->stream = aws_http_stream_new_client_request(opt);
+    ASSERT_NOT_NULL(response->stream);
+
+    return AWS_OP_SUCCESS;
+}
+
+int s_response_tester_clean_up(struct response_tester *response) {
+    aws_http_stream_release(response->stream);
+    aws_byte_buf_clean_up(&response->storage);
+    return AWS_OP_SUCCESS;
+}
+
+int s_send_response(struct tester *tester, struct aws_byte_cursor data) {
+    struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
+        tester->testing_channel.channel, AWS_IO_MESSAGE_APPLICATION_DATA, data.len);
+    ASSERT_NOT_NULL(msg);
+
+    ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&msg->message_data, data));
+
+    ASSERT_SUCCESS(testing_channel_push_read_message(&tester->testing_channel, msg));
+
+    return AWS_OP_SUCCESS;
+}
+
+int s_send_response_str(struct tester *tester, const char *str) {
+    return s_send_response(tester, aws_byte_cursor_from_c_str(str));
+}
+
+H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+
+    struct response_tester response;
+    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* send response */
+    s_send_response_str(&tester, "HTTP/1.1 204 No Content\r\n\r\n");
+
+    /* check result */
+    ASSERT_TRUE(response.on_complete_cb_count == 1);
+    ASSERT_TRUE(response.on_complete_error_code == AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(response.status == 204);
+    ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
+    ASSERT_TRUE(response.num_headers == 0);
+    ASSERT_TRUE(response.body.len == 0);
+
+    /* clean up */
+    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+static bool s_streq(struct aws_byte_cursor cur, const char *str) {
+    return strncmp((char *)cur.ptr, str, cur.len) == 0;
+}
+
+static bool s_strieq(struct aws_byte_cursor cur, const char *str) {
+    if (cur.len != strlen(str)) {
+        return false;
+    }
+
+    for (size_t i = 0; i < cur.len; ++i) {
+        char a = *(cur.ptr + i);
+        char b = *(str + i);
+
+        if (a == b) {
+            continue;
+        }
+
+        if ((a >= 'A' && a <= 'Z')) {
+            if (a + ('a' - 'A') != b) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+static int s_check_header(struct response_tester *response, size_t i, const char *name_str, const char *value) {
+
+    ASSERT_TRUE(i < response->num_headers);
+    struct aws_http_header *header = response->headers + i;
+    ASSERT_TRUE(s_strieq(header->name_str, name_str));
+    ASSERT_TRUE(s_streq(header->value, value));
+
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_response_get_headers) {
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+
+    struct response_tester response;
+    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* send response */
+    s_send_response_str(
+        &tester,
+        "HTTP/1.1 308 Permanent Redirect\r\n"
+        "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
+        "Location: /index.html\r\n"
+        "\r\n");
+
+    /* check result */
+    ASSERT_TRUE(response.on_complete_cb_count == 1);
+    ASSERT_TRUE(response.on_complete_error_code == AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(response.status == 308);
+    ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
+    ASSERT_TRUE(response.num_headers == 2);
+    ASSERT_TRUE(response.headers[0].name == AWS_HTTP_HEADER_DATE);
+    ASSERT_SUCCESS(s_check_header(&response, 0, "Date", "Fri, 01 Mar 2019 17:18:55 GMT"));
+    ASSERT_SUCCESS(s_check_header(&response, 1, "Location", "/index.html"));
+    ASSERT_TRUE(response.body.len == 0);
+
+    /* clean up */
+    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_response_get_body) {
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+
+    struct response_tester response;
+    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* send response */
+    s_send_response_str(
+        &tester,
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 9\r\n"
+        "\r\n"
+        "Call Momo");
+
+    /* check result */
+    ASSERT_TRUE(response.on_complete_cb_count == 1);
+    ASSERT_TRUE(response.on_complete_error_code == AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(response.status == 200);
+    ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
+    ASSERT_TRUE(response.num_headers == 1);
+    ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9"));
+    ASSERT_TRUE(s_streq(response.body, "Call Momo"));
+
+    /* clean up */
+    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Check that a response spread across multiple aws_io_messages comes through */
+H1_CLIENT_TEST_CASE(h1_client_response_get_1_from_multiple_io_messages) {
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+
+    struct response_tester response;
+    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* send response with each byte in its own aws_io_message */
+    const char *response_str = "HTTP/1.1 200 OK\r\n"
+                               "Content-Length: 9\r\n"
+                               "\r\n"
+                               "Call Momo";
+    size_t response_str_len = strlen(response_str);
+    for (size_t i = 0; i < response_str_len; ++i) {
+        s_send_response(&tester, aws_byte_cursor_from_array(response_str + i, 1));
+    }
+
+    /* check result */
+    ASSERT_TRUE(response.on_complete_cb_count == 1);
+    ASSERT_TRUE(response.on_complete_error_code == AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(response.status == 200);
+    ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
+    ASSERT_TRUE(response.num_headers == 1);
+    ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9"));
+    ASSERT_TRUE(s_streq(response.body, "Call Momo"));
+
+    /* clean up */
+    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Check that multiple responses in a single aws_io_message all come through */
+H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send requests */
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+
+    struct response_tester responses[3];
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(responses); ++i) {
+        ASSERT_SUCCESS(s_response_tester_init(&responses[i], allocator, &opt));
+
+        testing_channel_execute_queued_tasks(&tester.testing_channel);
+    }
+
+    /* send all responses in a single aws_io_message  */
+    s_send_response_str(
+        &tester,
+        "HTTP/1.1 204 No Content\r\n\r\n"
+        "HTTP/1.1 204 No Content\r\n\r\n"
+        "HTTP/1.1 204 No Content\r\n\r\n");
+
+    /* check results */
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(responses); ++i) {
+        ASSERT_TRUE(responses[i].on_complete_cb_count == 1);
+        ASSERT_TRUE(responses[i].on_complete_error_code == AWS_ERROR_SUCCESS);
+        ASSERT_TRUE(responses[i].status == 204);
+        ASSERT_TRUE(responses[i].on_response_header_block_done_cb_count == 1);
+        ASSERT_TRUE(responses[i].num_headers == 0);
+        ASSERT_TRUE(responses[i].body.len == 0);
+
+        ASSERT_SUCCESS(s_response_tester_clean_up(&responses[i]));
     }
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));

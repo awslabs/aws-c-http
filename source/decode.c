@@ -563,9 +563,7 @@ void aws_http_decoder_reset(struct aws_http_decoder *decoder, struct aws_http_de
 }
 
 struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *params) {
-    if (!params) {
-        return NULL;
-    }
+    assert(params);
 
     struct aws_http_decoder *decoder = aws_mem_acquire(params->alloc, sizeof(struct aws_http_decoder));
     if (!decoder) {

@@ -137,7 +137,7 @@ enum stream_type {
 
 enum stream_outgoing_state {
     STREAM_OUTGOING_STATE_HEAD,
-    STREAM_OUTGOING_STATE_BODY,
+    STREAM_OUTGOING_STATE_BODY, /* TODO: support 100-continue */
     STREAM_OUTGOING_STATE_DONE,
 };
 
@@ -477,7 +477,7 @@ static void s_reset_incoming_stream_ptr(struct h1_connection *connection) {
 
     struct aws_http_decoder_params options = {
         .alloc = connection->base.alloc,
-        .true_for_request_false_for_response = desired->type == STREAM_TYPE_OUTGOING_REQUEST,
+        .true_for_request_false_for_response = desired->type == STREAM_TYPE_INCOMING_REQUEST,
         .user_data = connection,
         .vtable = s_decoder_vtable,
     };
@@ -635,6 +635,8 @@ static void s_decoder_on_uri(struct aws_byte_cursor *uri, void *user_data) {
     assert(!incoming_stream->base.incoming_request_uri.ptr);
 
     /* TODO: combine decoder on_uri & on_method callbacks so we can allocate buffer all at once */
+
+    /* TODO: Limit on lengths of incoming data https://httpwg.org/specs/rfc7230.html#attack.protocol.element.length */
 
     int err = aws_byte_buf_init(&incoming_stream->incoming_storage_buf, incoming_stream->base.alloc, uri->len);
     if (err) {
