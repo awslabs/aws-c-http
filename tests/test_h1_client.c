@@ -53,10 +53,13 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
     ASSERT_SUCCESS(aws_channel_slot_insert_end(tester->testing_channel.channel, slot));
     ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &tester->connection->channel_handler));
 
+    aws_channel_acquire_hold(tester->testing_channel.channel);
+
     return AWS_OP_SUCCESS;
 }
 
 static int s_tester_clean_up(struct tester *tester) {
+    aws_http_connection_release(tester->connection);
     ASSERT_SUCCESS(testing_channel_clean_up(&tester->testing_channel));
     return AWS_OP_SUCCESS;
 }
@@ -914,6 +917,106 @@ H1_CLIENT_TEST_CASE(h1_client_window_manual_update) {
 
 H1_CLIENT_TEST_CASE(h1_client_window_manual_update_off_thread) {
     return s_window_update(allocator, false);
+}
+
+void s_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)stream;
+    int *completion_error_code = user_data;
+    *completion_error_code = error_code;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_request_cancelled_by_channel_shutdown) {
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    int completion_error_code = 0;
+
+    /* send request */
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+    opt.user_data = &completion_error_code;
+    opt.on_complete = s_on_complete;
+    struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
+    ASSERT_NOT_NULL(stream);
+
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* shutdown channel before request completes */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* even though the channel shut down with error_code 0,
+     * the stream should not get code 0 because it did not complete successfully */
+    ASSERT_TRUE(completion_error_code != AWS_ERROR_SUCCESS);
+
+    /* clean up */
+    aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_multiple_requests_cancelled_by_channel_shutdown) {
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct aws_http_stream *streams[3];
+    int completion_error_codes[3];
+    memset(completion_error_codes, 0, sizeof(completion_error_codes));
+
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+    opt.on_complete = s_on_complete;
+
+    for (int i = 0; i < 2; ++i) {
+        opt.user_data = &completion_error_codes[i];
+        streams[i] = aws_http_stream_new_client_request(&opt);
+        ASSERT_NOT_NULL(streams[i]);
+    }
+
+    /* 2 streams are now in-progress */
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* Make 1 more stream that's still locked away in the pending queue */
+    opt.user_data = &completion_error_codes[2];
+    streams[2] = aws_http_stream_new_client_request(&opt);
+    ASSERT_NOT_NULL(streams[2]);
+
+    /* shutdown channel */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* check results */
+    for (int i = 0; i < 3; ++i) {
+        ASSERT_TRUE(completion_error_codes[i] != AWS_ERROR_SUCCESS);
+        aws_http_stream_release(streams[i]);
+    }
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_new_request_fails_if_channel_shut_down) {
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+
+    /* send request */
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
+    ASSERT_NULL(stream);
+    ASSERT_INT_EQUALS(aws_last_error(), AWS_ERROR_HTTP_CONNECTION_CLOSED);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
 }
 
 /* Tests TODO
