@@ -422,7 +422,6 @@ static void s_stream_update_window(struct aws_http_stream *stream, size_t increm
 
     struct update_window_task_data *data = aws_mem_acquire(stream->alloc, sizeof(struct update_window_task_data));
     if (!data) {
-        /* TODO: log warning */
         return;
     }
     aws_channel_task_init(&data->task, s_update_window_task, NULL);
