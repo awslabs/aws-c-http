@@ -118,6 +118,8 @@ struct h1_connection {
 
         bool is_shutting_down;
         int shutdown_error_code;
+
+        size_t upstream_message_overhead;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
@@ -157,7 +159,7 @@ struct h1_stream {
 
     bool is_incoming_message_done;
     bool is_incoming_head_done;
-    bool has_incoming_body;
+
     /* Buffer for incoming data that needs to stick around. */
     struct aws_byte_buf incoming_storage_buf;
 };
@@ -385,37 +387,43 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
 
 struct update_window_task_data {
     struct aws_channel_task task;
+    struct aws_http_connection *connection;
     size_t increment_size;
-    struct h1_connection *connection;
 };
+
+static void s_update_window_action(struct aws_http_connection *connection, size_t increment_size) {
+    int err = aws_channel_slot_increment_read_window(connection->channel_slot, increment_size);
+    if (err) {
+        /* TODO: log warning */
+    }
+}
 
 static void s_update_window_task(struct aws_channel_task *channel_task, void *arg, enum aws_task_status status) {
     (void)arg;
     struct update_window_task_data *data = AWS_CONTAINER_OF(channel_task, struct update_window_task_data, task);
 
     if (status == AWS_TASK_STATUS_RUN_READY) {
-        aws_channel_slot_increment_read_window(data->connection->base.channel_slot, data->increment_size);
+        s_update_window_action(data->connection, data->increment_size);
     }
 
-    aws_mem_release(data->connection->base.alloc, data);
+    aws_mem_release(data->connection->alloc, data);
 }
 
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
-    /* TODO: log error? shutdown? if anything here fails */
-
     /* Just do it if we're on the thread, otherwise schedule a task */
     if (aws_channel_thread_is_callers_thread(stream->owning_connection->channel_slot->channel)) {
-        aws_channel_slot_increment_read_window(stream->owning_connection->channel_slot, increment_size);
+        s_update_window_action(stream->owning_connection, increment_size);
         return;
     }
 
     struct update_window_task_data *data = aws_mem_acquire(stream->alloc, sizeof(struct update_window_task_data));
     if (!data) {
+        /* TODO: log warning */
         return;
     }
     aws_channel_task_init(&data->task, s_update_window_task, NULL);
+    data->connection = stream->owning_connection;
     data->increment_size = increment_size;
-    data->connection = AWS_CONTAINER_OF(stream->owning_connection, struct h1_connection, base);
     aws_channel_schedule_task_now(stream->owning_connection->channel_slot->channel, &data->task);
 }
 
@@ -602,6 +610,7 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
 
     struct h1_connection *connection = arg;
     struct aws_channel *channel = connection->base.channel_slot->channel;
+    struct aws_io_message *msg = NULL;
     int err;
 
     /* If connection is shutting down, stop sending data */
@@ -609,9 +618,20 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         return;
     }
 
-    // TODO: aws_channel_slot_upstream_message_overhead() ???
-    struct aws_io_message *msg =
-        aws_channel_acquire_message_from_pool(channel, AWS_IO_MESSAGE_APPLICATION_DATA, MESSAGE_SIZE_HINT);
+    /* Query the upstream message overhead if we haven't done so yet */
+    if (connection->thread_data.upstream_message_overhead == SIZE_MAX) {
+        connection->thread_data.upstream_message_overhead =
+            aws_channel_slot_upstream_message_overhead(connection->base.channel_slot);
+
+        if (connection->thread_data.upstream_message_overhead >= MESSAGE_SIZE_HINT) {
+            /* TODO: log error */
+            aws_raise_error(AWS_ERROR_HTTP_UNKNOWN); /* theoretical edge-case not worth an error code */
+            goto error;
+        }
+    }
+
+    size_t message_size_hint = MESSAGE_SIZE_HINT - connection->thread_data.upstream_message_overhead;
+    msg = aws_channel_acquire_message_from_pool(channel, AWS_IO_MESSAGE_APPLICATION_DATA, message_size_hint);
     if (!msg) {
         goto error;
     }
@@ -711,11 +731,6 @@ static bool s_decoder_on_header(const struct aws_http_decoded_header *header, vo
     struct h1_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
 
-    /* TODO: actually read transfer encoding. or have the decode pass us important data like that via flags */
-    if (header->name == AWS_HTTP_HEADER_CONTENT_LENGTH || header->name == AWS_HTTP_HEADER_TRANSFER_ENCODING) {
-        incoming_stream->has_incoming_body = true;
-    }
-
     /* TODO: worth buffering up headers and delivering all at once? In clumps? */
 
     /* TODO? how to support trailing headers? distinct cb? invoke same cb again? */
@@ -737,13 +752,26 @@ static bool s_decoder_on_header(const struct aws_http_decoded_header *header, vo
 }
 
 static void s_mark_head_done(struct h1_stream *incoming_stream) {
-    if (!incoming_stream->is_incoming_head_done) {
-        incoming_stream->is_incoming_head_done = true;
+    /* Bail out if we've already done this */
+    if (incoming_stream->is_incoming_head_done) {
+        return;
+    }
 
-        if (incoming_stream->base.user_cb_on_incoming_header_block_done) {
-            incoming_stream->base.user_cb_on_incoming_header_block_done(
-                &incoming_stream->base, incoming_stream->has_incoming_body, incoming_stream->base.user_data);
-        }
+    incoming_stream->is_incoming_head_done = true;
+
+    /* Determine if message will have a body */
+    struct h1_connection *connection =
+        AWS_CONTAINER_OF(incoming_stream->base.owning_connection, struct h1_connection, base);
+
+    bool has_incoming_body = false;
+    int transfer_encoding = aws_http_decoder_get_encoding_flags(connection->thread_data.incoming_stream_decoder);
+    has_incoming_body |= (transfer_encoding & AWS_HTTP_TRANSFER_ENCODING_CHUNKED);
+    has_incoming_body |= aws_http_decoder_get_content_length(connection->thread_data.incoming_stream_decoder);
+
+    /* Invoke user cb */
+    if (incoming_stream->base.user_cb_on_incoming_header_block_done) {
+        incoming_stream->base.user_cb_on_incoming_header_block_done(
+            &incoming_stream->base, has_incoming_body, incoming_stream->base.user_data);
     }
 }
 
@@ -812,6 +840,9 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
 
     aws_channel_task_init(&connection->outgoing_stream_task, s_outgoing_stream_task, connection);
     aws_linked_list_init(&connection->thread_data.stream_list);
+
+    /* Set invalid. Can't determine overhead until handler is installed in a channel */
+    connection->thread_data.upstream_message_overhead = SIZE_MAX;
 
     int err = aws_mutex_init(&connection->synced_data.lock);
     if (err) {
@@ -910,8 +941,6 @@ static int s_handler_process_read_message(
         goto error;
     }
 
-    /* TODO: what does decoder do if message contains multiple responses? */
-
     if (connection->thread_data.incoming_message_window_update > 0) {
         err = aws_channel_slot_increment_read_window(slot, connection->thread_data.incoming_message_window_update);
         if (err) {
@@ -960,8 +989,6 @@ static int s_handler_shutdown(
 
     (void)free_scarce_resources_immediately;
     struct h1_connection *connection = handler->impl;
-
-    /* TODO: should a server attempt to finish sending the current response? */
 
     /* Shut everything down the first time we get this callback (DIR_READ). */
     if (dir == AWS_CHANNEL_DIR_READ) {

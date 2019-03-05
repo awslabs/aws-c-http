@@ -522,6 +522,7 @@ void s_response_tester_on_body(
 
 void s_response_tester_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     struct response_tester *response = user_data;
+    AWS_FATAL_ASSERT(response->on_complete_cb_count == 0);
     response->on_complete_cb_count++;
     response->on_complete_error_code = error_code;
 }
@@ -585,7 +586,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
     testing_channel_execute_queued_tasks(&tester.testing_channel);
 
     /* send response */
-    s_send_response_str(&tester, "HTTP/1.1 204 No Content\r\n\r\n");
+    ASSERT_SUCCESS(s_send_response_str(&tester, "HTTP/1.1 204 No Content\r\n\r\n"));
 
     /* check result */
     ASSERT_TRUE(response.on_complete_cb_count == 1);
@@ -614,14 +615,15 @@ static bool s_strieq(struct aws_byte_cursor cur, const char *str) {
         char a = *(cur.ptr + i);
         char b = *(str + i);
 
-        if (a == b) {
-            continue;
+        if (a >= 'A' && a <= 'Z') {
+            a += ('a' - 'A');
+        }
+        if (b >= 'A' && b <= 'Z') {
+            b += ('a' - 'A');
         }
 
-        if ((a >= 'A' && a <= 'Z')) {
-            if (a + ('a' - 'A') != b) {
-                return false;
-            }
+        if (a != b) {
+            return false;
         }
     }
 
@@ -654,12 +656,12 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_headers) {
     testing_channel_execute_queued_tasks(&tester.testing_channel);
 
     /* send response */
-    s_send_response_str(
+    ASSERT_SUCCESS(s_send_response_str(
         &tester,
         "HTTP/1.1 308 Permanent Redirect\r\n"
         "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
         "Location: /index.html\r\n"
-        "\r\n");
+        "\r\n"));
 
     /* check result */
     ASSERT_TRUE(response.on_complete_cb_count == 1);
@@ -694,12 +696,12 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_body) {
     testing_channel_execute_queued_tasks(&tester.testing_channel);
 
     /* send response */
-    s_send_response_str(
+    ASSERT_SUCCESS(s_send_response_str(
         &tester,
         "HTTP/1.1 200 OK\r\n"
         "Content-Length: 9\r\n"
         "\r\n"
-        "Call Momo");
+        "Call Momo"));
 
     /* check result */
     ASSERT_TRUE(response.on_complete_cb_count == 1);
@@ -776,11 +778,11 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
     }
 
     /* send all responses in a single aws_io_message  */
-    s_send_response_str(
+    ASSERT_SUCCESS(s_send_response_str(
         &tester,
         "HTTP/1.1 204 No Content\r\n\r\n"
         "HTTP/1.1 204 No Content\r\n\r\n"
-        "HTTP/1.1 204 No Content\r\n\r\n");
+        "HTTP/1.1 204 No Content\r\n\r\n"));
 
     /* check results */
     for (size_t i = 0; i < AWS_ARRAY_SIZE(responses); ++i) {
@@ -819,7 +821,7 @@ H1_CLIENT_TEST_CASE(h1_client_window_reopens_by_default) {
                                "Content-Length: 9\r\n"
                                "\r\n"
                                "Call Momo";
-    s_send_response_str(&tester, response_str);
+    ASSERT_SUCCESS(s_send_response_str(&tester, response_str));
 
     /* check result */
     size_t window_update = testing_channel_last_window_update(&tester.testing_channel);
@@ -853,7 +855,7 @@ H1_CLIENT_TEST_CASE(h1_client_window_shrinks_if_user_says_so) {
                                "Content-Length: 9\r\n"
                                "\r\n"
                                "Call Momo";
-    s_send_response_str(&tester, response_str);
+    ASSERT_SUCCESS(s_send_response_str(&tester, response_str));
 
     /* check result */
     size_t window_update = testing_channel_last_window_update(&tester.testing_channel);
@@ -888,7 +890,7 @@ static int s_window_update(struct aws_allocator *allocator, bool on_thread) {
                                "Content-Length: 9\r\n"
                                "\r\n"
                                "Call Momo";
-    s_send_response_str(&tester, response_str);
+    ASSERT_SUCCESS(s_send_response_str(&tester, response_str));
 
     /* check result */
     if (!on_thread) {
@@ -1020,16 +1022,9 @@ H1_CLIENT_TEST_CASE(h1_client_new_request_fails_if_channel_shut_down) {
 }
 
 /* Tests TODO
--   On/Off thread behavior
-    -   new items in pending_request_list while still processing those in requst_list?
 -   Responses
     -   Responses finishing before request done sending
-    -   Multiple responses in 1 io_msg
-    -   Window update stuff
     -   bad data
         -   data comes in but no incoming_stream
         -   invalid data freaks out the decoder
--   Completion callbacks
--   Shutdown scenarios
-    -   data coming in after shutdown is ignored and cleaned
 */

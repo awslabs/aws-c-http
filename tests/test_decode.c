@@ -346,8 +346,7 @@ static int s_http_test_get_transfer_encoding_flags(struct aws_allocator *allocat
     /* Instead, the user should know their buffer has been processed without returning any body data, and
      * report the error in user-space. */
     ASSERT_SUCCESS(aws_http_decode(decoder, msg, len, NULL));
-    int flags;
-    ASSERT_SUCCESS(aws_http_decoder_get_encoding_flags(decoder, &flags));
+    int flags = aws_http_decoder_get_encoding_flags(decoder);
     ASSERT_INT_EQUALS(
         (AWS_HTTP_TRANSFER_ENCODING_CHUNKED | AWS_HTTP_TRANSFER_ENCODING_GZIP | AWS_HTTP_TRANSFER_ENCODING_DEFLATE |
          AWS_HTTP_TRANSFER_ENCODING_DEPRECATED_COMPRESS),

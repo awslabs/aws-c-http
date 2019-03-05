@@ -116,7 +116,9 @@ AWS_HTTP_API void aws_http_decoder_set_vtable(
 #define AWS_HTTP_TRANSFER_ENCODING_GZIP (1 << 1)
 #define AWS_HTTP_TRANSFER_ENCODING_DEFLATE (1 << 2)
 #define AWS_HTTP_TRANSFER_ENCODING_DEPRECATED_COMPRESS (1 << 3)
-AWS_HTTP_API int aws_http_decoder_get_encoding_flags(struct aws_http_decoder *decoder, int *flags);
+AWS_HTTP_API int aws_http_decoder_get_encoding_flags(const struct aws_http_decoder *decoder);
+
+AWS_HTTP_API size_t aws_http_decoder_get_content_length(const struct aws_http_decoder *decoder);
 
 AWS_EXTERN_C_END
 

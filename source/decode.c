@@ -619,7 +619,10 @@ void aws_http_decoder_set_vtable(struct aws_http_decoder *decoder, const struct 
     decoder->vtable = *vtable;
 }
 
-int aws_http_decoder_get_encoding_flags(struct aws_http_decoder *decoder, int *flags) {
-    *flags = decoder->transfer_encoding;
-    return AWS_OP_SUCCESS;
+int aws_http_decoder_get_encoding_flags(const struct aws_http_decoder *decoder) {
+    return decoder->transfer_encoding;
+}
+
+size_t aws_http_decoder_get_content_length(const struct aws_http_decoder *decoder) {
+    return decoder->content_length;
 }
