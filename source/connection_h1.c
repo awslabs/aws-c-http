@@ -22,6 +22,10 @@
 
 #include <stdio.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#endif
+
 enum {
     MESSAGE_SIZE_HINT = 16 * 1024,
 };
