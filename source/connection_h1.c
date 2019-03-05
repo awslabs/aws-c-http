@@ -77,12 +77,12 @@ static struct aws_http_connection_vtable s_connection_vtable = {
     .new_client_request_stream = s_new_client_request_stream,
 };
 
-const static struct aws_http_stream_vtable s_stream_vtable = {
+static const struct aws_http_stream_vtable s_stream_vtable = {
     .destroy = s_stream_destroy,
     .update_window = s_stream_update_window,
 };
 
-const static struct aws_http_decoder_vtable s_decoder_vtable = {
+static const struct aws_http_decoder_vtable s_decoder_vtable = {
     .on_method = s_decoder_on_method,
     .on_uri = s_decoder_on_uri,
     .on_version = s_decoder_on_version,

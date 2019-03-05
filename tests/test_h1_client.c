@@ -616,10 +616,10 @@ static bool s_strieq(struct aws_byte_cursor cur, const char *str) {
         char b = *(str + i);
 
         if (a >= 'A' && a <= 'Z') {
-            a += ('a' - 'A');
+            a = (char)(a + ('a' - 'A'));
         }
         if (b >= 'A' && b <= 'Z') {
-            b += ('a' - 'A');
+            b = (char)(b + ('a' - 'A'));
         }
 
         if (a != b) {
