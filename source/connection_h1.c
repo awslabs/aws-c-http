@@ -123,7 +123,8 @@ struct h1_connection {
         bool is_shutting_down;
         int shutdown_error_code;
 
-        size_t upstream_message_overhead;
+        /* Ideal size for outgoing messages. Cannot be calculated until channel is fully set up */
+        size_t outgoing_message_size_hint;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
@@ -621,20 +622,20 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         return;
     }
 
-    /* Query the upstream message overhead if we haven't done so yet */
-    if (connection->thread_data.upstream_message_overhead == SIZE_MAX) {
-        connection->thread_data.upstream_message_overhead =
-            aws_channel_slot_upstream_message_overhead(connection->base.channel_slot);
-
-        if (connection->thread_data.upstream_message_overhead >= MESSAGE_SIZE_HINT) {
+    /* If outgoing_message_size_hint isn't set yet, calculate it */
+    if (!connection->thread_data.outgoing_message_size_hint) {
+        size_t overhead = aws_channel_slot_upstream_message_overhead(connection->base.channel_slot);
+        if (overhead >= MESSAGE_SIZE_HINT) {
             /* TODO: log error */
             aws_raise_error(AWS_ERROR_HTTP_UNKNOWN); /* theoretical edge-case not worth an error code */
             goto error;
         }
+
+        connection->thread_data.outgoing_message_size_hint = MESSAGE_SIZE_HINT - overhead;
     }
 
-    size_t message_size_hint = MESSAGE_SIZE_HINT - connection->thread_data.upstream_message_overhead;
-    msg = aws_channel_acquire_message_from_pool(channel, AWS_IO_MESSAGE_APPLICATION_DATA, message_size_hint);
+    msg = aws_channel_acquire_message_from_pool(
+        channel, AWS_IO_MESSAGE_APPLICATION_DATA, connection->thread_data.outgoing_message_size_hint);
     if (!msg) {
         goto error;
     }
@@ -843,9 +844,6 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
 
     aws_channel_task_init(&connection->outgoing_stream_task, s_outgoing_stream_task, connection);
     aws_linked_list_init(&connection->thread_data.stream_list);
-
-    /* Set invalid. Can't determine overhead until handler is installed in a channel */
-    connection->thread_data.upstream_message_overhead = SIZE_MAX;
 
     int err = aws_mutex_init(&connection->synced_data.lock);
     if (err) {

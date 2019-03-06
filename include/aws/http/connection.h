@@ -114,7 +114,7 @@ struct aws_http_client_connection_options {
  * Initializes aws_http_client_connection_options with default values.
  */
 #define AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT                                                                        \
-    { .self_size = sizeof(struct aws_http_client_connection_options), .initial_window_size = SIZE_MAX }
+    { .self_size = sizeof(struct aws_http_client_connection_options), .initial_window_size = SIZE_MAX, }
 
 typedef void(aws_http_connection_result_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 

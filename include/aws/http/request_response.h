@@ -147,7 +147,7 @@ struct aws_http_request_options {
  * Initializes aws_http_request_options with default values.
  */
 #define AWS_HTTP_REQUEST_OPTIONS_INIT                                                                                  \
-    { .self_size = sizeof(struct aws_http_request_options) }
+    { .self_size = sizeof(struct aws_http_request_options), }
 
 struct aws_http_request_handler_options {
     /* Set to sizeof() this struct, used for versioning. */
@@ -163,7 +163,7 @@ struct aws_http_request_handler_options {
 };
 
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
-    { .self_size = sizeof(struct aws_http_request_handler_options) }
+    { .self_size = sizeof(struct aws_http_request_handler_options), }
 
 struct aws_http_response_options {
     /* Set to sizeof() this struct, used for versioning. */
