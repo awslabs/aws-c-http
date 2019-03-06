@@ -54,10 +54,11 @@ typedef void(aws_http_on_incoming_header_block_done_fn)(struct aws_http_stream *
  * Called repeatedly as body data is received.
  * The data must be copied immediately if you wish to preserve it.
  *
- * `out_window_update_size` is the amount by which the window is updated after reading data.
- * By default, it is the same size as the data which has just come in.
- * To prevent the window from updating, set this value to 0.
- * The window can be manually updated later via aws_http_stream_update_window()
+ * `out_window_update_size` is how much to increment the window once this data is processed.
+ * By default, it is the size of the data which has just come in.
+ * Leaving this value untouched will increment the window back to its original size.
+ * Setting this value to 0 will prevent the update and let the window shrink.
+ * The window can be manually updated via aws_http_stream_update_window()
  */
 typedef void(aws_http_on_incoming_body_fn)(
     struct aws_http_stream *stream,
@@ -227,8 +228,11 @@ int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *strea
 AWS_HTTP_API
 int aws_http_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options);
 
-/* Manually issue a window update.
- * This should only be called if the body reader is reducing the automatic window update size */
+/**
+ * Manually issue a window update.
+ * Note that the stream's default behavior is to issue updates which keep the window at its original size.
+ * See aws_http_on_incoming_body_fn() for details on letting the window shrink.
+ **/
 AWS_HTTP_API
 void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 

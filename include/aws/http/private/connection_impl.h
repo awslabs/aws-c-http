@@ -35,8 +35,8 @@ struct aws_http_client_connection_impl_options {
     bool is_using_tls;
     size_t initial_window_size;
     void *user_data;
-    aws_http_on_client_connection_setup_fn *user_cb_on_setup;
-    aws_http_on_client_connection_shutdown_fn *user_cb_on_shutdown;
+    aws_http_on_client_connection_setup_fn *on_setup;
+    aws_http_on_client_connection_shutdown_fn *on_shutdown;
 };
 
 struct aws_http_connection_vtable {
@@ -64,12 +64,12 @@ struct aws_http_connection {
 
     union {
         struct client_data {
-            aws_http_on_client_connection_shutdown_fn *user_cb_on_shutdown;
+            aws_http_on_client_connection_shutdown_fn *on_shutdown;
         } client;
 
         struct server_data {
-            aws_http_on_incoming_request_fn *user_cb_on_incoming_request;
-            aws_http_on_server_connection_shutdown_fn *user_cb_on_shutdown;
+            aws_http_on_incoming_request_fn *on_incoming_request;
+            aws_http_on_server_connection_shutdown_fn *on_shutdown;
         } server;
     } client_or_server_data;
 

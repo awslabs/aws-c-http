@@ -29,7 +29,7 @@ struct aws_http_server {
     bool is_using_tls;
     size_t initial_window_size;
     void *user_data;
-    aws_http_server_on_incoming_connection_fn *user_cb_on_incoming_connection;
+    aws_http_server_on_incoming_connection_fn *on_incoming_connection;
 
     struct aws_socket *socket;
 };
@@ -169,11 +169,11 @@ static void s_server_bootstrap_on_accept_channel_setup(
     }
 
     /* Tell user of successful connection. */
-    server->user_cb_on_incoming_connection(server, connection, error_code, server->user_data);
+    server->on_incoming_connection(server, connection, error_code, server->user_data);
     user_cb_invoked = true;
 
     /* If user failed to configure the server during callback, shut down the channel. */
-    if (!connection->server_data->user_cb_on_incoming_request) {
+    if (!connection->server_data->on_incoming_request) {
         aws_raise_error(AWS_ERROR_HTTP_REACTION_REQUIRED);
         goto error;
     }
@@ -185,7 +185,7 @@ error:
     }
 
     if (!user_cb_invoked) {
-        server->user_cb_on_incoming_connection(server, NULL, error_code, server->user_data);
+        server->on_incoming_connection(server, NULL, error_code, server->user_data);
     }
 
     if (channel) {
@@ -229,7 +229,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     server->is_using_tls = options->tls_options != NULL;
     server->initial_window_size = options->initial_window_size;
     server->user_data = options->server_user_data;
-    server->user_cb_on_incoming_connection = options->on_incoming_connection;
+    server->on_incoming_connection = options->on_incoming_connection;
 
     if (options->tls_options) {
         server->is_using_tls = true;
@@ -301,7 +301,7 @@ static void s_client_bootstrap_on_channel_setup(
     }
 
     /* Tell user of successful connection. */
-    options->user_cb_on_setup(connection, AWS_ERROR_SUCCESS, options->user_data);
+    options->on_setup(connection, AWS_ERROR_SUCCESS, options->user_data);
 
     aws_mem_release(options->alloc, options);
     return;
@@ -316,7 +316,7 @@ error:
     }
 
     /* Tell user of failed connection. */
-    options->user_cb_on_setup(NULL, error_code, options->user_data);
+    options->on_setup(NULL, error_code, options->user_data);
 
     aws_mem_release(options->alloc, options);
 }
@@ -356,8 +356,8 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
     impl_options->is_using_tls = options->tls_options != NULL;
     impl_options->initial_window_size = options->initial_window_size;
     impl_options->user_data = options->user_data;
-    impl_options->user_cb_on_setup = options->on_setup;
-    impl_options->user_cb_on_shutdown = options->on_shutdown;
+    impl_options->on_setup = options->on_setup;
+    impl_options->on_shutdown = options->on_shutdown;
 
     if (options->tls_options) {
         err = aws_client_bootstrap_new_tls_socket_channel(
@@ -408,13 +408,13 @@ int aws_http_connection_configure_server(
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    if (!connection->server_data || connection->server_data->user_cb_on_incoming_request) {
+    if (!connection->server_data || connection->server_data->on_incoming_request) {
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
     connection->user_data = options->connection_user_data;
-    connection->server_data->user_cb_on_incoming_request = options->on_incoming_request;
-    connection->server_data->user_cb_on_shutdown = options->on_shutdown;
+    connection->server_data->on_incoming_request = options->on_incoming_request;
+    connection->server_data->on_shutdown = options->on_shutdown;
 
     return AWS_OP_SUCCESS;
 }
