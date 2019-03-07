@@ -238,7 +238,7 @@ static int s_stream_scan_outgoing_headers(
                 /* TODO: actually process the values in these headers*/
                 stream->has_outgoing_body = true;
 
-                if (!stream->base.outgoing_body_sender) {
+                if (!stream->base.stream_outgoing_body) {
                     return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
                 }
                 break;
@@ -294,7 +294,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     stream->base.alloc = options->client_connection->alloc;
     stream->base.owning_connection = options->client_connection;
     stream->base.user_data = options->user_data;
-    stream->base.outgoing_body_sender = options->body_sender;
+    stream->base.stream_outgoing_body = options->stream_outgoing_body;
     stream->base.on_incoming_headers = options->on_response_headers;
     stream->base.on_incoming_header_block_done = options->on_response_header_block_done;
     stream->base.on_incoming_body = options->on_response_body;
@@ -507,10 +507,10 @@ static void s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io
 
                 size_t prev_len = dst->len;
 
-                enum aws_http_body_sender_state state =
-                    stream->base.outgoing_body_sender(&stream->base, dst, stream->base.user_data);
+                enum aws_http_outgoing_body_state state =
+                    stream->base.stream_outgoing_body(&stream->base, dst, stream->base.user_data);
 
-                if (state == AWS_HTTP_BODY_SENDER_DONE) {
+                if (state == AWS_HTTP_OUTGOING_BODY_DONE) {
                     stream->outgoing_state++;
                     break;
                 }

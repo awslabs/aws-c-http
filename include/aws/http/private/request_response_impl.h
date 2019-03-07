@@ -35,7 +35,7 @@ struct aws_http_stream {
     struct aws_http_connection *owning_connection;
 
     void *user_data;
-    aws_http_body_sender_fn *outgoing_body_sender;
+    aws_http_stream_outgoing_body_fn *stream_outgoing_body;
     aws_http_on_incoming_headers_fn *on_incoming_headers;
     aws_http_on_incoming_header_block_done_fn *on_incoming_header_block_done;
     aws_http_on_incoming_body_fn *on_incoming_body;

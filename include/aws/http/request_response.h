@@ -28,19 +28,19 @@ struct aws_http_connection;
  */
 struct aws_http_stream;
 
-enum aws_http_body_sender_state {
-    AWS_HTTP_BODY_SENDER_IN_PROGRESS,
-    AWS_HTTP_BODY_SENDER_DONE,
+enum aws_http_outgoing_body_state {
+    AWS_HTTP_OUTGOING_BODY_IN_PROGRESS,
+    AWS_HTTP_OUTGOING_BODY_DONE,
 };
 
 /**
  * Called repeatedly whenever body data can be sent.
  * User should write body to buffer using aws_byte_buf_write_X functions.
  * Note that the buffer might already be partially full.
- * Return AWS_HTTP_BODY_SENDER_DONE when the body has been written to its end.
+ * Return AWS_HTTP_OUTGOING_BODY_DONE when the body has been written to its end.
  */
-typedef enum aws_http_body_sender_state(
-    aws_http_body_sender_fn)(struct aws_http_stream *stream, struct aws_byte_buf *buf, void *user_data);
+typedef enum aws_http_outgoing_body_state(
+    aws_http_stream_outgoing_body_fn)(struct aws_http_stream *stream, struct aws_byte_buf *buf, void *user_data);
 
 typedef void(aws_http_on_incoming_headers_fn)(
     struct aws_http_stream *stream,
@@ -116,7 +116,7 @@ struct aws_http_request_options {
      * Callback responsible for sending the request body.
      * Required if request has a body.
      */
-    aws_http_body_sender_fn *body_sender;
+    aws_http_stream_outgoing_body_fn *stream_outgoing_body;
 
     /**
      * Invoked repeatedly times as headers are received.
@@ -173,7 +173,7 @@ struct aws_http_response_options {
     int status;
     struct aws_http_header *header_array;
     size_t num_headers;
-    aws_http_body_sender_fn *body_sender;
+    aws_http_stream_outgoing_body_fn *stream_outgoing_body;
 };
 
 AWS_EXTERN_C_BEGIN

@@ -164,7 +164,7 @@ struct simple_body_sender {
     size_t progress;
 };
 
-enum aws_http_body_sender_state s_simple_body_sender(
+enum aws_http_outgoing_body_state s_simple_send_body(
     struct aws_http_stream *stream,
     struct aws_byte_buf *buf,
     void *user_data) {
@@ -177,7 +177,7 @@ enum aws_http_body_sender_state s_simple_body_sender(
     aws_byte_buf_write(buf, data->src.ptr + data->progress, writing);
     data->progress += writing;
 
-    return (writing == remaining) ? AWS_HTTP_BODY_SENDER_DONE : AWS_HTTP_BODY_SENDER_IN_PROGRESS;
+    return (writing == remaining) ? AWS_HTTP_OUTGOING_BODY_DONE : AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
 }
 
 H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
@@ -204,7 +204,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
     opt.header_array = headers;
     opt.num_headers = AWS_ARRAY_SIZE(headers);
     opt.user_data = &body_sender;
-    opt.body_sender = s_simple_body_sender;
+    opt.stream_outgoing_body = s_simple_send_body;
     struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
     ASSERT_NOT_NULL(stream);
 
@@ -312,7 +312,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body) {
     opt.header_array = headers;
     opt.num_headers = AWS_ARRAY_SIZE(headers);
     opt.user_data = &body_sender;
-    opt.body_sender = s_simple_body_sender;
+    opt.stream_outgoing_body = s_simple_send_body;
     struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
     ASSERT_NOT_NULL(stream);
 
