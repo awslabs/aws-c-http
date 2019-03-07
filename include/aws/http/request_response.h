@@ -28,12 +28,19 @@ struct aws_http_connection;
  */
 struct aws_http_stream;
 
+enum aws_http_body_sender_state {
+    AWS_HTTP_BODY_SENDER_IN_PROGRESS,
+    AWS_HTTP_BODY_SENDER_DONE,
+};
+
 /**
  * Called repeatedly whenever body data can be sent.
- * Write up to `size` bytes to the `buffer` and return the number of bytes written.
- * Return 0 to end the body.
+ * User should write body to buffer using aws_byte_buf_write_X functions.
+ * Note that the buffer might already be partially full.
+ * Return AWS_HTTP_BODY_SENDER_DONE when the body has been written to its end.
  */
-typedef size_t(aws_http_body_sender_fn)(struct aws_http_stream *stream, uint8_t *buffer, size_t size, void *user_data);
+typedef enum aws_http_body_sender_state(
+    aws_http_body_sender_fn)(struct aws_http_stream *stream, struct aws_byte_buf *buf, void *user_data);
 
 typedef void(aws_http_on_incoming_headers_fn)(
     struct aws_http_stream *stream,
@@ -47,10 +54,11 @@ typedef void(aws_http_on_incoming_header_block_done_fn)(struct aws_http_stream *
  * Called repeatedly as body data is received.
  * The data must be copied immediately if you wish to preserve it.
  *
- * `out_window_update_size` is the amount by which the window is updated after reading data.
- * By default, it is the same size as the data which has just come in.
- * To prevent the window from updating, set this value to 0.
- * The window can be manually updated later via aws_http_stream_update_window()
+ * `out_window_update_size` is how much to increment the window once this data is processed.
+ * By default, it is the size of the data which has just come in.
+ * Leaving this value untouched will increment the window back to its original size.
+ * Setting this value to 0 will prevent the update and let the window shrink.
+ * The window can be manually updated via aws_http_stream_update_window()
  */
 typedef void(aws_http_on_incoming_body_fn)(
     struct aws_http_stream *stream,
@@ -60,10 +68,14 @@ typedef void(aws_http_on_incoming_body_fn)(
 
 typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
 
+/**
+ * Options for creating a stream which sends a request from the client and receives a response from the server.
+ * Initialize with AWS_HTTP_REQUEST_OPTIONS_INIT to set default values.
+ */
 struct aws_http_request_options {
     /**
-     * Set to sizeof() this struct, used for versioning.
-     * Required.
+     * The sizeof() this struct, used for versioning.
+     * Set by AWS_HTTP_REQUEST_OPTIONS_INIT.
      */
     size_t self_size;
 
@@ -132,6 +144,12 @@ struct aws_http_request_options {
     aws_http_on_stream_complete_fn *on_complete;
 };
 
+/**
+ * Initializes aws_http_request_options with default values.
+ */
+#define AWS_HTTP_REQUEST_OPTIONS_INIT                                                                                  \
+    { .self_size = sizeof(struct aws_http_request_options), }
+
 struct aws_http_request_handler_options {
     /* Set to sizeof() this struct, used for versioning. */
     size_t self_size;
@@ -144,6 +162,9 @@ struct aws_http_request_handler_options {
     aws_http_on_incoming_body_fn *on_request_body;
     aws_http_on_stream_complete_fn *on_complete;
 };
+
+#define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
+    { .self_size = sizeof(struct aws_http_request_handler_options), }
 
 struct aws_http_response_options {
     /* Set to sizeof() this struct, used for versioning. */
@@ -173,8 +194,16 @@ AWS_HTTP_API
 struct aws_http_stream *aws_http_stream_new_server_request_handler(
     const struct aws_http_request_handler_options *options);
 
+/**
+ * Users must release the stream when they are done with it, or its memory will never be cleaned up.
+ * This will not cancel the stream, its callbacks will still fire if the stream is still in progress.
+ *
+ * Tips for language bindings:
+ * - Invoke this from the wrapper class's finalizer/destructor.
+ * - Do not let the wrapper class be destroyed until on_complete() has fired.
+ */
 AWS_HTTP_API
-void aws_http_stream_destroy(struct aws_http_stream *stream);
+void aws_http_stream_release(struct aws_http_stream *stream);
 
 AWS_HTTP_API
 struct aws_http_connection *aws_http_stream_get_connection(const struct aws_http_stream *stream);
@@ -199,10 +228,13 @@ int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *strea
 AWS_HTTP_API
 int aws_http_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options);
 
-/* Manually issue a window update.
- * This should only be called if the body reader is reducing the automatic window update size */
+/**
+ * Manually issue a window update.
+ * Note that the stream's default behavior is to issue updates which keep the window at its original size.
+ * See aws_http_on_incoming_body_fn() for details on letting the window shrink.
+ **/
 AWS_HTTP_API
-int aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
+void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 
 AWS_EXTERN_C_END
 

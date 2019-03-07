@@ -45,6 +45,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_REACTION_REQUIRED,
         "A necessary function was not invoked from a user callback."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_DATA_NOT_AVAILABLE,
+        "This data is not yet available."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_END_RANGE,
         "Not a real error and should never be seen."),
     AWS_DEFINE_ERROR_INFO_HTTP(

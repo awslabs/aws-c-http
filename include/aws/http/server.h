@@ -100,7 +100,7 @@ struct aws_http_server_options {
  * Initializes aws_http_server_options with default values.
  */
 #define AWS_HTTP_SERVER_OPTIONS_INIT                                                                                   \
-    { .self_size = sizeof(struct aws_http_server_options), .initial_window_size = SIZE_MAX }
+    { .self_size = sizeof(struct aws_http_server_options), .initial_window_size = SIZE_MAX, }
 
 typedef void(aws_http_on_incoming_request_fn)(struct aws_http_connection *connection, void *user_data);
 
@@ -144,7 +144,7 @@ struct aws_http_server_connection_options {
  * Initializes aws_http_server_connection_options with default values.
  */
 #define AWS_HTTP_SERVER_CONNECTION_OPTIONS_INIT                                                                        \
-    { .self_size = sizeof(struct aws_http_server_connection_options) }
+    { .self_size = sizeof(struct aws_http_server_connection_options), }
 
 AWS_EXTERN_C_BEGIN
 
