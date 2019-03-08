@@ -110,7 +110,7 @@ static void s_common_test_setup(
     void *user_data) {
     params->alloc = allocator;
     params->scratch_space_initial_size = scratch_space_size;
-    params->true_for_request_false_for_response = type;
+    params->is_decoding_requests = type;
     params->user_data = user_data;
     params->vtable.on_header = s_on_header_stub;
     params->vtable.on_body = s_on_body_stub;
@@ -365,7 +365,7 @@ static int s_http_test_body_unchunked(struct aws_allocator *allocator, void *ctx
     params.scratch_space_initial_size = 1024;
     params.vtable.on_header = s_on_header_stub;
     params.vtable.on_body = s_on_body;
-    params.true_for_request_false_for_response = false;
+    params.is_decoding_requests = false;
     params.user_data = &body_params;
     struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 

@@ -871,7 +871,7 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
 
     struct aws_http_decoder_params options = {
         .alloc = alloc,
-        .true_for_request_false_for_response = connection->base.server_data != NULL,
+        .is_decoding_requests = connection->base.server_data != NULL,
         .user_data = connection,
         .vtable = s_decoder_vtable,
         .scratch_space_initial_size = DECODER_INITIAL_SCRATCH_SIZE,

@@ -76,7 +76,8 @@ struct aws_http_decoder_vtable {
 struct aws_http_decoder_params {
     struct aws_allocator *alloc;
     size_t scratch_space_initial_size;
-    bool true_for_request_false_for_response;
+    /* Set false if decoding responses */
+    bool is_decoding_requests;
     void *user_data;
     struct aws_http_decoder_vtable vtable;
 };

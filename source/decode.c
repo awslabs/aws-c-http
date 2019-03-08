@@ -31,8 +31,8 @@ struct aws_http_decoder {
     /* Implementation data. */
     struct aws_allocator *alloc;
     struct aws_byte_buf scratch_space;
-    state_fn *state_cb;
-    linestate_fn *linestate_cb;
+    state_fn *run_state;
+    linestate_fn *process_line;
     int transfer_encoding;
     size_t content_processed;
     size_t content_length;
@@ -43,7 +43,7 @@ struct aws_http_decoder {
 
     /* User callbacks and settings. */
     struct aws_http_decoder_vtable vtable;
-    bool true_for_request_false_for_response;
+    bool is_decoding_requests;
     void *user_data;
 };
 
@@ -95,19 +95,11 @@ static struct aws_byte_cursor s_trim_whitespace(struct aws_byte_cursor cursor) {
     return cursor;
 }
 
-static bool s_scan_for_crlf(struct aws_byte_cursor input, bool prev_char_was_carriage, size_t *bytes_processed) {
-
+static bool s_scan_for_crlf(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     assert(input.len > 0);
 
-    /* Check special case that last scan finished on "\r",
-     * and this scan starts on "\n" */
-    if (prev_char_was_carriage && input.ptr[0] == '\n') {
-        *bytes_processed = 1;
-        return true;
-    }
-
     /* In a loop, scan for "\n", then look one char back for "\r" */
-    uint8_t *ptr = input.ptr + 1;
+    uint8_t *ptr = input.ptr;
     uint8_t *end = input.ptr + input.len;
     while (ptr != end) {
         uint8_t *newline = (uint8_t *)memchr(ptr, '\n', end - ptr);
@@ -115,7 +107,19 @@ static bool s_scan_for_crlf(struct aws_byte_cursor input, bool prev_char_was_car
             break;
         }
 
-        if (*(newline - 1) == '\r') {
+        uint8_t prev_char;
+        if (newline == input.ptr) {
+            /* If "\n" is first character check scratch_space for previous character */
+            if (decoder->scratch_space.len > 0) {
+                prev_char = decoder->scratch_space.buffer[decoder->scratch_space.len - 1];
+            } else {
+                prev_char = 0;
+            }
+        } else {
+            prev_char = *(newline - 1);
+        }
+
+        if (prev_char == '\r') {
             *bytes_processed = 1 + (newline - input.ptr);
             return true;
         }
@@ -190,10 +194,8 @@ static int s_state_getline(struct aws_http_decoder *decoder, struct aws_byte_cur
     /* If preceding runs of this state failed to find CRLF, their data is stored in the scratch_space
      * and new data needs to be combined with the old data for processing. */
     bool has_prev_data = decoder->scratch_space.len;
-    uint8_t last_char = has_prev_data ? decoder->scratch_space.buffer[decoder->scratch_space.len - 1] : '\0';
-    bool last_char_is_carriage = last_char == '\r';
 
-    bool found_crlf = s_scan_for_crlf(input, last_char_is_carriage, bytes_processed);
+    bool found_crlf = s_scan_for_crlf(decoder, input, bytes_processed);
 
     bool use_scratch = !found_crlf | has_prev_data;
     if (AWS_UNLIKELY(use_scratch)) {
@@ -217,7 +219,7 @@ static int s_state_getline(struct aws_http_decoder *decoder, struct aws_byte_cur
         assert(line.len >= 2);
         line.len -= 2;
 
-        return decoder->linestate_cb(decoder, line);
+        return decoder->process_line(decoder, line);
     }
 
     /* Didn't find crlf, we'll continue scanning when more data comes in */
@@ -234,14 +236,14 @@ static size_t s_byte_buf_split(struct aws_byte_cursor line, struct aws_byte_curs
 
 static void s_set_state(struct aws_http_decoder *decoder, state_fn *state) {
     decoder->scratch_space.len = 0;
-    decoder->state_cb = state;
-    decoder->linestate_cb = NULL;
+    decoder->run_state = state;
+    decoder->process_line = NULL;
 }
 
 /* Set next state to capture a full line, then call the specified linestate_fn on it */
 static void s_set_line_state(struct aws_http_decoder *decoder, linestate_fn *line_processor) {
     s_set_state(decoder, s_state_getline);
-    decoder->linestate_cb = line_processor;
+    decoder->process_line = line_processor;
 }
 
 /* Reset state, in preparation for processing a new message */
@@ -250,7 +252,7 @@ void s_reset_state(struct aws_http_decoder *decoder, bool message_done) {
         decoder->vtable.on_done(decoder->user_data);
     }
 
-    if (decoder->true_for_request_false_for_response) {
+    if (decoder->is_decoding_requests) {
         s_set_line_state(decoder, s_linestate_request);
     } else {
         s_set_line_state(decoder, s_linestate_response);
@@ -417,7 +419,7 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
             /* RFC-7230 section 4.2 Compression Codings */
             struct aws_byte_cursor codings[8];
             int flags = 0;
-            size_t n = s_byte_buf_split(header.value_data, codings, ',', 8);
+            const size_t n = s_byte_buf_split(header.value_data, codings, ',', 8);
             if (n < 1 || n > AWS_ARRAY_SIZE(codings)) {
                 /* At least 1 coding must be passed */
                 return aws_raise_error(AWS_ERROR_HTTP_PARSE);
@@ -544,7 +546,7 @@ struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *pa
     decoder->alloc = params->alloc;
     decoder->user_data = params->user_data;
     decoder->vtable = params->vtable;
-    decoder->true_for_request_false_for_response = params->true_for_request_false_for_response;
+    decoder->is_decoding_requests = params->is_decoding_requests;
 
     aws_byte_buf_init(&decoder->scratch_space, params->alloc, params->scratch_space_initial_size);
 
@@ -567,14 +569,14 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
 
     int ret = AWS_OP_SUCCESS;
     while (ret == AWS_OP_SUCCESS && data_bytes) {
-        if (!decoder->state_cb) {
+        if (!decoder->run_state) {
             /* Attempted to call decoder on an invalid decoder state. */
             ret = aws_raise_error(AWS_ERROR_HTTP_INVALID_PARSE_STATE);
             break;
         }
 
         size_t bytes_processed = 0;
-        ret = decoder->state_cb(decoder, input, &bytes_processed);
+        ret = decoder->run_state(decoder, input, &bytes_processed);
         data_bytes -= bytes_processed;
         total_bytes_processed += bytes_processed;
         aws_byte_cursor_advance(&input, bytes_processed);
