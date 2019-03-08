@@ -28,6 +28,7 @@
 
 enum {
     MESSAGE_SIZE_HINT = 16 * 1024,
+    DECODER_INITIAL_SCRATCH_SIZE = 256,
 };
 
 static int s_handler_process_read_message(
@@ -551,18 +552,6 @@ static void s_update_incoming_stream_ptr(struct h1_connection *connection) {
     }
 
     connection->thread_data.incoming_stream = desired;
-    if (!desired) {
-        return;
-    }
-
-    struct aws_http_decoder_params options = {
-        .alloc = connection->base.alloc,
-        .true_for_request_false_for_response = desired->type == STREAM_TYPE_INCOMING_REQUEST,
-        .user_data = connection,
-        .vtable = s_decoder_vtable,
-    };
-
-    aws_http_decoder_reset(connection->thread_data.incoming_stream_decoder, &options);
 }
 
 /**
@@ -880,8 +869,13 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
 
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
 
-    /* Using bogus options since decoder will be reset before each use anyway */
-    struct aws_http_decoder_params options = {.alloc = alloc};
+    struct aws_http_decoder_params options = {
+        .alloc = alloc,
+        .is_decoding_requests = connection->base.server_data != NULL,
+        .user_data = connection,
+        .vtable = s_decoder_vtable,
+        .scratch_space_initial_size = DECODER_INITIAL_SCRATCH_SIZE,
+    };
     connection->thread_data.incoming_stream_decoder = aws_http_decoder_new(&options);
     if (!connection->thread_data.incoming_stream_decoder) {
         goto error_decoder;

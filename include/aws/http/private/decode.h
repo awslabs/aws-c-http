@@ -45,8 +45,7 @@ typedef bool(aws_http_decoder_on_header_fn)(const struct aws_http_decoded_header
  * `finished` is true if this is the last section of the http body, and false if more body data is yet to be received.
  * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
  * Return true to keep decoding, or false to immediately stop decoding and place the decoder in an invalid state, where
- * the only valid operation is to destroy or reset the decoder with `aws_http_decoder_destroy` or
- * `aws_http_decoder_reset`.
+ * the only valid operation is to destroy the decoder with `aws_http_decoder_destroy`.
  */
 typedef bool(aws_http_decoder_on_body_fn)(const struct aws_byte_cursor *data, bool finished, void *user_data);
 
@@ -76,15 +75,9 @@ struct aws_http_decoder_vtable {
  */
 struct aws_http_decoder_params {
     struct aws_allocator *alloc;
-
-    /*
-     * The `scratch_space` buffer will be used by the decoder until the decoder needs a larger buffer. At this point
-     * the decoder will allocate a new `aws_byte_buf` and free it when finished. The decoder will never clean up the
-     * the `scratch_space` buffer, as it is completely owned by the provider. The allocator inside of `scratch_space`
-     * is always ignored.
-     */
-    struct aws_byte_buf scratch_space;
-    bool true_for_request_false_for_response;
+    size_t scratch_space_initial_size;
+    /* Set false if decoding responses */
+    bool is_decoding_requests;
     void *user_data;
     struct aws_http_decoder_vtable vtable;
 };
@@ -94,13 +87,6 @@ struct aws_http_decoder;
 AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *params);
-
-/**
- * Places the decoder in a usable state, assuming the `params` are properly setup, or a previous call to
- * `aws_http_decoder` was made with a proper `params` setup. `params` can be NULL in order to re-use a previous valid
- * set of `params` values.
- */
-AWS_HTTP_API void aws_http_decoder_reset(struct aws_http_decoder *decoder, struct aws_http_decoder_params *params);
 AWS_HTTP_API void aws_http_decoder_destroy(struct aws_http_decoder *decoder);
 AWS_HTTP_API int aws_http_decode(
     struct aws_http_decoder *decoder,
