@@ -200,7 +200,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
     opt.method_str = aws_byte_cursor_from_c_str("PUT");
-    opt.uri = aws_byte_cursor_from_c_str("/todo.txt");
+    opt.uri = aws_byte_cursor_from_c_str("/plan.txt");
     opt.header_array = headers;
     opt.num_headers = AWS_ARRAY_SIZE(headers);
     opt.user_data = &body_sender;
@@ -211,7 +211,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
     testing_channel_execute_queued_tasks(&tester.testing_channel);
 
     /* check result */
-    const char *expected = "PUT /todo.txt HTTP/1.1\r\n"
+    const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
                            "Content-Length: 16\r\n"
                            "\r\n"
                            "write more tests";
@@ -544,9 +544,7 @@ void s_response_tester_on_complete(struct aws_http_stream *stream, int error_cod
 
     if (error_code == AWS_ERROR_SUCCESS) {
         /* Body callback should fire if and only if the response was reported to have a body */
-        /* TODO: fix when decoder invokes on_done
         AWS_FATAL_ASSERT(response->has_incoming_body == (response->on_response_body_cb_count > 0));
-        */
     }
 }
 
