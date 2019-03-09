@@ -15,6 +15,7 @@
 
 #include <aws/http/private/connection_impl.h>
 
+#include <aws/common/string.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
@@ -338,12 +339,19 @@ static void s_client_bootstrap_on_channel_shutdown(
 
 int aws_http_client_connect(const struct aws_http_client_connection_options *options) {
     struct aws_http_client_connection_impl_options *impl_options = NULL;
+    struct aws_string *host_name = NULL;
     int err = 0;
 
-    if (!options || options->self_size == 0 || !options->allocator || !options->bootstrap || !options->host_name ||
-        !options->socket_options || !options->on_setup) {
+    if (!options || options->self_size == 0 || !options->allocator || !options->bootstrap ||
+        options->host_name.len == 0 || !options->socket_options || !options->on_setup) {
 
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        goto error;
+    }
+
+    /* bootstrap_new() functions requires a null-terminated c-str */
+    host_name = aws_string_new_from_array(options->allocator, options->host_name.ptr, options->host_name.len);
+    if (!host_name) {
         goto error;
     }
 
@@ -362,7 +370,7 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
     if (options->tls_options) {
         err = aws_client_bootstrap_new_tls_socket_channel(
             options->bootstrap,
-            options->host_name,
+            (const char *)aws_string_bytes(host_name),
             options->port,
             options->socket_options,
             options->tls_options,
@@ -375,7 +383,7 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
     } else {
         err = aws_client_bootstrap_new_socket_channel(
             options->bootstrap,
-            options->host_name,
+            (const char *)aws_string_bytes(host_name),
             options->port,
             options->socket_options,
             s_client_bootstrap_on_channel_setup,
@@ -386,11 +394,16 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
         }
     }
 
+    aws_string_destroy(host_name);
     return AWS_OP_SUCCESS;
 
 error:
     if (impl_options) {
         aws_mem_release(impl_options->alloc, impl_options);
+    }
+
+    if (host_name) {
+        aws_string_destroy(host_name);
     }
 
     return AWS_OP_ERR;

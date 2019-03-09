@@ -223,7 +223,7 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
     client_options.allocator = tester->alloc;
     client_options.bootstrap = tester->client_bootstrap;
-    client_options.host_name = endpoint.address;
+    client_options.host_name = aws_byte_cursor_from_c_str(endpoint.address);
     client_options.port = endpoint.port;
     client_options.socket_options = &socket_options;
     client_options.user_data = tester;
