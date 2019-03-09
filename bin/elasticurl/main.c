@@ -339,7 +339,7 @@ static void s_onclient_connection_setup(struct aws_http_connection *connection, 
     headers[1].name_str = aws_byte_cursor_from_c_str("host");
     headers[1].value = app_ctx->uri.host_name;
     headers[2].name_str = aws_byte_cursor_from_c_str("user-agent");
-    headers[2].value = aws_byte_cursor_from_c_str("elasticache 1.0, Powered by the AWS Common Runtime.");
+    headers[2].value = aws_byte_cursor_from_c_str("elasticurl 1.0, Powered by the AWS Common Runtime.");
 
     if (app_ctx->data.len) {
         size_t data_len = app_ctx->data.len;
