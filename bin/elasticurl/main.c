@@ -515,7 +515,14 @@ int main(int argc, char **argv) {
 
         aws_tls_connection_options_init_from_ctx(&tls_connection_options, tls_ctx);
         tls_options = &tls_connection_options;
-        aws_tls_connection_options_set_server_name(tls_options, (const char *)app_ctx.uri.host_name.ptr);
+
+        /* TODO: move aws-c-io to running off of aws_byte_cursor so we don't have to do all these tmp copies. */
+        char host_name[256];
+        AWS_ZERO_ARRAY(host_name);
+        memcpy(host_name, app_ctx.uri.host_name.ptr, app_ctx.uri.host_name.len);
+
+        memcpy(host_name, app_ctx.uri.host_name.ptr, app_ctx.uri.host_name.len);
+        aws_tls_connection_options_set_server_name(tls_options, host_name);
 
         if (app_ctx.uri.port) {
             port = app_ctx.uri.port;
@@ -539,10 +546,6 @@ int main(int argc, char **argv) {
         .keep_alive_interval_sec = 0,
     };
 
-    char host_name[256];
-    AWS_ZERO_ARRAY(host_name);
-
-    memcpy(host_name, app_ctx.uri.host_name.ptr, app_ctx.uri.host_name.len);
     struct aws_http_client_connection_options http_client_options = {
         .self_size = sizeof(struct aws_http_client_connection_options),
         .socket_options = &socket_options,
