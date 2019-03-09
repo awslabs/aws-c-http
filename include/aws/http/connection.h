@@ -62,7 +62,7 @@ struct aws_http_client_connection_options {
      * Required.
      * aws_http_client_connect() makes a copy.
      */
-    const char *host_name;
+    struct aws_byte_cursor host_name;
 
     /**
      * Required.
