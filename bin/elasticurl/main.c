@@ -551,7 +551,7 @@ int main(int argc, char **argv) {
         .socket_options = &socket_options,
         .allocator = allocator,
         .port = port,
-        .host_name = host_name,
+        .host_name = app_ctx.uri.host_name,
         .bootstrap = bootstrap,
         .initial_window_size = SIZE_MAX,
         .tls_options = tls_options,

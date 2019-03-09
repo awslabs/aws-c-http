@@ -25,7 +25,7 @@
 #        endif /* AWS_HTTP_EXPORTS */
 #    else
 #        define AWS_HTTP_API
-#    endif // USE_IMPORT_EXPORT
+#    endif /* USE_IMPORT_EXPORT */
 
 #else
 #    if ((__GNUC__ >= 4) || defined(__clang__)) && defined(AWS_HTTP_USE_IMPORT_EXPORT) && defined(AWS_HTTP_EXPORTS)
