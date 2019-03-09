@@ -78,3 +78,8 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}-config.cmake"
 
 include(CTest)
 add_subdirectory(tests)
+
+if (NOT WIN32)
+    # uncomment this to run on windows when we implement getoptargs() on that platform
+    add_subdirectory(bin/elasticurl)
+endif()
