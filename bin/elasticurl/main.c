@@ -579,7 +579,11 @@ int main(int argc, char **argv) {
     }
 
     aws_tls_clean_up_static_state();
-    aws_logger_cleanup(&logger);
+
+    if (app_ctx.log_level) {
+        aws_logger_cleanup(&logger);
+    }
+
     aws_uri_clean_up(&app_ctx.uri);
 
     if (app_ctx.output != stdout) {
