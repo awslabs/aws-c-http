@@ -17,6 +17,7 @@
 
 #include <aws/common/condition_variable.h>
 #include <aws/common/mutex.h>
+#include <aws/common/string.h>
 
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
@@ -53,7 +54,8 @@ struct elasticurl_ctx {
     enum aws_log_level log_level;
 };
 
-static void s_usage() {
+static void s_usage(void) {
+
     fprintf(stderr, "usage: elasticurl [options] url\n");
     fprintf(stderr, " url: url to make a request to. The default is a GET request.\n");
     fprintf(stderr, "\n Options:\n\n");
@@ -76,7 +78,6 @@ static void s_usage() {
     fprintf(stderr, "  -v, --verbose ERROR|INFO|DEBUG|TRACE: log level to configure. Default is none.\n");
     fprintf(stderr, "  -h, --help\n");
     fprintf(stderr, "            Display this message and quit.\n");
-
     exit(1);
 }
 
@@ -246,9 +247,11 @@ enum aws_http_outgoing_body_state s_stream_outgoing_body_fn(
 
     if (app_ctx->data.len) {
         size_t max_cpy = buf->len > app_ctx->data.len ? app_ctx->data.len : buf->len;
-        struct aws_byte_cursor to_write = aws_byte_cursor_advance(&app_ctx->data, max_cpy);
-        aws_byte_buf_append(buf, &to_write);
+        struct aws_byte_cursor outgoing_data = aws_byte_cursor_advance(&app_ctx->data, max_cpy);
+        aws_byte_buf_append(buf, &outgoing_data);
 
+        /* if any data is left in the buffer, tell the client that we're still in progress,
+         * otherwise say we're done. */
         if (app_ctx->data.len) {
             return AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
         }
@@ -259,6 +262,8 @@ enum aws_http_outgoing_body_state s_stream_outgoing_body_fn(
     if (app_ctx->data_file) {
         ssize_t read = fread(buf->buffer, 1, buf->len, app_ctx->data_file);
 
+        /* if any data is left in the buffer, tell the client that we're still in progress,
+         * otherwise say we're done. */
         if (read > 0) {
             return AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
         }
@@ -328,12 +333,13 @@ static void s_onclient_connection_setup(struct aws_http_connection *connection, 
     app_ctx->request_options.on_complete = s_on_stream_complete_fn;
     app_ctx->response_code_written = false;
 
+    /* only 10 custom header lines are supported, we send an additional 4 by default (hence 14). */
     struct aws_http_header headers[14];
     AWS_ZERO_ARRAY(headers);
     size_t header_count = 3;
     size_t pre_header_count = 3;
 
-    /* TODO: goback and use the enum variants when this is all fixed. */
+    /* TODO: go back and use the enum variants when this is all fixed. */
     headers[0].name_str = aws_byte_cursor_from_c_str("accept");
     headers[0].value = aws_byte_cursor_from_c_str("*/*");
     headers[1].name_str = aws_byte_cursor_from_c_str("host");
@@ -369,6 +375,7 @@ static void s_onclient_connection_setup(struct aws_http_connection *connection, 
         app_ctx->request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
     }
 
+    assert(app_ctx->header_line_count <= 10);
     for (size_t i = 0; i < app_ctx->header_line_count; ++i) {
         char *delimiter = memchr(app_ctx->header_lines[i], ':', strlen(app_ctx->header_lines[i]));
 
@@ -397,6 +404,10 @@ static void s_on_client_connection_shutdown(struct aws_http_connection *connecti
     aws_http_connection_release(connection);
     aws_condition_variable_notify_all(&app_ctx->c_var);
 }
+
+AWS_STATIC_STRING_FROM_LITERAL(http_cmp1, "http");
+AWS_STATIC_STRING_FROM_LITERAL(http_cmp2, "Http");
+AWS_STATIC_STRING_FROM_LITERAL(http_cmp3, "HTTP");
 
 int main(int argc, char **argv) {
     aws_load_error_strings();
@@ -472,18 +483,12 @@ int main(int argc, char **argv) {
     bool use_tls = true;
     uint16_t port = 443;
 
-    char scheme_buf[16];
-    AWS_ZERO_ARRAY(scheme_buf);
-    if (app_ctx.uri.scheme.len) {
-        assert(app_ctx.uri.scheme.len < sizeof(scheme_buf));
-        memcpy(scheme_buf, app_ctx.uri.scheme.ptr, app_ctx.uri.scheme.len);
-    }
-
     if (!app_ctx.uri.scheme.len && (app_ctx.uri.port == 80 || app_ctx.uri.port == 8080)) {
         use_tls = false;
-    } else if (
-        app_ctx.uri.scheme.len &&
-        (!strcmp("http", scheme_buf) || !strcmp("Http", scheme_buf) || !strcmp("HTTP", scheme_buf))) {
+    } else if (/* if "http", "Http", or "HTTP" is the scheme. */
+               app_ctx.uri.scheme.len && (aws_string_eq_byte_cursor(http_cmp1, &app_ctx.uri.scheme) ||
+                                          aws_string_eq_byte_cursor(http_cmp2, &app_ctx.uri.scheme) ||
+                                          aws_string_eq_byte_cursor(http_cmp3, &app_ctx.uri.scheme))) {
         use_tls = false;
     }
 
