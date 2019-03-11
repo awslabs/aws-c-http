@@ -79,10 +79,16 @@ struct aws_http_connection {
     struct server_data *server_data;
 };
 
+AWS_EXTERN_C_BEGIN
+
+AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http1_1_server(
     const struct aws_http_server_connection_impl_options *options);
 
+AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http1_1_client(
     const struct aws_http_client_connection_impl_options *options);
+
+AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_CONNECTION_IMPL_H */
