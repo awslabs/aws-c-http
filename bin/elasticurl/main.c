@@ -101,7 +101,7 @@ static struct option s_long_options[] = {
     {"verbose", required_argument, NULL, 'v'},
     {"help", no_argument, NULL, 'h'},
     /* Per getopt(3) the last element of the array has to be filled with all zeros */
-    {0},
+    {NULL, no_argument, NULL, 0},
 };
 
 static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
