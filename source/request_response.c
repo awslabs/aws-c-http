@@ -16,9 +16,11 @@
 #include <aws/http/private/request_response_impl.h>
 
 #include <aws/http/private/connection_impl.h>
+#include <aws/io/logging.h>
 
 struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http_request_options *options) {
     if (!options || options->self_size == 0 || !options->client_connection) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "static: Invalid options, cannot create client request.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }
@@ -38,12 +40,17 @@ struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http
 void aws_http_stream_release(struct aws_http_stream *stream) {
     assert(stream);
 
-    if (aws_atomic_fetch_sub(&stream->refcount, 1) == 1) {
+    size_t prev_refcount = aws_atomic_fetch_sub(&stream->refcount, 1);
+    if (prev_refcount == 1) {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Final refcount released.", (void *)stream);
+
         struct aws_http_connection *owning_connection = stream->owning_connection;
         stream->vtable->destroy(stream);
 
         /* Connection needed to outlive stream, but it's free to go now */
         aws_http_connection_release(owning_connection);
+    } else {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Refcount released, %zu remaining.", (void *)stream, prev_refcount);
     }
 }
 
@@ -57,6 +64,7 @@ int aws_http_stream_get_incoming_response_status(const struct aws_http_stream *s
 
     /* TODO: 0 is actually legal. Also, rename enum "_status" instead of "_code" */
     if (stream->incoming_response_status == (int)AWS_HTTP_CODE_UNKNOWN) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Status code not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
 
@@ -71,6 +79,7 @@ int aws_http_stream_get_incoming_request_method(
     assert(stream);
 
     if (!stream->incoming_request_method_str.ptr) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Request method not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
 
@@ -85,6 +94,7 @@ int aws_http_stream_get_incoming_request_method_str(
     assert(stream);
 
     if (!stream->incoming_request_method_str.ptr) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Request method not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
 
@@ -96,6 +106,7 @@ int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *strea
     assert(stream);
 
     if (!stream->incoming_request_uri.ptr) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Request URI not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
 

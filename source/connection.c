@@ -17,6 +17,7 @@
 
 #include <aws/common/string.h>
 #include <aws/io/channel_bootstrap.h>
+#include <aws/io/logging.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 
@@ -48,11 +49,13 @@ static struct aws_http_connection *s_connection_new(
     /* Create slot for connection. */
     connection_slot = aws_channel_slot_new(channel);
     if (!connection_slot) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed to create channel slot.");
         goto error;
     }
 
     int err = aws_channel_slot_insert_end(channel, connection_slot);
     if (err) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed to insert slot into channel.");
         goto error;
     }
 
@@ -63,6 +66,7 @@ static struct aws_http_connection *s_connection_new(
         /* Query TLS channel handler (immediately to left in the channel) for negotiated ALPN protocol */
         if (!connection_slot->adj_left || !connection_slot->adj_left->handler) {
             aws_raise_error(AWS_ERROR_INVALID_STATE);
+            AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed to find TLS handler in channel.");
             goto error;
         }
 
@@ -78,6 +82,11 @@ static struct aws_http_connection *s_connection_new(
             } else if (aws_byte_cursor_eq_byte_buf(&h2, &protocol)) {
                 version = AWS_HTTP_VERSION_2_0;
             } else {
+                AWS_LOGF_ERROR(
+                    AWS_LS_HTTP_CONNECTION,
+                    "static: Unrecognized ALPN protocol '" PRInSTR "'.",
+                    AWS_BYTE_BUF_PRI(protocol));
+
                 aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
                 goto error;
             }
@@ -94,17 +103,25 @@ static struct aws_http_connection *s_connection_new(
             }
             break;
         default:
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION, "static: Unsupported HTTP version %s.", aws_http_version_to_str(version));
             aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
             goto error;
     }
 
     if (!connection) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Failed to create HTTP/%s %s connection object.",
+            aws_http_version_to_str(version),
+            is_server ? "server" : "client");
         goto error;
     }
 
     /* Connect handler and slot */
     err = aws_channel_slot_set_handler(connection_slot, &connection->channel_handler);
     if (err) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed setting HTTP handler in channel slot.");
         goto error;
     }
 
@@ -113,6 +130,13 @@ static struct aws_http_connection *s_connection_new(
     /* Success! Acquire a hold on the channel to prevent its destruction until the user has
      * given the go-ahead via aws_http_connection_release() */
     aws_channel_acquire_hold(channel);
+
+    AWS_LOGF_DEBUG(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Created new HTTP/%s %s connection object.",
+        (void *)connection,
+        aws_http_version_to_str(connection->http_version),
+        connection->server_data ? "server" : "client");
 
     return connection;
 
@@ -132,12 +156,17 @@ void aws_http_connection_release(struct aws_http_connection *connection) {
     assert(connection);
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
     if (prev_refcount == 1) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION, "id=%p: Final refcount released, shut down if necessary.", (void *)connection);
 
         /* Channel might already be shut down, but make sure */
         aws_channel_shutdown(connection->channel_slot->channel, AWS_ERROR_SUCCESS);
 
         /* When the channel's refcount reaches 0, it destroys its slots/handlers, which will destroy the connection */
         aws_channel_release_hold(connection->channel_slot->channel);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION, "id=%p: Refcount released, %zu remaining.", (void *)connection, prev_refcount - 1);
     }
 }
 
@@ -155,8 +184,22 @@ static void s_server_bootstrap_on_accept_channel_setup(
     bool user_cb_invoked = false;
 
     if (error_code) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_SERVER,
+            "%s:%d: Incoming connection failed with error code %d (%s)",
+            server->socket->remote_endpoint.address,
+            server->socket->remote_endpoint.port,
+            error_code,
+            aws_error_str(error_code));
+
         goto error;
     }
+
+    AWS_LOGF_DEBUG(
+        AWS_LS_HTTP_SERVER,
+        "%s:%d: Incoming connection accepted, creating connection object.",
+        server->socket->remote_endpoint.address,
+        server->socket->remote_endpoint.port);
 
     /* Create connection */
     struct aws_http_server_connection_impl_options options = {
@@ -166,15 +209,28 @@ static void s_server_bootstrap_on_accept_channel_setup(
 
     struct aws_http_connection *connection = s_connection_new(channel, true, server->is_using_tls, &options);
     if (!connection) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_SERVER,
+            "%s:%d: Failed to create connection object.",
+            server->socket->remote_endpoint.address,
+            server->socket->remote_endpoint.port);
         goto error;
     }
 
     /* Tell user of successful connection. */
+    AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION, "id=%p: Setup complete, notifying caller.", (void *)connection);
+
     server->on_incoming_connection(server, connection, error_code, server->user_data);
     user_cb_invoked = true;
 
     /* If user failed to configure the server during callback, shut down the channel. */
     if (!connection->server_data->on_incoming_request) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Caller failed to invoke aws_http_connection_configure_server() during on_incoming_connection "
+            "callback, closing connection.",
+            (void *)connection);
+
         aws_raise_error(AWS_ERROR_HTTP_REACTION_REQUIRED);
         goto error;
     }
@@ -215,6 +271,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     if (!options || options->self_size == 0 || !options->allocator || !options->bootstrap || !options->socket_options ||
         !options->on_incoming_connection || !options->endpoint) {
 
+        AWS_LOGF_ERROR(AWS_LS_HTTP_SERVER, "static: Invalid options, cannot create server.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         goto error;
     }
@@ -243,10 +300,6 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             s_server_bootstrap_on_accept_channel_setup,
             s_server_bootstrap_on_accept_channel_shutdown,
             server);
-
-        if (!server->socket) {
-            goto error;
-        }
     } else {
         server->socket = aws_server_bootstrap_new_socket_listener(
             options->bootstrap,
@@ -255,11 +308,18 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             s_server_bootstrap_on_accept_channel_setup,
             s_server_bootstrap_on_accept_channel_shutdown,
             server);
-
-        if (!server->socket) {
-            goto error;
-        }
     }
+
+    if (!server->socket) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_SERVER, "static: Failed to create new socket listener, cannot create server.");
+        goto error;
+    }
+
+    AWS_LOGF_DEBUG(
+        AWS_LS_HTTP_SERVER,
+        "%s:%d: Server setup complete, listening for incoming connections.",
+        server->socket->remote_endpoint.address,
+        server->socket->remote_endpoint.port);
 
     return server;
 
@@ -274,6 +334,12 @@ void aws_http_server_destroy(struct aws_http_server *server) {
     assert(server);
 
     if (server->socket) {
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_SERVER,
+            "%s:%d: Destroying server.",
+            server->socket->remote_endpoint.address,
+            server->socket->remote_endpoint.port);
+
         aws_server_bootstrap_destroy_socket_listener(server->bootstrap, server->socket);
     }
 
@@ -293,13 +359,23 @@ static void s_client_bootstrap_on_channel_setup(
     struct aws_http_client_connection_impl_options *options = user_data;
 
     if (error_code) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Client connection failed with error code %d (%s).",
+            error_code,
+            aws_error_str(error_code));
         goto error;
     }
 
+    AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION, "static: Socket connected, creating client connection object.");
+
     struct aws_http_connection *connection = s_connection_new(channel, false, options->is_using_tls, options);
     if (!connection) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed to create the client connection object.");
         goto error;
     }
+
+    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: Setup complete, notifying caller.", (void *)connection);
 
     /* Tell user of successful connection. */
     options->on_setup(connection, AWS_ERROR_SUCCESS, options->user_data);
@@ -345,6 +421,7 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
     if (!options || options->self_size == 0 || !options->allocator || !options->bootstrap ||
         options->host_name.len == 0 || !options->socket_options || !options->on_setup) {
 
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid options, cannot create client connection.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         goto error;
     }
@@ -377,9 +454,6 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
             s_client_bootstrap_on_channel_setup,
             s_client_bootstrap_on_channel_shutdown,
             impl_options);
-        if (err) {
-            goto error;
-        }
     } else {
         err = aws_client_bootstrap_new_socket_channel(
             options->bootstrap,
@@ -389,9 +463,11 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
             s_client_bootstrap_on_channel_setup,
             s_client_bootstrap_on_channel_shutdown,
             impl_options);
-        if (err) {
-            goto error;
-        }
+    }
+
+    if (err) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed to initiate socket channel for new client connection.");
+        goto error;
     }
 
     aws_string_destroy(host_name);
@@ -418,10 +494,20 @@ int aws_http_connection_configure_server(
     const struct aws_http_server_connection_options *options) {
 
     if (!connection || !options || !options->on_incoming_request) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "id=%p: Invalid server configuration options.", (void *)connection);
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    if (!connection->server_data || connection->server_data->on_incoming_request) {
+    if (!connection->server_data) {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Server-only function invoked on client, ignoring call.",
+            (void *)connection);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+    if (connection->server_data->on_incoming_request) {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION, "id=%p: Connection is already configured, ignoring call.", (void *)connection);
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
