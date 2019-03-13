@@ -36,7 +36,6 @@ struct elasticurl_ctx {
     const char *verb;
     struct aws_uri uri;
     struct aws_condition_variable c_var;
-    struct aws_http_request_options request_options;
     bool response_code_written;
     const char *cacert;
     const char *capath;
@@ -311,10 +310,9 @@ static void s_on_stream_complete_fn(struct aws_http_stream *stream, int error_co
     (void)error_code;
     (void)user_data;
     aws_http_stream_release(stream);
-    aws_http_connection_release(aws_http_stream_get_connection(stream));
 }
 
-static void s_onclient_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
+static void s_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct elasticurl_ctx *app_ctx = user_data;
 
     if (error_code) {
@@ -323,15 +321,16 @@ static void s_onclient_connection_setup(struct aws_http_connection *connection, 
         return;
     }
 
-    app_ctx->request_options = (struct aws_http_request_options)AWS_HTTP_REQUEST_OPTIONS_INIT;
-    app_ctx->request_options.uri = app_ctx->uri.path_and_query;
-    app_ctx->request_options.user_data = app_ctx;
-    app_ctx->request_options.client_connection = connection;
-    app_ctx->request_options.method_str = aws_byte_cursor_from_c_str(app_ctx->verb);
-    app_ctx->request_options.on_response_headers = s_on_incoming_headers_fn;
-    app_ctx->request_options.on_response_header_block_done = s_on_incoming_header_block_done_fn;
-    app_ctx->request_options.on_response_body = s_on_incoming_body_fn;
-    app_ctx->request_options.on_complete = s_on_stream_complete_fn;
+    struct aws_http_request_options request_options = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    request_options.uri = app_ctx->uri.path_and_query;
+    request_options.user_data = app_ctx;
+    request_options.client_connection = connection;
+    request_options.method_str = aws_byte_cursor_from_c_str(app_ctx->verb);
+    request_options.on_response_headers = s_on_incoming_headers_fn;
+    request_options.on_response_header_block_done = s_on_incoming_header_block_done_fn;
+    request_options.on_response_body = s_on_incoming_body_fn;
+    request_options.on_complete = s_on_stream_complete_fn;
+
     app_ctx->response_code_written = false;
 
     /* only 10 custom header lines are supported, we send an additional 4 by default (hence 14). */
@@ -357,7 +356,7 @@ static void s_onclient_connection_setup(struct aws_http_connection *connection, 
         headers[3].value = aws_byte_cursor_from_c_str(content_length);
         pre_header_count += 1;
         header_count += 1;
-        app_ctx->request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
+        request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
     } else if (app_ctx->data_file) {
         if (fseek(app_ctx->data_file, 0L, SEEK_END)) {
             fprintf(stderr, "failed to seek data file.\n");
@@ -373,7 +372,7 @@ static void s_onclient_connection_setup(struct aws_http_connection *connection, 
         headers[3].value = aws_byte_cursor_from_c_str(content_length);
         pre_header_count += 1;
         header_count += 1;
-        app_ctx->request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
+        request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
     }
 
     assert(app_ctx->header_line_count <= 10);
@@ -391,10 +390,17 @@ static void s_onclient_connection_setup(struct aws_http_connection *connection, 
         header_count++;
     }
 
-    app_ctx->request_options.header_array = headers;
-    app_ctx->request_options.num_headers = header_count;
+    request_options.header_array = headers;
+    request_options.num_headers = header_count;
 
-    aws_http_stream_new_client_request(&app_ctx->request_options);
+    struct aws_http_stream *stream = aws_http_stream_new_client_request(&request_options);
+    if (!stream) {
+        fprintf(stderr, "failed to create request.");
+        exit(1);
+    }
+
+    /* Release hold on connection, it will clean itself up once stream completes */
+    aws_http_connection_release(connection);
 }
 
 static void s_on_client_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
@@ -402,7 +408,6 @@ static void s_on_client_connection_shutdown(struct aws_http_connection *connecti
     (void)connection;
     struct elasticurl_ctx *app_ctx = user_data;
 
-    aws_http_connection_release(connection);
     aws_condition_variable_notify_all(&app_ctx->c_var);
 }
 
@@ -568,7 +573,7 @@ int main(int argc, char **argv) {
         .initial_window_size = SIZE_MAX,
         .tls_options = tls_options,
         .user_data = &app_ctx,
-        .on_setup = s_onclient_connection_setup,
+        .on_setup = s_on_client_connection_setup,
         .on_shutdown = s_on_client_connection_shutdown,
     };
 

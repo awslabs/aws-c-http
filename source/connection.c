@@ -145,6 +145,8 @@ error:
     return NULL;
 }
 
+/* TODO: probably should have a aws_http_connection_close(int error_code) function */
+
 void aws_http_connection_release(struct aws_http_connection *connection) {
     assert(connection);
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
@@ -186,8 +188,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
             "%s:%d: Incoming connection failed with error code %d (%s)",
-            server->socket->remote_endpoint.address,
-            server->socket->remote_endpoint.port,
+            server->socket->local_endpoint.address,
+            server->socket->local_endpoint.port,
             error_code,
             aws_error_name(error_code));
 
@@ -197,8 +199,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_SERVER,
         "%s:%d: Incoming connection accepted, creating connection object.",
-        server->socket->remote_endpoint.address,
-        server->socket->remote_endpoint.port);
+        server->socket->local_endpoint.address,
+        server->socket->local_endpoint.port);
 
     /* Create connection */
     struct aws_http_server_connection_impl_options options = {
@@ -211,8 +213,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
             "%s:%d: Failed to create connection object.",
-            server->socket->remote_endpoint.address,
-            server->socket->remote_endpoint.port);
+            server->socket->local_endpoint.address,
+            server->socket->local_endpoint.port);
         goto error;
     }
 
@@ -318,11 +320,11 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
         goto error;
     }
 
-    AWS_LOGF_DEBUG(
+    AWS_LOGF_INFO(
         AWS_LS_HTTP_SERVER,
         "%s:%d: Server setup complete, listening for incoming connections.",
-        server->socket->remote_endpoint.address,
-        server->socket->remote_endpoint.port);
+        server->socket->local_endpoint.address,
+        server->socket->local_endpoint.port);
 
     return server;
 
@@ -337,11 +339,11 @@ void aws_http_server_destroy(struct aws_http_server *server) {
     assert(server);
 
     if (server->socket) {
-        AWS_LOGF_DEBUG(
+        AWS_LOGF_INFO(
             AWS_LS_HTTP_SERVER,
             "%s:%d: Destroying server.",
-            server->socket->remote_endpoint.address,
-            server->socket->remote_endpoint.port);
+            server->socket->local_endpoint.address,
+            server->socket->local_endpoint.port);
 
         aws_server_bootstrap_destroy_socket_listener(server->bootstrap, server->socket);
     }
