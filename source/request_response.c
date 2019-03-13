@@ -42,7 +42,7 @@ void aws_http_stream_release(struct aws_http_stream *stream) {
 
     size_t prev_refcount = aws_atomic_fetch_sub(&stream->refcount, 1);
     if (prev_refcount == 1) {
-        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Final refcount released.", (void *)stream);
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Final stream refcount released.", (void *)stream);
 
         struct aws_http_connection *owning_connection = stream->owning_connection;
         stream->vtable->destroy(stream);
@@ -50,7 +50,9 @@ void aws_http_stream_release(struct aws_http_stream *stream) {
         /* Connection needed to outlive stream, but it's free to go now */
         aws_http_connection_release(owning_connection);
     } else {
-        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Refcount released, %zu remaining.", (void *)stream, prev_refcount);
+        assert(prev_refcount != 0);
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM, "id=%p: Stream refcount released, %zu remaining.", (void *)stream, prev_refcount - 1);
     }
 }
 

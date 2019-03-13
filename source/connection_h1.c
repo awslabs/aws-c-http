@@ -193,7 +193,7 @@ static void s_shutdown_connection(struct h1_connection *connection, int error_co
             "id=%p: Connection shutting down with error code %d (%s).",
             (void *)&connection->base,
             error_code,
-            aws_error_str(error_code));
+            aws_error_name(error_code));
 
         { /* BEGIN CRITICAL SECTION */
             int err = aws_mutex_lock(&connection->synced_data.lock);
@@ -405,7 +405,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_STREAM,
-        "id=%p: Created client request " PRInSTR " " PRInSTR " HTTP/%s",
+        "id=%p: Created client request: " PRInSTR " " PRInSTR " HTTP/%s",
         (void *)&stream->base,
         AWS_BYTE_CURSOR_PRI(method),
         AWS_BYTE_CURSOR_PRI(options->uri),
@@ -425,7 +425,7 @@ error:
 }
 
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
-    AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "id=%p: Destroyed.", (void *)stream_base);
+    AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Stream destroyed.", (void *)stream_base);
 
     struct h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct h1_stream, base);
 
@@ -598,6 +598,11 @@ static void s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io
             }
         }
     }
+
+    if (stream->outgoing_state == STREAM_OUTGOING_STATE_DONE) {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Stream is done sending data.", (void *)&stream->base);
+        return;
+    }
 }
 
 static void s_stream_complete(struct h1_stream *stream, int error_code) {
@@ -608,12 +613,12 @@ static void s_stream_complete(struct h1_stream *stream, int error_code) {
             "id=%p: Stream completed with error code %d (%s).",
             (void *)&stream->base,
             error_code,
-            aws_error_str(error_code));
+            aws_error_name(error_code));
 
     } else if (stream->type == STREAM_TYPE_OUTGOING_REQUEST) {
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_STREAM,
-            "id=%p: Client request complete, response status code is %d (%s).",
+            "id=%p: Client request complete, response status: %d (%s).",
             (void *)&stream->base,
             stream->base.incoming_response_status,
             aws_http_code_to_str(stream->base.incoming_response_status));
@@ -653,7 +658,7 @@ static void s_update_incoming_stream_ptr(struct h1_connection *connection) {
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,
-        "id=%p: Current incoming stream is now id=%p.",
+        "id=%p: Current incoming stream is now %p.",
         (void *)&connection->base,
         desired ? (void *)&desired->base : NULL);
 
@@ -727,7 +732,7 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
     if (prev != current) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
-            "id=%p: Current outgoing stream is now id=%p.",
+            "id=%p: Current outgoing stream is now %p.",
             (void *)&connection->base,
             current ? (void *)&current->base : NULL);
 
@@ -809,7 +814,7 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         if (err) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
-                "id=%s: Failed to send message up channel, closing connection.",
+                "id=%p: Failed to send message up channel, closing connection.",
                 (void *)&connection->base);
 
             goto error;
@@ -820,7 +825,7 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
          * If this scenario turns out to be common we should implement a "pause" feature. */
         AWS_LOGF_WARN(
             AWS_LS_HTTP_CONNECTION,
-            "id=%p: Current outgoing stream id=%p sent no data, will try again next tick.",
+            "id=%p: Current outgoing stream %p sent no data, will try again next tick.",
             (void *)&connection->base,
             outgoing_stream ? (void *)&outgoing_stream->base : NULL);
 
@@ -856,7 +861,7 @@ static void s_decoder_on_method(enum aws_http_method method, void *user_data) {
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
-        "id=%s: Incoming request method %s.",
+        "id=%p: Incoming request method: %s.",
         (void *)&incoming_stream->base,
         aws_http_method_to_str(method));
 
@@ -873,7 +878,7 @@ static void s_decoder_on_uri(struct aws_byte_cursor *uri, void *user_data) {
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
-        "id=%s: Incoming request uri " PRInSTR,
+        "id=%p: Incoming request uri: " PRInSTR,
         (void *)&incoming_stream->base,
         AWS_BYTE_CURSOR_PRI(*uri));
 
@@ -904,7 +909,7 @@ static void s_decoder_on_version(enum aws_http_version version, void *user_data)
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
-        "id=%s: Incoming version HTTP/%s",
+        "id=%p: Incoming version: HTTP/%s",
         (void *)&connection->thread_data.incoming_stream->base,
         aws_http_version_to_str(version));
 
@@ -929,7 +934,7 @@ static void s_decoder_on_response_code(enum aws_http_code code, void *user_data)
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
-        "id=%p: Incoming response code %d (%s).",
+        "id=%p: Incoming response status: %d (%s).",
         (void *)&connection->thread_data.incoming_stream->base,
         (int)code,
         aws_http_code_to_str(code));
@@ -943,7 +948,7 @@ static bool s_decoder_on_header(const struct aws_http_decoded_header *header, vo
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
-        "id=%p: Incoming header " PRInSTR ": " PRInSTR,
+        "id=%p: Incoming header: " PRInSTR ": " PRInSTR,
         (void *)&incoming_stream->base,
         AWS_BYTE_CURSOR_PRI(header->name_data),
         AWS_BYTE_CURSOR_PRI(header->value_data));
@@ -986,7 +991,7 @@ static void s_mark_head_done(struct h1_stream *incoming_stream) {
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
-        "id=%p: Incoming head done, %s.",
+        "id=%p: Incoming head is done, %s.",
         (void *)&incoming_stream->base,
         has_incoming_body ? "body is next" : "there will be no body");
 
@@ -1007,7 +1012,7 @@ static bool s_decoder_on_body(const struct aws_byte_cursor *data, bool finished,
     s_mark_head_done(incoming_stream);
 
     AWS_LOGF_TRACE(
-        AWS_LS_HTTP_STREAM, "id=%p: Incoming body, %zu bytes received.", (void *)&incoming_stream->base, data->len);
+        AWS_LS_HTTP_STREAM, "id=%p: Incoming body: %zu bytes received.", (void *)&incoming_stream->base, data->len);
 
     if (incoming_stream->base.on_incoming_body) {
         size_t window_update_size = data->len;
@@ -1181,6 +1186,12 @@ static int s_handler_process_read_message(
     connection->thread_data.incoming_message_window_update = message->message_data.len;
 
     /* Decoder will invoke the internal s_decoder_X callbacks, which in turn invoke user callbacks */
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Begin processing message of size %zu.",
+        (void *)&connection->base,
+        message->message_data.len);
+
     size_t decoded_len = 0;
     int err = aws_http_decode(
         connection->thread_data.incoming_stream_decoder,
@@ -1193,6 +1204,12 @@ static int s_handler_process_read_message(
 
         goto error;
     }
+
+    AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Done processing message.", (void *)&connection->base);
+
+    /* TODO: Not using decoded_len. This used to be how you knew the message ended. Then I changed it, but now
+     * we're not checking that current incoming stream is valid in decoder callbacks.
+     * The current state of things is not safe*/
 
     if (connection->thread_data.incoming_message_window_update > 0) {
         err = aws_channel_slot_increment_read_window(slot, connection->thread_data.incoming_message_window_update);
@@ -1250,12 +1267,12 @@ static int s_handler_shutdown(
 
     /* Shut everything down the first time we get this callback (DIR_READ). */
     if (dir == AWS_CHANNEL_DIR_READ) {
-        AWS_LOGF_DEBUG(
+        AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Channel shutting down with error code %d (%s).",
             (void *)&connection->base,
             error_code,
-            aws_error_str(error_code));
+            aws_error_name(error_code));
 
         /* This call ensures that no further streams will be created or worked on. */
         s_shutdown_connection(connection, error_code);

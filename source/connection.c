@@ -131,13 +131,6 @@ static struct aws_http_connection *s_connection_new(
      * given the go-ahead via aws_http_connection_release() */
     aws_channel_acquire_hold(channel);
 
-    AWS_LOGF_DEBUG(
-        AWS_LS_HTTP_CONNECTION,
-        "id=%p: Created new HTTP/%s %s connection object.",
-        (void *)connection,
-        aws_http_version_to_str(connection->http_version),
-        connection->server_data ? "server" : "client");
-
     return connection;
 
 error:
@@ -157,7 +150,9 @@ void aws_http_connection_release(struct aws_http_connection *connection) {
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
     if (prev_refcount == 1) {
         AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION, "id=%p: Final refcount released, shut down if necessary.", (void *)connection);
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Final connection refcount released, shut down if necessary.",
+            (void *)connection);
 
         /* Channel might already be shut down, but make sure */
         aws_channel_shutdown(connection->channel_slot->channel, AWS_ERROR_SUCCESS);
@@ -165,8 +160,12 @@ void aws_http_connection_release(struct aws_http_connection *connection) {
         /* When the channel's refcount reaches 0, it destroys its slots/handlers, which will destroy the connection */
         aws_channel_release_hold(connection->channel_slot->channel);
     } else {
+        assert(prev_refcount != 0);
         AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION, "id=%p: Refcount released, %zu remaining.", (void *)connection, prev_refcount - 1);
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Connection refcount released, %zu remaining.",
+            (void *)connection,
+            prev_refcount - 1);
     }
 }
 
@@ -190,7 +189,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
             server->socket->remote_endpoint.address,
             server->socket->remote_endpoint.port,
             error_code,
-            aws_error_str(error_code));
+            aws_error_name(error_code));
 
         goto error;
     }
@@ -218,7 +217,11 @@ static void s_server_bootstrap_on_accept_channel_setup(
     }
 
     /* Tell user of successful connection. */
-    AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION, "id=%p: Setup complete, notifying caller.", (void *)connection);
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: HTTP/%s server connection established.",
+        (void *)connection,
+        aws_http_version_to_str(connection->http_version));
 
     server->on_incoming_connection(server, connection, error_code, server->user_data);
     user_cb_invoked = true;
@@ -363,11 +366,11 @@ static void s_client_bootstrap_on_channel_setup(
             AWS_LS_HTTP_CONNECTION,
             "static: Client connection failed with error code %d (%s).",
             error_code,
-            aws_error_str(error_code));
+            aws_error_name(error_code));
         goto error;
     }
 
-    AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION, "static: Socket connected, creating client connection object.");
+    AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "static: Socket connected, creating client connection object.");
 
     struct aws_http_connection *connection = s_connection_new(channel, false, options->is_using_tls, options);
     if (!connection) {
@@ -375,7 +378,11 @@ static void s_client_bootstrap_on_channel_setup(
         goto error;
     }
 
-    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: Setup complete, notifying caller.", (void *)connection);
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: HTTP/%s client connection established.",
+        (void *)connection,
+        aws_http_version_to_str(connection->http_version));
 
     /* Tell user of successful connection. */
     options->on_setup(connection, AWS_ERROR_SUCCESS, options->user_data);
