@@ -493,6 +493,8 @@ int main(int argc, char **argv) {
     }
 
     struct aws_tls_ctx *tls_ctx = NULL;
+    struct aws_tls_ctx_options tls_ctx_options;
+    AWS_ZERO_STRUCT(tls_ctx_options);
     struct aws_tls_connection_options tls_connection_options;
     AWS_ZERO_STRUCT(tls_connection_options);
     struct aws_tls_connection_options *tls_options = NULL;
@@ -500,16 +502,49 @@ int main(int argc, char **argv) {
     if (use_tls) {
         aws_tls_init_static_state(allocator);
 
-        struct aws_tls_ctx_options tls_ctx_options = {
-            /* .alpn_list = "h2;http/1.1", add this back when we have h2 support */
-            .alpn_list = "http/1.1",
-            .minimum_tls_version = AWS_IO_TLS_VER_SYS_DEFAULTS,
-            .verify_peer = !app_ctx.insecure,
-            .ca_path = app_ctx.capath,
-            .ca_file = app_ctx.cacert,
-            .certificate_path = app_ctx.cert,
-            .private_key_path = app_ctx.key,
-        };
+        if (app_ctx.cert && app_ctx.key) {
+            if (aws_tls_ctx_options_init_client_mtls_from_path(
+                    &tls_ctx_options, allocator, app_ctx.cert, app_ctx.key)) {
+                fprintf(
+                    stderr,
+                    "Failed to load %s and %s with error %s.",
+                    app_ctx.cert,
+                    app_ctx.key,
+                    aws_error_debug_str(aws_last_error()));
+                exit(1);
+            }
+        }
+#ifdef _WIN32
+        else if (app_ctx.cert && !app_ctx.key) {
+            aws_tls_ctx_options_init_client_mtls_from_system_path(&tls_ctx_options, allocator, app_ctx.cert);
+        }
+#endif
+        else {
+            aws_tls_ctx_options_init_default_client(&tls_ctx_options, allocator);
+        }
+
+        if (app_ctx.capath || app_ctx.cacert) {
+            if (aws_tls_ctx_options_override_default_trust_store_from_path(
+                    &tls_ctx_options, app_ctx.capath, app_ctx.cacert)) {
+                fprintf(
+                    stderr,
+                    "Failed to load %s and %s with error %s",
+                    app_ctx.capath,
+                    app_ctx.cacert,
+                    aws_error_debug_str(aws_last_error()));
+                exit(1);
+            }
+        }
+
+        if (app_ctx.insecure) {
+            aws_tls_ctx_options_set_verify_peer(&tls_ctx_options, false);
+        }
+
+        /* "h2;http/1.1", add this back when we have h2 support */
+        if (aws_tls_ctx_options_set_alpn_list(&tls_ctx_options, "http/1.1")) {
+            fprintf(stderr, "Failed to load alpn list with error %s.", aws_error_debug_str(aws_last_error()));
+            exit(1);
+        }
 
         tls_ctx = aws_tls_client_ctx_new(allocator, &tls_ctx_options);
 
@@ -519,15 +554,11 @@ int main(int argc, char **argv) {
         }
 
         aws_tls_connection_options_init_from_ctx(&tls_connection_options, tls_ctx);
+        if (aws_tls_connection_options_set_server_name(&tls_connection_options, allocator, &app_ctx.uri.host_name)) {
+            fprintf(stderr, "Failed to set servername with error %s.", aws_error_debug_str(aws_last_error()));
+            exit(1);
+        }
         tls_options = &tls_connection_options;
-
-        /* TODO: move aws-c-io to running off of aws_byte_cursor so we don't have to do all these tmp copies. */
-        char host_name[256];
-        AWS_ZERO_ARRAY(host_name);
-        memcpy(host_name, app_ctx.uri.host_name.ptr, app_ctx.uri.host_name.len);
-
-        memcpy(host_name, app_ctx.uri.host_name.ptr, app_ctx.uri.host_name.len);
-        aws_tls_connection_options_set_server_name(tls_options, host_name);
 
         if (app_ctx.uri.port) {
             port = app_ctx.uri.port;
@@ -567,7 +598,6 @@ int main(int argc, char **argv) {
 
     struct aws_mutex semaphore_mutex = AWS_MUTEX_INIT;
     aws_http_client_connect(&http_client_options);
-
     aws_mutex_lock(&semaphore_mutex);
     aws_condition_variable_wait(&app_ctx.c_var, &semaphore_mutex);
 
@@ -575,7 +605,9 @@ int main(int argc, char **argv) {
     aws_event_loop_group_clean_up(&el_group);
 
     if (tls_ctx) {
+        aws_tls_connection_options_clean_up(&tls_connection_options);
         aws_tls_ctx_destroy(tls_ctx);
+        aws_tls_ctx_options_clean_up(&tls_ctx_options);
     }
 
     aws_tls_clean_up_static_state();
