@@ -591,7 +591,8 @@ static void s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io
                 if (prev_len == dst->len) {
                     AWS_LOGF_TRACE(
                         AWS_LS_HTTP_STREAM,
-                        "id=%p: No body data written. Concluding this message. Try to write more in the next message.",
+                        "id=%p: No body data written, concluding this message."
+                        " Will try to write body data again in the next message.",
                         (void *)&stream->base);
                     return;
                 }
