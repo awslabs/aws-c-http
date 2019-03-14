@@ -49,13 +49,24 @@ static struct aws_http_connection *s_connection_new(
     /* Create slot for connection. */
     connection_slot = aws_channel_slot_new(channel);
     if (!connection_slot) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed to create channel slot.");
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Failed to create slot in channel %p, error %d (%s).",
+            (void *)channel,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
         goto error;
     }
 
     int err = aws_channel_slot_insert_end(channel, connection_slot);
     if (err) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed to insert slot into channel.");
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Failed to insert slot into channel %p, error %d (%s).",
+            (void *)channel,
+            err,
+            aws_error_name(err));
         goto error;
     }
 
@@ -66,7 +77,8 @@ static struct aws_http_connection *s_connection_new(
         /* Query TLS channel handler (immediately to left in the channel) for negotiated ALPN protocol */
         if (!connection_slot->adj_left || !connection_slot->adj_left->handler) {
             aws_raise_error(AWS_ERROR_INVALID_STATE);
-            AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed to find TLS handler in channel.");
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION, "static: Failed to find TLS handler in channel %p.", (void *)channel);
             goto error;
         }
 
@@ -112,16 +124,25 @@ static struct aws_http_connection *s_connection_new(
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "static: Failed to create HTTP/%s %s connection object.",
+            "static: Failed to create HTTP/%s %s connection object, error %d (%s).",
             aws_http_version_to_str(version),
-            is_server ? "server" : "client");
+            is_server ? "server" : "client",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
         goto error;
     }
 
     /* Connect handler and slot */
     err = aws_channel_slot_set_handler(connection_slot, &connection->channel_handler);
     if (err) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed setting HTTP handler in channel slot.");
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Failed to setting HTTP handler into slot on channel %p, error %d (%s).",
+            (void *)channel,
+            err,
+            aws_error_name(err));
+
         goto error;
     }
 
@@ -212,9 +233,12 @@ static void s_server_bootstrap_on_accept_channel_setup(
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
-            "%s:%d: Failed to create connection object.",
+            "%s:%d: Failed to create connection object, error %d (%s).",
             server->socket->local_endpoint.address,
-            server->socket->local_endpoint.port);
+            server->socket->local_endpoint.port,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
         goto error;
     }
 
@@ -316,7 +340,12 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     }
 
     if (!server->socket) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_SERVER, "static: Failed to create new socket listener, cannot create server.");
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_SERVER,
+            "static: Failed creating new socket listener, error %d (%s). Cannot create server.",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
         goto error;
     }
 
@@ -366,7 +395,7 @@ static void s_client_bootstrap_on_channel_setup(
     if (error_code) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "static: Client connection failed with error code %d (%s).",
+            "static: Client connection failed with error %d (%s).",
             error_code,
             aws_error_name(error_code));
         goto error;
@@ -376,7 +405,12 @@ static void s_client_bootstrap_on_channel_setup(
 
     struct aws_http_connection *connection = s_connection_new(channel, false, options->is_using_tls, options);
     if (!connection) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed to create the client connection object.");
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Failed to create the client connection object, error %d (%s).",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
         goto error;
     }
 
@@ -475,7 +509,12 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
     }
 
     if (err) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed to initiate socket channel for new client connection.");
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Failed to initiate socket channel for new client connection, error %d (%s).",
+            err,
+            aws_error_name(err));
+
         goto error;
     }
 

@@ -782,7 +782,11 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         channel, AWS_IO_MESSAGE_APPLICATION_DATA, connection->thread_data.outgoing_message_size_hint);
     if (!msg) {
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION, "id=%p: Failed to acquire message, closing connection.", (void *)&connection->base);
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Failed to acquire message from pool, error %d (%s). Closing connection.",
+            (void *)&connection->base,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
         goto error;
     }
 
@@ -815,8 +819,10 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         if (err) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
-                "id=%p: Failed to send message up channel, closing connection.",
-                (void *)&connection->base);
+                "id=%p: Failed to send message up channel, error %d (%s). Closing connection.",
+                (void *)&connection->base,
+                err,
+                aws_error_name(err));
 
             goto error;
         }
@@ -1081,7 +1087,9 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
 
     int err = aws_mutex_init(&connection->synced_data.lock);
     if (err) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed to initialize mutex.");
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
+
         goto error_mutex;
     }
 
@@ -1096,7 +1104,12 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
     };
     connection->thread_data.incoming_stream_decoder = aws_http_decoder_new(&options);
     if (!connection->thread_data.incoming_stream_decoder) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Failed to create decoder.");
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Failed to create decoder, error %d (%s).",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
         goto error_decoder;
     }
 
@@ -1201,7 +1214,11 @@ static int s_handler_process_read_message(
         &decoded_len);
     if (err) {
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION, "id=%p: Error decoding message, closing connection.", (void *)&connection->base);
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Message processing failed, error %d (%s). Closing connection.",
+            (void *)&connection->base,
+            err,
+            aws_error_name(err));
 
         goto error;
     }
@@ -1217,8 +1234,10 @@ static int s_handler_process_read_message(
         if (err) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
-                "id=%p: Failed to increment read window, closing connection.",
-                (void *)&connection->base);
+                "id=%p: Failed to increment read window, error %d (%s). Closing connection.",
+                (void *)&connection->base,
+                err,
+                aws_error_name(err));
 
             goto error;
         }
