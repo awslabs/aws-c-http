@@ -21,6 +21,8 @@
 #include <aws/common/uuid.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
+#include <aws/io/log_writer.h>
+#include <aws/io/logging.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 #include <aws/testing/aws_test_harness.h>
@@ -48,6 +50,7 @@ struct tester_options {
 /* Singleton used by tests in this file */
 struct tester {
     struct aws_allocator *alloc;
+    struct aws_logger logger;
     struct aws_event_loop_group event_loop_group;
     struct aws_server_bootstrap *server_bootstrap;
     struct aws_http_server *server;
@@ -173,6 +176,20 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 
     tester->alloc = options->alloc;
 
+    aws_load_error_strings();
+    aws_io_load_error_strings();
+    aws_io_load_log_subject_strings();
+    aws_http_load_error_strings();
+    aws_http_load_log_subject_strings();
+
+    struct aws_logger_standard_options logger_options = {
+        .level = AWS_LOG_LEVEL_TRACE,
+        .file = stderr,
+    };
+
+    ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->alloc, &logger_options));
+    aws_logger_set(&tester->logger);
+
     ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
 
@@ -252,6 +269,7 @@ static int s_tester_clean_up(struct tester *tester) {
     aws_http_server_destroy(tester->server);
     aws_server_bootstrap_destroy(tester->server_bootstrap);
     aws_event_loop_group_clean_up(&tester->event_loop_group);
+    aws_logger_clean_up(&tester->logger);
 
     return AWS_OP_SUCCESS;
 }

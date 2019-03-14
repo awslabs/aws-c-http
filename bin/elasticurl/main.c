@@ -36,7 +36,6 @@ struct elasticurl_ctx {
     const char *verb;
     struct aws_uri uri;
     struct aws_condition_variable c_var;
-    struct aws_http_request_options request_options;
     bool response_code_written;
     const char *cacert;
     const char *capath;
@@ -228,6 +227,7 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
 static void s_on_incoming_body_fn(
     struct aws_http_stream *stream,
     const struct aws_byte_cursor *data,
+    /* NOLINTNEXTLINE(readability-non-const-parameter) */
     size_t *out_window_update_size,
     void *user_data) {
 
@@ -310,10 +310,9 @@ static void s_on_stream_complete_fn(struct aws_http_stream *stream, int error_co
     (void)error_code;
     (void)user_data;
     aws_http_stream_release(stream);
-    aws_http_connection_release(aws_http_stream_get_connection(stream));
 }
 
-static void s_onclient_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
+static void s_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct elasticurl_ctx *app_ctx = user_data;
 
     if (error_code) {
@@ -322,15 +321,16 @@ static void s_onclient_connection_setup(struct aws_http_connection *connection, 
         return;
     }
 
-    app_ctx->request_options = (struct aws_http_request_options)AWS_HTTP_REQUEST_OPTIONS_INIT;
-    app_ctx->request_options.uri = app_ctx->uri.path_and_query;
-    app_ctx->request_options.user_data = app_ctx;
-    app_ctx->request_options.client_connection = connection;
-    app_ctx->request_options.method_str = aws_byte_cursor_from_c_str(app_ctx->verb);
-    app_ctx->request_options.on_response_headers = s_on_incoming_headers_fn;
-    app_ctx->request_options.on_response_header_block_done = s_on_incoming_header_block_done_fn;
-    app_ctx->request_options.on_response_body = s_on_incoming_body_fn;
-    app_ctx->request_options.on_complete = s_on_stream_complete_fn;
+    struct aws_http_request_options request_options = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    request_options.uri = app_ctx->uri.path_and_query;
+    request_options.user_data = app_ctx;
+    request_options.client_connection = connection;
+    request_options.method_str = aws_byte_cursor_from_c_str(app_ctx->verb);
+    request_options.on_response_headers = s_on_incoming_headers_fn;
+    request_options.on_response_header_block_done = s_on_incoming_header_block_done_fn;
+    request_options.on_response_body = s_on_incoming_body_fn;
+    request_options.on_complete = s_on_stream_complete_fn;
+
     app_ctx->response_code_written = false;
 
     /* only 10 custom header lines are supported, we send an additional 4 by default (hence 14). */
@@ -356,7 +356,7 @@ static void s_onclient_connection_setup(struct aws_http_connection *connection, 
         headers[3].value = aws_byte_cursor_from_c_str(content_length);
         pre_header_count += 1;
         header_count += 1;
-        app_ctx->request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
+        request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
     } else if (app_ctx->data_file) {
         if (fseek(app_ctx->data_file, 0L, SEEK_END)) {
             fprintf(stderr, "failed to seek data file.\n");
@@ -372,7 +372,7 @@ static void s_onclient_connection_setup(struct aws_http_connection *connection, 
         headers[3].value = aws_byte_cursor_from_c_str(content_length);
         pre_header_count += 1;
         header_count += 1;
-        app_ctx->request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
+        request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
     }
 
     assert(app_ctx->header_line_count <= 10);
@@ -390,10 +390,17 @@ static void s_onclient_connection_setup(struct aws_http_connection *connection, 
         header_count++;
     }
 
-    app_ctx->request_options.header_array = headers;
-    app_ctx->request_options.num_headers = header_count;
+    request_options.header_array = headers;
+    request_options.num_headers = header_count;
 
-    aws_http_stream_new_client_request(&app_ctx->request_options);
+    struct aws_http_stream *stream = aws_http_stream_new_client_request(&request_options);
+    if (!stream) {
+        fprintf(stderr, "failed to create request.");
+        exit(1);
+    }
+
+    /* Release hold on connection, it will clean itself up once stream completes */
+    aws_http_connection_release(connection);
 }
 
 static void s_on_client_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
@@ -401,7 +408,6 @@ static void s_on_client_connection_shutdown(struct aws_http_connection *connecti
     (void)connection;
     struct elasticurl_ctx *app_ctx = user_data;
 
-    aws_http_connection_release(connection);
     aws_condition_variable_notify_all(&app_ctx->c_var);
 }
 
@@ -435,48 +441,23 @@ int main(int argc, char **argv) {
     AWS_ZERO_STRUCT(log_channel);
     if (app_ctx.log_level) {
         aws_io_load_log_subject_strings();
+        aws_http_load_log_subject_strings();
+
+        struct aws_logger_standard_options options = {
+            .level = app_ctx.log_level,
+        };
 
         if (app_ctx.trace_file) {
-            struct aws_logger_standard_options options = {
-                .level = app_ctx.log_level,
-                .filename = app_ctx.trace_file,
-            };
-
-            if (aws_logger_init_standard(&logger, allocator, &options)) {
-                fprintf(stderr, "Failed to initialize logger with error %s\n", aws_error_debug_str(aws_last_error()));
-                exit(1);
-            }
+            options.filename = app_ctx.trace_file;
         } else {
-            if (aws_log_writer_init_stderr(&log_writer, allocator)) {
-                fprintf(
-                    stderr, "Failed to initialize log writer with error %s\n", aws_error_debug_str(aws_last_error()));
-                exit(1);
-            }
-
-            struct aws_log_formatter_standard_options options = {
-                .date_format = AWS_DATE_FORMAT_ISO_8601,
-            };
-
-            if (aws_log_formatter_init_default(&log_formatter, allocator, &options)) {
-                fprintf(
-                    stderr,
-                    "Failed to initialize log formatter with error %s\n",
-                    aws_error_debug_str(aws_last_error()));
-                exit(1);
-            }
-
-            if (aws_log_channel_init_background(&log_channel, allocator, &log_writer)) {
-                fprintf(
-                    stderr, "Failed to initialize log channel with error %s\n", aws_error_debug_str(aws_last_error()));
-                exit(1);
-            }
-
-            if (aws_logger_init_from_external(
-                    &logger, allocator, &log_formatter, &log_channel, &log_writer, app_ctx.log_level)) {
-                fprintf(stderr, "Failed to initialize logger with error %s\n", aws_error_debug_str(aws_last_error()));
-                exit(1);
-            }
+            options.file = stderr;
         }
+
+        if (aws_logger_init_standard(&logger, allocator, &options)) {
+            fprintf(stderr, "Failed to initialize logger with error %s\n", aws_error_debug_str(aws_last_error()));
+            exit(1);
+        }
+
         aws_logger_set(&logger);
     }
 
@@ -592,7 +573,7 @@ int main(int argc, char **argv) {
         .initial_window_size = SIZE_MAX,
         .tls_options = tls_options,
         .user_data = &app_ctx,
-        .on_setup = s_onclient_connection_setup,
+        .on_setup = s_on_client_connection_setup,
         .on_shutdown = s_on_client_connection_shutdown,
     };
 
@@ -613,7 +594,7 @@ int main(int argc, char **argv) {
     aws_tls_clean_up_static_state();
 
     if (app_ctx.log_level) {
-        aws_logger_cleanup(&logger);
+        aws_logger_clean_up(&logger);
     }
 
     aws_uri_clean_up(&app_ctx.uri);
