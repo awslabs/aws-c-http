@@ -15,6 +15,7 @@
 #include <aws/http/connection.h>
 #include <aws/http/request_response.h>
 
+#include <aws/common/command_line_parser.h>
 #include <aws/common/condition_variable.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
@@ -29,12 +30,17 @@
 #include <aws/io/tls_channel_handler.h>
 #include <aws/io/uri.h>
 
-#include <getopt.h>
+#ifdef _MSC_VER
+#    pragma warning(disable : 4996) /* Disable warnings about fopen() being insecure */
+#    pragma warning(disable : 4204) /* Declared initializers */
+#    pragma warning(disable : 4221) /* Local var in declared initializer */
+#endif
 
 struct elasticurl_ctx {
     struct aws_allocator *allocator;
     const char *verb;
     struct aws_uri uri;
+    struct aws_mutex mutex;
     struct aws_condition_variable c_var;
     bool response_code_written;
     const char *cacert;
@@ -51,6 +57,7 @@ struct elasticurl_ctx {
     FILE *output;
     const char *trace_file;
     enum aws_log_level log_level;
+    bool exchange_completed;
 };
 
 static void s_usage(void) {
@@ -80,33 +87,33 @@ static void s_usage(void) {
     exit(1);
 }
 
-static struct option s_long_options[] = {
-    {"cacert", required_argument, NULL, 'a'},
-    {"capath", required_argument, NULL, 'b'},
-    {"cert", required_argument, NULL, 'c'},
-    {"key", required_argument, NULL, 'e'},
-    {"connect-timeout", required_argument, NULL, 'f'},
-    {"header", required_argument, NULL, 'H'},
-    {"data", required_argument, NULL, 'd'},
-    {"data-file", required_argument, NULL, 'g'},
-    {"method", required_argument, NULL, 'M'},
-    {"get", no_argument, NULL, 'G'},
-    {"post", no_argument, NULL, 'P'},
-    {"head", no_argument, NULL, 'I'},
-    {"include", no_argument, NULL, 'i'},
-    {"insecure", no_argument, NULL, 'k'},
-    {"output", required_argument, NULL, 'o'},
-    {"trace", required_argument, NULL, 't'},
-    {"verbose", required_argument, NULL, 'v'},
-    {"help", no_argument, NULL, 'h'},
+static struct aws_cli_option s_long_options[] = {
+    {"cacert", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'a'},
+    {"capath", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'b'},
+    {"cert", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'c'},
+    {"key", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'e'},
+    {"connect-timeout", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'f'},
+    {"header", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'H'},
+    {"data", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'd'},
+    {"data-file", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'g'},
+    {"method", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'M'},
+    {"get", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'G'},
+    {"post", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'P'},
+    {"head", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'I'},
+    {"include", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'i'},
+    {"insecure", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'k'},
+    {"output", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'o'},
+    {"trace", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 't'},
+    {"verbose", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'v'},
+    {"help", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'h'},
     /* Per getopt(3) the last element of the array has to be filled with all zeros */
-    {NULL, no_argument, NULL, 0},
+    {NULL, AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 0},
 };
 
 static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
     while (true) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "a:b:c:e:f:H:d:g:M:GPHiko:t:v:h", s_long_options, &option_index);
+        int c = aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:M:GPHiko:t:v:h", s_long_options, &option_index);
         if (c == -1) {
             break;
         }
@@ -116,42 +123,40 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 /* getopt_long() returns 0 if an option.flag is non-null */
                 break;
             case 'a':
-                ctx->cacert = optarg;
+                ctx->cacert = aws_cli_optarg;
                 break;
             case 'b':
-                ctx->capath = optarg;
+                ctx->capath = aws_cli_optarg;
                 break;
             case 'c':
-                ctx->cert = optarg;
+                ctx->cert = aws_cli_optarg;
                 break;
             case 'e':
-                ctx->key = optarg;
+                ctx->key = aws_cli_optarg;
                 break;
             case 'f':
-                ctx->connect_timeout = atoi(optarg);
+                ctx->connect_timeout = atoi(aws_cli_optarg);
                 break;
             case 'H':
                 if (ctx->header_line_count >= sizeof(ctx->header_lines) / sizeof(const char *)) {
                     fprintf(stderr, "currently only 10 header lines are supported.\n");
                     s_usage();
-                    exit(1);
                 }
-                ctx->header_lines[ctx->header_line_count++] = optarg;
+                ctx->header_lines[ctx->header_line_count++] = aws_cli_optarg;
                 break;
             case 'd':
-                ctx->data = aws_byte_cursor_from_c_str(optarg);
+                ctx->data = aws_byte_cursor_from_c_str(aws_cli_optarg);
                 break;
             case 'g':
 
-                ctx->data_file = fopen(optarg, "r");
+                ctx->data_file = fopen(aws_cli_optarg, "rb");
                 if (!ctx->data_file) {
-                    fprintf(stderr, "unable to open file %s.\n", optarg);
+                    fprintf(stderr, "unable to open file %s.\n", aws_cli_optarg);
                     s_usage();
-                    exit(1);
                 }
                 break;
             case 'M':
-                ctx->verb = optarg;
+                ctx->verb = aws_cli_optarg;
                 break;
             case 'G':
                 ctx->verb = "GET";
@@ -169,44 +174,41 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 ctx->insecure = true;
                 break;
             case 'o':
-                ctx->output = fopen(optarg, "w");
+                ctx->output = fopen(aws_cli_optarg, "wb");
 
                 if (!ctx->output) {
-                    fprintf(stderr, "unable to open file %s.\n", optarg);
+                    fprintf(stderr, "unable to open file %s.\n", aws_cli_optarg);
                     s_usage();
-                    exit(1);
                 }
                 break;
             case 't':
-                ctx->trace_file = optarg;
+                ctx->trace_file = aws_cli_optarg;
                 break;
             case 'v':
-                if (!strcmp(optarg, "TRACE")) {
+                if (!strcmp(aws_cli_optarg, "TRACE")) {
                     ctx->log_level = AWS_LL_TRACE;
-                } else if (!strcmp(optarg, "INFO")) {
+                } else if (!strcmp(aws_cli_optarg, "INFO")) {
                     ctx->log_level = AWS_LL_INFO;
-                } else if (!strcmp(optarg, "DEBUG")) {
+                } else if (!strcmp(aws_cli_optarg, "DEBUG")) {
                     ctx->log_level = AWS_LL_DEBUG;
-                } else if (!strcmp(optarg, "ERROR")) {
+                } else if (!strcmp(aws_cli_optarg, "ERROR")) {
                     ctx->log_level = AWS_LL_ERROR;
                 } else {
-                    fprintf(stderr, "unsupported log level %s.\n", optarg);
+                    fprintf(stderr, "unsupported log level %s.\n", aws_cli_optarg);
                     s_usage();
-                    exit(1);
                 }
                 break;
             case 'h':
                 s_usage();
-                exit(1);
+                break;
             default:
                 fprintf(stderr, "Unknown option\n");
                 s_usage();
-                exit(1);
         }
     }
 
-    if (optind < argc) {
-        struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str(argv[optind++]);
+    if (aws_cli_optind < argc) {
+        struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str(argv[aws_cli_optind++]);
 
         if (aws_uri_init_parse(&ctx->uri, ctx->allocator, &uri_cursor)) {
             fprintf(
@@ -215,12 +217,10 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 (char *)uri_cursor.ptr,
                 aws_error_debug_str(aws_last_error()));
             s_usage();
-            exit(1);
         };
     } else {
         fprintf(stderr, "A URI for the request must be supplied.\n");
         s_usage();
-        exit(1);
     }
 }
 
@@ -260,7 +260,12 @@ enum aws_http_outgoing_body_state s_stream_outgoing_body_fn(
     }
 
     if (app_ctx->data_file) {
+#ifdef _WIN32
+        size_t read_val = fread(buf->buffer, 1, buf->len, app_ctx->data_file);
+        long long read = read_val == 0 ? ferror(app_ctx->data_file) : (long long)read_val;
+#else
         ssize_t read = fread(buf->buffer, 1, buf->len, app_ctx->data_file);
+#endif
 
         /* if any data is left in the buffer, tell the client that we're still in progress,
          * otherwise say we're done. */
@@ -317,6 +322,9 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
 
     if (error_code) {
         fprintf(stderr, "Connection failed with error %s\n", aws_error_debug_str(error_code));
+        aws_mutex_lock(&app_ctx->mutex);
+        app_ctx->exchange_completed = true;
+        aws_mutex_unlock(&app_ctx->mutex);
         aws_condition_variable_notify_all(&app_ctx->c_var);
         return;
     }
@@ -399,7 +407,6 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
         exit(1);
     }
 
-    /* Release hold on connection, it will clean itself up once stream completes */
     aws_http_connection_release(connection);
 }
 
@@ -408,7 +415,15 @@ static void s_on_client_connection_shutdown(struct aws_http_connection *connecti
     (void)connection;
     struct elasticurl_ctx *app_ctx = user_data;
 
+    aws_mutex_lock(&app_ctx->mutex);
+    app_ctx->exchange_completed = true;
+    aws_mutex_unlock(&app_ctx->mutex);
     aws_condition_variable_notify_all(&app_ctx->c_var);
+}
+
+static bool s_completion_predicate(void *arg) {
+    struct elasticurl_ctx *app_ctx = arg;
+    return app_ctx->exchange_completed;
 }
 
 AWS_STATIC_STRING_FROM_LITERAL(http_cmp1, "http");
@@ -428,17 +443,13 @@ int main(int argc, char **argv) {
     app_ctx.connect_timeout = 3000;
     app_ctx.output = stdout;
     app_ctx.verb = "GET";
+    aws_mutex_init(&app_ctx.mutex);
 
     s_parse_options(argc, argv, &app_ctx);
 
     struct aws_logger logger;
     AWS_ZERO_STRUCT(logger);
-    struct aws_log_writer log_writer;
-    AWS_ZERO_STRUCT(log_writer);
-    struct aws_log_formatter log_formatter;
-    AWS_ZERO_STRUCT(log_formatter);
-    struct aws_log_channel log_channel;
-    AWS_ZERO_STRUCT(log_channel);
+
     if (app_ctx.log_level) {
         aws_io_load_log_subject_strings();
         aws_http_load_log_subject_strings();
@@ -577,10 +588,9 @@ int main(int argc, char **argv) {
         .on_shutdown = s_on_client_connection_shutdown,
     };
 
-    struct aws_mutex semaphore_mutex = AWS_MUTEX_INIT;
     aws_http_client_connect(&http_client_options);
-    aws_mutex_lock(&semaphore_mutex);
-    aws_condition_variable_wait(&app_ctx.c_var, &semaphore_mutex);
+    aws_mutex_lock(&app_ctx.mutex);
+    aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_completion_predicate, &app_ctx);
 
     aws_client_bootstrap_destroy(bootstrap);
     aws_event_loop_group_clean_up(&el_group);
