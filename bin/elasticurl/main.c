@@ -443,7 +443,7 @@ int main(int argc, char **argv) {
     app_ctx.connect_timeout = 3000;
     app_ctx.output = stdout;
     app_ctx.verb = "GET";
-    app_ctx.mutex = (struct aws_mutex)AWS_MUTEX_INIT;
+    aws_mutex_init(&app_ctx.mutex);
 
     s_parse_options(argc, argv, &app_ctx);
 
