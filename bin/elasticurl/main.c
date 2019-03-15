@@ -200,6 +200,7 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 break;
             case 'h':
                 s_usage();
+                break;
             default:
                 fprintf(stderr, "Unknown option\n");
                 s_usage();
