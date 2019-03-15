@@ -200,12 +200,24 @@ struct aws_http_header {
     struct aws_byte_cursor value;
 };
 
+enum aws_http_log_subject {
+    AWS_LS_HTTP_GENERAL = 0x800,
+    AWS_LS_HTTP_CONNECTION,
+    AWS_LS_HTTP_SERVER,
+    AWS_LS_HTTP_STREAM,
+};
+
 AWS_EXTERN_C_BEGIN
 
 /**
  * Loads error strings for this API so that aws_last_error_str etc. will return useful debug strings.
  */
 AWS_HTTP_API void aws_http_load_error_strings(void);
+
+/**
+ * Load aws-c-http's log subject strings.
+ */
+AWS_HTTP_API void aws_http_load_log_subject_strings(void);
 
 AWS_HTTP_API const char *aws_http_header_name_to_str(enum aws_http_header_name name);
 AWS_HTTP_API const char *aws_http_method_to_str(enum aws_http_method method);

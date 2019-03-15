@@ -18,6 +18,7 @@
 #include <aws/common/array_list.h>
 #include <aws/common/byte_buf.h>
 #include <aws/common/error.h>
+#include <aws/io/logging.h>
 
 #include <assert.h>
 #include <ctype.h>
@@ -67,6 +68,27 @@ void aws_http_load_error_strings(void) {
     if (!s_error_strings_loaded) {
         s_error_strings_loaded = true;
         aws_register_error_info(&s_list);
+    }
+}
+
+static struct aws_log_subject_info s_log_subject_infos[] = {
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_GENERAL, "http", "Misc HTTP logging"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION, "http-connection", "HTTP client or server connection"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_SERVER, "http-server", "HTTP server socket listening for incoming connections"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_STREAM, "http-stream", "HTTP request-response exchange"),
+};
+
+static struct aws_log_subject_info_list s_log_subject_list = {
+    .subject_list = s_log_subject_infos,
+    .count = AWS_ARRAY_SIZE(s_log_subject_infos),
+};
+
+static bool s_log_strings_loaded = false;
+
+void aws_http_load_log_subject_strings(void) {
+    if (!s_log_strings_loaded) {
+        s_log_strings_loaded = true;
+        aws_register_log_subject_info_list(&s_log_subject_list);
     }
 }
 
