@@ -141,7 +141,6 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 if (ctx->header_line_count >= sizeof(ctx->header_lines) / sizeof(const char *)) {
                     fprintf(stderr, "currently only 10 header lines are supported.\n");
                     s_usage();
-                    exit(1);
                 }
                 ctx->header_lines[ctx->header_line_count++] = aws_cli_optarg;
                 break;
@@ -154,7 +153,6 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 if (!ctx->data_file) {
                     fprintf(stderr, "unable to open file %s.\n", aws_cli_optarg);
                     s_usage();
-                    exit(1);
                 }
                 break;
             case 'M':
@@ -181,7 +179,6 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 if (!ctx->output) {
                     fprintf(stderr, "unable to open file %s.\n", aws_cli_optarg);
                     s_usage();
-                    exit(1);
                 }
                 break;
             case 't':
@@ -199,16 +196,13 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 } else {
                     fprintf(stderr, "unsupported log level %s.\n", aws_cli_optarg);
                     s_usage();
-                    exit(1);
                 }
                 break;
             case 'h':
                 s_usage();
-                exit(1);
             default:
                 fprintf(stderr, "Unknown option\n");
                 s_usage();
-                exit(1);
         }
     }
 
@@ -222,12 +216,10 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 (char *)uri_cursor.ptr,
                 aws_error_debug_str(aws_last_error()));
             s_usage();
-            exit(1);
         };
     } else {
         fprintf(stderr, "A URI for the request must be supplied.\n");
         s_usage();
-        exit(1);
     }
 }
 
