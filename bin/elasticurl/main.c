@@ -449,12 +449,7 @@ int main(int argc, char **argv) {
 
     struct aws_logger logger;
     AWS_ZERO_STRUCT(logger);
-    struct aws_log_writer log_writer;
-    AWS_ZERO_STRUCT(log_writer);
-    struct aws_log_formatter log_formatter;
-    AWS_ZERO_STRUCT(log_formatter);
-    struct aws_log_channel log_channel;
-    AWS_ZERO_STRUCT(log_channel);
+
     if (app_ctx.log_level) {
         aws_io_load_log_subject_strings();
         aws_http_load_log_subject_strings();
