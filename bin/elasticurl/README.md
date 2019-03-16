@@ -5,7 +5,7 @@ This is a sample application showing how to use `aws-c-http` in client mode. It'
 ### Examples
 Dump the body of example.com to stdout
 
-    elasitcurl example.com
+    elasticurl example.com
     
 Make a POST request with a header and payload, logging ERROR and FATAL messages:
 
