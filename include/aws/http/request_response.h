@@ -28,6 +28,11 @@ struct aws_http_connection;
  */
 struct aws_http_stream;
 
+struct aws_http_header {
+    struct aws_byte_cursor name;
+    struct aws_byte_cursor value;
+};
+
 enum aws_http_outgoing_body_state {
     AWS_HTTP_OUTGOING_BODY_IN_PROGRESS,
     AWS_HTTP_OUTGOING_BODY_DONE,
@@ -85,16 +90,10 @@ struct aws_http_request_options {
     struct aws_http_connection *client_connection;
 
     /**
-     * Either `method`, or `method_str` are required for HTTP/1.
+     * Required for HTTP/1.
      * Not required in HTTP/2 if :method header is passed in.
      */
-    enum aws_http_method method;
-
-    /**
-     * Either `method`, or `method_str` are required for HTTP/1.
-     * Not required in HTTP/2 if :method header is passed in.
-     */
-    struct aws_byte_cursor method_str;
+    struct aws_byte_cursor method;
 
     /**
      * Required for HTTP/1.
@@ -138,7 +137,7 @@ struct aws_http_request_options {
     aws_http_on_incoming_body_fn *on_response_body;
 
     /**
-     * Invoked when request/response stream is complete, whether successful or unsucessful
+     * Invoked when request/response stream is complete, whether successful or unsuccessful
      * Optional.
      */
     aws_http_on_stream_complete_fn *on_complete;
@@ -214,10 +213,7 @@ int aws_http_stream_get_incoming_response_status(const struct aws_http_stream *s
 
 /* Only valid in "request handler" streams, once request headers start arriving */
 AWS_HTTP_API
-int aws_http_stream_get_incoming_request_method(const struct aws_http_stream *stream, enum aws_http_method *out_method);
-
-AWS_HTTP_API
-int aws_http_stream_get_incoming_request_method_str(
+int aws_http_stream_get_incoming_request_method(
     const struct aws_http_stream *stream,
     struct aws_byte_cursor *out_method);
 
@@ -232,7 +228,7 @@ int aws_http_stream_send_response(struct aws_http_stream *stream, const struct a
  * Manually issue a window update.
  * Note that the stream's default behavior is to issue updates which keep the window at its original size.
  * See aws_http_on_incoming_body_fn() for details on letting the window shrink.
- **/
+ */
 AWS_HTTP_API
 void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 

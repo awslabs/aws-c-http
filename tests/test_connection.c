@@ -182,6 +182,8 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     aws_http_load_error_strings();
     aws_http_load_log_subject_strings();
 
+    aws_http_library_init(options->alloc);
+
     struct aws_logger_standard_options logger_options = {
         .level = AWS_LOG_LEVEL_TRACE,
         .file = stderr,
@@ -269,6 +271,7 @@ static int s_tester_clean_up(struct tester *tester) {
     aws_http_server_destroy(tester->server);
     aws_server_bootstrap_destroy(tester->server_bootstrap);
     aws_event_loop_group_clean_up(&tester->event_loop_group);
+    aws_http_library_clean_up();
     aws_logger_clean_up(&tester->logger);
 
     return AWS_OP_SUCCESS;

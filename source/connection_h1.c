@@ -60,10 +60,9 @@ static void s_handler_destroy(struct aws_channel_handler *handler);
 static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
 static void s_stream_destroy(struct aws_http_stream *stream_base);
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
-static void s_decoder_on_method(enum aws_http_method method, void *user_data);
+static void s_decoder_on_method(enum aws_http_method method, const struct aws_byte_cursor *method_str, void *user_data);
 static void s_decoder_on_uri(struct aws_byte_cursor *uri, void *user_data);
-static void s_decoder_on_version(enum aws_http_version version, void *user_data);
-static void s_decoder_on_response_code(enum aws_http_code code, void *user_data);
+static void s_decoder_on_response_code(int status_code, void *user_data);
 static bool s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data);
 static bool s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data);
 static void s_decoder_on_done(void *user_data);
@@ -91,7 +90,6 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
 static const struct aws_http_decoder_vtable s_decoder_vtable = {
     .on_method = s_decoder_on_method,
     .on_uri = s_decoder_on_uri,
-    .on_version = s_decoder_on_version,
     .on_code = s_decoder_on_response_code,
     .on_header = s_decoder_on_header,
     .on_body = s_decoder_on_body,
@@ -229,14 +227,9 @@ static int s_stream_scan_outgoing_headers(
         struct aws_http_header header = header_array[i];
 
         enum aws_http_header_name name_enum;
-        size_t name_len;
 
-        if (header.name_str.len > 0) {
-            name_len = header.name_str.len;
-            name_enum = aws_http_str_to_header_name(header.name_str);
-        } else if (header.name != AWS_HTTP_HEADER_UNKNOWN) {
-            name_len = strlen(aws_http_header_name_to_str(header.name));
-            name_enum = header.name;
+        if (header.name.len > 0) {
+            name_enum = aws_http_str_to_header_name(header.name);
         } else {
             AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "static: No name set for header[%zu].", i);
             return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -251,8 +244,8 @@ static int s_stream_scan_outgoing_headers(
                 if (!stream->base.stream_outgoing_body) {
                     AWS_LOGF_ERROR(
                         AWS_LS_HTTP_STREAM,
-                        "static: %s header specified, but body-streaming callback is not set.",
-                        aws_http_header_name_to_str(name_enum));
+                        "static: '" PRInSTR "' header specified, but body-streaming callback is not set.",
+                        AWS_BYTE_CURSOR_PRI(header.name));
 
                     return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
                 }
@@ -262,7 +255,7 @@ static int s_stream_scan_outgoing_headers(
         }
 
         /* header-line: "{name}: {value}\r\n" */
-        *out_header_lines_len += name_len + 2 + header.value.len + 2;
+        *out_header_lines_len += header.name.len + 2 + header.value.len + 2;
 
         /* TODO: check for overflows anywhere we do addition/subtraction? */
     }
@@ -275,15 +268,9 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_head
     bool wrote_all = true;
     for (size_t i = 0; i < num_headers; ++i) {
         struct aws_http_header header = header_array[i];
-        struct aws_byte_cursor name_cursor;
-        if (header.name_str.len > 0) {
-            name_cursor = header.name_str;
-        } else {
-            name_cursor = aws_byte_cursor_from_c_str(aws_http_header_name_to_str(header.name));
-        }
 
         /* header-line: "{name}: {value}\r\n" */
-        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, name_cursor);
+        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.name);
         wrote_all &= aws_byte_buf_write_u8(dst, ':');
         wrote_all &= aws_byte_buf_write_u8(dst, ' ');
         wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.value);
@@ -294,7 +281,7 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_head
 }
 
 struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options) {
-    if (options->uri.len == 0 || (options->method == AWS_HTTP_METHOD_UNKNOWN && options->method_str.len == 0)) {
+    if (options->uri.len == 0 || options->method.len == 0) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid options, cannot create client request.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
@@ -315,20 +302,12 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     stream->base.on_incoming_header_block_done = options->on_response_header_block_done;
     stream->base.on_incoming_body = options->on_response_body;
     stream->base.on_complete = options->on_complete;
+    stream->base.incoming_response_status = AWS_HTTP_STATUS_UNKNOWN;
 
     /* Stream refcount starts at 2. 1 for user and 1 for connection to release it's done with the stream */
     aws_atomic_init_int(&stream->base.refcount, 2);
 
-    struct aws_byte_cursor method;
-    if (options->method_str.len > 0) {
-        method = options->method_str;
-    } else {
-        /* TODO: make _to_cursor() versions of these _to_str() functions to avoid runtime strlen() */
-        method = aws_byte_cursor_from_c_str(aws_http_method_to_str(options->method));
-    }
-
-    struct aws_byte_cursor version_str = aws_byte_cursor_from_array("HTTP/", 5);
-    struct aws_byte_cursor version_num = aws_byte_cursor_from_c_str(aws_http_version_to_str(AWS_HTTP_VERSION_1_1));
+    struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
 
     /**
      * Calculate total size needed for outgoing_head_buffer, then write to buffer.
@@ -337,7 +316,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
      * header-line: "{name}: {value}\r\n"
      * head-end: "\r\n"
      */
-    size_t request_line_len = method.len + 1 + options->uri.len + 1 + version_str.len + version_num.len + 2;
+    size_t request_line_len = options->method.len + 1 + options->uri.len + 1 + version.len + 2;
     size_t header_lines_len;
     int err = s_stream_scan_outgoing_headers(stream, options->header_array, options->num_headers, &header_lines_len);
     if (err) {
@@ -354,12 +333,11 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     bool wrote_all = true;
 
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, method);
+    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, options->method);
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, ' ');
     wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, options->uri);
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, ' ');
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, version_str);
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, version_num);
+    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, version);
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\r');
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\n');
 
@@ -397,7 +375,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_STREAM,
             "static: Connection is closed, cannot create " PRInSTR " request.",
-            AWS_BYTE_CURSOR_PRI(method));
+            AWS_BYTE_CURSOR_PRI(options->method));
 
         aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
         goto error;
@@ -405,11 +383,11 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_STREAM,
-        "id=%p: Created client request: " PRInSTR " " PRInSTR " HTTP/%s",
+        "id=%p: Created client request: " PRInSTR " " PRInSTR " " PRInSTR,
         (void *)&stream->base,
-        AWS_BYTE_CURSOR_PRI(method),
+        AWS_BYTE_CURSOR_PRI(options->method),
         AWS_BYTE_CURSOR_PRI(options->uri),
-        aws_http_version_to_str(connection->base.http_version));
+        AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->base.http_version)));
 
     if (should_schedule_task) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling outgoing stream task.", (void *)&connection->base);
@@ -622,7 +600,7 @@ static void s_stream_complete(struct h1_stream *stream, int error_code) {
             "id=%p: Client request complete, response status: %d (%s).",
             (void *)&stream->base,
             stream->base.incoming_response_status,
-            aws_http_code_to_str(stream->base.incoming_response_status));
+            aws_http_status_text(stream->base.incoming_response_status));
     } else {
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_STREAM,
@@ -860,21 +838,23 @@ error:
     s_shutdown_connection(connection, aws_last_error());
 }
 
-static void s_decoder_on_method(enum aws_http_method method, void *user_data) {
-    /* TODO: this needs to pass raw strings too */
+static void s_decoder_on_method(enum aws_http_method method, const struct aws_byte_cursor *method_str, void *user_data) {
+    (void)method;
 
     struct h1_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
-        "id=%p: Incoming request method: %s.",
+        "id=%p: Incoming request method: " PRInSTR,
         (void *)&incoming_stream->base,
-        aws_http_method_to_str(method));
+        AWS_BYTE_CURSOR_PRI(*method_str));
 
-    assert(incoming_stream->base.incoming_request_method == AWS_HTTP_METHOD_UNKNOWN);
+    assert(incoming_stream->base.incoming_request_method_str.len == 0);
+    /* TODO: combine decoder on_uri & on_method callbacks so we can allocate buffer all at once
     incoming_stream->base.incoming_request_method = method;
     incoming_stream->base.incoming_request_method_str = aws_byte_cursor_from_c_str(aws_http_method_to_str(method));
+    */
 }
 
 static void s_decoder_on_uri(struct aws_byte_cursor *uri, void *user_data) {
@@ -911,42 +891,17 @@ error:
     s_shutdown_connection(connection, aws_last_error());
 }
 
-static void s_decoder_on_version(enum aws_http_version version, void *user_data) {
-    struct h1_connection *connection = user_data;
-
-    AWS_LOGF_TRACE(
-        AWS_LS_HTTP_STREAM,
-        "id=%p: Incoming version: HTTP/%s",
-        (void *)&connection->thread_data.incoming_stream->base,
-        aws_http_version_to_str(version));
-
-    if (version != connection->base.http_version) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM,
-            "id=%p: Incoming message with incorrect version HTTP/%s, closing connection.",
-            (void *)&connection->thread_data.incoming_stream->base,
-            aws_http_version_to_str(version));
-
-        aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
-        goto error;
-    }
-
-    return;
-error:
-    s_shutdown_connection(connection, aws_last_error());
-}
-
-static void s_decoder_on_response_code(enum aws_http_code code, void *user_data) {
+static void s_decoder_on_response_code(int status_code, void *user_data) {
     struct h1_connection *connection = user_data;
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
         "id=%p: Incoming response status: %d (%s).",
         (void *)&connection->thread_data.incoming_stream->base,
-        (int)code,
-        aws_http_code_to_str(code));
+        status_code,
+        aws_http_status_text(status_code));
 
-    connection->thread_data.incoming_stream->base.incoming_response_status = code;
+    connection->thread_data.incoming_stream->base.incoming_response_status = status_code;
 }
 
 static bool s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
@@ -968,8 +923,7 @@ static bool s_decoder_on_header(const struct aws_http_decoded_header *header, vo
 
     if (incoming_stream->base.on_incoming_headers) {
         struct aws_http_header deliver = {
-            .name = header->name,
-            .name_str = header->name_data,
+            .name = header->name_data,
             .value = header->value_data,
         };
 

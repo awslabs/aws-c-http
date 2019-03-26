@@ -64,8 +64,7 @@ struct aws_http_connection *aws_http_stream_get_connection(const struct aws_http
 int aws_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status) {
     assert(stream);
 
-    /* TODO: 0 is actually legal. Also, rename enum "_status" instead of "_code" */
-    if (stream->incoming_response_status == (int)AWS_HTTP_CODE_UNKNOWN) {
+    if (stream->incoming_response_status == (int)AWS_HTTP_STATUS_UNKNOWN) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Status code not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
@@ -75,21 +74,6 @@ int aws_http_stream_get_incoming_response_status(const struct aws_http_stream *s
 }
 
 int aws_http_stream_get_incoming_request_method(
-    const struct aws_http_stream *stream,
-    enum aws_http_method *out_method) {
-
-    assert(stream);
-
-    if (!stream->incoming_request_method_str.ptr) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Request method not yet received.", (void *)stream);
-        return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
-    }
-
-    *out_method = stream->incoming_request_method;
-    return AWS_OP_SUCCESS;
-}
-
-int aws_http_stream_get_incoming_request_method_str(
     const struct aws_http_stream *stream,
     struct aws_byte_cursor *out_method) {
 

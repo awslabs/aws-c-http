@@ -92,7 +92,7 @@ static struct aws_http_connection *s_connection_new(
             if (aws_byte_cursor_eq_byte_buf(&http_1_1, &protocol)) {
                 version = AWS_HTTP_VERSION_1_1;
             } else if (aws_byte_cursor_eq_byte_buf(&h2, &protocol)) {
-                version = AWS_HTTP_VERSION_2_0;
+                version = AWS_HTTP_VERSION_2;
             } else {
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_CONNECTION,
@@ -116,7 +116,10 @@ static struct aws_http_connection *s_connection_new(
             break;
         default:
             AWS_LOGF_ERROR(
-                AWS_LS_HTTP_CONNECTION, "static: Unsupported HTTP version %s.", aws_http_version_to_str(version));
+                AWS_LS_HTTP_CONNECTION,
+                "static: Unsupported version " PRInSTR,
+                AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(version)));
+
             aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
             goto error;
     }
@@ -124,8 +127,8 @@ static struct aws_http_connection *s_connection_new(
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "static: Failed to create HTTP/%s %s connection object, error %d (%s).",
-            aws_http_version_to_str(version),
+            "static: Failed to create " PRInSTR " %s connection object, error %d (%s).",
+            AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(version)),
             is_server ? "server" : "client",
             aws_last_error(),
             aws_error_name(aws_last_error()));
@@ -245,9 +248,9 @@ static void s_server_bootstrap_on_accept_channel_setup(
     /* Tell user of successful connection. */
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
-        "id=%p: HTTP/%s server connection established.",
+        "id=%p: " PRInSTR " server connection established.",
         (void *)connection,
-        aws_http_version_to_str(connection->http_version));
+        AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->http_version)));
 
     server->on_incoming_connection(server, connection, error_code, server->user_data);
     user_cb_invoked = true;
@@ -295,6 +298,8 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
 }
 
 struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options) {
+    aws_http_fatal_assert_library_initialized();
+
     struct aws_http_server *server = NULL;
 
     if (!options || options->self_size == 0 || !options->allocator || !options->bootstrap || !options->socket_options ||
@@ -416,9 +421,9 @@ static void s_client_bootstrap_on_channel_setup(
 
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
-        "id=%p: HTTP/%s client connection established.",
+        "id=%p: " PRInSTR " client connection established.",
         (void *)connection,
-        aws_http_version_to_str(connection->http_version));
+        AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->http_version)));
 
     /* Tell user of successful connection. */
     options->on_setup(connection, AWS_ERROR_SUCCESS, options->user_data);
@@ -457,6 +462,8 @@ static void s_client_bootstrap_on_channel_shutdown(
 }
 
 int aws_http_client_connect(const struct aws_http_client_connection_options *options) {
+    aws_http_fatal_assert_library_initialized();
+
     struct aws_http_client_connection_impl_options *impl_options = NULL;
     struct aws_string *host_name = NULL;
     int err = 0;
