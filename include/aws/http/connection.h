@@ -128,6 +128,13 @@ AWS_HTTP_API
 int aws_http_client_connect(const struct aws_http_client_connection_options *options);
 
 /**
+ * Begin shutdown sequence of the connection if it hasn't already started. It's safe to call this
+ * function regardless of the connection state as long as you hold a reference to the connection.
+ */
+AWS_HTTP_API
+int aws_http_client_connection_close(struct aws_http_connection *connection);
+
+/**
  * Users must release the connection when they are done with it.
  * The connection's memory cannot be reclaimed until this is done.
  * If the connection was not already shutting down, it will be shut down.
