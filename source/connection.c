@@ -166,7 +166,13 @@ error:
     return NULL;
 }
 
-/* TODO: probably should have a aws_http_connection_close(int error_code) function */
+int aws_http_client_connection_close(struct aws_http_connection *connection) {
+    if (connection->channel_slot->channel) {
+        return aws_channel_shutdown(connection->channel_slot->channel, AWS_ERROR_SUCCESS);
+    }
+
+    return AWS_OP_SUCCESS;
+}
 
 void aws_http_connection_release(struct aws_http_connection *connection) {
     assert(connection);
