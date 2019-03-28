@@ -86,12 +86,9 @@ static struct aws_http_connection *s_connection_new(
         struct aws_channel_handler *tls_handler = tls_slot->handler;
         struct aws_byte_buf protocol = aws_tls_handler_protocol(tls_handler);
         if (protocol.len) {
-            struct aws_byte_cursor http_1_1 = aws_byte_cursor_from_array("http/1.1", 8);
-            struct aws_byte_cursor h2 = aws_byte_cursor_from_array("h2", 2);
-
-            if (aws_byte_cursor_eq_byte_buf(&http_1_1, &protocol)) {
+            if (aws_byte_buf_eq_c_str(&protocol, "http/1.1")) {
                 version = AWS_HTTP_VERSION_1_1;
-            } else if (aws_byte_cursor_eq_byte_buf(&h2, &protocol)) {
+            } else if (aws_byte_buf_eq_c_str(&protocol, "h2")) {
                 version = AWS_HTTP_VERSION_2;
             } else {
                 AWS_LOGF_ERROR(

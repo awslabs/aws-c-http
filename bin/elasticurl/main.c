@@ -471,8 +471,7 @@ int main(int argc, char **argv) {
     if (!app_ctx.uri.scheme.len && (app_ctx.uri.port == 80 || app_ctx.uri.port == 8080)) {
         use_tls = false;
     } else {
-        struct aws_byte_cursor http_cmp = aws_byte_cursor_from_c_str("http");
-        if (aws_byte_cursor_eq_case_insensitive(&app_ctx.uri.scheme, &http_cmp)) {
+        if (aws_byte_cursor_eq_c_str_ignore_case(&app_ctx.uri.scheme, "http")) {
             use_tls = false;
         }
     }

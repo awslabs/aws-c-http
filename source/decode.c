@@ -52,11 +52,6 @@ static int s_linestate_response(struct aws_http_decoder *decoder, struct aws_byt
 static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_cursor input);
 static int s_linestate_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_cursor input);
 
-static bool s_byte_cursor_eq_c_str_case_insensitive(struct aws_byte_cursor *cursor, const char *c_str) {
-    struct aws_byte_cursor cursor_b = aws_byte_cursor_from_c_str(c_str);
-    return aws_byte_cursor_eq_case_insensitive(cursor, &cursor_b);
-}
-
 static struct aws_byte_cursor s_trim_trailing_whitespace(struct aws_byte_cursor cursor) {
     while (cursor.len && cursor.ptr[cursor.len - 1] == (uint8_t)' ') {
         cursor.len--;
@@ -385,6 +380,10 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
     struct aws_byte_cursor value = aws_byte_cursor_from_array(split_ptr + 1, (input.ptr + input.len) - (split_ptr + 1));
     value = s_trim_whitespace(value);
 
+    if (name.len == 0) {
+        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+    }
+
     struct aws_http_decoded_header header;
     header.name = aws_http_str_to_header_name(name);
     header.name_data = name;
@@ -411,17 +410,17 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
             }
             for (size_t i = 0; i < n; ++i) {
                 struct aws_byte_cursor coding = s_trim_whitespace(codings[i]);
-                if (s_byte_cursor_eq_c_str_case_insensitive(&coding, "chunked")) {
+                if (aws_byte_cursor_eq_c_str_ignore_case(&coding, "chunked")) {
                     flags |= AWS_HTTP_TRANSFER_ENCODING_CHUNKED;
                     if (i != (n - 1)) {
                         /* chunked must be the final transfer coding */
                         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
                     }
-                } else if (s_byte_cursor_eq_c_str_case_insensitive(&coding, "compress")) {
+                } else if (aws_byte_cursor_eq_c_str_ignore_case(&coding, "compress")) {
                     flags |= AWS_HTTP_TRANSFER_ENCODING_DEPRECATED_COMPRESS;
-                } else if (s_byte_cursor_eq_c_str_case_insensitive(&coding, "deflate")) {
+                } else if (aws_byte_cursor_eq_c_str_ignore_case(&coding, "deflate")) {
                     flags |= AWS_HTTP_TRANSFER_ENCODING_DEFLATE;
-                } else if (s_byte_cursor_eq_c_str_case_insensitive(&coding, "gzip")) {
+                } else if (aws_byte_cursor_eq_c_str_ignore_case(&coding, "gzip")) {
                     flags |= AWS_HTTP_TRANSFER_ENCODING_GZIP;
                 }
             }
@@ -438,7 +437,7 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
         } break;
 
         case AWS_HTTP_HEADER_EXPECT:
-            if (s_byte_cursor_eq_c_str_case_insensitive(&header.value_data, "100-continue")) {
+            if (aws_byte_cursor_eq_c_str_ignore_case(&header.value_data, "100-continue")) {
                 decoder->expect_100_continue_skip_on_done = true;
             }
             break;

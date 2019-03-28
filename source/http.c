@@ -106,8 +106,8 @@ static void s_init_case_insensitive_hash_table(
         table,
         alloc,
         end_index - start_index,
-        aws_hash_byte_cursor_ptr_case_insensitive,
-        (aws_hash_callback_eq_fn *)aws_byte_cursor_eq_case_insensitive,
+        aws_hash_byte_cursor_ptr_ignore_case,
+        (aws_hash_callback_eq_fn *)aws_byte_cursor_eq_ignore_case,
         NULL,
         NULL);
     AWS_FATAL_ASSERT(!err);

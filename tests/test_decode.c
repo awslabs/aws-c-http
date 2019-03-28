@@ -138,8 +138,7 @@ static int s_http_test_get_method(struct aws_allocator *allocator, void *ctx) {
     ASSERT_SUCCESS(aws_http_decode(decoder, msg, len, NULL));
     ASSERT_INT_EQUALS(AWS_HTTP_METHOD_HEAD, request_data.method_enum);
 
-    const struct aws_byte_cursor head_cmp = aws_byte_cursor_from_c_str("HEAD");
-    ASSERT_TRUE(aws_byte_cursor_eq_case_insensitive(&request_data.method_str, &head_cmp));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request_data.method_str, "HEAD"));
 
     aws_http_decoder_destroy(decoder);
     aws_http_library_clean_up();
@@ -180,11 +179,6 @@ static int s_http_test_response_bad_version(struct aws_allocator *allocator, voi
     return AWS_OP_SUCCESS;
 }
 
-static int s_streq_cursor(struct aws_byte_cursor cursor, const char *str) {
-    const struct aws_byte_cursor cursor_b = aws_byte_cursor_from_c_str(str);
-    return aws_byte_cursor_eq(&cursor, &cursor_b);
-}
-
 AWS_TEST_CASE(http_test_get_uri, s_http_test_get_uri);
 static int s_http_test_get_uri(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -200,7 +194,7 @@ static int s_http_test_get_uri(struct aws_allocator *allocator, void *ctx) {
 
     size_t len = strlen(msg);
     ASSERT_SUCCESS(aws_http_decode(decoder, msg, len, NULL));
-    ASSERT_TRUE(s_streq_cursor(uri_data, "/"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&uri_data, "/"));
 
     aws_http_decoder_destroy(decoder);
     aws_http_library_clean_up();
@@ -256,7 +250,7 @@ static bool s_got_header(const struct aws_http_decoded_header *header, void *use
     if (params->index < params->max_index) {
         if (params->first_error == AWS_OP_SUCCESS) {
             params->first_error =
-                s_streq_cursor(header->name_data, params->header_names[params->index]) ? AWS_OP_SUCCESS : AWS_OP_ERR;
+                aws_byte_cursor_eq_c_str(&header->name_data, params->header_names[params->index]) ? AWS_OP_SUCCESS : AWS_OP_ERR;
         }
         params->index++;
     } else {

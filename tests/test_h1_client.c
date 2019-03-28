@@ -84,8 +84,7 @@ static int s_check_message(struct tester *tester, const char *expected) {
     struct aws_linked_list_node *node = aws_linked_list_pop_front(msgs);
     struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
 
-    struct aws_byte_cursor expected_cur = aws_byte_cursor_from_c_str(expected);
-    ASSERT_TRUE(aws_byte_cursor_eq_byte_buf(&expected_cur, &msg->message_data));
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&msg->message_data, expected));
 
     aws_mem_release(msg->allocator, msg);
 
@@ -627,22 +626,12 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
     return AWS_OP_SUCCESS;
 }
 
-static bool s_streq(struct aws_byte_cursor cur, const char *str) {
-    struct aws_byte_cursor cur_b = aws_byte_cursor_from_c_str(str);
-    return aws_byte_cursor_eq(&cur, &cur_b);
-}
-
-static bool s_strieq(struct aws_byte_cursor cur, const char *str) {
-    struct aws_byte_cursor cur_b = aws_byte_cursor_from_c_str(str);
-    return aws_byte_cursor_eq_case_insensitive(&cur, &cur_b);
-}
-
 static int s_check_header(struct response_tester *response, size_t i, const char *name_str, const char *value) {
 
     ASSERT_TRUE(i < response->num_headers);
     struct aws_http_header *header = response->headers + i;
-    ASSERT_TRUE(s_strieq(header->name, name_str));
-    ASSERT_TRUE(s_streq(header->value, value));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str_ignore_case(&header->name, name_str));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str_ignore_case(&header->value, value));
 
     return AWS_OP_SUCCESS;
 }
@@ -718,7 +707,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_body) {
     ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
     ASSERT_TRUE(response.num_headers == 1);
     ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9"));
-    ASSERT_TRUE(s_streq(response.body, "Call Momo"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&response.body, "Call Momo"));
 
     /* clean up */
     ASSERT_SUCCESS(s_response_tester_clean_up(&response));
@@ -760,7 +749,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1_from_multiple_io_messages) {
     ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
     ASSERT_TRUE(response.num_headers == 1);
     ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9"));
-    ASSERT_TRUE(s_streq(response.body, "Call Momo"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&response.body, "Call Momo"));
 
     /* clean up */
     ASSERT_SUCCESS(s_response_tester_clean_up(&response));
