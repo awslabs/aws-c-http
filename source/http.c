@@ -130,7 +130,7 @@ static void s_methods_init(struct aws_allocator *alloc) {
         &s_method_str_to_enum, alloc, s_method_enum_to_str, AWS_HTTP_METHOD_UNKNOWN + 1, AWS_HTTP_METHOD_COUNT);
 }
 
-static void s_methods_clean_up() {
+static void s_methods_clean_up(void) {
     aws_hash_table_clean_up(&s_method_str_to_enum);
 }
 
@@ -155,7 +155,7 @@ static void s_versions_init(struct aws_allocator *alloc) {
     s_version_enum_to_str[AWS_HTTP_VERSION_2] = aws_byte_cursor_from_c_str("HTTP/2");
 }
 
-static void s_versions_clean_up() {}
+static void s_versions_clean_up(void) {}
 
 struct aws_byte_cursor aws_http_version_to_str(enum aws_http_version version) {
     if (version < AWS_HTTP_VERSION_UNKNOWN || version >= AWS_HTTP_VERSION_COUNT) {
@@ -178,7 +178,7 @@ static void s_headers_init(struct aws_allocator *alloc) {
         &s_header_str_to_enum, alloc, s_header_enum_to_str, AWS_HTTP_HEADER_UNKNOWN + 1, AWS_HTTP_HEADER_COUNT);
 }
 
-static void s_headers_clean_up() {
+static void s_headers_clean_up(void) {
     aws_hash_table_clean_up(&s_header_str_to_enum);
 }
 
@@ -338,7 +338,7 @@ void aws_http_library_init(struct aws_allocator *alloc) {
     s_versions_init(alloc);
 }
 
-void aws_http_library_clean_up() {
+void aws_http_library_clean_up(void) {
     s_methods_clean_up();
     s_headers_clean_up();
     s_versions_clean_up();
