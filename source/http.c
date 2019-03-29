@@ -119,9 +119,30 @@ static void s_init_case_insensitive_hash_table(
     }
 }
 
+/**
+ * Given key, get value from table initialized by s_init_case_insensitive_hash_table().
+ * Returns -1 if key not found.
+ */
+static int s_find_in_case_insensitive_hash_table(const struct aws_hash_table *table, struct aws_byte_cursor *key) {
+    struct aws_hash_element *elem;
+    aws_hash_table_find(table, key, &elem);
+    if (elem) {
+#ifdef _MSC_VER
+#    pragma warning(push)
+#    pragma warning(disable : 4311) /* 'type cast': pointer truncation from 'void *' to 'int' */
+#endif
+        int value = (int)elem->value;
+#ifdef _MSC_VER
+#    pragma warning(pop)
+#endif
+        return value;
+    }
+    return -1;
+}
+
 /* METHODS */
-static struct aws_hash_table s_method_str_to_enum;
-static struct aws_byte_cursor s_method_enum_to_str[AWS_HTTP_METHOD_COUNT];
+static struct aws_hash_table s_method_str_to_enum; /* for string -> enum lookup */
+static struct aws_byte_cursor s_method_enum_to_str[AWS_HTTP_METHOD_COUNT]; /* for enum -> string lookup */
 
 static void s_methods_init(struct aws_allocator *alloc) {
     s_method_enum_to_str[AWS_HTTP_METHOD_HEAD] = aws_byte_cursor_from_c_str("HEAD");
@@ -135,17 +156,15 @@ static void s_methods_clean_up(void) {
 }
 
 enum aws_http_method aws_http_str_to_method(struct aws_byte_cursor cursor) {
-    struct aws_hash_element *elem;
-    aws_hash_table_find(&s_method_str_to_enum, &cursor, &elem);
-    if (elem) {
-        enum aws_http_method method = (enum aws_http_method)elem->value;
-        return method;
+    int method = s_find_in_case_insensitive_hash_table(&s_method_str_to_enum, &cursor);
+    if (method >= 0) {
+        return (enum aws_http_method)method;
     }
     return AWS_HTTP_METHOD_UNKNOWN;
 }
 
 /* VERSIONS */
-static struct aws_byte_cursor s_version_enum_to_str[AWS_HTTP_HEADER_COUNT];
+static struct aws_byte_cursor s_version_enum_to_str[AWS_HTTP_HEADER_COUNT]; /* for enum -> string lookup */
 
 static void s_versions_init(struct aws_allocator *alloc) {
     (void)alloc;
@@ -166,8 +185,8 @@ struct aws_byte_cursor aws_http_version_to_str(enum aws_http_version version) {
 }
 
 /* HEADERS */
-static struct aws_hash_table s_header_str_to_enum;
-static struct aws_byte_cursor s_header_enum_to_str[AWS_HTTP_HEADER_COUNT];
+static struct aws_hash_table s_header_str_to_enum; /* for string -> enum lookup */
+static struct aws_byte_cursor s_header_enum_to_str[AWS_HTTP_HEADER_COUNT]; /* for enum -> string lookup */
 
 static void s_headers_init(struct aws_allocator *alloc) {
     s_header_enum_to_str[AWS_HTTP_HEADER_TRANSFER_ENCODING] = aws_byte_cursor_from_c_str("transfer-encoding");
@@ -183,11 +202,9 @@ static void s_headers_clean_up(void) {
 }
 
 enum aws_http_header_name aws_http_str_to_header_name(struct aws_byte_cursor cursor) {
-    struct aws_hash_element *elem;
-    aws_hash_table_find(&s_header_str_to_enum, &cursor, &elem);
-    if (elem) {
-        enum aws_http_header_name header = (enum aws_http_header_name)elem->value;
-        return header;
+    int header = s_find_in_case_insensitive_hash_table(&s_header_str_to_enum, &cursor);
+    if (header >= 0) {
+        return (enum aws_http_header_name)header;
     }
     return AWS_HTTP_HEADER_UNKNOWN;
 }
