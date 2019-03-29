@@ -249,8 +249,9 @@ static bool s_got_header(const struct aws_http_decoded_header *header, void *use
     struct s_header_params *params = (struct s_header_params *)user_data;
     if (params->index < params->max_index) {
         if (params->first_error == AWS_OP_SUCCESS) {
-            params->first_error =
-                aws_byte_cursor_eq_c_str(&header->name_data, params->header_names[params->index]) ? AWS_OP_SUCCESS : AWS_OP_ERR;
+            if (!aws_byte_cursor_eq_c_str(&header->name_data, params->header_names[params->index])) {
+                params->first_error = AWS_OP_ERR;
+            }
         }
         params->index++;
     } else {

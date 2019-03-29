@@ -51,7 +51,12 @@ typedef bool(aws_http_decoder_on_body_fn)(const struct aws_byte_cursor *data, bo
 
 typedef void(aws_http_decoder_on_uri_fn)(struct aws_byte_cursor *uri, void *user_data);
 typedef void(aws_http_decoder_on_response_code_fn)(int code, void *user_data);
-typedef void(aws_http_decoder_on_method_fn)(enum aws_http_method method, const struct aws_byte_cursor *method_data, void *user_data);
+
+typedef void(aws_http_decoder_on_method_fn)(
+    enum aws_http_method method,
+    const struct aws_byte_cursor *method_data,
+    void *user_data);
+
 typedef void(aws_http_decoder_done_fn)(void *user_data);
 
 struct aws_http_decoder_vtable {

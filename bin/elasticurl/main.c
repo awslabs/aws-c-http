@@ -347,7 +347,6 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     size_t header_count = 3;
     size_t pre_header_count = 3;
 
-    /* TODO: go back and use the enum variants when this is all fixed. */
     headers[0].name = aws_byte_cursor_from_c_str("accept");
     headers[0].value = aws_byte_cursor_from_c_str("*/*");
     headers[1].name = aws_byte_cursor_from_c_str("host");

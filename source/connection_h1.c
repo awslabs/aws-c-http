@@ -838,7 +838,11 @@ error:
     s_shutdown_connection(connection, aws_last_error());
 }
 
-static void s_decoder_on_method(enum aws_http_method method, const struct aws_byte_cursor *method_str, void *user_data) {
+static void s_decoder_on_method(
+    enum aws_http_method method,
+    const struct aws_byte_cursor *method_str,
+    void *user_data) {
+
     (void)method;
 
     struct h1_connection *connection = user_data;

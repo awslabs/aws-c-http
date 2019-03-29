@@ -17,8 +17,9 @@
  */
 
 #include <aws/http/connection.h>
-#include <aws/http/server.h>
+
 #include <aws/http/private/http_impl.h>
+#include <aws/http/server.h>
 
 #include <aws/common/atomics.h>
 #include <aws/io/channel.h>
