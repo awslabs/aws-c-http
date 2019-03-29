@@ -127,14 +127,25 @@ static int s_find_in_case_insensitive_hash_table(const struct aws_hash_table *ta
     struct aws_hash_element *elem;
     aws_hash_table_find(table, key, &elem);
     if (elem) {
+
+    /* Compilers hate this!
+     * Avoid an allocation when storing an int in a hashtable using this one WEIRD trick... */
 #ifdef _MSC_VER
 #    pragma warning(push)
 #    pragma warning(disable : 4311) /* 'type cast': pointer truncation from 'void *' to 'int' */
+#else
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wpointer-to-int-cast"
 #endif
+
         int value = (int)elem->value;
+
 #ifdef _MSC_VER
 #    pragma warning(pop)
+#else
+#   pragma GCC diagnostic pop
 #endif
+
         return value;
     }
     return -1;
