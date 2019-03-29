@@ -141,7 +141,7 @@ static int s_find_in_case_insensitive_hash_table(const struct aws_hash_table *ta
 }
 
 /* METHODS */
-static struct aws_hash_table s_method_str_to_enum; /* for string -> enum lookup */
+static struct aws_hash_table s_method_str_to_enum;                         /* for string -> enum lookup */
 static struct aws_byte_cursor s_method_enum_to_str[AWS_HTTP_METHOD_COUNT]; /* for enum -> string lookup */
 
 static void s_methods_init(struct aws_allocator *alloc) {
@@ -185,7 +185,7 @@ struct aws_byte_cursor aws_http_version_to_str(enum aws_http_version version) {
 }
 
 /* HEADERS */
-static struct aws_hash_table s_header_str_to_enum; /* for string -> enum lookup */
+static struct aws_hash_table s_header_str_to_enum;                         /* for string -> enum lookup */
 static struct aws_byte_cursor s_header_enum_to_str[AWS_HTTP_HEADER_COUNT]; /* for enum -> string lookup */
 
 static void s_headers_init(struct aws_allocator *alloc) {
