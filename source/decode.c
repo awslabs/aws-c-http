@@ -15,9 +15,16 @@
 
 #include <aws/http/private/decode.h>
 
+#include <aws/common/string.h>
+
 #include <assert.h>
 
-struct aws_http_decoder;
+AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_chunked, "chunked");
+AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_compress, "compress");
+AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_deflate, "deflate");
+AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_gzip, "gzip");
+
+AWS_STATIC_STRING_FROM_LITERAL(s_expect_val_100_continue, "100-continue");
 
 /* Decoder runs a state machine.
  * Each state consumes data until it sets the next state.
@@ -51,28 +58,6 @@ static int s_linestate_request(struct aws_http_decoder *decoder, struct aws_byte
 static int s_linestate_response(struct aws_http_decoder *decoder, struct aws_byte_cursor input);
 static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_cursor input);
 static int s_linestate_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_cursor input);
-
-static char s_upper(char c) {
-    if (c >= 'a' && c <= 'z') {
-        c = (char)(c - ('a' - 'A'));
-    }
-    return c;
-}
-
-/* Works like memcmp or strcmp, except is case-agnostic. */
-static int s_strcmp_case_insensitive(const char *a, size_t len_a, const char *b, size_t len_b) {
-    if (len_a != len_b) {
-        return 1;
-    }
-
-    for (size_t i = 0; i < len_a; ++i) {
-        int d = s_upper(a[i]) - s_upper(b[i]);
-        if (d) {
-            return d;
-        }
-    }
-    return 0;
-}
 
 static struct aws_byte_cursor s_trim_trailing_whitespace(struct aws_byte_cursor cursor) {
     while (cursor.len && cursor.ptr[cursor.len - 1] == (uint8_t)' ') {
@@ -370,40 +355,48 @@ static int s_linestate_chunk_size(struct aws_http_decoder *decoder, struct aws_b
 }
 
 static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_cursor input) {
-
-    struct aws_byte_cursor cursors[2];
-    if (AWS_UNLIKELY(s_byte_buf_split(input, cursors, ':', 2) != 2)) {
-        /* The \r\n was just processed by `s_state_getline`. */
-        /* Empty line signifies end of headers, and beginning of body or end of trailers. */
-        /* RFC-7230 section 3 Message Format */
-
-        if (input.len == 0) {
-            if (AWS_LIKELY(!decoder->doing_trailers)) {
-                if (decoder->transfer_encoding & AWS_HTTP_TRANSFER_ENCODING_CHUNKED) {
-                    s_set_line_state(decoder, s_linestate_chunk_size);
-                } else if (decoder->content_length > 0) {
-                    s_set_state(decoder, s_state_unchunked_body);
-                } else {
-                    s_reset_state(decoder, true);
-                }
+    /* The \r\n was just processed by `s_state_getline`. */
+    /* Empty line signifies end of headers, and beginning of body or end of trailers. */
+    /* RFC-7230 section 3 Message Format */
+    if (input.len == 0) {
+        if (AWS_LIKELY(!decoder->doing_trailers)) {
+            if (decoder->transfer_encoding & AWS_HTTP_TRANSFER_ENCODING_CHUNKED) {
+                s_set_line_state(decoder, s_linestate_chunk_size);
+            } else if (decoder->content_length > 0) {
+                s_set_state(decoder, s_state_unchunked_body);
             } else {
-                /* Empty line means end of message. */
                 s_reset_state(decoder, true);
             }
-
-            return AWS_OP_SUCCESS;
         } else {
-            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            /* Empty line means end of message. */
+            s_reset_state(decoder, true);
         }
+
+        return AWS_OP_SUCCESS;
     }
 
-    struct aws_byte_cursor header_name = s_trim_whitespace(cursors[0]);
-    struct aws_byte_cursor header_value = s_trim_whitespace(cursors[1]);
+    /* Each header field consists of a case-insensitive field name followed by a colon (":"),
+     * optional leading whitespace, the field value, and optional trailing whitespace.
+     * RFC-7230 3.2 */
+    struct aws_byte_cursor name;
+    AWS_ZERO_STRUCT(name);
+    if (!aws_byte_cursor_next_split(&input, ':', &name)) { /* 1st split() finds string preceding ':' */
+        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+    }
+
+    if (name.len == 0 || name.len == input.len) {
+        /* TODO: log errors in decode.c */
+        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+    }
+
+    struct aws_byte_cursor value = input;
+    aws_byte_cursor_advance(&value, name.len + 1);
+    value = s_trim_whitespace(value);
 
     struct aws_http_decoded_header header;
-    header.name = aws_http_str_to_header_name(header_name);
-    header.name_data = header_name;
-    header.value_data = header_value;
+    header.name = aws_http_str_to_header_name(name);
+    header.name_data = name;
+    header.value_data = value;
     header.data = input;
 
     switch (header.name) {
@@ -426,19 +419,17 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
             }
             for (size_t i = 0; i < n; ++i) {
                 struct aws_byte_cursor coding = s_trim_whitespace(codings[i]);
-                if (!s_strcmp_case_insensitive((const char *)coding.ptr, coding.len, "chunked", strlen("chunked"))) {
+                if (aws_string_eq_byte_cursor_ignore_case(s_transfer_coding_chunked, &coding)) {
                     flags |= AWS_HTTP_TRANSFER_ENCODING_CHUNKED;
                     if (i != (n - 1)) {
                         /* chunked must be the final transfer coding */
                         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
                     }
-                } else if (!s_strcmp_case_insensitive(
-                               (const char *)coding.ptr, coding.len, "compress", strlen("compress"))) {
+                } else if (aws_string_eq_byte_cursor_ignore_case(s_transfer_coding_compress, &coding)) {
                     flags |= AWS_HTTP_TRANSFER_ENCODING_DEPRECATED_COMPRESS;
-                } else if (!s_strcmp_case_insensitive(
-                               (const char *)coding.ptr, coding.len, "deflate", strlen("deflate"))) {
+                } else if (aws_string_eq_byte_cursor_ignore_case(s_transfer_coding_deflate, &coding)) {
                     flags |= AWS_HTTP_TRANSFER_ENCODING_DEFLATE;
-                } else if (!s_strcmp_case_insensitive((const char *)coding.ptr, coding.len, "gzip", strlen("gzip"))) {
+                } else if (aws_string_eq_byte_cursor_ignore_case(s_transfer_coding_gzip, &coding)) {
                     flags |= AWS_HTTP_TRANSFER_ENCODING_GZIP;
                 }
             }
@@ -455,8 +446,7 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
         } break;
 
         case AWS_HTTP_HEADER_EXPECT:
-            if (!s_strcmp_case_insensitive(
-                    (const char *)header.value_data.ptr, header.value_data.len, "100-continue", 12)) {
+            if (aws_string_eq_byte_cursor_ignore_case(s_expect_val_100_continue, &header.value_data)) {
                 decoder->expect_100_continue_skip_on_done = true;
             }
             break;
@@ -483,12 +473,13 @@ static int s_linestate_request(struct aws_http_decoder *decoder, struct aws_byte
     struct aws_byte_cursor uri = cursors[1];
     struct aws_byte_cursor version = cursors[2];
 
-    if (decoder->vtable.on_method) {
-        decoder->vtable.on_method(aws_http_str_to_method(method), decoder->user_data);
+    struct aws_byte_cursor version_expected = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
+    if (!aws_byte_cursor_eq(&version, &version_expected)) {
+        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
-    if (decoder->vtable.on_version) {
-        decoder->vtable.on_version(aws_http_str_to_version(version), decoder->user_data);
+    if (decoder->vtable.on_method) {
+        decoder->vtable.on_method(aws_http_str_to_method(method), &method, decoder->user_data);
     }
 
     if (decoder->vtable.on_uri) {
@@ -511,8 +502,9 @@ static int s_linestate_response(struct aws_http_decoder *decoder, struct aws_byt
     struct aws_byte_cursor phrase = cursors[2];
     (void)phrase; /* Unused for now. */
 
-    if (decoder->vtable.on_version) {
-        decoder->vtable.on_version(aws_http_str_to_version(version), decoder->user_data);
+    struct aws_byte_cursor version_expected = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
+    if (!aws_byte_cursor_eq(&version, &version_expected)) {
+        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
     int64_t code_val;
@@ -527,7 +519,7 @@ static int s_linestate_response(struct aws_http_decoder *decoder, struct aws_byt
     }
 
     if (decoder->vtable.on_code) {
-        decoder->vtable.on_code(aws_http_int_to_code((int)code_val), decoder->user_data);
+        decoder->vtable.on_code((int)code_val, decoder->user_data);
     }
 
     s_set_line_state(decoder, s_linestate_header);

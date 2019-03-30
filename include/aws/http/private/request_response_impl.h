@@ -18,6 +18,8 @@
 
 #include <aws/http/request_response.h>
 
+#include <aws/http/private/http_impl.h>
+
 #include <aws/common/atomics.h>
 
 struct aws_http_stream_vtable {

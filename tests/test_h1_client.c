@@ -34,6 +34,8 @@ struct tester {
 };
 
 static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
+    aws_http_library_init(alloc);
+
     AWS_ZERO_STRUCT(*tester);
 
     tester->alloc = alloc;
@@ -61,6 +63,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
 static int s_tester_clean_up(struct tester *tester) {
     aws_http_connection_release(tester->connection);
     ASSERT_SUCCESS(testing_channel_clean_up(&tester->testing_channel));
+    aws_http_library_clean_up();
     return AWS_OP_SUCCESS;
 }
 
@@ -81,8 +84,7 @@ static int s_check_message(struct tester *tester, const char *expected) {
     struct aws_linked_list_node *node = aws_linked_list_pop_front(msgs);
     struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
 
-    struct aws_byte_cursor expected_cur = aws_byte_cursor_from_c_str(expected);
-    ASSERT_TRUE(aws_byte_cursor_eq_byte_buf(&expected_cur, &msg->message_data));
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&msg->message_data, expected));
 
     aws_mem_release(msg->allocator, msg);
 
@@ -98,7 +100,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_1liner) {
     /* send request */
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
     struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
     ASSERT_NOT_NULL(stream);
@@ -125,18 +127,18 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_headers) {
     /* send request */
     struct aws_http_header headers[] = {
         {
-            .name = AWS_HTTP_HEADER_HOST,
+            .name = aws_byte_cursor_from_c_str("Host"),
             .value = aws_byte_cursor_from_c_str("example.com"),
         },
         {
-            .name_str = aws_byte_cursor_from_c_str("Accept"),
+            .name = aws_byte_cursor_from_c_str("Accept"),
             .value = aws_byte_cursor_from_c_str("*/*"),
         },
     };
 
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
     opt.header_array = headers;
     opt.num_headers = AWS_ARRAY_SIZE(headers);
@@ -147,7 +149,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_headers) {
 
     /* check result */
     const char *expected = "GET / HTTP/1.1\r\n"
-                           "HOST: example.com\r\n"
+                           "Host: example.com\r\n"
                            "Accept: */*\r\n"
                            "\r\n";
     ASSERT_SUCCESS(s_check_message(&tester, expected));
@@ -192,14 +194,14 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
 
     struct aws_http_header headers[] = {
         {
-            .name_str = aws_byte_cursor_from_c_str("Content-Length"),
+            .name = aws_byte_cursor_from_c_str("Content-Length"),
             .value = aws_byte_cursor_from_c_str("16"),
         },
     };
 
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("PUT");
+    opt.method = aws_byte_cursor_from_c_str("PUT");
     opt.uri = aws_byte_cursor_from_c_str("/plan.txt");
     opt.header_array = headers;
     opt.num_headers = AWS_ARRAY_SIZE(headers);
@@ -300,14 +302,14 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body) {
     snprintf(content_length_value, sizeof(content_length_value), "%zu", body_len);
     struct aws_http_header headers[] = {
         {
-            .name_str = aws_byte_cursor_from_c_str("Content-Length"),
+            .name = aws_byte_cursor_from_c_str("Content-Length"),
             .value = aws_byte_cursor_from_c_str(content_length_value),
         },
     };
 
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("PUT");
+    opt.method = aws_byte_cursor_from_c_str("PUT");
     opt.uri = aws_byte_cursor_from_c_str("/large.txt");
     opt.header_array = headers;
     opt.num_headers = AWS_ARRAY_SIZE(headers);
@@ -365,8 +367,8 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_head) {
         struct aws_http_header *header = headers + i;
 
         /* Point to where the UUID is going to be written in the `expected` buffer */
-        header->name_str = aws_byte_cursor_from_array(expected.buffer + expected.len, AWS_UUID_STR_LEN - 1);
-        header->value = header->name_str;
+        header->name = aws_byte_cursor_from_array(expected.buffer + expected.len, AWS_UUID_STR_LEN - 1);
+        header->value = header->name;
 
         struct aws_uuid uuid;
         ASSERT_SUCCESS(aws_uuid_init(&uuid));
@@ -382,7 +384,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_head) {
     /* send request */
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
     opt.header_array = headers;
     opt.num_headers = num_headers;
@@ -413,7 +415,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_multiple_in_1_io_message) {
     /* send requests */
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
 
     struct aws_http_stream *streams[3];
@@ -482,8 +484,8 @@ void s_response_tester_on_headers(
         /* copy-by-value, then update cursors to point into permanent storage */
         *my_header = *in_header;
 
-        my_header->name_str.ptr = storage->buffer + storage->len;
-        AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(storage, in_header->name_str));
+        my_header->name.ptr = storage->buffer + storage->len;
+        AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(storage, in_header->name));
 
         my_header->value.ptr = storage->buffer + storage->len;
         AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(storage, in_header->value));
@@ -599,7 +601,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
     /* send request */
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
 
     struct response_tester response;
@@ -624,40 +626,12 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
     return AWS_OP_SUCCESS;
 }
 
-static bool s_streq(struct aws_byte_cursor cur, const char *str) {
-    return strncmp((char *)cur.ptr, str, cur.len) == 0;
-}
-
-static bool s_strieq(struct aws_byte_cursor cur, const char *str) {
-    if (cur.len != strlen(str)) {
-        return false;
-    }
-
-    for (size_t i = 0; i < cur.len; ++i) {
-        char a = *(cur.ptr + i);
-        char b = *(str + i);
-
-        if (a >= 'A' && a <= 'Z') {
-            a = (char)(a + ('a' - 'A'));
-        }
-        if (b >= 'A' && b <= 'Z') {
-            b = (char)(b + ('a' - 'A'));
-        }
-
-        if (a != b) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 static int s_check_header(struct response_tester *response, size_t i, const char *name_str, const char *value) {
 
     ASSERT_TRUE(i < response->num_headers);
     struct aws_http_header *header = response->headers + i;
-    ASSERT_TRUE(s_strieq(header->name_str, name_str));
-    ASSERT_TRUE(s_streq(header->value, value));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str_ignore_case(&header->name, name_str));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str_ignore_case(&header->value, value));
 
     return AWS_OP_SUCCESS;
 }
@@ -670,7 +644,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_headers) {
     /* send request */
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
 
     struct response_tester response;
@@ -692,7 +666,6 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_headers) {
     ASSERT_TRUE(response.status == 308);
     ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
     ASSERT_TRUE(response.num_headers == 2);
-    ASSERT_TRUE(response.headers[0].name == AWS_HTTP_HEADER_DATE);
     ASSERT_SUCCESS(s_check_header(&response, 0, "Date", "Fri, 01 Mar 2019 17:18:55 GMT"));
     ASSERT_SUCCESS(s_check_header(&response, 1, "Location", "/index.html"));
     ASSERT_TRUE(response.body.len == 0);
@@ -711,7 +684,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_body) {
     /* send request */
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
 
     struct response_tester response;
@@ -734,7 +707,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_body) {
     ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
     ASSERT_TRUE(response.num_headers == 1);
     ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9"));
-    ASSERT_TRUE(s_streq(response.body, "Call Momo"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&response.body, "Call Momo"));
 
     /* clean up */
     ASSERT_SUCCESS(s_response_tester_clean_up(&response));
@@ -751,7 +724,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1_from_multiple_io_messages) {
     /* send request */
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
 
     struct response_tester response;
@@ -776,7 +749,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1_from_multiple_io_messages) {
     ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
     ASSERT_TRUE(response.num_headers == 1);
     ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9"));
-    ASSERT_TRUE(s_streq(response.body, "Call Momo"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&response.body, "Call Momo"));
 
     /* clean up */
     ASSERT_SUCCESS(s_response_tester_clean_up(&response));
@@ -793,7 +766,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
     /* send requests */
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
 
     struct response_tester responses[3];
@@ -835,7 +808,7 @@ H1_CLIENT_TEST_CASE(h1_client_window_reopens_by_default) {
     /* send request */
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
 
     struct response_tester response;
@@ -869,7 +842,7 @@ H1_CLIENT_TEST_CASE(h1_client_window_shrinks_if_user_says_so) {
     /* send request */
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
 
     struct response_tester response;
@@ -904,7 +877,7 @@ static int s_window_update(struct aws_allocator *allocator, bool on_thread) {
     /* send request */
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
 
     struct response_tester response;
@@ -967,7 +940,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_cancelled_by_channel_shutdown) {
     /* send request */
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
     opt.user_data = &completion_error_code;
     opt.on_complete = s_on_complete;
@@ -1002,7 +975,7 @@ H1_CLIENT_TEST_CASE(h1_client_multiple_requests_cancelled_by_channel_shutdown) {
 
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
     opt.on_complete = s_on_complete;
 
@@ -1044,7 +1017,7 @@ H1_CLIENT_TEST_CASE(h1_client_new_request_fails_if_channel_shut_down) {
     /* send request */
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
-    opt.method_str = aws_byte_cursor_from_c_str("GET");
+    opt.method = aws_byte_cursor_from_c_str("GET");
     opt.uri = aws_byte_cursor_from_c_str("/");
     struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
     ASSERT_NULL(stream);

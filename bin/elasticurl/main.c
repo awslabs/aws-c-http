@@ -297,7 +297,7 @@ static void s_on_incoming_headers_fn(
         }
 
         for (size_t i = 0; i < num_headers; ++i) {
-            fwrite(header_array[i].name_str.ptr, 1, header_array[i].name_str.len, stdout);
+            fwrite(header_array[i].name.ptr, 1, header_array[i].name.len, stdout);
             fprintf(stdout, ":");
             fwrite(header_array[i].value.ptr, 1, header_array[i].value.len, stdout);
             fprintf(stdout, "\n");
@@ -333,7 +333,7 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     request_options.uri = app_ctx->uri.path_and_query;
     request_options.user_data = app_ctx;
     request_options.client_connection = connection;
-    request_options.method_str = aws_byte_cursor_from_c_str(app_ctx->verb);
+    request_options.method = aws_byte_cursor_from_c_str(app_ctx->verb);
     request_options.on_response_headers = s_on_incoming_headers_fn;
     request_options.on_response_header_block_done = s_on_incoming_header_block_done_fn;
     request_options.on_response_body = s_on_incoming_body_fn;
@@ -347,41 +347,34 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     size_t header_count = 3;
     size_t pre_header_count = 3;
 
-    /* TODO: go back and use the enum variants when this is all fixed. */
-    headers[0].name_str = aws_byte_cursor_from_c_str("accept");
+    headers[0].name = aws_byte_cursor_from_c_str("accept");
     headers[0].value = aws_byte_cursor_from_c_str("*/*");
-    headers[1].name_str = aws_byte_cursor_from_c_str("host");
+    headers[1].name = aws_byte_cursor_from_c_str("host");
     headers[1].value = app_ctx->uri.host_name;
-    headers[2].name_str = aws_byte_cursor_from_c_str("user-agent");
+    headers[2].name = aws_byte_cursor_from_c_str("user-agent");
     headers[2].value = aws_byte_cursor_from_c_str("elasticurl 1.0, Powered by the AWS Common Runtime.");
 
+    size_t data_len;
     if (app_ctx->data.len) {
-        size_t data_len = app_ctx->data.len;
-        char content_length[64];
-        AWS_ZERO_ARRAY(content_length);
-        sprintf(content_length, "%llu", (unsigned long long)data_len);
-        headers[3].name_str = aws_byte_cursor_from_c_str("content-length");
-        headers[3].value = aws_byte_cursor_from_c_str(content_length);
-        pre_header_count += 1;
-        header_count += 1;
-        request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
-    } else if (app_ctx->data_file) {
+        data_len = app_ctx->data.len;
+    } else {
         if (fseek(app_ctx->data_file, 0L, SEEK_END)) {
             fprintf(stderr, "failed to seek data file.\n");
             exit(1);
         }
 
-        size_t data_len = (size_t)ftell(app_ctx->data_file);
+        data_len = (size_t)ftell(app_ctx->data_file);
         fseek(app_ctx->data_file, 0L, SEEK_SET);
-        char content_length[64];
-        AWS_ZERO_ARRAY(content_length);
-        sprintf(content_length, "%llu", (unsigned long long)data_len);
-        headers[3].name = AWS_HTTP_HEADER_CONTENT_LENGTH;
-        headers[3].value = aws_byte_cursor_from_c_str(content_length);
-        pre_header_count += 1;
-        header_count += 1;
-        request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
     }
+
+    char content_length[64];
+    AWS_ZERO_ARRAY(content_length);
+    sprintf(content_length, "%llu", (unsigned long long)data_len);
+    headers[3].name = aws_byte_cursor_from_c_str("content-length");
+    headers[3].value = aws_byte_cursor_from_c_str(content_length);
+    pre_header_count += 1;
+    header_count += 1;
+    request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
 
     assert(app_ctx->header_line_count <= 10);
     for (size_t i = 0; i < app_ctx->header_line_count; ++i) {
@@ -392,7 +385,7 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
             exit(1);
         }
 
-        headers[i + pre_header_count].name_str =
+        headers[i + pre_header_count].name =
             aws_byte_cursor_from_array(app_ctx->header_lines[i], delimiter - app_ctx->header_lines[i]);
         headers[i + pre_header_count].value = aws_byte_cursor_from_c_str(delimiter + 1);
         header_count++;
@@ -426,16 +419,13 @@ static bool s_completion_predicate(void *arg) {
     return app_ctx->exchange_completed;
 }
 
-AWS_STATIC_STRING_FROM_LITERAL(http_cmp1, "http");
-AWS_STATIC_STRING_FROM_LITERAL(http_cmp2, "Http");
-AWS_STATIC_STRING_FROM_LITERAL(http_cmp3, "HTTP");
-
 int main(int argc, char **argv) {
+    struct aws_allocator *allocator = aws_default_allocator();
+
     aws_load_error_strings();
     aws_io_load_error_strings();
-    aws_http_load_error_strings();
+    aws_http_library_init(allocator);
 
-    struct aws_allocator *allocator = aws_default_allocator();
     struct elasticurl_ctx app_ctx;
     AWS_ZERO_STRUCT(app_ctx);
     app_ctx.allocator = allocator;
@@ -452,7 +442,6 @@ int main(int argc, char **argv) {
 
     if (app_ctx.log_level) {
         aws_io_load_log_subject_strings();
-        aws_http_load_log_subject_strings();
 
         struct aws_logger_standard_options options = {
             .level = app_ctx.log_level,
@@ -477,11 +466,10 @@ int main(int argc, char **argv) {
 
     if (!app_ctx.uri.scheme.len && (app_ctx.uri.port == 80 || app_ctx.uri.port == 8080)) {
         use_tls = false;
-    } else if (/* if "http", "Http", or "HTTP" is the scheme. */
-               app_ctx.uri.scheme.len && (aws_string_eq_byte_cursor(http_cmp1, &app_ctx.uri.scheme) ||
-                                          aws_string_eq_byte_cursor(http_cmp2, &app_ctx.uri.scheme) ||
-                                          aws_string_eq_byte_cursor(http_cmp3, &app_ctx.uri.scheme))) {
-        use_tls = false;
+    } else {
+        if (aws_byte_cursor_eq_c_str_ignore_case(&app_ctx.uri.scheme, "http")) {
+            use_tls = false;
+        }
     }
 
     struct aws_tls_ctx *tls_ctx = NULL;
@@ -602,6 +590,7 @@ int main(int argc, char **argv) {
     }
 
     aws_tls_clean_up_static_state();
+    aws_http_library_clean_up();
 
     if (app_ctx.log_level) {
         aws_logger_clean_up(&logger);

@@ -16,7 +16,7 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/http.h>
+#include <aws/http/private/http_impl.h>
 
 struct aws_http_decoded_header {
     /* Name of the header. If the type is `AWS_HTTP_HEADER_NAME_UNKNOWN` then `name_data` must be parsed manually. */
@@ -49,16 +49,19 @@ typedef bool(aws_http_decoder_on_header_fn)(const struct aws_http_decoded_header
  */
 typedef bool(aws_http_decoder_on_body_fn)(const struct aws_byte_cursor *data, bool finished, void *user_data);
 
-typedef void(aws_http_decoder_on_version_fn)(enum aws_http_version version, void *user_data);
 typedef void(aws_http_decoder_on_uri_fn)(struct aws_byte_cursor *uri, void *user_data);
-typedef void(aws_http_decoder_on_response_code_fn)(enum aws_http_code code, void *user_data);
-typedef void(aws_http_decoder_on_method_fn)(enum aws_http_method method, void *user_data);
+typedef void(aws_http_decoder_on_response_code_fn)(int code, void *user_data);
+
+typedef void(aws_http_decoder_on_method_fn)(
+    enum aws_http_method method,
+    const struct aws_byte_cursor *method_data,
+    void *user_data);
+
 typedef void(aws_http_decoder_done_fn)(void *user_data);
 
 struct aws_http_decoder_vtable {
     aws_http_decoder_on_header_fn *on_header;
     aws_http_decoder_on_body_fn *on_body;
-    aws_http_decoder_on_version_fn *on_version;
 
     /* Only needed for requests, can be NULL for responses. */
     aws_http_decoder_on_uri_fn *on_uri;
