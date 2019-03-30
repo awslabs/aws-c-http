@@ -378,7 +378,8 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
     /* Each header field consists of a case-insensitive field name followed by a colon (":"),
      * optional leading whitespace, the field value, and optional trailing whitespace.
      * RFC-7230 3.2 */
-    struct aws_byte_cursor name = {0};
+    struct aws_byte_cursor name;
+    AWS_ZERO_STRUCT(name);
     if (!aws_byte_cursor_next_split(&input, ':', &name)) { /* 1st split() finds string preceding ':' */
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
