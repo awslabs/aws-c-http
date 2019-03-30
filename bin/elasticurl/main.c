@@ -420,12 +420,10 @@ static bool s_completion_predicate(void *arg) {
 }
 
 int main(int argc, char **argv) {
-    aws_load_error_strings();
-    aws_io_load_error_strings();
-    aws_http_load_error_strings();
-
     struct aws_allocator *allocator = aws_default_allocator();
 
+    aws_load_error_strings();
+    aws_io_load_error_strings();
     aws_http_library_init(allocator);
 
     struct elasticurl_ctx app_ctx;
@@ -444,7 +442,6 @@ int main(int argc, char **argv) {
 
     if (app_ctx.log_level) {
         aws_io_load_log_subject_strings();
-        aws_http_load_log_subject_strings();
 
         struct aws_logger_standard_options options = {
             .level = app_ctx.log_level,

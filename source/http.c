@@ -21,6 +21,12 @@
 #include <assert.h>
 #include <ctype.h>
 
+#ifdef _MSC_VER
+#    pragma warning(disable : 4311) /* 'type cast': pointer truncation from 'void *' to 'int' */
+#else
+#    pragma GCC diagnostic ignored "-Wpointer-to-int-cast"
+#endif
+
 #define AWS_DEFINE_ERROR_INFO_HTTP(CODE, STR) AWS_DEFINE_ERROR_INFO(CODE, STR, "aws-c-http")
 
 /* clang-format off */
@@ -55,19 +61,10 @@ static struct aws_error_info s_errors[] = {
 };
 /* clang-format on */
 
-static struct aws_error_info_list s_list = {
+static struct aws_error_info_list s_error_list = {
     .error_list = s_errors,
     .count = AWS_ARRAY_SIZE(s_errors),
 };
-
-static bool s_error_strings_loaded = false;
-
-void aws_http_load_error_strings(void) {
-    if (!s_error_strings_loaded) {
-        s_error_strings_loaded = true;
-        aws_register_error_info(&s_list);
-    }
-}
 
 static struct aws_log_subject_info s_log_subject_infos[] = {
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_GENERAL, "http", "Misc HTTP logging"),
@@ -80,15 +77,6 @@ static struct aws_log_subject_info_list s_log_subject_list = {
     .subject_list = s_log_subject_infos,
     .count = AWS_ARRAY_SIZE(s_log_subject_infos),
 };
-
-static bool s_log_strings_loaded = false;
-
-void aws_http_load_log_subject_strings(void) {
-    if (!s_log_strings_loaded) {
-        s_log_strings_loaded = true;
-        aws_register_log_subject_info_list(&s_log_subject_list);
-    }
-}
 
 /**
  * Given array of aws_byte_cursors, init hashtable where...
@@ -127,26 +115,7 @@ static int s_find_in_case_insensitive_hash_table(const struct aws_hash_table *ta
     struct aws_hash_element *elem;
     aws_hash_table_find(table, key, &elem);
     if (elem) {
-
-#ifdef _MSC_VER
-#    pragma warning(push)
-#    pragma warning(disable : 4311) /* 'type cast': pointer truncation from 'void *' to 'int' */
-#else
-#    pragma GCC diagnostic push
-#    pragma GCC diagnostic ignored "-Wpointer-to-int-cast"
-#endif
-
-        /* Compilers hate this!
-         * Avoid an allocation when storing an int in a hashtable using this one WEIRD trick... */
-        int value = (int)elem->value;
-
-#ifdef _MSC_VER
-#    pragma warning(pop)
-#else
-#    pragma GCC diagnostic pop
-#endif
-
-        return value;
+        return (int)elem->value;
     }
     return -1;
 }
@@ -361,6 +330,8 @@ void aws_http_library_init(struct aws_allocator *alloc) {
     }
     s_library_initialized = true;
 
+    aws_register_error_info(&s_error_list);
+    aws_register_log_subject_info_list(&s_log_subject_list);
     s_methods_init(alloc);
     s_headers_init(alloc);
     s_versions_init(alloc);

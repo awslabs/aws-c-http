@@ -25,6 +25,9 @@
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
+AWS_STATIC_STRING_FROM_LITERAL(s_alpn_protocol_http_1_1, "http/1.1");
+AWS_STATIC_STRING_FROM_LITERAL(s_alpn_protocol_http_2, "h2");
+
 struct aws_http_server {
     struct aws_allocator *alloc;
     struct aws_server_bootstrap *bootstrap;
@@ -86,9 +89,9 @@ static struct aws_http_connection *s_connection_new(
         struct aws_channel_handler *tls_handler = tls_slot->handler;
         struct aws_byte_buf protocol = aws_tls_handler_protocol(tls_handler);
         if (protocol.len) {
-            if (aws_byte_buf_eq_c_str(&protocol, "http/1.1")) {
+            if (aws_string_eq_byte_buf(s_alpn_protocol_http_1_1, &protocol)) {
                 version = AWS_HTTP_VERSION_1_1;
-            } else if (aws_byte_buf_eq_c_str(&protocol, "h2")) {
+            } else if (aws_string_eq_byte_buf(s_alpn_protocol_http_2, &protocol)) {
                 version = AWS_HTTP_VERSION_2;
             } else {
                 AWS_LOGF_ERROR(

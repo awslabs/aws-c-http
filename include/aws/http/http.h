@@ -64,18 +64,6 @@ AWS_HTTP_API
 void aws_http_library_clean_up(void);
 
 /**
- * Loads error strings for this API so that aws_last_error_str etc. will return useful debug strings.
- */
-AWS_HTTP_API
-void aws_http_load_error_strings(void);
-
-/**
- * Load aws-c-http's log subject strings.
- */
-AWS_HTTP_API
-void aws_http_load_log_subject_strings(void);
-
-/**
  * Returns the description of common status codes.
  * Ex: 404 -> "Not Found"
  * An empty string is returned if the status code is not recognized.
