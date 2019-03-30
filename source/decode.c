@@ -229,7 +229,6 @@ static void s_set_line_state(struct aws_http_decoder *decoder, linestate_fn *lin
     decoder->process_line = line_processor;
 }
 
-
 static void s_mark_done(struct aws_http_decoder *decoder) {
     decoder->is_done = true;
 
