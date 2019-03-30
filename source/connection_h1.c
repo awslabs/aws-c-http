@@ -923,8 +923,6 @@ static bool s_decoder_on_header(const struct aws_http_decoded_header *header, vo
 
     /* TODO? how to support trailing headers? distinct cb? invoke same cb again? */
 
-    /* TODO: does aws_http_decoded_header type need to exist? */
-
     if (incoming_stream->base.on_incoming_headers) {
         struct aws_http_header deliver = {
             .name = header->name_data,
@@ -1130,62 +1128,64 @@ static int s_handler_process_read_message(
     struct aws_io_message *message) {
 
     struct h1_connection *connection = handler->impl;
-
-    if (connection->thread_data.is_shutting_down) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Cannot process message because connection is shutting down.",
-            (void *)&connection->base);
-
-        aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
-        goto error;
-    }
-
-    if (!connection->thread_data.incoming_stream) {
-        /* TODO: Server connection would create new request-handler stream at this point. */
-
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Cannot process message because no requests are currently awaiting response, closing connection.",
-            (void *)&connection->base);
-
-        aws_raise_error(AWS_ERROR_HTTP_INVALID_PARSE_STATE);
-        goto error;
-    }
+    int err;
 
     /* By default, we will increment the read window by the same amount we just read in.
      * However, users have the opportunity to tweak this number in their aws_http_on_incoming_body_fn() callback. */
     connection->thread_data.incoming_message_window_update = message->message_data.len;
 
-    /* Decoder will invoke the internal s_decoder_X callbacks, which in turn invoke user callbacks */
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,
         "id=%p: Begin processing message of size %zu.",
         (void *)&connection->base,
         message->message_data.len);
 
-    size_t decoded_len = 0;
-    int err = aws_http_decode(
-        connection->thread_data.incoming_stream_decoder,
-        message->message_data.buffer,
-        message->message_data.len,
-        &decoded_len);
-    if (err) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Message processing failed, error %d (%s). Closing connection.",
-            (void *)&connection->base,
-            err,
-            aws_error_name(err));
+    /* Run decoder until all message data is processed */
+    struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
+    while (message_cursor.len > 0) {
+        if (connection->thread_data.is_shutting_down) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Cannot process message because connection is shutting down.",
+                (void *)&connection->base);
 
-        goto error;
+            aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+            goto error;
+        }
+
+        if (!connection->thread_data.incoming_stream) {
+            /* TODO: Server connection would create new request-handler stream at this point. */
+
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Cannot process message because no requests are currently awaiting response, closing "
+                "connection.",
+                (void *)&connection->base);
+
+            aws_raise_error(AWS_ERROR_HTTP_INVALID_PARSE_STATE);
+            goto error;
+        }
+
+        /* Decoder will invoke the internal s_decoder_X callbacks, which in turn invoke user callbacks */
+        size_t decoded_len = 0;
+        err = aws_http_decode(
+            connection->thread_data.incoming_stream_decoder, message_cursor.ptr, message_cursor.len, &decoded_len);
+        if (err) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Message processing failed, error %d (%s). Closing connection.",
+                (void *)&connection->base,
+                err,
+                aws_error_name(err));
+
+            goto error;
+        }
+
+        AWS_FATAL_ASSERT(decoded_len > 0);
+        aws_byte_cursor_advance(&message_cursor, decoded_len);
     }
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Done processing message.", (void *)&connection->base);
-
-    /* TODO: Not using decoded_len. This used to be how you knew the message ended. Then I changed it, but now
-     * we're not checking that current incoming stream is valid in decoder callbacks.
-     * The current state of things is not safe*/
 
     if (connection->thread_data.incoming_message_window_update > 0) {
         err = aws_channel_slot_increment_read_window(slot, connection->thread_data.incoming_message_window_update);
