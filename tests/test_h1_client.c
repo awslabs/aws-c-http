@@ -36,6 +36,7 @@ struct tester {
 };
 
 static void s_on_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
+    (void)connection;
     struct tester *tester = user_data;
     tester->is_shut_down = true;
     tester->shutdown_error_code = error_code;
