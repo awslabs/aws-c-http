@@ -15,6 +15,7 @@
 
 #include <aws/http/private/connection_impl.h>
 
+#include <aws/common/math.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
 #include <aws/http/private/decode.h>
@@ -60,9 +61,12 @@ static void s_handler_destroy(struct aws_channel_handler *handler);
 static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
 static void s_stream_destroy(struct aws_http_stream *stream_base);
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
-static void s_decoder_on_method(enum aws_http_method method, const struct aws_byte_cursor *method_str, void *user_data);
-static void s_decoder_on_uri(struct aws_byte_cursor *uri, void *user_data);
-static void s_decoder_on_response_code(int status_code, void *user_data);
+static void s_decoder_on_request(
+    enum aws_http_method method_enum,
+    const struct aws_byte_cursor *method_str,
+    const struct aws_byte_cursor *uri,
+    void *user_data);
+static void s_decoder_on_response(int status_code, void *user_data);
 static bool s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data);
 static bool s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data);
 static void s_decoder_on_done(void *user_data);
@@ -88,9 +92,8 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
 };
 
 static const struct aws_http_decoder_vtable s_decoder_vtable = {
-    .on_method = s_decoder_on_method,
-    .on_uri = s_decoder_on_uri,
-    .on_code = s_decoder_on_response_code,
+    .on_request = s_decoder_on_request,
+    .on_response = s_decoder_on_response,
     .on_header = s_decoder_on_header,
     .on_body = s_decoder_on_body,
     .on_done = s_decoder_on_done,
@@ -838,52 +841,50 @@ error:
     s_shutdown_connection(connection, aws_last_error());
 }
 
-static void s_decoder_on_method(
-    enum aws_http_method method,
+static void s_decoder_on_request(
+    enum aws_http_method method_enum,
     const struct aws_byte_cursor *method_str,
+    const struct aws_byte_cursor *uri,
     void *user_data) {
 
-    (void)method;
-
     struct h1_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
-
-    AWS_LOGF_TRACE(
-        AWS_LS_HTTP_STREAM,
-        "id=%p: Incoming request method: " PRInSTR,
-        (void *)&incoming_stream->base,
-        AWS_BYTE_CURSOR_PRI(*method_str));
 
     assert(incoming_stream->base.incoming_request_method_str.len == 0);
-    /* TODO: combine decoder on_uri & on_method callbacks so we can allocate buffer all at once
-    incoming_stream->base.incoming_request_method = method;
-    incoming_stream->base.incoming_request_method_str = aws_byte_cursor_from_c_str(aws_http_method_to_str(method));
-    */
-}
-
-static void s_decoder_on_uri(struct aws_byte_cursor *uri, void *user_data) {
-    struct h1_connection *connection = user_data;
-    struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
-
-    assert(!incoming_stream->base.incoming_request_uri.ptr);
+    assert(incoming_stream->base.incoming_request_uri.len == 0);
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
-        "id=%p: Incoming request uri: " PRInSTR,
+        "id=%p: Incoming request: method=" PRInSTR " uri=" PRInSTR,
         (void *)&incoming_stream->base,
+        AWS_BYTE_CURSOR_PRI(*method_str),
         AWS_BYTE_CURSOR_PRI(*uri));
-
-    /* TODO: combine decoder on_uri & on_method callbacks so we can allocate buffer all at once */
 
     /* TODO: Limit on lengths of incoming data https://httpwg.org/specs/rfc7230.html#attack.protocol.element.length */
 
-    int err = aws_byte_buf_init(&incoming_stream->incoming_storage_buf, incoming_stream->base.alloc, uri->len);
+    /* Copy strings to internal buffer */
+    struct aws_byte_buf *storage_buf = &incoming_stream->incoming_storage_buf;
+    assert(storage_buf->capacity == 0);
+
+    size_t storage_size = 0;
+    int err = aws_add_size_checked(uri->len, method_str->len, &storage_size);
     if (err) {
         goto error;
     }
 
-    aws_byte_buf_write(&incoming_stream->incoming_storage_buf, uri->ptr, uri->len);
-    incoming_stream->base.incoming_request_uri = aws_byte_cursor_from_buf(&incoming_stream->incoming_storage_buf);
+    err = aws_byte_buf_init(storage_buf, incoming_stream->base.alloc, storage_size);
+    if (err) {
+        goto error;
+    }
+
+    aws_byte_buf_write_from_whole_cursor(storage_buf, *method_str);
+    incoming_stream->base.incoming_request_method_str = aws_byte_cursor_from_buf(storage_buf);
+
+    aws_byte_buf_write_from_whole_cursor(storage_buf, *uri);
+    incoming_stream->base.incoming_request_uri = aws_byte_cursor_from_buf(storage_buf);
+    aws_byte_cursor_advance(&incoming_stream->base.incoming_request_method_str, storage_buf->len - uri->len);
+
+    incoming_stream->base.incoming_request_method = method_enum;
 
     return;
 error:
@@ -895,7 +896,7 @@ error:
     s_shutdown_connection(connection, aws_last_error());
 }
 
-static void s_decoder_on_response_code(int status_code, void *user_data) {
+static void s_decoder_on_response(int status_code, void *user_data) {
     struct h1_connection *connection = user_data;
 
     AWS_LOGF_TRACE(

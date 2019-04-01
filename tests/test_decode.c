@@ -49,28 +49,14 @@ static bool s_on_body_stub(const struct aws_byte_cursor *data, bool finished, vo
     return true;
 }
 
-static void s_on_uri(struct aws_byte_cursor *uri, void *user_data) {
-    struct aws_byte_cursor *ptr = (struct aws_byte_cursor *)user_data;
-    if (ptr) {
-        size_t len = ptr->len < uri->len ? ptr->len : uri->len;
-        memcpy(ptr->ptr, uri->ptr, len);
-        ptr->len = len;
-    }
-}
-
-static void s_on_uri_stub(struct aws_byte_cursor *uri, void *user_data) {
-    (void)uri;
-    (void)user_data;
-}
-
-static void s_on_code(int code, void *user_data) {
+static void s_on_response(int code, void *user_data) {
     int *ptr = (int *)user_data;
     if (ptr) {
         *ptr = code;
     }
 }
 
-static void s_on_code_stub(int code, void *user_data) {
+static void s_on_response_stub(int code, void *user_data) {
     (void)code;
     (void)user_data;
 }
@@ -78,21 +64,39 @@ static void s_on_code_stub(int code, void *user_data) {
 struct request_data {
     enum aws_http_method method_enum;
     struct aws_byte_cursor method_str;
+    struct aws_byte_cursor uri;
     uint8_t buffer[1024];
 };
 
-static void s_on_method(enum aws_http_method method, const struct aws_byte_cursor *method_str, void *user_data) {
+static void s_on_request(
+    enum aws_http_method method_enum,
+    const struct aws_byte_cursor *method_str,
+    const struct aws_byte_cursor *uri,
+    void *user_data) {
+
     struct request_data *request_data = (struct request_data *)user_data;
+    assert(sizeof(request_data->buffer) >= uri->len + method_str->len);
     if (request_data) {
-        request_data->method_enum = method;
+        request_data->method_enum = method_enum;
+
         memcpy(request_data->buffer, method_str->ptr, method_str->len);
         request_data->method_str = aws_byte_cursor_from_array(request_data->buffer, method_str->len);
+
+        uint8_t *uri_dst = request_data->buffer + method_str->len;
+        memcpy(uri_dst, uri->ptr, uri->len);
+        request_data->uri = aws_byte_cursor_from_array(uri_dst, uri->len);
     }
 }
 
-static void s_on_method_stub(enum aws_http_method method, const struct aws_byte_cursor *method_str, void *user_data) {
-    (void)method;
+static void s_on_request_stub(
+    enum aws_http_method method_enum,
+    const struct aws_byte_cursor *method_str,
+    const struct aws_byte_cursor *uri,
+    void *user_data) {
+
+    (void)method_enum;
     (void)method_str;
+    (void)uri;
     (void)user_data;
 }
 
@@ -115,14 +119,13 @@ static void s_common_test_setup(
     params->user_data = user_data;
     params->vtable.on_header = s_on_header_stub;
     params->vtable.on_body = s_on_body_stub;
-    params->vtable.on_uri = s_on_uri_stub;
-    params->vtable.on_code = s_on_code_stub;
-    params->vtable.on_method = s_on_method_stub;
+    params->vtable.on_request = s_on_request_stub;
+    params->vtable.on_response = s_on_response_stub;
     params->vtable.on_done = s_on_done;
 }
 
-AWS_TEST_CASE(http_test_get_method, s_http_test_get_method);
-static int s_http_test_get_method(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(http_test_get_request, s_http_test_get_request);
+static int s_http_test_get_request(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
     struct request_data request_data;
@@ -131,7 +134,7 @@ static int s_http_test_get_method(struct aws_allocator *allocator, void *ctx) {
 
     struct aws_http_decoder_params params;
     s_common_test_setup(allocator, 1024, &params, s_request, &request_data);
-    params.vtable.on_method = s_on_method;
+    params.vtable.on_request = s_on_request;
     struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(msg);
@@ -139,6 +142,8 @@ static int s_http_test_get_method(struct aws_allocator *allocator, void *ctx) {
     ASSERT_INT_EQUALS(AWS_HTTP_METHOD_HEAD, request_data.method_enum);
 
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request_data.method_str, "HEAD"));
+
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request_data.uri, "/"));
 
     aws_http_decoder_destroy(decoder);
     aws_http_library_clean_up();
@@ -179,28 +184,6 @@ static int s_http_test_response_bad_version(struct aws_allocator *allocator, voi
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(http_test_get_uri, s_http_test_get_uri);
-static int s_http_test_get_uri(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
-
-    uint8_t buf[128];
-    struct aws_byte_cursor uri_data = aws_byte_cursor_from_array(buf, 128);
-
-    const char *msg = s_typical_request;
-    struct aws_http_decoder_params params;
-    s_common_test_setup(allocator, 1024, &params, s_request, &uri_data);
-    params.vtable.on_uri = s_on_uri;
-    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
-
-    size_t len = strlen(msg);
-    ASSERT_SUCCESS(aws_http_decode(decoder, msg, len, NULL));
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&uri_data, "/"));
-
-    aws_http_decoder_destroy(decoder);
-    aws_http_library_clean_up();
-    return AWS_OP_SUCCESS;
-}
-
 AWS_TEST_CASE(http_test_get_status_code, s_http_test_get_status_code);
 static int s_http_test_get_status_code(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -210,7 +193,7 @@ static int s_http_test_get_status_code(struct aws_allocator *allocator, void *ct
     const char *msg = s_typical_response;
     struct aws_http_decoder_params params;
     s_common_test_setup(allocator, 1024, &params, s_response, &code);
-    params.vtable.on_code = s_on_code;
+    params.vtable.on_response = s_on_response;
     struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
 
     size_t len = strlen(msg);
