@@ -49,13 +49,13 @@ typedef bool(aws_http_decoder_on_header_fn)(const struct aws_http_decoded_header
  */
 typedef bool(aws_http_decoder_on_body_fn)(const struct aws_byte_cursor *data, bool finished, void *user_data);
 
-typedef void(aws_http_decoder_on_uri_fn)(struct aws_byte_cursor *uri, void *user_data);
-typedef void(aws_http_decoder_on_response_code_fn)(int code, void *user_data);
-
-typedef void(aws_http_decoder_on_method_fn)(
-    enum aws_http_method method,
-    const struct aws_byte_cursor *method_data,
+typedef void(aws_http_decoder_on_request_fn)(
+    enum aws_http_method method_enum,
+    const struct aws_byte_cursor *method_str,
+    const struct aws_byte_cursor *uri,
     void *user_data);
+
+typedef void(aws_http_decoder_on_response_fn)(int status_code, void *user_data);
 
 typedef void(aws_http_decoder_done_fn)(void *user_data);
 
@@ -64,11 +64,10 @@ struct aws_http_decoder_vtable {
     aws_http_decoder_on_body_fn *on_body;
 
     /* Only needed for requests, can be NULL for responses. */
-    aws_http_decoder_on_uri_fn *on_uri;
-    aws_http_decoder_on_method_fn *on_method;
+    aws_http_decoder_on_request_fn *on_request;
 
     /* Only needed for responses, can be NULL for requests. */
-    aws_http_decoder_on_response_code_fn *on_code;
+    aws_http_decoder_on_response_fn *on_response;
 
     aws_http_decoder_done_fn *on_done;
 };

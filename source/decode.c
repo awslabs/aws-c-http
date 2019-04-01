@@ -475,12 +475,8 @@ static int s_linestate_request(struct aws_http_decoder *decoder, struct aws_byte
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
-    if (decoder->vtable.on_method) {
-        decoder->vtable.on_method(aws_http_str_to_method(method), &method, decoder->user_data);
-    }
-
-    if (decoder->vtable.on_uri) {
-        decoder->vtable.on_uri(&uri, decoder->user_data);
+    if (decoder->vtable.on_request) {
+        decoder->vtable.on_request(aws_http_str_to_method(method), &method, &uri, decoder->user_data);
     }
 
     s_set_line_state(decoder, s_linestate_header);
@@ -515,8 +511,8 @@ static int s_linestate_response(struct aws_http_decoder *decoder, struct aws_byt
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
-    if (decoder->vtable.on_code) {
-        decoder->vtable.on_code((int)code_val, decoder->user_data);
+    if (decoder->vtable.on_response) {
+        decoder->vtable.on_response((int)code_val, decoder->user_data);
     }
 
     s_set_line_state(decoder, s_linestate_header);
