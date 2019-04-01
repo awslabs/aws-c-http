@@ -24,7 +24,8 @@ AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_compress, "compress");
 AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_deflate, "deflate");
 AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_gzip, "gzip");
 
-AWS_STATIC_STRING_FROM_LITERAL(s_expect_val_100_continue, "100-continue");
+/* TODO: every user callback should be able to stop decoder, and should probably return int instead of bool */
+/* TODO: decoder needs logging */
 
 /* Decoder runs a state machine.
  * Each state consumes data until it sets the next state.
@@ -46,7 +47,7 @@ struct aws_http_decoder {
     size_t chunk_processed;
     size_t chunk_size;
     bool doing_trailers;
-    bool expect_100_continue_skip_on_done;
+    bool is_done;
 
     /* User callbacks and settings. */
     struct aws_http_decoder_vtable vtable;
@@ -231,12 +232,14 @@ static void s_set_line_state(struct aws_http_decoder *decoder, linestate_fn *lin
     decoder->process_line = line_processor;
 }
 
-/* Reset state, in preparation for processing a new message */
-void s_reset_state(struct aws_http_decoder *decoder, bool message_done) {
-    if (message_done && !decoder->expect_100_continue_skip_on_done && decoder->vtable.on_done) {
-        decoder->vtable.on_done(decoder->user_data);
-    }
+static void s_mark_done(struct aws_http_decoder *decoder) {
+    decoder->is_done = true;
 
+    decoder->vtable.on_done(decoder->user_data);
+}
+
+/* Reset state, in preparation for processing a new message */
+void s_reset_state(struct aws_http_decoder *decoder) {
     if (decoder->is_decoding_requests) {
         s_set_line_state(decoder, s_linestate_request);
     } else {
@@ -249,7 +252,7 @@ void s_reset_state(struct aws_http_decoder *decoder, bool message_done) {
     decoder->chunk_processed = 0;
     decoder->chunk_size = 0;
     decoder->doing_trailers = false;
-    decoder->expect_100_continue_skip_on_done = false;
+    decoder->is_done = false;
 }
 
 static int s_state_unchunked_body(
@@ -277,7 +280,7 @@ static int s_state_unchunked_body(
     }
 
     if (AWS_LIKELY(finished)) {
-        s_reset_state(decoder, true);
+        s_mark_done(decoder);
     }
 
     *bytes_processed = processed_bytes;
@@ -365,11 +368,11 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
             } else if (decoder->content_length > 0) {
                 s_set_state(decoder, s_state_unchunked_body);
             } else {
-                s_reset_state(decoder, true);
+                s_mark_done(decoder);
             }
         } else {
             /* Empty line means end of message. */
-            s_reset_state(decoder, true);
+            s_mark_done(decoder);
         }
 
         return AWS_OP_SUCCESS;
@@ -444,12 +447,6 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
 
             decoder->transfer_encoding |= flags;
         } break;
-
-        case AWS_HTTP_HEADER_EXPECT:
-            if (aws_string_eq_byte_cursor_ignore_case(s_expect_val_100_continue, &header.value_data)) {
-                decoder->expect_100_continue_skip_on_done = true;
-            }
-            break;
 
         default:
             break;
@@ -542,7 +539,7 @@ struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *pa
 
     aws_byte_buf_init(&decoder->scratch_space, params->alloc, params->scratch_space_initial_size);
 
-    s_reset_state(decoder, false);
+    s_reset_state(decoder);
 
     return decoder;
 }
@@ -560,13 +557,7 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
     size_t total_bytes_processed = 0;
 
     int ret = AWS_OP_SUCCESS;
-    while (ret == AWS_OP_SUCCESS && data_bytes) {
-        if (!decoder->run_state) {
-            /* Attempted to call decoder on an invalid decoder state. */
-            ret = aws_raise_error(AWS_ERROR_HTTP_INVALID_PARSE_STATE);
-            break;
-        }
-
+    while (ret == AWS_OP_SUCCESS && data_bytes && !decoder->is_done) {
         size_t bytes_processed = 0;
         ret = decoder->run_state(decoder, input, &bytes_processed);
         data_bytes -= bytes_processed;
@@ -578,11 +569,11 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
         *bytes_read = total_bytes_processed;
     }
 
-    return ret;
-}
+    if (decoder->is_done) {
+        s_reset_state(decoder);
+    }
 
-void aws_http_decoder_set_vtable(struct aws_http_decoder *decoder, const struct aws_http_decoder_vtable *vtable) {
-    decoder->vtable = *vtable;
+    return ret;
 }
 
 int aws_http_decoder_get_encoding_flags(const struct aws_http_decoder *decoder) {

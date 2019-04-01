@@ -96,9 +96,6 @@ AWS_HTTP_API int aws_http_decode(
     const void *data,
     size_t data_bytes,
     size_t *bytes_read);
-AWS_HTTP_API void aws_http_decoder_set_vtable(
-    struct aws_http_decoder *decoder,
-    const struct aws_http_decoder_vtable *vtable);
 
 /* RFC-7230 section 4.2 Message Format */
 #define AWS_HTTP_TRANSFER_ENCODING_CHUNKED (1 << 0)

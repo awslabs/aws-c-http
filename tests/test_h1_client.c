@@ -31,7 +31,16 @@ struct tester {
     struct aws_allocator *alloc;
     struct testing_channel testing_channel;
     struct aws_http_connection *connection;
+    bool is_shut_down;
+    int shutdown_error_code;
 };
+
+static void s_on_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
+    (void)connection;
+    struct tester *tester = user_data;
+    tester->is_shut_down = true;
+    tester->shutdown_error_code = error_code;
+}
 
 static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
     aws_http_library_init(alloc);
@@ -45,6 +54,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
         .alloc = alloc,
         .initial_window_size = SIZE_MAX,
         .user_data = tester,
+        .on_shutdown = s_on_shutdown,
     };
     tester->connection = aws_http_connection_new_http1_1_client(&options);
     ASSERT_NOT_NULL(tester->connection);
@@ -577,16 +587,23 @@ int s_response_tester_clean_up(struct response_tester *response) {
     return AWS_OP_SUCCESS;
 }
 
-int s_send_response(struct tester *tester, struct aws_byte_cursor data) {
+int s_send_response_ex(struct tester *tester, struct aws_byte_cursor data, bool ignore_send_message_errors) {
     struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
         tester->testing_channel.channel, AWS_IO_MESSAGE_APPLICATION_DATA, data.len);
     ASSERT_NOT_NULL(msg);
 
     ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&msg->message_data, data));
 
-    ASSERT_SUCCESS(testing_channel_push_read_message(&tester->testing_channel, msg));
+    int err = testing_channel_push_read_message(&tester->testing_channel, msg);
+    if (!ignore_send_message_errors) {
+        ASSERT_SUCCESS(err);
+    }
 
     return AWS_OP_SUCCESS;
+}
+
+int s_send_response(struct tester *tester, struct aws_byte_cursor data) {
+    return s_send_response_ex(tester, data, false);
 }
 
 int s_send_response_str(struct tester *tester, const char *str) {
@@ -794,6 +811,48 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
 
         ASSERT_SUCCESS(s_response_tester_clean_up(&responses[i]));
     }
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test case is: 1 request has been sent. Then 2 responses arrive in 1 io message.
+ * The 1st request should complete just fine, then the connection should shutdown with error */
+H1_CLIENT_TEST_CASE(h1_client_response_with_too_much_data_shuts_down_connection) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send 1 request */
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method = aws_byte_cursor_from_c_str("GET");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+
+    struct response_tester response;
+    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* send 2 responses in a single aws_io_message. */
+    ASSERT_SUCCESS(s_send_response_ex(
+        &tester,
+        aws_byte_cursor_from_c_str("HTTP/1.1 204 No Content\r\n\r\n"
+                                   "HTTP/1.1 204 No Content\r\n\r\n"),
+        true /* ignore send errors */));
+
+    /* 1st response should have come across successfully */
+    ASSERT_TRUE(response.on_complete_cb_count == 1);
+    ASSERT_TRUE(response.on_complete_error_code == AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(response.status == 204);
+    ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
+    ASSERT_TRUE(response.num_headers == 0);
+    ASSERT_TRUE(response.body.len == 0);
+    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+
+    /* extra data should have caused channel shutdown */
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+    ASSERT_TRUE(tester.is_shut_down);
+    ASSERT_TRUE(tester.shutdown_error_code != AWS_ERROR_SUCCESS);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
