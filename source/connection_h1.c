@@ -1168,6 +1168,9 @@ static int s_handler_process_read_message(
         }
 
         /* Decoder will invoke the internal s_decoder_X callbacks, which in turn invoke user callbacks */
+        aws_http_decoder_set_logging_id(
+            connection->thread_data.incoming_stream_decoder, connection->thread_data.incoming_stream);
+
         size_t decoded_len = 0;
         err = aws_http_decode(
             connection->thread_data.incoming_stream_decoder, message_cursor.ptr, message_cursor.len, &decoded_len);

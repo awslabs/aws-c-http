@@ -19,8 +19,6 @@
 #include <aws/io/logging.h>
 
 #include <assert.h>
-#include <errno.h>
-#include <limits.h>
 
 AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_chunked, "chunked");
 AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_compress, "compress");
@@ -160,25 +158,49 @@ static int s_cat(struct aws_http_decoder *decoder, uint8_t *data, size_t len) {
     return op;
 }
 
-static int s_read_size(struct aws_byte_cursor cursor, size_t *size, int base) {
-    uint64_t val;
-    char *end;
-    val = (int64_t)strtoull((const char *)cursor.ptr, &end, base);
+/* strtoull() is too permissive, allows things like whitespace and inputs that start with "0x" */
+static int s_read_size_impl(struct aws_byte_cursor cursor, size_t *size, bool hex) {
+    size_t val = 0;
+    size_t base = hex ? 16 : 10;
 
-    if ((char *)cursor.ptr == end) {
+    if (cursor.len == 0) {
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
-    if (val == ULLONG_MAX && errno == ERANGE) {
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+    for (; cursor.len > 0; aws_byte_cursor_advance(&cursor, 1)) {
+        uint8_t c = cursor.ptr[0];
+
+        if (aws_mul_size_checked(val, base, &val)) {
+            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        }
+
+        if (c >= '0' && c <= '9') {
+            if (aws_add_size_checked(val, c - '0', &val)) {
+                return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            }
+        } else if (hex && (c >= 'a' && c <= 'f')) {
+            if (aws_add_size_checked(val, c - 'a' + 10, &val)) {
+                return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            }
+        } else if (hex && (c >= 'A' && c <= 'F')) {
+            if (aws_add_size_checked(val, c - 'A' + 10, &val)) {
+                return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            }
+        } else {
+            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        }
     }
 
-    if (val > SIZE_MAX) {
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
-    }
-
-    *size = (size_t)val;
+    *size = val;
     return AWS_OP_SUCCESS;
+}
+
+static int s_read_size(struct aws_byte_cursor cursor, size_t *size) {
+    return s_read_size_impl(cursor, size, false);
+}
+
+static int s_read_size_hex(struct aws_byte_cursor cursor, size_t *size) {
+    return s_read_size_impl(cursor, size, true);
 }
 
 /* This state consumes an entire line, then calls a linestate_fn to process the line. */
@@ -271,7 +293,7 @@ static int s_cursor_split_exactly_n_times(
     struct aws_byte_cursor *cursor_array,
     size_t num_cursors) {
 
-    return s_cursor_split_impl(input, split_on, cursor_array, num_cursors, false);
+    return s_cursor_split_impl(input, split_on, cursor_array, num_cursors, true);
 }
 
 static void s_set_state(struct aws_http_decoder *decoder, state_fn *state) {
@@ -315,15 +337,7 @@ static int s_state_unchunked_body(
     size_t *bytes_processed) {
 
     size_t processed_bytes = 0;
-    if (decoder->content_processed > decoder->content_length) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM,
-            "id=%p: Incoming body has exceeded its stated content-length of %zu",
-            decoder->logging_id,
-            decoder->content_length);
-
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
-    }
+    AWS_FATAL_ASSERT(decoder->content_processed < decoder->content_length); /* shouldn't be possible */
 
     if ((decoder->content_processed + input.len) > decoder->content_length) {
         processed_bytes = decoder->content_length - decoder->content_processed;
@@ -353,7 +367,8 @@ static int s_linestate_chunk_terminator(struct aws_http_decoder *decoder, struct
     /* Expecting CRLF at end of each chunk */
     /* RFC-7230 section 4.1 Chunked Transfer Encoding */
     if (AWS_UNLIKELY(input.len != 0)) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Last incoming chunk is malformed.", decoder->logging_id);
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM, "id=%p: Incoming chunk is invalid, does not end with CRLF.", decoder->logging_id);
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
@@ -390,8 +405,26 @@ static int s_state_chunk(struct aws_http_decoder *decoder, struct aws_byte_curso
 }
 
 static int s_linestate_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_cursor input) {
-    if (AWS_UNLIKELY(s_read_size(input, &decoder->chunk_size, 16) != AWS_OP_SUCCESS)) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Failed to parse incoming chunk size.", decoder->logging_id);
+    struct aws_byte_cursor size;
+    AWS_ZERO_STRUCT(size);
+    if (!aws_byte_cursor_next_split(&input, ';', &size)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Incoming chunk is invalid, first line is malformed: '" PRInSTR "'",
+            decoder->logging_id,
+            AWS_BYTE_CURSOR_PRI(input));
+
+        return AWS_OP_ERR;
+    }
+
+    int err = s_read_size_hex(size, &decoder->chunk_size);
+    if (err) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Failed to parse size of incoming chunk: '" PRInSTR "'",
+            decoder->logging_id,
+            AWS_BYTE_CURSOR_PRI(size));
+
         return AWS_OP_ERR;
     }
     decoder->chunk_processed = 0;
@@ -447,13 +480,20 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
     int err = s_cursor_split_first_n_times(input, ':', splits, 2); /* value may contain more colons */
     if (err) {
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM, "id=%p: Invalid incoming header, missing colon separator.", decoder->logging_id);
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Invalid incoming header, missing colon: '" PRInSTR "'",
+            decoder->logging_id,
+            AWS_BYTE_CURSOR_PRI(input));
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
     struct aws_byte_cursor name = splits[0];
     if (name.len == 0) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Invalid incoming header, name is empty.", decoder->logging_id);
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Invalid incoming header, name is empty: '" PRInSTR "'",
+            decoder->logging_id,
+            AWS_BYTE_CURSOR_PRI(input));
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
@@ -475,11 +515,12 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
                 return aws_raise_error(AWS_ERROR_HTTP_PARSE);
             }
 
-            if (s_read_size(header.value_data, &decoder->content_length, 10) != AWS_OP_SUCCESS) {
+            if (s_read_size(header.value_data, &decoder->content_length) != AWS_OP_SUCCESS) {
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,
-                    "id=%p: Incoming content-length header has invalid value.",
-                    decoder->logging_id);
+                    "id=%p: Incoming content-length header has invalid value: '" PRInSTR "'",
+                    decoder->logging_id,
+                    AWS_BYTE_CURSOR_PRI(header.value_data));
                 return AWS_OP_ERR;
             }
             break;
@@ -525,8 +566,9 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
                 } else if (coding.len > 0) {
                     AWS_LOGF_ERROR(
                         AWS_LS_HTTP_STREAM,
-                        "id=%p: Incoming transfer-encoding header lists unrecognized coding.",
-                        decoder->logging_id);
+                        "id=%p: Incoming transfer-encoding header lists unrecognized coding: '" PRInSTR "'",
+                        decoder->logging_id,
+                        AWS_BYTE_CURSOR_PRI(coding));
                     return aws_raise_error(AWS_ERROR_HTTP_PARSE);
                 }
 
@@ -536,8 +578,10 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
                 if ((prev_flags & AWS_HTTP_TRANSFER_ENCODING_CHUNKED) && (decoder->transfer_encoding != prev_flags)) {
                     AWS_LOGF_ERROR(
                         AWS_LS_HTTP_STREAM,
-                        "id=%p: Incoming transfer-encoding header lists 'chunked' in wrong order.",
-                        decoder->logging_id);
+                        "id=%p: Incoming transfer-encoding header lists another coding '" PRInSTR
+                        "' after 'chunked', this is illegal.",
+                        decoder->logging_id,
+                        AWS_BYTE_CURSOR_PRI(coding));
                     return aws_raise_error(AWS_ERROR_HTTP_PARSE);
                 }
             }
@@ -570,13 +614,21 @@ static int s_linestate_request(struct aws_http_decoder *decoder, struct aws_byte
     int err = s_cursor_split_exactly_n_times(input, ' ', cursors, 3); /* extra spaces not allowed */
     if (err) {
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM, "id=%p: Incoming request line has wrong number of spaces.", decoder->logging_id);
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Incoming request line has wrong number of spaces: '" PRInSTR "'",
+            decoder->logging_id,
+            AWS_BYTE_CURSOR_PRI(input));
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
     for (size_t i = 0; i < AWS_ARRAY_SIZE(cursors); ++i) {
         if (cursors[i].len == 0) {
-            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Incoming request line has empty values.", decoder->logging_id);
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Incoming request line has empty values: '" PRInSTR "'",
+                decoder->logging_id,
+                AWS_BYTE_CURSOR_PRI(input));
+            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
         }
     }
 
@@ -587,7 +639,10 @@ static int s_linestate_request(struct aws_http_decoder *decoder, struct aws_byte
     struct aws_byte_cursor version_expected = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
     if (!aws_byte_cursor_eq(&version, &version_expected)) {
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM, "id=%p: Incoming request uses unsupported HTTP version.", decoder->logging_id);
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Incoming request uses unsupported HTTP version: '" PRInSTR "'",
+            decoder->logging_id,
+            AWS_BYTE_CURSOR_PRI(version));
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
@@ -604,8 +659,11 @@ static int s_linestate_response(struct aws_http_decoder *decoder, struct aws_byt
     struct aws_byte_cursor cursors[3];
     int err = s_cursor_split_first_n_times(input, ' ', cursors, 3); /* phrase may contain spaces */
     if (err) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Incoming response line is invalid.", decoder->logging_id);
-
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Incoming response status line is invalid: '" PRInSTR "'",
+            decoder->logging_id,
+            AWS_BYTE_CURSOR_PRI(input));
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
@@ -617,22 +675,23 @@ static int s_linestate_response(struct aws_http_decoder *decoder, struct aws_byt
     struct aws_byte_cursor version_expected = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
     if (!aws_byte_cursor_eq(&version, &version_expected)) {
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM, "id=%p: Incoming response uses unsupported HTTP version.", decoder->logging_id);
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Incoming response uses unsupported HTTP version: '" PRInSTR "'",
+            decoder->logging_id,
+            AWS_BYTE_CURSOR_PRI(version));
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
-    }
-
-    size_t code_val;
-    err = s_read_size(code, &code_val, 10);
-    if (err) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM, "id=%p: Failed to parse status code from incoming response.", decoder->logging_id);
-        return AWS_OP_ERR;
     }
 
     /* Status-code is a 3-digit integer. RFC7230 section 3.1.2 */
-    if (code.len != 3 || code_val > 999) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Incoming response has invalid status code", decoder->logging_id);
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+    size_t code_val;
+    err = s_read_size(code, &code_val);
+    if (err || code.len != 3 || code_val > 999) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Incoming response has invalid status code: '" PRInSTR "'",
+            decoder->logging_id,
+            AWS_BYTE_CURSOR_PRI(code));
+        return AWS_OP_ERR;
     }
 
     if (decoder->vtable.on_response) {
