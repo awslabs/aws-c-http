@@ -17,6 +17,7 @@
 #include <aws/http/request_response.h>
 
 #include <aws/common/uuid.h>
+#include <aws/io/logging.h>
 #include <aws/testing/io_testing_channel.h>
 
 #if _MSC_VER
@@ -33,6 +34,7 @@ struct tester {
     struct aws_http_connection *connection;
     bool is_shut_down;
     int shutdown_error_code;
+    struct aws_logger logger;
 };
 
 static void s_on_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
@@ -43,11 +45,22 @@ static void s_on_shutdown(struct aws_http_connection *connection, int error_code
 }
 
 static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
+    aws_load_error_strings();
+    aws_io_load_error_strings();
+    aws_io_load_log_subject_strings();
     aws_http_library_init(alloc);
 
     AWS_ZERO_STRUCT(*tester);
 
     tester->alloc = alloc;
+
+    struct aws_logger_standard_options logger_options = {
+        .level = AWS_LOG_LEVEL_TRACE,
+        .file = stderr,
+    };
+    ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->alloc, &logger_options));
+    aws_logger_set(&tester->logger);
+
     ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc));
 
     struct aws_http_client_connection_impl_options options = {
@@ -74,6 +87,7 @@ static int s_tester_clean_up(struct tester *tester) {
     aws_http_connection_release(tester->connection);
     ASSERT_SUCCESS(testing_channel_clean_up(&tester->testing_channel));
     aws_http_library_clean_up();
+    aws_logger_clean_up(&tester->logger);
     return AWS_OP_SUCCESS;
 }
 

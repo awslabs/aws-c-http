@@ -301,11 +301,10 @@ static int s_http_test_get_transfer_encoding_flags(struct aws_allocator *allocat
     (void)ctx;
     const char *msg = "HTTP/1.1 200 OK\r\n"
                       "Server: some-server\r\n"
-                      "Content-Length: 11\r\n"
-                      "Transfer-Encoding: chunked\r\n"
                       "Transfer-Encoding: compress\r\n"
-                      "Transfer-Encoding: gzip, deflate\r\n"
-                      "Transfer-Encoding: identity\r\n"
+                      "Transfer-Encoding: gzip, ,deflate\r\n"
+                      "Transfer-Encoding: chunked\r\n"
+                      "Transfer-Encoding:\r\n"
                       "\r\n"
                       "Hello noob.";
     struct aws_http_decoder_params params;
@@ -575,6 +574,12 @@ static int s_http_decode_bad_messages_and_assert_failure(struct aws_allocator *a
         "Transfer-Encoding: chunked, gzip\r\n"
         "\r\n",
 
+        /* Chunked should be final encoding, p2 */
+        "GET / HTTP/1.1\r\n"
+        "Transfer-Encoding: chunked\r\n"
+        "Transfer-Encoding: gzip\r\n"
+        "\r\n",
+
         /* Invalid hex-int as chunk size. */
         "GET / HTTP/1.1\r\n"
         "Transfer-Encoding: chunked\r\n"
@@ -631,25 +636,6 @@ static int s_http_test_extraneous_buffer_data_ensure_not_processed(struct aws_al
     size_t size_read;
     ASSERT_SUCCESS(aws_http_decode(decoder, request, len, &size_read));
     ASSERT_INT_EQUALS(len, size_read);
-
-    aws_http_decoder_destroy(decoder);
-    aws_http_library_clean_up();
-    return AWS_OP_SUCCESS;
-}
-
-AWS_TEST_CASE(http_test_ignore_transfer_extensions, s_http_test_ignore_transfer_extensions);
-static int s_http_test_ignore_transfer_extensions(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
-
-    const char *request = "GET / HTTP/1.1\r\n"
-                          "Transfer-Encoding: token; fake=extension\r\n";
-
-    struct aws_http_decoder_params params;
-    s_common_test_setup(allocator, 1024, &params, s_request, NULL);
-    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
-
-    size_t len = strlen(request);
-    ASSERT_SUCCESS(aws_http_decode(decoder, request, len, NULL));
 
     aws_http_decoder_destroy(decoder);
     aws_http_library_clean_up();

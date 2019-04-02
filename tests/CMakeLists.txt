@@ -20,7 +20,6 @@ add_test_case(http_decode_one_byte_at_a_time)
 add_test_case(http_decode_messages_at_random_intervals)
 add_test_case(http_decode_bad_messages_and_assert_failure)
 add_test_case(http_test_extraneous_buffer_data_ensure_not_processed)
-add_test_case(http_test_ignore_transfer_extensions)
 add_test_case(http_test_ignore_chunk_extensions)
 add_test_case(server_new_destroy)
 # add_test_case(connection_setup_shutdown) TODO: diagnose occasional failures

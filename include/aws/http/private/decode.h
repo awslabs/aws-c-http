@@ -96,6 +96,8 @@ AWS_HTTP_API int aws_http_decode(
     size_t data_bytes,
     size_t *bytes_read);
 
+AWS_HTTP_API void aws_http_decoder_set_logging_id(struct aws_http_decoder *decoder, void *id);
+
 /* RFC-7230 section 4.2 Message Format */
 #define AWS_HTTP_TRANSFER_ENCODING_CHUNKED (1 << 0)
 #define AWS_HTTP_TRANSFER_ENCODING_GZIP (1 << 1)
