@@ -122,7 +122,7 @@ static void s_test_init(struct aws_allocator *allocator) {
     aws_logger_set(&s_logger);
 }
 
-static void s_test_clean_up() {
+static void s_test_clean_up(void) {
     aws_http_library_clean_up();
     aws_logger_clean_up(&s_logger);
 }
@@ -410,7 +410,7 @@ static int s_http_test_body_chunked(struct aws_allocator *allocator, void *ctx) 
                       "\r\n"
                       "D\r\n"
                       "Hello, there \r\n"
-                      "1C\r\n"
+                      "1c\r\n"
                       "should be a carriage return \r\n"
                       "9\r\n"
                       "in\r\nhere.\r\n"
