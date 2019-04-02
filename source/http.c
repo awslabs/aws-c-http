@@ -83,19 +83,20 @@ static struct aws_log_subject_info_list s_log_subject_list = {
  * Key is aws_byte_cursor* (pointing into cursor from array) and comparisons are case-insensitive.
  * Value is the array index cast to a void*.
  */
-static void s_init_case_insensitive_hash_table(
+static void s_init_str_to_enum_hash_table(
     struct aws_hash_table *table,
     struct aws_allocator *alloc,
     struct aws_byte_cursor *str_array,
     int start_index,
-    int end_index) {
+    int end_index,
+    bool ignore_case) {
 
     int err = aws_hash_table_init(
         table,
         alloc,
         end_index - start_index,
-        aws_hash_byte_cursor_ptr_ignore_case,
-        (aws_hash_callback_eq_fn *)aws_byte_cursor_eq_ignore_case,
+        ignore_case ? aws_hash_byte_cursor_ptr_ignore_case : aws_hash_byte_cursor_ptr,
+        (aws_hash_callback_eq_fn *)(ignore_case ? aws_byte_cursor_eq_ignore_case : aws_byte_cursor_eq),
         NULL,
         NULL);
     AWS_FATAL_ASSERT(!err);
@@ -108,10 +109,10 @@ static void s_init_case_insensitive_hash_table(
 }
 
 /**
- * Given key, get value from table initialized by s_init_case_insensitive_hash_table().
+ * Given key, get value from table initialized by s_init_str_to_enum_hash_table().
  * Returns -1 if key not found.
  */
-static int s_find_in_case_insensitive_hash_table(const struct aws_hash_table *table, struct aws_byte_cursor *key) {
+static int s_find_in_str_to_enum_hash_table(const struct aws_hash_table *table, struct aws_byte_cursor *key) {
     struct aws_hash_element *elem;
     aws_hash_table_find(table, key, &elem);
     if (elem) {
@@ -127,8 +128,13 @@ static struct aws_byte_cursor s_method_enum_to_str[AWS_HTTP_METHOD_COUNT]; /* fo
 static void s_methods_init(struct aws_allocator *alloc) {
     s_method_enum_to_str[AWS_HTTP_METHOD_HEAD] = aws_byte_cursor_from_c_str("HEAD");
 
-    s_init_case_insensitive_hash_table(
-        &s_method_str_to_enum, alloc, s_method_enum_to_str, AWS_HTTP_METHOD_UNKNOWN + 1, AWS_HTTP_METHOD_COUNT);
+    s_init_str_to_enum_hash_table(
+        &s_method_str_to_enum,
+        alloc,
+        s_method_enum_to_str,
+        AWS_HTTP_METHOD_UNKNOWN + 1,
+        AWS_HTTP_METHOD_COUNT,
+        false /* DO NOT ignore case of method */);
 }
 
 static void s_methods_clean_up(void) {
@@ -136,7 +142,7 @@ static void s_methods_clean_up(void) {
 }
 
 enum aws_http_method aws_http_str_to_method(struct aws_byte_cursor cursor) {
-    int method = s_find_in_case_insensitive_hash_table(&s_method_str_to_enum, &cursor);
+    int method = s_find_in_str_to_enum_hash_table(&s_method_str_to_enum, &cursor);
     if (method >= 0) {
         return (enum aws_http_method)method;
     }
@@ -173,8 +179,13 @@ static void s_headers_init(struct aws_allocator *alloc) {
     s_header_enum_to_str[AWS_HTTP_HEADER_CONTENT_LENGTH] = aws_byte_cursor_from_c_str("content-length");
     s_header_enum_to_str[AWS_HTTP_HEADER_EXPECT] = aws_byte_cursor_from_c_str("expect");
 
-    s_init_case_insensitive_hash_table(
-        &s_header_str_to_enum, alloc, s_header_enum_to_str, AWS_HTTP_HEADER_UNKNOWN + 1, AWS_HTTP_HEADER_COUNT);
+    s_init_str_to_enum_hash_table(
+        &s_header_str_to_enum,
+        alloc,
+        s_header_enum_to_str,
+        AWS_HTTP_HEADER_UNKNOWN + 1,
+        AWS_HTTP_HEADER_COUNT,
+        true /* ignore case */);
 }
 
 static void s_headers_clean_up(void) {
@@ -182,7 +193,7 @@ static void s_headers_clean_up(void) {
 }
 
 enum aws_http_header_name aws_http_str_to_header_name(struct aws_byte_cursor cursor) {
-    int header = s_find_in_case_insensitive_hash_table(&s_header_str_to_enum, &cursor);
+    int header = s_find_in_str_to_enum_hash_table(&s_header_str_to_enum, &cursor);
     if (header >= 0) {
         return (enum aws_http_header_name)header;
     }
