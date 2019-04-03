@@ -59,6 +59,7 @@ static size_t s_handler_initial_window_size(struct aws_channel_handler *handler)
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
 static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
+static void s_connection_close(struct aws_http_connection *connection_base);
 static void s_stream_destroy(struct aws_http_stream *stream_base);
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 static int s_decoder_on_request(
@@ -84,6 +85,7 @@ static struct aws_http_connection_vtable s_connection_vtable = {
         },
 
     .new_client_request_stream = s_new_client_request_stream,
+    .close = s_connection_close,
 };
 
 static const struct aws_http_stream_vtable s_stream_vtable = {
@@ -107,6 +109,9 @@ struct h1_connection {
 
     /* Single task used for issuing window updates from off-thread */
     struct aws_channel_task window_update_task;
+
+    /* Task used once during shutdown. */
+    struct aws_channel_task shutdown_delay_task;
 
     /* Only the event-loop thread may touch this data */
     struct {
@@ -183,7 +188,8 @@ struct h1_stream {
 };
 
 /**
- * Called when something goes wrong internally which should result in the channel shutting down.
+ * Internal function for shutting down the connection.
+ * If connection is already shutting down, this call has no effect.
  */
 static void s_shutdown_connection(struct h1_connection *connection, int error_code) {
     assert(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
@@ -209,8 +215,36 @@ static void s_shutdown_connection(struct h1_connection *connection, int error_co
         connection->thread_data.is_shutting_down = true;
         connection->thread_data.shutdown_error_code = error_code;
 
+        /* Delay the call to aws_channel_shutdown().
+         * This ensures that a user calling aws_http_connection_close() won't have completion callbacks
+         * firing before aws_http_connection_close() has even returned. */
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->shutdown_delay_task);
+    }
+}
+
+static void s_shutdown_delay_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    struct h1_connection *connection = arg;
+
+    if (status == AWS_TASK_STATUS_RUN_READY) {
         /* If channel is already shutting down, this call has no effect */
-        aws_channel_shutdown(connection->base.channel_slot->channel, error_code);
+        aws_channel_shutdown(connection->base.channel_slot->channel, connection->thread_data.shutdown_error_code);
+    }
+}
+
+/**
+ * Public function for closing connection.
+ * If connection is already shutting down, this call has no effect.
+ */
+static void s_connection_close(struct aws_http_connection *connection_base) {
+    struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
+
+    if (aws_channel_thread_is_callers_thread(connection_base->channel_slot->channel)) {
+        /* Invoke internal function so connection ceases work immediately */
+        s_shutdown_connection(connection, AWS_ERROR_SUCCESS);
+    } else {
+        /* Not on thread, so tell channel to shut down, which will result in connection shutting down. */
+        aws_channel_shutdown(connection_base->channel_slot->channel, AWS_ERROR_SUCCESS);
     }
 }
 
@@ -1069,6 +1103,7 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
 
     aws_channel_task_init(&connection->outgoing_stream_task, s_outgoing_stream_task, connection);
     aws_channel_task_init(&connection->window_update_task, s_update_window_task, connection);
+    aws_channel_task_init(&connection->shutdown_delay_task, s_shutdown_delay_task, connection);
     aws_linked_list_init(&connection->thread_data.stream_list);
 
     int err = aws_mutex_init(&connection->synced_data.lock);
@@ -1276,8 +1311,7 @@ static int s_handler_shutdown(
     (void)free_scarce_resources_immediately;
     struct h1_connection *connection = handler->impl;
 
-    /* Shutdown happens first in DIR_READ, then in DIR_WRITE with an event-loop tick in between.
-     * Invoke completion callbacks on 2nd pass so they don't fire from within a user's call to close_connection() */
+    /* Shut everything down the first time we get this callback (DIR_READ). */
     if (dir == AWS_CHANNEL_DIR_READ) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
@@ -1288,7 +1322,7 @@ static int s_handler_shutdown(
 
         /* This call ensures that no further streams will be created or worked on. */
         s_shutdown_connection(connection, error_code);
-    } else {
+
         /* Mark all pending streams as complete. */
         int stream_error_code = error_code == AWS_ERROR_SUCCESS ? AWS_ERROR_HTTP_CONNECTION_CLOSED : error_code;
 

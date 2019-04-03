@@ -45,6 +45,7 @@ struct aws_http_connection_vtable {
     struct aws_channel_handler_vtable channel_handler_vtable;
 
     struct aws_http_stream *(*new_client_request_stream)(const struct aws_http_request_options *options);
+    void (*close)(struct aws_http_connection *connection);
 };
 
 /**
