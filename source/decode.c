@@ -27,8 +27,6 @@ AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_deflate, "deflate");
 AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_gzip, "gzip");
 AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_x_gzip, "x-gzip");
 
-/* TODO: every user callback should be able to stop decoder, and should probably return int instead of bool */
-
 /* Decoder runs a state machine.
  * Each state consumes data until it sets the next state.
  * A common state is the "line state", which handles consuming one line ending in CRLF
