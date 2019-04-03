@@ -61,15 +61,15 @@ static void s_handler_destroy(struct aws_channel_handler *handler);
 static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
 static void s_stream_destroy(struct aws_http_stream *stream_base);
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
-static void s_decoder_on_request(
+static int s_decoder_on_request(
     enum aws_http_method method_enum,
     const struct aws_byte_cursor *method_str,
     const struct aws_byte_cursor *uri,
     void *user_data);
-static void s_decoder_on_response(int status_code, void *user_data);
-static bool s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data);
-static bool s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data);
-static void s_decoder_on_done(void *user_data);
+static int s_decoder_on_response(int status_code, void *user_data);
+static int s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data);
+static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data);
+static int s_decoder_on_done(void *user_data);
 
 static struct aws_http_connection_vtable s_connection_vtable = {
     .channel_handler_vtable =
@@ -841,7 +841,7 @@ error:
     s_shutdown_connection(connection, aws_last_error());
 }
 
-static void s_decoder_on_request(
+static int s_decoder_on_request(
     enum aws_http_method method_enum,
     const struct aws_byte_cursor *method_str,
     const struct aws_byte_cursor *uri,
@@ -886,17 +886,16 @@ static void s_decoder_on_request(
 
     incoming_stream->base.incoming_request_method = method_enum;
 
-    return;
+    /* No user callbacks, so we're not checking for shutdown */
+    return AWS_OP_SUCCESS;
+
 error:
-
-    /* TODO: all decoder callbacks should be able to stop decoder, so we don't keep churning in the case of errors.
-     * There's some fishy stuff where callbacks assume current_incoming_stream is a valid ptr, but that's only the case
-     * while things are working */
-
-    s_shutdown_connection(connection, aws_last_error());
+    err = aws_last_error();
+    s_shutdown_connection(connection, err);
+    return aws_raise_error(err);
 }
 
-static void s_decoder_on_response(int status_code, void *user_data) {
+static int s_decoder_on_response(int status_code, void *user_data) {
     struct h1_connection *connection = user_data;
 
     AWS_LOGF_TRACE(
@@ -907,9 +906,12 @@ static void s_decoder_on_response(int status_code, void *user_data) {
         aws_http_status_text(status_code));
 
     connection->thread_data.incoming_stream->base.incoming_response_status = status_code;
+
+    /* No user callbacks, so we're not checking for shutdown */
+    return AWS_OP_SUCCESS;
 }
 
-static bool s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
+static int s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
     struct h1_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
 
@@ -919,8 +921,6 @@ static bool s_decoder_on_header(const struct aws_http_decoded_header *header, vo
         (void *)&incoming_stream->base,
         AWS_BYTE_CURSOR_PRI(header->name_data),
         AWS_BYTE_CURSOR_PRI(header->value_data));
-
-    /* TODO: worth buffering up headers and delivering all at once? In clumps? */
 
     /* TODO? how to support trailing headers? distinct cb? invoke same cb again? */
 
@@ -933,13 +933,18 @@ static bool s_decoder_on_header(const struct aws_http_decoded_header *header, vo
         incoming_stream->base.on_incoming_headers(&incoming_stream->base, &deliver, 1, incoming_stream->base.user_data);
     }
 
-    return true;
+    /* Stop decoding if user callback shut down the connection. */
+    if (connection->thread_data.is_shutting_down) {
+        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    }
+
+    return AWS_OP_SUCCESS;
 }
 
-static void s_mark_head_done(struct h1_stream *incoming_stream) {
+static int s_mark_head_done(struct h1_stream *incoming_stream) {
     /* Bail out if we've already done this */
     if (incoming_stream->is_incoming_head_done) {
-        return;
+        return AWS_OP_SUCCESS;
     }
 
     incoming_stream->is_incoming_head_done = true;
@@ -964,16 +969,26 @@ static void s_mark_head_done(struct h1_stream *incoming_stream) {
         incoming_stream->base.on_incoming_header_block_done(
             &incoming_stream->base, has_incoming_body, incoming_stream->base.user_data);
     }
+
+    /* Stop decoding if user callback shut down the connection. */
+    if (connection->thread_data.is_shutting_down) {
+        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    }
+
+    return AWS_OP_SUCCESS;
 }
 
-static bool s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data) {
+static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data) {
     (void)finished;
 
     struct h1_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
     assert(incoming_stream);
 
-    s_mark_head_done(incoming_stream);
+    int err = s_mark_head_done(incoming_stream);
+    if (err) {
+        return AWS_OP_ERR;
+    }
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM, "id=%p: Incoming body: %zu bytes received.", (void *)&incoming_stream->base, data->len);
@@ -998,16 +1013,24 @@ static bool s_decoder_on_body(const struct aws_byte_cursor *data, bool finished,
         }
     }
 
-    return true;
+    /* Stop decoding if user callback shut down the connection. */
+    if (connection->thread_data.is_shutting_down) {
+        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    }
+
+    return AWS_OP_SUCCESS;
 }
 
-static void s_decoder_on_done(void *user_data) {
+static int s_decoder_on_done(void *user_data) {
     struct h1_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
     assert(incoming_stream);
 
     /* Ensure head was marked done */
-    s_mark_head_done(incoming_stream);
+    int err = s_mark_head_done(incoming_stream);
+    if (err) {
+        return AWS_OP_ERR;
+    }
 
     incoming_stream->is_incoming_message_done = true;
 
@@ -1018,6 +1041,12 @@ static void s_decoder_on_done(void *user_data) {
 
         s_update_incoming_stream_ptr(connection);
     }
+
+    /* Report success even if user's on_complete() callback shuts down on the connection.
+     * We don't want it to look like something went wrong while decoding.
+     * The decode() function returns after each message completes,
+     * and we won't call decode() again if the connection has been shut down */
+    return AWS_OP_SUCCESS;
 }
 
 /* Common new() logic for server & client */
@@ -1247,7 +1276,8 @@ static int s_handler_shutdown(
     (void)free_scarce_resources_immediately;
     struct h1_connection *connection = handler->impl;
 
-    /* Shut everything down the first time we get this callback (DIR_READ). */
+    /* Shutdown happens first in DIR_READ, then in DIR_WRITE with an event-loop tick in between.
+     * Invoke completion callbacks on 2nd pass so they don't fire from within a user's call to close_connection() */
     if (dir == AWS_CHANNEL_DIR_READ) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
@@ -1258,7 +1288,7 @@ static int s_handler_shutdown(
 
         /* This call ensures that no further streams will be created or worked on. */
         s_shutdown_connection(connection, error_code);
-
+    } else {
         /* Mark all pending streams as complete. */
         int stream_error_code = error_code == AWS_ERROR_SUCCESS ? AWS_ERROR_HTTP_CONNECTION_CLOSED : error_code;
 

@@ -624,6 +624,10 @@ int s_send_response_str(struct tester *tester, const char *str) {
     return s_send_response(tester, aws_byte_cursor_from_c_str(str));
 }
 
+int s_send_response_str_ignore_errors(struct tester *tester, const char *str) {
+    return s_send_response_ex(tester, aws_byte_cursor_from_c_str(str), true);
+}
+
 H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
     (void)ctx;
     struct tester tester;
@@ -1097,6 +1101,192 @@ H1_CLIENT_TEST_CASE(h1_client_new_request_fails_if_channel_shut_down) {
     ASSERT_INT_EQUALS(aws_last_error(), AWS_ERROR_HTTP_CONNECTION_CLOSED);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+enum request_callback {
+    REQUEST_CALLBACK_OUTGOING_BODY,
+    REQUEST_CALLBACK_INCOMING_HEADERS,
+    REQUEST_CALLBACK_INCOMING_HEADERS_DONE,
+    REQUEST_CALLBACK_INCOMING_BODY,
+    REQUEST_CALLBACK_COMPLETE,
+    REQUEST_CALLBACK_COUNT,
+};
+
+struct close_from_callback_tester {
+    enum request_callback close_at;
+    int callback_counts[REQUEST_CALLBACK_COUNT];
+    bool is_closed;
+};
+
+void s_close_from_callback_common(
+    struct aws_http_stream *stream,
+    struct close_from_callback_tester *close_tester,
+    enum request_callback current_callback) {
+
+    close_tester->callback_counts[current_callback]++;
+
+    /* After connection closed, no more callbacks should fire (except for on_complete) */
+    if (current_callback == REQUEST_CALLBACK_COMPLETE) {
+        if (close_tester->close_at < REQUEST_CALLBACK_COMPLETE) {
+            AWS_FATAL_ASSERT(close_tester->is_closed);
+        }
+    } else {
+        AWS_FATAL_ASSERT(!close_tester->is_closed);
+        AWS_FATAL_ASSERT(current_callback <= close_tester->close_at);
+    }
+
+    if (current_callback == close_tester->close_at) {
+        aws_http_connection_close(aws_http_stream_get_connection(stream));
+        close_tester->is_closed = true;
+    }
+}
+
+enum aws_http_outgoing_body_state s_close_from_outgoing_body(
+    struct aws_http_stream *stream,
+    struct aws_byte_buf *buf,
+    void *user_data) {
+
+    (void)buf;
+    s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_OUTGOING_BODY);
+
+    /* If we're closing from this function, try and keep going. It's a failure if we're invoked again. */
+    struct close_from_callback_tester *close_tester = user_data;
+    if (close_tester->close_at == REQUEST_CALLBACK_OUTGOING_BODY) {
+        return AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
+    } else {
+        return AWS_HTTP_OUTGOING_BODY_DONE;
+    }
+}
+
+void s_close_from_incoming_headers(
+    struct aws_http_stream *stream,
+    const struct aws_http_header *header_array,
+    size_t num_headers,
+    void *user_data) {
+
+    (void)header_array;
+    (void)num_headers;
+    s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_INCOMING_HEADERS);
+}
+
+void s_close_from_incoming_headers_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
+    (void)has_body;
+    s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_INCOMING_HEADERS_DONE);
+}
+
+void s_close_from_incoming_body(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    /* NOLINTNEXTLINE(readability-non-const-parameter) */
+    size_t *out_window_update_size,
+    void *user_data) {
+
+    (void)data;
+    (void)out_window_update_size;
+    s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_INCOMING_BODY);
+}
+
+void s_close_from_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)error_code;
+    s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_COMPLETE);
+}
+
+int s_test_close_from_callback(struct aws_allocator *allocator, enum request_callback close_at) {
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    struct close_from_callback_tester close_tester = {
+        .close_at = close_at,
+    };
+
+    /* send request */
+    struct aws_http_header headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Content-Length"),
+            .value = aws_byte_cursor_from_c_str("999"),
+        },
+    };
+
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method = aws_byte_cursor_from_c_str("POST");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+    opt.header_array = headers;
+    opt.num_headers = AWS_ARRAY_SIZE(headers);
+    opt.stream_outgoing_body = s_close_from_outgoing_body;
+    opt.on_response_headers = s_close_from_incoming_headers;
+    opt.on_response_header_block_done = s_close_from_incoming_headers_done;
+    opt.on_response_body = s_close_from_incoming_body;
+    opt.on_complete = s_close_from_stream_complete;
+    opt.user_data = &close_tester;
+
+    struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
+    ASSERT_NOT_NULL(stream);
+
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* send response */
+    ASSERT_SUCCESS(s_send_response_str_ignore_errors(
+        &tester,
+        "HTTP/1.1 200 OK\r\n"
+        "Transfer-Encoding: chunked\r\n"
+        "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
+        "\r\n"
+        "3\r\n"
+        "two\r\n"
+        "6\r\n"
+        "chunks\r\n"
+        "0\r\n"
+        "\r\n"));
+
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* check that callbacks were invoked before close_at, but not after */
+    for (int i = 0; i < REQUEST_CALLBACK_COMPLETE; ++i) {
+        if (i <= close_at) {
+            ASSERT_TRUE(close_tester.callback_counts[i] > 0);
+        } else {
+            ASSERT_INT_EQUALS(0, close_tester.callback_counts[i]);
+        }
+    }
+
+    /* the on_complete callback should always fire though */
+    ASSERT_INT_EQUALS(1, close_tester.callback_counts[REQUEST_CALLBACK_COMPLETE]);
+
+    aws_http_stream_release(stream);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_close_from_outgoing_body_callback_stops_decoder) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_OUTGOING_BODY));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_close_from_incoming_headers_callback_stops_decoder) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_INCOMING_HEADERS));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_close_from_incoming_headers_done_callback_stops_decoder) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_INCOMING_HEADERS_DONE));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_close_from_incoming_body_callback_stops_decoder) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_INCOMING_BODY));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_close_from_stream_complete_callback_stops_decoder) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_COMPLETE));
     return AWS_OP_SUCCESS;
 }
 

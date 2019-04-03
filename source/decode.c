@@ -308,10 +308,10 @@ static void s_set_line_state(struct aws_http_decoder *decoder, linestate_fn *lin
     decoder->process_line = line_processor;
 }
 
-static void s_mark_done(struct aws_http_decoder *decoder) {
+static int s_mark_done(struct aws_http_decoder *decoder) {
     decoder->is_done = true;
 
-    decoder->vtable.on_done(decoder->user_data);
+    return decoder->vtable.on_done(decoder->user_data);
 }
 
 /* Reset state, in preparation for processing a new message */
@@ -349,12 +349,16 @@ static int s_state_unchunked_body(
 
     bool finished = decoder->content_processed == decoder->content_length;
     struct aws_byte_cursor body = aws_byte_cursor_from_array(input.ptr, processed_bytes);
-    if (!decoder->vtable.on_body(&body, finished, decoder->user_data)) {
-        return aws_raise_error(AWS_ERROR_HTTP_USER_CALLBACK_EXIT);
+    int err = decoder->vtable.on_body(&body, finished, decoder->user_data);
+    if (err) {
+        return AWS_OP_ERR;
     }
 
     if (AWS_LIKELY(finished)) {
-        s_mark_done(decoder);
+        err = s_mark_done(decoder);
+        if (err) {
+            return AWS_OP_ERR;
+        }
     }
 
     *bytes_processed = processed_bytes;
@@ -391,8 +395,9 @@ static int s_state_chunk(struct aws_http_decoder *decoder, struct aws_byte_curso
 
     bool finished = decoder->chunk_processed == decoder->chunk_size;
     struct aws_byte_cursor body = aws_byte_cursor_from_array(input.ptr, decoder->chunk_size);
-    if (!decoder->vtable.on_body(&body, false, decoder->user_data)) {
-        return aws_raise_error(AWS_ERROR_HTTP_USER_CALLBACK_EXIT);
+    int err = decoder->vtable.on_body(&body, false, decoder->user_data);
+    if (err) {
+        return AWS_OP_ERR;
     }
 
     if (AWS_LIKELY(finished)) {
@@ -434,8 +439,9 @@ static int s_linestate_chunk_size(struct aws_http_decoder *decoder, struct aws_b
         struct aws_byte_cursor cursor;
         cursor.ptr = NULL;
         cursor.len = 0;
-        if (!decoder->vtable.on_body(&cursor, true, decoder->user_data)) {
-            return aws_raise_error(AWS_ERROR_HTTP_USER_CALLBACK_EXIT);
+        err = decoder->vtable.on_body(&cursor, true, decoder->user_data);
+        if (err) {
+            return AWS_OP_ERR;
         }
 
         /* Expected empty newline and end of message. */
@@ -453,6 +459,8 @@ static int s_linestate_chunk_size(struct aws_http_decoder *decoder, struct aws_b
 }
 
 static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_cursor input) {
+    int err;
+
     /* The \r\n was just processed by `s_state_getline`. */
     /* Empty line signifies end of headers, and beginning of body or end of trailers. */
     /* RFC-7230 section 3 Message Format */
@@ -463,11 +471,17 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
             } else if (decoder->content_length > 0) {
                 s_set_state(decoder, s_state_unchunked_body);
             } else {
-                s_mark_done(decoder);
+                err = s_mark_done(decoder);
+                if (err) {
+                    return AWS_OP_ERR;
+                }
             }
         } else {
             /* Empty line means end of message. */
-            s_mark_done(decoder);
+            err = s_mark_done(decoder);
+            if (err) {
+                return AWS_OP_ERR;
+            }
         }
 
         return AWS_OP_SUCCESS;
@@ -477,7 +491,7 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
      * optional leading whitespace, the field value, and optional trailing whitespace.
      * RFC-7230 3.2 */
     struct aws_byte_cursor splits[2];
-    int err = s_cursor_split_first_n_times(input, ':', splits, 2); /* value may contain more colons */
+    err = s_cursor_split_first_n_times(input, ':', splits, 2); /* value may contain more colons */
     if (err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_STREAM,
@@ -600,8 +614,9 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
             break;
     }
 
-    if (!decoder->vtable.on_header(&header, decoder->user_data)) {
-        return aws_raise_error(AWS_ERROR_HTTP_USER_CALLBACK_EXIT);
+    err = decoder->vtable.on_header(&header, decoder->user_data);
+    if (err) {
+        return AWS_OP_ERR;
     }
 
     s_set_line_state(decoder, s_linestate_header);
@@ -646,8 +661,9 @@ static int s_linestate_request(struct aws_http_decoder *decoder, struct aws_byte
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
-    if (decoder->vtable.on_request) {
-        decoder->vtable.on_request(aws_http_str_to_method(method), &method, &uri, decoder->user_data);
+    err = decoder->vtable.on_request(aws_http_str_to_method(method), &method, &uri, decoder->user_data);
+    if (err) {
+        return AWS_OP_ERR;
     }
 
     s_set_line_state(decoder, s_linestate_header);
@@ -694,8 +710,9 @@ static int s_linestate_response(struct aws_http_decoder *decoder, struct aws_byt
         return AWS_OP_ERR;
     }
 
-    if (decoder->vtable.on_response) {
-        decoder->vtable.on_response((int)code_val, decoder->user_data);
+    err = decoder->vtable.on_response((int)code_val, decoder->user_data);
+    if (err) {
+        return AWS_OP_ERR;
     }
 
     s_set_line_state(decoder, s_linestate_header);
@@ -735,10 +752,12 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
     struct aws_byte_cursor input = aws_byte_cursor_from_array(data, data_bytes);
     size_t total_bytes_processed = 0;
 
-    int ret = AWS_OP_SUCCESS;
-    while (ret == AWS_OP_SUCCESS && data_bytes && !decoder->is_done) {
+    while (data_bytes && !decoder->is_done) {
         size_t bytes_processed = 0;
-        ret = decoder->run_state(decoder, input, &bytes_processed);
+        int err = decoder->run_state(decoder, input, &bytes_processed);
+        if (err) {
+            return AWS_OP_ERR;
+        }
         data_bytes -= bytes_processed;
         total_bytes_processed += bytes_processed;
         aws_byte_cursor_advance(&input, bytes_processed);
@@ -752,7 +771,7 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
         s_reset_state(decoder);
     }
 
-    return ret;
+    return AWS_OP_SUCCESS;
 }
 
 int aws_http_decoder_get_encoding_flags(const struct aws_http_decoder *decoder) {
