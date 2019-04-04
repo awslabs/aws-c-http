@@ -170,7 +170,8 @@ error:
 }
 
 void aws_http_connection_close(struct aws_http_connection *connection) {
-    aws_channel_shutdown(connection->channel_slot->channel, AWS_ERROR_SUCCESS);
+    assert(connection);
+    connection->vtable->close(connection);
 }
 
 void aws_http_connection_release(struct aws_http_connection *connection) {

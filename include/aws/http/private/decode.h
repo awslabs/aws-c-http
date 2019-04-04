@@ -35,29 +35,25 @@ struct aws_http_decoded_header {
 /**
  * Called from `aws_http_decode` when an http header has been received.
  * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
- * Return true to keep decoding, or false to immediately stop decoding and place the decoder in an invalid state, where
- * the only valid operation is to destroy the decoder with `aws_http_decoder_destroy`.
  */
-typedef bool(aws_http_decoder_on_header_fn)(const struct aws_http_decoded_header *header, void *user_data);
+typedef int(aws_http_decoder_on_header_fn)(const struct aws_http_decoded_header *header, void *user_data);
 
 /**
  * Called from `aws_http_decode` when a portion of the http body has been received.
  * `finished` is true if this is the last section of the http body, and false if more body data is yet to be received.
  * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
- * Return true to keep decoding, or false to immediately stop decoding and place the decoder in an invalid state, where
- * the only valid operation is to destroy the decoder with `aws_http_decoder_destroy`.
  */
-typedef bool(aws_http_decoder_on_body_fn)(const struct aws_byte_cursor *data, bool finished, void *user_data);
+typedef int(aws_http_decoder_on_body_fn)(const struct aws_byte_cursor *data, bool finished, void *user_data);
 
-typedef void(aws_http_decoder_on_request_fn)(
+typedef int(aws_http_decoder_on_request_fn)(
     enum aws_http_method method_enum,
     const struct aws_byte_cursor *method_str,
     const struct aws_byte_cursor *uri,
     void *user_data);
 
-typedef void(aws_http_decoder_on_response_fn)(int status_code, void *user_data);
+typedef int(aws_http_decoder_on_response_fn)(int status_code, void *user_data);
 
-typedef void(aws_http_decoder_done_fn)(void *user_data);
+typedef int(aws_http_decoder_done_fn)(void *user_data);
 
 struct aws_http_decoder_vtable {
     aws_http_decoder_on_header_fn *on_header;
