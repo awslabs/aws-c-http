@@ -81,8 +81,11 @@ static void s_tester_on_server_connection_shutdown(
     (void)connection;
     (void)error_code;
     struct tester *tester = user_data;
+    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
 
     tester->server_connection_is_shutdown = true;
+
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
     aws_condition_variable_notify_one(&tester->wait_cvar);
 }
 
@@ -94,6 +97,7 @@ static void s_tester_on_server_connection_setup(
 
     (void)server;
     struct tester *tester = user_data;
+    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
 
     if (error_code) {
         tester->wait_result = error_code;
@@ -113,6 +117,7 @@ static void s_tester_on_server_connection_setup(
 
     tester->server_connection = connection;
 done:
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
     aws_condition_variable_notify_one(&tester->wait_cvar);
 }
 
@@ -122,6 +127,8 @@ static void s_tester_on_client_connection_setup(
     void *user_data) {
 
     struct tester *tester = user_data;
+    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
+
     if (error_code) {
         tester->wait_result = error_code;
         goto done;
@@ -129,6 +136,7 @@ static void s_tester_on_client_connection_setup(
 
     tester->client_connection = connection;
 done:
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
     aws_condition_variable_notify_one(&tester->wait_cvar);
 }
 
@@ -140,8 +148,11 @@ static void s_tester_on_client_connection_shutdown(
     (void)connection;
     (void)error_code;
     struct tester *tester = user_data;
+    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
 
     tester->client_connection_is_shutdown = true;
+
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
     aws_condition_variable_notify_one(&tester->wait_cvar);
 }
 
