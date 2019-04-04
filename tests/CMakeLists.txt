@@ -23,7 +23,7 @@ add_test_case(http_decode_bad_responses_and_assert_failure)
 add_test_case(http_test_extraneous_buffer_data_ensure_not_processed)
 add_test_case(http_test_ignore_chunk_extensions)
 add_test_case(server_new_destroy)
-# add_test_case(connection_setup_shutdown) TODO: diagnose occasional failures
+add_test_case(connection_setup_shutdown)
 add_test_case(h1_client_sanity_check)
 add_test_case(h1_client_request_send_1liner)
 add_test_case(h1_client_request_send_headers)
