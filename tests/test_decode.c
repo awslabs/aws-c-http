@@ -38,29 +38,31 @@ static const bool s_response = false;
 
 static struct aws_logger s_logger;
 
-static bool s_on_header_stub(const struct aws_http_decoded_header *header, void *user_data) {
+static int s_on_header_stub(const struct aws_http_decoded_header *header, void *user_data) {
     (void)header;
     (void)user_data;
-    return true;
+    return AWS_OP_SUCCESS;
 }
 
-static bool s_on_body_stub(const struct aws_byte_cursor *data, bool finished, void *user_data) {
+static int s_on_body_stub(const struct aws_byte_cursor *data, bool finished, void *user_data) {
     (void)data;
     (void)finished;
     (void)user_data;
-    return true;
+    return AWS_OP_SUCCESS;
 }
 
-static void s_on_response(int code, void *user_data) {
+static int s_on_response(int code, void *user_data) {
     int *ptr = (int *)user_data;
     if (ptr) {
         *ptr = code;
     }
+    return AWS_OP_SUCCESS;
 }
 
-static void s_on_response_stub(int code, void *user_data) {
+static int s_on_response_stub(int code, void *user_data) {
     (void)code;
     (void)user_data;
+    return AWS_OP_SUCCESS;
 }
 
 struct request_data {
@@ -70,7 +72,7 @@ struct request_data {
     uint8_t buffer[1024];
 };
 
-static void s_on_request(
+static int s_on_request(
     enum aws_http_method method_enum,
     const struct aws_byte_cursor *method_str,
     const struct aws_byte_cursor *uri,
@@ -88,9 +90,11 @@ static void s_on_request(
         memcpy(uri_dst, uri->ptr, uri->len);
         request_data->uri = aws_byte_cursor_from_array(uri_dst, uri->len);
     }
+
+    return AWS_OP_SUCCESS;
 }
 
-static void s_on_request_stub(
+static int s_on_request_stub(
     enum aws_http_method method_enum,
     const struct aws_byte_cursor *method_str,
     const struct aws_byte_cursor *uri,
@@ -100,10 +104,12 @@ static void s_on_request_stub(
     (void)method_str;
     (void)uri;
     (void)user_data;
+    return AWS_OP_SUCCESS;
 }
 
-static void s_on_done(void *user_data) {
+static int s_on_done(void *user_data) {
     (void)user_data;
+    return AWS_OP_SUCCESS;
 }
 
 static void s_test_init(struct aws_allocator *allocator) {
@@ -254,7 +260,7 @@ struct s_header_params {
     const char **header_names;
 };
 
-static bool s_got_header(const struct aws_http_decoded_header *header, void *user_data) {
+static int s_got_header(const struct aws_http_decoded_header *header, void *user_data) {
     struct s_header_params *params = (struct s_header_params *)user_data;
     if (params->index < params->max_index) {
         if (params->first_error == AWS_OP_SUCCESS) {
@@ -264,10 +270,10 @@ static bool s_got_header(const struct aws_http_decoded_header *header, void *use
         }
         params->index++;
     } else {
-        return false;
+        return aws_raise_error(AWS_ERROR_UNKNOWN);
     }
 
-    return true;
+    return AWS_OP_SUCCESS;
 }
 
 AWS_TEST_CASE(http_test_receive_request_headers, s_http_test_receive_request_headers);
@@ -360,7 +366,7 @@ struct s_body_params {
     struct aws_array_list body_data;
 };
 
-static bool s_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data) {
+static int s_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data) {
     (void)finished;
 
     struct s_body_params *params = (struct s_body_params *)user_data;
@@ -368,7 +374,7 @@ static bool s_on_body(const struct aws_byte_cursor *data, bool finished, void *u
         aws_array_list_push_back(&params->body_data, data->ptr + i);
     }
 
-    return true;
+    return AWS_OP_SUCCESS;
 }
 
 AWS_TEST_CASE(http_test_body_unchunked, s_http_test_body_unchunked);
