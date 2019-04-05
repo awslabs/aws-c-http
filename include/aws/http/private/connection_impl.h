@@ -46,7 +46,7 @@ struct aws_http_connection_vtable {
 
     struct aws_http_stream *(*new_client_request_stream)(const struct aws_http_request_options *options);
     void (*close)(struct aws_http_connection *connection);
-    bool (*ok)(const struct aws_http_connection *connection);
+    bool (*is_open)(const struct aws_http_connection *connection);
 };
 
 /**

@@ -144,10 +144,10 @@ AWS_HTTP_API
 void aws_http_connection_close(struct aws_http_connection *connection);
 
 /**
- * Returns true if the connection is thought to be good (not closed or closing).
+ * Returns true unless the connection is closed or closing.
  */
 AWS_HTTP_API
-bool aws_http_connection_ok(const struct aws_http_connection *connection);
+bool aws_http_connection_is_open(const struct aws_http_connection *connection);
 
 AWS_HTTP_API
 enum aws_http_version aws_http_connection_get_version(const struct aws_http_connection *connection);

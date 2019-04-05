@@ -60,7 +60,7 @@ static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
 static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
 static void s_connection_close(struct aws_http_connection *connection_base);
-static bool s_connection_ok(const struct aws_http_connection *connection_base);
+static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static void s_stream_destroy(struct aws_http_stream *stream_base);
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 static int s_decoder_on_request(
@@ -87,7 +87,7 @@ static struct aws_http_connection_vtable s_connection_vtable = {
 
     .new_client_request_stream = s_new_client_request_stream,
     .close = s_connection_close,
-    .ok = s_connection_ok,
+    .is_open = s_connection_is_open,
 };
 
 static const struct aws_http_stream_vtable s_stream_vtable = {
@@ -251,7 +251,7 @@ static void s_connection_close(struct aws_http_connection *connection_base) {
     s_shutdown_connection(connection, AWS_ERROR_SUCCESS);
 }
 
-static bool s_connection_ok(const struct aws_http_connection *connection_base) {
+static bool s_connection_is_open(const struct aws_http_connection *connection_base) {
     struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
     bool is_shutting_down;
 

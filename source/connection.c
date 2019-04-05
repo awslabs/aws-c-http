@@ -174,9 +174,9 @@ void aws_http_connection_close(struct aws_http_connection *connection) {
     connection->vtable->close(connection);
 }
 
-bool aws_http_connection_ok(const struct aws_http_connection *connection) {
+bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
     assert(connection);
-    return connection->vtable->ok(connection);
+    return connection->vtable->is_open(connection);
 }
 
 void aws_http_connection_release(struct aws_http_connection *connection) {
