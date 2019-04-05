@@ -68,8 +68,8 @@ static struct aws_http_connection *s_connection_new(
             AWS_LS_HTTP_CONNECTION,
             "static: Failed to insert slot into channel %p, error %d (%s).",
             (void *)channel,
-            err,
-            aws_error_name(err));
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
         goto error;
     }
 
@@ -143,8 +143,8 @@ static struct aws_http_connection *s_connection_new(
             AWS_LS_HTTP_CONNECTION,
             "static: Failed to setting HTTP handler into slot on channel %p, error %d (%s).",
             (void *)channel,
-            err,
-            aws_error_name(err));
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
 
         goto error;
     }
@@ -522,8 +522,8 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "static: Failed to initiate socket channel for new client connection, error %d (%s).",
-            err,
-            aws_error_name(err));
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
 
         goto error;
     }

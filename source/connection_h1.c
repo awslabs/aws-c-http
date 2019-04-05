@@ -164,7 +164,7 @@ enum stream_type {
 
 enum stream_outgoing_state {
     STREAM_OUTGOING_STATE_HEAD,
-    STREAM_OUTGOING_STATE_BODY, /* TODO: support 100-continue */
+    STREAM_OUTGOING_STATE_BODY,
     STREAM_OUTGOING_STATE_DONE,
 };
 
@@ -258,7 +258,7 @@ static int s_stream_scan_outgoing_headers(
     size_t num_headers,
     size_t *out_header_lines_len) {
 
-    *out_header_lines_len = 0;
+    size_t total = 0;
 
     for (size_t i = 0; i < num_headers; ++i) {
         struct aws_http_header header = header_array[i];
@@ -268,20 +268,25 @@ static int s_stream_scan_outgoing_headers(
         if (header.name.len > 0) {
             name_enum = aws_http_str_to_header_name(header.name);
         } else {
-            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "static: No name set for header[%zu].", i);
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Failed to create stream, no name set for header[%zu].",
+                (void *)stream->base.owning_connection,
+                i);
             return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         }
 
         switch (name_enum) {
             case AWS_HTTP_HEADER_CONTENT_LENGTH:
             case AWS_HTTP_HEADER_TRANSFER_ENCODING:
-                /* TODO: actually process the values in these headers*/
                 stream->has_outgoing_body = true;
 
                 if (!stream->base.stream_outgoing_body) {
                     AWS_LOGF_ERROR(
-                        AWS_LS_HTTP_STREAM,
-                        "static: '" PRInSTR "' header specified, but body-streaming callback is not set.",
+                        AWS_LS_HTTP_CONNECTION,
+                        "id=%p: Failed to create stream, '" PRInSTR
+                        "' header specified but body-streaming callback is not set.",
+                        (void *)stream->base.owning_connection,
                         AWS_BYTE_CURSOR_PRI(header.name));
 
                     return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -292,11 +297,22 @@ static int s_stream_scan_outgoing_headers(
         }
 
         /* header-line: "{name}: {value}\r\n" */
-        *out_header_lines_len += header.name.len + 2 + header.value.len + 2;
-
-        /* TODO: check for overflows anywhere we do addition/subtraction? */
+        int err = 0;
+        err |= aws_add_size_checked(header.name.len, total, &total);
+        err |= aws_add_size_checked(header.value.len, total, &total);
+        err |= aws_add_size_checked(4, total, &total); /* ": " + "\r\n" */
+        if (err) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Failed to create stream, header size calculation produced error %d (%s)'",
+                (void *)stream->base.owning_connection,
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
+            return AWS_OP_ERR;
+        }
     }
 
+    *out_header_lines_len = total;
     return AWS_OP_SUCCESS;
 }
 
@@ -319,7 +335,10 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_head
 
 struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options) {
     if (options->uri.len == 0 || options->method.len == 0) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid options, cannot create client request.");
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Cannot create client request, options are invalid.",
+            (void *)options->client_connection);
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }
@@ -348,24 +367,48 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     /**
      * Calculate total size needed for outgoing_head_buffer, then write to buffer.
-     * The head will look like this:
-     * request-line: "{method} {uri} {version}\r\n"
-     * header-line: "{name}: {value}\r\n"
-     * head-end: "\r\n"
      */
-    size_t request_line_len = options->method.len + 1 + options->uri.len + 1 + version.len + 2;
+
     size_t header_lines_len;
     int err = s_stream_scan_outgoing_headers(stream, options->header_array, options->num_headers, &header_lines_len);
     if (err) {
-        goto error;
+        /* errors already logged by scan_outgoing_headers() function */
+        goto error_scanning_headers;
     }
 
+    /* request-line: "{method} {uri} {version}\r\n" */
+    size_t request_line_len = 4; /* 2 spaces + "\r\n" */
+    err |= aws_add_size_checked(options->method.len, request_line_len, &request_line_len);
+    err |= aws_add_size_checked(options->uri.len, request_line_len, &request_line_len);
+    err |= aws_add_size_checked(version.len, request_line_len, &request_line_len);
+
+    /* head-end: "\r\n" */
     size_t head_end_len = 2;
 
-    size_t head_total_len = request_line_len + header_lines_len + head_end_len;
+    size_t head_total_len = request_line_len;
+    err |= aws_add_size_checked(header_lines_len, head_total_len, &head_total_len);
+    err |= aws_add_size_checked(head_end_len, head_total_len, &head_total_len);
+
+    if (err) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Failed to create request, size calculation had error %d (%s).",
+            (void *)options->client_connection,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        goto error_calculating_size;
+    }
+
     err = aws_byte_buf_init(&stream->outgoing_head_buf, stream->base.alloc, head_total_len);
     if (err) {
-        goto error;
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Failed to create request, buffer initialization had error %d (%s).",
+            (void *)options->client_connection,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
+        goto error_initializing_buf;
     }
 
     bool wrote_all = true;
@@ -410,18 +453,19 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     if (is_shutting_down) {
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM,
-            "static: Connection is closed, cannot create " PRInSTR " request.",
-            AWS_BYTE_CURSOR_PRI(options->method));
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Connection is closed, cannot create request.",
+            (void *)options->client_connection);
 
         aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
-        goto error;
+        goto error_connection_closed;
     }
 
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_STREAM,
-        "id=%p: Created client request: " PRInSTR " " PRInSTR " " PRInSTR,
+        "id=%p: Created client request on connection=%p: " PRInSTR " " PRInSTR " " PRInSTR,
         (void *)&stream->base,
+        (void *)options->client_connection,
         AWS_BYTE_CURSOR_PRI(options->method),
         AWS_BYTE_CURSOR_PRI(options->uri),
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->base.http_version)));
@@ -433,8 +477,11 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     return &stream->base;
 
-error:
+error_connection_closed:
     aws_byte_buf_clean_up(&stream->outgoing_head_buf);
+error_initializing_buf:
+error_calculating_size:
+error_scanning_headers:
     aws_mem_release(stream->base.alloc, stream);
     return NULL;
 }
@@ -452,7 +499,14 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
 static void s_update_window_action(struct h1_connection *connection, size_t increment_size) {
     int err = aws_channel_slot_increment_read_window(connection->base.channel_slot, increment_size);
     if (err) {
-        /* TODO: log warning OR remove error code from aws_channel_slot_increment_read_window */
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Failed to increment read window, error %d (%s). Closing connection.",
+            (void *)&connection->base,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
+        s_shutdown_connection(connection, aws_last_error());
     }
 }
 
@@ -836,8 +890,8 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
                 AWS_LS_HTTP_CONNECTION,
                 "id=%p: Failed to send message up channel, error %d (%s). Closing connection.",
                 (void *)&connection->base,
-                err,
-                aws_error_name(err));
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
 
             goto error;
         }
@@ -893,8 +947,6 @@ static int s_decoder_on_request(
         (void *)&incoming_stream->base,
         AWS_BYTE_CURSOR_PRI(*method_str),
         AWS_BYTE_CURSOR_PRI(*uri));
-
-    /* TODO: Limit on lengths of incoming data https://httpwg.org/specs/rfc7230.html#attack.protocol.element.length */
 
     /* Copy strings to internal buffer */
     struct aws_byte_buf *storage_buf = &incoming_stream->incoming_storage_buf;
@@ -955,8 +1007,6 @@ static int s_decoder_on_header(const struct aws_http_decoded_header *header, voi
         (void *)&incoming_stream->base,
         AWS_BYTE_CURSOR_PRI(header->name_data),
         AWS_BYTE_CURSOR_PRI(header->value_data));
-
-    /* TODO? how to support trailing headers? distinct cb? invoke same cb again? */
 
     if (incoming_stream->base.on_incoming_headers) {
         struct aws_http_header deliver = {
@@ -1243,8 +1293,8 @@ static int s_handler_process_read_message(
                 AWS_LS_HTTP_CONNECTION,
                 "id=%p: Message processing failed, error %d (%s). Closing connection.",
                 (void *)&connection->base,
-                err,
-                aws_error_name(err));
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
 
             goto error;
         }
@@ -1262,8 +1312,8 @@ static int s_handler_process_read_message(
                 AWS_LS_HTTP_CONNECTION,
                 "id=%p: Failed to increment read window, error %d (%s). Closing connection.",
                 (void *)&connection->base,
-                err,
-                aws_error_name(err));
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
 
             goto error;
         }
