@@ -1508,4 +1508,3 @@ H1_CLIENT_TEST_CASE(h1_client_close_from_on_thread_makes_not_open) {
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
-
