@@ -115,6 +115,27 @@ static int s_check_message(struct tester *tester, const char *expected) {
     return AWS_OP_SUCCESS;
 }
 
+/* Pop all messages from queue and compare their contents to expected string */
+static int s_check_all_messages(struct tester *tester, const char *expected) {
+    struct aws_byte_buf all_msgs;
+    ASSERT_SUCCESS(aws_byte_buf_init(&all_msgs, tester->alloc, 1024));
+
+    struct aws_linked_list *msgs = testing_channel_get_written_message_queue(&tester->testing_channel);
+    while (!aws_linked_list_empty(msgs)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(msgs);
+        struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
+
+        struct aws_byte_cursor msg_cursor = aws_byte_cursor_from_buf(&msg->message_data);
+        aws_byte_buf_append_dynamic(&all_msgs, &msg_cursor);
+
+        aws_mem_release(msg->allocator, msg);
+    }
+
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&all_msgs, expected));
+    aws_byte_buf_clean_up(&all_msgs);
+    return AWS_OP_SUCCESS;
+}
+
 /* Send 1 line request, doesn't care about response */
 H1_CLIENT_TEST_CASE(h1_client_request_send_1liner) {
     (void)ctx;
@@ -489,6 +510,9 @@ struct response_tester {
     int on_complete_error_code;
 
     bool stop_auto_window_update;
+
+    /* If a specific test needs to add some custom data */
+    void *specific_test_data;
 };
 
 void s_response_tester_on_headers(
@@ -575,10 +599,11 @@ void s_response_tester_on_complete(struct aws_http_stream *stream, int error_cod
 }
 
 /* Create request stream and hook it up so callbacks feed data to the response_tester */
-int s_response_tester_init(
+int s_response_tester_init_ex(
     struct response_tester *response,
     struct aws_allocator *alloc,
-    struct aws_http_request_options *opt) {
+    struct aws_http_request_options *opt,
+    void *specific_test_data) {
 
     AWS_ZERO_STRUCT(*response);
     ASSERT_SUCCESS(aws_byte_buf_init(&response->storage, alloc, 1024 * 1024 * 1)); /* big enough */
@@ -589,10 +614,19 @@ int s_response_tester_init(
     opt->on_response_body = s_response_tester_on_body;
     opt->on_complete = s_response_tester_on_complete;
 
+    response->specific_test_data = specific_test_data;
     response->stream = aws_http_stream_new_client_request(opt);
     ASSERT_NOT_NULL(response->stream);
 
     return AWS_OP_SUCCESS;
+}
+
+int s_response_tester_init(
+    struct response_tester *response,
+    struct aws_allocator *alloc,
+    struct aws_http_request_options *opt) {
+
+    return s_response_tester_init_ex(response, alloc, opt, NULL);
 }
 
 int s_response_tester_clean_up(struct response_tester *response) {
@@ -834,6 +868,37 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
     return AWS_OP_SUCCESS;
 }
 
+H1_CLIENT_TEST_CASE(h1_client_response_with_bad_data_shuts_down_connection) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method = aws_byte_cursor_from_c_str("GET");
+    opt.uri = aws_byte_cursor_from_c_str("/");
+
+    struct response_tester response;
+    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* send response */
+    ASSERT_SUCCESS(s_send_response_str_ignore_errors(&tester, "Mmmm garbage data\r\n\r\n"));
+
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    ASSERT_TRUE(response.on_complete_cb_count == 1);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PARSE, response.on_complete_error_code);
+
+    /* clean up */
+    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 /* Test case is: 1 request has been sent. Then 2 responses arrive in 1 io message.
  * The 1st request should complete just fine, then the connection should shutdown with error */
 H1_CLIENT_TEST_CASE(h1_client_response_with_too_much_data_shuts_down_connection) {
@@ -872,6 +937,121 @@ H1_CLIENT_TEST_CASE(h1_client_response_with_too_much_data_shuts_down_connection)
     ASSERT_TRUE(tester.is_shut_down);
     ASSERT_TRUE(tester.shutdown_error_code != AWS_ERROR_SUCCESS);
 
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+struct slow_body_sender {
+    struct aws_byte_cursor cursor;
+    size_t delay_ticks;    /* Don't send anything the first N ticks */
+    size_t bytes_per_tick; /* Don't send more than N bytes per tick */
+};
+
+enum aws_http_outgoing_body_state s_slow_send_body(
+    struct aws_http_stream *stream,
+    struct aws_byte_buf *buf,
+    void *user_data) {
+
+    (void)stream;
+    struct response_tester *response = user_data;
+    struct slow_body_sender *sender = response->specific_test_data;
+    size_t dst_available = buf->capacity - buf->len;
+    size_t writing = 0;
+    if (sender->delay_ticks > 0) {
+        sender->delay_ticks--;
+    } else {
+        writing = sender->cursor.len;
+
+        if (dst_available < writing) {
+            writing = dst_available;
+        }
+
+        if ((sender->bytes_per_tick < writing) && (sender->bytes_per_tick > 0)) {
+            writing = sender->bytes_per_tick;
+        }
+    }
+
+    aws_byte_buf_write(buf, sender->cursor.ptr, writing);
+    aws_byte_cursor_advance(&sender->cursor, writing);
+
+    return (sender->cursor.len == 0) ? AWS_HTTP_OUTGOING_BODY_DONE : AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
+}
+
+/* It should be fine to receive a response before the request has finished sending */
+H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* set up request whose body won't send immediately */
+    struct slow_body_sender body_sender = {
+        .cursor = aws_byte_cursor_from_c_str("write more tests"),
+        .delay_ticks = 5,
+        .bytes_per_tick = 1,
+    };
+
+    struct aws_http_header headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Content-Length"),
+            .value = aws_byte_cursor_from_c_str("16"),
+        },
+    };
+
+    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    opt.client_connection = tester.connection;
+    opt.method = aws_byte_cursor_from_c_str("PUT");
+    opt.uri = aws_byte_cursor_from_c_str("/plan.txt");
+    opt.header_array = headers;
+    opt.num_headers = AWS_ARRAY_SIZE(headers);
+    opt.stream_outgoing_body = s_slow_send_body;
+
+    struct response_tester response;
+    ASSERT_SUCCESS(s_response_tester_init_ex(&response, allocator, &opt, &body_sender));
+
+    /* send head of request */
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    /* send response */
+    ASSERT_SUCCESS(s_send_response_str(&tester, "HTTP/1.1 200 OK\r\n\r\n"));
+
+    /* tick loop until body finishes sending.*/
+    while (body_sender.cursor.len > 0) {
+        testing_channel_execute_queued_tasks(&tester.testing_channel);
+    }
+
+    /* check result */
+    const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
+                           "Content-Length: 16\r\n"
+                           "\r\n"
+                           "write more tests";
+    ASSERT_SUCCESS(s_check_all_messages(&tester, expected));
+
+    ASSERT_TRUE(response.on_complete_cb_count == 1);
+    ASSERT_TRUE(response.on_complete_error_code == AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(response.status == 200);
+    ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
+    ASSERT_TRUE(response.num_headers == 0);
+    ASSERT_TRUE(response.body.len == 0);
+
+    /* clean up */
+    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Response data arrives, but there was no outstanding request */
+H1_CLIENT_TEST_CASE(h1_client_response_without_request_shuts_down_connection) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    ASSERT_SUCCESS(s_send_response_str_ignore_errors(&tester, "HTTP/1.1 200 OK\r\n\r\n"));
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
+    ASSERT_TRUE(tester.is_shut_down);
+    ASSERT_TRUE(tester.shutdown_error_code != AWS_ERROR_SUCCESS);
+
+    /* clean up */
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
@@ -1329,10 +1509,3 @@ H1_CLIENT_TEST_CASE(h1_client_close_from_on_thread_makes_not_open) {
     return AWS_OP_SUCCESS;
 }
 
-/* Tests TODO
--   Responses
-    -   Responses finishing before request done sending
-    -   bad data
-        -   data comes in but no incoming_stream
-        -   invalid data freaks out the decoder
-*/
