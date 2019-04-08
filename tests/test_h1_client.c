@@ -1290,6 +1290,45 @@ H1_CLIENT_TEST_CASE(h1_client_close_from_stream_complete_callback_stops_decoder)
     return AWS_OP_SUCCESS;
 }
 
+/* After aws_http_connection_close() is called, aws_http_connection_is_open() should return false,
+ * even if both calls were made from outside the event-loop thread. */
+H1_CLIENT_TEST_CASE(h1_client_close_from_off_thread_makes_not_open) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+
+    ASSERT_TRUE(aws_http_connection_is_open(tester.connection));
+    aws_http_connection_close(tester.connection);
+    ASSERT_FALSE(aws_http_connection_is_open(tester.connection));
+
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_close_from_on_thread_makes_not_open) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+    ASSERT_TRUE(aws_http_connection_is_open(tester.connection));
+
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
+    aws_http_connection_close(tester.connection);
+
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+    ASSERT_FALSE(aws_http_connection_is_open(tester.connection));
+
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 /* Tests TODO
 -   Responses
     -   Responses finishing before request done sending

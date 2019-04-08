@@ -60,6 +60,7 @@ static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
 static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
 static void s_connection_close(struct aws_http_connection *connection_base);
+static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static void s_stream_destroy(struct aws_http_stream *stream_base);
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 static int s_decoder_on_request(
@@ -86,6 +87,7 @@ static struct aws_http_connection_vtable s_connection_vtable = {
 
     .new_client_request_stream = s_new_client_request_stream,
     .close = s_connection_close,
+    .is_open = s_connection_is_open,
 };
 
 static const struct aws_http_stream_vtable s_stream_vtable = {
@@ -189,31 +191,40 @@ struct h1_stream {
 
 /**
  * Internal function for shutting down the connection.
- * If connection is already shutting down, this call has no effect.
+ * This function can be called multiple times, from on-thread or off.
+ * This function is always run once on-thread during channel shutdown.
  */
 static void s_shutdown_connection(struct h1_connection *connection, int error_code) {
-    assert(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+    bool on_thread = aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel);
+    if (on_thread) {
+        /* If thread_data already knew about shutdown, then no more work to do here. */
+        if (connection->thread_data.is_shutting_down) {
+            return;
+        }
 
-    if (!connection->thread_data.is_shutting_down) {
+        connection->thread_data.is_shutting_down = true;
+        connection->thread_data.shutdown_error_code = error_code;
+    }
+
+    bool was_shutdown_known;
+    { /* BEGIN CRITICAL SECTION */
+        int err = aws_mutex_lock(&connection->synced_data.lock);
+        AWS_FATAL_ASSERT(!err);
+
+        was_shutdown_known = connection->synced_data.is_shutting_down;
+        connection->synced_data.is_shutting_down = true;
+
+        err = aws_mutex_unlock(&connection->synced_data.lock);
+        AWS_FATAL_ASSERT(!err);
+    } /* END CRITICAL SECTION */
+
+    if (!was_shutdown_known) {
         AWS_LOGF_INFO(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Connection shutting down with error code %d (%s).",
             (void *)&connection->base,
             error_code,
             aws_error_name(error_code));
-
-        { /* BEGIN CRITICAL SECTION */
-            int err = aws_mutex_lock(&connection->synced_data.lock);
-            AWS_FATAL_ASSERT(!err);
-
-            connection->synced_data.is_shutting_down = true;
-
-            err = aws_mutex_unlock(&connection->synced_data.lock);
-            AWS_FATAL_ASSERT(!err);
-        } /* END CRITICAL SECTION */
-
-        connection->thread_data.is_shutting_down = true;
-        connection->thread_data.shutdown_error_code = error_code;
 
         /* Delay the call to aws_channel_shutdown().
          * This ensures that a user calling aws_http_connection_close() won't have completion callbacks
@@ -234,18 +245,27 @@ static void s_shutdown_delay_task(struct aws_channel_task *task, void *arg, enum
 
 /**
  * Public function for closing connection.
- * If connection is already shutting down, this call has no effect.
  */
 static void s_connection_close(struct aws_http_connection *connection_base) {
     struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
+    s_shutdown_connection(connection, AWS_ERROR_SUCCESS);
+}
 
-    if (aws_channel_thread_is_callers_thread(connection_base->channel_slot->channel)) {
-        /* Invoke internal function so connection ceases work immediately */
-        s_shutdown_connection(connection, AWS_ERROR_SUCCESS);
-    } else {
-        /* Not on thread, so tell channel to shut down, which will result in connection shutting down. */
-        aws_channel_shutdown(connection_base->channel_slot->channel, AWS_ERROR_SUCCESS);
-    }
+static bool s_connection_is_open(const struct aws_http_connection *connection_base) {
+    struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
+    bool is_shutting_down;
+
+    { /* BEGIN CRITICAL SECTION */
+        int err = aws_mutex_lock(&connection->synced_data.lock);
+        AWS_FATAL_ASSERT(!err);
+
+        is_shutting_down = connection->synced_data.is_shutting_down;
+
+        err = aws_mutex_unlock(&connection->synced_data.lock);
+        AWS_FATAL_ASSERT(!err);
+    } /* END CRITICAL SECTION */
+
+    return !is_shutting_down;
 }
 
 /**

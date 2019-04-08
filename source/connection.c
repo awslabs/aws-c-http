@@ -174,6 +174,11 @@ void aws_http_connection_close(struct aws_http_connection *connection) {
     connection->vtable->close(connection);
 }
 
+bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
+    assert(connection);
+    return connection->vtable->is_open(connection);
+}
+
 void aws_http_connection_release(struct aws_http_connection *connection) {
     assert(connection);
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
