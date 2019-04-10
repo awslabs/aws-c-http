@@ -52,6 +52,7 @@ struct tester {
     struct aws_allocator *alloc;
     struct aws_logger logger;
     struct aws_event_loop_group event_loop_group;
+    struct aws_host_resolver host_resolver;
     struct aws_server_bootstrap *server_bootstrap;
     struct aws_http_server *server;
     struct aws_client_bootstrap *client_bootstrap;
@@ -205,7 +206,7 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
 
     ASSERT_SUCCESS(aws_event_loop_group_default_init(&tester->event_loop_group, tester->alloc, 1));
-
+    ASSERT_SUCCESS(aws_host_resolver_init_default(&tester->host_resolver, tester->alloc, 8, &tester->event_loop_group));
     tester->server_bootstrap = aws_server_bootstrap_new(tester->alloc, &tester->event_loop_group);
     ASSERT_NOT_NULL(tester->server_bootstrap);
 
@@ -244,7 +245,8 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
         return AWS_OP_SUCCESS;
     }
 
-    tester->client_bootstrap = aws_client_bootstrap_new(tester->alloc, &tester->event_loop_group, NULL, NULL);
+    tester->client_bootstrap =
+        aws_client_bootstrap_new(tester->alloc, &tester->event_loop_group, &tester->host_resolver, NULL);
     ASSERT_NOT_NULL(tester->client_bootstrap);
 
     /* Connect */
@@ -274,11 +276,12 @@ static int s_tester_clean_up(struct tester *tester) {
 
         ASSERT_SUCCESS(s_tester_wait(tester, s_tester_connection_shutdown_pred));
 
-        aws_client_bootstrap_destroy(tester->client_bootstrap);
+        aws_client_bootstrap_release(tester->client_bootstrap);
     }
 
     aws_http_server_destroy(tester->server);
-    aws_server_bootstrap_destroy(tester->server_bootstrap);
+    aws_server_bootstrap_release(tester->server_bootstrap);
+    aws_host_resolver_clean_up(&tester->host_resolver);
     aws_event_loop_group_clean_up(&tester->event_loop_group);
     aws_http_library_clean_up();
     aws_logger_clean_up(&tester->logger);

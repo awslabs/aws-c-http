@@ -552,7 +552,11 @@ int main(int argc, char **argv) {
 
     struct aws_event_loop_group el_group;
     aws_event_loop_group_default_init(&el_group, allocator, 1);
-    struct aws_client_bootstrap *bootstrap = aws_client_bootstrap_new(allocator, &el_group, NULL, NULL);
+
+    struct aws_host_resolver resolver;
+    aws_host_resolver_init_default(&resolver, allocator, 8, &el_group);
+
+    struct aws_client_bootstrap *bootstrap = aws_client_bootstrap_new(allocator, &el_group, &resolver, NULL);
 
     struct aws_socket_options socket_options = {
         .type = AWS_SOCKET_STREAM,
@@ -580,7 +584,8 @@ int main(int argc, char **argv) {
     aws_mutex_lock(&app_ctx.mutex);
     aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_completion_predicate, &app_ctx);
 
-    aws_client_bootstrap_destroy(bootstrap);
+    aws_client_bootstrap_release(bootstrap);
+    aws_host_resolver_clean_up(&resolver);
     aws_event_loop_group_clean_up(&el_group);
 
     if (tls_ctx) {
