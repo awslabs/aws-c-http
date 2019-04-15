@@ -115,7 +115,7 @@ static int s_state_length_continue(struct aws_websocket_decoder *decoder, struct
      * 2) It is a crime to use most-significant bit on 8 byte payloads.
      *      > If 127, the following 8 bytes interpreted as a 64-bit unsigned integer
      *      > (the most significant bit MUST be 0) are the payload length */
-    uint64_t total_bytes_extended_length;
+    uint8_t total_bytes_extended_length;
     uint64_t min_acceptable_value;
     uint64_t max_acceptable_value;
     if (decoder->current_frame.payload_length == VALUE_FOR_2BYTE_EXTENDED_LENGTH) {
@@ -197,7 +197,7 @@ static int s_state_masking_key_continue(struct aws_websocket_decoder *decoder, s
     }
 
     assert(4 > decoder->state_bytes_processed);
-    size_t bytes_remaining = 4 - decoder->state_bytes_processed;
+    size_t bytes_remaining = 4 - (size_t)decoder->state_bytes_processed;
     size_t bytes_to_consume = bytes_remaining < data->len ? bytes_remaining : data->len;
 
     memcpy(decoder->current_frame.masking_key + decoder->state_bytes_processed, data->ptr, bytes_to_consume);
@@ -242,7 +242,7 @@ static int s_state_payload_continue(struct aws_websocket_decoder *decoder, struc
 
     assert(decoder->current_frame.payload_length > decoder->state_bytes_processed);
     uint64_t bytes_remaining = decoder->current_frame.payload_length - decoder->state_bytes_processed;
-    size_t bytes_to_consume = bytes_remaining < data->len ? bytes_remaining : data->len;
+    size_t bytes_to_consume = bytes_remaining < data->len ? (size_t)bytes_remaining : data->len;
 
     struct aws_byte_cursor payload = aws_byte_cursor_advance(data, bytes_to_consume);
 
