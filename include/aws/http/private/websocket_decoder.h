@@ -33,8 +33,8 @@ enum aws_websocket_opcode {
 struct aws_websocket_frame {
     bool fin;
     bool rsv[3];
-    uint8_t opcode;
     bool masked;
+    uint8_t opcode;
     uint64_t payload_length;
     uint8_t masking_key[4];
 };

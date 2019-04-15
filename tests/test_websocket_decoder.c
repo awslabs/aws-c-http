@@ -108,20 +108,24 @@ int s_decoder_tester_clean_up(struct decoder_tester *tester) {
 }
 
 int s_compare_frame(const struct aws_websocket_frame *expected, const struct aws_websocket_frame *decoded) {
+    uint8_t a[24];
+    memcpy(a, expected, 24);
+    uint8_t b[24];
+    memcpy(b, decoded, 24);
+
     /* compare each field so it's clear where test failed */
-    ASSERT_UINT_EQUALS(expected->opcode, decoded->opcode);
     ASSERT_UINT_EQUALS(expected->fin, decoded->fin);
     ASSERT_UINT_EQUALS(expected->rsv[0], decoded->rsv[0]);
     ASSERT_UINT_EQUALS(expected->rsv[1], decoded->rsv[1]);
     ASSERT_UINT_EQUALS(expected->rsv[2], decoded->rsv[2]);
     ASSERT_UINT_EQUALS(expected->masked, decoded->masked);
+    ASSERT_UINT_EQUALS(expected->opcode, decoded->opcode);
+    ASSERT_UINT_EQUALS(expected->payload_length, decoded->payload_length);
     ASSERT_UINT_EQUALS(expected->masking_key[0], decoded->masking_key[0]);
     ASSERT_UINT_EQUALS(expected->masking_key[1], decoded->masking_key[1]);
     ASSERT_UINT_EQUALS(expected->masking_key[2], decoded->masking_key[2]);
     ASSERT_UINT_EQUALS(expected->masking_key[3], decoded->masking_key[3]);
-    ASSERT_UINT_EQUALS(expected->payload_length, decoded->payload_length);
 
-    ASSERT_INT_EQUALS(0, memcmp(expected, decoded, sizeof(struct aws_websocket_frame)));
     return AWS_OP_SUCCESS;
 };
 
