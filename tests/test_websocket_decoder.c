@@ -126,6 +126,7 @@ int s_compare_frame(const struct aws_websocket_frame *expected, const struct aws
 };
 
 DECODER_TEST_CASE(websocket_decoder_sanity_check) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
     ASSERT_SUCCESS(s_decoder_tester_clean_up(&tester));
@@ -134,6 +135,7 @@ DECODER_TEST_CASE(websocket_decoder_sanity_check) {
 
 /* Test decoding simplest possible frame, no payload */
 DECODER_TEST_CASE(websocket_decoder_simplest_frame) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
@@ -166,6 +168,7 @@ DECODER_TEST_CASE(websocket_decoder_simplest_frame) {
 
 /* Test the 3 RSV bools */
 DECODER_TEST_CASE(websocket_decoder_rsv) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
@@ -201,6 +204,7 @@ DECODER_TEST_CASE(websocket_decoder_rsv) {
 
 /* Test decoding a simple data frame, with a payload */
 DECODER_TEST_CASE(websocket_decoder_data_frame) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
@@ -243,6 +247,7 @@ DECODER_TEST_CASE(websocket_decoder_data_frame) {
 
 /* Test aws_websocket_decoder_process() returns at the end of each frame */
 DECODER_TEST_CASE(websocket_decoder_stops_at_frame_end) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
@@ -275,6 +280,7 @@ DECODER_TEST_CASE(websocket_decoder_stops_at_frame_end) {
 
 /* Test a single frame masked text message */
 DECODER_TEST_CASE(websocket_decoder_masking) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
@@ -320,6 +326,7 @@ DECODER_TEST_CASE(websocket_decoder_masking) {
 
 /* Test a data frame which uses the 2 byte extended-length encoding */
 DECODER_TEST_CASE(websocket_decoder_extended_length_2byte) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
@@ -387,6 +394,7 @@ DECODER_TEST_CASE(websocket_decoder_extended_length_2byte) {
 }
 
 DECODER_TEST_CASE(websocket_decoder_extended_length_8byte) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
@@ -458,6 +466,7 @@ DECODER_TEST_CASE(websocket_decoder_extended_length_8byte) {
 
 /* Test that decoder can handle data that's split at any possible point */
 DECODER_TEST_CASE(websocket_decoder_1byte_at_a_time) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
@@ -518,6 +527,7 @@ DECODER_TEST_CASE(websocket_decoder_1byte_at_a_time) {
 
 /* Test fragmented messages, which arrive across multiple frames whose FIN bit is cleared */
 DECODER_TEST_CASE(websocket_decoder_fragmented_message) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
@@ -585,6 +595,7 @@ DECODER_TEST_CASE(websocket_decoder_fragmented_message) {
 }
 
 DECODER_TEST_CASE(websocket_decoder_fail_on_bad_fragmentation) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
@@ -612,6 +623,7 @@ DECODER_TEST_CASE(websocket_decoder_fail_on_bad_fragmentation) {
 
 /* Control frames must have FIN bit set */
 DECODER_TEST_CASE(websocket_decoder_control_frame_cannot_be_fragmented) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
@@ -631,6 +643,7 @@ DECODER_TEST_CASE(websocket_decoder_control_frame_cannot_be_fragmented) {
 
 /* Test that an error from the on_frame callback fails the decoder */
 DECODER_TEST_CASE(websocket_decoder_on_frame_callback_can_fail_decoder) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
@@ -655,6 +668,7 @@ DECODER_TEST_CASE(websocket_decoder_on_frame_callback_can_fail_decoder) {
 }
 
 DECODER_TEST_CASE(websocket_decoder_on_payload_callback_can_fail_decoder) {
+    (void)ctx;
     struct decoder_tester tester;
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
