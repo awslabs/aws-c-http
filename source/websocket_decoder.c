@@ -25,7 +25,7 @@ typedef int(state_fn)(struct aws_websocket_decoder *decoder, struct aws_byte_cur
 static int s_state_init(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
     (void)data;
     AWS_ZERO_STRUCT(decoder->current_frame);
-    decoder->state++;
+    decoder->state = AWS_WEBSOCKET_DECODER_STATE_OPCODE_BYTE;
     return AWS_OP_SUCCESS;
 }
 
@@ -71,12 +71,12 @@ static int s_state_opcode_byte(struct aws_websocket_decoder *decoder, struct aws
         }
     }
 
-    decoder->state++;
+    decoder->state = AWS_WEBSOCKET_DECODER_STATE_LENGTH_BYTE;
     return AWS_OP_SUCCESS;
 }
 
-/* STATE_LENGTH_BEGIN: Decode byte containing length, determine if we need to decode extended length. */
-static int s_state_length_begin(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
+/* STATE_LENGTH_BYTE: Decode byte containing length, determine if we need to decode extended length. */
+static int s_state_length_byte(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
     if (data->len == 0) {
         return AWS_OP_SUCCESS;
     }
@@ -90,19 +90,20 @@ static int s_state_length_begin(struct aws_websocket_decoder *decoder, struct aw
     /* remaining 7 bits are payload length */
     decoder->current_frame.payload_length = byte & 0x7F;
 
-    /* If 7bit payload length has a high value, then the next few bytes contain the real payload length */
-    if (decoder->current_frame.payload_length < VALUE_FOR_2BYTE_EXTENDED_LENGTH) {
-        decoder->state += 2; /* Skip next state, which would have processed extended length */
-    } else {
+    if (decoder->current_frame.payload_length >= VALUE_FOR_2BYTE_EXTENDED_LENGTH) {
+        /* If 7bit payload length has a high value, then the next few bytes contain the real payload length */
         decoder->state_bytes_processed = 0;
-        decoder->state++;
+        decoder->state = AWS_WEBSOCKET_DECODER_STATE_EXTENDED_LENGTH;
+    } else {
+        /* If 7bit payload length has low value, that's the actual payload size, jump past EXTENDED_LENGTH state */
+        decoder->state = AWS_WEBSOCKET_DECODER_STATE_MASKING_KEY_CHECK;
     }
 
     return AWS_OP_SUCCESS;
 }
 
-/* STATE_LENGTH_CONTINUE: Decode extended length (skipped if no extended length) . */
-static int s_state_length_continue(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
+/* STATE_EXTENDED_LENGTH: Decode extended length (state skipped if no extended length). */
+static int s_state_extended_length(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
     if (data->len == 0) {
         return AWS_OP_SUCCESS;
     }
@@ -127,7 +128,7 @@ static int s_state_length_continue(struct aws_websocket_decoder *decoder, struct
 
         total_bytes_extended_length = 8;
         min_acceptable_value = UINT16_MAX + 1;
-        max_acceptable_value = 0x8000000000000000ULL - 1;
+        max_acceptable_value = 0x7FFFFFFFFFFFFFFFULL;
     }
 
     /* Copy bytes of extended-length to state_cache, we'll process them later.*/
@@ -170,28 +171,28 @@ static int s_state_length_continue(struct aws_websocket_decoder *decoder, struct
         return aws_raise_error(AWS_ERROR_HTTP_PARSE);
     }
 
-    decoder->state++;
+    decoder->state = AWS_WEBSOCKET_DECODER_STATE_MASKING_KEY_CHECK;
     return AWS_OP_SUCCESS;
 }
 
-/* MASKING_KEY_BEGIN: Determine if we need to decode masking-key. Consumes no data. */
-static int s_state_masking_key_begin(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
+/* MASKING_KEY_CHECK: Determine if we need to decode masking-key. Consumes no data. */
+static int s_state_masking_key_check(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
     (void)data;
 
     /* If mask bit was set, move to next state to process 4 bytes of masking key.
      * Otherwise skip next step, there is no masking key. */
     if (decoder->current_frame.masked) {
-        decoder->state++;
+        decoder->state = AWS_WEBSOCKET_DECODER_STATE_MASKING_KEY;
         decoder->state_bytes_processed = 0;
     } else {
-        decoder->state += 2;
+        decoder->state = AWS_WEBSOCKET_DECODER_STATE_PAYLOAD_CHECK;
     }
 
     return AWS_OP_SUCCESS;
 }
 
-/* MASKING_KEY_CONTINUE: Decode masking-key. */
-static int s_state_masking_key_continue(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
+/* MASKING_KEY: Decode masking-key (state skipped if no masking key). */
+static int s_state_masking_key(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
     if (data->len == 0) {
         return AWS_OP_SUCCESS;
     }
@@ -207,14 +208,14 @@ static int s_state_masking_key_continue(struct aws_websocket_decoder *decoder, s
 
     /* If all bytes consumed, proceed to next state */
     if (decoder->state_bytes_processed == 4) {
-        decoder->state++;
+        decoder->state = AWS_WEBSOCKET_DECODER_STATE_PAYLOAD_CHECK;
     }
 
     return AWS_OP_SUCCESS;
 }
 
-/* PAYLOAD_BEGIN: Determine if we need to decode a payload. Consumes no data. */
-static int s_state_payload_begin(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
+/* PAYLOAD_CHECK: Determine if we need to decode a payload. Consumes no data. */
+static int s_state_payload_check(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
     (void)data;
 
     /* Invoke on_frame() callback to inform user of non-payload data. */
@@ -226,16 +227,16 @@ static int s_state_payload_begin(struct aws_websocket_decoder *decoder, struct a
     /* Choose next state: either we have payload to process or we don't. */
     if (decoder->current_frame.payload_length > 0) {
         decoder->state_bytes_processed = 0;
-        decoder->state++;
+        decoder->state = AWS_WEBSOCKET_DECODER_STATE_PAYLOAD;
     } else {
-        decoder->state += 2;
+        decoder->state = AWS_WEBSOCKET_DECODER_STATE_DONE;
     }
 
     return AWS_OP_SUCCESS;
 }
 
-/* PAYLOAD_CONTINUE: Decode payload until we're done. */
-static int s_state_payload_continue(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
+/* PAYLOAD: Decode payload until we're done (state skipped if no payload). */
+static int s_state_payload(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
     if (data->len == 0) {
         return AWS_OP_SUCCESS;
     }
@@ -279,15 +280,15 @@ static int s_state_payload_continue(struct aws_websocket_decoder *decoder, struc
     return AWS_OP_SUCCESS;
 }
 
-static state_fn *s_state_vtable[AWS_WEBSOCKET_DECODER_STATE_DONE] = {
+static state_fn *s_state_functions[AWS_WEBSOCKET_DECODER_STATE_DONE] = {
     s_state_init,
     s_state_opcode_byte,
-    s_state_length_begin,
-    s_state_length_continue,
-    s_state_masking_key_begin,
-    s_state_masking_key_continue,
-    s_state_payload_begin,
-    s_state_payload_continue,
+    s_state_length_byte,
+    s_state_extended_length,
+    s_state_masking_key_check,
+    s_state_masking_key,
+    s_state_payload_check,
+    s_state_payload,
 };
 
 int aws_websocket_decoder_process(
@@ -295,15 +296,18 @@ int aws_websocket_decoder_process(
     struct aws_byte_cursor *data,
     bool *frame_complete) {
 
+    /* Run state machine until frame is completely decoded, or the state stops changing.
+     * Note that we don't stop looping when data->len reaches zero, because some states consume no data. */
     while (decoder->state != AWS_WEBSOCKET_DECODER_STATE_DONE) {
         enum aws_websocket_decoder_state prev_state = decoder->state;
 
-        int err = s_state_vtable[decoder->state](decoder, data);
+        int err = s_state_functions[decoder->state](decoder, data);
         if (err) {
             return AWS_OP_ERR;
         }
 
         if (decoder->state == prev_state) {
+            assert(data->len == 0); /* If no more work to do, all possible data should have been consumed */
             break;
         }
     }

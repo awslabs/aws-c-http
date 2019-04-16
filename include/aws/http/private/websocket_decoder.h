@@ -46,19 +46,17 @@ typedef int(aws_websocket_decoder_frame_fn)(const struct aws_websocket_frame *fr
 typedef int(aws_websocket_decoder_payload_fn)(struct aws_byte_cursor data, void *user_data);
 
 /**
- * Each state must consume data and/or move decoder to a subsequent state.
- * "_BEGIN" states tend to prep things for the following "_CONTINUE" state,
- * or determine that the "_CONTINUE" state isn't necessary.
+ * Each state consumes data and/or moves decoder to a subsequent state.
  */
 enum aws_websocket_decoder_state {
     AWS_WEBSOCKET_DECODER_STATE_INIT,
     AWS_WEBSOCKET_DECODER_STATE_OPCODE_BYTE,
-    AWS_WEBSOCKET_DECODER_STATE_LENGTH_BEGIN,
-    AWS_WEBSOCKET_DECODER_STATE_LENGTH_CONTINUE,
-    AWS_WEBSOCKET_DECODER_STATE_MASKING_KEY_BEGIN,
-    AWS_WEBSOCKET_DECODER_STATE_MASKING_KEY_CONTINUE,
-    AWS_WEBSOCKET_DECODER_STATE_PAYLOAD_BEGIN,
-    AWS_WEBSOCKET_DECODER_STATE_PAYLOAD_CONTINUE,
+    AWS_WEBSOCKET_DECODER_STATE_LENGTH_BYTE,
+    AWS_WEBSOCKET_DECODER_STATE_EXTENDED_LENGTH,
+    AWS_WEBSOCKET_DECODER_STATE_MASKING_KEY_CHECK,
+    AWS_WEBSOCKET_DECODER_STATE_MASKING_KEY,
+    AWS_WEBSOCKET_DECODER_STATE_PAYLOAD_CHECK,
+    AWS_WEBSOCKET_DECODER_STATE_PAYLOAD,
     AWS_WEBSOCKET_DECODER_STATE_DONE,
 };
 
