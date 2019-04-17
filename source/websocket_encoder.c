@@ -188,7 +188,7 @@ static int s_state_payload(struct aws_websocket_encoder *encoder, struct aws_byt
     }
 
     const uint64_t prev_bytes_processed = encoder->state_bytes_processed;
-    const size_t prev_buf_len = out_buf->len;
+    const struct aws_byte_buf prev_buf = *out_buf;
 
     /* Invoke callback which will write to buffer */
     int err = encoder->stream_outgoing_payload(out_buf, encoder->user_data);
@@ -196,9 +196,13 @@ static int s_state_payload(struct aws_websocket_encoder *encoder, struct aws_byt
         return AWS_OP_ERR;
     }
 
-    AWS_FATAL_ASSERT(out_buf->len >= prev_buf_len);
+    /* Ensure that user did not commit forbidden acts with the out_buf */
+    AWS_FATAL_ASSERT(
+        (out_buf->buffer == prev_buf.buffer) && (out_buf->capacity == prev_buf.capacity) &&
+        (out_buf->len >= prev_buf.len));
 
-    size_t bytes_written = out_buf->len - prev_buf_len;
+    size_t bytes_written = out_buf->len - prev_buf.len;
+
     err = aws_add_u64_checked(encoder->state_bytes_processed, bytes_written, &encoder->state_bytes_processed);
     if (err) {
         return AWS_OP_ERR;
@@ -215,7 +219,7 @@ static int s_state_payload(struct aws_websocket_encoder *encoder, struct aws_byt
         uint64_t mask_index = prev_bytes_processed;
 
         /* Optimization idea: don't do this 1 byte at a time */
-        uint8_t *current_byte = out_buf->buffer + prev_buf_len;
+        uint8_t *current_byte = out_buf->buffer + prev_buf.len;
         uint8_t *end_byte = out_buf->buffer + out_buf->len;
         while (current_byte != end_byte) {
             *current_byte++ ^= encoder->frame.masking_key[mask_index++ % 4];
