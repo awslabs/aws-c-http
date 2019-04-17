@@ -34,6 +34,7 @@ struct encoder_tester {
     size_t fail_on_nth_payload;
     bool never_say_payload_is_done;
 
+    uint8_t out_buf_storage[1024];
     struct aws_byte_buf out_buf;
 };
 
@@ -82,7 +83,7 @@ static int s_encoder_tester_init(struct encoder_tester *tester, struct aws_alloc
     ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->alloc, &logger_options));
     aws_logger_set(&tester->logger);
 
-    ASSERT_SUCCESS(aws_byte_buf_init(&tester->out_buf, alloc, 1024));
+    tester->out_buf = aws_byte_buf_from_empty_array(tester->out_buf_storage, sizeof(tester->out_buf_storage));
 
     s_encoder_tester_reset(tester);
 
@@ -90,13 +91,12 @@ static int s_encoder_tester_init(struct encoder_tester *tester, struct aws_alloc
 }
 
 static int s_encoder_tester_clean_up(struct encoder_tester *tester) {
-    aws_byte_buf_clean_up(&tester->out_buf);
     aws_http_library_clean_up();
     aws_logger_clean_up(&tester->logger);
     return AWS_OP_SUCCESS;
 }
 
-static bool aws_byte_buf_eq_array(const struct aws_byte_buf *buf, void *array, size_t array_len) {
+static bool aws_byte_buf_eq_array(const struct aws_byte_buf *buf, const void *array, size_t array_len) {
     return aws_array_eq(buf->buffer, buf->len, array, array_len);
 }
 
@@ -400,6 +400,68 @@ ENCODER_TEST_CASE(websocket_encoder_extended_length) {
             }
         }
     }
+
+    ASSERT_SUCCESS(s_encoder_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+ENCODER_TEST_CASE(websocket_encoder_1_byte_at_a_time) {
+    (void)ctx;
+    struct encoder_tester tester;
+    ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
+
+    /* Use all optional frame features in this test (8byte extended payload length and masking-key).
+     * Even though we say the payload is long, we're only going to send a portion of it in this test */
+    const char *input_payload = "Hello";
+    tester.payload = aws_byte_cursor_from_c_str(input_payload);
+    tester.never_say_payload_is_done = true;
+
+    const struct aws_websocket_frame input_frame = {
+        .fin = true,
+        .opcode = 1,
+        .masked = true,
+        .masking_key = {0x37, 0xfa, 0x21, 0x3d},
+        .payload_length = 0x0102030405060708,
+    };
+
+    const uint8_t expected_output[] = {
+        0x81, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0xFF, /* mask | 7bit payload len */
+        /* 8byte extended payload len */
+        0x01,
+        0x02,
+        0x03,
+        0x04,
+        0x05,
+        0x06,
+        0x07,
+        0x08,
+        /* masking key */
+        0x37,
+        0xfa,
+        0x21,
+        0x3d,
+        /* payload */
+        0x7f,
+        0x9f,
+        0x4d,
+        0x51,
+        0x58,
+    };
+
+    ASSERT_SUCCESS(aws_websocket_encoder_start_frame(&tester.encoder, &input_frame));
+
+    for (size_t i = 0; i < sizeof(expected_output); ++i) {
+        uint8_t one_sad_byte;
+        struct aws_byte_buf one_sad_byte_buf = aws_byte_buf_from_empty_array(&one_sad_byte, 1);
+
+        ASSERT_TRUE(aws_websocket_encoder_is_frame_in_progress(&tester.encoder));
+        ASSERT_SUCCESS(aws_websocket_encoder_process(&tester.encoder, &one_sad_byte_buf));
+
+        aws_byte_buf_write_from_whole_buffer(&tester.out_buf, one_sad_byte_buf);
+    }
+
+    ASSERT_TRUE(aws_byte_buf_eq_array(&tester.out_buf, expected_output, sizeof(expected_output)));
 
     ASSERT_SUCCESS(s_encoder_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;

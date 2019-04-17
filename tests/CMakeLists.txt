@@ -77,6 +77,7 @@ add_test_case(websocket_encoder_fail_if_payload_less_than_stated_length)
 add_test_case(websocket_encoder_fail_if_payload_never_marked_done)
 add_test_case(websocket_encoder_masking)
 add_test_case(websocket_encoder_extended_length)
+add_test_case(websocket_encoder_1_byte_at_a_time)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})

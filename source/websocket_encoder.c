@@ -115,6 +115,7 @@ static int s_state_extended_length(struct aws_websocket_encoder *encoder, struct
     }
 
     aws_byte_buf_write_from_whole_cursor(out_buf, network_bytes_cursor);
+    encoder->state_bytes_processed += network_bytes_cursor.len;
 
     /* If all bytes written, advance to next state */
     if (all_data_written) {
@@ -156,6 +157,7 @@ static int s_state_masking_key(struct aws_websocket_encoder *encoder, struct aws
     }
 
     aws_byte_buf_write_from_whole_cursor(out_buf, cursor);
+    encoder->state_bytes_processed += cursor.len;
 
     /* If all bytes written, advance to next state */
     if (all_data_written) {
