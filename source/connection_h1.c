@@ -1297,7 +1297,7 @@ static int s_handler_process_read_message(
                 "connection.",
                 (void *)&connection->base);
 
-            aws_raise_error(AWS_ERROR_HTTP_INVALID_PARSE_STATE);
+            aws_raise_error(AWS_ERROR_INVALID_STATE);
             goto error;
         }
 

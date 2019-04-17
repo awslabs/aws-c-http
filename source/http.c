@@ -38,9 +38,6 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_PARSE,
         "Encountered an unexpected form when parsing an http message."),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_INVALID_PARSE_STATE,
-        "Decoding/parsing was ran while the decoder object was in a poor state -- make sure to properly check for error codes before running the decoder."),
-    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL,
         "An unsupported protocol was encountered."),
     AWS_DEFINE_ERROR_INFO_HTTP(

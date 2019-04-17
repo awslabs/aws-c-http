@@ -15,9 +15,7 @@
 
 #include <aws/http/private/websocket_decoder.h>
 
-/* If 7bit payload length has these values, then the next few bytes contain the real payload length */
-#define VALUE_FOR_2BYTE_EXTENDED_LENGTH 126
-#define VALUE_FOR_8BYTE_EXTENDED_LENGTH 127
+/* TODO: decoder logging */
 
 typedef int(state_fn)(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data);
 
@@ -90,7 +88,7 @@ static int s_state_length_byte(struct aws_websocket_decoder *decoder, struct aws
     /* remaining 7 bits are payload length */
     decoder->current_frame.payload_length = byte & 0x7F;
 
-    if (decoder->current_frame.payload_length >= VALUE_FOR_2BYTE_EXTENDED_LENGTH) {
+    if (decoder->current_frame.payload_length >= AWS_WEBSOCKET_7BIT_VALUE_FOR_2BYTE_EXTENDED_LENGTH) {
         /* If 7bit payload length has a high value, then the next few bytes contain the real payload length */
         decoder->state_bytes_processed = 0;
         decoder->state = AWS_WEBSOCKET_DECODER_STATE_EXTENDED_LENGTH;
@@ -108,27 +106,20 @@ static int s_state_extended_length(struct aws_websocket_decoder *decoder, struct
         return AWS_OP_SUCCESS;
     }
 
-    /* RFC-6455 Section 5.2 Base Framing Protocol - Payload length
-     * 1) It is a crime to use more bytes than necessary to encode length.
-     *      > in all cases, the minimal number of bytes MUST be used to encode
-     *      > the length, for example, the length of a 124-byte-long string
-     *      > can't be encoded as the sequence 126, 0, 124
-     * 2) It is a crime to use most-significant bit on 8 byte payloads.
-     *      > If 127, the following 8 bytes interpreted as a 64-bit unsigned integer
-     *      > (the most significant bit MUST be 0) are the payload length */
+    /* Actual payload length is encoded across the next 2 or 8 bytes */
     uint8_t total_bytes_extended_length;
     uint64_t min_acceptable_value;
     uint64_t max_acceptable_value;
-    if (decoder->current_frame.payload_length == VALUE_FOR_2BYTE_EXTENDED_LENGTH) {
+    if (decoder->current_frame.payload_length == AWS_WEBSOCKET_7BIT_VALUE_FOR_2BYTE_EXTENDED_LENGTH) {
         total_bytes_extended_length = 2;
-        min_acceptable_value = VALUE_FOR_2BYTE_EXTENDED_LENGTH;
-        max_acceptable_value = UINT16_MAX;
+        min_acceptable_value = AWS_WEBSOCKET_2BYTE_EXTENDED_LENGTH_MIN_VALUE;
+        max_acceptable_value = AWS_WEBSOCKET_2BYTE_EXTENDED_LENGTH_MAX_VALUE;
     } else {
-        assert(decoder->current_frame.payload_length == VALUE_FOR_8BYTE_EXTENDED_LENGTH);
+        assert(decoder->current_frame.payload_length == AWS_WEBSOCKET_7BIT_VALUE_FOR_8BYTE_EXTENDED_LENGTH);
 
         total_bytes_extended_length = 8;
-        min_acceptable_value = UINT16_MAX + 1;
-        max_acceptable_value = 0x7FFFFFFFFFFFFFFFULL;
+        min_acceptable_value = AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MIN_VALUE;
+        max_acceptable_value = AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MAX_VALUE;
     }
 
     /* Copy bytes of extended-length to state_cache, we'll process them later.*/
