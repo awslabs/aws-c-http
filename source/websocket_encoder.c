@@ -191,12 +191,13 @@ static int s_state_payload(struct aws_websocket_encoder *encoder, struct aws_byt
     const struct aws_byte_buf prev_buf = *out_buf;
 
     /* Invoke callback which will write to buffer */
-    int err = encoder->stream_outgoing_payload(out_buf, encoder->user_data);
+    bool user_says_done = false;
+    int err = encoder->stream_outgoing_payload(out_buf, &user_says_done, encoder->user_data);
     if (err) {
         return AWS_OP_ERR;
     }
 
-    /* Ensure that user did not commit forbidden acts with the out_buf */
+    /* Ensure that user did not commit forbidden acts upon the out_buf */
     AWS_FATAL_ASSERT(
         (out_buf->buffer == prev_buf.buffer) && (out_buf->capacity == prev_buf.capacity) &&
         (out_buf->len >= prev_buf.len));
@@ -205,11 +206,7 @@ static int s_state_payload(struct aws_websocket_encoder *encoder, struct aws_byt
 
     err = aws_add_u64_checked(encoder->state_bytes_processed, bytes_written, &encoder->state_bytes_processed);
     if (err) {
-        return AWS_OP_ERR;
-    }
-
-    if (encoder->state_bytes_processed > encoder->frame.payload_length) {
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+        return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
     }
 
     /* Mask data, if necessary.
@@ -228,7 +225,20 @@ static int s_state_payload(struct aws_websocket_encoder *encoder, struct aws_byt
 
     /* If done writing payload, proceed to next state */
     if (encoder->state_bytes_processed == encoder->frame.payload_length) {
+        if (!user_says_done) {
+            return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+        }
+
         encoder->state = AWS_WEBSOCKET_ENCODER_STATE_DONE;
+    } else {
+        /* Some more error-checking... */
+        if (encoder->state_bytes_processed > encoder->frame.payload_length) {
+            return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+        }
+
+        if (user_says_done) {
+            return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+        }
     }
 
     return AWS_OP_SUCCESS;
@@ -247,6 +257,8 @@ static state_fn *s_state_functions[AWS_WEBSOCKET_ENCODER_STATE_DONE] = {
 
 int aws_websocket_encoder_process(struct aws_websocket_encoder *encoder, struct aws_byte_buf *out_buf) {
 
+    /* Run state machine until frame is completely decoded, or the state stops changing.
+     * Note that we don't necessarily stop looping when out_buf is full, because not all state need to output data */
     while (encoder->state != AWS_WEBSOCKET_ENCODER_STATE_DONE) {
         const enum aws_websocket_encoder_state prev_state = encoder->state;
 
@@ -256,7 +268,10 @@ int aws_websocket_encoder_process(struct aws_websocket_encoder *encoder, struct 
         }
 
         if (prev_state == encoder->state) {
-            assert(out_buf->len == out_buf->capacity); /* Assert that a state isn't giving up without filling buffer */
+            /* This assert checks that each state is doing as much work as it possibly can.
+             * Except for the PAYLOAD state, where it's up to the user to fill the buffer. */
+            assert((out_buf->len == out_buf->capacity) || (encoder->state == AWS_WEBSOCKET_ENCODER_STATE_PAYLOAD));
+
             break;
         }
     }

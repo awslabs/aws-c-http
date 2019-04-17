@@ -18,7 +18,7 @@
 
 #include <aws/http/private/websocket_impl.h>
 
-typedef int(aws_websocket_encoder_payload_fn)(struct aws_byte_buf *out_buf, void *user_data);
+typedef int(aws_websocket_encoder_payload_fn)(struct aws_byte_buf *out_buf, bool *out_done, void *user_data);
 
 enum aws_websocket_encoder_state {
     AWS_WEBSOCKET_ENCODER_STATE_INIT,

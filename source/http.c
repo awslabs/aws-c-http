@@ -52,6 +52,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_CLOSED,
         "Message not sent, as the connection has closed."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT,
+        "Amount of data streamed out does not match the previously declared length."),
 };
 /* clang-format on */
 
