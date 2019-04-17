@@ -466,3 +466,27 @@ ENCODER_TEST_CASE(websocket_encoder_1_byte_at_a_time) {
     ASSERT_SUCCESS(s_encoder_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
+
+ENCODER_TEST_CASE(websocket_encoder_payload_callback_can_fail_encoder) {
+    (void)ctx;
+    struct encoder_tester tester;
+    ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
+
+    const struct aws_websocket_frame input_frame = {
+        .fin = true,
+        .opcode = 2,
+        .payload_length = 4,
+    };
+
+    tester.fail_on_nth_payload = 1;
+
+    ASSERT_SUCCESS(aws_websocket_encoder_start_frame(&tester.encoder, &input_frame));
+    ASSERT_FAILS(aws_websocket_encoder_process(&tester.encoder, &tester.out_buf));
+
+    /* Check that error returned by callback bubbles up.
+     * UNKNOWN error just happens to be what our test callback throws */
+    ASSERT_INT_EQUALS(AWS_ERROR_UNKNOWN, aws_last_error());
+
+    ASSERT_SUCCESS(s_encoder_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
