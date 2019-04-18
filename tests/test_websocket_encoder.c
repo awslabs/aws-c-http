@@ -362,7 +362,7 @@ ENCODER_TEST_CASE(websocket_encoder_extended_length) {
 
         if (pair_i.type == LENGTH_ILLEGAL) {
             ASSERT_FAILS(aws_websocket_encoder_start_frame(&tester.encoder, &input_frame));
-            ASSERT_INT_EQUALS(AWS_ERROR_INVALID_ARGUMENT, aws_last_error());
+            ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PARSE, aws_last_error());
         } else {
             uint8_t extended_length_bytes;
             uint8_t expected_output[10];
@@ -392,11 +392,15 @@ ENCODER_TEST_CASE(websocket_encoder_extended_length) {
             if (pair_i.type == LENGTH_IN_7BITS) {
                 ASSERT_UINT_EQUALS(pair_i.len, tester.out_buf.buffer[1]);
             } else if (pair_i.type == LENGTH_IN_2BYTES) {
-                uint16_t *u16_ptr = (uint16_t *)&tester.out_buf.buffer[2];
-                ASSERT_UINT_EQUALS(pair_i.len, aws_ntoh16(*u16_ptr));
+                struct aws_byte_cursor extended_length = aws_byte_cursor_from_array(&tester.out_buf.buffer[2], 2);
+                uint16_t u16;
+                ASSERT_TRUE(aws_byte_cursor_read_be16(&extended_length, &u16));
+                ASSERT_UINT_EQUALS(pair_i.len, u16);
             } else { /* LENGTH_IN_8BYTES */
-                uint64_t *u64_ptr = (uint64_t *)&tester.out_buf.buffer[2];
-                ASSERT_UINT_EQUALS(pair_i.len, aws_ntoh64(*u64_ptr));
+                struct aws_byte_cursor extended_length = aws_byte_cursor_from_array(&tester.out_buf.buffer[2], 8);
+                uint64_t u64;
+                ASSERT_TRUE(aws_byte_cursor_read_be64(&extended_length, &u64));
+                ASSERT_UINT_EQUALS(pair_i.len, u64);
             }
         }
     }
@@ -405,6 +409,8 @@ ENCODER_TEST_CASE(websocket_encoder_extended_length) {
     return AWS_OP_SUCCESS;
 }
 
+/* Ensure the encoder can handle outputing data across split buffers.
+ * Best way I know is to output 1 byte at a time, that covers EVERY possible splitting point. */
 ENCODER_TEST_CASE(websocket_encoder_1_byte_at_a_time) {
     (void)ctx;
     struct encoder_tester tester;
@@ -462,6 +468,204 @@ ENCODER_TEST_CASE(websocket_encoder_1_byte_at_a_time) {
     }
 
     ASSERT_TRUE(aws_byte_buf_eq_array(&tester.out_buf, expected_output, sizeof(expected_output)));
+
+    ASSERT_SUCCESS(s_encoder_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test fragmented messages, which are sent via multiple frames whose FIN bit is cleared */
+ENCODER_TEST_CASE(websocket_encoder_fragmented_message) {
+    (void)ctx;
+    struct encoder_tester tester;
+    ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
+
+    struct frame_payload_pair {
+        struct aws_websocket_frame frame;
+        const char *payload;
+    };
+
+    const struct frame_payload_pair input_pairs[] = {
+        /* TEXT FRAME */
+        {
+            {
+                .fin = false,
+                .opcode = 1,
+                .payload_length = 3,
+            },
+            "hot",
+        },
+        {
+            /* CONTINUATION FRAME */
+            {
+                .fin = false,
+                .opcode = 0,
+                .payload_length = 2,
+            },
+            "do",
+        },
+        /* PING FRAME - Control frames may be injected in the middle of a fragmented message. */
+        {
+            {
+                .fin = true,
+                .opcode = 9,
+            },
+            "",
+        },
+        /* CONTINUATION FRAME */
+        {
+            {
+                .fin = true,
+                .opcode = 0,
+                .payload_length = 1,
+            },
+            "g",
+        },
+    };
+
+    const uint8_t expected_output[] = {
+        /* TEXT FRAME */
+        0x01, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x03, /* mask | 7bit payload len */
+        'h',
+        'o',
+        't',
+
+        /* CONTINUATION FRAME */
+        0x00, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x02, /* mask | 7bit payload len */
+        'd',
+        'o',
+
+        /* PING FRAME */
+        0x89, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x00, /* mask | 7bit payload len */
+
+        /* CONTINUATION FRAME */
+        0x80, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x01, /* mask | 7bit payload len */
+        'g',
+    };
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(input_pairs); ++i) {
+        const struct frame_payload_pair *pair_i = &input_pairs[i];
+
+        tester.payload = aws_byte_cursor_from_c_str(pair_i->payload);
+
+        ASSERT_SUCCESS(aws_websocket_encoder_start_frame(&tester.encoder, &pair_i->frame));
+        ASSERT_SUCCESS(aws_websocket_encoder_process(&tester.encoder, &tester.out_buf));
+        ASSERT_FALSE(aws_websocket_encoder_is_frame_in_progress(&tester.encoder));
+    }
+
+    ASSERT_TRUE(aws_byte_buf_eq_array(&tester.out_buf, expected_output, sizeof(expected_output)));
+
+    ASSERT_SUCCESS(s_encoder_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test illegal sequences of fragmented (FIN bit is clear) frames */
+ENCODER_TEST_CASE(websocket_encoder_fragmentation_failure_checks) {
+    (void)ctx;
+    struct encoder_tester tester;
+    ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
+
+    struct aws_websocket_frame fragmented_control_frames[] = {
+        {
+            .fin = false,
+            .opcode = AWS_WEBSOCKET_OPCODE_PING,
+        },
+    };
+
+    struct aws_websocket_frame no_fin_bit_between_messages[] = {
+        {
+            .fin = false,
+            .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+        },
+        {
+            .fin = true,
+            .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+        },
+    };
+
+    struct aws_websocket_frame no_fin_bit_between_messages2[] = {
+        {
+            .fin = false,
+            .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+        },
+        {
+            .fin = false,
+            .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+        },
+        {
+            .fin = true,
+            .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+        },
+    };
+
+    struct aws_websocket_frame continuation_frame_without_preceding_data_frame[] = {
+        {
+            .fin = false,
+            .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+        },
+    };
+
+    struct aws_websocket_frame continuation_frame_without_preceding_data_frame2[] = {
+        {
+            .fin = true,
+            .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+        },
+    };
+
+    struct test_length_pair {
+        struct aws_websocket_frame *frames;
+        size_t num_frames;
+    };
+
+    struct test_length_pair test_pairs[] = {
+        {
+            .frames = fragmented_control_frames,
+            .num_frames = AWS_ARRAY_SIZE(fragmented_control_frames),
+        },
+        {
+            .frames = no_fin_bit_between_messages,
+            .num_frames = AWS_ARRAY_SIZE(no_fin_bit_between_messages),
+        },
+        {
+            .frames = no_fin_bit_between_messages2,
+            .num_frames = AWS_ARRAY_SIZE(no_fin_bit_between_messages2),
+        },
+        {
+            .frames = continuation_frame_without_preceding_data_frame,
+            .num_frames = AWS_ARRAY_SIZE(continuation_frame_without_preceding_data_frame),
+        },
+        {
+            .frames = continuation_frame_without_preceding_data_frame2,
+            .num_frames = AWS_ARRAY_SIZE(continuation_frame_without_preceding_data_frame2),
+        },
+    };
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(test_pairs); ++i) {
+        struct test_length_pair *pair_i = &test_pairs[i];
+
+        s_encoder_tester_reset(&tester);
+
+        int err = 0;
+
+        for (size_t frame_i = 0; frame_i < pair_i->num_frames; ++frame_i) {
+            /* We expect the encoder to fail at some point in this test.
+             * Currently, fragmentation errors are detected in the frame_start() call */
+            err = aws_websocket_encoder_start_frame(&tester.encoder, &pair_i->frames[frame_i]);
+            if (err) {
+                ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PARSE, aws_last_error()); /* Error code */
+                break;
+            }
+
+            ASSERT_SUCCESS(aws_websocket_encoder_process(&tester.encoder, &tester.out_buf));
+            ASSERT_FALSE(aws_websocket_encoder_is_frame_in_progress(&tester.encoder));
+        }
+
+        /* Assert that test did fail at some point */
+        ASSERT_INT_EQUALS(AWS_OP_ERR, err);
+    }
 
     ASSERT_SUCCESS(s_encoder_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
