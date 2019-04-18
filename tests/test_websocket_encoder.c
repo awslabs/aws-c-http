@@ -362,7 +362,7 @@ ENCODER_TEST_CASE(websocket_encoder_extended_length) {
 
         if (pair_i.type == LENGTH_ILLEGAL) {
             ASSERT_FAILS(aws_websocket_encoder_start_frame(&tester.encoder, &input_frame));
-            ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PARSE, aws_last_error());
+            ASSERT_INT_EQUALS(AWS_ERROR_INVALID_ARGUMENT, aws_last_error());
         } else {
             uint8_t extended_length_bytes;
             uint8_t expected_output[10];
@@ -615,47 +615,53 @@ ENCODER_TEST_CASE(websocket_encoder_fragmentation_failure_checks) {
         },
     };
 
-    struct test_length_pair {
+    struct test_def {
         struct aws_websocket_frame *frames;
         size_t num_frames;
+        int error_code;
     };
 
-    struct test_length_pair test_pairs[] = {
+    struct test_def test_defs[] = {
         {
             .frames = fragmented_control_frames,
             .num_frames = AWS_ARRAY_SIZE(fragmented_control_frames),
+            .error_code = AWS_ERROR_INVALID_ARGUMENT,
         },
         {
             .frames = no_fin_bit_between_messages,
             .num_frames = AWS_ARRAY_SIZE(no_fin_bit_between_messages),
+            .error_code = AWS_ERROR_INVALID_STATE,
         },
         {
             .frames = no_fin_bit_between_messages2,
             .num_frames = AWS_ARRAY_SIZE(no_fin_bit_between_messages2),
+            .error_code = AWS_ERROR_INVALID_STATE,
         },
         {
             .frames = continuation_frame_without_preceding_data_frame,
             .num_frames = AWS_ARRAY_SIZE(continuation_frame_without_preceding_data_frame),
+            .error_code = AWS_ERROR_INVALID_STATE,
         },
         {
             .frames = continuation_frame_without_preceding_data_frame2,
             .num_frames = AWS_ARRAY_SIZE(continuation_frame_without_preceding_data_frame2),
+            .error_code = AWS_ERROR_INVALID_STATE,
         },
     };
 
-    for (size_t i = 0; i < AWS_ARRAY_SIZE(test_pairs); ++i) {
-        struct test_length_pair *pair_i = &test_pairs[i];
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(test_defs); ++i) {
+        struct test_def *test_i = &test_defs[i];
 
         s_encoder_tester_reset(&tester);
 
         int err = 0;
 
-        for (size_t frame_i = 0; frame_i < pair_i->num_frames; ++frame_i) {
+        for (size_t frame_i = 0; frame_i < test_i->num_frames; ++frame_i) {
             /* We expect the encoder to fail at some point in this test.
              * Currently, fragmentation errors are detected in the frame_start() call */
-            err = aws_websocket_encoder_start_frame(&tester.encoder, &pair_i->frames[frame_i]);
+            err = aws_websocket_encoder_start_frame(&tester.encoder, &test_i->frames[frame_i]);
             if (err) {
-                ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PARSE, aws_last_error()); /* Error code */
+                ASSERT_INT_EQUALS(test_i->error_code, aws_last_error()); /* Error code */
                 break;
             }
 

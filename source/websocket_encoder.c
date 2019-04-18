@@ -16,12 +16,8 @@
 #include <aws/http/private/websocket_encoder.h>
 
 /* TODO: encoder logging */
-/* TODO: make common masking algorithm in aws-c-common */
+/* TODO: implement masking function in aws-c-common */
 /* TODO: use nospec advance? */
-/* TODO: whyyyy does advance break after SIZE_MAX/2 */
-/* TODO: aws_byte_buf_write_from_advancing_cursor() ?*/
-/* TODO: reject unknown opcodes */
-/* TODO: rename AWS_ERROR_HTTP_PARSE -> AWS_ERROR_HTTP_PROTOCOL */
 
 typedef int(state_fn)(struct aws_websocket_encoder *encoder, struct aws_byte_buf *out_buf);
 
@@ -290,19 +286,19 @@ int aws_websocket_encoder_process(struct aws_websocket_encoder *encoder, struct 
 int aws_websocket_encoder_start_frame(struct aws_websocket_encoder *encoder, const struct aws_websocket_frame *frame) {
     /* Error-check as much as possible before accepting next frame */
     if (encoder->is_frame_in_progress) {
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
     /* RFC-6455 Section 5.2 contains all these rules... */
 
     /* Opcode must fit in 4bits */
     if (frame->opcode != (frame->opcode & 0x0F)) {
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
     /* High bit of 8byte length must be clear */
     if (frame->payload_length > AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MAX_VALUE) {
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
     /* Data frames with the FIN bit clear are considered fragmented and must be followed by
@@ -315,14 +311,14 @@ int aws_websocket_encoder_start_frame(struct aws_websocket_encoder *encoder, con
         bool is_continuation_frame = (AWS_WEBSOCKET_OPCODE_CONTINUATION == frame->opcode);
 
         if (encoder->expecting_continuation_data_frames != is_continuation_frame) {
-            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            return aws_raise_error(AWS_ERROR_INVALID_STATE);
         }
 
         keep_expecting_continuation_data_frames = !frame->fin;
     } else {
         /* Control frames themselves MUST NOT be fragmented. */
         if (!frame->fin) {
-            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         }
     }
 

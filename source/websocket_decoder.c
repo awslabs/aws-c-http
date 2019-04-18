@@ -45,6 +45,20 @@ static int s_state_opcode_byte(struct aws_websocket_decoder *decoder, struct aws
     /* next 4 bits are opcode */
     decoder->current_frame.opcode = byte & 0x0F;
 
+    /* RFC-6455 Section 5.2 - Opcode
+     * If an unknown opcode is received, the receiving endpoint MUST _Fail the WebSocket Connection_. */
+    switch (decoder->current_frame.opcode) {
+        case AWS_WEBSOCKET_OPCODE_CONTINUATION:
+        case AWS_WEBSOCKET_OPCODE_TEXT:
+        case AWS_WEBSOCKET_OPCODE_BINARY:
+        case AWS_WEBSOCKET_OPCODE_CLOSE:
+        case AWS_WEBSOCKET_OPCODE_PING:
+        case AWS_WEBSOCKET_OPCODE_PONG:
+            break;
+        default:
+            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+    }
+
     /* RFC-6455 Section 5.2 Fragmentation
      *
      * Data frames with the FIN bit clear are considered fragmented and must be followed by

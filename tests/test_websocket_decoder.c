@@ -529,6 +529,25 @@ DECODER_TEST_CASE(websocket_decoder_1byte_at_a_time) {
     return AWS_OP_SUCCESS;
 }
 
+DECODER_TEST_CASE(websocket_decoder_fail_on_unknown_opcode) {
+    (void)ctx;
+    struct decoder_tester tester;
+    ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
+
+    uint8_t input[] = {
+        0x07, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x00, /* mask | 7bit payload len */
+    };
+
+    bool frame_complete;
+    struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
+    ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PARSE, aws_last_error());
+
+    ASSERT_SUCCESS(s_decoder_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 /* Test fragmented messages, which arrive across multiple frames whose FIN bit is cleared */
 DECODER_TEST_CASE(websocket_decoder_fragmented_message) {
     (void)ctx;
