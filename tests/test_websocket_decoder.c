@@ -185,7 +185,8 @@ DECODER_TEST_CASE(websocket_decoder_rsv) {
         };
 
         /* Set the appropriate RSV */
-        input[0] |= (uint8_t)(1 << (6 - rsv));
+        /* the bit arithmetic is setup this way to avoid Conversion warnings from the compiler. */
+        input[0] = (uint8_t)(input[0] | (1 << (6 - rsv)));
 
         struct aws_websocket_frame expected_frame = {
             .fin = true,
