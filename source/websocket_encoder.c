@@ -17,7 +17,6 @@
 
 /* TODO: encoder logging */
 /* TODO: make common masking algorithm in aws-c-common */
-/* TODO: validate fragmentation of outgoing frames? */
 /* TODO: use nospec advance? */
 /* TODO: whyyyy does advance break after SIZE_MAX/2 */
 /* TODO: aws_byte_buf_write_from_advancing_cursor() ?*/
