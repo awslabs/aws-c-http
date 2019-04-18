@@ -94,13 +94,11 @@ static struct aws_http_connection *s_connection_new(
             } else if (aws_string_eq_byte_buf(s_alpn_protocol_http_2, &protocol)) {
                 version = AWS_HTTP_VERSION_2;
             } else {
-                AWS_LOGF_ERROR(
-                    AWS_LS_HTTP_CONNECTION,
-                    "static: Unrecognized ALPN protocol '" PRInSTR "'.",
-                    AWS_BYTE_BUF_PRI(protocol));
+                AWS_LOGF_WARN(AWS_LS_HTTP_CONNECTION, "static: Unrecognized ALPN protocol. Assuming HTTP/1.1");
+                AWS_LOGF_DEBUG(
+                    AWS_LS_HTTP_CONNECTION, "static: Unrecognized ALPN protocol " PRInSTR, AWS_BYTE_BUF_PRI(protocol));
 
-                aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
-                goto error;
+                version = AWS_HTTP_VERSION_1_1;
             }
         }
     }

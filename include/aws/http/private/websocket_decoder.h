@@ -16,7 +16,6 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/private/websocket_impl.h>
 
 /* Called when the non-payload portion of a frame has been decoded. */
 typedef int(aws_websocket_decoder_frame_fn)(const struct aws_websocket_frame *frame, void *user_data);
