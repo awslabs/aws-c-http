@@ -1,3 +1,6 @@
+echo "Installing python version: %* via choco"
+choco install python3 -y
+call RefreshEnv.cmd
 
 set CMAKE_ARGS=%*
 
@@ -14,7 +17,7 @@ cd %BUILDS_DIR%\aws-c-http-build
 cmake %CMAKE_ARGS% -DCMAKE_BUILD_TYPE="RelWithDebInfo" -DCMAKE_INSTALL_PREFIX="%INSTALL_DIR%" -DCMAKE_PREFIX_PATH="%INSTALL_DIR%" %CODEBUILD_SRC_DIR% || goto error
 cmake --build . --config RelWithDebInfo || goto error
 ctest -V || goto error
-py %CODEBUILD_SRC_DIR%\integration-testing\http_client_test.py bin\elasticurl\RelWithDebInfo\elasticurl.exe || goto error
+python %CODEBUILD_SRC_DIR%\integration-testing\http_client_test.py bin\elasticurl\RelWithDebInfo\elasticurl.exe || goto error
 
 goto :EOF
 
