@@ -208,13 +208,13 @@ ENCODER_TEST_CASE(websocket_encoder_fail_if_payload_exceeds_stated_length) {
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 
-    struct aws_websocket_frame input_frame = {
+    const struct aws_websocket_frame input_frame = {
         .fin = true,
         .opcode = 2,
         .payload_length = 4,
     };
 
-    const uint8_t input_payload[5];
+    const uint8_t input_payload[5] = {0};
     tester.payload = aws_byte_cursor_from_array(input_payload, sizeof(input_payload));
 
     ASSERT_SUCCESS(aws_websocket_encoder_start_frame(&tester.encoder, &input_frame));
@@ -230,13 +230,13 @@ ENCODER_TEST_CASE(websocket_encoder_fail_if_payload_less_than_stated_length) {
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 
-    struct aws_websocket_frame input_frame = {
+    const struct aws_websocket_frame input_frame = {
         .fin = true,
         .opcode = 2,
         .payload_length = 4,
     };
 
-    const uint8_t input_payload[3];
+    const uint8_t input_payload[3] = {0};
     tester.payload = aws_byte_cursor_from_array(input_payload, sizeof(input_payload));
 
     ASSERT_SUCCESS(aws_websocket_encoder_start_frame(&tester.encoder, &input_frame));
@@ -252,13 +252,13 @@ ENCODER_TEST_CASE(websocket_encoder_fail_if_payload_never_marked_done) {
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 
-    struct aws_websocket_frame input_frame = {
+    const struct aws_websocket_frame input_frame = {
         .fin = true,
         .opcode = 2,
         .payload_length = 4,
     };
 
-    const uint8_t input_payload[4];
+    const uint8_t input_payload[4] = {0};
     tester.payload = aws_byte_cursor_from_array(input_payload, sizeof(input_payload));
     tester.never_say_payload_is_done = true;
 
