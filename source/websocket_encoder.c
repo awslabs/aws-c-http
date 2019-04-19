@@ -103,7 +103,7 @@ static int s_state_extended_length(struct aws_websocket_encoder *encoder, struct
     struct aws_byte_cursor network_bytes_cursor = aws_byte_cursor_from_buf(&network_bytes_buf);
 
     /* Advance cursor if some bytes already written */
-    aws_byte_cursor_advance(&network_bytes_cursor, encoder->state_bytes_processed);
+    aws_byte_cursor_advance(&network_bytes_cursor, (size_t)encoder->state_bytes_processed);
 
     /* Shorten cursor if it won't all fit in out_buf */
     bool all_data_written = true;
@@ -145,7 +145,7 @@ static int s_state_masking_key(struct aws_websocket_encoder *encoder, struct aws
         aws_byte_cursor_from_array(encoder->frame.masking_key, sizeof(encoder->frame.masking_key));
 
     /* Advance cursor if some bytes already written */
-    aws_byte_cursor_advance(&cursor, encoder->state_bytes_processed);
+    aws_byte_cursor_advance(&cursor, (size_t)encoder->state_bytes_processed);
 
     /* Shorten cursor if it won't all fit in out_buf */
     bool all_data_written = true;

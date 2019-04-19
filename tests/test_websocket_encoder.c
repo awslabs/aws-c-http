@@ -46,11 +46,13 @@ static int s_on_payload(struct aws_byte_buf *out_buf, bool *out_done, void *user
         return aws_raise_error(AWS_ERROR_UNKNOWN);
     }
 
-    size_t space_available = out_buf->capacity - out_buf->len;
-    size_t bytes_to_write = space_available < tester->payload.len ? space_available : tester->payload.len;
-    struct aws_byte_cursor cursor_to_write = aws_byte_cursor_advance(&tester->payload, bytes_to_write);
-    if (!aws_byte_buf_write_from_whole_cursor(out_buf, cursor_to_write)) {
-        return aws_raise_error(AWS_ERROR_UNKNOWN); /* write shouldn't fail, but just in case */
+    if (tester->payload.len > 0) {
+        size_t space_available = out_buf->capacity - out_buf->len;
+        size_t bytes_to_write = space_available < tester->payload.len ? space_available : tester->payload.len;
+        if (!aws_byte_buf_write(out_buf, tester->payload.ptr, bytes_to_write)) {
+            return aws_raise_error(AWS_ERROR_UNKNOWN); /* write shouldn't fail, but just in case */
+        }
+        aws_byte_cursor_advance(&tester->payload, bytes_to_write);
     }
 
     if (tester->payload.len == 0) {
