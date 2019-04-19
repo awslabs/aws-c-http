@@ -365,7 +365,8 @@ ENCODER_TEST_CASE(websocket_encoder_extended_length) {
             ASSERT_INT_EQUALS(AWS_ERROR_INVALID_ARGUMENT, aws_last_error());
         } else {
             uint8_t expected_output_array[10];
-            struct aws_byte_buf expected_output = aws_byte_buf_from_empty_array(expected_output_array, sizeof(expected_output_array));
+            struct aws_byte_buf expected_output =
+                aws_byte_buf_from_empty_array(expected_output_array, sizeof(expected_output_array));
             aws_byte_buf_write_u8(&expected_output, 0x82); /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
 
             switch (pair_i.type) {
@@ -378,7 +379,7 @@ ENCODER_TEST_CASE(websocket_encoder_extended_length) {
                     break;
                 default:
                     aws_byte_buf_write_u8(&expected_output, AWS_WEBSOCKET_7BIT_VALUE_FOR_8BYTE_EXTENDED_LENGTH);
-                    aws_byte_buf_write_be64(&expected_output, pair_i.len);  /* extended length */
+                    aws_byte_buf_write_be64(&expected_output, pair_i.len); /* extended length */
                     break;
             }
 
