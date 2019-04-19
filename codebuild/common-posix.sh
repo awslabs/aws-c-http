@@ -41,5 +41,5 @@ cmake --build . --target install
 
 LSAN_OPTIONS=verbosity=1:log_threads=1 ctest --output-on-failure
 popd
-integration-testing/elasticurl_test.sh $INSTALL_PATH/bin/elasticurl
+python3 integration-testing/http_client_test.py $INSTALL_PATH/bin/elasticurl
 
