@@ -26,7 +26,7 @@
 
 #define H1_CLIENT_TEST_CASE(NAME)                                                                                      \
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
-    int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
+    static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
 struct tester {
     struct aws_allocator *alloc;
@@ -211,7 +211,7 @@ struct simple_body_sender {
     size_t progress;
 };
 
-enum aws_http_outgoing_body_state s_simple_send_body(
+static enum aws_http_outgoing_body_state s_simple_send_body(
     struct aws_http_stream *stream,
     struct aws_byte_buf *buf,
     void *user_data) {
@@ -515,7 +515,7 @@ struct response_tester {
     void *specific_test_data;
 };
 
-void s_response_tester_on_headers(
+static void s_response_tester_on_headers(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
     size_t num_headers,
@@ -544,7 +544,7 @@ void s_response_tester_on_headers(
     }
 }
 
-void s_response_tester_on_header_block_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
+static void s_response_tester_on_header_block_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
     (void)stream;
     struct response_tester *response = user_data;
 
@@ -556,7 +556,7 @@ void s_response_tester_on_header_block_done(struct aws_http_stream *stream, bool
     AWS_FATAL_ASSERT(!aws_http_stream_get_incoming_response_status(response->stream, &response->status));
 }
 
-void s_response_tester_on_body(
+static void s_response_tester_on_body(
     struct aws_http_stream *stream,
     const struct aws_byte_cursor *data,
     size_t *out_window_update_size,
@@ -585,7 +585,7 @@ void s_response_tester_on_body(
     }
 }
 
-void s_response_tester_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+static void s_response_tester_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     (void)stream;
     struct response_tester *response = user_data;
     AWS_FATAL_ASSERT(response->on_complete_cb_count == 0);
@@ -599,7 +599,7 @@ void s_response_tester_on_complete(struct aws_http_stream *stream, int error_cod
 }
 
 /* Create request stream and hook it up so callbacks feed data to the response_tester */
-int s_response_tester_init_ex(
+static int s_response_tester_init_ex(
     struct response_tester *response,
     struct aws_allocator *alloc,
     struct aws_http_request_options *opt,
@@ -621,7 +621,7 @@ int s_response_tester_init_ex(
     return AWS_OP_SUCCESS;
 }
 
-int s_response_tester_init(
+static int s_response_tester_init(
     struct response_tester *response,
     struct aws_allocator *alloc,
     struct aws_http_request_options *opt) {
@@ -629,13 +629,13 @@ int s_response_tester_init(
     return s_response_tester_init_ex(response, alloc, opt, NULL);
 }
 
-int s_response_tester_clean_up(struct response_tester *response) {
+static int s_response_tester_clean_up(struct response_tester *response) {
     aws_http_stream_release(response->stream);
     aws_byte_buf_clean_up(&response->storage);
     return AWS_OP_SUCCESS;
 }
 
-int s_send_response_ex(struct tester *tester, struct aws_byte_cursor data, bool ignore_send_message_errors) {
+static int s_send_response_ex(struct tester *tester, struct aws_byte_cursor data, bool ignore_send_message_errors) {
     struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
         tester->testing_channel.channel, AWS_IO_MESSAGE_APPLICATION_DATA, data.len);
     ASSERT_NOT_NULL(msg);
@@ -650,15 +650,15 @@ int s_send_response_ex(struct tester *tester, struct aws_byte_cursor data, bool 
     return AWS_OP_SUCCESS;
 }
 
-int s_send_response(struct tester *tester, struct aws_byte_cursor data) {
+static int s_send_response(struct tester *tester, struct aws_byte_cursor data) {
     return s_send_response_ex(tester, data, false);
 }
 
-int s_send_response_str(struct tester *tester, const char *str) {
+static int s_send_response_str(struct tester *tester, const char *str) {
     return s_send_response(tester, aws_byte_cursor_from_c_str(str));
 }
 
-int s_send_response_str_ignore_errors(struct tester *tester, const char *str) {
+static int s_send_response_str_ignore_errors(struct tester *tester, const char *str) {
     return s_send_response_ex(tester, aws_byte_cursor_from_c_str(str), true);
 }
 
@@ -947,7 +947,7 @@ struct slow_body_sender {
     size_t bytes_per_tick; /* Don't send more than N bytes per tick */
 };
 
-enum aws_http_outgoing_body_state s_slow_send_body(
+static enum aws_http_outgoing_body_state s_slow_send_body(
     struct aws_http_stream *stream,
     struct aws_byte_buf *buf,
     void *user_data) {
@@ -1181,7 +1181,7 @@ H1_CLIENT_TEST_CASE(h1_client_window_manual_update_off_thread) {
     return s_window_update(allocator, false);
 }
 
-void s_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+static void s_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     (void)stream;
     int *completion_error_code = user_data;
     *completion_error_code = error_code;
@@ -1299,7 +1299,7 @@ struct close_from_callback_tester {
     bool is_closed;
 };
 
-void s_close_from_callback_common(
+static void s_close_from_callback_common(
     struct aws_http_stream *stream,
     struct close_from_callback_tester *close_tester,
     enum request_callback current_callback) {
@@ -1322,7 +1322,7 @@ void s_close_from_callback_common(
     }
 }
 
-enum aws_http_outgoing_body_state s_close_from_outgoing_body(
+static enum aws_http_outgoing_body_state s_close_from_outgoing_body(
     struct aws_http_stream *stream,
     struct aws_byte_buf *buf,
     void *user_data) {
@@ -1339,7 +1339,7 @@ enum aws_http_outgoing_body_state s_close_from_outgoing_body(
     }
 }
 
-void s_close_from_incoming_headers(
+static void s_close_from_incoming_headers(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
     size_t num_headers,
@@ -1350,12 +1350,12 @@ void s_close_from_incoming_headers(
     s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_INCOMING_HEADERS);
 }
 
-void s_close_from_incoming_headers_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
+static void s_close_from_incoming_headers_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
     (void)has_body;
     s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_INCOMING_HEADERS_DONE);
 }
 
-void s_close_from_incoming_body(
+static void s_close_from_incoming_body(
     struct aws_http_stream *stream,
     const struct aws_byte_cursor *data,
     /* NOLINTNEXTLINE(readability-non-const-parameter) */
@@ -1367,12 +1367,12 @@ void s_close_from_incoming_body(
     s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_INCOMING_BODY);
 }
 
-void s_close_from_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+static void s_close_from_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     (void)error_code;
     s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_COMPLETE);
 }
 
-int s_test_close_from_callback(struct aws_allocator *allocator, enum request_callback close_at) {
+static int s_test_close_from_callback(struct aws_allocator *allocator, enum request_callback close_at) {
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
     testing_channel_execute_queued_tasks(&tester.testing_channel);

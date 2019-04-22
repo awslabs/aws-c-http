@@ -24,7 +24,7 @@
 
 #define DECODER_TEST_CASE(NAME)                                                                                        \
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
-    int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
+    static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
 struct decoder_tester {
     struct aws_allocator *alloc;
@@ -42,7 +42,7 @@ struct decoder_tester {
     size_t fail_on_nth_payload;
 };
 
-int s_on_frame(const struct aws_websocket_frame *frame, void *user_data) {
+static int s_on_frame(const struct aws_websocket_frame *frame, void *user_data) {
     struct decoder_tester *tester = user_data;
 
     tester->frame = *frame;
@@ -55,7 +55,7 @@ int s_on_frame(const struct aws_websocket_frame *frame, void *user_data) {
     return AWS_OP_SUCCESS;
 }
 
-int s_on_payload(struct aws_byte_cursor data, void *user_data) {
+static int s_on_payload(struct aws_byte_cursor data, void *user_data) {
     struct decoder_tester *tester = user_data;
 
     ASSERT_SUCCESS(aws_byte_buf_append_dynamic(&tester->payload, &data));
@@ -69,7 +69,7 @@ int s_on_payload(struct aws_byte_cursor data, void *user_data) {
 }
 
 /* For resetting the decoder and its results mid-test */
-void s_decoder_tester_reset(struct decoder_tester *tester) {
+static void s_decoder_tester_reset(struct decoder_tester *tester) {
     aws_websocket_decoder_init(&tester->decoder, s_on_frame, s_on_payload, tester);
     AWS_ZERO_STRUCT(tester->frame);
     tester->on_frame_count = 0;
@@ -77,7 +77,7 @@ void s_decoder_tester_reset(struct decoder_tester *tester) {
     tester->on_payload_count = 0;
 }
 
-int s_decoder_tester_init(struct decoder_tester *tester, struct aws_allocator *alloc) {
+static int s_decoder_tester_init(struct decoder_tester *tester, struct aws_allocator *alloc) {
     aws_load_error_strings();
     aws_io_load_error_strings();
     aws_io_load_log_subject_strings();
@@ -100,14 +100,14 @@ int s_decoder_tester_init(struct decoder_tester *tester, struct aws_allocator *a
     return AWS_OP_SUCCESS;
 }
 
-int s_decoder_tester_clean_up(struct decoder_tester *tester) {
+static int s_decoder_tester_clean_up(struct decoder_tester *tester) {
     aws_byte_buf_clean_up(&tester->payload);
     aws_http_library_clean_up();
     aws_logger_clean_up(&tester->logger);
     return AWS_OP_SUCCESS;
 }
 
-int s_compare_frame(const struct aws_websocket_frame *expected, const struct aws_websocket_frame *decoded) {
+static int s_compare_frame(const struct aws_websocket_frame *expected, const struct aws_websocket_frame *decoded) {
     uint8_t a[24];
     memcpy(a, expected, 24);
     uint8_t b[24];
@@ -476,7 +476,7 @@ DECODER_TEST_CASE(websocket_decoder_1byte_at_a_time) {
     ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
 
     /* Use all optional frame features in this test (8byte extended payload length and masking-key).
-     * Even though we say the payload is long, we're only going to send bytes of it in this test */
+     * Even though we say the payload is long, we're only going to send a portion of it in this test */
     uint8_t input[] = {
         0x81, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
         0xFF, /* mask | 7bit payload len */
@@ -525,6 +525,25 @@ DECODER_TEST_CASE(websocket_decoder_1byte_at_a_time) {
     ASSERT_UINT_EQUALS(5, tester.on_payload_count);
     ASSERT_SUCCESS(s_compare_frame(&expected_frame, &tester.frame));
     ASSERT_TRUE(aws_byte_buf_eq_c_str(&tester.payload, expected_payload));
+
+    ASSERT_SUCCESS(s_decoder_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+DECODER_TEST_CASE(websocket_decoder_fail_on_unknown_opcode) {
+    (void)ctx;
+    struct decoder_tester tester;
+    ASSERT_SUCCESS(s_decoder_tester_init(&tester, allocator));
+
+    uint8_t input[] = {
+        0x07, /* fin | rsv1 | rsv2 | rsv3 | 4bit opcode */
+        0x00, /* mask | 7bit payload len */
+    };
+
+    bool frame_complete;
+    struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
+    ASSERT_FAILS(aws_websocket_decoder_process(&tester.decoder, &input_cursor, &frame_complete));
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PARSE, aws_last_error());
 
     ASSERT_SUCCESS(s_decoder_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;

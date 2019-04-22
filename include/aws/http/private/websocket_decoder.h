@@ -16,28 +16,7 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/http.h>
-
-enum aws_websocket_opcode {
-    AWS_WEBSOCKET_OPCODE_CONTINUATION = 0x0,
-    AWS_WEBSOCKET_OPCODE_TEXT = 0x1,
-    AWS_WEBSOCKET_OPCODE_DATA = 0x2,
-    AWS_WEBSOCKET_OPCODE_CLOSE = 0x8,
-    AWS_WEBSOCKET_OPCODE_PING = 0x9,
-    AWS_WEBSOCKET_OPCODE_PONG = 0xA,
-};
-
-/**
- * Full contents of a websocket frame, excluding the payload.
- */
-struct aws_websocket_frame {
-    bool fin;
-    bool rsv[3];
-    bool masked;
-    uint8_t opcode;
-    uint64_t payload_length;
-    uint8_t masking_key[4];
-};
+#include <aws/http/private/websocket_impl.h>
 
 /* Called when the non-payload portion of a frame has been decoded. */
 typedef int(aws_websocket_decoder_frame_fn)(const struct aws_websocket_frame *frame, void *user_data);
@@ -67,20 +46,12 @@ struct aws_websocket_decoder {
 
     struct aws_websocket_frame current_frame; /* Data about current frame being decoded */
 
-    bool expecting_continuation_data_frames; /* True when the next data frame must be CONTINUATION frame */
+    bool expecting_continuation_data_frame; /* True when the next data frame must be CONTINUATION frame */
 
     void *user_data;
     aws_websocket_decoder_frame_fn *on_frame;
     aws_websocket_decoder_payload_fn *on_payload;
 };
-
-/**
- * Return true if opcode is for a data frame, false if opcode if for a control frame.
- */
-AWS_STATIC_IMPL
-bool aws_websocket_is_data_frame(uint8_t opcode) {
-    return !(opcode & 0x08); /* RFC-6455 Section 5.6: Most significant bit of (4 bit) data frame opcode is 0 */
-}
 
 AWS_EXTERN_C_BEGIN
 
