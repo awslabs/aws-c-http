@@ -46,7 +46,7 @@ struct aws_websocket_decoder {
 
     struct aws_websocket_frame current_frame; /* Data about current frame being decoded */
 
-    bool expecting_continuation_data_frames; /* True when the next data frame must be CONTINUATION frame */
+    bool expecting_continuation_data_frame; /* True when the next data frame must be CONTINUATION frame */
 
     void *user_data;
     aws_websocket_decoder_frame_fn *on_frame;

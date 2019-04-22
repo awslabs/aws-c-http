@@ -70,11 +70,11 @@ static int s_state_opcode_byte(struct aws_websocket_decoder *decoder, struct aws
     if (aws_websocket_is_data_frame(decoder->current_frame.opcode)) {
         bool is_continuation_frame = AWS_WEBSOCKET_OPCODE_CONTINUATION == decoder->current_frame.opcode;
 
-        if (decoder->expecting_continuation_data_frames != is_continuation_frame) {
+        if (decoder->expecting_continuation_data_frame != is_continuation_frame) {
             return aws_raise_error(AWS_ERROR_HTTP_PARSE);
         }
 
-        decoder->expecting_continuation_data_frames = !decoder->current_frame.fin;
+        decoder->expecting_continuation_data_frame = !decoder->current_frame.fin;
 
     } else {
         /* Control frames themselves MUST NOT be fragmented. */
@@ -120,7 +120,8 @@ static int s_state_extended_length(struct aws_websocket_decoder *decoder, struct
         return AWS_OP_SUCCESS;
     }
 
-    /* Actual payload length is encoded across the next 2 or 8 bytes */
+    /* The 7bit payload value loaded during the previous state indicated that
+     * actual payload length is encoded across the next 2 or 8 bytes. */
     uint8_t total_bytes_extended_length;
     uint64_t min_acceptable_value;
     uint64_t max_acceptable_value;

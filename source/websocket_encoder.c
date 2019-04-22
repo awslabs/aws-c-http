@@ -144,7 +144,7 @@ static int s_state_masking_key(struct aws_websocket_encoder *encoder, struct aws
     struct aws_byte_cursor cursor =
         aws_byte_cursor_from_array(encoder->frame.masking_key, sizeof(encoder->frame.masking_key));
 
-    /* Advance cursor if some bytes already written */
+    /* Advance cursor if some bytes already written (moves ptr forward but shortens len so end stays in place) */
     aws_byte_cursor_advance(&cursor, (size_t)encoder->state_bytes_processed);
 
     /* Shorten cursor if it won't all fit in out_buf */
@@ -259,7 +259,7 @@ static state_fn *s_state_functions[AWS_WEBSOCKET_ENCODER_STATE_DONE] = {
 int aws_websocket_encoder_process(struct aws_websocket_encoder *encoder, struct aws_byte_buf *out_buf) {
 
     /* Run state machine until frame is completely decoded, or the state stops changing.
-     * Note that we don't necessarily stop looping when out_buf is full, because not all state need to output data */
+     * Note that we don't necessarily stop looping when out_buf is full, because not all states need to output data */
     while (encoder->state != AWS_WEBSOCKET_ENCODER_STATE_DONE) {
         const enum aws_websocket_encoder_state prev_state = encoder->state;
 
@@ -269,7 +269,7 @@ int aws_websocket_encoder_process(struct aws_websocket_encoder *encoder, struct 
         }
 
         if (prev_state == encoder->state) {
-            /* This assert checks that each state is doing as much work as it possibly can.
+            /* dev-assert: Check that each state is doing as much work as it possibly can.
              * Except for the PAYLOAD state, where it's up to the user to fill the buffer. */
             assert((out_buf->len == out_buf->capacity) || (encoder->state == AWS_WEBSOCKET_ENCODER_STATE_PAYLOAD));
 
@@ -308,15 +308,15 @@ int aws_websocket_encoder_start_frame(struct aws_websocket_encoder *encoder, con
      *
      * Control frames may be injected in the middle of a fragmented message,
      * but control frames may not be fragmented themselves. */
-    bool keep_expecting_continuation_data_frames = encoder->expecting_continuation_data_frames;
+    bool keep_expecting_continuation_data_frame = encoder->expecting_continuation_data_frame;
     if (aws_websocket_is_data_frame(frame->opcode)) {
         bool is_continuation_frame = (AWS_WEBSOCKET_OPCODE_CONTINUATION == frame->opcode);
 
-        if (encoder->expecting_continuation_data_frames != is_continuation_frame) {
+        if (encoder->expecting_continuation_data_frame != is_continuation_frame) {
             return aws_raise_error(AWS_ERROR_INVALID_STATE);
         }
 
-        keep_expecting_continuation_data_frames = !frame->fin;
+        keep_expecting_continuation_data_frame = !frame->fin;
     } else {
         /* Control frames themselves MUST NOT be fragmented. */
         if (!frame->fin) {
@@ -327,7 +327,7 @@ int aws_websocket_encoder_start_frame(struct aws_websocket_encoder *encoder, con
     /* Frame accepted */
     encoder->frame = *frame;
     encoder->is_frame_in_progress = true;
-    encoder->expecting_continuation_data_frames = keep_expecting_continuation_data_frames;
+    encoder->expecting_continuation_data_frame = keep_expecting_continuation_data_frame;
 
     return AWS_OP_SUCCESS;
 }

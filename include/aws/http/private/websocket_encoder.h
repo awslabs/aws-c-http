@@ -39,7 +39,7 @@ struct aws_websocket_encoder {
     bool is_frame_in_progress;
 
     /* True when the next data frame must be a CONTINUATION frame */
-    bool expecting_continuation_data_frames;
+    bool expecting_continuation_data_frame;
 
     void *user_data;
     aws_websocket_encoder_payload_fn *stream_outgoing_payload;
