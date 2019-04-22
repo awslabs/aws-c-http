@@ -354,10 +354,10 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     headers[2].name = aws_byte_cursor_from_c_str("user-agent");
     headers[2].value = aws_byte_cursor_from_c_str("elasticurl 1.0, Powered by the AWS Common Runtime.");
 
-    size_t data_len;
+    size_t data_len = 0;
     if (app_ctx->data.len) {
         data_len = app_ctx->data.len;
-    } else {
+    } else if (app_ctx->data_file) {
         if (fseek(app_ctx->data_file, 0L, SEEK_END)) {
             fprintf(stderr, "failed to seek data file.\n");
             exit(1);
@@ -367,14 +367,16 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
         fseek(app_ctx->data_file, 0L, SEEK_SET);
     }
 
-    char content_length[64];
-    AWS_ZERO_ARRAY(content_length);
-    sprintf(content_length, "%llu", (unsigned long long)data_len);
-    headers[3].name = aws_byte_cursor_from_c_str("content-length");
-    headers[3].value = aws_byte_cursor_from_c_str(content_length);
-    pre_header_count += 1;
-    header_count += 1;
-    request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
+    if (data_len) {
+        char content_length[64];
+        AWS_ZERO_ARRAY(content_length);
+        sprintf(content_length, "%llu", (unsigned long long)data_len);
+        headers[3].name = aws_byte_cursor_from_c_str("content-length");
+        headers[3].value = aws_byte_cursor_from_c_str(content_length);
+        pre_header_count += 1;
+        header_count += 1;
+        request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
+    }
 
     assert(app_ctx->header_line_count <= 10);
     for (size_t i = 0; i < app_ctx->header_line_count; ++i) {
