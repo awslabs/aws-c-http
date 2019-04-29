@@ -165,10 +165,11 @@ static void s_on_stream_headers(struct aws_http_stream *stream, const struct aws
     (void)user_data;
 }
 
-static void s_on_stream_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, size_t * const out_window_update_size, void *user_data) {
-    (void)stream;
-    (void)out_window_update_size;
-    struct test_ctx *test = user_data;
+/* NOLINTNEXTLINE(readability-non-const-parameter) */
+static void s_on_stream_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, size_t *out_window_update_size, void *user_data) { 
+    (void)stream; 
+    (void)out_window_update_size; 
+    struct test_ctx *test = user_data; 
     test->body_size += data->len;
 }
 
@@ -186,7 +187,7 @@ static bool s_stream_wait_pred(void *user_data) {
 
 static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
-    
+
     aws_tls_init_static_state(allocator);
     aws_http_library_init(allocator);
 
@@ -223,17 +224,12 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
     ASSERT_NOT_NULL(test.tls_ctx = aws_tls_client_ctx_new(allocator, &tls_ctx_options));
     struct aws_tls_connection_options tls_connection_options;
     aws_tls_connection_options_init_from_ctx(&tls_connection_options, test.tls_ctx);
-    aws_tls_connection_options_set_server_name(&tls_connection_options, allocator, (struct aws_byte_cursor*)aws_uri_host_name(&uri));
-    struct aws_http_client_connection_options http_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
-    http_options.allocator = test.alloc;
-    http_options.bootstrap = test.client_bootstrap;
-    http_options.host_name = *aws_uri_host_name(&uri);
-    http_options.port = 443;
-    http_options.on_setup = s_on_connection_setup;
-    http_options.on_shutdown = s_on_connection_shutdown;
-    http_options.socket_options = &socket_options;
-    http_options.tls_options = &tls_connection_options;
-    http_options.user_data = &test;
+    aws_tls_connection_options_set_server_name(&tls_connection_options, allocator, (struct
+aws_byte_cursor*)aws_uri_host_name(&uri)); struct aws_http_client_connection_options http_options =
+AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT; http_options.allocator = test.alloc; http_options.bootstrap =
+test.client_bootstrap; http_options.host_name = *aws_uri_host_name(&uri); http_options.port = 443; http_options.on_setup
+= s_on_connection_setup; http_options.on_shutdown = s_on_connection_shutdown; http_options.socket_options =
+&socket_options; http_options.tls_options = &tls_connection_options; http_options.user_data = &test;
 
     ASSERT_SUCCESS(aws_http_client_connect(&http_options));
     ASSERT_SUCCESS(s_test_wait(&test, s_test_connection_setup_pred));
@@ -255,37 +251,37 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
     req_options.user_data = &test;
 
     ASSERT_NOT_NULL(test.stream = aws_http_stream_new_client_request(&req_options));
-    
+
     /* wait for the request to complete */
-    s_test_wait(&test, s_stream_wait_pred);
+s_test_wait(&test, s_stream_wait_pred);
 
-    ASSERT_INT_EQUALS(14428801, test.body_size);
+ASSERT_INT_EQUALS(14428801, test.body_size);
 
-    aws_http_stream_release(test.stream);
-    test.stream = NULL;
+aws_http_stream_release(test.stream);
+test.stream = NULL;
 
-    aws_http_connection_release(test.client_connection);
-    ASSERT_SUCCESS(s_test_wait(&test, s_test_connection_shutdown_pred));
+aws_http_connection_release(test.client_connection);
+ASSERT_SUCCESS(s_test_wait(&test, s_test_connection_shutdown_pred));
 
-    aws_condition_variable_clean_up(&test.wait_cvar);
-    aws_mutex_clean_up(&test.wait_lock);
+aws_condition_variable_clean_up(&test.wait_cvar);
+aws_mutex_clean_up(&test.wait_lock);
 
-    aws_client_bootstrap_release(test.client_bootstrap);
-    aws_host_resolver_clean_up(&test.host_resolver);
-    aws_event_loop_group_clean_up(&test.event_loop_group);
+aws_client_bootstrap_release(test.client_bootstrap);
+aws_host_resolver_clean_up(&test.host_resolver);
+aws_event_loop_group_clean_up(&test.event_loop_group);
 
-    aws_tls_ctx_options_clean_up(&tls_ctx_options);
-    aws_tls_connection_options_clean_up(&tls_connection_options);
-    aws_tls_ctx_destroy(test.tls_ctx);
+aws_tls_ctx_options_clean_up(&tls_ctx_options);
+aws_tls_connection_options_clean_up(&tls_connection_options);
+aws_tls_ctx_destroy(test.tls_ctx);
 
-    aws_logger_set(NULL);
-    aws_logger_clean_up(&test.logger);
+aws_logger_set(NULL);
+aws_logger_clean_up(&test.logger);
 
-    aws_uri_clean_up(&uri);
+aws_uri_clean_up(&uri);
 
-    aws_http_library_clean_up();
-    aws_tls_clean_up_static_state();
+aws_http_library_clean_up();
+aws_tls_clean_up_static_state();
 
-    return 0;
+return 0;
 }
 AWS_TEST_CASE(tls_download_medium_file, s_test_tls_download_medium_file);
