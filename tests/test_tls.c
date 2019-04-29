@@ -60,6 +60,7 @@ void s_on_connection_setup(struct aws_http_connection *connection, int error_cod
 }
 
 void s_on_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
+    (void)connection;
     struct test_ctx *test = user_data;
     test->client_connection_is_shutdown = true;
     test->wait_result = error_code;
@@ -94,6 +95,8 @@ static bool s_test_connection_shutdown_pred(void *user_data) {
  * notified. Connecting to port 80 on s3 or amazon.com and attempting TLS will get
  * you blackholed, and thus timed out */
 static int s_test_tls_negotiation_timeout(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
     aws_tls_init_static_state(allocator);
     aws_http_library_init(allocator);
     aws_load_error_strings();
@@ -182,6 +185,8 @@ static bool s_stream_wait_pred(void *user_data) {
 }
 
 static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    
     aws_tls_init_static_state(allocator);
     aws_http_library_init(allocator);
 
