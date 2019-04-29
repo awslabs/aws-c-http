@@ -152,6 +152,9 @@ static int s_test_tls_negotiation_timeout(struct aws_allocator *allocator, void 
     aws_client_bootstrap_release(test.client_bootstrap);
     aws_host_resolver_clean_up(&test.host_resolver);
     aws_event_loop_group_clean_up(&test.event_loop_group);
+    
+    aws_tls_ctx_options_clean_up(&tls_ctx_options);
+    aws_tls_connection_options_clean_up(&tls_connection_options);
     aws_tls_ctx_destroy(test.tls_ctx);
 
     aws_logger_set(NULL);
