@@ -445,7 +445,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\r');
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\n');
-
+    (void)wrote_all;
     assert(wrote_all);
 
     /* Insert new stream into pending list, and schedule outgoing_stream_task if it's not already running. */
