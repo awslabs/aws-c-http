@@ -117,6 +117,10 @@ static int s_test_tls_negotiation_timeout(struct aws_allocator *allocator, void 
     AWS_ZERO_STRUCT(test);
     test.alloc = allocator;
 
+    struct aws_logger_standard_options logger_options = {.file = stdout, .level = AWS_LL_TRACE};
+    ASSERT_SUCCESS(aws_logger_init_standard(&test.logger, allocator, &logger_options));
+    aws_logger_set(&test.logger);
+
     ASSERT_SUCCESS(aws_event_loop_group_default_init(&test.event_loop_group, test.alloc, 1));
     ASSERT_SUCCESS(aws_host_resolver_init_default(&test.host_resolver, test.alloc, 1, &test.event_loop_group));
     ASSERT_NOT_NULL(
@@ -149,6 +153,10 @@ static int s_test_tls_negotiation_timeout(struct aws_allocator *allocator, void 
     aws_host_resolver_clean_up(&test.host_resolver);
     aws_event_loop_group_clean_up(&test.event_loop_group);
     aws_tls_ctx_destroy(test.tls_ctx);
+
+    aws_logger_set(NULL);
+    aws_logger_clean_up(&test.logger);
+
     aws_uri_clean_up(&uri);
 
     aws_http_library_clean_up();
