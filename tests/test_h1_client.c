@@ -1163,7 +1163,7 @@ static int s_window_update(struct aws_allocator *allocator, bool on_thread) {
     }
 
     size_t window_update = testing_channel_last_window_update(&tester.testing_channel);
-    ASSERT_INT_EQUALS(0, window_update);
+    ASSERT_INT_EQUALS(9, window_update);
 
     /* clean up */
     ASSERT_SUCCESS(s_response_tester_clean_up(&response));
