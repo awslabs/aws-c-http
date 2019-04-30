@@ -52,6 +52,8 @@ static const size_t TEST_TIMEOUT_SEC = 20;
 
 void s_on_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct test_ctx *test = user_data;
+    AWS_FATAL_ASSERT(aws_mutex_lock(&test->wait_lock) == AWS_OP_SUCCESS);
+
     test->client_connection = connection;
     test->wait_result = error_code;
 
@@ -62,6 +64,8 @@ void s_on_connection_setup(struct aws_http_connection *connection, int error_cod
 void s_on_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
     (void)connection;
     struct test_ctx *test = user_data;
+    AWS_FATAL_ASSERT(aws_mutex_lock(&test->wait_lock) == AWS_OP_SUCCESS);
+
     test->client_connection_is_shutdown = true;
     test->wait_result = error_code;
 
@@ -121,6 +125,9 @@ static int s_test_tls_negotiation_timeout(struct aws_allocator *allocator, void 
     ASSERT_SUCCESS(aws_logger_init_standard(&test.logger, allocator, &logger_options));
     aws_logger_set(&test.logger);
 
+    aws_mutex_init(&test.wait_lock);
+    aws_condition_variable_init(&test.wait_cvar);
+
     ASSERT_SUCCESS(aws_event_loop_group_default_init(&test.event_loop_group, test.alloc, 1));
     ASSERT_SUCCESS(aws_host_resolver_init_default(&test.host_resolver, test.alloc, 1, &test.event_loop_group));
     ASSERT_NOT_NULL(
@@ -164,6 +171,8 @@ static int s_test_tls_negotiation_timeout(struct aws_allocator *allocator, void 
     aws_logger_set(NULL);
     aws_logger_clean_up(&test.logger);
 
+    aws_mutex_clean_up(&test.wait_lock);
+    aws_condition_variable_clean_up(&test.wait_cvar);
     aws_uri_clean_up(&uri);
 
     aws_http_library_clean_up();
@@ -305,6 +314,8 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
     aws_logger_set(NULL);
     aws_logger_clean_up(&test.logger);
 
+    aws_mutex_clean_up(&test.wait_lock);
+    aws_condition_variable_clean_up(&test.wait_cvar);
     aws_uri_clean_up(&uri);
 
     aws_http_library_clean_up();
