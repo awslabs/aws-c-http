@@ -300,9 +300,6 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
     aws_http_connection_release(test.client_connection);
     ASSERT_SUCCESS(s_test_wait(&test, s_test_connection_shutdown_pred));
 
-    aws_condition_variable_clean_up(&test.wait_cvar);
-    aws_mutex_clean_up(&test.wait_lock);
-
     aws_client_bootstrap_release(test.client_bootstrap);
     aws_host_resolver_clean_up(&test.host_resolver);
     aws_event_loop_group_clean_up(&test.event_loop_group);
