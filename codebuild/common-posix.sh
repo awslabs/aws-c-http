@@ -47,5 +47,5 @@ fi
 
 LSAN_OPTIONS=verbosity=1:log_threads=1 catchsegv tests/aws-c-http-tests tls_negotiation_timeout
 popd
-python3 integration-testing/http_client_test.py $INSTALL_PATH/bin/elasticurl
+#python3 integration-testing/http_client_test.py $INSTALL_PATH/bin/elasticurl
 
