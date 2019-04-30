@@ -39,7 +39,7 @@ pushd build
 cmake $CMAKE_ARGS ../
 cmake --build . --target install
 
-LD_PRELOAD=/lib/x86_64-linux-gnu/libSegFault.so LSAN_OPTIONS=verbosity=1:log_threads=1 ctest --output-on-failure
+LD_PRELOAD=/lib/x86_64-linux-gnu/libSegFault.so LSAN_OPTIONS=verbosity=1:log_threads=1 ctest --output-on-failure | addr2line -fe tests/aws-c-http-tests
 popd
 python3 integration-testing/http_client_test.py $INSTALL_PATH/bin/elasticurl
 
