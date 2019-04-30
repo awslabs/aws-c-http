@@ -32,7 +32,7 @@ if [ "$TRAVIS_OS_NAME" != "osx" ]; then
     install_library s2n 7c9069618e68214802ac7fbf45705d5f8b53135f
 fi
 install_library aws-c-common v0.3.7
-install_library aws-c-io v0.3.3
+install_library aws-c-io 5c9778343e8284d7592e7bee8d49eb39c23e3443
 
 mkdir -p build
 pushd build
