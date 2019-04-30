@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -e
+set -x
 
 echo "Using CC=$CC CXX=$CXX"
 
