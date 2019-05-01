@@ -158,14 +158,10 @@ static int s_test_tls_negotiation_timeout(struct aws_allocator *allocator, void 
     ASSERT_NULL(test.client_connection);
     ASSERT_TRUE(0 != test.wait_result);
 
-    printf("aws_client_bootstrap_release\n");
     aws_client_bootstrap_release(test.client_bootstrap);
-    printf("aws_host_resolver_clean_up\n");
     aws_host_resolver_clean_up(&test.host_resolver);
-    printf("aws_event_loop_group_clean_up\n");
     aws_event_loop_group_clean_up(&test.event_loop_group);
 
-    printf("aws_tls_XXX_clean_up\n");
     aws_tls_ctx_options_clean_up(&tls_ctx_options);
     aws_tls_connection_options_clean_up(&tls_connection_options);
     aws_tls_ctx_destroy(test.tls_ctx);
