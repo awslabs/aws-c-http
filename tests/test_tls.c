@@ -48,7 +48,7 @@ struct test_ctx {
     int wait_result;
 };
 
-static const size_t TEST_TIMEOUT_SEC = 8;
+static const size_t TEST_TIMEOUT_SEC = 4;
 
 void s_on_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct test_ctx *test = user_data;
@@ -117,10 +117,7 @@ static int s_test_tls_negotiation_timeout(struct aws_allocator *allocator, void 
     aws_uri_init_parse(&uri, allocator, &url);
 
     struct aws_socket_options socket_options = {
-        .type = AWS_SOCKET_STREAM,
-        .domain = AWS_SOCKET_IPV4,
-        .connect_timeout_ms = TEST_TIMEOUT_SEC * 1000
-    };
+        .type = AWS_SOCKET_STREAM, .domain = AWS_SOCKET_IPV4, .connect_timeout_ms = TEST_TIMEOUT_SEC * 1000};
 
     struct test_ctx test;
     AWS_ZERO_STRUCT(test);
