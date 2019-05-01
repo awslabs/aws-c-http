@@ -412,6 +412,11 @@ static void s_client_bootstrap_on_channel_setup(
         goto error;
     }
 
+    if (!channel) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Client connection did not produce a channel");
+        goto error;
+    }
+
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "static: Socket connected, creating client connection object.");
 
     struct aws_http_connection *connection = s_connection_new(channel, false, options->is_using_tls, options);
