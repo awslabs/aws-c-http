@@ -578,12 +578,6 @@ static void s_stream_update_window(struct aws_http_stream *stream, size_t increm
     int err = aws_mutex_lock(&connection->synced_data.lock);
     AWS_FATAL_ASSERT(!err);
 
-    AWS_LOGF_TRACE(
-        AWS_LS_HTTP_CONNECTION,
-        "id=%p: window_update_size is currently %zu",
-        (void *)&connection->base,
-        connection->synced_data.window_update_size);
-
     bool should_schedule_task = connection->synced_data.window_update_size == 0;
 
     connection->synced_data.window_update_size =
