@@ -17,6 +17,7 @@ tar xvjf valgrind-*.tar.bz2
 cd valgrind-3.15.0
 ./configure
 make -j && sudo make install
+sudo apt-get install -y libc6-dbg
 popd
 
 # install_library <git_repo> [<commit>]
