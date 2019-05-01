@@ -48,7 +48,7 @@ struct test_ctx {
     int wait_result;
 };
 
-static const size_t TEST_TIMEOUT_SEC = 4;
+static const uint32_t TEST_TIMEOUT_SEC = 4;
 
 void s_on_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct test_ctx *test = user_data;
