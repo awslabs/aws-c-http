@@ -1164,6 +1164,7 @@ static int s_window_update(struct aws_allocator *allocator, bool on_thread) {
         testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
         testing_channel_execute_queued_tasks(&tester.testing_channel);
     }
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
 
     size_t window_update = testing_channel_last_window_update(&tester.testing_channel);
     ASSERT_INT_EQUALS(9, window_update);
