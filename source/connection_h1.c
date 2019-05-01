@@ -543,6 +543,11 @@ static void s_update_window_task(struct aws_channel_task *channel_task, void *ar
     AWS_FATAL_ASSERT(!err);
 
     size_t window_update_size = connection->synced_data.window_update_size;
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Zeroing window update size, was %zu",
+        (void *)&connection->base,
+        window_update_size);
     connection->synced_data.window_update_size = 0;
 
     err = aws_mutex_unlock(&connection->synced_data.lock);
@@ -577,6 +582,11 @@ static void s_stream_update_window(struct aws_http_stream *stream, size_t increm
 
     connection->synced_data.window_update_size =
         aws_add_size_saturating(connection->synced_data.window_update_size, increment_size);
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: requested window_update_size is now %zu",
+        (void *)&connection->base,
+        connection->synced_data.window_update_size);
 
     err = aws_mutex_unlock(&connection->synced_data.lock);
     AWS_FATAL_ASSERT(!err);
