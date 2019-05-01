@@ -48,7 +48,7 @@ struct test_ctx {
     int wait_result;
 };
 
-static const size_t TEST_TIMEOUT_SEC = 20;
+static const size_t TEST_TIMEOUT_SEC = 8;
 
 void s_on_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct test_ctx *test = user_data;
@@ -75,13 +75,17 @@ void s_on_connection_shutdown(struct aws_http_connection *connection, int error_
 
 static int s_test_wait(struct test_ctx *test, bool (*pred)(void *user_data)) {
     ASSERT_SUCCESS(aws_mutex_lock(&test->wait_lock));
-    ASSERT_SUCCESS(aws_condition_variable_wait_for_pred(
-        &test->wait_cvar,
-        &test->wait_lock,
-        aws_timestamp_convert(TEST_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL),
-        pred,
-        test));
+    int wait_result = 0;
+    do {
+        wait_result = aws_condition_variable_wait_for_pred(
+            &test->wait_cvar,
+            &test->wait_lock,
+            aws_timestamp_convert(TEST_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL),
+            pred,
+            test);
+    } while (wait_result == -1 && AWS_ERROR_COND_VARIABLE_TIMED_OUT == aws_last_error());
     ASSERT_SUCCESS(aws_mutex_unlock(&test->wait_lock));
+    ASSERT_SUCCESS(wait_result);
     return AWS_OP_SUCCESS;
 }
 
@@ -115,6 +119,7 @@ static int s_test_tls_negotiation_timeout(struct aws_allocator *allocator, void 
     struct aws_socket_options socket_options = {
         .type = AWS_SOCKET_STREAM,
         .domain = AWS_SOCKET_IPV4,
+        .connect_timeout_ms = TEST_TIMEOUT_SEC * 1000
     };
 
     struct test_ctx test;
