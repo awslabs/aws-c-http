@@ -1150,6 +1150,9 @@ static int s_window_update(struct aws_allocator *allocator, bool on_thread) {
                                "Call Momo";
     ASSERT_SUCCESS(s_send_response_str(&tester, response_str));
 
+    /* drain the task queue, in case there's an update window task in there from the headers */
+    testing_channel_execute_queued_tasks(&tester.testing_channel);
+
     /* check result */
     if (!on_thread) {
         testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
