@@ -445,7 +445,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\r');
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\n');
-
+    (void)wrote_all;
     assert(wrote_all);
 
     /* Insert new stream into pending list, and schedule outgoing_stream_task if it's not already running. */
@@ -543,6 +543,11 @@ static void s_update_window_task(struct aws_channel_task *channel_task, void *ar
     AWS_FATAL_ASSERT(!err);
 
     size_t window_update_size = connection->synced_data.window_update_size;
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Zeroing window update size, was %zu",
+        (void *)&connection->base,
+        window_update_size);
     connection->synced_data.window_update_size = 0;
 
     err = aws_mutex_unlock(&connection->synced_data.lock);
@@ -578,8 +583,9 @@ static void s_stream_update_window(struct aws_http_stream *stream, size_t increm
     int err = aws_mutex_lock(&connection->synced_data.lock);
     AWS_FATAL_ASSERT(!err);
 
-    bool should_schedule_task = connection->synced_data.window_update_size == 0;
-
+    /* if this is not volatile, gcc-4x will load window_update_size's address into a register
+     * and then read it as should_schedule_task down below, which will invert its meaning */
+    volatile bool should_schedule_task = (connection->synced_data.window_update_size == 0);
     connection->synced_data.window_update_size =
         aws_add_size_saturating(connection->synced_data.window_update_size, increment_size);
 
