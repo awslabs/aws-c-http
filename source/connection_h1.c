@@ -583,10 +583,10 @@ static void s_stream_update_window(struct aws_http_stream *stream, size_t increm
         aws_add_size_saturating(connection->synced_data.window_update_size, increment_size);
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,
-        "id=%p: requested window_update_size is now %zu, %s",
+        "id=%p: requested window_update_size is now %zu",
         (void *)&connection->base,
-        connection->synced_data.window_update_size,
-        (should_schedule_task) ? "will schedule task" : "will update existing task");
+        connection->synced_data.window_update_size /*,
+        (should_schedule_task) ? "will schedule task" : "will update existing task"*/);
 
     err = aws_mutex_unlock(&connection->synced_data.lock);
     AWS_FATAL_ASSERT(!err);
