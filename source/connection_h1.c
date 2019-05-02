@@ -573,7 +573,7 @@ static void s_stream_update_window(struct aws_http_stream *stream, size_t increm
 
     /* Otherwise, schedule a task to do it.
      * If task is already scheduled, just increase size to be updated */
-    
+
     /* BEGIN CRITICAL SECTION */
     int err = aws_mutex_lock(&connection->synced_data.lock);
     AWS_FATAL_ASSERT(!err);
