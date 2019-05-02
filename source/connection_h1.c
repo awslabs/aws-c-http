@@ -555,6 +555,11 @@ static void s_update_window_task(struct aws_channel_task *channel_task, void *ar
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
     struct h1_connection *connection = AWS_CONTAINER_OF(stream->owning_connection, struct h1_connection, base);
 
+    if (increment_size == 0) {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Ignoring window update of size 0.", (void *)&connection->base);
+        return;
+    }
+
     /* If we're on the thread, just do it. */
     if (aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel)) {
         AWS_LOGF_TRACE(
