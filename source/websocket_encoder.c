@@ -345,3 +345,29 @@ void aws_websocket_encoder_init(
     encoder->user_data = user_data;
     encoder->stream_outgoing_payload = stream_outgoing_payload;
 }
+
+uint64_t aws_websocket_frame_encoded_size(const struct aws_websocket_frame *frame) {
+    /* This is an internal function, so asserts are sufficient error handling */
+    assert(frame);
+    assert(frame->payload_length <= AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MAX_VALUE);
+
+    /* All frames start with at least 2 bytes */
+    uint64_t total = 2;
+
+    /* If masked, add 4 bytes for masking-key */
+    if (frame->masked) {
+        total += 4;
+    }
+
+    /* If extended payload length, add 2 or 8 bytes */
+    if (frame->payload_length >= AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MIN_VALUE) {
+        total += 8;
+    } else if (frame->payload_length >= AWS_WEBSOCKET_2BYTE_EXTENDED_LENGTH_MIN_VALUE) {
+        total += 2;
+    }
+
+    /* Plus payload itself */
+    total += frame->payload_length;
+
+    return total;
+}
