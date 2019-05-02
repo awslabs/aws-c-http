@@ -41,8 +41,8 @@ if [ "$TRAVIS_OS_NAME" != "osx" ]; then
     sudo apt-get install libssl-dev -y
     install_library s2n 7c9069618e68214802ac7fbf45705d5f8b53135f
 fi
-install_library aws-c-common v0.3.7
-install_library aws-c-io v0.3.5
+install_library aws-c-common
+install_library aws-c-io
 
 mkdir -p build
 pushd build
