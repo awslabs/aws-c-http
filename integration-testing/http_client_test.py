@@ -45,7 +45,7 @@ class SimpleTests(unittest.TestCase):
 
         urllib.request.urlretrieve('https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png', 'elastigirl_expected.png')
 
-        if not filecmp.cmp('elastigirl.png', 'elastigirl_expected.png'):
+        if not filecmp.cmp('elastigirl.png', 'elastigirl_expected.png', shallow=False):
             raise RuntimeError('downloaded files do not match')
 
 if __name__ == '__main__':
