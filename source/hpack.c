@@ -15,8 +15,11 @@
 
 #include <aws/http/private/hpack.h>
 
+#include <aws/http/request_response.h>
+
 #include <aws/compression/huffman.h>
 
+#include <aws/common/hash_table.h>
 #include <aws/common/string.h>
 
 #include <assert.h>
@@ -102,7 +105,11 @@ int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_s
     return AWS_OP_SUCCESS;
 }
 
-int aws_hpack_encode_string(const struct aws_byte_cursor *to_encode, struct aws_huffman_encoder *encoder, struct aws_byte_buf *output) {
+int aws_hpack_encode_string(
+    const struct aws_byte_cursor *to_encode,
+    struct aws_huffman_encoder *encoder,
+    struct aws_byte_buf *output) {
+
     if (output->len == output->capacity) {
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
@@ -125,15 +132,91 @@ int aws_hpack_encode_string(const struct aws_byte_cursor *to_encode, struct aws_
     return aws_byte_buf_write_from_whole_cursor(output, *to_encode);
 }
 
-/*
-FOR STRINGS: Checks the last bits match EOS
-struct aws_huffman_code eos = ...
+#define HEADER(_index, _name)                                                                                          \
+    [_index] = {                                                                                                       \
+        .name =                                                                                                        \
+            {                                                                                                          \
+                .ptr = (uint8_t *)(_name),                                                                             \
+                .len = AWS_ARRAY_SIZE(_name),                                                                          \
+            },                                                                                                         \
+        .value =                                                                                                       \
+            {                                                                                                          \
+                .ptr = NULL,                                                                                           \
+                .len = 0,                                                                                              \
+            },                                                                                                         \
+    },
 
-uint64_t leftovers = (decoder->working_bits >> (BITSIZEOF(decoder->working_bits) - bits_left));
-uint64_t expected = eos.pattern >> (eos.num_bits - bits_left);
+#define HEADER_WITH_VALUE(_index, _name, _value)                                                                       \
+    [_index] = {                                                                                                       \
+        .name =                                                                                                        \
+            {                                                                                                          \
+                .ptr = (uint8_t *)(_name),                                                                             \
+                .len = AWS_ARRAY_SIZE(_name),                                                                          \
+            },                                                                                                         \
+        .value =                                                                                                       \
+            {                                                                                                          \
+                .ptr = (uint8_t *)(_value),                                                                            \
+                .len = AWS_ARRAY_SIZE(_value),                                                                         \
+            },                                                                                                         \
+    },
 
-if (bits_left < 8 &&
-    leftovers == expected) {
-    return AWS_HUFFMAN_EOS_REACHED;
+struct aws_http_header s_static_header_table[] = {
+#include <aws/http/private/hpack_header_static_table.def>
+};
+
+#undef HEADER
+#undef HEADER_WITH_VALUE
+
+static struct aws_hash_table s_static_header_reverse_lookup;
+
+static uint64_t s_header_hash(const void *key) {
+    const struct aws_http_header *header = key;
+
+    return aws_hash_byte_cursor_ptr(&header->name);
 }
-*/
+
+static bool s_header_eq(const void *a, const void *b) {
+    const struct aws_http_header *left = a;
+    const struct aws_http_header *right = b;
+
+    return aws_byte_cursor_eq(&left->name, &right->name) && aws_byte_cursor_eq(&left->value, &right->value);
+}
+
+void aws_hpack_build_lookup_table(struct aws_allocator *allocator) {
+
+    aws_hash_table_init(
+        &s_static_header_reverse_lookup,
+        allocator,
+        AWS_ARRAY_SIZE(s_static_header_table) - 1,
+        s_header_hash,
+        s_header_eq,
+        NULL,
+        NULL);
+
+#define HEADER(_index, _name)                                                                                          \
+    aws_hash_table_put(&s_static_header_reverse_lookup, &s_static_header_table[_index], (void *)_index, NULL);
+#define HEADER_WITH_VALUE(_index, _name, _value) HEADER(_index, _name)
+
+#include <aws/http/private/hpack_header_static_table.def>
+
+#undef HEADER
+#undef HEADER_WITH_VALUE
+}
+
+struct aws_http_header *aws_hpack_get_index_header(size_t index) {
+    assert(index > 0);
+    assert(index < AWS_ARRAY_SIZE(s_static_header_table));
+
+    return &s_static_header_table[index];
+}
+
+uint64_t aws_hpack_get_index_for_header(const struct aws_http_header *header) {
+
+    struct aws_hash_element *elem = NULL;
+    aws_hash_table_find(&s_static_header_reverse_lookup, header, &elem);
+    if (elem) {
+        return (uint64_t)elem->value;
+    }
+
+    return 0;
+}

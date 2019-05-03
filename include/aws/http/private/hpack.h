@@ -25,6 +25,13 @@ int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_s
 
 struct aws_huffman_symbol_coder *hpack_get_coder(void);
 
+struct aws_huffman_encoder;
+
+int aws_hpack_encode_string(
+    const struct aws_byte_cursor *to_encode,
+    struct aws_huffman_encoder *encoder,
+    struct aws_byte_buf *output);
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_HPACK_H */
