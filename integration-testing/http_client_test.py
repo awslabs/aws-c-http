@@ -14,8 +14,9 @@ import filecmp
 import subprocess
 import sys
 import urllib.request
+import unittest
 
-elasticurl_path = sys.argv[1]
+elasticurl_path = sys.argv.pop()
 shell = sys.platform.startswith('win')
 
 if elasticurl_path == None:
@@ -25,25 +26,20 @@ if elasticurl_path == None:
 def run_command(args):
     subprocess.check_call(args, shell=shell)
 
-class Test(object):
-    def test(self):
-        raise NotImplementedError()
 
+class SimpleTests(unittest.TestCase):
 #make a simple GET request and make sure it succeeds
-class SimpleGet(Test):
-    def test(self):
+    def test_simple_get(self):
         simple_get_args = [elasticurl_path, '-v', 'TRACE', 'http://example.com']
         run_command(simple_get_args)
 
 #make a simple POST request to make sure sending data succeeds
-class SimplePost(Test):
-    def test(self):
+    def test_simple_post(self):
         simple_post_args = [elasticurl_path, '-v', 'TRACE', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'http://httpbin.org/post']
         run_command(simple_post_args)
 
 #download a large file and compare the results with something we assume works (e.g. urllib)
-class SimpleImageDownload(Test):
-    def test(self):
+    def test_simple_download(self):
         elasticurl_download_args = [elasticurl_path, '-v', 'TRACE', '-o', 'elastigirl.png', 'https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png']
         run_command(elasticurl_download_args)
 
@@ -53,21 +49,4 @@ class SimpleImageDownload(Test):
             raise RuntimeError('downloaded files do not match')
 
 if __name__ == '__main__':
-    tests = Test.__subclasses__()
-    passed = 0
-    for test_type in tests:
-        print('##########################################################################')
-        print("TEST: {}".format(test_type.__name__))
-        print('##########################################################################')
-        test = test_type()
-        try:
-            test.test()
-            passed = passed + 1
-        except RuntimeError as re:
-            print(re)
-            print("TEST: {} FAILED".format(test_type.__name__))
-    
-    print("")
-    print("{}/{} tests passed".format(passed, len(tests)))
-    if (passed != len(tests)):
-        sys.exit(-1)
+    unittest.main()
