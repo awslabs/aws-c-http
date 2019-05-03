@@ -81,3 +81,58 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
 
     return AWS_OP_SUCCESS;
 }
+
+
+AWS_TEST_CASE(hpack_decode_integer, test_hpack_decode_integer)
+static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx) {
+    (void)allocator;
+    (void)ctx;
+    /* Test encoding integers
+       Test cases taken from https://httpwg.org/specs/rfc7541.html#integer.representation.examples */
+
+    uint64_t result = 0;
+    struct aws_byte_cursor to_decode;
+
+    /* Test 10 in 5 bits
+     * Layout:
+     *   0   1   2   3   4   5   6   7
+     * +---+---+---+---+---+---+---+---+
+     * | X | X | X | 0 | 1 | 0 | 1 | 0 |  10
+     * +---+---+---+---+---+---+---+---+
+     */
+    uint8_t test_1[] = { 10 };
+    to_decode = aws_byte_cursor_from_array(test_1, AWS_ARRAY_SIZE(test_1));
+    ASSERT_SUCCESS(aws_hpack_decode_integer(&to_decode, 5, &result));
+    ASSERT_UINT_EQUALS(0, to_decode.len);
+    ASSERT_UINT_EQUALS(10, result);
+
+    /* Test 42 in 8 bits
+     * Layout:
+     *   0   1   2   3   4   5   6   7
+     * +---+---+---+---+---+---+---+---+
+     * | 0 | 0 | 1 | 0 | 1 | 0 | 1 | 0 |  42
+     * +---+---+---+---+---+---+---+---+
+     */
+    uint8_t test_2[] = { 42 };
+    to_decode = aws_byte_cursor_from_array(test_2, AWS_ARRAY_SIZE(test_2));
+    ASSERT_SUCCESS(aws_hpack_decode_integer(&to_decode, 8, &result));
+    ASSERT_UINT_EQUALS(0, to_decode.len);
+    ASSERT_UINT_EQUALS(42, result);
+
+    /* Test 1337 with 5bit prefix
+     * Layout:
+     *   0   1   2   3   4   5   6   7
+     * +---+---+---+---+---+---+---+---+
+     * | X | X | X | 1 | 1 | 1 | 1 | 1 |  31
+     * | 1 | 0 | 0 | 1 | 1 | 0 | 1 | 0 | 154
+     * | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 |  10
+     * +---+---+---+---+---+---+---+---+
+     */
+    uint8_t test_3[] = { UINT8_MAX >> 3, 154, 10 };
+    to_decode = aws_byte_cursor_from_array(test_3, AWS_ARRAY_SIZE(test_3));
+    ASSERT_SUCCESS(aws_hpack_decode_integer(&to_decode, 5, &result));
+    ASSERT_UINT_EQUALS(0, to_decode.len);
+    ASSERT_UINT_EQUALS(1337, result);
+
+    return AWS_OP_SUCCESS;
+}

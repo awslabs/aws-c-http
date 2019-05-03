@@ -111,6 +111,7 @@ add_test_case(websocket_handler_read_frames_split_across_io_messages)
 add_test_case(websocket_handler_read_frames_complete_on_shutdown)
 
 add_test_case(hpack_encode_integer)
+add_test_case(hpack_decode_integer)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})

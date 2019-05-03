@@ -21,6 +21,7 @@
 AWS_EXTERN_C_BEGIN
 
 int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_byte_buf *output);
+int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_size, uint64_t *integer);
 
 struct aws_huffman_symbol_coder *hpack_get_coder(void);
 

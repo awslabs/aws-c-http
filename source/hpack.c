@@ -68,12 +68,49 @@ int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_b
     return AWS_OP_SUCCESS;
 }
 
+int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_size, uint64_t *integer) {
+    assert(prefix_size <= 8);
+    assert(integer);
+
+    if (to_decode->len == 0) {
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+    }
+    const uint8_t cut_bits = 8 - prefix_size;
+    const uint8_t prefix_mask = UINT8_MAX >> cut_bits;
+
+    uint8_t byte = 0;
+    if (!aws_byte_cursor_read_u8(to_decode, &byte)) {
+        return AWS_OP_ERR;
+    }
+    /* Cut the prefix */
+    byte &= prefix_mask;
+
+    /* No matter what, the first byte's value is always added to the integer */
+    *integer = byte;
+
+    if (byte == prefix_mask) {
+        uint8_t bit_count = 0;
+        do {
+            if (!aws_byte_cursor_read_u8(to_decode, &byte)) {
+                return AWS_OP_ERR;
+            }
+            *integer += (byte & 127) << bit_count;
+            bit_count += 7;
+        } while (byte & 128);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 int aws_hpack_encode_string(const struct aws_byte_cursor *to_encode, struct aws_huffman_encoder *encoder, struct aws_byte_buf *output) {
     if (output->len == output->capacity) {
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
 
-    unsigned use_huffman = encoder != NULL;
+    bool use_huffman = encoder != NULL;
+
+    /* Write the use_huffman bit */
+    *output->buffer |= use_huffman << 7;
 
     /* Write the header */
     if (aws_hpack_encode_integer(to_encode->len, 7, output)) {
