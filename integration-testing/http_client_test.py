@@ -14,8 +14,9 @@ import filecmp
 import subprocess
 import sys
 import urllib.request
+import unittest
 
-elasticurl_path = sys.argv[1]
+elasticurl_path = sys.argv.pop()
 shell = sys.platform.startswith('win')
 
 if elasticurl_path == None:
@@ -25,20 +26,27 @@ if elasticurl_path == None:
 def run_command(args):
     subprocess.check_call(args, shell=shell)
 
+
+class SimpleTests(unittest.TestCase):
 #make a simple GET request and make sure it succeeds
-simple_get_args = [elasticurl_path, '-v', 'TRACE', 'example.com']
-run_command(simple_get_args)
+    def test_simple_get(self):
+        simple_get_args = [elasticurl_path, '-v', 'TRACE', 'http://example.com']
+        run_command(simple_get_args)
 
 #make a simple POST request to make sure sending data succeeds
-simple_post_args = [elasticurl_path, '-v', 'TRACE', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'http://httpbin.org/post']
-run_command(simple_post_args)
+    def test_simple_post(self):
+        simple_post_args = [elasticurl_path, '-v', 'TRACE', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'http://httpbin.org/post']
+        run_command(simple_post_args)
 
 #download a large file and compare the results with something we assume works (e.g. urllib)
-elasticurl_download_args = [elasticurl_path, '-v', 'TRACE', '-o', 'elastigirl.png', 'https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png']
-run_command(elasticurl_download_args)
+    def test_simple_download(self):
+        elasticurl_download_args = [elasticurl_path, '-v', 'TRACE', '-o', 'elastigirl.png', 'https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png']
+        run_command(elasticurl_download_args)
 
-urllib.request.urlretrieve('https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png', 'elastigirl_expected.png')
+        urllib.request.urlretrieve('https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png', 'elastigirl_expected.png')
 
-if not filecmp.cmp('elastigirl.png', 'elastigirl_expected.png'):
-    print('downloaded files do not match, exiting with error....')
-    sys.exit(-1)
+        if not filecmp.cmp('elastigirl.png', 'elastigirl_expected.png', shallow=False):
+            raise RuntimeError('downloaded files do not match')
+
+if __name__ == '__main__':
+    unittest.main()
