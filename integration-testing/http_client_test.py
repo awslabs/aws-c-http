@@ -26,7 +26,7 @@ def run_command(args):
     subprocess.check_call(args, shell=shell)
 
 #make a simple GET request and make sure it succeeds
-simple_get_args = [elasticurl_path, '-v', 'TRACE', 'example.com']
+simple_get_args = [elasticurl_path, '-v', 'TRACE', 'http://example.com']
 run_command(simple_get_args)
 
 #make a simple POST request to make sure sending data succeeds
