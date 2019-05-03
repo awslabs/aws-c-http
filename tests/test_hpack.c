@@ -15,7 +15,7 @@
 
 #include <aws/testing/aws_test_harness.h>
 
-#include <aws/http/hpack.h>
+#include <aws/http/private/hpack.h>
 
 AWS_TEST_CASE(hpack_encode_integer, test_hpack_encode_integer)
 static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx) {

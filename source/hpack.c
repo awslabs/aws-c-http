@@ -13,7 +13,7 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/hpack.h>
+#include <aws/http/private/hpack.h>
 
 #include <aws/compression/huffman.h>
 
