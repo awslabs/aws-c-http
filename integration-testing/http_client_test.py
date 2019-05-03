@@ -25,20 +25,49 @@ if elasticurl_path == None:
 def run_command(args):
     subprocess.check_call(args, shell=shell)
 
+class Test(object):
+    def test(self):
+        raise NotImplementedError()
+
 #make a simple GET request and make sure it succeeds
-simple_get_args = [elasticurl_path, '-v', 'TRACE', 'http://example.com']
-run_command(simple_get_args)
+class SimpleGet(Test):
+    def test(self):
+        simple_get_args = [elasticurl_path, '-v', 'TRACE', 'http://example.com']
+        run_command(simple_get_args)
 
 #make a simple POST request to make sure sending data succeeds
-simple_post_args = [elasticurl_path, '-v', 'TRACE', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'http://httpbin.org/post']
-run_command(simple_post_args)
+class SimplePost(Test):
+    def test(self):
+        simple_post_args = [elasticurl_path, '-v', 'TRACE', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'http://httpbin.org/post']
+        run_command(simple_post_args)
 
 #download a large file and compare the results with something we assume works (e.g. urllib)
-elasticurl_download_args = [elasticurl_path, '-v', 'TRACE', '-o', 'elastigirl.png', 'https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png']
-run_command(elasticurl_download_args)
+class SimpleImageDownload(Test):
+    def test(self):
+        elasticurl_download_args = [elasticurl_path, '-v', 'TRACE', '-o', 'elastigirl.png', 'https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png']
+        run_command(elasticurl_download_args)
 
-urllib.request.urlretrieve('https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png', 'elastigirl_expected.png')
+        urllib.request.urlretrieve('https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png', 'elastigirl_expected.png')
 
-if not filecmp.cmp('elastigirl.png', 'elastigirl_expected.png'):
-    print('downloaded files do not match, exiting with error....')
-    sys.exit(-1)
+        if not filecmp.cmp('elastigirl.png', 'elastigirl_expected.png'):
+            raise RuntimeError('downloaded files do not match')
+
+if __name__ == '__main__':
+    tests = Test.__subclasses__()
+    passed = 0
+    for test_type in tests:
+        print('##########################################################################')
+        print("TEST: {}".format(test_type.__name__))
+        print('##########################################################################')
+        test = test_type()
+        try:
+            test.test()
+            passed = passed + 1
+        except RuntimeError as re:
+            print(re)
+            print("TEST: {} FAILED".format(test_type.__name__))
+    
+    print("")
+    print("{}/{} tests passed".format(passed, len(tests)))
+    if (passed != len(tests)):
+        sys.exit(-1)
