@@ -134,35 +134,20 @@ int aws_hpack_encode_string(
 
 #define HEADER(_index, _name)                                                                                          \
     [_index] = {                                                                                                       \
-        .name =                                                                                                        \
-            {                                                                                                          \
-                .ptr = (uint8_t *)(_name),                                                                             \
-                .len = AWS_ARRAY_SIZE(_name),                                                                          \
-            },                                                                                                         \
-        .value =                                                                                                       \
-            {                                                                                                          \
-                .ptr = NULL,                                                                                           \
-                .len = 0,                                                                                              \
-            },                                                                                                         \
+        .name = {.ptr = (uint8_t *)(_name), .len = AWS_ARRAY_SIZE(_name)},                                             \
+        .value = {.ptr = NULL, .len = 0},                                                                              \
     },
 
 #define HEADER_WITH_VALUE(_index, _name, _value)                                                                       \
     [_index] = {                                                                                                       \
-        .name =                                                                                                        \
-            {                                                                                                          \
-                .ptr = (uint8_t *)(_name),                                                                             \
-                .len = AWS_ARRAY_SIZE(_name),                                                                          \
-            },                                                                                                         \
-        .value =                                                                                                       \
-            {                                                                                                          \
-                .ptr = (uint8_t *)(_value),                                                                            \
-                .len = AWS_ARRAY_SIZE(_value),                                                                         \
-            },                                                                                                         \
+        .name = {.ptr = (uint8_t *)(_name), .len = AWS_ARRAY_SIZE(_name)},                                             \
+        .value = {.ptr = (uint8_t *)(_value), .len = AWS_ARRAY_SIZE(_value)},                                          \
     },
 
 struct aws_http_header s_static_header_table[] = {
 #include <aws/http/private/hpack_header_static_table.def>
 };
+static const size_t s_static_header_table_size = AWS_ARRAY_SIZE(s_static_header_table);
 
 #undef HEADER
 #undef HEADER_WITH_VALUE
@@ -187,7 +172,7 @@ void aws_hpack_build_lookup_table(struct aws_allocator *allocator) {
     aws_hash_table_init(
         &s_static_header_reverse_lookup,
         allocator,
-        AWS_ARRAY_SIZE(s_static_header_table) - 1,
+        s_static_header_table_size - 1,
         s_header_hash,
         s_header_eq,
         NULL,
@@ -205,7 +190,7 @@ void aws_hpack_build_lookup_table(struct aws_allocator *allocator) {
 
 struct aws_http_header *aws_hpack_get_index_header(size_t index) {
     assert(index > 0);
-    assert(index < AWS_ARRAY_SIZE(s_static_header_table));
+    assert(index < s_static_header_table_size);
 
     return &s_static_header_table[index];
 }
