@@ -152,6 +152,7 @@ static const size_t s_static_header_table_size = AWS_ARRAY_SIZE(s_static_header_
 #undef HEADER
 #undef HEADER_WITH_VALUE
 
+/* aws_http_header * -> size_t */
 static struct aws_hash_table s_static_header_reverse_lookup;
 
 static uint64_t s_header_hash(const void *key) {
@@ -204,4 +205,153 @@ uint64_t aws_hpack_get_index_for_header(const struct aws_http_header *header) {
     }
 
     return 0;
+}
+
+/* Insertion is backwards, indexing is forwards */
+struct hpack_dynamic_table {
+    struct aws_allocator *allocator;
+    struct aws_http_header *buffer;
+    size_t max_elements;
+    size_t num_elements;
+    size_t index_0;
+
+    /* aws_http_header * -> size_t */
+    struct aws_hash_table reverse_lookup;
+};
+
+int hpack_dynamic_table_init(struct hpack_dynamic_table *table, struct aws_allocator *allocator, size_t max_elements) {
+    AWS_ZERO_STRUCT(*table);
+
+    table->buffer = aws_mem_acquire(allocator, max_elements * sizeof(struct aws_http_header));
+    if (!table->buffer) {
+        return AWS_OP_ERR;
+    }
+
+    if (aws_hash_table_init(&table->reverse_lookup, allocator, max_elements, s_header_hash, s_header_eq, NULL, NULL)) {
+        aws_mem_release(allocator, table->buffer);
+        return AWS_OP_ERR;
+    }
+
+    table->allocator = allocator;
+    table->max_elements = max_elements;
+    table->num_elements = 0;
+    table->index_0 = 0;
+
+    return AWS_OP_SUCCESS;
+}
+
+void hpack_dynamic_table_clean_up(struct hpack_dynamic_table *table) {
+    aws_mem_release(table->allocator, table->buffer);
+    aws_hash_table_clean_up(&table->reverse_lookup);
+    AWS_ZERO_STRUCT(*table);
+}
+
+struct aws_http_header *hpack_dynamic_table_get(struct hpack_dynamic_table *table, size_t index) {
+
+    if (index >= table->num_elements) {
+        aws_raise_error(AWS_ERROR_INVALID_INDEX);
+        return NULL;
+    }
+
+    return &table->buffer[(table->index_0 + index) % table->max_elements];
+}
+
+int hpack_dynamic_table_find(struct hpack_dynamic_table *table, const struct aws_http_header *header, size_t *index) {
+
+    struct aws_hash_element *elem = NULL;
+    aws_hash_table_find(&table->reverse_lookup, header, &elem);
+    if (elem) {
+        const size_t absolute_index = (size_t)elem->value;
+        if (absolute_index >= table->index_0) {
+            *index = absolute_index - table->index_0;
+        } else {
+            *index = (table->max_elements - table->index_0) + absolute_index;
+        }
+        return AWS_OP_SUCCESS;
+    }
+
+    return AWS_OP_ERR;
+}
+
+int hpack_dynamic_table_insert(struct hpack_dynamic_table *table, const struct aws_http_header *header) {
+
+    /* Cache state */
+    const size_t old_index_0 = table->index_0;
+
+    /* Increment index 0, wrapping if necessary */
+    if (table->index_0 == 0) {
+        table->index_0 = table->max_elements - 1;
+    } else {
+        table->index_0--;
+    }
+
+    /* Remove old header from hash table */
+    if (aws_hash_table_remove(&table->reverse_lookup, &table->buffer[table->index_0], NULL, NULL)) {
+        goto error;
+    }
+
+    /* Write the new header */
+    if (aws_hash_table_put(&table->reverse_lookup, header, (void *)table->index_0, NULL)) {
+        goto error;
+    }
+    table->buffer[table->index_0] = *header;
+
+    /* Increment num_elements if necessary */
+    if (table->num_elements < table->max_elements) {
+        ++table->num_elements;
+    }
+
+    return AWS_OP_SUCCESS;
+
+error:
+    /* Attempt to replace old header in map */
+    aws_hash_table_put(&table->reverse_lookup, &table->buffer[table->index_0], (void *)table->index_0, NULL);
+    /* Reset index 0 */
+    table->index_0 = old_index_0;
+
+    return AWS_OP_ERR;
+}
+
+int hpack_dynamic_table_resize(struct hpack_dynamic_table *table, size_t new_max_elements) {
+
+    /* Clear the old hash table */
+    aws_hash_table_clear(&table->reverse_lookup);
+
+    struct aws_http_header *new_buffer = aws_mem_acquire(table->allocator, new_max_elements * sizeof(struct aws_http_header));
+    if (!new_buffer) {
+        return AWS_OP_ERR;
+    }
+
+    /* Copy as much the above block as possible */
+    size_t above_block_size = table->max_elements - table->index_0;
+    if (above_block_size > new_max_elements) {
+        above_block_size = new_max_elements;
+    }
+    memcpy(new_buffer, table->buffer + table->index_0, above_block_size * sizeof(struct aws_http_header));
+
+    /* Copy as much of below block as possible */
+    const size_t free_blocks_available = new_max_elements - above_block_size;
+    const size_t old_blocks_to_copy = table->max_elements - above_block_size;
+    const size_t below_block_size = free_blocks_available > old_blocks_to_copy ? old_blocks_to_copy : free_blocks_available;
+    if (below_block_size) {
+        memcpy(new_buffer + above_block_size, table->buffer, below_block_size * sizeof(struct aws_http_header));
+    }
+
+    /* Free the old memory */
+    aws_mem_release(table->allocator, table->buffer);
+
+    /* Reset state */
+    if (table->num_elements > new_max_elements) {
+        table->num_elements = new_max_elements;
+    }
+    table->max_elements = new_max_elements;
+    table->index_0 = 0;
+    table->buffer = new_buffer;
+
+    /* Re-insert all of the reverse lookup elements */
+    for (size_t i = 0; i < table->num_elements; ++i) {
+        aws_hash_table_put(&table->reverse_lookup, table->buffer + i, (void *)i, NULL);
+    }
+
+    return AWS_OP_SUCCESS;
 }
