@@ -22,7 +22,6 @@ AWS_EXTERN_C_BEGIN
 
 struct aws_http_header;
 struct aws_hpack_context;
-struct aws_huffman_encoder;
 
 /* Library-level init and shutdown */
 void aws_hpack_static_table_init(struct aws_allocator *allocator);
@@ -40,8 +39,9 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
 int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_byte_buf *output);
 int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_size, uint64_t *integer);
 int aws_hpack_encode_string(
+    struct aws_hpack_context *context,
     const struct aws_byte_cursor *to_encode,
-    struct aws_huffman_encoder *encoder,
+    bool huffman_encode,
     struct aws_byte_buf *output);
 
 AWS_EXTERN_C_END

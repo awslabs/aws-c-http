@@ -107,33 +107,6 @@ int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_s
     return AWS_OP_SUCCESS;
 }
 
-int aws_hpack_encode_string(
-    const struct aws_byte_cursor *to_encode,
-    struct aws_huffman_encoder *encoder,
-    struct aws_byte_buf *output) {
-
-    if (output->len == output->capacity) {
-        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-    }
-
-    bool use_huffman = encoder != NULL;
-
-    /* Write the use_huffman bit */
-    *output->buffer |= use_huffman << 7;
-
-    /* Write the header */
-    if (aws_hpack_encode_integer(to_encode->len, 7, output)) {
-        return AWS_OP_ERR;
-    }
-
-    if (use_huffman) {
-        struct aws_byte_cursor to_encode_copy = *to_encode;
-        return aws_huffman_encode(encoder, &to_encode_copy, output);
-    }
-
-    return aws_byte_buf_write_from_whole_cursor(output, *to_encode);
-}
-
 #define HEADER(_index, _name)                                                                                          \
     [_index] = {                                                                                                       \
         .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_name),                                                          \
@@ -403,4 +376,30 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
     }
 
     return AWS_OP_SUCCESS;
+}
+
+int aws_hpack_encode_string(
+    struct aws_hpack_context *context,
+    const struct aws_byte_cursor *to_encode,
+    bool huffman_encode,
+    struct aws_byte_buf *output) {
+
+    if (output->len == output->capacity) {
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+    }
+
+    /* Write the use_huffman bit */
+    *output->buffer |= huffman_encode << 7;
+
+    /* Write the header */
+    if (aws_hpack_encode_integer(to_encode->len, 7, output)) {
+        return AWS_OP_ERR;
+    }
+
+    if (huffman_encode) {
+        struct aws_byte_cursor to_encode_copy = *to_encode;
+        return aws_huffman_encode(&context->encoder, &to_encode_copy, output);
+    }
+
+    return aws_byte_buf_write_from_whole_cursor(output, *to_encode);
 }
