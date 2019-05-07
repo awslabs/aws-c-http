@@ -268,6 +268,7 @@ static int s_state_payload(struct aws_websocket_decoder *decoder, struct aws_byt
     }
 
     /* TODO: validate utf-8 */
+    /* TODO: validate payload of CLOSE frame */
 
     /* Invoke on_payload() callback to inform user of payload data */
     int err = decoder->on_payload(payload, decoder->user_data);

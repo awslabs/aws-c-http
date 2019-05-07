@@ -234,7 +234,7 @@ static void s_on_outgoing_frame_complete(struct aws_websocket *websocket, int er
     send_tester->owner->on_send_complete_count++;
 }
 
-static int s_send_frame(struct tester *tester, struct send_tester *send_tester) {
+static int s_send_frame_ex(struct tester *tester, struct send_tester *send_tester, bool assert_on_error) {
     send_tester->owner = tester;
     send_tester->cursor = send_tester->payload;
     send_tester->def.payload_length = send_tester->payload.len;
@@ -242,8 +242,20 @@ static int s_send_frame(struct tester *tester, struct send_tester *send_tester) 
     send_tester->def.on_complete = s_on_outgoing_frame_complete;
     send_tester->def.user_data = send_tester;
 
-    ASSERT_SUCCESS(aws_websocket_send_frame(tester->websocket, &send_tester->def));
-    return AWS_OP_SUCCESS;
+    if (assert_on_error) {
+        ASSERT_SUCCESS(aws_websocket_send_frame(tester->websocket, &send_tester->def));
+        return AWS_OP_SUCCESS;
+    } else {
+        return aws_websocket_send_frame(tester->websocket, &send_tester->def);
+    }
+}
+
+static int s_send_frame(struct tester *tester, struct send_tester *send_tester) {
+    return s_send_frame_ex(tester, send_tester, true);
+}
+
+static int s_send_frame_no_assert(struct tester *tester, struct send_tester *send_tester) {
+    return s_send_frame_ex(tester, send_tester, false);
 }
 
 static int s_check_written_message(struct send_tester *send, size_t expected_order) {
@@ -324,6 +336,7 @@ TEST_CASE(websocket_handler_send_multiple_frames) {
             .def =
                 {
                     .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = false,
                 },
         },
         {
@@ -331,6 +344,7 @@ TEST_CASE(websocket_handler_send_multiple_frames) {
             .def =
                 {
                     .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = false,
                 },
         },
         {
@@ -338,6 +352,7 @@ TEST_CASE(websocket_handler_send_multiple_frames) {
             .def =
                 {
                     .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = false,
                 },
         },
         {
@@ -388,6 +403,7 @@ TEST_CASE(websocket_handler_send_huge_frame) {
             .def =
                 {
                     .opcode = AWS_WEBSOCKET_OPCODE_BINARY,
+                    .fin = false,
                 },
         },
         {
@@ -395,11 +411,16 @@ TEST_CASE(websocket_handler_send_huge_frame) {
             .def =
                 {
                     .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = false,
                 },
         },
         {
             .payload = aws_byte_cursor_from_c_str("Little frame after big one."),
-            .def = {.opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION, .fin = true},
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = true,
+                },
         },
     };
 
@@ -432,18 +453,20 @@ TEST_CASE(websocket_handler_send_payload_slowly) {
             .def =
                 {
                     .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = false,
                 },
         },
         {
-            .payload = aws_byte_cursor_from_c_str("s l o o w w w l l y  B"),
+            .payload = aws_byte_cursor_from_c_str("s l o o w w w l l y  B."),
             .def =
                 {
                     .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = false,
                 },
             .bytes_per_tick = 1,
         },
         {
-            .payload = aws_byte_cursor_from_c_str("quick C"),
+            .payload = aws_byte_cursor_from_c_str("quick C."),
             .def =
                 {
                     .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
@@ -480,18 +503,20 @@ TEST_CASE(websocket_handler_send_payload_with_pauses) {
             .def =
                 {
                     .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = false,
                 },
         },
         {
-            .payload = aws_byte_cursor_from_c_str("delayed B"),
+            .payload = aws_byte_cursor_from_c_str("delayed B."),
             .def =
                 {
                     .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = false,
                 },
             .delay_ticks = 5,
         },
         {
-            .payload = aws_byte_cursor_from_c_str("immediate C"),
+            .payload = aws_byte_cursor_from_c_str("immediate C."),
             .def =
                 {
                     .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
@@ -528,14 +553,15 @@ TEST_CASE(websocket_handler_send_high_priority_frame) {
             .def =
                 {
                     .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = false,
                 },
         },
         {
             .def =
                 {
                     .opcode = AWS_WEBSOCKET_OPCODE_PING,
-                    .high_priority = true,
                     .fin = true,
+                    .high_priority = true,
                 },
         },
         {
@@ -563,6 +589,138 @@ TEST_CASE(websocket_handler_send_high_priority_frame) {
     ASSERT_SUCCESS(s_check_written_message(&sending[1], 0));
     ASSERT_SUCCESS(s_check_written_message(&sending[0], 1));
     ASSERT_SUCCESS(s_check_written_message(&sending[2], 2));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_sends_nothing_after_close_frame) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct send_tester sending[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("Last text frame"),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = true,
+                },
+        },
+        {
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CLOSE,
+                    .fin = true,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Should not be sent."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = true,
+                },
+        },
+    };
+
+    /* Ensure these frames are queued and processed later */
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
+        ASSERT_SUCCESS(s_send_frame(&tester, &sending[i]));
+    }
+
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+
+    /* Ensure that only 1st frame and CLOSE frame were written*/
+    ASSERT_UINT_EQUALS(2, tester.num_written_frames);
+    ASSERT_SUCCESS(s_check_written_message(&sending[0], 0));
+    ASSERT_SUCCESS(s_check_written_message(&sending[1], 1));
+
+    /* Ensure no more frames written during shutdown */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+    ASSERT_UINT_EQUALS(2, tester.num_written_frames);
+
+    /* Ensure 3rd frame completed with error code */
+    ASSERT_UINT_EQUALS(1, sending[2].on_complete_count);
+    ASSERT_TRUE(sending[2].on_complete_error_code != AWS_ERROR_SUCCESS);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Send a frame while the handler is in every conceivable state.
+ * Ensure that the completion callback always fires. */
+TEST_CASE(websocket_handler_send_frames_always_complete) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    enum {
+        ON_THREAD_BEFORE_CLOSE,
+        OFF_THREAD_BEFORE_CLOSE,
+        CLOSE,
+        ON_THREAD_AFTER_CLOSE,
+        OFF_THREAD_AFTER_CLOSE,
+        ON_THREAD_DURING_SHUTDOWN,
+        OFF_THREAD_DURING_SHUTDOWN,
+        ON_THREAD_AFTER_SHUTDOWN,
+        OFF_THREAD_AFTER_SHUTDOWN,
+        COUNT,
+    };
+
+    struct send_tester sending[COUNT];
+    memset(sending, 0, sizeof(sending));
+    for (int i = 0; i < COUNT; ++i) {
+        struct send_tester *send = &sending[i];
+        send->def.opcode = (i == CLOSE) ? AWS_WEBSOCKET_OPCODE_CLOSE : AWS_WEBSOCKET_OPCODE_PING;
+        send->def.fin = true;
+    }
+
+    int sending_err[AWS_ARRAY_SIZE(sending)];
+
+    /* Start sending frames */
+    sending_err[ON_THREAD_BEFORE_CLOSE] = s_send_frame_no_assert(&tester, &sending[ON_THREAD_BEFORE_CLOSE]);
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+    sending_err[OFF_THREAD_BEFORE_CLOSE] = s_send_frame_no_assert(&tester, &sending[OFF_THREAD_BEFORE_CLOSE]);
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
+
+    /* Send close frame */
+    sending_err[CLOSE] = s_send_frame_no_assert(&tester, &sending[CLOSE]);
+
+    sending_err[ON_THREAD_AFTER_CLOSE] = s_send_frame_no_assert(&tester, &sending[ON_THREAD_AFTER_CLOSE]);
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+    sending_err[OFF_THREAD_AFTER_CLOSE] = s_send_frame_no_assert(&tester, &sending[OFF_THREAD_AFTER_CLOSE]);
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
+
+    /* Issue channel shutdown */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+
+    sending_err[ON_THREAD_DURING_SHUTDOWN] = s_send_frame_no_assert(&tester, &sending[ON_THREAD_DURING_SHUTDOWN]);
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+    sending_err[OFF_THREAD_DURING_SHUTDOWN] = s_send_frame_no_assert(&tester, &sending[OFF_THREAD_DURING_SHUTDOWN]);
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
+
+    /* Wait for shutdown to complete */
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+
+    /* Try to send even more frames */
+    sending_err[ON_THREAD_AFTER_SHUTDOWN] = s_send_frame_no_assert(&tester, &sending[ON_THREAD_AFTER_SHUTDOWN]);
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+    sending_err[OFF_THREAD_AFTER_SHUTDOWN] = s_send_frame_no_assert(&tester, &sending[OFF_THREAD_AFTER_SHUTDOWN]);
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
+
+    /* Check that each send() failed immediately, or had its completion callback invoked. */
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+    for (int i = 0; i < COUNT; ++i) {
+        if (sending_err[i] == AWS_OP_SUCCESS) {
+            ASSERT_UINT_EQUALS(1, sending[i].on_complete_count);
+        }
+    }
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
