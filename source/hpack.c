@@ -283,7 +283,7 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     /* Cache state */
     const size_t old_index_0 = context->dynamic_table.index_0;
 
-    /* Increment index 0, wrapping if necessary */
+    /* Decrement index 0, wrapping if necessary */
     if (context->dynamic_table.index_0 == 0) {
         context->dynamic_table.index_0 = context->dynamic_table.max_elements - 1;
     } else {
