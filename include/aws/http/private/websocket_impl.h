@@ -61,6 +61,7 @@ struct aws_websocket_frame {
 
 struct aws_websocket_handler_options {
     struct aws_allocator *allocator;
+    struct aws_channel_slot *channel_slot;
     size_t initial_window_size;
     bool is_server;
 
@@ -74,16 +75,24 @@ struct aws_websocket_handler_options {
 AWS_EXTERN_C_BEGIN
 
 /**
+ * Returns printable name for opcode as c-string.
+ */
+AWS_HTTP_API
+const char *aws_websocket_opcode_str(uint8_t opcode);
+
+/**
  * Return total number of bytes needed to encode frame and its payload
  */
 AWS_HTTP_API
 uint64_t aws_websocket_frame_encoded_size(const struct aws_websocket_frame *frame);
 
+/**
+ * Returns channel-handler for websocket.
+ * handler->impl is the aws_websocket*
+ * To destroy a handler that was never put into a channel, invoke: `handler->vtable.destroy(handler)`
+ */
 AWS_HTTP_API
 struct aws_channel_handler *aws_websocket_handler_new(const struct aws_websocket_handler_options *options);
-
-AWS_HTTP_API
-void aws_websocket_handler_destroy(struct aws_channel_handler *websocket_handler);
 
 AWS_EXTERN_C_END
 #endif /* AWS_HTTP_WEBSOCKET_IMPL_H */

@@ -47,9 +47,6 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_DATA_NOT_AVAILABLE,
         "This data is not yet available."),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_END_RANGE,
-        "Not a real error and should never be seen."),
-    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_CLOSED,
         "Message not sent, as the connection has closed or is closing."),
     AWS_DEFINE_ERROR_INFO_HTTP(
@@ -58,6 +55,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_WEBSOCKET_CLOSE_FRAME_SENT,
         "Websocket has sent CLOSE frame, no more data will be sent."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_END_RANGE,
+        "Not a real error and should never be seen."),
 };
 /* clang-format on */
 

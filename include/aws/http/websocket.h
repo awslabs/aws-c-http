@@ -130,12 +130,6 @@ bool aws_websocket_is_data_frame(uint8_t opcode) {
 
 AWS_EXTERN_C_BEGIN
 
-/**
- * Returns printable name for opcode as c-string.
- */
-AWS_HTTP_API
-const char *aws_websocket_opcode_str(uint8_t opcode);
-
 AWS_HTTP_API
 int aws_websocket_client_connect(const struct aws_websocket_client_connection_options *options);
 
@@ -148,7 +142,7 @@ AWS_HTTP_API
 void aws_websocket_release_hold(struct aws_websocket *websocket);
 
 AWS_HTTP_API
-void aws_websocket_close(struct aws_websocket *websocket);
+void aws_websocket_close(struct aws_websocket *websocket, int error_code);
 
 AWS_HTTP_API
 int aws_websocket_send_frame(
