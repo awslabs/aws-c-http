@@ -20,13 +20,24 @@
 
 AWS_EXTERN_C_BEGIN
 
-int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_byte_buf *output);
-int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_size, uint64_t *integer);
-
-struct aws_huffman_symbol_coder *hpack_get_coder(void);
-
+struct aws_hpack_context;
 struct aws_huffman_encoder;
 
+/* Library-level init and shutdown */
+void aws_hpack_static_table_init(struct aws_allocator *allocator);
+void aws_hpack_static_table_clean_up(void);
+
+/* General HPACK API */
+struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator, size_t max_dynamic_elements);
+void aws_hpack_context_destroy(struct aws_hpack_context *context);
+struct aws_http_header *aws_hpack_get_header(struct aws_hpack_context *context, size_t index);
+int aws_hpack_find_index(struct aws_hpack_context *context, const struct aws_http_header *header, size_t *index);
+int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_http_header *header);
+int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new_max_elements);
+
+/* Public for testing purposes */
+int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_byte_buf *output);
+int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_size, uint64_t *integer);
 int aws_hpack_encode_string(
     const struct aws_byte_cursor *to_encode,
     struct aws_huffman_encoder *encoder,
