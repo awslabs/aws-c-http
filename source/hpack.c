@@ -219,21 +219,11 @@ struct aws_hpack_context {
 
 struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator, size_t max_dynamic_elements) {
 
-    struct aws_hpack_context *context = NULL;
-    struct aws_http_header *buffer = NULL;
-
-    aws_mem_acquire_many(
-        allocator,
-        2,
-        &context,
-        sizeof(struct aws_hpack_context),
-        &buffer,
-        max_dynamic_elements * sizeof(struct aws_http_header));
-    if (!context || !buffer) {
+    struct aws_hpack_context *context = aws_mem_acquire(allocator, sizeof(struct aws_hpack_context));
+    if (!context) {
         return NULL;
     }
     AWS_ZERO_STRUCT(*context);
-    memset(buffer, 0, max_dynamic_elements * sizeof(struct aws_http_header));
     context->allocator = allocator;
 
     /* Initialize the huffman coders */
@@ -242,7 +232,9 @@ struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator,
     aws_huffman_decoder_init(&context->decoder, hpack_coder);
 
     /* Initialize dynamic table */
-    context->dynamic_table.buffer = buffer;
+    const size_t buffer_size = max_dynamic_elements * sizeof(struct aws_http_header);
+    context->dynamic_table.buffer = aws_mem_acquire(allocator, buffer_size);
+    memset(context->dynamic_table.buffer, 0, buffer_size);
     context->dynamic_table.max_elements = max_dynamic_elements;
     context->dynamic_table.num_elements = 0;
     context->dynamic_table.index_0 = 0;
@@ -263,6 +255,7 @@ struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator,
 }
 
 void aws_hpack_context_destroy(struct aws_hpack_context *context) {
+    aws_mem_release(context->allocator, context->dynamic_table.buffer);
     aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup);
     aws_mem_release(context->allocator, context);
 }

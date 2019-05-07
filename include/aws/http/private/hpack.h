@@ -20,6 +20,7 @@
 
 AWS_EXTERN_C_BEGIN
 
+struct aws_http_header;
 struct aws_hpack_context;
 struct aws_huffman_encoder;
 
