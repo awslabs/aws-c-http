@@ -60,10 +60,10 @@ struct send_tester {
     /* Everything below this line is auto-configured */
 
     struct aws_byte_cursor cursor; /* iterates as payload is written */
+    size_t on_payload_count;
 
     size_t on_complete_count;
     int on_complete_error_code;
-
     size_t on_complete_order; /* Order that frame sent, amongst all frames sent this test */
 
     struct tester *owner;
@@ -204,6 +204,8 @@ static enum aws_websocket_outgoing_payload_state s_on_stream_outgoing_payload(
     struct send_tester *send_tester = user_data;
     AWS_FATAL_ASSERT(websocket == send_tester->owner->websocket);
 
+    send_tester->on_payload_count++;
+
     size_t space_available = out_buf->capacity - out_buf->len;
 
     size_t bytes_max = send_tester->cursor.len;
@@ -292,7 +294,7 @@ TEST_CASE(websocket_handler_send_frame) {
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
-    const char *payload = "Crying through the lock";
+    const char *payload = "Shall I come in to cut off your threads?";
 
     struct send_tester send = {
         .payload = aws_byte_cursor_from_c_str(payload),
@@ -306,6 +308,261 @@ TEST_CASE(websocket_handler_send_frame) {
     ASSERT_SUCCESS(s_send_frame(&tester, &send));
     ASSERT_SUCCESS(s_drain_written_messages(&tester));
     ASSERT_SUCCESS(s_check_written_message(&send, 0));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_send_multiple_frames) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct send_tester sending[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("Wee Willie Winkie runs through the town."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Upstairs and downstairs in his nightgown."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Rapping at the window, crying through the lock."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                },
+        },
+        {
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_PING,
+                    .fin = true,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Are the children all in bed, for now it's eight o'clock?"),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = true,
+                },
+        },
+
+    };
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
+        ASSERT_SUCCESS(s_send_frame(&tester, &sending[i]));
+    }
+
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
+        ASSERT_SUCCESS(s_check_written_message(&sending[i], i));
+    }
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_send_huge_frame) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* transmit giant buffer with random contents */
+    struct aws_byte_buf giant_buf;
+    ASSERT_SUCCESS(aws_byte_buf_init(&giant_buf, allocator, 100000));
+    while (aws_byte_buf_write_u8(&giant_buf, (uint8_t)rand())) {
+    }
+
+    struct send_tester sending[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("Little frame before big one."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_BINARY,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_buf(&giant_buf),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Little frame after big one."),
+            .def = {.opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION, .fin = true},
+        },
+    };
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
+        ASSERT_SUCCESS(s_send_frame(&tester, &sending[i]));
+    }
+
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
+        ASSERT_SUCCESS(s_check_written_message(&sending[i], i));
+    }
+
+    /* Ensure this was actually big enough to be split across aws_io_messages */
+    ASSERT_TRUE(sending[1].on_payload_count > 1);
+
+    aws_byte_buf_clean_up(&giant_buf);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_send_payload_slowly) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct send_tester sending[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("quick A."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("s l o o w w w l l y  B"),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                },
+            .bytes_per_tick = 1,
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("quick C"),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = true,
+                },
+        },
+    };
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
+        ASSERT_SUCCESS(s_send_frame(&tester, &sending[i]));
+    }
+
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
+        ASSERT_SUCCESS(s_check_written_message(&sending[i], i));
+    }
+
+    /* Ensure this test really did send data over multiple callbacks */
+    ASSERT_TRUE(sending[1].on_payload_count > 1);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_send_payload_with_pauses) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct send_tester sending[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("immediate A."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("delayed B"),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                },
+            .delay_ticks = 5,
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("immediate C"),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = true,
+                },
+        },
+    };
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
+        ASSERT_SUCCESS(s_send_frame(&tester, &sending[i]));
+    }
+
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
+        ASSERT_SUCCESS(s_check_written_message(&sending[i], i));
+    }
+
+    /* Ensure this test really did send data over multiple callbacks */
+    ASSERT_TRUE(sending[1].on_payload_count > 1);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_send_high_priority_frame) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct send_tester sending[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("A"),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                },
+        },
+        {
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_PING,
+                    .high_priority = true,
+                    .fin = true,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("C"),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = true,
+                },
+        },
+    };
+
+    /* Send from user-thread to ensure that everything is queued.
+     * When queued frames are processed, the high-priority one should end up first. */
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
+        ASSERT_SUCCESS(s_send_frame(&tester, &sending[i]));
+    }
+
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+
+    /* High-priority frame (index 1) should get sent first */
+    ASSERT_SUCCESS(s_check_written_message(&sending[1], 0));
+    ASSERT_SUCCESS(s_check_written_message(&sending[0], 1));
+    ASSERT_SUCCESS(s_check_written_message(&sending[2], 2));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
