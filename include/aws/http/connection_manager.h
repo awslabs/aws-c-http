@@ -19,13 +19,19 @@
 #include <aws/http/http.h>
 
 #include <aws/common/byte_buf.h>
+#include <aws/http/connection.h>
 
 struct aws_client_bootstrap;
-struct aws_http_connection;
 struct aws_http_connection_manager;
 struct aws_socket_options;
 struct aws_tls_connection_options;
 
+/*
+ * Connection manager configuration struct.
+ *
+ * Contains all of the configuration needed to create an http connection as well as
+ * the maximum number of connections to ever have in existence.
+ */
 struct aws_http_connection_manager_options {
     struct aws_client_bootstrap *bootstrap;
     size_t initial_window_size;
@@ -36,23 +42,35 @@ struct aws_http_connection_manager_options {
     size_t max_connections;
 };
 
-typedef int (acquire_connection_callback_fn)(struct aws_http_connection *connection, void *user_data, int result);
-
-
 AWS_EXTERN_C_BEGIN
 
-AWS_HTTP_API
-void aws_http_connection_manager_release(struct aws_http_connection_manager *manager);
-
+/*
+ * Connection managers are ref counted.  Adds one external ref to the manager.
+ */
 AWS_HTTP_API
 void aws_http_connection_manager_acquire(struct aws_http_connection_manager *manager);
 
+/*
+ * Connection managers are ref counted.  Removes one external ref from the manager.
+ */
+AWS_HTTP_API
+void aws_http_connection_manager_release(struct aws_http_connection_manager *manager);
+
+/*
+ * Creates a new connection manager with the supplied configuration options.
+ */
 AWS_HTTP_API
 struct aws_http_connection_manager *aws_http_connection_manager_new(struct aws_allocator *allocator, struct aws_http_connection_manager_options *options);
 
+/*
+ * Requests a connection from the manager
+ */
 AWS_HTTP_API
-int aws_http_connection_manager_acquire_connection(struct aws_http_connection_manager *connection_manager, acquire_connection_callback_fn *callback, void *user_data);
+int aws_http_connection_manager_acquire_connection(struct aws_http_connection_manager *connection_manager, aws_http_on_client_connection_setup_fn *callback, void *user_data);
 
+/*
+ * Returns a connection back to the manager
+ */
 AWS_HTTP_API
 int aws_http_connection_manager_release_connection(struct aws_http_connection_manager *connection_manager, struct aws_http_connection *connection);
 

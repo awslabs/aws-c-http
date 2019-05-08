@@ -24,33 +24,121 @@
 #include <aws/io/tls_channel_handler.h>
 #include <aws/http/connection.h>
 
-enum aws_connection_return_type {
-    AWS_CRT_CONNECTED,
-    AWS_CRT_RELEASED
+enum aws_http_connection_accept_type {
+    AWS_CAT_NEWLY_CONNECTED,
+    AWS_CAT_RELEASED
 };
 
 struct aws_http_connection_manager {
     struct aws_allocator *allocator;
+
+    /*
+     * Controls access to all mutable state on the connection manager
+     */
     struct aws_mutex lock;
+
+    /*
+     * The set of all available ready-to-be-used connections
+     */
     struct aws_hash_table connections;
+
+    /*
+     * The set of all incomplete connection acquisition requests
+     */
     struct aws_linked_list pending_acquisitions;
-    size_t pending_connection_count;
+
+    /*
+     * The number of all incomplete connection acquisition requests.  So
+     * that we don't have compute the size of a linked list every time.
+     */
+    size_t pending_acquisition_count;
+
+    /*
+     * The number of pending new connection requests we have outstanding to the http
+     * layer.  Each pending new connection requests adds one to the connection manager's
+     * overall ref count.   Each resolved request subtracts one.
+     */
+    size_t pending_connects_count;
+
+    /*
+     * The number of connections currently being used by external users.
+     */
+    size_t vended_connection_count;
+
+    /*
+     * All the options needed to create an http connection
+     */
     struct aws_client_bootstrap *bootstrap;
     size_t initial_window_size;
     struct aws_socket_options socket_options;
     struct aws_tls_connection_options tls_connection_options;
     struct aws_string *host;
     uint16_t port;
+
+    /*
+     * The maximum number of connections this manager should ever have at once.
+     */
     size_t max_connections;
-    size_t vended_connection_count;
+
+    /*
+     * Lifecycle tracking for the connection manager.  Starts at 1.
+     *
+     * value = # external refs + # pending connects
+     */
     struct aws_atomic_var ref_count;
 };
 
-struct aws_pending_acquisition {
+/*
+ * A struct that functions as both the pending acquisition tracker and the about-to-complete data.
+ *
+ * The list in the connection manager is the set of all acquisition requests that we haven't resolved.
+ *
+ * In order to make sure we never invoke callbacks while holding the manager's lock, in a number of places
+ * we build a list of one or more acquisitions to complete while holding the lock.  Once the lock is released
+ * we complete all the acquisitions in the list using the data within the struct (hence why we have
+ * connection and result members).
+ */
+struct aws_http_connection_acquisition {
     struct aws_linked_list_node node;
-    acquire_connection_callback_fn *callback;
+    aws_http_on_client_connection_setup_fn *callback;
     void *user_data;
+    struct aws_http_connection *connection;
+    int result;
 };
+
+/*
+ * Only call this outside the scope of the connection manager's lock
+ */
+static void s_aws_http_connection_manager_complete_acquisitions(struct aws_linked_list *acquisitions, struct aws_allocator *allocator) {
+    while (!aws_linked_list_empty(acquisitions)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(acquisitions);
+        struct aws_http_connection_acquisition *pending_acquisition = AWS_CONTAINER_OF(node, struct aws_http_connection_acquisition, node);
+
+        pending_acquisition->callback(pending_acquisition->connection, pending_acquisition->result, pending_acquisition->user_data);
+        aws_mem_release(allocator, pending_acquisition);
+    }
+}
+
+/*
+ * Moves the first pending connection acquisition into a list.  Call this while holding the lock to
+ * build the set of callbacks to be completed once the lock is released.
+ *
+ * If this was a successful acquisition then connection is non-null
+ * If this was a failed acquisition then connection is null
+ */
+static void s_aws_http_connection_manager_move_front_acquisition(struct aws_http_connection_manager *manager, struct aws_http_connection *connection, int result, struct aws_linked_list *output_list) {
+    assert(!aws_linked_list_empty(&manager->pending_acquisitions));
+    assert(manager->pending_acquisition_count > 0);
+
+    struct aws_linked_list_node *node = aws_linked_list_pop_front(&manager->pending_acquisitions);
+    --manager->pending_acquisition_count;
+
+    struct aws_http_connection_acquisition *pending_acquisition = AWS_CONTAINER_OF(node, struct aws_http_connection_acquisition, node);
+    pending_acquisition->connection = connection;
+    pending_acquisition->result = result;
+
+    aws_linked_list_push_back(output_list, node);
+}
 
 static int s_connection_cleanup(void *context, struct aws_hash_element *element) {
     (void)context;
@@ -66,33 +154,19 @@ static void s_aws_http_connection_manager_destroy(struct aws_http_connection_man
         return;
     }
 
+    assert(manager->pending_connects_count == 0);
+
     aws_hash_table_foreach(&manager->connections, s_connection_cleanup, NULL);
     aws_hash_table_clean_up(&manager->connections);
 
-    while (!aws_linked_list_empty(&manager->pending_acquisitions)) {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(&manager->pending_acquisitions);
-        struct aws_pending_acquisition *pending_acquisition = AWS_CONTAINER_OF(node, struct aws_pending_acquisition, node);
-
-        pending_acquisition->callback(NULL, pending_acquisition->user_data, AWS_OP_ERR);
-        aws_mem_release(manager->allocator, pending_acquisition);
-    }
+    s_aws_http_connection_manager_complete_acquisitions(&manager->pending_acquisitions, manager->allocator);
+    manager->pending_acquisition_count = 0;
 
     aws_string_destroy(manager->host);
     aws_tls_connection_options_clean_up(&manager->tls_connection_options);
     aws_mutex_clean_up(&manager->lock);
 
     aws_mem_release(manager->allocator, manager);
-}
-
-void aws_http_connection_manager_acquire(struct aws_http_connection_manager *manager) {
-    aws_atomic_fetch_add(&manager->ref_count, 1);
-}
-
-void aws_http_connection_manager_release(struct aws_http_connection_manager *manager) {
-    size_t old_value = aws_atomic_fetch_sub(&manager->ref_count, 1);
-    if (old_value == 1) {
-        s_aws_http_connection_manager_destroy(manager);
-    }
 }
 
 struct aws_http_connection_manager *aws_http_connection_manager_new(struct aws_allocator *allocator, struct aws_http_connection_manager_options *options) {
@@ -144,7 +218,20 @@ on_error:
     return NULL;
 }
 
-static void s_aws_http_connection_manager_add_connection(struct aws_http_connection_manager *connection_manager, struct aws_http_connection *connection, enum aws_connection_return_type return_type);
+void aws_http_connection_manager_acquire(struct aws_http_connection_manager *manager) {
+    aws_atomic_fetch_add(&manager->ref_count, 1);
+}
+
+void aws_http_connection_manager_release(struct aws_http_connection_manager *manager) {
+    size_t old_value = aws_atomic_fetch_sub(&manager->ref_count, 1);
+    if (old_value == 1) {
+        s_aws_http_connection_manager_destroy(manager);
+    }
+}
+
+static void s_aws_http_connection_manager_accept_connection(struct aws_http_connection_manager *connection_manager,
+                                                            struct aws_http_connection *connection,
+                                                            enum aws_http_connection_accept_type return_type);
 
 static void s_aws_http_connection_manager_on_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     (void)error_code;
@@ -152,15 +239,36 @@ static void s_aws_http_connection_manager_on_connection_setup(struct aws_http_co
     struct aws_http_connection_manager *manager = user_data;
 
     if (connection != NULL) {
-        s_aws_http_connection_manager_add_connection(manager, connection, AWS_CRT_CONNECTED);
+        s_aws_http_connection_manager_accept_connection(manager, connection, AWS_CAT_NEWLY_CONNECTED);
         return;
     }
 
     aws_mutex_lock(&manager->lock);
 
-    // TODO: implement ??;
+    assert(manager->pending_connects_count > 0);
+    --manager->pending_connects_count;
+
+    /*
+     * A nice behavioral optimization.  If we failed to connect now, then we're more likely to fail in the near-future
+     * as well.  So if we have an excess of pending acquisitions (beyond the number of pending connects), let's fail
+     * all of the excess.
+     */
+    struct aws_linked_list trimmed_acquisitions;
+    aws_linked_list_init(&trimmed_acquisitions);
+
+    while(manager->pending_acquisition_count > manager->pending_connects_count) {
+        s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &trimmed_acquisitions);
+    }
 
     aws_mutex_unlock(&manager->lock);
+
+    s_aws_http_connection_manager_complete_acquisitions(&trimmed_acquisitions, manager->allocator);
+
+    /*
+     * Normally paired with pending_connects_count side effect, but let's delay this until the very end on
+     * the offchance that someone released the last external ref while there was still a pending connect.
+     */
+    aws_http_connection_manager_release(manager);
 }
 
 static void s_aws_http_connection_manager_on_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
@@ -179,7 +287,10 @@ static void s_aws_http_connection_manager_on_connection_shutdown(struct aws_http
 static int s_aws_http_connection_manager_new_connection(struct aws_http_connection_manager *connection_manager) {
     assert(aws_hash_table_get_entry_count(&connection_manager->connections) == 0);
 
-    if (connection_manager->vended_connection_count + connection_manager->pending_connection_count >= connection_manager->max_connections) {
+    /*
+     * Don't create too many
+     */
+    if (connection_manager->vended_connection_count + connection_manager->pending_connects_count >= connection_manager->max_connections) {
         return AWS_OP_SUCCESS;
     }
 
@@ -202,42 +313,51 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
         return AWS_OP_ERR;
     }
 
-    ++connection_manager->pending_connection_count;
+    ++connection_manager->pending_connects_count;
+    aws_http_connection_manager_acquire(connection_manager);
 
     return AWS_OP_SUCCESS;
 }
 
-static void s_aws_http_connection_manager_pump_acquisitions(struct aws_http_connection_manager *connection_manager) {
+/*
+ * A utility function that, if there's at least one pending acquisition, attempts to create a new connection for it.
+ */
+static void s_aws_http_connection_manager_pump_acquisitions(struct aws_http_connection_manager *connection_manager, struct aws_linked_list *to_complete_acquisitions) {
     if (!aws_linked_list_empty(&connection_manager->pending_acquisitions)) {
-        struct aws_linked_list_node *node = aws_linked_list_front(&connection_manager->pending_acquisitions);
-        struct aws_pending_acquisition *pending_acquisition = AWS_CONTAINER_OF(node, struct aws_pending_acquisition, node);
-
         if (s_aws_http_connection_manager_new_connection(connection_manager)) {
-
-            aws_linked_list_pop_front(&connection_manager->pending_acquisitions);
-            pending_acquisition->callback(NULL, pending_acquisition->user_data, AWS_OP_ERR);
-            aws_mem_release(connection_manager->allocator, pending_acquisition);
+            s_aws_http_connection_manager_move_front_acquisition(connection_manager, NULL, aws_last_error(), to_complete_acquisitions);
         }
     }
 }
 
-void s_aws_http_connection_manager_add_connection(struct aws_http_connection_manager *connection_manager, struct aws_http_connection *connection, enum aws_connection_return_type return_type) {
+/*
+ * Shared implementation for
+ *   (1) a new connection comes back from the http layer (AWS_CAT_NEWLY_CONNECTED)
+ *   (2) an old connection is returned by an external user (AWS_CAT_RELEASED)
+ */
+void s_aws_http_connection_manager_accept_connection(struct aws_http_connection_manager *connection_manager,
+                                                     struct aws_http_connection *connection,
+                                                     enum aws_http_connection_accept_type return_type) {
     assert(connection);
+
+    struct aws_linked_list to_complete_acquisitions;
+    aws_linked_list_init(&to_complete_acquisitions);
 
     aws_mutex_lock(&connection_manager->lock);
 
-    if (return_type == AWS_CRT_CONNECTED) {
-        assert(connection_manager->pending_connection_count > 0);
-
-        --connection_manager->pending_connection_count;
-    } else if (return_type == AWS_CRT_RELEASED) {
+    if (return_type == AWS_CAT_NEWLY_CONNECTED) {
+        assert(connection_manager->pending_connects_count > 0);
+        --connection_manager->pending_connects_count;
+    } else if (return_type == AWS_CAT_RELEASED) {
         assert(connection_manager->vended_connection_count > 0);
-
         --connection_manager->vended_connection_count;
     }
 
+    /*
+     * If the connection has expired, we should try to replace it with a new one.
+     */
     if (!aws_http_connection_is_open(connection)) {
-        s_aws_http_connection_manager_pump_acquisitions(connection_manager);
+        s_aws_http_connection_manager_pump_acquisitions(connection_manager, &to_complete_acquisitions);
         goto done;
     }
 
@@ -249,24 +369,41 @@ void s_aws_http_connection_manager_add_connection(struct aws_http_connection_man
         goto done;
     }
 
-    struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection_manager->pending_acquisitions);
-    struct aws_pending_acquisition *pending_acquisition = AWS_CONTAINER_OF(node, struct aws_pending_acquisition, node);
-
-    pending_acquisition->callback(connection, pending_acquisition->user_data, AWS_OP_SUCCESS);
-    aws_mem_release(connection_manager->allocator, pending_acquisition);
+    s_aws_http_connection_manager_move_front_acquisition(connection_manager, connection, AWS_ERROR_SUCCESS, &to_complete_acquisitions);
 
     ++connection_manager->vended_connection_count;
 
 done:
 
     aws_mutex_unlock(&connection_manager->lock);
+
+    s_aws_http_connection_manager_complete_acquisitions(&to_complete_acquisitions, connection_manager->allocator);
+
+    /*
+     * Delay until the very end just in case someone dropped the last external ref while there's a pending connect
+     */
+    if (return_type == AWS_CAT_NEWLY_CONNECTED) {
+        aws_http_connection_manager_release(connection_manager);
+    }
 }
 
-int aws_http_connection_manager_acquire_connection(struct aws_http_connection_manager *connection_manager, acquire_connection_callback_fn *callback, void *user_data) {
+/*
+ * Unlike the other functions, using the to_complete_acquisitions list doesn't make sense here because many
+ * of the completion points do not have an aws_http_connection_acquisition structure filled out.  So just
+ * do it with local variables (make_callback, callback_connection).
+ */
+int aws_http_connection_manager_acquire_connection(struct aws_http_connection_manager *connection_manager, aws_http_on_client_connection_setup_fn *callback, void *user_data) {
     int result = AWS_OP_ERR;
+
+    bool make_callback = false;
+    struct aws_http_connection *callback_connection = NULL;
 
     aws_mutex_lock(&connection_manager->lock);
 
+    /*
+     * Future: possibly worth evaluating whether LIFO-ordering ready connections gives a performance improvement (cache-wise)
+     * Would require moving from hash table to a different data structure
+     */
     size_t available_connection_count = aws_hash_table_get_entry_count(&connection_manager->connections);
     if (available_connection_count > 0) {
         struct aws_hash_iter iter = aws_hash_iter_begin(&connection_manager->connections);
@@ -276,20 +413,22 @@ int aws_http_connection_manager_acquire_connection(struct aws_http_connection_ma
 
         ++connection_manager->vended_connection_count;
         result = AWS_OP_SUCCESS;
-        callback(connection, user_data, AWS_OP_SUCCESS);
+
+        make_callback = true;
+        callback_connection = connection;
 
         goto done;
     }
 
-    struct aws_pending_acquisition *pending_connection = aws_mem_acquire(connection_manager->allocator, sizeof(struct aws_pending_acquisition));
+    struct aws_http_connection_acquisition *pending_connection = aws_mem_acquire(connection_manager->allocator, sizeof(struct aws_http_connection_acquisition));
     if (pending_connection == NULL) {
-        callback(NULL, user_data, AWS_OP_ERR);
+        make_callback = true;
         goto done;
     }
 
     if (s_aws_http_connection_manager_new_connection(connection_manager)) {
         aws_mem_release(connection_manager->allocator, pending_connection);
-        callback(NULL, user_data, AWS_OP_ERR);
+        make_callback = true;
         goto done;
     }
 
@@ -299,16 +438,21 @@ int aws_http_connection_manager_acquire_connection(struct aws_http_connection_ma
     pending_connection->user_data = user_data;
 
     aws_linked_list_push_back(&connection_manager->pending_acquisitions, &pending_connection->node);
+    ++connection_manager->pending_acquisition_count;
 
 done:
 
     aws_mutex_unlock(&connection_manager->lock);
 
+    if (make_callback) {
+        callback(callback_connection, callback_connection != NULL ? AWS_ERROR_SUCCESS : aws_last_error(), user_data);
+    }
+
     return result;
 }
 
 int aws_http_connection_manager_release_connection(struct aws_http_connection_manager *connection_manager, struct aws_http_connection *connection) {
-    s_aws_http_connection_manager_add_connection(connection_manager, connection, AWS_CRT_RELEASED);
+    s_aws_http_connection_manager_accept_connection(connection_manager, connection, AWS_CAT_RELEASED);
 
     return AWS_OP_SUCCESS;
 }
