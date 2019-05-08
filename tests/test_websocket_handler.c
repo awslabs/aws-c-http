@@ -724,9 +724,12 @@ TEST_CASE(websocket_handler_send_one_io_msg_at_a_time) {
 
     struct aws_byte_cursor payload = aws_byte_cursor_from_c_str("bitter butter.");
 
-    struct send_tester sending[10000];
-    memset(sending, 0, sizeof(sending));
-    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
+    const size_t count = 10000;
+    struct send_tester *sending = aws_mem_acquire(allocator, sizeof(struct send_tester) * count);
+    ASSERT_NOT_NULL(sending);
+    memset(sending, 0, sizeof(struct send_tester) * count);
+
+    for (size_t i = 0; i < count; ++i) {
         struct send_tester *send = &sending[i];
         send->payload = payload;
         send->def.opcode = AWS_WEBSOCKET_OPCODE_TEXT;
@@ -757,12 +760,13 @@ TEST_CASE(websocket_handler_send_one_io_msg_at_a_time) {
     }
 
     /* Assert that every frame sent */
-    ASSERT_UINT_EQUALS(1, sending[AWS_ARRAY_SIZE(sending) - 1].on_complete_count);
+    ASSERT_UINT_EQUALS(1, sending[count - 1].on_complete_count);
 
     /* Assert this test actually actually involved several aws_io_messages */
     ASSERT_TRUE(total_io_msg_count >= 3);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    aws_mem_release(allocator, sending);
     return AWS_OP_SUCCESS;
 }
 
