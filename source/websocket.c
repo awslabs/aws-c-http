@@ -39,7 +39,7 @@ enum {
 };
 
 struct outgoing_frame {
-    struct aws_websocket_outgoing_frame_options def;
+    struct aws_websocket_send_frame_options def;
     struct aws_linked_list_node node;
 };
 
@@ -295,9 +295,7 @@ static void s_enqueue_prioritized_frame(struct aws_linked_list *list, struct out
     aws_linked_list_insert_before(node_iter, &frame->node);
 }
 
-int aws_websocket_send_frame(
-    struct aws_websocket *websocket,
-    const struct aws_websocket_outgoing_frame_options *options) {
+int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_websocket_send_frame_options *options) {
 
     assert(websocket);
     assert(options);
@@ -330,6 +328,7 @@ int aws_websocket_send_frame(
     /* BEGIN CRITICAL SECTION */
     int err = aws_mutex_lock(&websocket->synced_data.lock);
     assert(!err);
+    (void)err;
 
     if (websocket->synced_data.send_frame_error_code) {
         send_error = websocket->synced_data.send_frame_error_code;
@@ -343,6 +342,8 @@ int aws_websocket_send_frame(
 
     err = aws_mutex_unlock(&websocket->synced_data.lock);
     assert(!err);
+    (void)err;
+
     /* END CRITICAL SECTION */
 
     if (send_error) {
@@ -388,6 +389,7 @@ static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, voi
     /* BEGIN CRITICAL SECTION */
     int err = aws_mutex_lock(&websocket->synced_data.lock);
     assert(!err);
+    (void)err;
 
     aws_linked_list_swap_contents(&websocket->synced_data.outgoing_frame_list, &tmp_list);
 
@@ -395,6 +397,7 @@ static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, voi
 
     err = aws_mutex_unlock(&websocket->synced_data.lock);
     assert(!err);
+    (void)err;
     /* END CRITICAL SECTION */
 
     if (!aws_linked_list_empty(&tmp_list)) {
@@ -702,11 +705,13 @@ static void s_stop_writing(struct aws_websocket *websocket, int send_frame_error
     /* BEGIN CRITICAL SECTION */
     int err = aws_mutex_lock(&websocket->synced_data.lock);
     assert(!err);
+    (void)err;
 
     websocket->synced_data.send_frame_error_code = send_frame_error_code;
 
     err = aws_mutex_unlock(&websocket->synced_data.lock);
     assert(!err);
+    (void)err;
     /* END CRITICAL SECTION */
 
     websocket->thread_data.is_writing_stopped = true;
@@ -778,7 +783,7 @@ static int s_handler_shutdown(
             s_finish_shutdown(websocket);
         } else {
             /* Attempt to queue a CLOSE frame, then wait for it to send before finishing shutdown. */
-            struct aws_websocket_outgoing_frame_options close_frame = {
+            struct aws_websocket_send_frame_options close_frame = {
                 .opcode = AWS_WEBSOCKET_OPCODE_CLOSE,
                 .fin = true,
             };
@@ -824,13 +829,17 @@ static void s_finish_shutdown(struct aws_websocket *websocket) {
     /* BEGIN CRITICAL SECTION */
     int err = aws_mutex_lock(&websocket->synced_data.lock);
     assert(!err);
+    (void)err;
+
     while (!aws_linked_list_empty(&websocket->synced_data.outgoing_frame_list)) {
         /* Move frames from synced_data to thread_data, then cancel them together outside critical section */
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&websocket->synced_data.outgoing_frame_list);
         aws_linked_list_push_back(&websocket->thread_data.outgoing_frame_list, node);
     }
+
     err = aws_mutex_unlock(&websocket->synced_data.lock);
     assert(!err);
+    (void)err;
     /* END CRITICAL SECTION */
 
     while (!aws_linked_list_empty(&websocket->thread_data.outgoing_frame_list)) {

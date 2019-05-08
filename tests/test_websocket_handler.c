@@ -51,7 +51,7 @@ struct tester {
 
 /* Helps track the progress of a frame being sent. */
 struct send_tester {
-    struct aws_websocket_outgoing_frame_options def; /* some properties are autoconfigured */
+    struct aws_websocket_send_frame_options def; /* some properties are autoconfigured */
     struct aws_byte_cursor payload;
 
     size_t delay_ticks;    /* Don't send anything the first N ticks */
