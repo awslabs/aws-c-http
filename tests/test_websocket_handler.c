@@ -56,17 +56,17 @@ struct send_tester {
 
     size_t delay_ticks;    /* Don't send anything the first N ticks */
     size_t bytes_per_tick; /* Don't send more than N bytes per tick */
+    size_t send_wrong_payload_amount;
 
     /* Everything below this line is auto-configured */
+    struct tester *owner;
 
     struct aws_byte_cursor cursor; /* iterates as payload is written */
     size_t on_payload_count;
 
     size_t on_complete_count;
-    int on_complete_error_code;
     size_t on_complete_order; /* Order that frame sent, amongst all frames sent this test */
-
-    struct tester *owner;
+    int on_complete_error_code;
 };
 
 static void s_on_connection_shutdown(struct aws_websocket *websocket, int error_code, void *user_data) {
@@ -204,6 +204,11 @@ static enum aws_websocket_outgoing_payload_state s_on_stream_outgoing_payload(
     struct send_tester *send_tester = user_data;
     AWS_FATAL_ASSERT(websocket == send_tester->owner->websocket);
 
+    /* If user wants frame to break websocket, write an extra byte */
+    if (send_tester->send_wrong_payload_amount && (send_tester->on_payload_count == 0)) {
+        aws_byte_buf_write_u8(out_buf, 'X');
+    }
+
     send_tester->on_payload_count++;
 
     size_t space_available = out_buf->capacity - out_buf->len;
@@ -237,6 +242,7 @@ static void s_on_outgoing_frame_complete(struct aws_websocket *websocket, int er
 static int s_send_frame_ex(struct tester *tester, struct send_tester *send_tester, bool assert_on_error) {
     send_tester->owner = tester;
     send_tester->cursor = send_tester->payload;
+
     send_tester->def.payload_length = send_tester->payload.len;
     send_tester->def.stream_outgoing_payload = s_on_stream_outgoing_payload;
     send_tester->def.on_complete = s_on_outgoing_frame_complete;
@@ -497,46 +503,24 @@ TEST_CASE(websocket_handler_send_payload_with_pauses) {
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
-    struct send_tester sending[] = {
-        {
-            .payload = aws_byte_cursor_from_c_str("immediate A."),
-            .def =
-                {
-                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
-                    .fin = false,
-                },
-        },
-        {
-            .payload = aws_byte_cursor_from_c_str("delayed B."),
-            .def =
-                {
-                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
-                    .fin = false,
-                },
-            .delay_ticks = 5,
-        },
-        {
-            .payload = aws_byte_cursor_from_c_str("immediate C."),
-            .def =
-                {
-                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
-                    .fin = true,
-                },
-        },
+    struct send_tester sending = {
+        .payload = aws_byte_cursor_from_c_str("delayed B."),
+        .def =
+            {
+                .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                .fin = true,
+            },
+        .delay_ticks = 5,
     };
 
-    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
-        ASSERT_SUCCESS(s_send_frame(&tester, &sending[i]));
-    }
+    ASSERT_SUCCESS(s_send_frame(&tester, &sending));
 
     ASSERT_SUCCESS(s_drain_written_messages(&tester));
 
-    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
-        ASSERT_SUCCESS(s_check_written_message(&sending[i], i));
-    }
+    ASSERT_SUCCESS(s_check_written_message(&sending, 0));
 
     /* Ensure this test really did send data over multiple callbacks */
-    ASSERT_TRUE(sending[1].on_payload_count > 1);
+    ASSERT_TRUE(sending.on_payload_count > 1);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -721,6 +705,208 @@ TEST_CASE(websocket_handler_send_frames_always_complete) {
             ASSERT_UINT_EQUALS(1, sending[i].on_complete_count);
         }
     }
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_send_one_io_msg_at_a_time) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct aws_byte_cursor payload = aws_byte_cursor_from_c_str("bitter butter.");
+
+    struct send_tester sending[10000];
+    memset(sending, 0, sizeof(sending));
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
+        struct send_tester *send = &sending[i];
+        send->payload = payload;
+        send->def.opcode = AWS_WEBSOCKET_OPCODE_TEXT;
+        send->def.fin = true;
+
+        ASSERT_SUCCESS(s_send_frame(&tester, send));
+    }
+
+    /* Repeatedly drain event loop and ensure that only 1 aws_io_message is written */
+    struct aws_linked_list *io_msgs = testing_channel_get_written_message_queue(&tester.testing_channel);
+    size_t total_io_msg_count = 0;
+    while (true) {
+        testing_channel_drain_queued_tasks(&tester.testing_channel);
+        if (aws_linked_list_empty(io_msgs)) {
+            break;
+        }
+
+        total_io_msg_count++;
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(io_msgs);
+        struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
+
+        ASSERT_TRUE(aws_linked_list_empty(io_msgs)); /* Only 1 aws_io_message should be in the channel at a time */
+
+        if (msg->on_completion) {
+            msg->on_completion(tester.testing_channel.channel, msg, AWS_ERROR_SUCCESS, msg->user_data);
+        }
+        aws_mem_release(msg->allocator, msg);
+    }
+
+    /* Assert that every frame sent */
+    ASSERT_UINT_EQUALS(1, sending[AWS_ARRAY_SIZE(sending) - 1].on_complete_count);
+
+    /* Assert this test actually actually involved several aws_io_messages */
+    ASSERT_TRUE(total_io_msg_count >= 3);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_shutdown_automatically_sends_close_frame) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* Shutdown channel normally */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+
+    /* Check that CLOSE frame written */
+    ASSERT_UINT_EQUALS(AWS_WEBSOCKET_OPCODE_CLOSE, tester.written_frames[0].def.opcode);
+    ASSERT_TRUE(tester.written_frames[0].is_complete);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Ensure that, if user had queued their own CLOSE frame before shutdown,
+ * The user frame is the only one that gets written. */
+TEST_CASE(websocket_handler_shutdown_handles_queued_close_frame) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* Try to make it so we issue channel-shutdown while user CLOSE frame is mid-send.
+     * We use the "payload delay" feature in the `send_tester` struct */
+    uint8_t payload_bytes[] = {0x01, 0x02};
+    struct send_tester send = {
+        .payload = aws_byte_cursor_from_array(payload_bytes, sizeof(payload_bytes)),
+        .def =
+            {
+                .opcode = AWS_WEBSOCKET_OPCODE_CLOSE,
+                .fin = true,
+            },
+        .delay_ticks = 5,
+    };
+
+    ASSERT_SUCCESS(s_send_frame(&tester, &send));
+
+    /* Assert that test has one aws_io_message written, containing a partially sent frame */
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    ASSERT_TRUE(send.on_payload_count > 0);
+    ASSERT_UINT_EQUALS(0, send.on_complete_count);
+
+    /* Shutdown channel normally */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+
+    /* Check that user's CLOSE frame was written, and nothing further */
+    ASSERT_SUCCESS(s_check_written_message(&send, 0));
+    ASSERT_UINT_EQUALS(1, tester.num_written_frames);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_shutdown_immediately_in_emergency) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* Try to make it so we issue channel-shutdown while a frame is mid-send.
+     * We use the "payload delay" feature in the `send_tester` struct */
+    struct send_tester send = {
+        .payload = aws_byte_cursor_from_c_str("delayed payload"),
+        .def =
+            {
+                .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                .fin = true,
+            },
+        .delay_ticks = 15,
+    };
+
+    ASSERT_SUCCESS(s_send_frame(&tester, &send));
+
+    /* Assert that test is issuing shutdown while frame is partially written */
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    ASSERT_TRUE(send.on_payload_count > 0);
+    ASSERT_UINT_EQUALS(0, send.on_complete_count);
+
+    /* Shutdown channel with error code, which should result in IMMEDIATE style shutdown */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_IO_SOCKET_CLOSED);
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+
+    /* Ensure shutdown is complete at this point*/
+    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+
+    /* Frame should not have sent completely, no CLOSE frame should have been sent either */
+    ASSERT_UINT_EQUALS(1, send.on_complete_count);
+    ASSERT_TRUE(send.on_complete_error_code != AWS_ERROR_SUCCESS);
+
+    ASSERT_UINT_EQUALS(0, tester.num_written_frames);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* During normal shutdown, the websocket delays until a CLOSE frame can be sent.
+ * This test checks that, if unexpected errors occur during that waiting period, shutdown doesn't hang forever */
+TEST_CASE(websocket_handler_shutdown_handles_unexpected_write_error) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* Queue a frame that delays a while, and then breaks the websocket entirely. */
+    struct send_tester send = {
+        .payload = aws_byte_cursor_from_c_str("bad frame"),
+        .def =
+            {
+                .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                .fin = true,
+            },
+        .delay_ticks = 15,
+        .send_wrong_payload_amount = 1,
+    };
+
+    ASSERT_SUCCESS(s_send_frame(&tester, &send));
+
+    /* Assert that test is issuing shutdown while frame is partially written */
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    ASSERT_TRUE(send.on_payload_count > 0);
+    ASSERT_UINT_EQUALS(0, send.on_complete_count);
+
+    /* Shutdown channel normally, which should cause the websocket to queue a CLOSE frame and wait until it's sent. */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_IO_SOCKET_CLOSED);
+
+    /* Wait for shutdown to complete */
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+
+    /* Assert that test did actually experience a write error */
+    ASSERT_UINT_EQUALS(1, send.on_complete_count);
+    ASSERT_TRUE(send.on_complete_error_code != AWS_ERROR_SUCCESS);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_shutdown_on_zero_refcount) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    aws_websocket_acquire_hold(tester.websocket);
+    aws_websocket_release_hold(tester.websocket);
+
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;

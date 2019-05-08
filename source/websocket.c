@@ -26,7 +26,13 @@
 #include <inttypes.h>
 
 /* TODO: echo payload of peer CLOSE */
+
 /* TODO: Can we be sure socket will always mark aws_io_messages as complete? */
+
+/* TODO: If something goes wrong during normal shutdown, do I change the error_code? */
+
+/* TODO: Delayed payload works by sending 0-size io_msgs down pipe and trying again when they're compele.
+ *       Do something more efficient? */
 
 enum {
     MESSAGE_SIZE_HINT = 16 * 1024,
@@ -192,7 +198,7 @@ struct aws_channel_handler *aws_websocket_handler_new(const struct aws_websocket
     websocket->on_incoming_frame_payload = options->on_incoming_frame_payload;
     websocket->on_incoming_frame_complete = options->on_incoming_frame_complete;
 
-    aws_atomic_init_int(&websocket->refcount, 1);
+    aws_atomic_init_int(&websocket->refcount, 0);
 
     websocket->is_server = options->is_server;
 
@@ -768,6 +774,7 @@ static int s_handler_shutdown(
                 "id=%p: Finishing handler shutdown immediately, without ensuring a CLOSE frame was sent.",
                 (void *)websocket);
 
+            s_stop_writing(websocket, AWS_ERROR_HTTP_CONNECTION_CLOSED);
             s_finish_shutdown(websocket);
         } else {
             /* Attempt to queue a CLOSE frame, then wait for it to send before finishing shutdown. */
@@ -784,6 +791,7 @@ static int s_handler_shutdown(
                     aws_last_error(),
                     aws_error_name(aws_last_error()));
 
+                s_stop_writing(websocket, AWS_ERROR_HTTP_CONNECTION_CLOSED);
                 s_finish_shutdown(websocket);
             } else {
                 AWS_LOGF_TRACE(
