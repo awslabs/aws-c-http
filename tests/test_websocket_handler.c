@@ -19,6 +19,10 @@
 #include <aws/io/logging.h>
 #include <aws/testing/io_testing_channel.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#endif
+
 #define TEST_CASE(NAME)                                                                                                \
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
@@ -128,7 +132,8 @@ static int s_on_written_frame(const struct aws_websocket_frame *frame, void *use
     struct written_frame *written = &tester->written_frames[tester->num_written_frames];
     written->def = *frame;
     if (frame->payload_length) {
-        ASSERT_SUCCESS(aws_byte_buf_init(&written->payload, tester->alloc, frame->payload_length));
+        AWS_FATAL_ASSERT(frame->payload_length <= SIZE_MAX);
+        ASSERT_SUCCESS(aws_byte_buf_init(&written->payload, tester->alloc, (size_t)frame->payload_length));
     }
     return AWS_OP_SUCCESS;
 }
@@ -223,7 +228,9 @@ static enum aws_websocket_outgoing_payload_state s_on_stream_outgoing_payload(
 
     size_t amount_to_send = bytes_max < space_available ? bytes_max : space_available;
     struct aws_byte_cursor send_cursor = aws_byte_cursor_advance(&send_tester->cursor, amount_to_send);
-    aws_byte_buf_write_from_whole_cursor(out_buf, send_cursor);
+    if (send_cursor.len) {
+        aws_byte_buf_write_from_whole_cursor(out_buf, send_cursor);
+    }
 
     return send_tester->cursor.len == 0 ? AWS_WEBSOCKET_OUTGOING_PAYLOAD_DONE
                                         : AWS_WEBSOCKET_OUTGOING_PAYLOAD_IN_PROGRESS;
