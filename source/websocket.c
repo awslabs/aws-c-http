@@ -25,6 +25,10 @@
 
 #include <inttypes.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#endif
+
 /* TODO: echo payload of peer CLOSE */
 
 /* TODO: Can we be sure socket will always mark aws_io_messages as complete? */

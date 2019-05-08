@@ -258,9 +258,7 @@ void aws_websocket_close(struct aws_websocket *websocket, int error_code);
  * A callback will be invoked when the operation completes.
  */
 AWS_HTTP_API
-int aws_websocket_send_frame(
-    struct aws_websocket *websocket,
-    const struct aws_websocket_send_frame_options *options);
+int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_websocket_send_frame_options *options);
 
 /* WIP */
 AWS_HTTP_API
