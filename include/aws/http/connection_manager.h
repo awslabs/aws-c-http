@@ -25,6 +25,7 @@ struct aws_client_bootstrap;
 struct aws_http_connection_manager;
 struct aws_socket_options;
 struct aws_tls_connection_options;
+struct aws_http_connection_manager_mocks;
 
 /*
  * Connection manager configuration struct.
@@ -40,6 +41,7 @@ struct aws_http_connection_manager_options {
     struct aws_byte_cursor host;
     uint16_t port;
     size_t max_connections;
+    struct aws_http_connection_manager_function_table *mocks;
 };
 
 AWS_EXTERN_C_BEGIN

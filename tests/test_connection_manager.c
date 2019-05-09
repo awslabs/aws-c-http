@@ -15,6 +15,7 @@
 
 #include <aws/testing/aws_test_harness.h>
 
+#include <aws/common/array_list.h>
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
 #include <aws/common/mutex.h>
@@ -45,48 +46,13 @@ struct cm_tester {
     struct aws_tls_ctx_options tls_ctx_options;
     struct aws_tls_connection_options tls_connection_options;
 
-    struct aws_mutex wait_lock;
-    struct aws_condition_variable wait_cvar;
+    struct aws_mutex lock;
+    struct aws_condition_variable signal;
 
-    int wait_result;
+    struct aws_array_list connections;
+    size_t connect_errors;
+
 };
-
-#ifdef NEVER
-static void s_tester_on_client_connection_setup(
-    struct aws_http_connection *connection,
-    int error_code,
-    void *user_data) {
-
-    struct tester *tester = user_data;
-    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
-
-    if (error_code) {
-        tester->wait_result = error_code;
-        goto done;
-    }
-
-    tester->client_connection = connection;
-    done:
-    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
-    aws_condition_variable_notify_one(&tester->wait_cvar);
-}
-
-static void s_tester_on_client_connection_shutdown(
-    struct aws_http_connection *connection,
-    int error_code,
-    void *user_data) {
-
-    (void)connection;
-    (void)error_code;
-    struct tester *tester = user_data;
-    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
-
-    tester->client_connection_is_shutdown = true;
-
-    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
-    aws_condition_variable_notify_one(&tester->wait_cvar);
-}
-#endif
 
 int s_cm_tester_init(struct cm_tester *tester, struct cm_tester_options *options) {
     AWS_ZERO_STRUCT(*tester);
@@ -98,13 +64,7 @@ int s_cm_tester_init(struct cm_tester *tester, struct cm_tester_options *options
 
     tester->allocator = options->allocator;
 
-    if (aws_mutex_init(&tester->wait_lock)) {
-        return AWS_OP_ERR;
-    }
-
-    if (aws_condition_variable_init(&tester->wait_cvar)) {
-        return AWS_OP_ERR;
-    }
+    ASSERT_SUCCESS(aws_array_list_init_dynamic(&tester->connections, tester->allocator, 10, sizeof(struct aws_http_connection *)));
 
     ASSERT_SUCCESS(aws_event_loop_group_default_init(&tester->event_loop_group, tester->allocator, 1));
     ASSERT_SUCCESS(aws_host_resolver_init_default(&tester->host_resolver, tester->allocator, 8, &tester->event_loop_group));
@@ -142,10 +102,50 @@ int s_cm_tester_init(struct cm_tester *tester, struct cm_tester_options *options
     return AWS_OP_SUCCESS;
 }
 
+void s_release_connections(struct cm_tester *tester, size_t count) {
+    size_t release_count = aws_array_list_length(&tester->connections);
+    if (release_count > count) {
+        release_count = count;
+    }
+
+    for (size_t i = 0; i < release_count; ++i) {
+        struct aws_http_connection *connection = NULL;
+        if (aws_array_list_back(&tester->connections, &connection)) {
+            continue;
+        }
+
+        aws_array_list_pop_back(&tester->connections);
+
+        aws_http_connection_manager_release_connection(tester->connection_manager, connection);
+    }
+}
+
+void s_on_acquire_connection(struct aws_http_connection *connection, int error_code, void *user_data) {
+    struct cm_tester *tester = user_data;
+
+    aws_mutex_lock(&tester->lock);
+
+    if (connection == NULL) {
+        ++tester->connect_errors;
+    } else if (aws_array_list_push_back(&tester->connections, &connection)) {
+        aws_http_connection_manager_release_connection(tester->connection_manager, connection);
+    }
+
+    aws_mutex_unlock(&tester->lock);
+}
+
+void s_acquire_connections(struct cm_tester *tester, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        aws_http_connection_manager_acquire_connection(tester->connection_manager, s_on_acquire_connection, tester);
+    }
+}
+
 void s_cm_tester_clean_up(struct cm_tester *tester) {
     if (tester == NULL) {
         return;
     }
+
+    s_release_connections(tester, aws_array_list_length(&tester->connections));
 
     aws_http_connection_manager_release(tester->connection_manager);
 
@@ -157,9 +157,6 @@ void s_cm_tester_clean_up(struct cm_tester *tester) {
     aws_tls_ctx_options_clean_up(&tester->tls_ctx_options);
     aws_tls_connection_options_clean_up(&tester->tls_connection_options);
     aws_tls_ctx_destroy(tester->tls_ctx);
-
-    aws_mutex_clean_up(&tester->wait_lock);
-    aws_condition_variable_clean_up(&tester->wait_cvar);
 
     aws_http_library_clean_up();
     aws_tls_clean_up_static_state();
