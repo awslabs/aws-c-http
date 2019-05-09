@@ -563,6 +563,14 @@ TEST_CASE(websocket_handler_send_high_priority_frame) {
                     .fin = true,
                 },
         },
+        {
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_PONG,
+                    .fin = true,
+                    .high_priority = true,
+                },
+        },
     };
 
     /* Send from user-thread to ensure that everything is queued.
@@ -576,10 +584,11 @@ TEST_CASE(websocket_handler_send_high_priority_frame) {
     testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
     ASSERT_SUCCESS(s_drain_written_messages(&tester));
 
-    /* High-priority frame (index 1) should get sent first */
+    /* High-priority frames (index 1 and 3) should get sent first */
     ASSERT_SUCCESS(s_check_written_message(&sending[1], 0));
-    ASSERT_SUCCESS(s_check_written_message(&sending[0], 1));
-    ASSERT_SUCCESS(s_check_written_message(&sending[2], 2));
+    ASSERT_SUCCESS(s_check_written_message(&sending[3], 1));
+    ASSERT_SUCCESS(s_check_written_message(&sending[0], 2));
+    ASSERT_SUCCESS(s_check_written_message(&sending[2], 3));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;

@@ -59,11 +59,9 @@ struct aws_websocket {
     aws_websocket_on_incoming_frame_payload_fn *on_incoming_frame_payload;
     aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
 
-    struct aws_atomic_var refcount;
-
-    bool is_server;
-
     struct aws_channel_task move_synced_data_to_thread_task;
+    struct aws_atomic_var refcount;
+    bool is_server;
 
     struct {
         struct aws_websocket_encoder encoder;
@@ -290,18 +288,19 @@ void aws_websocket_release_hold(struct aws_websocket *websocket) {
 }
 
 /* Insert frame into list, sorting by priority, then by age (high-priority and older frames towards the front) */
-static void s_enqueue_prioritized_frame(struct aws_linked_list *list, struct outgoing_frame *frame) {
-    struct aws_linked_list_node *node_iter = aws_linked_list_begin(list);
-    const struct aws_linked_list_node *end = aws_linked_list_end(list);
-    while (node_iter != end) {
-        struct outgoing_frame *frame_iter = AWS_CONTAINER_OF(node_iter, struct outgoing_frame, node);
-        if (frame->def.high_priority && !frame_iter->def.high_priority) {
+static void s_enqueue_prioritized_frame(struct aws_linked_list *list, struct outgoing_frame *to_add) {
+    /* Iterate in reverse so that common case (a bunch of low-priority frames) is O(1) */
+    struct aws_linked_list_node *rev_iter = aws_linked_list_rbegin(list);
+    const struct aws_linked_list_node *rev_end = aws_linked_list_rend(list);
+    while (rev_iter != rev_end) {
+        struct outgoing_frame *frame_i = AWS_CONTAINER_OF(rev_iter, struct outgoing_frame, node);
+        if (to_add->def.high_priority == frame_i->def.high_priority) {
             break;
         }
-        node_iter = aws_linked_list_next(node_iter);
+        rev_iter = aws_linked_list_prev(rev_iter);
     }
 
-    aws_linked_list_insert_before(node_iter, &frame->node);
+    aws_linked_list_insert_after(rev_iter, &to_add->node);
 }
 
 int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_websocket_send_frame_options *options) {

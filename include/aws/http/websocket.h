@@ -200,16 +200,16 @@ struct aws_websocket_send_frame_options {
     bool fin;
 
     /**
-     * MUST be 0 unless an extension is negotiated that defines meanings for non-zero values.
-     */
-    bool rsv[3];
-
-    /**
      * If true, frame will be sent before those with normal priority.
      * Useful for opcodes like PING and PONG where low latency is important.
      * This feature may only be used with "control" opcodes, not "data" opcodes like BINARY and TEXT.
      */
     bool high_priority;
+
+    /**
+     * MUST be 0 unless an extension is negotiated that defines meanings for non-zero values.
+     */
+    bool rsv[3];
 };
 
 AWS_EXTERN_C_BEGIN
