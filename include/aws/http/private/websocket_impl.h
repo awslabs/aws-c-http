@@ -16,16 +16,7 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/http.h>
-
-enum aws_websocket_opcode {
-    AWS_WEBSOCKET_OPCODE_CONTINUATION = 0x0,
-    AWS_WEBSOCKET_OPCODE_TEXT = 0x1,
-    AWS_WEBSOCKET_OPCODE_BINARY = 0x2,
-    AWS_WEBSOCKET_OPCODE_CLOSE = 0x8,
-    AWS_WEBSOCKET_OPCODE_PING = 0x9,
-    AWS_WEBSOCKET_OPCODE_PONG = 0xA,
-};
+#include <aws/http/websocket.h>
 
 /* RFC-6455 Section 5.2 Base Framing Protocol
  * Payload length:  7 bits, 7+16 bits, or 7+64 bits
@@ -53,6 +44,9 @@ enum aws_websocket_opcode {
 #define AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MIN_VALUE 0x0000000000010000
 #define AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MAX_VALUE 0x7FFFFFFFFFFFFFFF
 
+/* Max bytes necessary to send non-payload parts of a frame */
+#define AWS_WEBSOCKET_MAX_FRAME_OVERHEAD (2 + 8 + 4) /* base + extended-length + masking-key */
+
 /**
  * Full contents of a websocket frame, excluding the payload.
  */
@@ -65,12 +59,41 @@ struct aws_websocket_frame {
     uint8_t masking_key[4];
 };
 
-/**
- * Return true if opcode is for a data frame, false if opcode if for a control frame.
- */
-AWS_STATIC_IMPL
-bool aws_websocket_is_data_frame(uint8_t opcode) {
-    return !(opcode & 0x08); /* RFC-6455 Section 5.6: Most significant bit of (4 bit) data frame opcode is 0 */
-}
+struct aws_websocket_handler_options {
+    struct aws_allocator *allocator;
+    struct aws_channel_slot *channel_slot;
+    size_t initial_window_size;
 
+    void *user_data;
+    aws_websocket_on_connection_shutdown_fn *on_connection_shutdown;
+    aws_websocket_on_incoming_frame_begin_fn *on_incoming_frame_begin;
+    aws_websocket_on_incoming_frame_payload_fn *on_incoming_frame_payload;
+    aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
+
+    bool is_server;
+};
+
+AWS_EXTERN_C_BEGIN
+
+/**
+ * Returns printable name for opcode as c-string.
+ */
+AWS_HTTP_API
+const char *aws_websocket_opcode_str(uint8_t opcode);
+
+/**
+ * Return total number of bytes needed to encode frame and its payload
+ */
+AWS_HTTP_API
+uint64_t aws_websocket_frame_encoded_size(const struct aws_websocket_frame *frame);
+
+/**
+ * Returns channel-handler for websocket.
+ * handler->impl is the aws_websocket*
+ * To destroy a handler that was never put into a channel, invoke: `handler->vtable.destroy(handler)`
+ */
+AWS_HTTP_API
+struct aws_channel_handler *aws_websocket_handler_new(const struct aws_websocket_handler_options *options);
+
+AWS_EXTERN_C_END
 #endif /* AWS_HTTP_WEBSOCKET_IMPL_H */

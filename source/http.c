@@ -38,6 +38,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_PARSE,
         "Encountered an unexpected form when parsing an http message."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_CONNECTION_CLOSED,
+        "Message not sent, as the connection has closed or is closing."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL,
         "An unsupported protocol was encountered."),
     AWS_DEFINE_ERROR_INFO_HTTP(
@@ -47,14 +50,14 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_DATA_NOT_AVAILABLE,
         "This data is not yet available."),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_END_RANGE,
-        "Not a real error and should never be seen."),
-    AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_CONNECTION_CLOSED,
-        "Message not sent, as the connection has closed."),
-    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT,
         "Amount of data streamed out does not match the previously declared length."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_WEBSOCKET_CLOSE_FRAME_SENT,
+        "Websocket has sent CLOSE frame, no more data will be sent."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_END_RANGE,
+        "Not a real error and should never be seen."),
 };
 /* clang-format on */
 
@@ -68,6 +71,7 @@ static struct aws_log_subject_info s_log_subject_infos[] = {
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION, "http-connection", "HTTP client or server connection"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_SERVER, "http-server", "HTTP server socket listening for incoming connections"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_STREAM, "http-stream", "HTTP request-response exchange"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET, "websocket", "Websocket"),
 };
 
 static struct aws_log_subject_info_list s_log_subject_list = {
