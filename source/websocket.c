@@ -55,9 +55,9 @@ struct aws_websocket {
 
     void *user_data;
     aws_websocket_on_connection_shutdown_fn *on_connection_shutdown;
-    aws_websocket_on_incoming_frame_begin *on_incoming_frame_begin;
-    aws_websocket_on_incoming_frame_payload *on_incoming_frame_payload;
-    aws_websocket_on_incoming_frame_complete *on_incoming_frame_complete;
+    aws_websocket_on_incoming_frame_begin_fn *on_incoming_frame_begin;
+    aws_websocket_on_incoming_frame_payload_fn *on_incoming_frame_payload;
+    aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
 
     struct aws_atomic_var refcount;
 
@@ -176,6 +176,11 @@ const char *aws_websocket_opcode_str(uint8_t opcode) {
         default:
             return "";
     }
+}
+
+bool aws_websocket_is_data_frame(uint8_t opcode) {
+    /* RFC-6455 Section 5.6: Most significant bit of (4 bit) data frame opcode is 0 */
+    return !(opcode & 0x08);
 }
 
 struct aws_channel_handler *aws_websocket_handler_new(const struct aws_websocket_handler_options *options) {
@@ -759,9 +764,9 @@ static int s_handler_shutdown(
     assert(aws_channel_thread_is_callers_thread(slot->channel));
     struct aws_websocket *websocket = handler->impl;
 
-    AWS_LOGF_TRACE(
+    AWS_LOGF_DEBUG(
         AWS_LS_HTTP_WEBSOCKET,
-        "id=%p: Websocket handler shutdown dir=%s error_code=%d immediate=%d.",
+        "id=%p: Websocket handler shutting down dir=%s error_code=%d immediate=%d.",
         (void *)websocket,
         dir == AWS_CHANNEL_DIR_READ ? "READ" : "WRITE",
         error_code,

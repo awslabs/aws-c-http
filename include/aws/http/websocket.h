@@ -76,7 +76,7 @@ struct aws_websocket_incoming_frame {
  * Each incoming-frame-begin call will eventually be followed by an incoming-frame-complete call,
  * before the next frame begins and before the websocket shuts down.
  */
-typedef void(aws_websocket_on_incoming_frame_begin)(
+typedef void(aws_websocket_on_incoming_frame_begin_fn)(
     struct aws_websocket *websocket,
     const struct aws_websocket_incoming_frame *frame,
     void *user_data);
@@ -93,7 +93,7 @@ typedef void(aws_websocket_on_incoming_frame_begin)(
  * Setting this value to 0 will prevent the update and let the window shrink.
  * The window can be manually updated via aws_websocket_update_window()
  */
-typedef void(aws_websocket_on_incoming_frame_payload)(
+typedef void(aws_websocket_on_incoming_frame_payload_fn)(
     struct aws_websocket *websocket,
     const struct aws_websocket_incoming_frame *frame,
     struct aws_byte_cursor data,
@@ -105,7 +105,7 @@ typedef void(aws_websocket_on_incoming_frame_payload)(
  * If error_code is non-zero, an error occurred and the payload may not have been completely received.
  * Invoked once per frame on the websocket's event-loop thread.
  */
-typedef void(aws_websocket_on_incoming_frame_complete)(
+typedef void(aws_websocket_on_incoming_frame_complete_fn)(
     struct aws_websocket *websocket,
     const struct aws_websocket_incoming_frame *frame,
     int error_code,
@@ -127,9 +127,9 @@ struct aws_websocket_client_connection_options {
     void *user_data;
     aws_websocket_on_connection_setup_fn *on_connection_setup;
     aws_websocket_on_connection_shutdown_fn *on_connection_shutdown;
-    aws_websocket_on_incoming_frame_begin *on_incoming_frame_begin;
-    aws_websocket_on_incoming_frame_payload *on_incoming_frame_payload;
-    aws_websocket_on_incoming_frame_complete *on_incoming_frame_complete;
+    aws_websocket_on_incoming_frame_begin_fn *on_incoming_frame_begin;
+    aws_websocket_on_incoming_frame_payload_fn *on_incoming_frame_payload;
+    aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
 };
 
 enum aws_websocket_outgoing_payload_state {
@@ -212,15 +212,13 @@ struct aws_websocket_send_frame_options {
     bool high_priority;
 };
 
+AWS_EXTERN_C_BEGIN
+
 /**
  * Return true if opcode is for a data frame, false if opcode if for a control frame.
  */
-AWS_STATIC_IMPL
-bool aws_websocket_is_data_frame(uint8_t opcode) {
-    return !(opcode & 0x08); /* RFC-6455 Section 5.6: Most significant bit of (4 bit) data frame opcode is 0 */
-}
-
-AWS_EXTERN_C_BEGIN
+AWS_HTTP_API
+bool aws_websocket_is_data_frame(uint8_t opcode);
 
 /* WIP */
 AWS_HTTP_API
