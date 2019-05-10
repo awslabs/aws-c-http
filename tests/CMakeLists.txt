@@ -86,6 +86,7 @@ add_test_case(websocket_encoder_fragmentation_failure_checks)
 add_test_case(websocket_encoder_payload_callback_can_fail_encoder)
 
 add_test_case(test_connection_manager_setup_shutdown)
+add_test_case(test_connection_manager_single_connection)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})

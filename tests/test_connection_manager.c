@@ -52,6 +52,7 @@ struct cm_tester {
     struct aws_array_list connections;
     size_t connect_errors;
 
+    size_t wait_for_connection_count;
 };
 
 int s_cm_tester_init(struct cm_tester *tester, struct cm_tester_options *options) {
@@ -90,9 +91,9 @@ int s_cm_tester_init(struct cm_tester *tester, struct cm_tester_options *options
         .bootstrap = tester->client_bootstrap,
         .initial_window_size = SIZE_MAX,
         .socket_options = &socket_options,
-        .tls_connection_options = &tester->tls_connection_options,
-        .host = aws_byte_cursor_from_c_str("https://s3.amazonaws.com/"),
-        .port = 443,
+        .tls_connection_options = NULL, //&tester->tls_connection_options,
+        .host = aws_byte_cursor_from_c_str("www.google.com"),
+        .port = 80,
         .max_connections = options->max_connections
     };
 
@@ -127,17 +128,32 @@ void s_on_acquire_connection(struct aws_http_connection *connection, int error_c
 
     if (connection == NULL) {
         ++tester->connect_errors;
-    } else if (aws_array_list_push_back(&tester->connections, &connection)) {
-        aws_http_connection_manager_release_connection(tester->connection_manager, connection);
+    } else {
+        aws_array_list_push_back(&tester->connections, &connection);
     }
+
+    aws_condition_variable_notify_one(&tester->signal);
 
     aws_mutex_unlock(&tester->lock);
 }
 
-void s_acquire_connections(struct cm_tester *tester, size_t count) {
+static void s_acquire_connections(struct cm_tester *tester, size_t count) {
     for (size_t i = 0; i < count; ++i) {
         aws_http_connection_manager_acquire_connection(tester->connection_manager, s_on_acquire_connection, tester);
     }
+}
+
+static bool s_is_connection_reply_count_equal(void *context) {
+    struct cm_tester *tester = context;
+
+    return tester->wait_for_connection_count == aws_array_list_length(&tester->connections) + tester->connect_errors;
+}
+
+static void s_wait_on_connection_reply_count(struct cm_tester *tester, size_t count) {
+    aws_mutex_lock(&tester->lock);
+
+    tester->wait_for_connection_count = count;
+    aws_condition_variable_wait_pred(&tester->signal, &tester->lock, s_is_connection_reply_count_equal, tester);
 }
 
 void s_cm_tester_clean_up(struct cm_tester *tester) {
@@ -146,6 +162,8 @@ void s_cm_tester_clean_up(struct cm_tester *tester) {
     }
 
     s_release_connections(tester, aws_array_list_length(&tester->connections));
+
+    aws_array_list_clean_up(&tester->connections);
 
     aws_http_connection_manager_release(tester->connection_manager);
 
@@ -178,3 +196,26 @@ static int s_test_connection_manager_setup_shutdown(struct aws_allocator *alloca
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_setup_shutdown, s_test_connection_manager_setup_shutdown);
+
+static int s_test_connection_manager_single_connection(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5
+    };
+
+    struct cm_tester tester;
+    ASSERT_SUCCESS(s_cm_tester_init(&tester, &options));
+
+    s_acquire_connections(&tester, 1);
+
+    s_wait_on_connection_reply_count(&tester, 1);
+
+    s_release_connections(&tester, 1);
+
+    s_cm_tester_clean_up(&tester);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_single_connection, s_test_connection_manager_single_connection);

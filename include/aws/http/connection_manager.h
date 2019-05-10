@@ -41,7 +41,7 @@ struct aws_http_connection_manager_options {
     struct aws_byte_cursor host;
     uint16_t port;
     size_t max_connections;
-    struct aws_http_connection_manager_function_table *mocks;
+    const struct aws_http_connection_manager_function_table *mocks;
 };
 
 AWS_EXTERN_C_BEGIN
