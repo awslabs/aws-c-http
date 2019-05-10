@@ -81,6 +81,11 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
     ASSERT_UINT_EQUALS(10, output_buffer[2]);
     ASSERT_UINT_EQUALS(0, output_buffer[3]);
 
+    /* Test 1337 with 5bit prefix and insufficient output space */
+    AWS_ZERO_ARRAY(output_buffer);
+    output_buf = aws_byte_buf_from_empty_array(output_buffer, 2);
+    ASSERT_FAILS(aws_hpack_encode_integer(1337, 5, &output_buf));
+
     return AWS_OP_SUCCESS;
 }
 

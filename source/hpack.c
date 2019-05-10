@@ -19,6 +19,7 @@
 
 #include <aws/compression/huffman.h>
 
+#include <aws/common/byte_buf.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/string.h>
 
@@ -253,7 +254,7 @@ struct aws_http_header *aws_hpack_get_header(struct aws_hpack_context *context, 
 
 int aws_hpack_find_index(struct aws_hpack_context *context, const struct aws_http_header *header, size_t *index) {
 
-    /* Check statuc table */
+    /* Check static table */
     struct aws_hash_element *elem = NULL;
     aws_hash_table_find(&s_static_header_reverse_lookup, header, &elem);
     if (elem) {
@@ -289,6 +290,7 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     } else {
         context->dynamic_table.index_0--;
     }
+    struct aws_http_header *table_header = &context->dynamic_table.buffer[context->dynamic_table.index_0];
 
     /* Remove old header from hash table */
     if (aws_hash_table_remove(
@@ -300,11 +302,14 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     }
 
     /* Write the new header */
+    struct aws_http_header old_header = *table_header;
+    *table_header = *header;
     if (aws_hash_table_put(
-            &context->dynamic_table.reverse_lookup, header, (void *)context->dynamic_table.index_0, NULL)) {
+            &context->dynamic_table.reverse_lookup, table_header, (void *)context->dynamic_table.index_0, NULL)) {
+        /* Roll back and handle the error */
+        *table_header = old_header;
         goto error;
     }
-    context->dynamic_table.buffer[context->dynamic_table.index_0] = *header;
 
     /* Increment num_elements if necessary */
     if (context->dynamic_table.num_elements < context->dynamic_table.max_elements) {
@@ -316,10 +321,7 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
 error:
     /* Attempt to replace old header in map */
     aws_hash_table_put(
-        &context->dynamic_table.reverse_lookup,
-        &context->dynamic_table.buffer[context->dynamic_table.index_0],
-        (void *)context->dynamic_table.index_0,
-        NULL);
+        &context->dynamic_table.reverse_lookup, table_header, (void *)context->dynamic_table.index_0, NULL);
     /* Reset index 0 */
     context->dynamic_table.index_0 = old_index_0;
 
