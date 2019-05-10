@@ -43,7 +43,7 @@ int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_b
            won't be all 1's, just write it */
 
         /* Just write out the bits we care about */
-        output->buffer[output->len] = (output->buffer[output->len] & ~prefix_mask) | integer;
+        output->buffer[output->len] = (output->buffer[output->len] & ~prefix_mask) | (uint8_t)integer;
         ++output->len;
     } else {
         /* Set all of the bits in the first octet to 1 */
