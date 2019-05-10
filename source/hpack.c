@@ -98,9 +98,14 @@ int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_s
         uint8_t bit_count = 0;
         do {
             if (!aws_byte_cursor_read_u8(to_decode, &byte)) {
-                return AWS_OP_ERR;
+                return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
             }
-            *integer += (byte & 127) << bit_count;
+            uint64_t new_byte_value = (uint64_t)(byte & 127) << bit_count;
+            if (*integer + new_byte_value < *integer) {
+                *integer = 0;
+                return aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
+            }
+            *integer += new_byte_value;
             bit_count += 7;
         } while (byte & 128);
     }

@@ -140,6 +140,53 @@ static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx)
     ASSERT_UINT_EQUALS(0, to_decode.len);
     ASSERT_UINT_EQUALS(1337, result);
 
+    /* Test number ending with continue byte
+     * Layout:
+     *   0   1   2   3   4   5   6   7
+     * +---+---+---+---+---+---+---+---+
+     * | X | X | X | 1 | 1 | 1 | 1 | 1 |  31
+     * | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 127
+     * +---+---+---+---+---+---+---+---+
+     */
+    uint8_t test_4[] = {UINT8_MAX >> 3, UINT8_MAX};
+    to_decode = aws_byte_cursor_from_array(test_4, AWS_ARRAY_SIZE(test_4));
+    ASSERT_FAILS(aws_hpack_decode_integer(&to_decode, 5, &result));
+    ASSERT_UINT_EQUALS(AWS_ERROR_SHORT_BUFFER, aws_last_error());
+
+    /* Test number too big
+     * Layout:
+     *   0   1   2   3   4   5   6   7
+     * +---+---+---+---+---+---+---+---+
+     * | X | X | X | 1 | 1 | 1 | 1 | 1 |  31
+     * | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 127
+     * | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 127
+     * | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 127
+     * | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 127
+     * | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 127
+     * | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 127
+     * | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 127
+     * | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 127
+     * | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 127
+     * | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 127
+     * +---+---+---+---+---+---+---+---+
+     */
+    uint8_t test_5[] = {
+        UINT8_MAX >> 3,
+        UINT8_MAX,
+        UINT8_MAX,
+        UINT8_MAX,
+        UINT8_MAX,
+        UINT8_MAX,
+        UINT8_MAX,
+        UINT8_MAX,
+        UINT8_MAX,
+        UINT8_MAX,
+        UINT8_MAX,
+    };
+    to_decode = aws_byte_cursor_from_array(test_5, AWS_ARRAY_SIZE(test_5));
+    ASSERT_FAILS(aws_hpack_decode_integer(&to_decode, 5, &result));
+    ASSERT_UINT_EQUALS(AWS_ERROR_OVERFLOW_DETECTED, aws_last_error());
+
     return AWS_OP_SUCCESS;
 }
 
