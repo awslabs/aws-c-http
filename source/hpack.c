@@ -91,7 +91,7 @@ int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_s
 
     uint8_t byte = 0;
     if (!aws_byte_cursor_read_u8(to_decode, &byte)) {
-        AWS_FATAL_ASSERT(false); /* Like 5 seconds ago we made sure there was data in here */
+        assert(false); /* Look 8 lines up */
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
     /* Cut the prefix */
