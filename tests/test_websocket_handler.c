@@ -209,6 +209,7 @@ static void s_on_incoming_frame_payload(
 
     (void)websocket;
     (void)frame;
+    (void)out_window_update_size;
     struct tester *tester = user_data;
     struct incoming_frame *incoming_frame = &tester->incoming_frames[tester->num_incoming_frames];
     AWS_FATAL_ASSERT(incoming_frame->has_begun);
