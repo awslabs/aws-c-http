@@ -1297,7 +1297,7 @@ TEST_CASE(websocket_handler_read_frames_complete_on_shutdown) {
 
     /* Push most, but not all, of a frame */
     struct readpush_options options = {
-        .num_bytes = aws_websocket_frame_encoded_size(&pushing[0].def) - 1,
+        .num_bytes = (size_t)(aws_websocket_frame_encoded_size(&pushing[0].def) - 1),
     };
     s_do_readpush(&tester, options);
 
