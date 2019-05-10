@@ -73,13 +73,11 @@ struct aws_websocket {
         struct outgoing_frame *current_outgoing_frame;
 
         struct aws_websocket_decoder decoder;
+        struct aws_websocket_incoming_frame *current_incoming_frame;
+        struct aws_websocket_incoming_frame incoming_frame_storage;
 
         /* Amount to increment window after a channel message has been processed. */
         size_t incoming_message_window_update;
-
-        /* Frame currently being decoded. */
-        struct aws_websocket_incoming_frame incoming_frame;
-        bool has_incoming_frame;
 
         /* True when no more frames will be read, due to:
          * - a CLOSE frame was received
@@ -253,7 +251,7 @@ error:
 static void s_handler_destroy(struct aws_channel_handler *handler) {
     struct aws_websocket *websocket = handler->impl;
     assert(!websocket->thread_data.current_outgoing_frame);
-    assert(!websocket->thread_data.has_incoming_frame);
+    assert(!websocket->thread_data.current_incoming_frame);
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Destroying websocket.", (void *)websocket);
 
@@ -782,7 +780,7 @@ static void s_shutdown_due_to_read_err(struct aws_websocket *websocket, int erro
     websocket->thread_data.is_reading_stopped = true;
 
     /* If there's a current incoming frame, complete it with the specific error code. */
-    if (websocket->thread_data.has_incoming_frame) {
+    if (websocket->thread_data.current_incoming_frame) {
         s_complete_incoming_frame(websocket, error_code);
     }
 
@@ -868,7 +866,7 @@ static void s_finish_shutdown(struct aws_websocket *websocket) {
     websocket->thread_data.is_shutting_down_and_waiting_for_close_frame_to_be_written = false;
 
     /* Cancel all incomplete frames */
-    if (websocket->thread_data.has_incoming_frame) {
+    if (websocket->thread_data.current_incoming_frame) {
         s_complete_incoming_frame(websocket, AWS_ERROR_HTTP_CONNECTION_CLOSED);
     }
 
@@ -990,21 +988,22 @@ clean_up:
 static int s_decoder_on_frame(const struct aws_websocket_frame *frame, void *user_data) {
     struct aws_websocket *websocket = user_data;
     assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
-    assert(!websocket->thread_data.has_incoming_frame);
+    assert(!websocket->thread_data.current_incoming_frame);
+    assert(!websocket->thread_data.is_reading_stopped);
 
-    websocket->thread_data.has_incoming_frame = true;
+    websocket->thread_data.current_incoming_frame = &websocket->thread_data.incoming_frame_storage;
 
-    struct aws_websocket_incoming_frame *incoming_frame = &websocket->thread_data.incoming_frame;
-    incoming_frame->payload_length = frame->payload_length;
-    incoming_frame->opcode = frame->opcode;
-    incoming_frame->fin = frame->fin;
-    incoming_frame->rsv[0] = frame->rsv[0];
-    incoming_frame->rsv[1] = frame->rsv[1];
-    incoming_frame->rsv[2] = frame->rsv[2];
+    websocket->thread_data.current_incoming_frame->payload_length = frame->payload_length;
+    websocket->thread_data.current_incoming_frame->opcode = frame->opcode;
+    websocket->thread_data.current_incoming_frame->fin = frame->fin;
+    websocket->thread_data.current_incoming_frame->rsv[0] = frame->rsv[0];
+    websocket->thread_data.current_incoming_frame->rsv[1] = frame->rsv[1];
+    websocket->thread_data.current_incoming_frame->rsv[2] = frame->rsv[2];
 
     /* Invoke user cb */
     if (websocket->on_incoming_frame_begin) {
-        websocket->on_incoming_frame_begin(websocket, incoming_frame, websocket->user_data);
+        websocket->on_incoming_frame_begin(
+            websocket, websocket->thread_data.current_incoming_frame, websocket->user_data);
     }
 
     /* Stop decoding if user callback shut down the connection. */
@@ -1018,14 +1017,15 @@ static int s_decoder_on_frame(const struct aws_websocket_frame *frame, void *use
 static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
     struct aws_websocket *websocket = user_data;
     assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
-    assert(websocket->thread_data.has_incoming_frame);
+    assert(websocket->thread_data.current_incoming_frame);
+    assert(!websocket->thread_data.is_reading_stopped);
 
     /* Invoke user cb */
     if (websocket->on_incoming_frame_payload) {
         size_t window_update_size = data.len;
 
         websocket->on_incoming_frame_payload(
-            websocket, &websocket->thread_data.incoming_frame, data, &window_update_size, websocket->user_data);
+            websocket, websocket->thread_data.current_incoming_frame, data, &window_update_size, websocket->user_data);
 
         /* If user reduced window_udpate_size, reduce how much the websocket will update its window */
         size_t reduce = data.len - window_update_size;
@@ -1051,13 +1051,12 @@ static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
 
 static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code) {
     assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
-    assert(websocket->thread_data.has_incoming_frame);
-
-    websocket->thread_data.has_incoming_frame = false;
+    assert(websocket->thread_data.current_incoming_frame);
+    assert(!websocket->thread_data.is_reading_stopped);
 
     if (error_code == AWS_OP_SUCCESS) {
         /* If this was a CLOSE frame, don't read any more data. */
-        if (websocket->thread_data.incoming_frame.opcode == AWS_WEBSOCKET_OPCODE_CLOSE) {
+        if (websocket->thread_data.current_incoming_frame->opcode == AWS_WEBSOCKET_OPCODE_CLOSE) {
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_WEBSOCKET,
                 "id=%p: Close frame received, any further data received will be ignored.",
@@ -1073,8 +1072,10 @@ static void s_complete_incoming_frame(struct aws_websocket *websocket, int error
     /* Invoke user cb */
     if (websocket->on_incoming_frame_complete) {
         websocket->on_incoming_frame_complete(
-            websocket, &websocket->thread_data.incoming_frame, error_code, websocket->user_data);
+            websocket, websocket->thread_data.current_incoming_frame, error_code, websocket->user_data);
     }
+
+    websocket->thread_data.current_incoming_frame = NULL;
 }
 
 static size_t s_handler_initial_window_size(struct aws_channel_handler *handler) {

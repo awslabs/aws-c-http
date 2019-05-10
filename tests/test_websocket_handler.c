@@ -70,7 +70,7 @@ struct tester {
      * An encoder is used to turn these into proper bits */
     struct readpush_frame *readpush_frames;
     size_t num_readpush_frames;
-    size_t readpush_frame_i;
+    size_t readpush_frame_index;
     struct aws_websocket_encoder readpush_encoder;
 };
 
@@ -255,7 +255,7 @@ static void s_set_readpush_frames(struct tester *tester, struct readpush_frame *
 static int s_stream_readpush_payload(struct aws_byte_buf *out_buf, bool *out_done, void *user_data) {
     struct tester *tester = user_data;
 
-    struct readpush_frame *frame = &tester->readpush_frames[tester->readpush_frame_i];
+    struct readpush_frame *frame = &tester->readpush_frames[tester->readpush_frame_index];
     size_t available_bytes = out_buf->capacity - out_buf->len;
     size_t sending_bytes = available_bytes < frame->cursor.len ? available_bytes : frame->cursor.len;
     struct aws_byte_cursor sending_cursor = aws_byte_cursor_advance(&frame->cursor, sending_bytes);
@@ -285,7 +285,7 @@ static int s_do_readpush(struct tester *tester, struct readpush_options options)
     size_t sum_bytes = 0;
     size_t sum_messages = 0;
 
-    bool done = tester->readpush_frame_i >= tester->num_readpush_frames;
+    bool done = tester->readpush_frame_index >= tester->num_readpush_frames;
     while (!done) {
         size_t remaining_bytes = max_bytes - sum_bytes;
         size_t request_bytes = remaining_bytes < message_size ? remaining_bytes : message_size;
@@ -297,7 +297,7 @@ static int s_do_readpush(struct tester *tester, struct readpush_options options)
 
             if (!aws_websocket_encoder_is_frame_in_progress(&tester->readpush_encoder)) {
                 ASSERT_SUCCESS(aws_websocket_encoder_start_frame(
-                    &tester->readpush_encoder, &tester->readpush_frames[tester->readpush_frame_i].def));
+                    &tester->readpush_encoder, &tester->readpush_frames[tester->readpush_frame_index].def));
             }
 
             ASSERT_SUCCESS(aws_websocket_encoder_process(&tester->readpush_encoder, &msg->message_data));
@@ -307,7 +307,7 @@ static int s_do_readpush(struct tester *tester, struct readpush_options options)
                 ASSERT_UINT_EQUALS(msg->message_data.len, msg->message_data.capacity);
             } else {
                 /* Frame done */
-                if (++tester->readpush_frame_i >= tester->num_readpush_frames) {
+                if (++tester->readpush_frame_index >= tester->num_readpush_frames) {
                     done = true;
                 }
 
