@@ -16,6 +16,7 @@
 #include <aws/http/private/websocket_impl.h>
 
 #include <aws/http/private/websocket_decoder.h>
+#include <aws/http/private/websocket_encoder.h>
 #include <aws/io/logging.h>
 #include <aws/testing/io_testing_channel.h>
 
@@ -30,6 +31,14 @@
 struct written_frame {
     struct aws_websocket_frame def;
     struct aws_byte_buf payload;
+    bool is_complete;
+};
+
+struct incoming_frame {
+    struct aws_websocket_incoming_frame def;
+    struct aws_byte_buf payload;
+    int on_complete_error_code;
+    bool has_begun;
     bool is_complete;
 };
 
@@ -51,6 +60,18 @@ struct tester {
     struct written_frame written_frames[100];
     size_t num_written_frames;
     struct aws_websocket_decoder written_frame_decoder;
+
+    /* Frames reported via the websocket's on_incoming_frame callbacks are recorded here */
+    struct incoming_frame incoming_frames[100];
+    size_t num_incoming_frames;
+
+    /* For pushing messages downstream, to be read by websocket handler.
+     * readpush_frame is for tests to define websocket frames to be pushed downstream.
+     * An encoder is used to turn these into proper bits */
+    struct readpush_frame *readpush_frames;
+    size_t num_readpush_frames;
+    size_t readpush_frame_index;
+    struct aws_websocket_encoder readpush_encoder;
 };
 
 /* Helps track the progress of a frame being sent. */
@@ -71,6 +92,14 @@ struct send_tester {
     size_t on_complete_count;
     size_t on_complete_order; /* Order that frame sent, amongst all frames sent this test */
     int on_complete_error_code;
+};
+
+struct readpush_frame {
+    struct aws_websocket_frame def;
+    struct aws_byte_cursor payload;
+
+    /* Everything below this is auto-configured */
+    struct aws_byte_cursor cursor; /* advances as payload is written */
 };
 
 static void s_on_connection_shutdown(struct aws_websocket *websocket, int error_code, void *user_data) {
@@ -145,6 +174,195 @@ static int s_on_written_frame_payload(struct aws_byte_cursor data, void *user_da
     return AWS_OP_SUCCESS;
 }
 
+static void s_on_incoming_frame_begin(
+    struct aws_websocket *websocket,
+    const struct aws_websocket_incoming_frame *frame,
+    void *user_data) {
+
+    (void)websocket;
+    struct tester *tester = user_data;
+
+    /* Make sure our arbitrarily-sized testing buffer hasn't overflowed */
+    AWS_FATAL_ASSERT(tester->num_incoming_frames < AWS_ARRAY_SIZE(tester->incoming_frames));
+
+    if (tester->num_incoming_frames > 0) {
+        /* Make sure previous frame was marked complete */
+        AWS_FATAL_ASSERT(tester->incoming_frames[tester->num_incoming_frames - 1].is_complete);
+    }
+
+    struct incoming_frame *incoming_frame = &tester->incoming_frames[tester->num_incoming_frames];
+
+    AWS_FATAL_ASSERT(!incoming_frame->has_begun);
+    incoming_frame->has_begun = true;
+    incoming_frame->def = *frame;
+
+    AWS_FATAL_ASSERT(frame->payload_length <= SIZE_MAX);
+    int err = aws_byte_buf_init(&incoming_frame->payload, tester->alloc, (size_t)frame->payload_length);
+    AWS_FATAL_ASSERT(!err);
+}
+
+static void s_on_incoming_frame_payload(
+    struct aws_websocket *websocket,
+    const struct aws_websocket_incoming_frame *frame,
+    struct aws_byte_cursor data,
+    size_t *out_window_update_size,
+    void *user_data) {
+
+    (void)websocket;
+    (void)frame;
+    struct tester *tester = user_data;
+    struct incoming_frame *incoming_frame = &tester->incoming_frames[tester->num_incoming_frames];
+    AWS_FATAL_ASSERT(incoming_frame->has_begun);
+    AWS_FATAL_ASSERT(!incoming_frame->is_complete);
+
+    size_t window_update_size = *out_window_update_size;
+    *out_window_update_size = window_update_size; /* TODO: test window update */
+
+    /* buffer was allocated to exact payload length, so write should succeed */
+    AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(&incoming_frame->payload, data));
+}
+
+static void s_on_incoming_frame_complete(
+    struct aws_websocket *websocket,
+    const struct aws_websocket_incoming_frame *frame,
+    int error_code,
+    void *user_data) {
+
+    (void)websocket;
+    (void)frame;
+    struct tester *tester = user_data;
+    struct incoming_frame *incoming_frame = &tester->incoming_frames[tester->num_incoming_frames++];
+    AWS_FATAL_ASSERT(incoming_frame->has_begun);
+    AWS_FATAL_ASSERT(!incoming_frame->is_complete);
+
+    incoming_frame->is_complete = true;
+    incoming_frame->on_complete_error_code = error_code;
+    if (error_code == AWS_ERROR_SUCCESS) {
+        AWS_FATAL_ASSERT(incoming_frame->payload.len == incoming_frame->def.payload_length);
+    }
+}
+
+static void s_set_readpush_frames(struct tester *tester, struct readpush_frame *frames, size_t num_frames) {
+    tester->readpush_frames = frames;
+    tester->num_readpush_frames = num_frames;
+    for (size_t i = 0; i < num_frames; ++i) {
+        struct readpush_frame *frame = &frames[i];
+        frame->cursor = frame->payload;
+        frame->def.payload_length = frame->payload.len;
+    }
+}
+
+static int s_stream_readpush_payload(struct aws_byte_buf *out_buf, bool *out_done, void *user_data) {
+    struct tester *tester = user_data;
+
+    struct readpush_frame *frame = &tester->readpush_frames[tester->readpush_frame_index];
+    size_t available_bytes = out_buf->capacity - out_buf->len;
+    size_t sending_bytes = available_bytes < frame->cursor.len ? available_bytes : frame->cursor.len;
+    struct aws_byte_cursor sending_cursor = aws_byte_cursor_advance(&frame->cursor, sending_bytes);
+    AWS_FATAL_ASSERT(sending_cursor.len > 0);
+
+    ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(out_buf, sending_cursor));
+    *out_done = (frame->cursor.len == 0);
+    return AWS_OP_SUCCESS;
+}
+
+/* Options for pushing readpush_frames. Anything set to 0 is treated as "unlimited" */
+struct readpush_options {
+    size_t num_frames;   /* Stop after pushing this many frames. */
+    size_t num_bytes;    /* Stop after pushing this many total bytes of aws_io_messages */
+    size_t num_messages; /* Stop after pushing this many aws_io_messages */
+    size_t message_size; /* Force fragmentation by limiting amount packed into each aws_io_message */
+};
+
+/* Encode readpush_frames into aws_io_messages and push those to websocket-handler. */
+static int s_do_readpush(struct tester *tester, struct readpush_options options) {
+    const size_t max_frames = options.num_frames ? options.num_frames : SIZE_MAX;
+    const size_t max_bytes = options.num_bytes ? options.num_bytes : SIZE_MAX;
+    const size_t max_messages = options.num_messages ? options.num_messages : SIZE_MAX;
+    const size_t message_size = options.message_size ? options.message_size : (16 * 1024);
+
+    size_t sum_frames = 0;
+    size_t sum_bytes = 0;
+    size_t sum_messages = 0;
+
+    bool done = tester->readpush_frame_index >= tester->num_readpush_frames;
+    while (!done) {
+        size_t remaining_bytes = max_bytes - sum_bytes;
+        size_t request_bytes = remaining_bytes < message_size ? remaining_bytes : message_size;
+        struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
+            tester->testing_channel.channel, AWS_IO_MESSAGE_APPLICATION_DATA, request_bytes);
+        ASSERT_NOT_NULL(msg);
+
+        while (!done && (msg->message_data.len < msg->message_data.capacity)) {
+
+            if (!aws_websocket_encoder_is_frame_in_progress(&tester->readpush_encoder)) {
+                ASSERT_SUCCESS(aws_websocket_encoder_start_frame(
+                    &tester->readpush_encoder, &tester->readpush_frames[tester->readpush_frame_index].def));
+            }
+
+            ASSERT_SUCCESS(aws_websocket_encoder_process(&tester->readpush_encoder, &msg->message_data));
+
+            if (aws_websocket_encoder_is_frame_in_progress(&tester->readpush_encoder)) {
+                /* This function doesn't expect encoder to stop until frame is done or buffer is full */
+                ASSERT_UINT_EQUALS(msg->message_data.len, msg->message_data.capacity);
+            } else {
+                /* Frame done */
+                if (++tester->readpush_frame_index >= tester->num_readpush_frames) {
+                    done = true;
+                }
+
+                if (++sum_frames >= max_frames) {
+                    done = true;
+                }
+            }
+        }
+
+        sum_bytes += msg->message_data.len;
+        if (sum_bytes >= max_bytes) {
+            done = true;
+        }
+
+        if (++sum_messages >= max_messages) {
+            done = true;
+        }
+
+        ASSERT_SUCCESS(testing_channel_push_read_message(&tester->testing_channel, msg));
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_do_readpush_all(struct tester *tester) {
+    struct readpush_options options;
+    AWS_ZERO_STRUCT(options);
+    return s_do_readpush(tester, options);
+}
+
+/* Check that a readpush_frame was received by websocket */
+static int s_readpush_check(struct tester *tester, size_t frame_i, int expected_error_code) {
+    ASSERT_TRUE(frame_i < tester->num_readpush_frames);
+    struct readpush_frame *pushed = &tester->readpush_frames[frame_i];
+    struct incoming_frame *received = &tester->incoming_frames[frame_i];
+
+    ASSERT_TRUE(received->has_begun);
+    ASSERT_TRUE(received->is_complete);
+    ASSERT_INT_EQUALS(expected_error_code, received->on_complete_error_code);
+
+    ASSERT_UINT_EQUALS(pushed->def.payload_length, received->def.payload_length);
+    ASSERT_UINT_EQUALS(pushed->def.opcode, received->def.opcode);
+    ASSERT_INT_EQUALS(pushed->def.fin, received->def.fin);
+    ASSERT_INT_EQUALS(pushed->def.rsv[0], received->def.rsv[0]);
+    ASSERT_INT_EQUALS(pushed->def.rsv[1], received->def.rsv[1]);
+    ASSERT_INT_EQUALS(pushed->def.rsv[2], received->def.rsv[2]);
+
+    if (received->on_complete_error_code == AWS_ERROR_SUCCESS) {
+        ASSERT_UINT_EQUALS(received->def.payload_length, received->payload.len);
+        ASSERT_TRUE(aws_byte_cursor_eq_byte_buf(&pushed->payload, &received->payload));
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
     aws_load_error_strings();
     aws_io_load_error_strings();
@@ -171,6 +389,9 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
         .channel_slot = channel_slot,
         .initial_window_size = SIZE_MAX,
         .user_data = tester,
+        .on_incoming_frame_begin = s_on_incoming_frame_begin,
+        .on_incoming_frame_payload = s_on_incoming_frame_payload,
+        .on_incoming_frame_complete = s_on_incoming_frame_complete,
         .on_connection_shutdown = s_on_connection_shutdown,
     };
     struct aws_channel_handler *channel_handler = aws_websocket_handler_new(&ws_options);
@@ -182,6 +403,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
     ASSERT_SUCCESS(aws_channel_slot_set_handler(channel_slot, channel_handler));
 
     aws_websocket_decoder_init(&tester->written_frame_decoder, s_on_written_frame, s_on_written_frame_payload, tester);
+    aws_websocket_encoder_init(&tester->readpush_encoder, s_stream_readpush_payload, tester);
 
     return AWS_OP_SUCCESS;
 }
@@ -194,6 +416,10 @@ static int s_tester_clean_up(struct tester *tester) {
 
     for (size_t i = 0; i < AWS_ARRAY_SIZE(tester->written_frames); ++i) {
         aws_byte_buf_clean_up(&tester->written_frames[i].payload);
+    }
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(tester->incoming_frames); ++i) {
+        aws_byte_buf_clean_up(&tester->incoming_frames[i].payload);
     }
 
     aws_http_library_clean_up();
@@ -927,6 +1153,163 @@ TEST_CASE(websocket_handler_shutdown_on_zero_refcount) {
 
     ASSERT_SUCCESS(s_drain_written_messages(&tester));
     ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_read_frame) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct readpush_frame pushing[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("guten morgen"),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = true,
+                },
+        },
+    };
+
+    s_set_readpush_frames(&tester, pushing, AWS_ARRAY_SIZE(pushing));
+    s_do_readpush_all(&tester);
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(pushing); ++i) {
+        ASSERT_SUCCESS(s_readpush_check(&tester, i, AWS_ERROR_SUCCESS));
+    }
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_read_multiple_frames) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct readpush_frame pushing[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("Uno."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = false,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Dos."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = false,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Tres."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = true,
+                },
+        },
+    };
+
+    s_set_readpush_frames(&tester, pushing, AWS_ARRAY_SIZE(pushing));
+    ASSERT_SUCCESS(s_do_readpush_all(&tester));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(pushing); ++i) {
+        ASSERT_SUCCESS(s_readpush_check(&tester, i, AWS_ERROR_SUCCESS));
+    }
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_read_frames_split_across_io_messages) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct readpush_frame pushing[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("As dry leaves that before the wild hurricane fly,"),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = false,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("when they meet with an obstacle,"),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = false,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("mount to the sky"),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION,
+                    .fin = true,
+                },
+        },
+    };
+
+    s_set_readpush_frames(&tester, pushing, AWS_ARRAY_SIZE(pushing));
+
+    /* Send 1 byte at a time to ensure we can tolerate frames split across multiple aws_io_messages */
+    struct readpush_options options = {.message_size = 1};
+    ASSERT_SUCCESS(s_do_readpush(&tester, options));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(pushing); ++i) {
+        ASSERT_SUCCESS(s_readpush_check(&tester, i, AWS_ERROR_SUCCESS));
+    }
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_read_frames_complete_on_shutdown) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct readpush_frame pushing[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("This frame will not be completely sent."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = true,
+                },
+        },
+    };
+
+    s_set_readpush_frames(&tester, pushing, AWS_ARRAY_SIZE(pushing));
+
+    /* Push most, but not all, of a frame */
+    struct readpush_options options = {
+        .num_bytes = (size_t)(aws_websocket_frame_encoded_size(&pushing[0].def) - 1),
+    };
+    s_do_readpush(&tester, options);
+
+    /* Shut down channel */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    s_drain_written_messages(&tester);
+
+    /* Check that completion callbacks fired */
+    ASSERT_SUCCESS(s_readpush_check(&tester, 0, AWS_ERROR_HTTP_CONNECTION_CLOSED));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;

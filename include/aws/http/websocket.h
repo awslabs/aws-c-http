@@ -20,6 +20,10 @@
 struct aws_channel_handler;
 struct aws_http_header;
 
+/* TODO: Document lifetime stuff */
+/* TODO: Document CLOSE frame behavior (when auto-sent during close, when auto-closed) */
+/* TODO: Document auto-pong behavior */
+
 /**
  * A websocket connection.
  */

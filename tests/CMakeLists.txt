@@ -105,8 +105,10 @@ add_test_case(websocket_handler_shutdown_on_zero_refcount)
 #add_test_case(websocket_handler_close_from_incoming_payload_cb_stops_processing)
 #add_test_case(websocket_handler_close_from_incoming_complete_cb_stops_processing)
 #add_test_case(websocket_handler_force_write_error_somehow)
-
-
+add_test_case(websocket_handler_read_frame)
+add_test_case(websocket_handler_read_multiple_frames)
+add_test_case(websocket_handler_read_frames_split_across_io_messages)
+add_test_case(websocket_handler_read_frames_complete_on_shutdown)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})
