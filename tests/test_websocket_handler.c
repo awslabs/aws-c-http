@@ -76,7 +76,7 @@ struct tester {
 
 /* Helps track the progress of a frame being sent. */
 struct send_tester {
-    struct aws_websocket_send_frame_options def; /* s ome properties are autoconfigured */
+    struct aws_websocket_send_frame_options def; /* some properties are autoconfigured */
     struct aws_byte_cursor payload;
 
     size_t delay_ticks;    /* Don't send anything the first N ticks */
@@ -179,6 +179,7 @@ static void s_on_incoming_frame_begin(
     const struct aws_websocket_incoming_frame *frame,
     void *user_data) {
 
+    (void)websocket;
     struct tester *tester = user_data;
 
     /* Make sure our arbitrarily-sized testing buffer hasn't overflowed */
@@ -206,6 +207,8 @@ static void s_on_incoming_frame_payload(
     size_t *out_window_update_size,
     void *user_data) {
 
+    (void)websocket;
+    (void)frame;
     struct tester *tester = user_data;
     struct incoming_frame *incoming_frame = &tester->incoming_frames[tester->num_incoming_frames];
     AWS_FATAL_ASSERT(incoming_frame->has_begun);
@@ -221,6 +224,8 @@ static void s_on_incoming_frame_complete(
     int error_code,
     void *user_data) {
 
+    (void)websocket;
+    (void)frame;
     struct tester *tester = user_data;
     struct incoming_frame *incoming_frame = &tester->incoming_frames[tester->num_incoming_frames++];
     AWS_FATAL_ASSERT(incoming_frame->has_begun);
