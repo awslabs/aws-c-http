@@ -196,7 +196,8 @@ static void s_on_incoming_frame_begin(
     incoming_frame->has_begun = true;
     incoming_frame->def = *frame;
 
-    int err = aws_byte_buf_init(&incoming_frame->payload, tester->alloc, frame->payload_length);
+    AWS_FATAL_ASSERT(frame->payload_length <= SIZE_MAX);
+    int err = aws_byte_buf_init(&incoming_frame->payload, tester->alloc, (size_t)frame->payload_length);
     AWS_FATAL_ASSERT(!err);
 }
 
@@ -209,11 +210,13 @@ static void s_on_incoming_frame_payload(
 
     (void)websocket;
     (void)frame;
-    (void)out_window_update_size;
     struct tester *tester = user_data;
     struct incoming_frame *incoming_frame = &tester->incoming_frames[tester->num_incoming_frames];
     AWS_FATAL_ASSERT(incoming_frame->has_begun);
     AWS_FATAL_ASSERT(!incoming_frame->is_complete);
+
+    size_t window_update_size = *out_window_update_size;
+    *out_window_update_size = window_update_size; /* TODO: test window update */
 
     /* buffer was allocated to exact payload length, so write should succeed */
     AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(&incoming_frame->payload, data));
