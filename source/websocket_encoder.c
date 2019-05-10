@@ -40,10 +40,10 @@ static int s_state_opcode_byte(struct aws_websocket_encoder *encoder, struct aws
 
     /* Right 4 bits are opcode, left 4 bits are fin|rsv1|rsv2|rsv3 */
     uint8_t byte = encoder->frame.opcode;
-    byte |= (uint8_t)(encoder->frame.fin << 7);
-    byte |= (uint8_t)(encoder->frame.rsv[0] << 6);
-    byte |= (uint8_t)(encoder->frame.rsv[1] << 5);
-    byte |= (uint8_t)(encoder->frame.rsv[2] << 4);
+    byte |= (encoder->frame.fin << 7);
+    byte |= (encoder->frame.rsv[0] << 6);
+    byte |= (encoder->frame.rsv[1] << 5);
+    byte |= (encoder->frame.rsv[2] << 4);
 
     /* If buffer has room to write, proceed to next state */
     if (aws_byte_buf_write_u8(out_buf, byte)) {
