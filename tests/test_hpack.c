@@ -151,6 +151,8 @@ static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx)
 
 AWS_TEST_CASE(hpack_static_table_find, test_hpack_static_table_find)
 static int test_hpack_static_table_find(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
     aws_hpack_static_table_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, 0);
 
@@ -178,6 +180,8 @@ static int test_hpack_static_table_find(struct aws_allocator *allocator, void *c
 
 AWS_TEST_CASE(hpack_static_table_get, test_hpack_static_table_get)
 static int test_hpack_static_table_get(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
     aws_hpack_static_table_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, 0);
 
@@ -207,6 +211,8 @@ static int test_hpack_static_table_get(struct aws_allocator *allocator, void *ct
 
 AWS_TEST_CASE(hpack_dynamic_table_find, test_hpack_dynamic_table_find)
 static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
     aws_hpack_static_table_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, 2);
 
@@ -245,6 +251,8 @@ static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *
 
 AWS_TEST_CASE(hpack_dynamic_table_get, test_hpack_dynamic_table_get)
 static int test_hpack_dynamic_table_get(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
     aws_hpack_static_table_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, 2);
 
