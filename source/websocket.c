@@ -1052,7 +1052,6 @@ static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
 static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code) {
     assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
     assert(websocket->thread_data.current_incoming_frame);
-    assert(!websocket->thread_data.is_reading_stopped);
 
     if (error_code == AWS_OP_SUCCESS) {
         /* If this was a CLOSE frame, don't read any more data. */
