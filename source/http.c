@@ -13,6 +13,7 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/http/private/hpack.h>
 #include <aws/http/private/http_impl.h>
 
 #include <aws/common/hash_table.h>
@@ -347,12 +348,14 @@ void aws_http_library_init(struct aws_allocator *alloc) {
     s_methods_init(alloc);
     s_headers_init(alloc);
     s_versions_init(alloc);
+    aws_hpack_static_table_init(alloc);
 }
 
 void aws_http_library_clean_up(void) {
     s_methods_clean_up();
     s_headers_clean_up();
     s_versions_clean_up();
+    aws_hpack_static_table_clean_up();
 }
 
 void aws_http_fatal_assert_library_initialized() {
