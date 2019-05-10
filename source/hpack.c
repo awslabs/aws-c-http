@@ -258,7 +258,7 @@ int aws_hpack_find_index(struct aws_hpack_context *context, const struct aws_htt
     struct aws_hash_element *elem = NULL;
     aws_hash_table_find(&s_static_header_reverse_lookup, header, &elem);
     if (elem) {
-        *index = (uint64_t)elem->value;
+        *index = (size_t)elem->value;
         return AWS_OP_SUCCESS;
     }
 
