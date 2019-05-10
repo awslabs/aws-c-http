@@ -150,7 +150,7 @@ static bool s_header_eq(const void *a, const void *b) {
 
 void aws_hpack_static_table_init(struct aws_allocator *allocator) {
 
-    aws_hash_table_init(
+    int result = aws_hash_table_init(
         &s_static_header_reverse_lookup,
         allocator,
         s_static_header_table_size - 1,
@@ -158,9 +158,15 @@ void aws_hpack_static_table_init(struct aws_allocator *allocator) {
         s_header_eq,
         NULL,
         NULL);
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == result);
 
 #define HEADER(_index, _name)                                                                                          \
-    aws_hash_table_put(&s_static_header_reverse_lookup, &s_static_header_table[_index], (void *)(_index), NULL);
+    do {                                                                                                               \
+        result = aws_hash_table_put(                                                                                   \
+            &s_static_header_reverse_lookup, &s_static_header_table[_index], (void *)(_index), NULL);                  \
+        AWS_FATAL_ASSERT(AWS_OP_SUCCESS == result);                                                                    \
+    } while (false);
+
 #define HEADER_WITH_VALUE(_index, _name, _value) HEADER(_index, _name)
 
 #include <aws/http/private/hpack_header_static_table.def>
