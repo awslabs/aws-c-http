@@ -85,6 +85,7 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
     AWS_ZERO_ARRAY(output_buffer);
     output_buf = aws_byte_buf_from_empty_array(output_buffer, 2);
     ASSERT_FAILS(aws_hpack_encode_integer(1337, 5, &output_buf));
+    ASSERT_UINT_EQUALS(0, output_buf.len);
 
     return AWS_OP_SUCCESS;
 }
@@ -152,6 +153,7 @@ static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx)
     to_decode = aws_byte_cursor_from_array(test_4, AWS_ARRAY_SIZE(test_4));
     ASSERT_FAILS(aws_hpack_decode_integer(&to_decode, 5, &result));
     ASSERT_UINT_EQUALS(AWS_ERROR_SHORT_BUFFER, aws_last_error());
+    ASSERT_UINT_EQUALS(AWS_ARRAY_SIZE(test_4), to_decode.len);
 
     /* Test number too big
      * Layout:
@@ -186,6 +188,7 @@ static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx)
     to_decode = aws_byte_cursor_from_array(test_5, AWS_ARRAY_SIZE(test_5));
     ASSERT_FAILS(aws_hpack_decode_integer(&to_decode, 5, &result));
     ASSERT_UINT_EQUALS(AWS_ERROR_OVERFLOW_DETECTED, aws_last_error());
+    ASSERT_UINT_EQUALS(AWS_ARRAY_SIZE(test_5), to_decode.len);
 
     return AWS_OP_SUCCESS;
 }

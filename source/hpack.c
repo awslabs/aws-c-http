@@ -30,6 +30,8 @@ struct aws_huffman_symbol_coder *hpack_get_coder(void);
 int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_byte_buf *output) {
     assert(prefix_size <= 8);
 
+    const struct aws_byte_buf output_backup = *output;
+
     if (output->len == output->capacity) {
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
@@ -41,11 +43,11 @@ int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_b
            won't be all 1's, just write it */
 
         /* Just write out the bits we care about */
-        *output->buffer |= integer;
+        output->buffer[output->len] = (output->buffer[output->len] & ~prefix_mask) | integer;
         ++output->len;
     } else {
         /* Set all of the bits in the first octet to 1 */
-        *output->buffer |= prefix_mask;
+        output->buffer[output->len] = (output->buffer[output->len] & ~prefix_mask) | prefix_mask;
         ++output->len;
 
         integer -= prefix_mask;
@@ -54,6 +56,7 @@ int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_b
 
         while (integer) {
             if (output->len == output->capacity) {
+                *output = output_backup;
                 return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
             }
 
@@ -78,6 +81,8 @@ int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_s
     assert(prefix_size <= 8);
     assert(integer);
 
+    const struct aws_byte_cursor to_decode_backup = *to_decode;
+
     if (to_decode->len == 0) {
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
@@ -86,7 +91,8 @@ int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_s
 
     uint8_t byte = 0;
     if (!aws_byte_cursor_read_u8(to_decode, &byte)) {
-        return AWS_OP_ERR;
+        AWS_FATAL_ASSERT(false); /* Like 5 seconds ago we made sure there was data in here */
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
     /* Cut the prefix */
     byte &= prefix_mask;
@@ -98,12 +104,13 @@ int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_s
         uint8_t bit_count = 0;
         do {
             if (!aws_byte_cursor_read_u8(to_decode, &byte)) {
-                return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+                aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+                goto decode_failure;
             }
             uint64_t new_byte_value = (uint64_t)(byte & 127) << bit_count;
             if (*integer + new_byte_value < *integer) {
-                *integer = 0;
-                return aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
+                aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
+                goto decode_failure;
             }
             *integer += new_byte_value;
             bit_count += 7;
@@ -111,6 +118,11 @@ int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_s
     }
 
     return AWS_OP_SUCCESS;
+
+decode_failure:
+    *to_decode = to_decode_backup;
+    *integer = 0;
+    return AWS_OP_ERR;
 }
 
 #define HEADER(_index, _name)                                                                                          \
@@ -240,6 +252,9 @@ struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator,
 }
 
 void aws_hpack_context_destroy(struct aws_hpack_context *context) {
+    if (!context) {
+        return;
+    }
     aws_mem_release(context->allocator, context->dynamic_table.buffer);
     aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup);
     aws_mem_release(context->allocator, context);
@@ -393,7 +408,7 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
 
 int aws_hpack_encode_string(
     struct aws_hpack_context *context,
-    const struct aws_byte_cursor *to_encode,
+    struct aws_byte_cursor *to_encode,
     bool huffman_encode,
     struct aws_byte_buf *output) {
 
@@ -402,7 +417,7 @@ int aws_hpack_encode_string(
     }
 
     /* Write the use_huffman bit */
-    *output->buffer |= huffman_encode << 7;
+    output->buffer[output->len] = huffman_encode << 7;
 
     /* Write the header */
     if (aws_hpack_encode_integer(to_encode->len, 7, output)) {
@@ -410,9 +425,19 @@ int aws_hpack_encode_string(
     }
 
     if (huffman_encode) {
-        struct aws_byte_cursor to_encode_copy = *to_encode;
-        return aws_huffman_encode(&context->encoder, &to_encode_copy, output);
+        struct aws_byte_cursor to_encode_backup = *to_encode;
+        int result = aws_huffman_encode(&context->encoder, to_encode, output);
+        if (result) {
+            *to_encode = to_encode_backup;
+            return result;
+        }
     }
 
-    return aws_byte_buf_write_from_whole_cursor(output, *to_encode);
+    int result = aws_byte_buf_write_from_whole_cursor(output, *to_encode);
+    if (result) {
+        return result;
+    }
+
+    aws_byte_cursor_advance(to_encode, to_encode->len);
+    return AWS_OP_SUCCESS;
 }

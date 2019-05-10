@@ -40,7 +40,7 @@ int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_b
 int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_size, uint64_t *integer);
 int aws_hpack_encode_string(
     struct aws_hpack_context *context,
-    const struct aws_byte_cursor *to_encode,
+    struct aws_byte_cursor *to_encode,
     bool huffman_encode,
     struct aws_byte_buf *output);
 
