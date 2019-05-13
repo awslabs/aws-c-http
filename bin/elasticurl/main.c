@@ -378,7 +378,7 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
         request_options.stream_outgoing_body = s_stream_outgoing_body_fn;
     }
 
-    assert(app_ctx->header_line_count <= 10);
+    AWS_ASSERT(app_ctx->header_line_count <= 10);
     for (size_t i = 0; i < app_ctx->header_line_count; ++i) {
         char *delimiter = memchr(app_ctx->header_lines[i], ':', strlen(app_ctx->header_lines[i]));
 

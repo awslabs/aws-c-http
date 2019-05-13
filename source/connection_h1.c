@@ -350,7 +350,7 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_head
         wrote_all &= aws_byte_buf_write_u8(dst, '\r');
         wrote_all &= aws_byte_buf_write_u8(dst, '\n');
     }
-    assert(wrote_all);
+    AWS_ASSERT(wrote_all);
 }
 
 struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options) {
@@ -446,7 +446,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\r');
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\n');
     (void)wrote_all;
-    assert(wrote_all);
+    AWS_ASSERT(wrote_all);
 
     /* Insert new stream into pending list, and schedule outgoing_stream_task if it's not already running. */
     bool is_shutting_down = false;
@@ -634,7 +634,7 @@ static void s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io
 
         bool success = aws_byte_buf_write(dst, src->buffer + src_progress, transferring);
         (void)success;
-        assert(success);
+        AWS_ASSERT(success);
 
         stream->outgoing_head_progress += transferring;
 
@@ -785,7 +785,7 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
         /* If it's also done receiving data, then it's complete! */
         if (current->is_incoming_message_done) {
             /* Only 1st stream in list could finish receiving before it finished sending */
-            assert(&current->node == aws_linked_list_begin(&connection->thread_data.stream_list));
+            AWS_ASSERT(&current->node == aws_linked_list_begin(&connection->thread_data.stream_list));
 
             /* This removes stream from list */
             s_stream_complete(current, AWS_ERROR_SUCCESS);
@@ -969,8 +969,8 @@ static int s_decoder_on_request(
     struct h1_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
 
-    assert(incoming_stream->base.incoming_request_method_str.len == 0);
-    assert(incoming_stream->base.incoming_request_uri.len == 0);
+    AWS_ASSERT(incoming_stream->base.incoming_request_method_str.len == 0);
+    AWS_ASSERT(incoming_stream->base.incoming_request_uri.len == 0);
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
@@ -981,7 +981,7 @@ static int s_decoder_on_request(
 
     /* Copy strings to internal buffer */
     struct aws_byte_buf *storage_buf = &incoming_stream->incoming_storage_buf;
-    assert(storage_buf->capacity == 0);
+    AWS_ASSERT(storage_buf->capacity == 0);
 
     size_t storage_size = 0;
     int err = aws_add_size_checked(uri->len, method_str->len, &storage_size);
@@ -1098,7 +1098,7 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
 
     struct h1_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
-    assert(incoming_stream);
+    AWS_ASSERT(incoming_stream);
 
     int err = s_mark_head_done(incoming_stream);
     if (err) {
@@ -1117,7 +1117,7 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
         /* If user reduced window_update_size, reduce how much the connection will update its window. */
         if (window_update_size < data->len) {
             size_t reduce = data->len - window_update_size;
-            assert(reduce <= connection->thread_data.incoming_message_window_update);
+            AWS_ASSERT(reduce <= connection->thread_data.incoming_message_window_update);
             connection->thread_data.incoming_message_window_update -= reduce;
 
             AWS_LOGF_DEBUG(
@@ -1139,7 +1139,7 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
 static int s_decoder_on_done(void *user_data) {
     struct h1_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
-    assert(incoming_stream);
+    AWS_ASSERT(incoming_stream);
 
     /* Ensure head was marked done */
     int err = s_mark_head_done(incoming_stream);
@@ -1150,7 +1150,7 @@ static int s_decoder_on_done(void *user_data) {
     incoming_stream->is_incoming_message_done = true;
 
     if (incoming_stream->outgoing_state == STREAM_OUTGOING_STATE_DONE) {
-        assert(&incoming_stream->node == aws_linked_list_begin(&connection->thread_data.stream_list));
+        AWS_ASSERT(&incoming_stream->node == aws_linked_list_begin(&connection->thread_data.stream_list));
 
         s_stream_complete(incoming_stream, AWS_ERROR_SUCCESS);
 
@@ -1260,8 +1260,8 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Destroying connection.", (void *)&connection->base);
 
-    assert(aws_linked_list_empty(&connection->thread_data.stream_list));
-    assert(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stream_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
 
     aws_http_decoder_destroy(connection->thread_data.incoming_stream_decoder);
     aws_mutex_clean_up(&connection->synced_data.lock);
@@ -1366,7 +1366,7 @@ static int s_handler_process_write_message(
     (void)handler;
     (void)slot;
     (void)message;
-    assert(false); /* Should not be called until websocket stuff comes along. */
+    AWS_ASSERT(false); /* Should not be called until websocket stuff comes along. */
     return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
 }
 
@@ -1378,7 +1378,7 @@ static int s_handler_increment_read_window(
     (void)handler;
     (void)slot;
     (void)size;
-    assert(false); /* Should not be called until websocket stuff comes along. */
+    AWS_ASSERT(false); /* Should not be called until websocket stuff comes along. */
     return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
 }
 

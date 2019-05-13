@@ -36,7 +36,7 @@ static int s_state_init(struct aws_websocket_encoder *encoder, struct aws_byte_b
 /* STATE_OPCODE_BYTE: Outputs 1st byte of frame, which is packed with goodies. */
 static int s_state_opcode_byte(struct aws_websocket_encoder *encoder, struct aws_byte_buf *out_buf) {
 
-    assert((encoder->frame.opcode & 0xF0) == 0); /* Should be impossible, the opcode was checked in start_frame() */
+    AWS_ASSERT((encoder->frame.opcode & 0xF0) == 0); /* Should be impossible, the opcode was checked in start_frame() */
 
     /* Right 4 bits are opcode, left 4 bits are fin|rsv1|rsv2|rsv3 */
     uint8_t byte = encoder->frame.opcode;
@@ -69,7 +69,7 @@ static int s_state_length_byte(struct aws_websocket_encoder *encoder, struct aws
         byte |= AWS_WEBSOCKET_7BIT_VALUE_FOR_2BYTE_EXTENDED_LENGTH;
         extended_length_required = true;
     } else {
-        assert(encoder->frame.payload_length <= AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MAX_VALUE);
+        AWS_ASSERT(encoder->frame.payload_length <= AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MAX_VALUE);
         byte |= AWS_WEBSOCKET_7BIT_VALUE_FOR_8BYTE_EXTENDED_LENGTH;
         extended_length_required = true;
     }
@@ -271,7 +271,7 @@ int aws_websocket_encoder_process(struct aws_websocket_encoder *encoder, struct 
         if (prev_state == encoder->state) {
             /* dev-assert: Check that each state is doing as much work as it possibly can.
              * Except for the PAYLOAD state, where it's up to the user to fill the buffer. */
-            assert((out_buf->len == out_buf->capacity) || (encoder->state == AWS_WEBSOCKET_ENCODER_STATE_PAYLOAD));
+            AWS_ASSERT((out_buf->len == out_buf->capacity) || (encoder->state == AWS_WEBSOCKET_ENCODER_STATE_PAYLOAD));
 
             break;
         }
@@ -348,8 +348,8 @@ void aws_websocket_encoder_init(
 
 uint64_t aws_websocket_frame_encoded_size(const struct aws_websocket_frame *frame) {
     /* This is an internal function, so asserts are sufficient error handling */
-    assert(frame);
-    assert(frame->payload_length <= AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MAX_VALUE);
+    AWS_ASSERT(frame);
+    AWS_ASSERT(frame->payload_length <= AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MAX_VALUE);
 
     /* All frames start with at least 2 bytes */
     uint64_t total = 2;

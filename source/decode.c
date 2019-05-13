@@ -18,8 +18,6 @@
 #include <aws/common/string.h>
 #include <aws/io/logging.h>
 
-#include <assert.h>
-
 AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_chunked, "chunked");
 AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_compress, "compress");
 AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_x_compress, "x-compress");
@@ -83,7 +81,7 @@ static struct aws_byte_cursor s_trim_whitespace(struct aws_byte_cursor cursor) {
 }
 
 static bool s_scan_for_crlf(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
-    assert(input.len > 0);
+    AWS_ASSERT(input.len > 0);
 
     /* In a loop, scan for "\n", then look one char back for "\r" */
     uint8_t *ptr = input.ptr;
@@ -235,7 +233,7 @@ static int s_state_getline(struct aws_http_decoder *decoder, struct aws_byte_cur
 
         /* Backup so "\r\n" is not included. */
         /* RFC-7230 section 3 Message Format */
-        assert(line.len >= 2);
+        AWS_ASSERT(line.len >= 2);
         line.len -= 2;
 
         return decoder->process_line(decoder, line);
@@ -381,7 +379,7 @@ static int s_linestate_chunk_terminator(struct aws_http_decoder *decoder, struct
 
 static int s_state_chunk(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     size_t processed_bytes = 0;
-    assert(decoder->chunk_processed < decoder->chunk_size);
+    AWS_ASSERT(decoder->chunk_processed < decoder->chunk_size);
 
     if ((decoder->chunk_processed + input.len) > decoder->chunk_size) {
         processed_bytes = decoder->chunk_size - decoder->chunk_processed;
@@ -735,7 +733,7 @@ static int s_linestate_response(struct aws_http_decoder *decoder, struct aws_byt
 }
 
 struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *params) {
-    assert(params);
+    AWS_ASSERT(params);
 
     struct aws_http_decoder *decoder = aws_mem_acquire(params->alloc, sizeof(struct aws_http_decoder));
     if (!decoder) {
@@ -761,8 +759,8 @@ void aws_http_decoder_destroy(struct aws_http_decoder *decoder) {
 }
 
 int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t data_bytes, size_t *bytes_read) {
-    assert(decoder);
-    assert(data);
+    AWS_ASSERT(decoder);
+    AWS_ASSERT(data);
 
     struct aws_byte_cursor input = aws_byte_cursor_from_array(data, data_bytes);
     size_t total_bytes_processed = 0;
