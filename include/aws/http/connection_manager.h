@@ -62,21 +62,27 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
  * Creates a new connection manager with the supplied configuration options.
  */
 AWS_HTTP_API
-struct aws_http_connection_manager *aws_http_connection_manager_new(struct aws_allocator *allocator, struct aws_http_connection_manager_options *options);
+struct aws_http_connection_manager *aws_http_connection_manager_new(
+    struct aws_allocator *allocator,
+    struct aws_http_connection_manager_options *options);
 
 /*
  * Requests a connection from the manager
  */
 AWS_HTTP_API
-int aws_http_connection_manager_acquire_connection(struct aws_http_connection_manager *connection_manager, aws_http_on_client_connection_setup_fn *callback, void *user_data);
+int aws_http_connection_manager_acquire_connection(
+    struct aws_http_connection_manager *connection_manager,
+    aws_http_on_client_connection_setup_fn *callback,
+    void *user_data);
 
 /*
  * Returns a connection back to the manager
  */
 AWS_HTTP_API
-int aws_http_connection_manager_release_connection(struct aws_http_connection_manager *connection_manager, struct aws_http_connection *connection);
+int aws_http_connection_manager_release_connection(
+    struct aws_http_connection_manager *connection_manager,
+    struct aws_http_connection *connection);
 
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_CONNECTION_MANAGER_H */
-

@@ -87,6 +87,10 @@ add_test_case(websocket_encoder_payload_callback_can_fail_encoder)
 
 add_test_case(test_connection_manager_setup_shutdown)
 add_test_case(test_connection_manager_single_connection)
+add_test_case(test_connection_manager_many_connections)
+add_test_case(test_connection_manager_acquire_release)
+add_test_case(test_connection_manager_close_and_release)
+add_test_case(test_connection_manager_acquire_release_mix)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})
