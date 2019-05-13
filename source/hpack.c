@@ -23,12 +23,10 @@
 #include <aws/common/hash_table.h>
 #include <aws/common/string.h>
 
-#include <assert.h>
-
 struct aws_huffman_symbol_coder *hpack_get_coder(void);
 
 int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_byte_buf *output) {
-    assert(prefix_size <= 8);
+    AWS_ASSERT(prefix_size <= 8);
 
     const struct aws_byte_buf output_backup = *output;
 
@@ -78,8 +76,8 @@ int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_b
 }
 
 int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_size, uint64_t *integer) {
-    assert(prefix_size <= 8);
-    assert(integer);
+    AWS_ASSERT(prefix_size <= 8);
+    AWS_ASSERT(integer);
 
     const struct aws_byte_cursor to_decode_backup = *to_decode;
 
@@ -91,7 +89,7 @@ int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_s
 
     uint8_t byte = 0;
     if (!aws_byte_cursor_read_u8(to_decode, &byte)) {
-        assert(false); /* Look 8 lines up */
+        AWS_ASSERT(false); /* Look 8 lines up */
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
     /* Cut the prefix */
@@ -273,7 +271,7 @@ struct aws_http_header *aws_hpack_get_header(struct aws_hpack_context *context, 
 
     /* Check dynamic table */
     index -= s_static_header_table_size;
-    assert(index < context->dynamic_table.num_elements);
+    AWS_ASSERT(index < context->dynamic_table.num_elements);
     return &context->dynamic_table
                 .buffer[(context->dynamic_table.index_0 + index) % context->dynamic_table.max_elements];
 }

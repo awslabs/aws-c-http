@@ -168,17 +168,17 @@ error:
 }
 
 void aws_http_connection_close(struct aws_http_connection *connection) {
-    assert(connection);
+    AWS_ASSERT(connection);
     connection->vtable->close(connection);
 }
 
 bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
-    assert(connection);
+    AWS_ASSERT(connection);
     return connection->vtable->is_open(connection);
 }
 
 void aws_http_connection_release(struct aws_http_connection *connection) {
-    assert(connection);
+    AWS_ASSERT(connection);
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
     if (prev_refcount == 1) {
         AWS_LOGF_TRACE(
@@ -192,7 +192,7 @@ void aws_http_connection_release(struct aws_http_connection *connection) {
         /* When the channel's refcount reaches 0, it destroys its slots/handlers, which will destroy the connection */
         aws_channel_release_hold(connection->channel_slot->channel);
     } else {
-        assert(prev_refcount != 0);
+        AWS_ASSERT(prev_refcount != 0);
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Connection refcount released, %zu remaining.",
@@ -210,7 +210,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
     void *user_data) {
 
     (void)bootstrap;
-    assert(user_data);
+    AWS_ASSERT(user_data);
     struct aws_http_server *server = user_data;
     bool user_cb_invoked = false;
 
@@ -376,7 +376,7 @@ error:
 }
 
 void aws_http_server_destroy(struct aws_http_server *server) {
-    assert(server);
+    AWS_ASSERT(server);
 
     if (server->socket) {
         AWS_LOGF_INFO(
@@ -400,7 +400,7 @@ static void s_client_bootstrap_on_channel_setup(
     void *user_data) {
 
     (void)bootstrap;
-    assert(user_data);
+    AWS_ASSERT(user_data);
     struct aws_http_client_connection_impl_options *options = user_data;
 
     if (error_code) {

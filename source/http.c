@@ -19,7 +19,6 @@
 #include <aws/common/hash_table.h>
 #include <aws/io/logging.h>
 
-#include <assert.h>
 #include <ctype.h>
 
 #ifdef _MSC_VER
