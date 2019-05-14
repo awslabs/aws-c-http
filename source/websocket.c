@@ -1123,7 +1123,7 @@ static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
     return AWS_OP_SUCCESS;
 }
 
-static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code) {
+static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code, bool *out_callback_result) {
     AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
     AWS_ASSERT(websocket->thread_data.current_incoming_frame);
 
