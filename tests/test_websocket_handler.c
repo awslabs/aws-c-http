@@ -37,6 +37,7 @@ struct written_frame {
 struct incoming_frame {
     struct aws_websocket_incoming_frame def;
     struct aws_byte_buf payload;
+    size_t on_payload_count;
     int on_complete_error_code;
     bool has_begun;
     bool is_complete;
@@ -64,6 +65,9 @@ struct tester {
     /* Frames reported via the websocket's on_incoming_frame callbacks are recorded here */
     struct incoming_frame incoming_frames[100];
     size_t num_incoming_frames;
+    size_t fail_on_incoming_frame_begin_n;    /* If set, return false on Nth incoming_frame_begin callback */
+    size_t fail_on_incoming_frame_payload_n;  /* If set, return false on Nth incoming_frame_payload callback */
+    size_t fail_on_incoming_frame_complete_n; /* If set, return false on Nth incoming_frame_complete callback */
 
     /* For pushing messages downstream, to be read by websocket handler.
      * readpush_frame is for tests to define websocket frames to be pushed downstream.
@@ -88,10 +92,12 @@ struct send_tester {
 
     struct aws_byte_cursor cursor; /* iterates as payload is written */
     size_t on_payload_count;
+    size_t fail_on_nth_payload; /* If set, returns false on Nth callback (1 is first callback)*/
 
     size_t on_complete_count;
     size_t on_complete_order; /* Order that frame sent, amongst all frames sent this test */
     int on_complete_error_code;
+    bool fail_on_complete; /* If true, return false from on_complete callback */
 };
 
 struct readpush_frame {
@@ -174,7 +180,7 @@ static int s_on_written_frame_payload(struct aws_byte_cursor data, void *user_da
     return AWS_OP_SUCCESS;
 }
 
-static void s_on_incoming_frame_begin(
+static bool s_on_incoming_frame_begin(
     struct aws_websocket *websocket,
     const struct aws_websocket_incoming_frame *frame,
     void *user_data) {
@@ -199,9 +205,18 @@ static void s_on_incoming_frame_begin(
     AWS_FATAL_ASSERT(frame->payload_length <= SIZE_MAX);
     int err = aws_byte_buf_init(&incoming_frame->payload, tester->alloc, (size_t)frame->payload_length);
     AWS_FATAL_ASSERT(!err);
+
+    if (tester->fail_on_incoming_frame_begin_n) {
+        AWS_FATAL_ASSERT(tester->num_incoming_frames < tester->fail_on_incoming_frame_begin_n);
+
+        if ((tester->num_incoming_frames + 1) == tester->fail_on_incoming_frame_begin_n) {
+            return false;
+        }
+    }
+    return true;
 }
 
-static void s_on_incoming_frame_payload(
+static bool s_on_incoming_frame_payload(
     struct aws_websocket *websocket,
     const struct aws_websocket_incoming_frame *frame,
     struct aws_byte_cursor data,
@@ -220,9 +235,20 @@ static void s_on_incoming_frame_payload(
 
     /* buffer was allocated to exact payload length, so write should succeed */
     AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(&incoming_frame->payload, data));
+
+    incoming_frame->on_payload_count++;
+
+    if (tester->fail_on_incoming_frame_payload_n) {
+        AWS_FATAL_ASSERT(incoming_frame->on_payload_count <= tester->fail_on_incoming_frame_payload_n);
+
+        if (incoming_frame->on_payload_count == tester->fail_on_incoming_frame_payload_n) {
+            return false;
+        }
+    }
+    return true;
 }
 
-static void s_on_incoming_frame_complete(
+static bool s_on_incoming_frame_complete(
     struct aws_websocket *websocket,
     const struct aws_websocket_incoming_frame *frame,
     int error_code,
@@ -240,6 +266,15 @@ static void s_on_incoming_frame_complete(
     if (error_code == AWS_ERROR_SUCCESS) {
         AWS_FATAL_ASSERT(incoming_frame->payload.len == incoming_frame->def.payload_length);
     }
+
+    if (tester->fail_on_incoming_frame_complete_n) {
+        AWS_FATAL_ASSERT(tester->num_incoming_frames <= tester->fail_on_incoming_frame_complete_n);
+
+        if (tester->num_incoming_frames == tester->fail_on_incoming_frame_complete_n) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static void s_set_readpush_frames(struct tester *tester, struct readpush_frame *frames, size_t num_frames) {
@@ -252,7 +287,7 @@ static void s_set_readpush_frames(struct tester *tester, struct readpush_frame *
     }
 }
 
-static int s_stream_readpush_payload(struct aws_byte_buf *out_buf, bool *out_done, void *user_data) {
+static int s_stream_readpush_payload(struct aws_byte_buf *out_buf, void *user_data) {
     struct tester *tester = user_data;
 
     struct readpush_frame *frame = &tester->readpush_frames[tester->readpush_frame_index];
@@ -262,7 +297,6 @@ static int s_stream_readpush_payload(struct aws_byte_buf *out_buf, bool *out_don
     AWS_FATAL_ASSERT(sending_cursor.len > 0);
 
     ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(out_buf, sending_cursor));
-    *out_done = (frame->cursor.len == 0);
     return AWS_OP_SUCCESS;
 }
 
@@ -427,7 +461,7 @@ static int s_tester_clean_up(struct tester *tester) {
     return AWS_OP_SUCCESS;
 }
 
-static enum aws_websocket_outgoing_payload_state s_on_stream_outgoing_payload(
+static bool s_on_stream_outgoing_payload(
     struct aws_websocket *websocket,
     struct aws_byte_buf *out_buf,
     void *user_data) {
@@ -458,8 +492,14 @@ static enum aws_websocket_outgoing_payload_state s_on_stream_outgoing_payload(
         aws_byte_buf_write_from_whole_cursor(out_buf, send_cursor);
     }
 
-    return send_tester->cursor.len == 0 ? AWS_WEBSOCKET_OUTGOING_PAYLOAD_DONE
-                                        : AWS_WEBSOCKET_OUTGOING_PAYLOAD_IN_PROGRESS;
+    if (send_tester->fail_on_nth_payload) {
+        AWS_FATAL_ASSERT(send_tester->on_payload_count <= send_tester->fail_on_nth_payload);
+        if (send_tester->on_payload_count == send_tester->fail_on_nth_payload) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 static void s_on_outgoing_frame_complete(struct aws_websocket *websocket, int error_code, void *user_data) {
@@ -467,6 +507,7 @@ static void s_on_outgoing_frame_complete(struct aws_websocket *websocket, int er
     AWS_FATAL_ASSERT(websocket == send_tester->owner->websocket);
 
     send_tester->on_complete_error_code = error_code;
+    AWS_FATAL_ASSERT(send_tester->on_complete_count == 0);
     send_tester->on_complete_count++;
     send_tester->on_complete_order = send_tester->owner->on_send_complete_count;
     send_tester->owner->on_send_complete_count++;
@@ -1005,6 +1046,56 @@ TEST_CASE(websocket_handler_send_one_io_msg_at_a_time) {
     return AWS_OP_SUCCESS;
 }
 
+TEST_CASE(websocket_handler_send_halts_if_payload_fn_returns_false) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct send_tester sending[] = {
+        {
+            /* Sending should halt after 1st frame sends 1byte of payload */
+            .payload = aws_byte_cursor_from_c_str("Stop"),
+            .fail_on_nth_payload = 1,
+            .bytes_per_tick = 1,
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = true,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Should never send"),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = true,
+                },
+        },
+    };
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(sending); ++i) {
+        ASSERT_SUCCESS(s_send_frame(&tester, &sending[i]));
+    }
+
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+
+    /* Check that frame stopped processing */
+    ASSERT_UINT_EQUALS(1, sending[0].on_payload_count);
+    ASSERT_UINT_EQUALS(1, sending[0].on_complete_count);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CALLBACK_FAILURE, sending[0].on_complete_error_code);
+
+    /* The websocket should close when a callback returns false */
+    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+
+    /* Other send should have been cancelled without it payload callback ever being invoked */
+    ASSERT_UINT_EQUALS(0, sending[1].on_payload_count);
+    ASSERT_UINT_EQUALS(1, sending[1].on_complete_count);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, sending[1].on_complete_error_code);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 TEST_CASE(websocket_handler_shutdown_automatically_sends_close_frame) {
     (void)ctx;
     struct tester tester;
@@ -1150,6 +1241,36 @@ TEST_CASE(websocket_handler_shutdown_on_zero_refcount) {
 
     aws_websocket_acquire_hold(tester.websocket);
     aws_websocket_release_hold(tester.websocket);
+
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_close_on_thread) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    aws_websocket_close(tester.websocket, false);
+
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_close_off_thread) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+    aws_websocket_close(tester.websocket, false);
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
 
     ASSERT_SUCCESS(s_drain_written_messages(&tester));
     ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
@@ -1310,6 +1431,142 @@ TEST_CASE(websocket_handler_read_frames_complete_on_shutdown) {
 
     /* Check that completion callbacks fired */
     ASSERT_SUCCESS(s_readpush_check(&tester, 0, AWS_ERROR_HTTP_CONNECTION_CLOSED));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_read_halts_if_begin_fn_returns_false) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct readpush_frame pushing[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("Fail on frame begin."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = true,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("This frame should never get read."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = true,
+                },
+        },
+    };
+
+    tester.fail_on_incoming_frame_begin_n = 1;
+
+    s_set_readpush_frames(&tester, pushing, AWS_ARRAY_SIZE(pushing));
+    ASSERT_SUCCESS(s_do_readpush_all(&tester));
+
+    s_drain_written_messages(&tester);
+
+    /* First frame should have completed immediately with an error */
+    ASSERT_SUCCESS(s_readpush_check(&tester, 0, AWS_ERROR_HTTP_CALLBACK_FAILURE));
+    ASSERT_UINT_EQUALS(0, tester.incoming_frames[0].on_payload_count);
+
+    /* No further frames should have been read */
+    ASSERT_UINT_EQUALS(1, tester.num_incoming_frames);
+
+    /* Callback failure should have caused connection to close */
+    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_read_halts_if_payload_fn_returns_false) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct readpush_frame pushing[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("Fail on payload."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = true,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("This frame should never get read."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = true,
+                },
+        },
+    };
+
+    /* Return false from 1st on_payload callback. */
+    tester.fail_on_incoming_frame_payload_n = 1;
+
+    s_set_readpush_frames(&tester, pushing, AWS_ARRAY_SIZE(pushing));
+    ASSERT_SUCCESS(s_do_readpush_all(&tester));
+
+    s_drain_written_messages(&tester);
+
+    /* First frame should complete with error */
+    ASSERT_SUCCESS(s_readpush_check(&tester, 0, AWS_ERROR_HTTP_CALLBACK_FAILURE));
+    ASSERT_UINT_EQUALS(1, tester.incoming_frames[0].on_payload_count);
+
+    /* No further frames should have been read */
+    ASSERT_UINT_EQUALS(1, tester.num_incoming_frames);
+
+    /* Callback failure should have caused connection to close */
+    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_read_halts_if_complete_fn_returns_false) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct readpush_frame pushing[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("Fail on completion."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = true,
+                },
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("This frame should never get read."),
+            .def =
+                {
+                    .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
+                    .fin = true,
+                },
+        },
+    };
+
+    /* Return false when 1st frame's on_complete callback */
+    tester.fail_on_incoming_frame_complete_n = 1;
+
+    s_set_readpush_frames(&tester, pushing, AWS_ARRAY_SIZE(pushing));
+    ASSERT_SUCCESS(s_do_readpush_all(&tester));
+
+    s_drain_written_messages(&tester);
+
+    /* First frame should have succeeded */
+    ASSERT_SUCCESS(s_readpush_check(&tester, 0, AWS_ERROR_SUCCESS));
+
+    /* No further frames should have been read */
+    ASSERT_UINT_EQUALS(1, tester.num_incoming_frames);
+
+    /* Callback failure should have caused connection to close */
+    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;

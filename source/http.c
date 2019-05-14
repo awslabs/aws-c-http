@@ -53,6 +53,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT,
         "Amount of data streamed out does not match the previously declared length."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_CALLBACK_FAILURE,
+        "A callback has reported failure."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_WEBSOCKET_CLOSE_FRAME_SENT,
         "Websocket has sent CLOSE frame, no more data will be sent."),
     AWS_DEFINE_ERROR_INFO_HTTP(

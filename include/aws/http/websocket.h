@@ -79,8 +79,11 @@ struct aws_websocket_incoming_frame {
  * Invoked once per frame on the websocket's event-loop thread.
  * Each incoming-frame-begin call will eventually be followed by an incoming-frame-complete call,
  * before the next frame begins and before the websocket shuts down.
+ *
+ * Return true to proceed normally. If false is returned, the websocket will read no further data,
+ * the frame will complete with an error-code, and the connection will close.
  */
-typedef void(aws_websocket_on_incoming_frame_begin_fn)(
+typedef bool(aws_websocket_on_incoming_frame_begin_fn)(
     struct aws_websocket *websocket,
     const struct aws_websocket_incoming_frame *frame,
     void *user_data);
@@ -96,8 +99,11 @@ typedef void(aws_websocket_on_incoming_frame_begin_fn)(
  * Leaving this value untouched will increment the window back to its original size.
  * Setting this value to 0 will prevent the update and let the window shrink.
  * The window can be manually updated via aws_websocket_update_window()
+ *
+ * Return true to proceed normally. If false is returned, the websocket will read no further data,
+ * the frame will complete with an error-code, and the connection will close.
  */
-typedef void(aws_websocket_on_incoming_frame_payload_fn)(
+typedef bool(aws_websocket_on_incoming_frame_payload_fn)(
     struct aws_websocket *websocket,
     const struct aws_websocket_incoming_frame *frame,
     struct aws_byte_cursor data,
@@ -108,8 +114,11 @@ typedef void(aws_websocket_on_incoming_frame_payload_fn)(
  * Called when done processing an incoming frame.
  * If error_code is non-zero, an error occurred and the payload may not have been completely received.
  * Invoked once per frame on the websocket's event-loop thread.
+ *
+ * Return true to proceed normally. If false is returned, the websocket will read no further data
+ * and the connection will close.
  */
-typedef void(aws_websocket_on_incoming_frame_complete_fn)(
+typedef bool(aws_websocket_on_incoming_frame_complete_fn)(
     struct aws_websocket *websocket,
     const struct aws_websocket_incoming_frame *frame,
     int error_code,
@@ -136,19 +145,17 @@ struct aws_websocket_client_connection_options {
     aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
 };
 
-enum aws_websocket_outgoing_payload_state {
-    AWS_WEBSOCKET_OUTGOING_PAYLOAD_IN_PROGRESS,
-    AWS_WEBSOCKET_OUTGOING_PAYLOAD_DONE,
-};
-
 /**
  * Called repeatedly as the websocket's payload is streamed out.
  * The user should write payload data to out_buf and return an enum to indicate their progress.
  * If the data is not yet available, your may return return IN_PROGRESS without writing out any data.
  * The websocket will mask this data for you, if necessary.
  * Invoked repeatedly on the websocket's event-loop thread.
+ *
+ * Return true to proceed normally. If false is returned, the websocket will send no further data,
+ * the frame will complete with an error-code, and the connection will close.
  */
-typedef enum aws_websocket_outgoing_payload_state(aws_websocket_stream_outgoing_payload_fn)(
+typedef bool(aws_websocket_stream_outgoing_payload_fn)(
     struct aws_websocket *websocket,
     struct aws_byte_buf *out_buf,
     void *user_data);
@@ -250,9 +257,10 @@ void aws_websocket_release_hold(struct aws_websocket *websocket);
  * Close the websocket connection.
  * It is safe to call this, even if the connection is already closed or closing.
  * The websocket will attempt to send a CLOSE frame during normal shutdown.
+ * If `free_scarce_resources_immediately` is true, the connection will be torn down as quickly as possible.
  */
 AWS_HTTP_API
-void aws_websocket_close(struct aws_websocket *websocket, int error_code);
+void aws_websocket_close(struct aws_websocket *websocket, bool free_scarce_resources_immediately);
 
 /**
  * Send a websocket frame.
