@@ -11,6 +11,7 @@ mkdir %INSTALL_DIR%
 
 CALL :install_library aws-c-common
 CALL :install_library aws-c-io
+CALL :install_library aws-c-compression
 
 mkdir %BUILDS_DIR%\aws-c-http-build
 cd %BUILDS_DIR%\aws-c-http-build

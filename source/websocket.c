@@ -201,13 +201,13 @@ bool aws_websocket_is_data_frame(uint8_t opcode) {
 
 void s_lock_synced_data(struct aws_websocket *websocket) {
     int err = aws_mutex_lock(&websocket->synced_data.lock);
-    assert(!err);
+    AWS_ASSERT(!err);
     (void)err;
 }
 
 void s_unlock_synced_data(struct aws_websocket *websocket) {
     int err = aws_mutex_unlock(&websocket->synced_data.lock);
-    assert(!err);
+    AWS_ASSERT(!err);
     (void)err;
 }
 
@@ -270,8 +270,8 @@ error:
 
 static void s_handler_destroy(struct aws_channel_handler *handler) {
     struct aws_websocket *websocket = handler->impl;
-    assert(!websocket->thread_data.current_outgoing_frame);
-    assert(!websocket->thread_data.current_incoming_frame);
+    AWS_ASSERT(!websocket->thread_data.current_outgoing_frame);
+    AWS_ASSERT(!websocket->thread_data.current_incoming_frame);
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Destroying websocket.", (void *)websocket);
 
@@ -294,8 +294,8 @@ void aws_websocket_acquire_hold(struct aws_websocket *websocket) {
 }
 
 void aws_websocket_release_hold(struct aws_websocket *websocket) {
-    assert(websocket);
-    assert(websocket->channel_slot);
+    AWS_ASSERT(websocket);
+    AWS_ASSERT(websocket->channel_slot);
 
     size_t prev_refcount = aws_atomic_fetch_sub(&websocket->refcount, 1);
     if (prev_refcount == 1) {
@@ -311,7 +311,7 @@ void aws_websocket_release_hold(struct aws_websocket *websocket) {
         aws_channel_release_hold(websocket->channel_slot->channel);
 
     } else {
-        assert(prev_refcount != 0);
+        AWS_ASSERT(prev_refcount != 0);
 
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_WEBSOCKET,
@@ -339,8 +339,8 @@ static void s_enqueue_prioritized_frame(struct aws_linked_list *list, struct out
 
 int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_websocket_send_frame_options *options) {
 
-    assert(websocket);
-    assert(options);
+    AWS_ASSERT(websocket);
+    AWS_ASSERT(options);
 
     /* Check for bad input. Log about non-obvious errors. */
     if (options->high_priority && aws_websocket_is_data_frame(options->opcode)) {
@@ -445,7 +445,7 @@ static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, voi
 }
 
 static void s_try_write_outgoing_frames(struct aws_websocket *websocket) {
-    assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
 
     /* Check whether we should be writing data */
     if (!websocket->thread_data.current_outgoing_frame &&
@@ -646,11 +646,11 @@ error:
 /* Encoder's outgoing_payload callback invokes current frame's callback */
 static int s_encoder_stream_outgoing_payload(struct aws_byte_buf *out_buf, void *user_data) {
     struct aws_websocket *websocket = user_data;
-    assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
-    assert(websocket->thread_data.current_outgoing_frame);
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+    AWS_ASSERT(websocket->thread_data.current_outgoing_frame);
 
     struct outgoing_frame *current_frame = websocket->thread_data.current_outgoing_frame;
-    assert(current_frame->def.stream_outgoing_payload);
+    AWS_ASSERT(current_frame->def.stream_outgoing_payload);
 
     bool callback_result = current_frame->def.stream_outgoing_payload(websocket, out_buf, current_frame->def.user_data);
     if (!callback_result) {
@@ -671,7 +671,7 @@ static void s_io_message_write_completed(
     (void)channel;
     (void)message;
     struct aws_websocket *websocket = user_data;
-    assert(aws_channel_thread_is_callers_thread(channel));
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(channel));
 
     if (err_code == AWS_ERROR_SUCCESS) {
         AWS_LOGF_TRACE(
@@ -722,8 +722,8 @@ static void s_destroy_outgoing_frame(struct aws_websocket *websocket, struct out
 }
 
 static void s_stop_writing(struct aws_websocket *websocket, int send_frame_error_code) {
-    assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
-    assert(send_frame_error_code != AWS_ERROR_SUCCESS);
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+    AWS_ASSERT(send_frame_error_code != AWS_ERROR_SUCCESS);
 
     if (websocket->thread_data.is_writing_stopped) {
         return;
@@ -748,7 +748,7 @@ static void s_stop_writing(struct aws_websocket *websocket, int send_frame_error
 }
 
 static void s_shutdown_due_to_write_err(struct aws_websocket *websocket, int error_code) {
-    assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
 
     /* No more writing allowed (it's ok to call this redundantly). */
     s_stop_writing(websocket, AWS_ERROR_HTTP_CONNECTION_CLOSED);
@@ -776,7 +776,7 @@ static void s_shutdown_due_to_write_err(struct aws_websocket *websocket, int err
 }
 
 static void s_shutdown_due_to_read_err(struct aws_websocket *websocket, int error_code) {
-    assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
 
     AWS_LOGF_ERROR(
         AWS_LS_HTTP_WEBSOCKET,
@@ -859,7 +859,7 @@ static int s_handler_shutdown(
     int error_code,
     bool free_scarce_resources_immediately) {
 
-    assert(aws_channel_thread_is_callers_thread(slot->channel));
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(slot->channel));
     struct aws_websocket *websocket = handler->impl;
     int err;
 
@@ -921,9 +921,9 @@ static int s_handler_shutdown(
 }
 
 static void s_finish_shutdown(struct aws_websocket *websocket) {
-    assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
-    assert(websocket->thread_data.is_writing_stopped);
-    assert(websocket->thread_data.is_shutting_down_and_waiting_for_close_frame_to_be_written);
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+    AWS_ASSERT(websocket->thread_data.is_writing_stopped);
+    AWS_ASSERT(websocket->thread_data.is_shutting_down_and_waiting_for_close_frame_to_be_written);
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Finishing websocket handler shutdown.", (void *)websocket);
 
@@ -976,8 +976,8 @@ static int s_handler_process_read_message(
     struct aws_channel_slot *slot,
     struct aws_io_message *message) {
 
-    assert(message);
-    assert(aws_channel_thread_is_callers_thread(slot->channel));
+    AWS_ASSERT(message);
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(slot->channel));
     struct aws_websocket *websocket = handler->impl;
     struct aws_byte_cursor cursor = aws_byte_cursor_from_buf(&message->message_data);
     int err;
@@ -1057,9 +1057,9 @@ clean_up:
 
 static int s_decoder_on_frame(const struct aws_websocket_frame *frame, void *user_data) {
     struct aws_websocket *websocket = user_data;
-    assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
-    assert(!websocket->thread_data.current_incoming_frame);
-    assert(!websocket->thread_data.is_reading_stopped);
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+    AWS_ASSERT(!websocket->thread_data.current_incoming_frame);
+    AWS_ASSERT(!websocket->thread_data.is_reading_stopped);
 
     websocket->thread_data.current_incoming_frame = &websocket->thread_data.incoming_frame_storage;
 
@@ -1088,9 +1088,9 @@ static int s_decoder_on_frame(const struct aws_websocket_frame *frame, void *use
 
 static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
     struct aws_websocket *websocket = user_data;
-    assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
-    assert(websocket->thread_data.current_incoming_frame);
-    assert(!websocket->thread_data.is_reading_stopped);
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+    AWS_ASSERT(websocket->thread_data.current_incoming_frame);
+    AWS_ASSERT(!websocket->thread_data.is_reading_stopped);
 
     /* Invoke user cb */
     bool callback_result = true;
@@ -1102,7 +1102,7 @@ static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
 
         /* If user reduced window_update_size, reduce how much the websocket will update its window */
         size_t reduce = data.len - window_update_size;
-        assert(reduce <= websocket->thread_data.incoming_message_window_update);
+        AWS_ASSERT(reduce <= websocket->thread_data.incoming_message_window_update);
         websocket->thread_data.incoming_message_window_update -= reduce;
 
         AWS_LOGF_DEBUG(
@@ -1123,9 +1123,9 @@ static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
     return AWS_OP_SUCCESS;
 }
 
-static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code, bool *out_callback_result) {
-    assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
-    assert(websocket->thread_data.current_incoming_frame);
+static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code) {
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+    AWS_ASSERT(websocket->thread_data.current_incoming_frame);
 
     if (error_code == AWS_OP_SUCCESS) {
         /* If this was a CLOSE frame, don't read any more data. */

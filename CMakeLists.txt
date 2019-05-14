@@ -57,7 +57,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PUBLIC
         $<INSTALL_INTERFACE:include>)
 
 find_package(aws-c-io REQUIRED)
-target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC AWS::aws-c-io)
+find_package(aws-c-compression REQUIRED)
+target_link_libraries(${CMAKE_PROJECT_NAME} PUBLIC AWS::aws-c-io AWS::aws-c-compression)
 
 aws_prepare_shared_lib_exports(${CMAKE_PROJECT_NAME})
 
