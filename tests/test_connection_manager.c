@@ -23,14 +23,23 @@
 #include <aws/common/uuid.h>
 #include <aws/http/connection.h>
 #include <aws/http/connection_manager.h>
+#include <aws/http/private/connection_manager_function_table.h>
 #include <aws/http/server.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 
+enum new_connection_result_type { AWS_NCRT_SUCCESS, AWS_NCRT_ERROR_VIA_CALLBACK, AWS_NCRT_ERROR_FROM_CREATE };
+
+struct mock_connection_proxy {
+    enum new_connection_result_type result;
+    bool is_closed_on_release;
+};
+
 struct cm_tester_options {
     struct aws_allocator *allocator;
+    struct aws_http_connection_manager_function_table *mock_table;
     size_t max_connections;
 };
 
@@ -55,9 +64,19 @@ struct cm_tester {
     size_t connection_releases;
 
     size_t wait_for_connection_count;
+
+    struct aws_http_connection_manager_function_table *mock_table;
+
+    struct aws_atomic_var next_connection_id;
+    struct aws_array_list mock_connections;
+    struct aws_atomic_var release_connection_fn;
 };
 
-int s_cm_tester_init(struct cm_tester *tester, struct cm_tester_options *options) {
+static struct cm_tester s_tester;
+
+int s_cm_tester_init(struct cm_tester_options *options) {
+    struct cm_tester *tester = &s_tester;
+
     AWS_ZERO_STRUCT(*tester);
 
     aws_tls_init_static_state(options->allocator);
@@ -97,15 +116,40 @@ int s_cm_tester_init(struct cm_tester *tester, struct cm_tester_options *options
                                                                  NULL, //&tester->tls_connection_options,
                                                              .host = aws_byte_cursor_from_c_str("www.google.com"),
                                                              .port = 80,
-                                                             .max_connections = options->max_connections};
+                                                             .max_connections = options->max_connections,
+                                                             .function_table = options->mock_table};
 
     tester->connection_manager = aws_http_connection_manager_new(tester->allocator, &cm_options);
     ASSERT_NOT_NULL(tester->connection_manager);
 
+    tester->mock_table = options->mock_table;
+
+    aws_atomic_store_int(&tester->next_connection_id, 0);
+    aws_atomic_store_ptr(&tester->release_connection_fn, NULL);
+
+    ASSERT_SUCCESS(aws_array_list_init_dynamic(
+        &tester->mock_connections, tester->allocator, 10, sizeof(struct mock_connection_proxy *)));
+
     return AWS_OP_SUCCESS;
 }
 
-void s_release_connections(struct cm_tester *tester, size_t count, bool close_first) {
+void s_add_mock_connections(size_t count, enum new_connection_result_type result, bool closed_on_release) {
+    struct cm_tester *tester = &s_tester;
+
+    for (size_t i = 0; i < count; ++i) {
+        struct mock_connection_proxy *mock = aws_mem_acquire(tester->allocator, sizeof(struct mock_connection_proxy));
+        AWS_ZERO_STRUCT(*mock);
+
+        mock->result = result;
+        mock->is_closed_on_release = closed_on_release;
+
+        aws_array_list_push_back(&tester->mock_connections, &mock);
+    }
+}
+
+void s_release_connections(size_t count, bool close_first) {
+
+    struct cm_tester *tester = &s_tester;
 
     aws_mutex_lock(&tester->lock);
 
@@ -137,7 +181,11 @@ void s_release_connections(struct cm_tester *tester, size_t count, bool close_fi
         }
 
         if (close_first) {
-            aws_http_connection_close(connection);
+            if (tester->mock_table) {
+                tester->mock_table->close_connection(connection);
+            } else {
+                aws_http_connection_close(connection);
+            }
         }
 
         aws_http_connection_manager_release_connection(tester->connection_manager, connection);
@@ -152,7 +200,7 @@ void s_release_connections(struct cm_tester *tester, size_t count, bool close_fi
 }
 
 void s_on_acquire_connection(struct aws_http_connection *connection, int error_code, void *user_data) {
-    struct cm_tester *tester = user_data;
+    struct cm_tester *tester = &s_tester;
 
     aws_mutex_lock(&tester->lock);
 
@@ -167,36 +215,49 @@ void s_on_acquire_connection(struct aws_http_connection *connection, int error_c
     aws_mutex_unlock(&tester->lock);
 }
 
-static void s_acquire_connections(struct cm_tester *tester, size_t count) {
+static void s_acquire_connections(size_t count) {
+    struct cm_tester *tester = &s_tester;
+
     for (size_t i = 0; i < count; ++i) {
         aws_http_connection_manager_acquire_connection(tester->connection_manager, s_on_acquire_connection, tester);
     }
 }
 
-static bool s_is_connection_reply_count_equal(void *context) {
-    struct cm_tester *tester = context;
+static bool s_is_connection_reply_count_at_least(void *context) {
+    struct cm_tester *tester = &s_tester;
 
-    return tester->wait_for_connection_count ==
+    return tester->wait_for_connection_count <=
            aws_array_list_length(&tester->connections) + tester->connection_errors + tester->connection_releases;
 }
 
-static void s_wait_on_connection_reply_count(struct cm_tester *tester, size_t count) {
+static void s_wait_on_connection_reply_count(size_t count) {
+    struct cm_tester *tester = &s_tester;
+
     aws_mutex_lock(&tester->lock);
 
     tester->wait_for_connection_count = count;
-    aws_condition_variable_wait_pred(&tester->signal, &tester->lock, s_is_connection_reply_count_equal, tester);
+    aws_condition_variable_wait_pred(&tester->signal, &tester->lock, s_is_connection_reply_count_at_least, tester);
 
     aws_mutex_unlock(&tester->lock);
 }
 
-void s_cm_tester_clean_up(struct cm_tester *tester) {
-    if (tester == NULL) {
-        return;
-    }
+void s_cm_tester_clean_up(void) {
+    struct cm_tester *tester = &s_tester;
 
-    s_release_connections(tester, aws_array_list_length(&tester->connections), false);
+    s_release_connections(aws_array_list_length(&tester->connections), false);
 
     aws_array_list_clean_up(&tester->connections);
+
+    for (size_t i = 0; i < aws_array_list_length(&tester->mock_connections); ++i) {
+        struct mock_connection_proxy *mock = NULL;
+
+        if (aws_array_list_get_at(&tester->mock_connections, &mock, i)) {
+            continue;
+        }
+
+        aws_mem_release(tester->allocator, mock);
+    }
+    aws_array_list_clean_up(&tester->mock_connections);
 
     aws_http_connection_manager_release(tester->connection_manager);
 
@@ -218,10 +279,9 @@ static int s_test_connection_manager_setup_shutdown(struct aws_allocator *alloca
 
     struct cm_tester_options options = {.allocator = allocator, .max_connections = 5};
 
-    struct cm_tester tester;
-    ASSERT_SUCCESS(s_cm_tester_init(&tester, &options));
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
 
-    s_cm_tester_clean_up(&tester);
+    s_cm_tester_clean_up();
 
     return AWS_OP_SUCCESS;
 }
@@ -232,16 +292,15 @@ static int s_test_connection_manager_single_connection(struct aws_allocator *all
 
     struct cm_tester_options options = {.allocator = allocator, .max_connections = 5};
 
-    struct cm_tester tester;
-    ASSERT_SUCCESS(s_cm_tester_init(&tester, &options));
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
 
-    s_acquire_connections(&tester, 1);
+    s_acquire_connections(1);
 
-    s_wait_on_connection_reply_count(&tester, 1);
+    s_wait_on_connection_reply_count(1);
 
-    s_release_connections(&tester, 1, false);
+    s_release_connections(1, false);
 
-    s_cm_tester_clean_up(&tester);
+    s_cm_tester_clean_up();
 
     return AWS_OP_SUCCESS;
 }
@@ -252,16 +311,15 @@ static int s_test_connection_manager_many_connections(struct aws_allocator *allo
 
     struct cm_tester_options options = {.allocator = allocator, .max_connections = 20};
 
-    struct cm_tester tester;
-    ASSERT_SUCCESS(s_cm_tester_init(&tester, &options));
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
 
-    s_acquire_connections(&tester, 20);
+    s_acquire_connections(20);
 
-    s_wait_on_connection_reply_count(&tester, 20);
+    s_wait_on_connection_reply_count(20);
 
-    s_release_connections(&tester, 20, false);
+    s_release_connections(20, false);
 
-    s_cm_tester_clean_up(&tester);
+    s_cm_tester_clean_up();
 
     return AWS_OP_SUCCESS;
 }
@@ -272,20 +330,19 @@ static int s_test_connection_manager_acquire_release(struct aws_allocator *alloc
 
     struct cm_tester_options options = {.allocator = allocator, .max_connections = 4};
 
-    struct cm_tester tester;
-    ASSERT_SUCCESS(s_cm_tester_init(&tester, &options));
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
 
-    s_acquire_connections(&tester, 20);
+    s_acquire_connections(20);
 
-    s_wait_on_connection_reply_count(&tester, 4);
+    s_wait_on_connection_reply_count(4);
 
     for (size_t i = 4; i < 20; ++i) {
-        s_release_connections(&tester, 1, false);
+        s_release_connections(1, false);
 
-        s_wait_on_connection_reply_count(&tester, i + 1);
+        s_wait_on_connection_reply_count(i + 1);
     }
 
-    s_cm_tester_clean_up(&tester);
+    s_cm_tester_clean_up();
 
     return AWS_OP_SUCCESS;
 }
@@ -296,20 +353,19 @@ static int s_test_connection_manager_close_and_release(struct aws_allocator *all
 
     struct cm_tester_options options = {.allocator = allocator, .max_connections = 4};
 
-    struct cm_tester tester;
-    ASSERT_SUCCESS(s_cm_tester_init(&tester, &options));
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
 
-    s_acquire_connections(&tester, 20);
+    s_acquire_connections(20);
 
-    s_wait_on_connection_reply_count(&tester, 4);
+    s_wait_on_connection_reply_count(4);
 
     for (size_t i = 4; i < 20; ++i) {
-        s_release_connections(&tester, 1, i % 1 == 0);
+        s_release_connections(1, i % 1 == 0);
 
-        s_wait_on_connection_reply_count(&tester, i + 1);
+        s_wait_on_connection_reply_count(i + 1);
     }
 
-    s_cm_tester_clean_up(&tester);
+    s_cm_tester_clean_up();
 
     return AWS_OP_SUCCESS;
 }
@@ -320,27 +376,191 @@ static int s_test_connection_manager_acquire_release_mix(struct aws_allocator *a
 
     struct cm_tester_options options = {.allocator = allocator, .max_connections = 5};
 
-    struct cm_tester tester;
-    ASSERT_SUCCESS(s_cm_tester_init(&tester, &options));
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
 
     for (size_t i = 0; i < 10; ++i) {
-        s_acquire_connections(&tester, 2);
+        s_acquire_connections(2);
 
-        s_wait_on_connection_reply_count(&tester, i + 1);
+        s_wait_on_connection_reply_count(i + 1);
 
-        s_release_connections(&tester, 1, i % 1 == 0);
+        s_release_connections(1, i % 1 == 0);
     }
 
-    s_wait_on_connection_reply_count(&tester, 15);
+    s_wait_on_connection_reply_count(15);
 
     for (size_t i = 15; i < 20; ++i) {
-        s_release_connections(&tester, 1, i % 1 == 0);
+        s_release_connections(1, i % 1 == 0);
 
-        s_wait_on_connection_reply_count(&tester, i + 1);
+        s_wait_on_connection_reply_count(i + 1);
     }
 
-    s_cm_tester_clean_up(&tester);
+    s_cm_tester_clean_up();
 
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_acquire_release_mix, s_test_connection_manager_acquire_release_mix);
+
+static int s_aws_http_connection_manager_create_connection_sync_mock(
+    const struct aws_http_client_connection_options *options) {
+    struct cm_tester *tester = &s_tester;
+
+    size_t next_connection_id = aws_atomic_fetch_add(&tester->next_connection_id, 1);
+    aws_atomic_store_ptr(&tester->release_connection_fn, options->on_shutdown);
+
+    struct mock_connection_proxy *connection = NULL;
+
+    if (next_connection_id < aws_array_list_length(&tester->mock_connections)) {
+        aws_array_list_get_at(&tester->mock_connections, &connection, next_connection_id);
+    }
+
+    if (connection->result == AWS_NCRT_SUCCESS) {
+        options->on_setup((struct aws_http_connection *)connection, AWS_ERROR_SUCCESS, options->user_data);
+    } else if (connection->result == AWS_NCRT_ERROR_VIA_CALLBACK) {
+        options->on_setup(NULL, AWS_ERROR_HTTP_UNKNOWN, options->user_data);
+    }
+
+    return connection->result != AWS_NCRT_ERROR_FROM_CREATE ? AWS_ERROR_SUCCESS : AWS_ERROR_HTTP_UNKNOWN;
+}
+
+static void s_aws_http_connection_manager_release_connection_sync_mock(struct aws_http_connection *connection) {
+    (void)connection;
+
+    struct cm_tester *tester = &s_tester;
+
+    aws_http_on_client_connection_shutdown_fn *release_callback = aws_atomic_load_ptr(&tester->release_connection_fn);
+
+    release_callback(connection, AWS_ERROR_SUCCESS, tester->connection_manager);
+}
+
+static void s_aws_http_connection_manager_close_connection_sync_mock(struct aws_http_connection *connection) {
+    (void)connection;
+}
+
+static bool s_aws_http_connection_manager_is_connection_open_sync_mock(const struct aws_http_connection *connection) {
+    (void)connection;
+
+    struct mock_connection_proxy *proxy = (struct mock_connection_proxy *)(void *)connection;
+
+    return !proxy->is_closed_on_release;
+}
+
+static struct aws_http_connection_manager_function_table s_synchronous_mocks = {
+    .create_connection = s_aws_http_connection_manager_create_connection_sync_mock,
+    .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
+    .close_connection = s_aws_http_connection_manager_close_connection_sync_mock,
+    .is_connection_open = s_aws_http_connection_manager_is_connection_open_sync_mock};
+
+static int s_test_connection_manager_acquire_release_mix_synchronous(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct cm_tester_options options = {
+        .allocator = allocator, .max_connections = 5, .mock_table = &s_synchronous_mocks};
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    for (size_t i = 0; i < 20; ++i) {
+        s_add_mock_connections(1, AWS_NCRT_SUCCESS, i % 1 == 0);
+    }
+
+    for (size_t i = 0; i < 10; ++i) {
+        s_acquire_connections(2);
+
+        s_wait_on_connection_reply_count(i + 1);
+
+        s_release_connections(1, false);
+    }
+
+    s_wait_on_connection_reply_count(15);
+
+    for (size_t i = 15; i < 20; ++i) {
+        s_release_connections(1, false);
+
+        s_wait_on_connection_reply_count(i + 1);
+    }
+
+    ASSERT_TRUE(s_tester.connection_errors == 0);
+
+    s_cm_tester_clean_up();
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_connection_manager_acquire_release_mix_synchronous,
+    s_test_connection_manager_acquire_release_mix_synchronous);
+
+static int s_test_connection_manager_connect_callback_failure(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct cm_tester_options options = {
+        .allocator = allocator, .max_connections = 5, .mock_table = &s_synchronous_mocks};
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_add_mock_connections(5, AWS_NCRT_ERROR_VIA_CALLBACK, false);
+
+    s_acquire_connections(5);
+
+    s_wait_on_connection_reply_count(5);
+
+    ASSERT_TRUE(s_tester.connection_errors == 5);
+
+    s_cm_tester_clean_up();
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_connect_callback_failure, s_test_connection_manager_connect_callback_failure);
+
+static int s_test_connection_manager_connect_immediate_failure(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct cm_tester_options options = {
+        .allocator = allocator, .max_connections = 5, .mock_table = &s_synchronous_mocks};
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_add_mock_connections(5, AWS_NCRT_ERROR_FROM_CREATE, false);
+
+    s_acquire_connections(5);
+
+    s_wait_on_connection_reply_count(5);
+
+    ASSERT_TRUE(s_tester.connection_errors == 5);
+
+    s_cm_tester_clean_up();
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_connect_immediate_failure, s_test_connection_manager_connect_immediate_failure);
+
+static int s_test_connection_manager_success_then_cancel_pending_from_failure(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+
+    struct cm_tester_options options = {
+        .allocator = allocator, .max_connections = 1, .mock_table = &s_synchronous_mocks};
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_add_mock_connections(1, AWS_NCRT_SUCCESS, true);
+    s_add_mock_connections(1, AWS_NCRT_ERROR_FROM_CREATE, false);
+
+    s_acquire_connections(5);
+
+    s_wait_on_connection_reply_count(1);
+
+    ASSERT_TRUE(s_tester.connection_errors == 0);
+
+    s_release_connections(1, true);
+
+    s_wait_on_connection_reply_count(5);
+
+    ASSERT_TRUE(s_tester.connection_errors == 4);
+
+    s_cm_tester_clean_up();
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_connection_manager_success_then_cancel_pending_from_failure,
+    s_test_connection_manager_success_then_cancel_pending_from_failure);

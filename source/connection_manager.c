@@ -25,6 +25,9 @@
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 
+/*
+ * Function table to use under normal circumstances
+ */
 static struct aws_http_connection_manager_function_table s_default_function_table = {
     .create_connection = aws_http_client_connect,
     .release_connection = aws_http_connection_release,
@@ -44,7 +47,7 @@ struct aws_http_connection_manager {
      * internal implementation references.  Selectively overridden by tests in order to
      * enable strong coverage of internal implementation details.
      */
-    const struct aws_http_connection_manager_function_table *functions;
+    const struct aws_http_connection_manager_function_table *function_table;
 
     /*
      * Controls access to all mutable state on the connection manager
@@ -58,7 +61,7 @@ struct aws_http_connection_manager {
     enum aws_http_connection_manager_state_type state;
 
     /*
-     * The set of all available ready-to-be-used connections
+     * The set of all available, ready-to-be-used connections
      */
     struct aws_array_list connections;
 
@@ -75,8 +78,7 @@ struct aws_http_connection_manager {
 
     /*
      * The number of pending new connection requests we have outstanding to the http
-     * layer.  Each pending new connection requests adds one to the connection manager's
-     * overall ref count.   Each resolved request subtracts one.
+     * layer.
      */
     size_t pending_connects_count;
 
@@ -111,17 +113,27 @@ struct aws_http_connection_manager {
     /*
      * Lifecycle tracking for the connection manager.  Starts at 1.
      *
-     * Once this drops to zero, the state transitions to shutting down
+     * Once this drops to zero, the manager state transitions to shutting down
      *
-     * The manager is deleted when all tracking counters have returned to zero.
+     * The manager is deleted when all other tracking counters have returned to zero.
+     *
+     * We don't use an atomic here because the shutdown phase wants to check many different
+     * values.  You could argue that we could use a sum of everything, but we still need the
+     * individual values for proper behavior and error checking during the ready state.  Also,
+     * a hybrid atomic/lock solution felt excessively complicated and delicate.
      */
-    size_t ref_count;
+    size_t external_ref_count;
 };
 
+/*
+ * The manager's lock must be held by the caller.
+ */
 static bool s_aws_http_connection_manager_should_destroy(struct aws_http_connection_manager *manager) {
     if (manager->state != AWS_HCMST_SHUTTING_DOWN) {
         return false;
     }
+
+    AWS_ASSERT(manager->external_ref_count == 0);
 
     if (manager->vended_connection_count > 0 || manager->pending_connects_count > 0 ||
         manager->open_connection_count > 0) {
@@ -146,25 +158,27 @@ struct aws_http_connection_acquisition {
     aws_http_on_client_connection_setup_fn *callback;
     void *user_data;
     struct aws_http_connection *connection;
-    int result;
+    int error_code;
 };
 
 /*
- * Invokes a set of acquisition callbacks.  Only call this outside the scope of the connection manager's lock.
+ * Invokes a set of acquisition completion callbacks.  Only call this outside the scope of the connection manager's
+ * lock.
  *
- * Assumes that internal state (like pending_acquisition_count, vended_connection_count) have already been updated
- * according to the list's contents.
+ * Assumes that internal state (like pending_acquisition_count, vended_connection_count, etc...) have already been
+ * updated according to the list's contents.
  */
 static void s_aws_http_connection_manager_complete_acquisitions(
     struct aws_linked_list *acquisitions,
     struct aws_allocator *allocator) {
+
     while (!aws_linked_list_empty(acquisitions)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(acquisitions);
         struct aws_http_connection_acquisition *pending_acquisition =
             AWS_CONTAINER_OF(node, struct aws_http_connection_acquisition, node);
 
         pending_acquisition->callback(
-            pending_acquisition->connection, pending_acquisition->result, pending_acquisition->user_data);
+            pending_acquisition->connection, pending_acquisition->error_code, pending_acquisition->user_data);
         aws_mem_release(allocator, pending_acquisition);
     }
 }
@@ -174,14 +188,15 @@ static void s_aws_http_connection_manager_complete_acquisitions(
  * build the set of callbacks to be completed once the lock is released.
  *
  * If this was a successful acquisition then connection is non-null
- * If this was a failed acquisition then connection is null and result is hopefully a useful diagnostic (extreme edge
- * cases exist where it may not be though)
+ * If this was a failed acquisition then connection is null and error_code is hopefully a useful diagnostic (extreme
+ * edge cases exist where it may not be though)
  */
 static void s_aws_http_connection_manager_move_front_acquisition(
     struct aws_http_connection_manager *manager,
     struct aws_http_connection *connection,
-    int result,
+    int error_code,
     struct aws_linked_list *output_list) {
+
     AWS_ASSERT(!aws_linked_list_empty(&manager->pending_acquisitions));
     AWS_ASSERT(manager->pending_acquisition_count > 0);
 
@@ -191,7 +206,7 @@ static void s_aws_http_connection_manager_move_front_acquisition(
     struct aws_http_connection_acquisition *pending_acquisition =
         AWS_CONTAINER_OF(node, struct aws_http_connection_acquisition, node);
     pending_acquisition->connection = connection;
-    pending_acquisition->result = result;
+    pending_acquisition->error_code = error_code;
 
     aws_linked_list_push_back(output_list, node);
 }
@@ -215,6 +230,7 @@ static void s_aws_http_connection_manager_destroy(struct aws_http_connection_man
         aws_tls_connection_options_clean_up(manager->tls_connection_options);
         aws_mem_release(manager->allocator, manager->tls_connection_options);
     }
+
     aws_mutex_clean_up(&manager->lock);
 
     aws_mem_release(manager->allocator, manager);
@@ -223,6 +239,7 @@ static void s_aws_http_connection_manager_destroy(struct aws_http_connection_man
 struct aws_http_connection_manager *aws_http_connection_manager_new(
     struct aws_allocator *allocator,
     struct aws_http_connection_manager_options *options) {
+
     AWS_ASSERT(options);
     AWS_ASSERT(options->socket_options);
     AWS_ASSERT(options->max_connections > 0);
@@ -266,13 +283,13 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->max_connections = options->max_connections;
     manager->socket_options = *options->socket_options;
     manager->bootstrap = options->bootstrap;
-    manager->functions = options->mocks;
-    manager->ref_count = 1;
-    if (manager->functions == NULL) {
-        manager->functions = g_aws_http_connection_manager_default_function_table_ptr;
+    manager->function_table = options->function_table;
+    manager->external_ref_count = 1;
+    if (manager->function_table == NULL) {
+        manager->function_table = g_aws_http_connection_manager_default_function_table_ptr;
     }
 
-    if (!aws_http_connection_manager_function_table_is_valid(manager->functions)) {
+    if (!aws_http_connection_manager_function_table_is_valid(manager->function_table)) {
         goto on_error;
     }
 
@@ -287,7 +304,7 @@ on_error:
 
 void aws_http_connection_manager_acquire(struct aws_http_connection_manager *manager) {
     aws_mutex_lock(&manager->lock);
-    manager->ref_count += 1;
+    manager->external_ref_count += 1;
     aws_mutex_unlock(&manager->lock);
 }
 
@@ -302,10 +319,10 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
 
     aws_mutex_lock(&manager->lock);
 
-    AWS_FATAL_ASSERT(manager->ref_count > 0);
-    manager->ref_count -= 1;
+    AWS_FATAL_ASSERT(manager->external_ref_count > 0);
+    manager->external_ref_count -= 1;
 
-    if (manager->ref_count == 0) {
+    if (manager->external_ref_count == 0) {
         manager->state = AWS_HCMST_SHUTTING_DOWN;
         should_destroy = s_aws_http_connection_manager_should_destroy(manager);
 
@@ -325,7 +342,7 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
             continue;
         }
 
-        aws_http_connection_release(connection);
+        manager->function_table->release_connection(connection);
     }
 
     aws_array_list_clean_up(&connections_to_release);
@@ -400,7 +417,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.on_setup = s_aws_http_connection_manager_on_connection_setup;
     options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
 
-    if (connection_manager->functions->create_connection(&options)) {
+    if (connection_manager->function_table->create_connection(&options)) {
         return AWS_OP_ERR;
     }
 
@@ -418,10 +435,13 @@ static void s_aws_http_connection_manager_execute_work_order(
     struct aws_array_list errors;
     AWS_ZERO_STRUCT(errors);
 
-    if (!aws_array_list_init_dynamic(&errors, connection_manager->allocator, new_connections, sizeof(int))) {
-        for (size_t i = 0; i < new_connections; ++i) {
-            if (s_aws_http_connection_manager_new_connection(connection_manager)) {
-                representative_error = aws_last_error();
+    bool push_errors = aws_array_list_init_dynamic(
+                           &errors, connection_manager->allocator, new_connections, sizeof(int)) == AWS_ERROR_SUCCESS;
+    for (size_t i = 0; i < new_connections; ++i) {
+        if (s_aws_http_connection_manager_new_connection(connection_manager)) {
+            ++new_connection_failures;
+            representative_error = aws_last_error();
+            if (push_errors) {
                 aws_array_list_push_back(&errors, &representative_error);
             }
         }
@@ -431,15 +451,24 @@ static void s_aws_http_connection_manager_execute_work_order(
         aws_mutex_lock(&connection_manager->lock);
 
         connection_manager->pending_connects_count -= new_connection_failures;
-        for (size_t i = 0;
-             i < new_connection_failures && !aws_linked_list_empty(&connection_manager->pending_acquisitions);
-             ++i) {
+        size_t i = 0;
+
+        /*
+         * Rather than failing one acquisition for each connection failure, if there's at least one
+         * connection failure, we instead fail all excess acquisitions, since there's no pending
+         * connect that will necessarily resolve them.
+         *
+         * Try to correspond an error with the acquisition failure, but as a fallback just use the
+         * representative error
+         */
+        while (connection_manager->pending_acquisition_count > connection_manager->pending_connects_count) {
             int error = representative_error;
             if (i < aws_array_list_length(&errors)) {
                 aws_array_list_get_at(&errors, &error, i);
             }
 
             s_aws_http_connection_manager_move_front_acquisition(connection_manager, NULL, error, completions);
+            ++i;
         }
 
         aws_mutex_unlock(&connection_manager->lock);
@@ -502,7 +531,7 @@ int aws_http_connection_manager_release_connection(
     AWS_ASSERT(connection_manager->vended_connection_count > 0);
     --connection_manager->vended_connection_count;
 
-    bool should_release_connection = !connection_manager->functions->is_connection_open(connection);
+    bool should_release_connection = !connection_manager->function_table->is_connection_open(connection);
     if (!should_release_connection) {
         if (aws_array_list_push_back(&connection_manager->connections, &connection)) {
             should_release_connection = true;
@@ -516,7 +545,7 @@ int aws_http_connection_manager_release_connection(
     s_aws_http_connection_manager_execute_work_order(connection_manager, &completions, new_connections);
 
     if (should_release_connection) {
-        connection_manager->functions->release_connection(connection);
+        connection_manager->function_table->release_connection(connection);
     }
 
     return AWS_OP_SUCCESS;
@@ -553,9 +582,9 @@ static void s_aws_http_connection_manager_on_connection_setup(
 
     if (connection == NULL) {
         /*
-         * A nice behavioral optimization.  If we failed to connect now, then we're more likely to fail in the
-         * near-future as well.  So if we have an excess of pending acquisitions (beyond the number of pending
-         * connects), let's fail all of the excess rather than wait for a cascade of failures.
+         * To be safe, if we have an excess of pending acquisitions (beyond the number of pending
+         * connects), we need to fail all of the excess.  Technically, we might be able to try and
+         * make a new connection, if there's room, but that could lead to some bad failure loops.
          *
          * This won't happen during shutdown since there are no pending acquisitions at that point.
          */
@@ -574,7 +603,7 @@ static void s_aws_http_connection_manager_on_connection_setup(
         /*
          * We didn't add the connection to the pool; just release it immediately
          */
-        manager->functions->release_connection(connection);
+        manager->function_table->release_connection(connection);
     }
 
     if (should_destroy) {
@@ -625,7 +654,7 @@ static void s_aws_http_connection_manager_on_connection_shutdown(
     AWS_ASSERT(!should_release_connection || !should_destroy);
 
     if (should_release_connection) {
-        manager->functions->release_connection(connection);
+        manager->function_table->release_connection(connection);
     }
 
     if (should_destroy) {

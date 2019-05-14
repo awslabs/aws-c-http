@@ -34,14 +34,25 @@ struct aws_http_connection_manager_mocks;
  * the maximum number of connections to ever have in existence.
  */
 struct aws_http_connection_manager_options {
+    /*
+     * http connection configuration
+     */
     struct aws_client_bootstrap *bootstrap;
     size_t initial_window_size;
     struct aws_socket_options *socket_options;
     struct aws_tls_connection_options *tls_connection_options;
     struct aws_byte_cursor host;
     uint16_t port;
+
+    /*
+     * Maximum number of connections this manager is allowed to contain
+     */
     size_t max_connections;
-    const struct aws_http_connection_manager_function_table *mocks;
+
+    /*
+     * Private function table for mocking http connection management
+     */
+    const struct aws_http_connection_manager_function_table *function_table;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -67,7 +78,8 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     struct aws_http_connection_manager_options *options);
 
 /*
- * Requests a connection from the manager
+ * Requests a connection from the manager.  The requester is notified of
+ * an acquired connection (or failure to acquire) via the supplied callback.
  */
 AWS_HTTP_API
 int aws_http_connection_manager_acquire_connection(
