@@ -1249,6 +1249,36 @@ TEST_CASE(websocket_handler_shutdown_on_zero_refcount) {
     return AWS_OP_SUCCESS;
 }
 
+TEST_CASE(websocket_handler_close_on_thread) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    aws_websocket_close(tester.websocket, false);
+
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_handler_close_off_thread) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+    aws_websocket_close(tester.websocket, false);
+    testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
+
+    ASSERT_SUCCESS(s_drain_written_messages(&tester));
+    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 TEST_CASE(websocket_handler_read_frame) {
     (void)ctx;
     struct tester tester;
