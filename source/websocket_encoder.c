@@ -192,8 +192,7 @@ static int s_state_payload(struct aws_websocket_encoder *encoder, struct aws_byt
     const struct aws_byte_buf prev_buf = *out_buf;
 
     /* Invoke callback which will write to buffer */
-    bool user_says_done = false;
-    int err = encoder->stream_outgoing_payload(out_buf, &user_says_done, encoder->user_data);
+    int err = encoder->stream_outgoing_payload(out_buf, encoder->user_data);
     if (err) {
         return AWS_OP_ERR;
     }
@@ -226,18 +225,10 @@ static int s_state_payload(struct aws_websocket_encoder *encoder, struct aws_byt
 
     /* If done writing payload, proceed to next state */
     if (encoder->state_bytes_processed == encoder->frame.payload_length) {
-        if (!user_says_done) {
-            return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
-        }
-
         encoder->state = AWS_WEBSOCKET_ENCODER_STATE_DONE;
     } else {
         /* Some more error-checking... */
         if (encoder->state_bytes_processed > encoder->frame.payload_length) {
-            return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
-        }
-
-        if (user_says_done) {
             return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
         }
     }

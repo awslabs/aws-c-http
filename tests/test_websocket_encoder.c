@@ -32,13 +32,13 @@ struct encoder_tester {
     struct aws_byte_cursor payload;
     size_t on_payload_count;
     size_t fail_on_nth_payload;
-    bool never_say_payload_is_done;
+    bool payload_length_is_wrong_on_purpose;
 
     uint8_t out_buf_storage[1024];
     struct aws_byte_buf out_buf;
 };
 
-static int s_on_payload(struct aws_byte_buf *out_buf, bool *out_done, void *user_data) {
+static int s_on_payload(struct aws_byte_buf *out_buf, void *user_data) {
     struct encoder_tester *tester = user_data;
 
     tester->on_payload_count++;
@@ -53,11 +53,9 @@ static int s_on_payload(struct aws_byte_buf *out_buf, bool *out_done, void *user
             return aws_raise_error(AWS_ERROR_UNKNOWN); /* write shouldn't fail, but just in case */
         }
         aws_byte_cursor_advance(&tester->payload, bytes_to_write);
-    }
-
-    if (tester->payload.len == 0) {
-        if (!tester->never_say_payload_is_done) {
-            *out_done = true;
+    } else {
+        if (!tester->payload_length_is_wrong_on_purpose) {
+            return aws_raise_error(AWS_ERROR_UNKNOWN); /* encoder should have stopped asking for more payload */
         }
     }
 
@@ -225,51 +223,6 @@ ENCODER_TEST_CASE(websocket_encoder_fail_if_payload_exceeds_stated_length) {
     return AWS_OP_SUCCESS;
 }
 
-ENCODER_TEST_CASE(websocket_encoder_fail_if_payload_less_than_stated_length) {
-    (void)ctx;
-    struct encoder_tester tester;
-    ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
-
-    const struct aws_websocket_frame input_frame = {
-        .fin = true,
-        .opcode = 2,
-        .payload_length = 4,
-    };
-
-    const uint8_t input_payload[3] = {0};
-    tester.payload = aws_byte_cursor_from_array(input_payload, sizeof(input_payload));
-
-    ASSERT_SUCCESS(aws_websocket_encoder_start_frame(&tester.encoder, &input_frame));
-    ASSERT_FAILS(aws_websocket_encoder_process(&tester.encoder, &tester.out_buf));
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT, aws_last_error());
-
-    ASSERT_SUCCESS(s_encoder_tester_clean_up(&tester));
-    return AWS_OP_SUCCESS;
-}
-
-ENCODER_TEST_CASE(websocket_encoder_fail_if_payload_never_marked_done) {
-    (void)ctx;
-    struct encoder_tester tester;
-    ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
-
-    const struct aws_websocket_frame input_frame = {
-        .fin = true,
-        .opcode = 2,
-        .payload_length = 4,
-    };
-
-    const uint8_t input_payload[4] = {0};
-    tester.payload = aws_byte_cursor_from_array(input_payload, sizeof(input_payload));
-    tester.never_say_payload_is_done = true;
-
-    ASSERT_SUCCESS(aws_websocket_encoder_start_frame(&tester.encoder, &input_frame));
-    ASSERT_FAILS(aws_websocket_encoder_process(&tester.encoder, &tester.out_buf));
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT, aws_last_error());
-
-    ASSERT_SUCCESS(s_encoder_tester_clean_up(&tester));
-    return AWS_OP_SUCCESS;
-}
-
 ENCODER_TEST_CASE(websocket_encoder_masking) {
     (void)ctx;
     struct encoder_tester tester;
@@ -354,7 +307,7 @@ ENCODER_TEST_CASE(websocket_encoder_extended_length) {
 
         /* Don't actually encode the payload, we're just testing the non-payload portion of the frame here */
         tester.payload.len = 0;
-        tester.never_say_payload_is_done = true;
+        tester.payload_length_is_wrong_on_purpose = true;
 
         struct aws_websocket_frame input_frame = {
             .fin = true,
@@ -407,7 +360,7 @@ ENCODER_TEST_CASE(websocket_encoder_1_byte_at_a_time) {
      * Even though we say the payload is long, we're only going to send a portion of it in this test */
     const char *input_payload = "Hello";
     tester.payload = aws_byte_cursor_from_c_str(input_payload);
-    tester.never_say_payload_is_done = true;
+    tester.payload_length_is_wrong_on_purpose = true;
 
     const struct aws_websocket_frame input_frame = {
         .fin = true,

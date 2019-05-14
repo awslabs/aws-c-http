@@ -38,7 +38,7 @@
 /* TODO: Delayed payload works by sending 0-size io_msgs down pipe and trying again when they're compele.
  *       Do something more efficient? */
 
-/* TODO: don't fire send completion until data written to socket */
+/* TODO: don't fire send completion until data written to socket .. which also means delaying on_shutdown cb */
 
 /* TODO: stop using the HTTP_PARSE error, give websocket its own error */
 
@@ -64,6 +64,7 @@ struct aws_websocket {
     aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
 
     struct aws_channel_task move_synced_data_to_thread_task;
+    struct aws_channel_task shutdown_channel_task;
     struct aws_atomic_var refcount;
     bool is_server;
 
@@ -106,10 +107,14 @@ struct aws_websocket {
 
         struct aws_linked_list outgoing_frame_list;
 
-        bool is_move_synced_data_to_thread_task_scheduled;
-
         /* Error-code returned by aws_websocket_send_frame() when is_writing_stopped is true */
         int send_frame_error_code;
+
+        /* Use a task to issue a channel shutdown. */
+        int shutdown_channel_task_error_code;
+        bool is_shutdown_channel_task_scheduled;
+
+        bool is_move_synced_data_to_thread_task_scheduled;
     } synced_data;
 };
 
@@ -139,13 +144,13 @@ static size_t s_handler_initial_window_size(struct aws_channel_handler *handler)
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
 
-static int s_encoder_stream_outgoing_payload(struct aws_byte_buf *out_buf, bool *out_done, void *user_data);
+static int s_encoder_stream_outgoing_payload(struct aws_byte_buf *out_buf, void *user_data);
 
 static int s_decoder_on_frame(const struct aws_websocket_frame *frame, void *user_data);
 static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data);
 
 static void s_destroy_outgoing_frame(struct aws_websocket *websocket, struct outgoing_frame *frame, int error_code);
-static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code);
+static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code, bool *out_callback_result);
 static void s_finish_shutdown(struct aws_websocket *websocket);
 static void s_io_message_write_completed(
     struct aws_channel *channel,
@@ -153,6 +158,8 @@ static void s_io_message_write_completed(
     int err_code,
     void *user_data);
 static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
+static void s_shutdown_channel_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
+static void s_schedule_channel_shutdown(struct aws_websocket *websocket, int error_code);
 static void s_shutdown_due_to_write_err(struct aws_websocket *websocket, int error_code);
 static void s_shutdown_due_to_read_err(struct aws_websocket *websocket, int error_code);
 static void s_stop_writing(struct aws_websocket *websocket, int send_frame_error_code);
@@ -192,6 +199,18 @@ bool aws_websocket_is_data_frame(uint8_t opcode) {
     return !(opcode & 0x08);
 }
 
+void s_lock_synced_data(struct aws_websocket *websocket) {
+    int err = aws_mutex_lock(&websocket->synced_data.lock);
+    assert(!err);
+    (void)err;
+}
+
+void s_unlock_synced_data(struct aws_websocket *websocket) {
+    int err = aws_mutex_unlock(&websocket->synced_data.lock);
+    assert(!err);
+    (void)err;
+}
+
 struct aws_channel_handler *aws_websocket_handler_new(const struct aws_websocket_handler_options *options) {
     /* TODO: validate options */
 
@@ -221,6 +240,7 @@ struct aws_channel_handler *aws_websocket_handler_new(const struct aws_websocket
     websocket->is_server = options->is_server;
 
     aws_channel_task_init(&websocket->move_synced_data_to_thread_task, s_move_synced_data_to_thread_task, websocket);
+    aws_channel_task_init(&websocket->shutdown_channel_task, s_shutdown_channel_task, websocket);
 
     aws_linked_list_init(&websocket->thread_data.outgoing_frame_list);
 
@@ -348,9 +368,7 @@ int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_w
     bool should_schedule_task = false;
 
     /* BEGIN CRITICAL SECTION */
-    int err = aws_mutex_lock(&websocket->synced_data.lock);
-    assert(!err);
-    (void)err;
+    s_lock_synced_data(websocket);
 
     if (websocket->synced_data.send_frame_error_code) {
         send_error = websocket->synced_data.send_frame_error_code;
@@ -362,10 +380,7 @@ int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_w
         }
     }
 
-    err = aws_mutex_unlock(&websocket->synced_data.lock);
-    assert(!err);
-    (void)err;
-
+    s_unlock_synced_data(websocket);
     /* END CRITICAL SECTION */
 
     if (send_error) {
@@ -409,17 +424,13 @@ static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, voi
     aws_linked_list_init(&tmp_list);
 
     /* BEGIN CRITICAL SECTION */
-    int err = aws_mutex_lock(&websocket->synced_data.lock);
-    assert(!err);
-    (void)err;
+    s_lock_synced_data(websocket);
 
     aws_linked_list_swap_contents(&websocket->synced_data.outgoing_frame_list, &tmp_list);
 
     websocket->synced_data.is_move_synced_data_to_thread_task_scheduled = false;
 
-    err = aws_mutex_unlock(&websocket->synced_data.lock);
-    assert(!err);
-    (void)err;
+    s_unlock_synced_data(websocket);
     /* END CRITICAL SECTION */
 
     if (!aws_linked_list_empty(&tmp_list)) {
@@ -633,7 +644,7 @@ error:
 }
 
 /* Encoder's outgoing_payload callback invokes current frame's callback */
-static int s_encoder_stream_outgoing_payload(struct aws_byte_buf *out_buf, bool *out_done, void *user_data) {
+static int s_encoder_stream_outgoing_payload(struct aws_byte_buf *out_buf, void *user_data) {
     struct aws_websocket *websocket = user_data;
     assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
     assert(websocket->thread_data.current_outgoing_frame);
@@ -641,12 +652,13 @@ static int s_encoder_stream_outgoing_payload(struct aws_byte_buf *out_buf, bool 
     struct outgoing_frame *current_frame = websocket->thread_data.current_outgoing_frame;
     assert(current_frame->def.stream_outgoing_payload);
 
-    enum aws_websocket_outgoing_payload_state payload_state =
-        current_frame->def.stream_outgoing_payload(websocket, out_buf, current_frame->def.user_data);
+    bool callback_result = current_frame->def.stream_outgoing_payload(websocket, out_buf, current_frame->def.user_data);
+    if (!callback_result) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET, "id=%p: Outgoing payload callback has reported a failure.", (void *)websocket);
+        return aws_raise_error(AWS_ERROR_HTTP_CALLBACK_FAILURE);
+    }
 
-    *out_done = (payload_state == AWS_WEBSOCKET_OUTGOING_PAYLOAD_DONE);
-
-    /* TODO: handle user closing connection from callback */
     return AWS_OP_SUCCESS;
 }
 
@@ -725,15 +737,11 @@ static void s_stop_writing(struct aws_websocket *websocket, int send_frame_error
         aws_error_name(send_frame_error_code));
 
     /* BEGIN CRITICAL SECTION */
-    int err = aws_mutex_lock(&websocket->synced_data.lock);
-    assert(!err);
-    (void)err;
+    s_lock_synced_data(websocket);
 
     websocket->synced_data.send_frame_error_code = send_frame_error_code;
 
-    err = aws_mutex_unlock(&websocket->synced_data.lock);
-    assert(!err);
-    (void)err;
+    s_unlock_synced_data(websocket);
     /* END CRITICAL SECTION */
 
     websocket->thread_data.is_writing_stopped = true;
@@ -763,7 +771,7 @@ static void s_shutdown_due_to_write_err(struct aws_websocket *websocket, int err
             (void *)websocket,
             error_code,
             aws_error_name(error_code));
-        aws_channel_shutdown(websocket->channel_slot->channel, error_code);
+        s_schedule_channel_shutdown(websocket, error_code);
     }
 }
 
@@ -781,11 +789,67 @@ static void s_shutdown_due_to_read_err(struct aws_websocket *websocket, int erro
 
     /* If there's a current incoming frame, complete it with the specific error code. */
     if (websocket->thread_data.current_incoming_frame) {
-        s_complete_incoming_frame(websocket, error_code);
+        s_complete_incoming_frame(websocket, error_code, NULL);
     }
 
     /* Tell channel to shutdown (it's ok to call this redundantly) */
+    s_schedule_channel_shutdown(websocket, error_code);
+}
+
+static void s_shutdown_channel_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        return;
+    }
+
+    struct aws_websocket *websocket = arg;
+    int error_code;
+
+    /* BEGIN CRITICAL SECTION */
+    s_lock_synced_data(websocket);
+
+    error_code = websocket->synced_data.shutdown_channel_task_error_code;
+
+    s_unlock_synced_data(websocket);
+    /* END CRITICAL SECTION */
+
     aws_channel_shutdown(websocket->channel_slot->channel, error_code);
+}
+
+/* Tell the channel to shut down. It is safe to call this multiple times.
+ * The call to aws_channel_shutdown() is delayed so that a user invoking aws_websocket_close doesn't
+ * have completion callbacks firing before the function call even returns */
+static void s_schedule_channel_shutdown(struct aws_websocket *websocket, int error_code) {
+    bool schedule_shutdown = false;
+
+    /* BEGIN CRITICAL SECTION */
+    s_lock_synced_data(websocket);
+
+    if (!websocket->synced_data.is_shutdown_channel_task_scheduled) {
+        schedule_shutdown = true;
+        websocket->synced_data.is_shutdown_channel_task_scheduled = true;
+        websocket->synced_data.shutdown_channel_task_error_code = error_code;
+    }
+
+    s_unlock_synced_data(websocket);
+    /* END CRITICAL SECTION */
+
+    if (schedule_shutdown) {
+        aws_channel_schedule_task_now(websocket->channel_slot->channel, &websocket->shutdown_channel_task);
+    }
+}
+
+void aws_websocket_close(struct aws_websocket *websocket, bool free_scarce_resources_immediately) {
+    int error_code = AWS_ERROR_SUCCESS;
+
+    /* TODO: aws_channel_shutdown() should let users specify error_code and "immediate" as separate parameters.
+     * Currently, any non-zero error_code results in "immediate" shutdown */
+    if (free_scarce_resources_immediately) {
+        error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
+    }
+
+    s_schedule_channel_shutdown(websocket, error_code);
 }
 
 static int s_handler_shutdown(
@@ -867,7 +931,7 @@ static void s_finish_shutdown(struct aws_websocket *websocket) {
 
     /* Cancel all incomplete frames */
     if (websocket->thread_data.current_incoming_frame) {
-        s_complete_incoming_frame(websocket, AWS_ERROR_HTTP_CONNECTION_CLOSED);
+        s_complete_incoming_frame(websocket, AWS_ERROR_HTTP_CONNECTION_CLOSED, NULL);
     }
 
     if (websocket->thread_data.current_outgoing_frame) {
@@ -877,9 +941,7 @@ static void s_finish_shutdown(struct aws_websocket *websocket) {
     }
 
     /* BEGIN CRITICAL SECTION */
-    int err = aws_mutex_lock(&websocket->synced_data.lock);
-    assert(!err);
-    (void)err;
+    s_lock_synced_data(websocket);
 
     while (!aws_linked_list_empty(&websocket->synced_data.outgoing_frame_list)) {
         /* Move frames from synced_data to thread_data, then cancel them together outside critical section */
@@ -887,9 +949,7 @@ static void s_finish_shutdown(struct aws_websocket *websocket) {
         aws_linked_list_push_back(&websocket->thread_data.outgoing_frame_list, node);
     }
 
-    err = aws_mutex_unlock(&websocket->synced_data.lock);
-    assert(!err);
-    (void)err;
+    s_unlock_synced_data(websocket);
     /* END CRITICAL SECTION */
 
     while (!aws_linked_list_empty(&websocket->thread_data.outgoing_frame_list)) {
@@ -949,7 +1009,17 @@ static int s_handler_process_read_message(
         }
 
         if (frame_complete) {
-            s_complete_incoming_frame(websocket, AWS_ERROR_SUCCESS);
+            bool callback_result;
+            s_complete_incoming_frame(websocket, AWS_ERROR_SUCCESS, &callback_result);
+            if (!callback_result) {
+                AWS_LOGF_ERROR(
+                    AWS_LS_HTTP_WEBSOCKET,
+                    "id=%p: Incoming frame completion callback has reported a failure. Closing connection",
+                    (void *)websocket);
+
+                aws_raise_error(AWS_ERROR_HTTP_CALLBACK_FAILURE);
+                goto error;
+            }
         }
     }
 
@@ -1001,14 +1071,16 @@ static int s_decoder_on_frame(const struct aws_websocket_frame *frame, void *use
     websocket->thread_data.current_incoming_frame->rsv[2] = frame->rsv[2];
 
     /* Invoke user cb */
+    bool callback_result = true;
     if (websocket->on_incoming_frame_begin) {
-        websocket->on_incoming_frame_begin(
+        callback_result = websocket->on_incoming_frame_begin(
             websocket, websocket->thread_data.current_incoming_frame, websocket->user_data);
     }
 
-    /* Stop decoding if user callback shut down the connection. */
-    if (websocket->thread_data.is_reading_stopped) {
-        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    if (!callback_result) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET, "id=%p: Incoming frame callback has reported a failure.", (void *)websocket);
+        return aws_raise_error(AWS_ERROR_HTTP_CALLBACK_FAILURE);
     }
 
     return AWS_OP_SUCCESS;
@@ -1021,13 +1093,14 @@ static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
     assert(!websocket->thread_data.is_reading_stopped);
 
     /* Invoke user cb */
+    bool callback_result = true;
     if (websocket->on_incoming_frame_payload) {
         size_t window_update_size = data.len;
 
-        websocket->on_incoming_frame_payload(
+        callback_result = websocket->on_incoming_frame_payload(
             websocket, websocket->thread_data.current_incoming_frame, data, &window_update_size, websocket->user_data);
 
-        /* If user reduced window_udpate_size, reduce how much the websocket will update its window */
+        /* If user reduced window_update_size, reduce how much the websocket will update its window */
         size_t reduce = data.len - window_update_size;
         assert(reduce <= websocket->thread_data.incoming_message_window_update);
         websocket->thread_data.incoming_message_window_update -= reduce;
@@ -1041,15 +1114,16 @@ static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
 
     /* TODO: pass data to channel handler on right */
 
-    /* Stop decoding if user callback shut down the connection. */
-    if (websocket->thread_data.is_reading_stopped) {
-        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    if (!callback_result) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET, "id=%p: Incoming payload callback has reported a failure.", (void *)websocket);
+        return aws_raise_error(AWS_ERROR_HTTP_CALLBACK_FAILURE);
     }
 
     return AWS_OP_SUCCESS;
 }
 
-static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code) {
+static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code, bool *out_callback_result) {
     assert(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
     assert(websocket->thread_data.current_incoming_frame);
 
@@ -1069,9 +1143,14 @@ static void s_complete_incoming_frame(struct aws_websocket *websocket, int error
     }
 
     /* Invoke user cb */
+    bool callback_result = true;
     if (websocket->on_incoming_frame_complete) {
-        websocket->on_incoming_frame_complete(
+        callback_result = websocket->on_incoming_frame_complete(
             websocket, websocket->thread_data.current_incoming_frame, error_code, websocket->user_data);
+    }
+
+    if (out_callback_result) {
+        *out_callback_result = callback_result;
     }
 
     websocket->thread_data.current_incoming_frame = NULL;
