@@ -1638,7 +1638,7 @@ static int s_window_manual_increment_common(struct aws_allocator *allocator, boo
 
     /* Manually increment window */
     testing_channel_set_is_on_users_thread(&tester.testing_channel, on_thread);
-    aws_websocket_increment_read_window(tester.websocket, pushing.def.payload_length);
+    aws_websocket_increment_read_window(tester.websocket, (size_t)pushing.def.payload_length);
 
     /* Assert it re-opened that much */
     testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
