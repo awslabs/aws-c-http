@@ -1606,7 +1606,7 @@ TEST_CASE(websocket_handler_window_reopens_by_default) {
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
-    size_t total_frame_size = aws_websocket_frame_encoded_size(&pushing.def);
+    uint64_t total_frame_size = aws_websocket_frame_encoded_size(&pushing.def);
     ASSERT_UINT_EQUALS(total_frame_size, testing_channel_last_window_update(&tester.testing_channel));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
@@ -1633,7 +1633,7 @@ static int s_window_manual_increment_common(struct aws_allocator *allocator, boo
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     /* Assert that window did not fully re-open*/
-    size_t frame_minus_payload_size = aws_websocket_frame_encoded_size(&pushing.def) - pushing.def.payload_length;
+    uint64_t frame_minus_payload_size = aws_websocket_frame_encoded_size(&pushing.def) - pushing.def.payload_length;
     ASSERT_UINT_EQUALS(frame_minus_payload_size, testing_channel_last_window_update(&tester.testing_channel));
 
     /* Manually increment window */
