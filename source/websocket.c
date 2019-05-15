@@ -65,6 +65,7 @@ struct aws_websocket {
 
     struct aws_channel_task move_synced_data_to_thread_task;
     struct aws_channel_task shutdown_channel_task;
+    struct aws_channel_task increment_read_window_task;
     struct aws_atomic_var refcount;
     bool is_server;
 
@@ -106,6 +107,9 @@ struct aws_websocket {
         struct aws_mutex lock;
 
         struct aws_linked_list outgoing_frame_list;
+
+        /* If non-zero, then increment_read_window_task is scheduled */
+        size_t window_increment_size;
 
         /* Error-code returned by aws_websocket_send_frame() when is_writing_stopped is true */
         int send_frame_error_code;
@@ -158,6 +162,7 @@ static void s_io_message_write_completed(
     int err_code,
     void *user_data);
 static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
+static void s_increment_read_window_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_shutdown_channel_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_schedule_channel_shutdown(struct aws_websocket *websocket, int error_code);
 static void s_shutdown_due_to_write_err(struct aws_websocket *websocket, int error_code);
@@ -241,6 +246,7 @@ struct aws_channel_handler *aws_websocket_handler_new(const struct aws_websocket
 
     aws_channel_task_init(&websocket->move_synced_data_to_thread_task, s_move_synced_data_to_thread_task, websocket);
     aws_channel_task_init(&websocket->shutdown_channel_task, s_shutdown_channel_task, websocket);
+    aws_channel_task_init(&websocket->increment_read_window_task, s_increment_read_window_task, websocket);
 
     aws_linked_list_init(&websocket->thread_data.outgoing_frame_list);
 
@@ -1175,4 +1181,93 @@ static int s_handler_increment_read_window(
     (void)slot;
     (void)size;
     return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+}
+
+static void s_increment_read_window_action(struct aws_websocket *websocket, size_t size) {
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+
+    int err = aws_channel_slot_increment_read_window(websocket->channel_slot, size);
+    if (err) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Failed to increment read window, error %d (%s). Closing websocket.",
+            (void *)websocket,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
+        s_schedule_channel_shutdown(websocket, aws_last_error());
+    }
+}
+
+static void s_increment_read_window_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        return;
+    }
+
+    struct aws_websocket *websocket = arg;
+    size_t size;
+
+    /* BEGIN CRITICAL SECTION */
+    s_lock_synced_data(websocket);
+
+    size = websocket->synced_data.window_increment_size;
+    websocket->synced_data.window_increment_size = 0;
+
+    s_unlock_synced_data(websocket);
+    /* END CRITICAL SECTION */
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_WEBSOCKET, "id=%p: Running task to increment read window by %zu.", (void *)websocket, size);
+
+    s_increment_read_window_action(websocket, size);
+}
+
+void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t size) {
+    if (size == 0) {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Ignoring window increment of size 0.", (void *)websocket);
+        return;
+    }
+
+    /* If we're on thread just do it. */
+    if (aws_channel_thread_is_callers_thread(websocket->channel_slot->channel)) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Incrementing read window immediately with size %zu.",
+            (void *)websocket,
+            size);
+        s_increment_read_window_action(websocket, size);
+        return;
+    }
+
+    /* Otherwise schedule a task to do it.
+     * If task is already scheduled, just increase size to be incremented */
+    bool should_schedule_task = false;
+
+    /* BEGIN CRITICAL SECTION */
+    s_lock_synced_data(websocket);
+
+    if (websocket->synced_data.window_increment_size == 0) {
+        should_schedule_task = true;
+        websocket->synced_data.window_increment_size = size;
+    } else {
+        websocket->synced_data.window_increment_size =
+            aws_add_size_saturating(websocket->synced_data.window_increment_size, size);
+    }
+
+    s_unlock_synced_data(websocket);
+    /* END CRITICAL SECTION */
+
+    if (should_schedule_task) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_WEBSOCKET, "id=%p: Scheduling task to increment read window by %zu.", (void *)websocket, size);
+        aws_channel_schedule_task_now(websocket->channel_slot->channel, &websocket->increment_read_window_task);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Task to increment read window already scheduled, increasing scheduled size by %zu.",
+            (void *)websocket,
+            size);
+    }
 }
