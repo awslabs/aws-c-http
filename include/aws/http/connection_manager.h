@@ -83,7 +83,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
  */
 AWS_HTTP_API
 int aws_http_connection_manager_acquire_connection(
-    struct aws_http_connection_manager *connection_manager,
+    struct aws_http_connection_manager *manager,
     aws_http_on_client_connection_setup_fn *callback,
     void *user_data);
 
@@ -92,7 +92,7 @@ int aws_http_connection_manager_acquire_connection(
  */
 AWS_HTTP_API
 int aws_http_connection_manager_release_connection(
-    struct aws_http_connection_manager *connection_manager,
+    struct aws_http_connection_manager *manager,
     struct aws_http_connection *connection);
 
 AWS_EXTERN_C_END
