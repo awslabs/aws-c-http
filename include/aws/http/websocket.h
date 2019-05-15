@@ -94,11 +94,12 @@ typedef bool(aws_websocket_on_incoming_frame_begin_fn)(
  * Payload data will not be valid after this call, so copy if necessary.
  * The payload data is always unmasked at this point.
  *
- * `out_window_update_size` is how much to increment the flow-control window once this data is processed.
- * By default, it is the size of the data which has just come in.
- * Leaving this value untouched will increment the window back to its original size.
- * Setting this value to 0 will prevent the update and let the window shrink.
- * The window can be manually updated via aws_websocket_update_window()
+ * `out_increment_window` is how much to increment the read window after this data is processed.
+ * The read window shrinks as payload data is received, and reading stops when its size reaches 0.
+ * The initial value of `out_increment_window` will match the size of the data which has just come in,
+ * so leaving `out_increment_window` untouched results in the window incrementing back to its original size.
+ * Setting `out_increment_window` to 0 will let the window shrink, and aws_websocket_increment_read_window()
+ * will need to be called when the user is ready to receive more data.
  *
  * Return true to proceed normally. If false is returned, the websocket will read no further data,
  * the frame will complete with an error-code, and the connection will close.
@@ -107,7 +108,7 @@ typedef bool(aws_websocket_on_incoming_frame_payload_fn)(
     struct aws_websocket *websocket,
     const struct aws_websocket_incoming_frame *frame,
     struct aws_byte_cursor data,
-    size_t *out_window_update_size,
+    size_t *out_increment_window,
     void *user_data);
 
 /**
@@ -242,6 +243,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
  * Ensure that the websocket cannot be destroyed until aws_websocket_release_hold() is called.
  * The websocket might still shutdown/close, but the public API will not crash when this websocket pointer is used.
  * If acquire_hold() is never called, the websocket is destroyed when its channel its channel is destroyed.
+ * This function may be called from any thread.
  */
 AWS_HTTP_API
 void aws_websocket_acquire_hold(struct aws_websocket *websocket);
@@ -249,6 +251,7 @@ void aws_websocket_acquire_hold(struct aws_websocket *websocket);
 /**
  * See aws_websocket_acquire_hold().
  * The websocket will shut itself down when the last hold is released.
+ * This function may be called from any thread.
  */
 AWS_HTTP_API
 void aws_websocket_release_hold(struct aws_websocket *websocket);
@@ -258,6 +261,7 @@ void aws_websocket_release_hold(struct aws_websocket *websocket);
  * It is safe to call this, even if the connection is already closed or closing.
  * The websocket will attempt to send a CLOSE frame during normal shutdown.
  * If `free_scarce_resources_immediately` is true, the connection will be torn down as quickly as possible.
+ * This function may be called from any thread.
  */
 AWS_HTTP_API
 void aws_websocket_close(struct aws_websocket *websocket, bool free_scarce_resources_immediately);
@@ -266,9 +270,20 @@ void aws_websocket_close(struct aws_websocket *websocket, bool free_scarce_resou
  * Send a websocket frame.
  * The `options` struct is copied.
  * A callback will be invoked when the operation completes.
+ * This function may be called from any thread.
  */
 AWS_HTTP_API
 int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_websocket_send_frame_options *options);
+
+/**
+ * Manually increment the read window.
+ * The read window shrinks as payload data is received, and reading stops when its size reaches 0.
+ * Note that the read window can also be controlled from the aws_websocket_on_incoming_frame_payload_fn(),
+ * callback, by manipulating the `out_increment_window` argument.
+ * This function may be called from any thread.
+ */
+AWS_HTTP_API
+void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t size);
 
 /* WIP */
 AWS_HTTP_API
