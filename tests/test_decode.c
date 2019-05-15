@@ -79,7 +79,7 @@ static int s_on_request(
     void *user_data) {
 
     struct request_data *request_data = (struct request_data *)user_data;
-    assert(sizeof(request_data->buffer) >= uri->len + method_str->len);
+    AWS_ASSERT(sizeof(request_data->buffer) >= uri->len + method_str->len);
     if (request_data) {
         request_data->method_enum = method_enum;
 

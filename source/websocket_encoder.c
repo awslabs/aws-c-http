@@ -36,14 +36,14 @@ static int s_state_init(struct aws_websocket_encoder *encoder, struct aws_byte_b
 /* STATE_OPCODE_BYTE: Outputs 1st byte of frame, which is packed with goodies. */
 static int s_state_opcode_byte(struct aws_websocket_encoder *encoder, struct aws_byte_buf *out_buf) {
 
-    assert((encoder->frame.opcode & 0xF0) == 0); /* Should be impossible, the opcode was checked in start_frame() */
+    AWS_ASSERT((encoder->frame.opcode & 0xF0) == 0); /* Should be impossible, the opcode was checked in start_frame() */
 
     /* Right 4 bits are opcode, left 4 bits are fin|rsv1|rsv2|rsv3 */
     uint8_t byte = encoder->frame.opcode;
-    byte |= (uint8_t)(encoder->frame.fin << 7);
-    byte |= (uint8_t)(encoder->frame.rsv[0] << 6);
-    byte |= (uint8_t)(encoder->frame.rsv[1] << 5);
-    byte |= (uint8_t)(encoder->frame.rsv[2] << 4);
+    byte |= (encoder->frame.fin << 7);
+    byte |= (encoder->frame.rsv[0] << 6);
+    byte |= (encoder->frame.rsv[1] << 5);
+    byte |= (encoder->frame.rsv[2] << 4);
 
     /* If buffer has room to write, proceed to next state */
     if (aws_byte_buf_write_u8(out_buf, byte)) {
@@ -69,7 +69,7 @@ static int s_state_length_byte(struct aws_websocket_encoder *encoder, struct aws
         byte |= AWS_WEBSOCKET_7BIT_VALUE_FOR_2BYTE_EXTENDED_LENGTH;
         extended_length_required = true;
     } else {
-        assert(encoder->frame.payload_length <= AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MAX_VALUE);
+        AWS_ASSERT(encoder->frame.payload_length <= AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MAX_VALUE);
         byte |= AWS_WEBSOCKET_7BIT_VALUE_FOR_8BYTE_EXTENDED_LENGTH;
         extended_length_required = true;
     }
@@ -192,8 +192,7 @@ static int s_state_payload(struct aws_websocket_encoder *encoder, struct aws_byt
     const struct aws_byte_buf prev_buf = *out_buf;
 
     /* Invoke callback which will write to buffer */
-    bool user_says_done = false;
-    int err = encoder->stream_outgoing_payload(out_buf, &user_says_done, encoder->user_data);
+    int err = encoder->stream_outgoing_payload(out_buf, encoder->user_data);
     if (err) {
         return AWS_OP_ERR;
     }
@@ -226,18 +225,10 @@ static int s_state_payload(struct aws_websocket_encoder *encoder, struct aws_byt
 
     /* If done writing payload, proceed to next state */
     if (encoder->state_bytes_processed == encoder->frame.payload_length) {
-        if (!user_says_done) {
-            return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
-        }
-
         encoder->state = AWS_WEBSOCKET_ENCODER_STATE_DONE;
     } else {
         /* Some more error-checking... */
         if (encoder->state_bytes_processed > encoder->frame.payload_length) {
-            return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
-        }
-
-        if (user_says_done) {
             return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
         }
     }
@@ -271,7 +262,7 @@ int aws_websocket_encoder_process(struct aws_websocket_encoder *encoder, struct 
         if (prev_state == encoder->state) {
             /* dev-assert: Check that each state is doing as much work as it possibly can.
              * Except for the PAYLOAD state, where it's up to the user to fill the buffer. */
-            assert((out_buf->len == out_buf->capacity) || (encoder->state == AWS_WEBSOCKET_ENCODER_STATE_PAYLOAD));
+            AWS_ASSERT((out_buf->len == out_buf->capacity) || (encoder->state == AWS_WEBSOCKET_ENCODER_STATE_PAYLOAD));
 
             break;
         }
@@ -344,4 +335,30 @@ void aws_websocket_encoder_init(
     AWS_ZERO_STRUCT(*encoder);
     encoder->user_data = user_data;
     encoder->stream_outgoing_payload = stream_outgoing_payload;
+}
+
+uint64_t aws_websocket_frame_encoded_size(const struct aws_websocket_frame *frame) {
+    /* This is an internal function, so asserts are sufficient error handling */
+    AWS_ASSERT(frame);
+    AWS_ASSERT(frame->payload_length <= AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MAX_VALUE);
+
+    /* All frames start with at least 2 bytes */
+    uint64_t total = 2;
+
+    /* If masked, add 4 bytes for masking-key */
+    if (frame->masked) {
+        total += 4;
+    }
+
+    /* If extended payload length, add 2 or 8 bytes */
+    if (frame->payload_length >= AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MIN_VALUE) {
+        total += 8;
+    } else if (frame->payload_length >= AWS_WEBSOCKET_2BYTE_EXTENDED_LENGTH_MIN_VALUE) {
+        total += 2;
+    }
+
+    /* Plus payload itself */
+    total += frame->payload_length;
+
+    return total;
 }

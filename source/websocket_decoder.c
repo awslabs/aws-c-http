@@ -130,7 +130,7 @@ static int s_state_extended_length(struct aws_websocket_decoder *decoder, struct
         min_acceptable_value = AWS_WEBSOCKET_2BYTE_EXTENDED_LENGTH_MIN_VALUE;
         max_acceptable_value = AWS_WEBSOCKET_2BYTE_EXTENDED_LENGTH_MAX_VALUE;
     } else {
-        assert(decoder->current_frame.payload_length == AWS_WEBSOCKET_7BIT_VALUE_FOR_8BYTE_EXTENDED_LENGTH);
+        AWS_ASSERT(decoder->current_frame.payload_length == AWS_WEBSOCKET_7BIT_VALUE_FOR_8BYTE_EXTENDED_LENGTH);
 
         total_bytes_extended_length = 8;
         min_acceptable_value = AWS_WEBSOCKET_8BYTE_EXTENDED_LENGTH_MIN_VALUE;
@@ -138,12 +138,12 @@ static int s_state_extended_length(struct aws_websocket_decoder *decoder, struct
     }
 
     /* Copy bytes of extended-length to state_cache, we'll process them later.*/
-    assert(total_bytes_extended_length > decoder->state_bytes_processed);
+    AWS_ASSERT(total_bytes_extended_length > decoder->state_bytes_processed);
 
     size_t remaining_bytes = (size_t)(total_bytes_extended_length - decoder->state_bytes_processed);
     size_t bytes_to_consume = remaining_bytes <= data->len ? remaining_bytes : data->len;
 
-    assert(bytes_to_consume + decoder->state_bytes_processed <= sizeof(decoder->state_cache));
+    AWS_ASSERT(bytes_to_consume + decoder->state_bytes_processed <= sizeof(decoder->state_cache));
 
     memcpy(decoder->state_cache + decoder->state_bytes_processed, data->ptr, bytes_to_consume);
 
@@ -203,7 +203,7 @@ static int s_state_masking_key(struct aws_websocket_decoder *decoder, struct aws
         return AWS_OP_SUCCESS;
     }
 
-    assert(4 > decoder->state_bytes_processed);
+    AWS_ASSERT(4 > decoder->state_bytes_processed);
     size_t bytes_remaining = 4 - (size_t)decoder->state_bytes_processed;
     size_t bytes_to_consume = bytes_remaining < data->len ? bytes_remaining : data->len;
 
@@ -247,7 +247,7 @@ static int s_state_payload(struct aws_websocket_decoder *decoder, struct aws_byt
         return AWS_OP_SUCCESS;
     }
 
-    assert(decoder->current_frame.payload_length > decoder->state_bytes_processed);
+    AWS_ASSERT(decoder->current_frame.payload_length > decoder->state_bytes_processed);
     uint64_t bytes_remaining = decoder->current_frame.payload_length - decoder->state_bytes_processed;
     size_t bytes_to_consume = bytes_remaining < data->len ? (size_t)bytes_remaining : data->len;
 
@@ -268,6 +268,7 @@ static int s_state_payload(struct aws_websocket_decoder *decoder, struct aws_byt
     }
 
     /* TODO: validate utf-8 */
+    /* TODO: validate payload of CLOSE frame */
 
     /* Invoke on_payload() callback to inform user of payload data */
     int err = decoder->on_payload(payload, decoder->user_data);
@@ -276,7 +277,7 @@ static int s_state_payload(struct aws_websocket_decoder *decoder, struct aws_byt
     }
 
     decoder->state_bytes_processed += payload.len;
-    assert(decoder->state_bytes_processed <= decoder->current_frame.payload_length);
+    AWS_ASSERT(decoder->state_bytes_processed <= decoder->current_frame.payload_length);
 
     /* If all data consumed, proceed to next state. */
     if (decoder->state_bytes_processed == decoder->current_frame.payload_length) {
@@ -313,7 +314,7 @@ int aws_websocket_decoder_process(
         }
 
         if (decoder->state == prev_state) {
-            assert(data->len == 0); /* If no more work to do, all possible data should have been consumed */
+            AWS_ASSERT(data->len == 0); /* If no more work to do, all possible data should have been consumed */
             break;
         }
     }

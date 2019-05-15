@@ -13,12 +13,12 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/http/private/hpack.h>
 #include <aws/http/private/http_impl.h>
 
 #include <aws/common/hash_table.h>
 #include <aws/io/logging.h>
 
-#include <assert.h>
 #include <ctype.h>
 
 #ifdef _MSC_VER
@@ -38,6 +38,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_PARSE,
         "Encountered an unexpected form when parsing an http message."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_CONNECTION_CLOSED,
+        "Message not sent, as the connection has closed or is closing."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL,
         "An unsupported protocol was encountered."),
     AWS_DEFINE_ERROR_INFO_HTTP(
@@ -47,20 +50,23 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_DATA_NOT_AVAILABLE,
         "This data is not yet available."),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_END_RANGE,
-        "Not a real error and should never be seen."),
-    AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_CONNECTION_CLOSED,
-        "Message not sent, as the connection has closed."),
-    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT,
         "Amount of data streamed out does not match the previously declared length."),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_CONNECTION_MANAGER_INVALID_STATE_FOR_ACQUIRE,
-        "Acquire called after the connection manager's ref count has reached zero"),
+        AWS_ERROR_HTTP_CALLBACK_FAILURE,
+        "A callback has reported failure."),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_CONNECTION_MANAGER_VENDED_CONNECTION_UNDERFLOW,
-        "Release called when the connection manager's vended connection count was zero"),
+        AWS_ERROR_HTTP_WEBSOCKET_CLOSE_FRAME_SENT,
+        "Websocket has sent CLOSE frame, no more data will be sent."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_END_RANGE,
+        "Not a real error and should never be seen."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+            AWS_ERROR_HTTP_CONNECTION_MANAGER_INVALID_STATE_FOR_ACQUIRE,
+            "Acquire called after the connection manager's ref count has reached zero"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+            AWS_ERROR_HTTP_CONNECTION_MANAGER_VENDED_CONNECTION_UNDERFLOW,
+            "Release called when the connection manager's vended connection count was zero"),
 };
 /* clang-format on */
 
@@ -74,7 +80,9 @@ static struct aws_log_subject_info s_log_subject_infos[] = {
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION, "http-connection", "HTTP client or server connection"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_SERVER, "http-server", "HTTP server socket listening for incoming connections"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_STREAM, "http-stream", "HTTP request-response exchange"),
-    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "connection-manager", "Http connection manager")};
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "connection-manager", "Http connection manager"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET, "websocket", "Websocket"),
+};
 
 static struct aws_log_subject_info_list s_log_subject_list = {
     .subject_list = s_log_subject_infos,
@@ -349,12 +357,14 @@ void aws_http_library_init(struct aws_allocator *alloc) {
     s_methods_init(alloc);
     s_headers_init(alloc);
     s_versions_init(alloc);
+    aws_hpack_static_table_init(alloc);
 }
 
 void aws_http_library_clean_up(void) {
     s_methods_clean_up();
     s_headers_clean_up();
     s_versions_clean_up();
+    aws_hpack_static_table_clean_up();
 }
 
 void aws_http_fatal_assert_library_initialized() {
