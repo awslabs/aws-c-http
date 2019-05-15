@@ -1613,36 +1613,7 @@ TEST_CASE(websocket_handler_window_reopens_by_default) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(websocket_handler_window_shrinks_by_payload_size_if_user_says_so) {
-    (void)ctx;
-    struct tester tester;
-    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-
-    struct readpush_frame pushing = {
-        .payload = aws_byte_cursor_from_c_str("Shrink"),
-        .def =
-            {
-                .opcode = AWS_WEBSOCKET_OPCODE_TEXT,
-                .fin = true,
-            },
-    };
-
-    tester.zero_window_on_incoming_frame_payload_n = 1;
-
-    s_set_readpush_frames(&tester, &pushing, 1);
-    ASSERT_SUCCESS(s_do_readpush_all(&tester));
-
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    /* Window will stil*/
-    size_t frame_minus_payload_size = aws_websocket_frame_encoded_size(&pushing.def) - pushing.def.payload_length;
-    ASSERT_UINT_EQUALS(frame_minus_payload_size, testing_channel_last_window_update(&tester.testing_channel));
-
-    ASSERT_SUCCESS(s_tester_clean_up(&tester));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_window_manual_increment(struct aws_allocator *allocator, bool on_thread) {
+static int s_window_manual_increment_common(struct aws_allocator *allocator, bool on_thread) {
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1661,11 +1632,17 @@ static int s_window_manual_increment(struct aws_allocator *allocator, bool on_th
     ASSERT_SUCCESS(s_do_readpush_all(&tester));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
+    /* Assert that window did not fully re-open*/
+    size_t frame_minus_payload_size = aws_websocket_frame_encoded_size(&pushing.def) - pushing.def.payload_length;
+    ASSERT_UINT_EQUALS(frame_minus_payload_size, testing_channel_last_window_update(&tester.testing_channel));
+
+    /* Manually increment window */
     testing_channel_set_is_on_users_thread(&tester.testing_channel, on_thread);
     aws_websocket_increment_read_window(tester.websocket, pushing.def.payload_length);
+
+    /* Assert it re-opened that much */
     testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
     testing_channel_drain_queued_tasks(&tester.testing_channel);
-
     ASSERT_UINT_EQUALS(pushing.def.payload_length, testing_channel_last_window_update(&tester.testing_channel));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
@@ -1674,10 +1651,10 @@ static int s_window_manual_increment(struct aws_allocator *allocator, bool on_th
 
 TEST_CASE(websocket_handler_window_manual_increment) {
     (void)ctx;
-    return s_window_manual_increment(allocator, true);
+    return s_window_manual_increment_common(allocator, true);
 }
 
 TEST_CASE(websocket_handler_window_manual_increment_off_thread) {
     (void)ctx;
-    return s_window_manual_increment(allocator, false);
+    return s_window_manual_increment_common(allocator, false);
 }
