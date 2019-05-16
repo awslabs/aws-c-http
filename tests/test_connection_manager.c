@@ -158,6 +158,10 @@ void s_release_connections(size_t count, bool close_first) {
         release_count = count;
     }
 
+    if (release_count == 0) {
+        return;
+    }
+
     struct aws_array_list to_release;
     aws_array_list_init_dynamic(&to_release, tester->allocator, release_count, sizeof(struct aws_http_connection *));
 
@@ -200,6 +204,9 @@ void s_release_connections(size_t count, bool close_first) {
 }
 
 void s_on_acquire_connection(struct aws_http_connection *connection, int error_code, void *user_data) {
+    (void)error_code;
+    (void)user_data;
+
     struct cm_tester *tester = &s_tester;
 
     aws_mutex_lock(&tester->lock);
@@ -224,6 +231,8 @@ static void s_acquire_connections(size_t count) {
 }
 
 static bool s_is_connection_reply_count_at_least(void *context) {
+    (void)context;
+
     struct cm_tester *tester = &s_tester;
 
     return tester->wait_for_connection_count <=
@@ -405,7 +414,7 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
     struct cm_tester *tester = &s_tester;
 
     size_t next_connection_id = aws_atomic_fetch_add(&tester->next_connection_id, 1);
-    aws_atomic_store_ptr(&tester->release_connection_fn, options->on_shutdown);
+    aws_atomic_store_ptr(&tester->release_connection_fn, (void *)options->on_shutdown);
 
     struct mock_connection_proxy *connection = NULL;
 
