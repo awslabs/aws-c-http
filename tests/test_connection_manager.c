@@ -413,13 +413,19 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
         aws_array_list_get_at(&tester->mock_connections, &connection, next_connection_id);
     }
 
-    if (connection->result == AWS_NCRT_SUCCESS) {
-        options->on_setup((struct aws_http_connection *)connection, AWS_ERROR_SUCCESS, options->user_data);
-    } else if (connection->result == AWS_NCRT_ERROR_VIA_CALLBACK) {
-        options->on_setup(NULL, AWS_ERROR_HTTP_UNKNOWN, options->user_data);
+    if (connection) {
+        if (connection->result == AWS_NCRT_SUCCESS) {
+            options->on_setup((struct aws_http_connection *)connection, AWS_ERROR_SUCCESS, options->user_data);
+        } else if (connection->result == AWS_NCRT_ERROR_VIA_CALLBACK) {
+            options->on_setup(NULL, AWS_ERROR_HTTP_UNKNOWN, options->user_data);
+        }
+
+        if (connection->result != AWS_NCRT_ERROR_FROM_CREATE) {
+            return AWS_OP_SUCCESS;
+        }
     }
 
-    return connection->result != AWS_NCRT_ERROR_FROM_CREATE ? AWS_ERROR_SUCCESS : AWS_ERROR_HTTP_UNKNOWN;
+    return aws_raise_error(AWS_ERROR_HTTP_UNKNOWN);
 }
 
 static void s_aws_http_connection_manager_release_connection_sync_mock(struct aws_http_connection *connection) {
