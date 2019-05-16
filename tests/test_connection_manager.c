@@ -163,7 +163,10 @@ void s_release_connections(size_t count, bool close_first) {
     }
 
     struct aws_array_list to_release;
-    aws_array_list_init_dynamic(&to_release, tester->allocator, release_count, sizeof(struct aws_http_connection *));
+    if (aws_array_list_init_dynamic(
+            &to_release, tester->allocator, release_count, sizeof(struct aws_http_connection *))) {
+        return;
+    }
 
     for (size_t i = 0; i < release_count; ++i) {
         struct aws_http_connection *connection = NULL;
