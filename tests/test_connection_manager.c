@@ -69,7 +69,7 @@ struct cm_tester {
 
     struct aws_atomic_var next_connection_id;
     struct aws_array_list mock_connections;
-    struct aws_atomic_var release_connection_fn;
+    aws_http_on_client_connection_shutdown_fn *release_connection_fn;
 };
 
 static struct cm_tester s_tester;
@@ -125,7 +125,6 @@ int s_cm_tester_init(struct cm_tester_options *options) {
     tester->mock_table = options->mock_table;
 
     aws_atomic_store_int(&tester->next_connection_id, 0);
-    aws_atomic_store_ptr(&tester->release_connection_fn, NULL);
 
     ASSERT_SUCCESS(aws_array_list_init_dynamic(
         &tester->mock_connections, tester->allocator, 10, sizeof(struct mock_connection_proxy *)));
@@ -417,7 +416,10 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
     struct cm_tester *tester = &s_tester;
 
     size_t next_connection_id = aws_atomic_fetch_add(&tester->next_connection_id, 1);
-    aws_atomic_store_ptr(&tester->release_connection_fn, (void *)options->on_shutdown);
+
+    aws_mutex_lock(&tester->lock);
+    tester->release_connection_fn = options->on_shutdown;
+    aws_mutex_unlock(&tester->lock);
 
     struct mock_connection_proxy *connection = NULL;
 
@@ -445,9 +447,7 @@ static void s_aws_http_connection_manager_release_connection_sync_mock(struct aw
 
     struct cm_tester *tester = &s_tester;
 
-    aws_http_on_client_connection_shutdown_fn *release_callback = aws_atomic_load_ptr(&tester->release_connection_fn);
-
-    release_callback(connection, AWS_ERROR_SUCCESS, tester->connection_manager);
+    tester->release_connection_fn(connection, AWS_ERROR_SUCCESS, tester->connection_manager);
 }
 
 static void s_aws_http_connection_manager_close_connection_sync_mock(struct aws_http_connection *connection) {
