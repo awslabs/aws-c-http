@@ -36,6 +36,8 @@
 #    pragma warning(disable : 4221) /* Local var in declared initializer */
 #endif
 
+#define ELASTICURL_VERSION "0.2.0"
+
 struct elasticurl_ctx {
     struct aws_allocator *allocator;
     const char *verb;
@@ -60,7 +62,7 @@ struct elasticurl_ctx {
     bool exchange_completed;
 };
 
-static void s_usage(void) {
+static void s_usage(int exit_code) {
 
     fprintf(stderr, "usage: elasticurl [options] url\n");
     fprintf(stderr, " url: url to make a request to. The default is a GET request.\n");
@@ -81,10 +83,11 @@ static void s_usage(void) {
     fprintf(stderr, "  -k, --insecure: turns off SSL/TLS validation.\n");
     fprintf(stderr, "  -o, --output FILE: dumps content-body to FILE instead of stdout.\n");
     fprintf(stderr, "  -t, --trace FILE: dumps logs to FILE instead of stderr.\n");
-    fprintf(stderr, "  -v, --verbose ERROR|INFO|DEBUG|TRACE: log level to configure. Default is none.\n");
+    fprintf(stderr, "  -v, --verbose: ERROR|INFO|DEBUG|TRACE: log level to configure. Default is none.\n");
+    fprintf(stderr, "      --version: print the version of elasticurl.\n");
     fprintf(stderr, "  -h, --help\n");
     fprintf(stderr, "            Display this message and quit.\n");
-    exit(1);
+    exit(exit_code);
 }
 
 static struct aws_cli_option s_long_options[] = {
@@ -105,6 +108,7 @@ static struct aws_cli_option s_long_options[] = {
     {"output", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'o'},
     {"trace", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 't'},
     {"verbose", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'v'},
+    {"version", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'V'},
     {"help", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'h'},
     /* Per getopt(3) the last element of the array has to be filled with all zeros */
     {NULL, AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 0},
@@ -113,7 +117,7 @@ static struct aws_cli_option s_long_options[] = {
 static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
     while (true) {
         int option_index = 0;
-        int c = aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:M:GPHiko:t:v:h", s_long_options, &option_index);
+        int c = aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:M:GPHiko:t:v:Vh", s_long_options, &option_index);
         if (c == -1) {
             break;
         }
@@ -140,7 +144,7 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
             case 'H':
                 if (ctx->header_line_count >= sizeof(ctx->header_lines) / sizeof(const char *)) {
                     fprintf(stderr, "currently only 10 header lines are supported.\n");
-                    s_usage();
+                    s_usage(1);
                 }
                 ctx->header_lines[ctx->header_line_count++] = aws_cli_optarg;
                 break;
@@ -152,7 +156,7 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 ctx->data_file = fopen(aws_cli_optarg, "rb");
                 if (!ctx->data_file) {
                     fprintf(stderr, "unable to open file %s.\n", aws_cli_optarg);
-                    s_usage();
+                    s_usage(1);
                 }
                 break;
             case 'M':
@@ -178,7 +182,7 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
 
                 if (!ctx->output) {
                     fprintf(stderr, "unable to open file %s.\n", aws_cli_optarg);
-                    s_usage();
+                    s_usage(1);
                 }
                 break;
             case 't':
@@ -195,15 +199,18 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                     ctx->log_level = AWS_LL_ERROR;
                 } else {
                     fprintf(stderr, "unsupported log level %s.\n", aws_cli_optarg);
-                    s_usage();
+                    s_usage(1);
                 }
                 break;
+            case 'V':
+                fprintf(stderr, "elasticurl %s\n", ELASTICURL_VERSION);
+                exit(0);
             case 'h':
-                s_usage();
+                s_usage(0);
                 break;
             default:
                 fprintf(stderr, "Unknown option\n");
-                s_usage();
+                s_usage(1);
         }
     }
 
@@ -216,11 +223,11 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 "Failed to parse uri %s with error %s\n",
                 (char *)uri_cursor.ptr,
                 aws_error_debug_str(aws_last_error()));
-            s_usage();
+            s_usage(1);
         };
     } else {
         fprintf(stderr, "A URI for the request must be supplied.\n");
-        s_usage();
+        s_usage(1);
     }
 }
 
