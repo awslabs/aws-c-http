@@ -13,7 +13,9 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/http/websocket.h>
 #include <aws/http/private/websocket_impl.h>
+#if 0
 
 #include <aws/common/atomics.h>
 #include <aws/common/device_random.h>
@@ -66,7 +68,7 @@ struct aws_websocket {
     struct aws_channel_task move_synced_data_to_thread_task;
     struct aws_channel_task shutdown_channel_task;
     struct aws_channel_task increment_read_window_task;
-    struct aws_atomic_var refcount;
+    struct aws_channel_task finish_midchannel_conversion_task;
     bool is_server;
 
     struct {
@@ -101,6 +103,10 @@ struct aws_websocket {
         /* Wait until each aws_io_message is completely written to
          * the socket before sending the next aws_io_message */
         bool is_waiting_for_write_completion;
+
+        /* True if this websocket is being used as a dumb mid-channel handler.
+         * The websocket will no longer respond to its public API or invoke callbacks. */
+        bool is_midchannel_handler;
     } thread_data;
 
     struct {
@@ -119,6 +125,12 @@ struct aws_websocket {
         bool is_shutdown_channel_task_scheduled;
 
         bool is_move_synced_data_to_thread_task_scheduled;
+
+        /* Mirrors variable from thread_data */
+        bool is_midchannel_handler;
+
+        /* Whether aws_websocket_release() has been called */
+        bool is_released;
     } synced_data;
 };
 
@@ -161,8 +173,15 @@ static void s_io_message_write_completed(
     struct aws_io_message *message,
     int err_code,
     void *user_data);
+static int s_send_frame(
+    struct aws_websocket *websocket,
+    const struct aws_websocket_send_frame_options *options,
+    bool from_public_api);
+static bool s_midchannel_send_payload(struct aws_websocket *websocket, struct aws_byte_buf *out_buf, void *user_data);
+static void s_midchannel_send_complete(struct aws_websocket *websocket, int error_code, void *user_data);
 static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_increment_read_window_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
+static void s_finish_midchannel_conversion_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_shutdown_channel_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_schedule_channel_shutdown(struct aws_websocket *websocket, int error_code);
 static void s_shutdown_due_to_write_err(struct aws_websocket *websocket, int error_code);
@@ -216,12 +235,26 @@ void s_unlock_synced_data(struct aws_websocket *websocket) {
     (void)err;
 }
 
-struct aws_channel_handler *aws_websocket_handler_new(const struct aws_websocket_handler_options *options) {
+struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handler_options *options) {
     /* TODO: validate options */
 
-    struct aws_websocket *websocket = aws_mem_acquire(options->allocator, sizeof(struct aws_websocket));
+    struct aws_channel_slot *slot = NULL;
+    struct aws_websocket *websocket = NULL;
+    int err;
+
+    slot = aws_channel_slot_new(options->channel);
+    if (!slot) {
+        goto error;
+    }
+
+    err = aws_channel_slot_insert_end(options->channel, slot);
+    if (err) {
+        goto error;
+    }
+
+    websocket = aws_mem_acquire(options->allocator, sizeof(struct aws_websocket));
     if (!websocket) {
-        return NULL;
+        goto error;
     }
     AWS_ZERO_STRUCT(*websocket);
 
@@ -230,7 +263,7 @@ struct aws_channel_handler *aws_websocket_handler_new(const struct aws_websocket
     websocket->channel_handler.alloc = options->allocator;
     websocket->channel_handler.impl = websocket;
 
-    websocket->channel_slot = options->channel_slot;
+    websocket->channel_slot = slot;
 
     websocket->initial_window_size = options->initial_window_size;
 
@@ -240,13 +273,13 @@ struct aws_channel_handler *aws_websocket_handler_new(const struct aws_websocket
     websocket->on_incoming_frame_payload = options->on_incoming_frame_payload;
     websocket->on_incoming_frame_complete = options->on_incoming_frame_complete;
 
-    aws_atomic_init_int(&websocket->refcount, 0);
-
     websocket->is_server = options->is_server;
 
     aws_channel_task_init(&websocket->move_synced_data_to_thread_task, s_move_synced_data_to_thread_task, websocket);
     aws_channel_task_init(&websocket->shutdown_channel_task, s_shutdown_channel_task, websocket);
     aws_channel_task_init(&websocket->increment_read_window_task, s_increment_read_window_task, websocket);
+    aws_channel_task_init(
+        &websocket->finish_midchannel_conversion_task, s_finish_midchannel_conversion_task, websocket);
 
     aws_linked_list_init(&websocket->thread_data.outgoing_frame_list);
 
@@ -254,7 +287,9 @@ struct aws_channel_handler *aws_websocket_handler_new(const struct aws_websocket
 
     aws_websocket_decoder_init(&websocket->thread_data.decoder, s_decoder_on_frame, s_decoder_on_payload, websocket);
 
-    int err = aws_mutex_init(&websocket->synced_data.lock);
+    aws_linked_list_init(&websocket->synced_data.outgoing_frame_list);
+
+    err = aws_mutex_init(&websocket->synced_data.lock);
     if (err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET,
@@ -265,12 +300,23 @@ struct aws_channel_handler *aws_websocket_handler_new(const struct aws_websocket
         goto error;
     }
 
-    aws_linked_list_init(&websocket->synced_data.outgoing_frame_list);
+    err = aws_channel_slot_set_handler(slot, &websocket->channel_handler);
+    if (err) {
+        goto error;
+    }
 
-    return &websocket->channel_handler;
+    /* Ensure websocket (and the rest of the channel) can't be destroyed until aws_websocket_release() is called */
+    aws_channel_acquire_hold(options->channel);
+
+    return websocket;
 
 error:
-    websocket->channel_handler.vtable->destroy(&websocket->channel_handler);
+    if (slot) {
+        if (websocket && !slot->handler) {
+            websocket->channel_handler.vtable->destroy(&websocket->channel_handler);
+        }
+        aws_channel_slot_remove(slot);
+    }
     return NULL;
 }
 
@@ -285,46 +331,118 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     aws_mem_release(websocket->alloc, websocket);
 }
 
-void aws_websocket_acquire_hold(struct aws_websocket *websocket) {
-    size_t prev_refcount = aws_atomic_fetch_add(&websocket->refcount, 1);
-    AWS_LOGF_TRACE(
-        AWS_LS_HTTP_WEBSOCKET,
-        "id=%p: Websocket refcount increased, currently %zu.",
-        (void *)websocket,
-        prev_refcount + 1);
-
-    if (prev_refcount == 0) {
-        /* Prevent channel from destroying the websocket unexpectedly */
-        aws_channel_acquire_hold(websocket->channel_slot->channel);
-    }
-}
-
-void aws_websocket_release_hold(struct aws_websocket *websocket) {
+void aws_websocket_release(struct aws_websocket *websocket) {
     AWS_ASSERT(websocket);
     AWS_ASSERT(websocket->channel_slot);
 
-    size_t prev_refcount = aws_atomic_fetch_sub(&websocket->refcount, 1);
-    if (prev_refcount == 1) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_WEBSOCKET,
-            "id=%p: Final websocket refcount released, shut down if necessary.",
-            (void *)websocket);
+    enum { OK, IS_MIDCHANNEL_HANDLER, ALREADY_RELEASED } outcome;
 
-        /* Channel might already be shut down, but make sure */
-        aws_channel_shutdown(websocket->channel_slot->channel, AWS_ERROR_SUCCESS);
-
-        /* Channel won't destroy its slots/handlers until its refcount reaches 0 */
-        aws_channel_release_hold(websocket->channel_slot->channel);
-
+    /* BEGIN CRITICAL SECTION */
+    s_lock_synced_data(websocket);
+    if (websocket->synced_data.is_released) {
+        outcome = ALREADY_RELEASED;
+    } else if (websocket->synced_data.is_midchannel_handler) {
+        outcome = IS_MIDCHANNEL_HANDLER;
     } else {
-        AWS_ASSERT(prev_refcount != 0);
+        websocket->synced_data.is_released = true;
+        outcome = OK;
+    }
+    s_unlock_synced_data(websocket);
+    /* END CRITICAL SECTION */
 
+    if (outcome == IS_MIDCHANNEL_HANDLER) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_WEBSOCKET,
-            "id=%p: Websocket refcount released, %zu remaining.",
-            (void *)websocket,
-            prev_refcount - 1);
+            "id=%p: Ignoring release call, websocket has converted to mid-channel handler"
+            " and will be destroyed when its channel is destroyed.",
+            (void *)websocket);
+        return;
     }
+
+    if (outcome == ALREADY_RELEASED) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_WEBSOCKET, "id=%p: Ignoring multiple calls to websocket release.", (void *)websocket);
+        return;
+    }
+
+    AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Websocket released, shut down if necessary.", (void *)websocket);
+
+    /* Channel might already be shut down, but make sure */
+    s_schedule_channel_shutdown(websocket, AWS_ERROR_SUCCESS);
+
+    /* Channel won't destroy its slots/handlers until its refcount reaches 0 */
+    aws_channel_release_hold(websocket->channel_slot->channel);
+}
+
+struct aws_channel *aws_websocket_convert_to_midchannel_handler(struct aws_websocket *websocket) {
+    if (!aws_channel_thread_is_callers_thread(websocket->channel_slot->channel)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET, "id=%p: Cannot convert to midchannel handler on this thread.", (void *)websocket);
+        aws_raise_error(AWS_ERROR_IO_EVENT_LOOP_THREAD_ONLY);
+        return NULL;
+    }
+
+    if (websocket->thread_data.is_midchannel_handler) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET, "id=%p: Websocket has already converted to midchannel handler.", (void *)websocket);
+        aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_IS_MIDCHANNEL_HANDLER);
+        return NULL;
+    }
+
+    if (websocket->thread_data.is_reading_stopped || websocket->thread_data.is_writing_stopped) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Cannot convert websocket to midchannel handler because it is closed or closing.",
+            (void *)websocket);
+        aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    }
+
+    if (websocket->thread_data.current_incoming_frame) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Cannot convert to midchannel handler in the middle of an incoming frame.",
+            (void *)websocket);
+        aws_raise_error(AWS_ERROR_INVALID_STATE);
+        return NULL;
+    }
+
+    bool was_released = false;
+
+    /* BEGIN CRITICAL SECTION */
+    s_lock_synced_data(websocket);
+    if (websocket->synced_data.is_released) {
+        was_released = true;
+    } else {
+        websocket->synced_data.is_midchannel_handler = true;
+    }
+    s_unlock_synced_data(websocket);
+    /* END CRITICAL SECTION */
+
+    if (was_released) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Cannot convert websocket to midchannel handler because it was already released.",
+            (void *)websocket);
+        aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+        return NULL;
+    }
+
+    websocket->thread_data.is_midchannel_handler = true;
+
+    aws_channel_schedule_task_now(websocket->channel_slot->channel, &websocket->finish_midchannel_conversion_task);
+
+    return websocket->channel_slot->channel;
+}
+
+static void s_finish_midchannel_conversion_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    (void)status;
+    struct aws_websocket *websocket = arg;
+
+    /* Once websocket is converted into a midchannel handler, it no longer prevents the channel from being destroyed.
+     * The channel hold is released as a post-conversion task so that whoever initiated the conversion has a chance to
+     * put their own hold on the channel. */
+    aws_channel_release_hold(websocket->channel_slot->channel);
 }
 
 /* Insert frame into list, sorting by priority, then by age (high-priority and older frames towards the front) */
@@ -343,7 +461,10 @@ static void s_enqueue_prioritized_frame(struct aws_linked_list *list, struct out
     aws_linked_list_insert_after(rev_iter, &to_add->node);
 }
 
-int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_websocket_send_frame_options *options) {
+static int s_send_frame(
+    struct aws_websocket *websocket,
+    const struct aws_websocket_send_frame_options *options,
+    bool from_public_api) {
 
     AWS_ASSERT(websocket);
     AWS_ASSERT(options);
@@ -376,7 +497,9 @@ int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_w
     /* BEGIN CRITICAL SECTION */
     s_lock_synced_data(websocket);
 
-    if (websocket->synced_data.send_frame_error_code) {
+    if (websocket->synced_data.is_midchannel_handler && from_public_api) {
+        send_error = AWS_ERROR_HTTP_WEBSOCKET_IS_MIDCHANNEL_HANDLER;
+    } else if (websocket->synced_data.send_frame_error_code) {
         send_error = websocket->synced_data.send_frame_error_code;
     } else {
         aws_linked_list_push_back(&websocket->synced_data.outgoing_frame_list, &frame->node);
@@ -417,6 +540,10 @@ int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_w
     }
 
     return AWS_OP_SUCCESS;
+}
+
+int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_websocket_send_frame_options *options) {
+    return s_send_frame(websocket, options, true);
 }
 
 static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
@@ -702,10 +829,59 @@ static int s_handler_process_write_message(
     struct aws_channel_slot *slot,
     struct aws_io_message *message) {
 
-    (void)handler;
     (void)slot;
-    (void)message;
-    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+    struct aws_websocket *websocket = handler->impl;
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+
+    /* For each aws_io_message headed in the write direction, send a BINARY frame,
+     * where the frame's payload is the data from this aws_io_message. */
+    struct aws_websocket_send_frame_options options = {
+        .payload_length = message->message_data.len,
+        .user_data = message,
+        .stream_outgoing_payload = s_midchannel_send_payload,
+        .on_complete = s_midchannel_send_complete,
+        .opcode = AWS_WEBSOCKET_OPCODE_BINARY,
+        .fin = true,
+    };
+
+    /* Use copy_mark to track progress as the data is streamed out */
+    message->copy_mark = 0;
+
+    int err = s_send_frame(websocket, &options, false);
+    if (err) {
+        /* TODO: mqtt handler needs to clean up messsages that fail to send. */
+        return AWS_OP_ERR;
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Callback for writing data from downstream aws_io_messages into payload of BINARY frames headed upstream */
+static bool s_midchannel_send_payload(struct aws_websocket *websocket, struct aws_byte_buf *out_buf, void *user_data) {
+    (void)websocket;
+    struct aws_io_message *io_msg = user_data;
+
+    /* copy_mark is used to track progress */
+    size_t src_available = io_msg->message_data.capacity - io_msg->copy_mark;
+    size_t dst_available = out_buf->capacity - out_buf->len;
+    size_t sending = dst_available < src_available ? dst_available : src_available;
+
+    bool success = aws_byte_buf_write(out_buf, io_msg->message_data.buffer + io_msg->copy_mark, sending);
+
+    io_msg->copy_mark += sending;
+    return success;
+}
+
+/* Callback when data from downstream aws_io_messages, finishes being sent as a BINARY frame upstream. */
+static void s_midchannel_send_complete(struct aws_websocket *websocket, int error_code, void *user_data) {
+    (void)websocket;
+    struct aws_io_message *io_msg = user_data;
+
+    if (io_msg->on_completion) {
+        io_msg->on_completion(io_msg->owning_channel, io_msg, error_code, io_msg->user_data);
+    }
+
+    aws_mem_release(io_msg->allocator, io_msg);
 }
 
 static void s_destroy_outgoing_frame(struct aws_websocket *websocket, struct outgoing_frame *frame, int error_code) {
@@ -847,10 +1023,25 @@ static void s_schedule_channel_shutdown(struct aws_websocket *websocket, int err
 }
 
 void aws_websocket_close(struct aws_websocket *websocket, bool free_scarce_resources_immediately) {
-    int error_code = AWS_ERROR_SUCCESS;
+    bool is_midchannel_handler;
+
+    /* BEGIN CRITICAL SECTION */
+    s_lock_synced_data(websocket);
+    is_midchannel_handler = websocket->synced_data.is_midchannel_handler;
+    s_unlock_synced_data(websocket);
+    /* END CRITICAL SECTION */
+
+    if (is_midchannel_handler) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Ignoring close call, websocket has converted to midchannel handler.",
+            (void *)websocket);
+        return;
+    }
 
     /* TODO: aws_channel_shutdown() should let users specify error_code and "immediate" as separate parameters.
      * Currently, any non-zero error_code results in "immediate" shutdown */
+    int error_code = AWS_ERROR_SUCCESS;
     if (free_scarce_resources_immediately) {
         error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
     }
@@ -964,7 +1155,7 @@ static void s_finish_shutdown(struct aws_websocket *websocket) {
         s_destroy_outgoing_frame(websocket, frame, AWS_ERROR_HTTP_CONNECTION_CLOSED);
     }
 
-    if (websocket->on_connection_shutdown) {
+    if (websocket->on_connection_shutdown && !websocket->thread_data.is_midchannel_handler) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Invoking user's shutdown callback.", (void *)websocket);
         websocket->on_connection_shutdown(
             websocket, websocket->thread_data.channel_shutdown_error_code, websocket->user_data);
@@ -1034,7 +1225,8 @@ static int s_handler_process_read_message(
         if (err) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_WEBSOCKET,
-                "id=%p: Failed to increment read window after message processing, error %d (%s). Closing connection.",
+                "id=%p: Failed to increment read window after message processing, error %d (%s). Closing "
+                "connection.",
                 (void *)websocket,
                 aws_last_error(),
                 aws_error_name(aws_last_error()));
@@ -1078,7 +1270,7 @@ static int s_decoder_on_frame(const struct aws_websocket_frame *frame, void *use
 
     /* Invoke user cb */
     bool callback_result = true;
-    if (websocket->on_incoming_frame_begin) {
+    if (websocket->on_incoming_frame_begin && !websocket->thread_data.is_midchannel_handler) {
         callback_result = websocket->on_incoming_frame_begin(
             websocket, websocket->thread_data.current_incoming_frame, websocket->user_data);
     }
@@ -1100,7 +1292,7 @@ static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
 
     /* Invoke user cb */
     bool callback_result = true;
-    if (websocket->on_incoming_frame_payload) {
+    if (websocket->on_incoming_frame_payload && !websocket->thread_data.is_midchannel_handler) {
         size_t window_update_size = data.len;
 
         callback_result = websocket->on_incoming_frame_payload(
@@ -1150,7 +1342,7 @@ static void s_complete_incoming_frame(struct aws_websocket *websocket, int error
 
     /* Invoke user cb */
     bool callback_result = true;
-    if (websocket->on_incoming_frame_complete) {
+    if (websocket->on_incoming_frame_complete && !websocket->thread_data.is_midchannel_handler) {
         callback_result = websocket->on_incoming_frame_complete(
             websocket, websocket->thread_data.current_incoming_frame, error_code, websocket->user_data);
     }
@@ -1180,7 +1372,8 @@ static int s_handler_increment_read_window(
     (void)handler;
     (void)slot;
     (void)size;
-    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+    /* TODO: implement */
+    return AWS_OP_SUCCESS;
 }
 
 static void s_increment_read_window_action(struct aws_websocket *websocket, size_t size) {
@@ -1230,25 +1423,17 @@ void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t
         return;
     }
 
-    /* If we're on thread just do it. */
-    if (aws_channel_thread_is_callers_thread(websocket->channel_slot->channel)) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_WEBSOCKET,
-            "id=%p: Incrementing read window immediately with size %zu.",
-            (void *)websocket,
-            size);
-        s_increment_read_window_action(websocket, size);
-        return;
-    }
-
-    /* Otherwise schedule a task to do it.
+    /* Schedule a task to do the increment.
      * If task is already scheduled, just increase size to be incremented */
+    bool is_midchannel_handler = false;
     bool should_schedule_task = false;
 
     /* BEGIN CRITICAL SECTION */
     s_lock_synced_data(websocket);
 
-    if (websocket->synced_data.window_increment_size == 0) {
+    if (websocket->synced_data.is_midchannel_handler) {
+        is_midchannel_handler = true;
+    } else if (websocket->synced_data.window_increment_size == 0) {
         should_schedule_task = true;
         websocket->synced_data.window_increment_size = size;
     } else {
@@ -1259,7 +1444,12 @@ void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t
     s_unlock_synced_data(websocket);
     /* END CRITICAL SECTION */
 
-    if (should_schedule_task) {
+    if (is_midchannel_handler) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Ignoring window increment call, websocket has converted to midchannel handler.",
+            (void *)websocket);
+    } else if (should_schedule_task) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_WEBSOCKET, "id=%p: Scheduling task to increment read window by %zu.", (void *)websocket, size);
         aws_channel_schedule_task_now(websocket->channel_slot->channel, &websocket->increment_read_window_task);
@@ -1271,3 +1461,4 @@ void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t
             size);
     }
 }
+#endif
