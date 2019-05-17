@@ -419,6 +419,7 @@ static int s_writepush(struct tester *tester, struct aws_byte_cursor data) {
         ASSERT_NOT_NULL(msg);
         size_t chunk_size = msg->message_data.capacity < data.len ? msg->message_data.capacity : data.len;
         struct aws_byte_cursor chunk = aws_byte_cursor_advance(&data, chunk_size);
+        ASSERT_NOT_NULL(chunk.ptr);
         ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&msg->message_data, chunk));
         ASSERT_SUCCESS(testing_channel_push_write_message(&tester->testing_channel, msg));
 
