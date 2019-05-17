@@ -436,7 +436,8 @@ static int s_writepush_check(struct tester *tester, size_t ignore_n_written_fram
         struct written_frame *frame_i = &tester->written_frames[i];
         if (aws_websocket_is_data_frame(frame_i->def.opcode)) {
             ASSERT_UINT_EQUALS(AWS_WEBSOCKET_OPCODE_BINARY, frame_i->def.opcode);
-            struct aws_byte_cursor expected_i = aws_byte_cursor_advance(&expected_cursor, (size_t)frame_i->def.payload_length);
+            struct aws_byte_cursor expected_i =
+                aws_byte_cursor_advance(&expected_cursor, (size_t)frame_i->def.payload_length);
             ASSERT_TRUE(expected_i.len > 0);
             ASSERT_TRUE(aws_byte_cursor_eq_byte_buf(&expected_i, &frame_i->payload));
         }
