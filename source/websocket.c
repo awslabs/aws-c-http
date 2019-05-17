@@ -13,9 +13,7 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/websocket.h>
 #include <aws/http/private/websocket_impl.h>
-#if 0
 
 #include <aws/common/atomics.h>
 #include <aws/common/device_random.h>
@@ -1461,4 +1459,3 @@ void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t
             size);
     }
 }
-#endif
