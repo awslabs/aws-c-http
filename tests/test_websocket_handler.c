@@ -410,7 +410,7 @@ static int s_readpush_check(struct tester *tester, size_t frame_i, int expected_
 
 static int s_writepush(struct tester *tester, struct aws_byte_cursor data) {
     if (!tester->all_writepush_data.allocator) {
-        aws_byte_buf_init(&tester->all_writepush_data, tester->alloc, data.len);
+        ASSERT_SUCCESS(aws_byte_buf_init(&tester->all_writepush_data, tester->alloc, data.len));
     }
 
     while (data.len) {
@@ -436,7 +436,7 @@ static int s_writepush_check(struct tester *tester, size_t ignore_n_written_fram
         struct written_frame *frame_i = &tester->written_frames[i];
         if (aws_websocket_is_data_frame(frame_i->def.opcode)) {
             ASSERT_UINT_EQUALS(AWS_WEBSOCKET_OPCODE_BINARY, frame_i->def.opcode);
-            struct aws_byte_cursor expected_i = aws_byte_cursor_advance(&expected_cursor, frame_i->def.payload_length);
+            struct aws_byte_cursor expected_i = aws_byte_cursor_advance(&expected_cursor, (size_t)frame_i->def.payload_length);
             ASSERT_TRUE(expected_i.len > 0);
             ASSERT_TRUE(aws_byte_cursor_eq_byte_buf(&expected_i, &frame_i->payload));
         }
@@ -510,7 +510,7 @@ static int s_install_downstream_handler(struct tester *tester, size_t initial_wi
     ASSERT_NOT_NULL(aws_websocket_convert_to_midchannel_handler(tester->websocket));
     tester->is_midchannel_handler = true;
 
-    ASSERT_SUCCESS(testing_channel_install_downstream_handler(&tester->testing_channel, SIZE_MAX));
+    ASSERT_SUCCESS(testing_channel_install_downstream_handler(&tester->testing_channel, initial_window));
     return AWS_OP_SUCCESS;
 }
 
