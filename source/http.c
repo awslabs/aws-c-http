@@ -59,6 +59,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_WEBSOCKET_CLOSE_FRAME_SENT,
         "Websocket has sent CLOSE frame, no more data will be sent."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_WEBSOCKET_IS_MIDCHANNEL_HANDLER,
+        "Operation cannot be performed because websocket has been converted to a midchannel handler."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_END_RANGE,
         "Not a real error and should never be seen."),
 };
