@@ -19,13 +19,16 @@
 #include <aws/http/http.h>
 
 #include <aws/common/byte_buf.h>
-#include <aws/http/connection.h>
 
 struct aws_client_bootstrap;
+struct aws_http_connection;
 struct aws_http_connection_manager;
+struct aws_http_connection_manager_mocks;
 struct aws_socket_options;
 struct aws_tls_connection_options;
-struct aws_http_connection_manager_mocks;
+
+typedef void(
+        aws_http_connection_manager_on_connection_setup_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
 /*
  * Connection manager configuration struct.
@@ -84,7 +87,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
 AWS_HTTP_API
 int aws_http_connection_manager_acquire_connection(
     struct aws_http_connection_manager *manager,
-    aws_http_on_client_connection_setup_fn *callback,
+    aws_http_connection_manager_on_connection_setup_fn *callback,
     void *user_data);
 
 /*

@@ -225,7 +225,7 @@ static bool s_aws_http_connection_manager_should_destroy(struct aws_http_connect
 struct aws_http_connection_acquisition {
     struct aws_linked_list_node node;
     struct aws_http_connection_manager *manager; /* Only used by logging */
-    aws_http_on_client_connection_setup_fn *callback;
+    aws_http_connection_manager_on_connection_setup_fn *callback;
     void *user_data;
     struct aws_http_connection *connection;
     int error_code;
@@ -629,7 +629,7 @@ static void s_aws_http_connection_manager_execute_task_set(
 
 int aws_http_connection_manager_acquire_connection(
     struct aws_http_connection_manager *manager,
-    aws_http_on_client_connection_setup_fn *callback,
+    aws_http_connection_manager_on_connection_setup_fn *callback,
     void *user_data) {
 
     int result = AWS_OP_ERR;
