@@ -62,6 +62,12 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_WEBSOCKET_IS_MIDCHANNEL_HANDLER,
         "Operation cannot be performed because websocket has been converted to a midchannel handler."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_CONNECTION_MANAGER_INVALID_STATE_FOR_ACQUIRE,
+        "Acquire called after the connection manager's ref count has reached zero"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_CONNECTION_MANAGER_VENDED_CONNECTION_UNDERFLOW,
+        "Release called when the connection manager's vended connection count was zero"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_END_RANGE,
         "Not a real error and should never be seen."),
 };
@@ -77,6 +83,7 @@ static struct aws_log_subject_info s_log_subject_infos[] = {
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION, "http-connection", "HTTP client or server connection"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_SERVER, "http-server", "HTTP server socket listening for incoming connections"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_STREAM, "http-stream", "HTTP request-response exchange"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "connection-manager", "Http connection manager"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET, "websocket", "Websocket"),
 };
 
