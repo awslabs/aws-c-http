@@ -17,11 +17,11 @@ phases:
       - mkdir /tmp/aws-c-http-build
       - mkdir /tmp/s2n-build
       - cd /tmp/aws-c-common-build 
-      - cmake -DCMAKE_INSTALL_PREFIX=/tmp/install -DBUILD_TESTING=OFF $CODEBUILD_SRC_DIR_aws-c-common
+      - cmake -DCMAKE_INSTALL_PREFIX=/tmp/install -DBUILD_TESTING=OFF $CODEBUILD_SRC_DIR_aws_c_common
       - make -j 
       - make install
       - cd /tmp/aws-c-compression-build
-      - cmake -DCMAKE_PREFIX_PATH=/tmp/install -DCMAKE_INSTALL_PREFIX=/tmp/install -DBUILD_TESTING=OFF $CODEBUILD_SRC_DIR_aws-c-compression
+      - cmake -DCMAKE_PREFIX_PATH=/tmp/install -DCMAKE_INSTALL_PREFIX=/tmp/install -DBUILD_TESTING=OFF $CODEBUILD_SRC_DIR_aws_c_compression
       - make -j
       - make install
       - cd /tmp/s2n-build
@@ -29,11 +29,11 @@ phases:
       - make -j 
       - make install
       - cd /tmp/aws-c-io-build
-      - cmake -DCMAKE_PREFIX_PATH=/opt/openssl;/tmp/install -DCMAKE_INSTALL_PREFIX=/tmp/install -DBUILD_TESTING=OFF $CODEBUILD_SRC_DIR_aws-c-io
+      - cmake -DCMAKE_PREFIX_PATH=/opt/openssl;/tmp/install -DCMAKE_INSTALL_PREFIX=/tmp/install -DBUILD_TESTING=OFF $CODEBUILD_SRC_DIR_aws_c_io
       - make -j
       - make install
       - cd /tmp/aws-c-http-build
-      - cmake -DCMAKE_PREFIX_PATH=/opt/openssl;/tmp/install -DCMAKE_INSTALL_PREFIX=/tmp/install -DBUILD_TESTING=OFF $CODEBUILD_SRC_DIR_aws-c-http
+      - cmake -DCMAKE_PREFIX_PATH=/opt/openssl;/tmp/install -DCMAKE_INSTALL_PREFIX=/tmp/install -DBUILD_TESTING=OFF $CODEBUILD_SRC_DIR
       - make -j
       - make install
       - /tmp/install/bin/elasticurl --version 
@@ -44,5 +44,5 @@ phases:
 
 artifacts:
   files:
-    - '/tmp/install/bin/elasticurl'
+    - '/tmp/install/bin/*'
  
