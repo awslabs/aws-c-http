@@ -27,8 +27,10 @@ struct aws_http_connection_manager_mocks;
 struct aws_socket_options;
 struct aws_tls_connection_options;
 
-typedef void(
-        aws_http_connection_manager_on_connection_setup_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
+typedef void(aws_http_connection_manager_on_connection_setup_fn)(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data);
 
 /*
  * Connection manager configuration struct.
@@ -51,11 +53,6 @@ struct aws_http_connection_manager_options {
      * Maximum number of connections this manager is allowed to contain
      */
     size_t max_connections;
-
-    /*
-     * Private function table for mocking http connection management
-     */
-    const struct aws_http_connection_manager_function_table *function_table;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -68,12 +65,20 @@ void aws_http_connection_manager_acquire(struct aws_http_connection_manager *man
 
 /*
  * Connection managers are ref counted.  Removes one external ref from the manager.
+ *
+ * When the ref count goes to zero, the connection manager begins its shut down
+ * process.  All pending connection acquisitions are failed (with callbacks
+ * invoked) and any (erroneous) subsequent attempts to acquire a connection
+ * fail immediately.  The connection manager destroys itself once all pending
+ * asynchronous activities have resolved.
  */
 AWS_HTTP_API
 void aws_http_connection_manager_release(struct aws_http_connection_manager *manager);
 
 /*
  * Creates a new connection manager with the supplied configuration options.
+ *
+ * The returned connection manager begins with a ref count of 1.
  */
 AWS_HTTP_API
 struct aws_http_connection_manager *aws_http_connection_manager_new(
@@ -83,15 +88,20 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
 /*
  * Requests a connection from the manager.  The requester is notified of
  * an acquired connection (or failure to acquire) via the supplied callback.
+ *
+ * Once a connection has been successfully acquired from the manager it
+ * must be released back (via aws_http_connection_manager_release_connection)
+ * at some point.  Failure to do so will cause a resource leak.
  */
 AWS_HTTP_API
-int aws_http_connection_manager_acquire_connection(
+void aws_http_connection_manager_acquire_connection(
     struct aws_http_connection_manager *manager,
     aws_http_connection_manager_on_connection_setup_fn *callback,
     void *user_data);
 
 /*
- * Returns a connection back to the manager
+ * Returns a connection back to the manager.  All acquired connections must
+ * eventually be released back to the manager in order to avoid a resource leak.
  */
 AWS_HTTP_API
 int aws_http_connection_manager_release_connection(

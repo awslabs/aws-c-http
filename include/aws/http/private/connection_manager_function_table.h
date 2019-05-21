@@ -35,12 +35,14 @@ struct aws_http_connection_manager_function_table {
     aws_http_connection_manager_is_connection_open_fn *is_connection_open;
 };
 
-AWS_STATIC_IMPL
+AWS_HTTP_API
 bool aws_http_connection_manager_function_table_is_valid(
-    const struct aws_http_connection_manager_function_table *table) {
-    return table->create_connection && table->close_connection && table->release_connection &&
-           table->is_connection_open;
-}
+    const struct aws_http_connection_manager_function_table *table);
+
+AWS_HTTP_API
+void aws_http_connection_manager_set_function_table(
+    struct aws_http_connection_manager *manager,
+    const struct aws_http_connection_manager_function_table *function_table);
 
 AWS_HTTP_API
 extern const struct aws_http_connection_manager_function_table

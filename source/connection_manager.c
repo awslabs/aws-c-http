@@ -38,7 +38,13 @@ static struct aws_http_connection_manager_function_table s_default_function_tabl
 const struct aws_http_connection_manager_function_table *g_aws_http_connection_manager_default_function_table_ptr =
     &s_default_function_table;
 
-enum aws_http_connection_manager_state_type { AWS_HCMST_READY, AWS_HCMST_SHUTTING_DOWN };
+bool aws_http_connection_manager_function_table_is_valid(
+    const struct aws_http_connection_manager_function_table *table) {
+    return table->create_connection && table->close_connection && table->release_connection &&
+           table->is_connection_open;
+}
+
+enum aws_http_connection_manager_state_type { AWS_HCMST_UNINITIALIZED, AWS_HCMST_READY, AWS_HCMST_SHUTTING_DOWN };
 
 /**
  * Vocabulary
@@ -185,6 +191,65 @@ struct aws_http_connection_manager {
      */
     size_t external_ref_count;
 };
+
+struct aws_http_connection_manager_snapshot {
+    enum aws_http_connection_manager_state_type state;
+
+    size_t held_connection_count;
+    size_t pending_acquisition_count;
+    size_t pending_connects_count;
+    size_t vended_connection_count;
+    size_t open_connection_count;
+
+    size_t external_ref_count;
+};
+
+/*
+ * Correct usage requires AWS_ZERO_STRUCT to have been called beforehand.
+ */
+static void s_aws_http_connection_manager_get_snapshot(
+    struct aws_http_connection_manager *manager,
+    struct aws_http_connection_manager_snapshot *snapshot) {
+
+    snapshot->state = manager->state;
+    snapshot->held_connection_count = aws_array_list_length(&manager->connections);
+    snapshot->pending_acquisition_count = manager->pending_acquisition_count;
+    snapshot->pending_connects_count = manager->pending_connects_count;
+    snapshot->vended_connection_count = manager->vended_connection_count;
+    snapshot->open_connection_count = manager->open_connection_count;
+
+    snapshot->external_ref_count = manager->external_ref_count;
+}
+
+static void s_aws_http_connection_manager_log_snapshot(
+    struct aws_http_connection_manager *manager,
+    struct aws_http_connection_manager_snapshot *snapshot) {
+    if (snapshot->state != AWS_HCMST_UNINITIALIZED) {
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "id=%p: snapshot - state=%d, held_connection_count=%zu, pending_acquire_count=%zu, "
+            "pending_connect_count=%zu, vended_connection_count=%zu, open_connection_count=%zu, ref_count=%zu",
+            (void *)manager,
+            (int)snapshot->state,
+            snapshot->held_connection_count,
+            snapshot->pending_acquisition_count,
+            snapshot->pending_connects_count,
+            snapshot->vended_connection_count,
+            snapshot->open_connection_count,
+            snapshot->external_ref_count);
+    } else {
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: snapshot not initialized by control flow", (void *)manager);
+    }
+}
+
+void aws_http_connection_manager_set_function_table(
+    struct aws_http_connection_manager *manager,
+    const struct aws_http_connection_manager_function_table *function_table) {
+    AWS_FATAL_ASSERT(aws_http_connection_manager_function_table_is_valid(function_table));
+
+    manager->function_table = function_table;
+}
 
 /*
  * Hard Requirement: Manager's lock must held somewhere in the call stack
@@ -375,15 +440,8 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->max_connections = options->max_connections;
     manager->socket_options = *options->socket_options;
     manager->bootstrap = options->bootstrap;
-    manager->function_table = options->function_table;
+    manager->function_table = g_aws_http_connection_manager_default_function_table_ptr;
     manager->external_ref_count = 1;
-    if (manager->function_table == NULL) {
-        manager->function_table = g_aws_http_connection_manager_default_function_table_ptr;
-    }
-
-    if (!aws_http_connection_manager_function_table_is_valid(manager->function_table)) {
-        goto on_error;
-    }
 
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Successfully created", (void *)manager);
 
@@ -398,6 +456,7 @@ on_error:
 
 void aws_http_connection_manager_acquire(struct aws_http_connection_manager *manager) {
     aws_mutex_lock(&manager->lock);
+    AWS_FATAL_ASSERT(manager->external_ref_count > 0);
     manager->external_ref_count += 1;
     aws_mutex_unlock(&manager->lock);
 }
@@ -487,6 +546,9 @@ static void s_aws_http_connection_manager_build_task_set(
     struct aws_http_connection_manager *manager,
     struct aws_linked_list *completions,
     size_t *new_connections) {
+
+    *new_connections = 0;
+
     /*
      * Step 1 - If there's free connections, complete acquisition requests
      */
@@ -627,18 +689,16 @@ static void s_aws_http_connection_manager_execute_task_set(
     aws_array_list_clean_up(&errors);
 }
 
-int aws_http_connection_manager_acquire_connection(
+void aws_http_connection_manager_acquire_connection(
     struct aws_http_connection_manager *manager,
     aws_http_connection_manager_on_connection_setup_fn *callback,
     void *user_data) {
-
-    int result = AWS_OP_ERR;
 
     struct aws_http_connection_acquisition *request =
         aws_mem_acquire(manager->allocator, sizeof(struct aws_http_connection_acquisition));
     if (request == NULL) {
         callback(NULL, aws_last_error(), user_data);
-        return result;
+        return;
     }
 
     AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Acquire connection", (void *)manager);
@@ -652,15 +712,16 @@ int aws_http_connection_manager_acquire_connection(
 
     size_t new_connections = 0;
 
+    struct aws_http_connection_manager_snapshot snapshot;
+    AWS_ZERO_STRUCT(snapshot);
+
     aws_mutex_lock(&manager->lock);
 
-    AWS_ASSERT(manager->state == AWS_HCMST_READY);
     if (manager->state == AWS_HCMST_READY) {
         aws_linked_list_push_back(&manager->pending_acquisitions, &request->node);
         ++manager->pending_acquisition_count;
 
         s_aws_http_connection_manager_build_task_set(manager, &completions, &new_connections);
-        result = AWS_OP_SUCCESS;
     } else {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION_MANAGER,
@@ -673,11 +734,13 @@ int aws_http_connection_manager_acquire_connection(
         aws_raise_error(AWS_ERROR_HTTP_CONNECTION_MANAGER_INVALID_STATE_FOR_ACQUIRE);
     }
 
+    s_aws_http_connection_manager_get_snapshot(manager, &snapshot);
+
     aws_mutex_unlock(&manager->lock);
 
-    s_aws_http_connection_manager_execute_task_set(manager, &completions, new_connections);
+    s_aws_http_connection_manager_log_snapshot(manager, &snapshot);
 
-    return result;
+    s_aws_http_connection_manager_execute_task_set(manager, &completions, new_connections);
 }
 
 int aws_http_connection_manager_release_connection(
@@ -686,9 +749,13 @@ int aws_http_connection_manager_release_connection(
     struct aws_linked_list completions;
     aws_linked_list_init(&completions);
 
+    bool should_destroy = false;
     int result = AWS_OP_ERR;
     size_t new_connections = 0;
     bool should_release_connection = !manager->function_table->is_connection_open(connection);
+
+    struct aws_http_connection_manager_snapshot snapshot;
+    AWS_ZERO_STRUCT(snapshot);
 
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Releasing connection (id=%p)", (void *)manager, (void *)connection);
@@ -697,7 +764,7 @@ int aws_http_connection_manager_release_connection(
 
     /* We're probably hosed in this case, but let's not underflow */
     if (manager->vended_connection_count == 0) {
-        AWS_LOGF_ERROR(
+        AWS_LOGF_FATAL(
             AWS_LS_HTTP_CONNECTION_MANAGER,
             "id=%p: Connection released when vended connection count is zero",
             (void *)manager);
@@ -717,14 +784,27 @@ int aws_http_connection_manager_release_connection(
 
     s_aws_http_connection_manager_build_task_set(manager, &completions, &new_connections);
 
+    /*
+     * This could be the last connection and we might have already gotten the release callback
+     * from http.  In that case, this would be our last chance to detect a destroyable state.
+     */
+    should_destroy = s_aws_http_connection_manager_should_destroy(manager);
+    s_aws_http_connection_manager_get_snapshot(manager, &snapshot);
+
 release:
 
     aws_mutex_unlock(&manager->lock);
+
+    s_aws_http_connection_manager_log_snapshot(manager, &snapshot);
 
     s_aws_http_connection_manager_execute_task_set(manager, &completions, new_connections);
 
     if (should_release_connection) {
         manager->function_table->release_connection(connection);
+    }
+
+    if (should_destroy) {
+        s_aws_http_connection_manager_destroy(manager);
     }
 
     return result;
@@ -756,6 +836,9 @@ static void s_aws_http_connection_manager_on_connection_setup(
             aws_error_str(error_code));
     }
 
+    struct aws_http_connection_manager_snapshot snapshot;
+    AWS_ZERO_STRUCT(snapshot);
+
     aws_mutex_lock(&manager->lock);
 
     bool is_shutting_down = manager->state == AWS_HCMST_SHUTTING_DOWN;
@@ -785,8 +868,11 @@ static void s_aws_http_connection_manager_on_connection_setup(
     s_aws_http_connection_manager_build_task_set(manager, &completions, &new_connections);
 
     bool should_destroy = s_aws_http_connection_manager_should_destroy(manager);
+    s_aws_http_connection_manager_get_snapshot(manager, &snapshot);
 
     aws_mutex_unlock(&manager->lock);
+
+    s_aws_http_connection_manager_log_snapshot(manager, &snapshot);
 
     s_aws_http_connection_manager_execute_task_set(manager, &completions, new_connections);
 
@@ -823,11 +909,13 @@ static void s_aws_http_connection_manager_on_connection_shutdown(
         (void *)manager,
         (void *)connection);
 
+    struct aws_http_connection_manager_snapshot snapshot;
+    AWS_ZERO_STRUCT(snapshot);
+
     aws_mutex_lock(&manager->lock);
 
     AWS_FATAL_ASSERT(manager->open_connection_count > 0);
     --manager->open_connection_count;
-    bool should_destroy = s_aws_http_connection_manager_should_destroy(manager);
 
     size_t connection_count = aws_array_list_length(&manager->connections);
 
@@ -857,9 +945,12 @@ static void s_aws_http_connection_manager_on_connection_shutdown(
         }
     }
 
+    bool should_destroy = s_aws_http_connection_manager_should_destroy(manager);
+    s_aws_http_connection_manager_get_snapshot(manager, &snapshot);
+
     aws_mutex_unlock(&manager->lock);
 
-    AWS_FATAL_ASSERT(!should_release_connection || !should_destroy);
+    s_aws_http_connection_manager_log_snapshot(manager, &snapshot);
 
     if (should_release_connection) {
         AWS_LOGF_INFO(

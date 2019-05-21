@@ -116,11 +116,14 @@ int s_cm_tester_init(struct cm_tester_options *options) {
                                                                  NULL, //&tester->tls_connection_options,
                                                              .host = aws_byte_cursor_from_c_str("www.google.com"),
                                                              .port = 80,
-                                                             .max_connections = options->max_connections,
-                                                             .function_table = options->mock_table};
+                                                             .max_connections = options->max_connections};
 
     tester->connection_manager = aws_http_connection_manager_new(tester->allocator, &cm_options);
     ASSERT_NOT_NULL(tester->connection_manager);
+
+    if (options->mock_table) {
+        aws_http_connection_manager_set_function_table(tester->connection_manager, options->mock_table);
+    }
 
     tester->mock_table = options->mock_table;
 
