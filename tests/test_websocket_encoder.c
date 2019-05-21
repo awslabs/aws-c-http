@@ -153,6 +153,7 @@ ENCODER_TEST_CASE(websocket_encoder_rsv) {
             0x89, // fin | rsv1 | rsv2 | rsv3 | 4bit opcode
             0x00, // mask | 7bit payload len
         };
+
         expected_output[0] |= (1 << (6 - rsv));
 
         tester.out_buf.len = 0; /* reset output buffer */
