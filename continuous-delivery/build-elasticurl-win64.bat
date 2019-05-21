@@ -1,7 +1,7 @@
-
+echo ON
 mkdir install
 cd install
-set INSTALL_DIR %cd%
+set INSTALL_DIR=%cd%
 cd ..
 mkdir aws-c-common-build
 mkdir aws-c-compression-build
