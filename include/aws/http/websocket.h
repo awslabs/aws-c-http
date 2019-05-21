@@ -17,10 +17,8 @@
 
 #include <aws/http/http.h>
 
-struct aws_channel_handler;
-struct aws_http_header;
-
 /* TODO: Document lifetime stuff */
+/* TODO: Should shutdown callback fire when it's a midchannel handler? */
 /* TODO: Document CLOSE frame behavior (when auto-sent during close, when auto-closed) */
 /* TODO: Document auto-pong behavior */
 
@@ -236,25 +234,15 @@ bool aws_websocket_is_data_frame(uint8_t opcode);
 AWS_HTTP_API
 int aws_websocket_client_connect(const struct aws_websocket_client_connection_options *options);
 
-/* TODO: Require all users to manually grab a hold? Http doesn't work like that... */
-/* TODO: should the last release trigger a shutdown automatically? http does that, channel doesn't. */
-
 /**
- * Ensure that the websocket cannot be destroyed until aws_websocket_release_hold() is called.
- * The websocket might still shutdown/close, but the public API will not crash when this websocket pointer is used.
- * If acquire_hold() is never called, the websocket is destroyed when its channel its channel is destroyed.
+ * Users must release the websocket when they are done with it (unless it's been converted to a mid-channel handler).
+ * The websocket's memory cannot be reclaimed until this is done.
+ * If the websocket connection was not already shutting down, it will be shut down.
+ * Callbacks may continue firing after this is called, with "shutdown" being the final callback.
  * This function may be called from any thread.
  */
 AWS_HTTP_API
-void aws_websocket_acquire_hold(struct aws_websocket *websocket);
-
-/**
- * See aws_websocket_acquire_hold().
- * The websocket will shut itself down when the last hold is released.
- * This function may be called from any thread.
- */
-AWS_HTTP_API
-void aws_websocket_release_hold(struct aws_websocket *websocket);
+void aws_websocket_release(struct aws_websocket *websocket);
 
 /**
  * Close the websocket connection.
@@ -285,11 +273,29 @@ int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_w
 AWS_HTTP_API
 void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t size);
 
-/* WIP */
+/**
+ * Convert the websocket into a mid-channel handler.
+ * The websocket will stop being usable via its public API and become just another handler in the channel.
+ * The caller will likely install a channel handler to the right.
+ * This must not be called in the middle of an incoming frame (between "frame begin" and "frame complete" callbacks).
+ * This MUST be called from the websocket's thread.
+ *
+ * If successful, the channel that the websocket belongs to is returned and:
+ * - The websocket will ignore all further calls to aws_websocket_X() functions.
+ * - The websocket will no longer invoke any "incoming frame" callbacks.
+ * - There is no need to invoke aws_websocket_release(), the websocket will be destroyed when the channel is destroyed.
+ *   The caller should acquire a hold on the channel if they need to prevent its destruction.
+ * - aws_io_messages written by a downstream handler will be wrapped in binary data frames and sent upstream.
+ *   The data may be split/combined as it is sent along.
+ * - aws_io_messages read from upstream handlers will be scanned for binary data frames.
+ *   The payloads of these frames will be sent downstream.
+ *   The payloads may be split/combined as they are sent along.
+ * - An incoming close frame will automatically result in channel-shutdown.
+ *
+ * If unsuccessful, NULL is returned and the websocket is unchanged.
+ */
 AWS_HTTP_API
-int aws_websocket_install_channel_handler_to_right(
-    struct aws_websocket *websocket,
-    struct aws_channel_handler *right_handler);
+struct aws_channel *aws_websocket_convert_to_midchannel_handler(struct aws_websocket *websocket);
 
 AWS_EXTERN_C_END
 
