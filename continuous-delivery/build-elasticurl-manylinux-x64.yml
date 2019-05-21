@@ -33,7 +33,7 @@ phases:
       - make -j
       - make install
       - cd /tmp/aws-c-http-build
-      - cmake -DCMAKE_PREFIX_PATH=/opt/openssl;/tmp/install -DCMAKE_INSTALL_PREFIX=/tmp/install -DBUILD_TESTING=OFF $CODEBUILD_SRC_DIR_aws_c_http
+      - cmake -DCMAKE_PREFIX_PATH=/opt/openssl;/tmp/install -DCMAKE_INSTALL_PREFIX=/tmp/install -DBUILD_TESTING=OFF $CODEBUILD_SRC_DIR
       - make -j
       - make install
       - /tmp/install/bin/elasticurl --version 
