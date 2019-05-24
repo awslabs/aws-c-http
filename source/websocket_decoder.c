@@ -21,7 +21,7 @@ typedef int(state_fn)(struct aws_websocket_decoder *decoder, struct aws_byte_cur
 
 /* STATE_INIT: Resets things, consumes no data */
 static int s_state_init(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
-    (void)data;
+    AWS_UNUSED_PARAM(data);
     AWS_ZERO_STRUCT(decoder->current_frame);
     decoder->state = AWS_WEBSOCKET_DECODER_STATE_OPCODE_BYTE;
     return AWS_OP_SUCCESS;
@@ -183,7 +183,7 @@ static int s_state_extended_length(struct aws_websocket_decoder *decoder, struct
 
 /* MASKING_KEY_CHECK: Determine if we need to decode masking-key. Consumes no data. */
 static int s_state_masking_key_check(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
-    (void)data;
+    AWS_UNUSED_PARAM(data);
 
     /* If mask bit was set, move to next state to process 4 bytes of masking key.
      * Otherwise skip next step, there is no masking key. */
@@ -222,7 +222,7 @@ static int s_state_masking_key(struct aws_websocket_decoder *decoder, struct aws
 
 /* PAYLOAD_CHECK: Determine if we need to decode a payload. Consumes no data. */
 static int s_state_payload_check(struct aws_websocket_decoder *decoder, struct aws_byte_cursor *data) {
-    (void)data;
+    AWS_UNUSED_PARAM(data);
 
     /* Invoke on_frame() callback to inform user of non-payload data. */
     int err = decoder->on_frame(&decoder->current_frame, decoder->user_data);

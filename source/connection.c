@@ -209,7 +209,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
     struct aws_channel *channel,
     void *user_data) {
 
-    (void)bootstrap;
+    AWS_UNUSED_PARAM(bootstrap);
     AWS_ASSERT(user_data);
     struct aws_http_server *server = user_data;
     bool user_cb_invoked = false;
@@ -295,10 +295,10 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
     struct aws_channel *channel,
     void *user_data) {
 
-    (void)bootstrap;
-    (void)error_code;
-    (void)channel;
-    (void)user_data;
+    AWS_UNUSED_PARAM(bootstrap);
+    AWS_UNUSED_PARAM(error_code);
+    AWS_UNUSED_PARAM(channel);
+    AWS_UNUSED_PARAM(user_data);
 
     /* No implementation because channel handler currently deals with shutdown logic and user callbacks. */
 }
@@ -399,7 +399,7 @@ static void s_client_bootstrap_on_channel_setup(
     struct aws_channel *channel,
     void *user_data) {
 
-    (void)bootstrap;
+    AWS_UNUSED_PARAM(bootstrap);
     AWS_ASSERT(user_data);
     struct aws_http_client_connection_impl_options *options = user_data;
 
@@ -464,10 +464,10 @@ static void s_client_bootstrap_on_channel_shutdown(
     struct aws_channel *channel,
     void *user_data) {
 
-    (void)bootstrap;
-    (void)error_code;
-    (void)channel;
-    (void)user_data;
+    AWS_UNUSED_PARAM(bootstrap);
+    AWS_UNUSED_PARAM(error_code);
+    AWS_UNUSED_PARAM(channel);
+    AWS_UNUSED_PARAM(user_data);
 
     /* No implementation because channel handler currently deals with shutdown logic and user callbacks. */
 }

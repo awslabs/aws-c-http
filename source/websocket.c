@@ -224,13 +224,13 @@ bool aws_websocket_is_data_frame(uint8_t opcode) {
 void s_lock_synced_data(struct aws_websocket *websocket) {
     int err = aws_mutex_lock(&websocket->synced_data.lock);
     AWS_ASSERT(!err);
-    (void)err;
+    AWS_UNUSED_PARAM(err);
 }
 
 void s_unlock_synced_data(struct aws_websocket *websocket) {
     int err = aws_mutex_unlock(&websocket->synced_data.lock);
     AWS_ASSERT(!err);
-    (void)err;
+    AWS_UNUSED_PARAM(err);
 }
 
 struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handler_options *options) {
@@ -433,8 +433,8 @@ struct aws_channel *aws_websocket_convert_to_midchannel_handler(struct aws_webso
 }
 
 static void s_finish_midchannel_conversion_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
-    (void)task;
-    (void)status;
+    AWS_UNUSED_PARAM(task);
+    AWS_UNUSED_PARAM(status);
     struct aws_websocket *websocket = arg;
 
     /* Once websocket is converted into a midchannel handler, it no longer prevents the channel from being destroyed.
@@ -545,7 +545,7 @@ int aws_websocket_send_frame(struct aws_websocket *websocket, const struct aws_w
 }
 
 static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
-    (void)task;
+    AWS_UNUSED_PARAM(task);
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;
     }
@@ -799,8 +799,8 @@ static void s_io_message_write_completed(
     int err_code,
     void *user_data) {
 
-    (void)channel;
-    (void)message;
+    AWS_UNUSED_PARAM(channel);
+    AWS_UNUSED_PARAM(message);
     struct aws_websocket *websocket = user_data;
     AWS_ASSERT(aws_channel_thread_is_callers_thread(channel));
 
@@ -827,7 +827,7 @@ static int s_handler_process_write_message(
     struct aws_channel_slot *slot,
     struct aws_io_message *message) {
 
-    (void)slot;
+    AWS_UNUSED_PARAM(slot);
     struct aws_websocket *websocket = handler->impl;
     AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
 
@@ -856,7 +856,7 @@ static int s_handler_process_write_message(
 
 /* Callback for writing data from downstream aws_io_messages into payload of BINARY frames headed upstream */
 static bool s_midchannel_send_payload(struct aws_websocket *websocket, struct aws_byte_buf *out_buf, void *user_data) {
-    (void)websocket;
+    AWS_UNUSED_PARAM(websocket);
     struct aws_io_message *io_msg = user_data;
 
     /* copy_mark is used to track progress */
@@ -872,7 +872,7 @@ static bool s_midchannel_send_payload(struct aws_websocket *websocket, struct aw
 
 /* Callback when data from downstream aws_io_messages, finishes being sent as a BINARY frame upstream. */
 static void s_midchannel_send_complete(struct aws_websocket *websocket, int error_code, void *user_data) {
-    (void)websocket;
+    AWS_UNUSED_PARAM(websocket);
     struct aws_io_message *io_msg = user_data;
 
     if (io_msg->on_completion) {
@@ -977,7 +977,7 @@ static void s_shutdown_due_to_read_err(struct aws_websocket *websocket, int erro
 }
 
 static void s_shutdown_channel_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
-    (void)task;
+    AWS_UNUSED_PARAM(task);
 
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;
@@ -1358,7 +1358,7 @@ static size_t s_handler_initial_window_size(struct aws_channel_handler *handler)
 }
 
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler) {
-    (void)handler;
+    AWS_UNUSED_PARAM(handler);
     return AWS_WEBSOCKET_MAX_FRAME_OVERHEAD;
 }
 
@@ -1367,9 +1367,9 @@ static int s_handler_increment_read_window(
     struct aws_channel_slot *slot,
     size_t size) {
 
-    (void)handler;
-    (void)slot;
-    (void)size;
+    AWS_UNUSED_PARAM(handler);
+    AWS_UNUSED_PARAM(slot);
+    AWS_UNUSED_PARAM(size);
     /* TODO: implement */
     return AWS_OP_SUCCESS;
 }
@@ -1391,7 +1391,7 @@ static void s_increment_read_window_action(struct aws_websocket *websocket, size
 }
 
 static void s_increment_read_window_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
-    (void)task;
+    AWS_UNUSED_PARAM(task);
 
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;

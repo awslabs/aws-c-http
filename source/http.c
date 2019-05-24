@@ -167,7 +167,7 @@ enum aws_http_method aws_http_str_to_method(struct aws_byte_cursor cursor) {
 static struct aws_byte_cursor s_version_enum_to_str[AWS_HTTP_HEADER_COUNT]; /* for enum -> string lookup */
 
 static void s_versions_init(struct aws_allocator *alloc) {
-    (void)alloc;
+    AWS_UNUSED_PARAM(alloc);
     s_version_enum_to_str[AWS_HTTP_VERSION_UNKNOWN] = aws_byte_cursor_from_c_str("Unknown");
     s_version_enum_to_str[AWS_HTTP_VERSION_1_0] = aws_byte_cursor_from_c_str("HTTP/1.0");
     s_version_enum_to_str[AWS_HTTP_VERSION_1_1] = aws_byte_cursor_from_c_str("HTTP/1.1");

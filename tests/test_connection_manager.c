@@ -209,8 +209,8 @@ void s_release_connections(size_t count, bool close_first) {
 }
 
 void s_on_acquire_connection(struct aws_http_connection *connection, int error_code, void *user_data) {
-    (void)error_code;
-    (void)user_data;
+    AWS_UNUSED_PARAM(error_code);
+    AWS_UNUSED_PARAM(user_data);
 
     struct cm_tester *tester = &s_tester;
 
@@ -236,7 +236,7 @@ static void s_acquire_connections(size_t count) {
 }
 
 static bool s_is_connection_reply_count_at_least(void *context) {
-    (void)context;
+    AWS_UNUSED_PARAM(context);
 
     struct cm_tester *tester = &s_tester;
 
@@ -289,7 +289,7 @@ void s_cm_tester_clean_up(void) {
 }
 
 static int s_test_connection_manager_setup_shutdown(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
 
     struct cm_tester_options options = {.allocator = allocator, .max_connections = 5};
 
@@ -302,7 +302,7 @@ static int s_test_connection_manager_setup_shutdown(struct aws_allocator *alloca
 AWS_TEST_CASE(test_connection_manager_setup_shutdown, s_test_connection_manager_setup_shutdown);
 
 static int s_test_connection_manager_single_connection(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
 
     struct cm_tester_options options = {.allocator = allocator, .max_connections = 5};
 
@@ -321,7 +321,7 @@ static int s_test_connection_manager_single_connection(struct aws_allocator *all
 AWS_TEST_CASE(test_connection_manager_single_connection, s_test_connection_manager_single_connection);
 
 static int s_test_connection_manager_many_connections(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
 
     struct cm_tester_options options = {.allocator = allocator, .max_connections = 20};
 
@@ -340,7 +340,7 @@ static int s_test_connection_manager_many_connections(struct aws_allocator *allo
 AWS_TEST_CASE(test_connection_manager_many_connections, s_test_connection_manager_many_connections);
 
 static int s_test_connection_manager_acquire_release(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
 
     struct cm_tester_options options = {.allocator = allocator, .max_connections = 4};
 
@@ -363,7 +363,7 @@ static int s_test_connection_manager_acquire_release(struct aws_allocator *alloc
 AWS_TEST_CASE(test_connection_manager_acquire_release, s_test_connection_manager_acquire_release);
 
 static int s_test_connection_manager_close_and_release(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
 
     struct cm_tester_options options = {.allocator = allocator, .max_connections = 4};
 
@@ -386,7 +386,7 @@ static int s_test_connection_manager_close_and_release(struct aws_allocator *all
 AWS_TEST_CASE(test_connection_manager_close_and_release, s_test_connection_manager_close_and_release);
 
 static int s_test_connection_manager_acquire_release_mix(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
 
     struct cm_tester_options options = {.allocator = allocator, .max_connections = 5};
 
@@ -446,7 +446,7 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
 }
 
 static void s_aws_http_connection_manager_release_connection_sync_mock(struct aws_http_connection *connection) {
-    (void)connection;
+    AWS_UNUSED_PARAM(connection);
 
     struct cm_tester *tester = &s_tester;
 
@@ -454,11 +454,11 @@ static void s_aws_http_connection_manager_release_connection_sync_mock(struct aw
 }
 
 static void s_aws_http_connection_manager_close_connection_sync_mock(struct aws_http_connection *connection) {
-    (void)connection;
+    AWS_UNUSED_PARAM(connection);
 }
 
 static bool s_aws_http_connection_manager_is_connection_open_sync_mock(const struct aws_http_connection *connection) {
-    (void)connection;
+    AWS_UNUSED_PARAM(connection);
 
     struct mock_connection_proxy *proxy = (struct mock_connection_proxy *)(void *)connection;
 
@@ -472,7 +472,7 @@ static struct aws_http_connection_manager_function_table s_synchronous_mocks = {
     .is_connection_open = s_aws_http_connection_manager_is_connection_open_sync_mock};
 
 static int s_test_connection_manager_acquire_release_mix_synchronous(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
 
     struct cm_tester_options options = {
         .allocator = allocator, .max_connections = 5, .mock_table = &s_synchronous_mocks};
@@ -510,7 +510,7 @@ AWS_TEST_CASE(
     s_test_connection_manager_acquire_release_mix_synchronous);
 
 static int s_test_connection_manager_connect_callback_failure(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
 
     struct cm_tester_options options = {
         .allocator = allocator, .max_connections = 5, .mock_table = &s_synchronous_mocks};
@@ -532,7 +532,7 @@ static int s_test_connection_manager_connect_callback_failure(struct aws_allocat
 AWS_TEST_CASE(test_connection_manager_connect_callback_failure, s_test_connection_manager_connect_callback_failure);
 
 static int s_test_connection_manager_connect_immediate_failure(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
 
     struct cm_tester_options options = {
         .allocator = allocator, .max_connections = 5, .mock_table = &s_synchronous_mocks};
@@ -556,7 +556,7 @@ AWS_TEST_CASE(test_connection_manager_connect_immediate_failure, s_test_connecti
 static int s_test_connection_manager_success_then_cancel_pending_from_failure(
     struct aws_allocator *allocator,
     void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
 
     struct cm_tester_options options = {
         .allocator = allocator, .max_connections = 1, .mock_table = &s_synchronous_mocks};

@@ -897,7 +897,7 @@ static void s_aws_http_connection_manager_on_connection_shutdown(
     struct aws_http_connection *connection,
     int error_code,
     void *user_data) {
-    (void)error_code;
+    AWS_UNUSED_PARAM(error_code);
 
     bool should_release_connection = false;
 

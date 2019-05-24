@@ -70,8 +70,8 @@ struct tester {
 };
 
 static void s_tester_on_incoming_request(struct aws_http_connection *connection, void *user_data) {
-    (void)connection;
-    (void)user_data;
+    AWS_UNUSED_PARAM(connection);
+    AWS_UNUSED_PARAM(user_data);
 }
 
 static void s_tester_on_server_connection_shutdown(
@@ -79,8 +79,8 @@ static void s_tester_on_server_connection_shutdown(
     int error_code,
     void *user_data) {
 
-    (void)connection;
-    (void)error_code;
+    AWS_UNUSED_PARAM(connection);
+    AWS_UNUSED_PARAM(error_code);
     struct tester *tester = user_data;
     AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
 
@@ -96,7 +96,7 @@ static void s_tester_on_server_connection_setup(
     int error_code,
     void *user_data) {
 
-    (void)server;
+    AWS_UNUSED_PARAM(server);
     struct tester *tester = user_data;
     AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
 
@@ -146,8 +146,8 @@ static void s_tester_on_client_connection_shutdown(
     int error_code,
     void *user_data) {
 
-    (void)connection;
-    (void)error_code;
+    AWS_UNUSED_PARAM(connection);
+    AWS_UNUSED_PARAM(error_code);
     struct tester *tester = user_data;
     AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
 
@@ -290,7 +290,7 @@ static int s_tester_clean_up(struct tester *tester) {
 }
 
 static int s_test_server_new_destroy(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester_options options = {
         .alloc = allocator,
         .no_connection = true,
@@ -304,7 +304,7 @@ static int s_test_server_new_destroy(struct aws_allocator *allocator, void *ctx)
 AWS_TEST_CASE(server_new_destroy, s_test_server_new_destroy);
 
 static int s_test_connection_setup_shutdown(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester_options options = {
         .alloc = allocator,
     };

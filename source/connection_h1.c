@@ -234,7 +234,7 @@ static void s_shutdown_connection(struct h1_connection *connection, int error_co
 }
 
 static void s_shutdown_delay_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
-    (void)task;
+    AWS_UNUSED_PARAM(task);
     struct h1_connection *connection = arg;
 
     if (status == AWS_TASK_STATUS_RUN_READY) {
@@ -445,7 +445,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\r');
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\n');
-    (void)wrote_all;
+    AWS_UNUSED_PARAM(wrote_all);
     AWS_ASSERT(wrote_all);
 
     /* Insert new stream into pending list, and schedule outgoing_stream_task if it's not already running. */
@@ -531,7 +531,7 @@ static void s_update_window_action(struct h1_connection *connection, size_t incr
 }
 
 static void s_update_window_task(struct aws_channel_task *channel_task, void *arg, enum aws_task_status status) {
-    (void)channel_task;
+    AWS_UNUSED_PARAM(channel_task);
     struct h1_connection *connection = arg;
 
     if (status != AWS_TASK_STATUS_RUN_READY) {
@@ -633,7 +633,7 @@ static void s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io
         size_t transferring = src_remaining < dst_available ? src_remaining : dst_available;
 
         bool success = aws_byte_buf_write(dst, src->buffer + src_progress, transferring);
-        (void)success;
+        AWS_UNUSED_PARAM(success);
         AWS_ASSERT(success);
 
         stream->outgoing_head_progress += transferring;
@@ -1094,7 +1094,7 @@ static int s_mark_head_done(struct h1_stream *incoming_stream) {
 }
 
 static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data) {
-    (void)finished;
+    AWS_UNUSED_PARAM(finished);
 
     struct h1_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
@@ -1363,9 +1363,9 @@ static int s_handler_process_write_message(
     struct aws_channel_slot *slot,
     struct aws_io_message *message) {
 
-    (void)handler;
-    (void)slot;
-    (void)message;
+    AWS_UNUSED_PARAM(handler);
+    AWS_UNUSED_PARAM(slot);
+    AWS_UNUSED_PARAM(message);
     AWS_ASSERT(false); /* Should not be called until websocket stuff comes along. */
     return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
 }
@@ -1375,9 +1375,9 @@ static int s_handler_increment_read_window(
     struct aws_channel_slot *slot,
     size_t size) {
 
-    (void)handler;
-    (void)slot;
-    (void)size;
+    AWS_UNUSED_PARAM(handler);
+    AWS_UNUSED_PARAM(slot);
+    AWS_UNUSED_PARAM(size);
     AWS_ASSERT(false); /* Should not be called until websocket stuff comes along. */
     return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
 }
@@ -1389,7 +1389,7 @@ static int s_handler_shutdown(
     int error_code,
     bool free_scarce_resources_immediately) {
 
-    (void)free_scarce_resources_immediately;
+    AWS_UNUSED_PARAM(free_scarce_resources_immediately);
     struct h1_connection *connection = handler->impl;
 
     /* Shut everything down the first time we get this callback (DIR_READ). */
@@ -1437,6 +1437,6 @@ static size_t s_handler_initial_window_size(struct aws_channel_handler *handler)
 }
 
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler) {
-    (void)handler;
+    AWS_UNUSED_PARAM(handler);
     return 0;
 }

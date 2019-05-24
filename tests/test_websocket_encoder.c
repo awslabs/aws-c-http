@@ -101,7 +101,7 @@ static bool aws_byte_buf_eq_array(const struct aws_byte_buf *buf, const void *ar
 }
 
 ENCODER_TEST_CASE(websocket_encoder_sanity_check) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 
@@ -111,7 +111,7 @@ ENCODER_TEST_CASE(websocket_encoder_sanity_check) {
 
 /* Test encoding a frame with no payload or mask */
 ENCODER_TEST_CASE(websocket_encoder_simplest_frame) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 
@@ -137,7 +137,7 @@ ENCODER_TEST_CASE(websocket_encoder_simplest_frame) {
 
 /* Test the 3 RSV bools */
 ENCODER_TEST_CASE(websocket_encoder_rsv) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 
@@ -169,7 +169,7 @@ ENCODER_TEST_CASE(websocket_encoder_rsv) {
 }
 
 ENCODER_TEST_CASE(websocket_encoder_data_frame) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 
@@ -203,7 +203,7 @@ ENCODER_TEST_CASE(websocket_encoder_data_frame) {
 }
 
 ENCODER_TEST_CASE(websocket_encoder_fail_if_payload_exceeds_stated_length) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 
@@ -225,7 +225,7 @@ ENCODER_TEST_CASE(websocket_encoder_fail_if_payload_exceeds_stated_length) {
 }
 
 ENCODER_TEST_CASE(websocket_encoder_masking) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 
@@ -268,7 +268,7 @@ ENCODER_TEST_CASE(websocket_encoder_masking) {
 }
 
 ENCODER_TEST_CASE(websocket_encoder_extended_length) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 
@@ -353,7 +353,7 @@ ENCODER_TEST_CASE(websocket_encoder_extended_length) {
 /* Ensure the encoder can handle outputing data across split buffers.
  * Best way I know is to output 1 byte at a time, that covers EVERY possible splitting point. */
 ENCODER_TEST_CASE(websocket_encoder_1_byte_at_a_time) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 
@@ -416,7 +416,7 @@ ENCODER_TEST_CASE(websocket_encoder_1_byte_at_a_time) {
 
 /* Test fragmented messages, which are sent via multiple frames whose FIN bit is cleared */
 ENCODER_TEST_CASE(websocket_encoder_fragmented_message) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 
@@ -505,7 +505,7 @@ ENCODER_TEST_CASE(websocket_encoder_fragmented_message) {
 
 /* Test illegal sequences of fragmented (FIN bit is clear) frames */
 ENCODER_TEST_CASE(websocket_encoder_fragmentation_failure_checks) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 
@@ -619,7 +619,7 @@ ENCODER_TEST_CASE(websocket_encoder_fragmentation_failure_checks) {
 }
 
 ENCODER_TEST_CASE(websocket_encoder_payload_callback_can_fail_encoder) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct encoder_tester tester;
     ASSERT_SUCCESS(s_encoder_tester_init(&tester, allocator));
 

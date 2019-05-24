@@ -23,7 +23,7 @@ typedef int(state_fn)(struct aws_websocket_encoder *encoder, struct aws_byte_buf
 
 /* STATE_INIT: Outputs no data */
 static int s_state_init(struct aws_websocket_encoder *encoder, struct aws_byte_buf *out_buf) {
-    (void)out_buf;
+    AWS_UNUSED_PARAM(out_buf);
 
     if (!encoder->is_frame_in_progress) {
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
@@ -126,7 +126,7 @@ static int s_state_extended_length(struct aws_websocket_encoder *encoder, struct
 
 /* MASKING_KEY_CHECK: Outputs no data. Gets things ready for (or decides to skip) the STATE_MASKING_KEY */
 static int s_state_masking_key_check(struct aws_websocket_encoder *encoder, struct aws_byte_buf *out_buf) {
-    (void)out_buf;
+    AWS_UNUSED_PARAM(out_buf);
 
     if (encoder->frame.masked) {
         encoder->state_bytes_processed = 0;
@@ -168,7 +168,7 @@ static int s_state_masking_key(struct aws_websocket_encoder *encoder, struct aws
 
 /* MASKING_KEY_CHECK: Outputs no data. Gets things ready for (or decides to skip) STATE_PAYLOAD */
 static int s_state_payload_check(struct aws_websocket_encoder *encoder, struct aws_byte_buf *out_buf) {
-    (void)out_buf;
+    AWS_UNUSED_PARAM(out_buf);
 
     if (encoder->frame.payload_length > 0) {
         encoder->state_bytes_processed = 0;

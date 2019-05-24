@@ -278,14 +278,14 @@ static struct aws_huffman_code code_points[] = {
 };
 
 static struct aws_huffman_code encode_symbol(uint8_t symbol, void *userdata) {
-    (void)userdata;
+    AWS_UNUSED_PARAM(userdata);
 
     return code_points[symbol];
 }
 
 /* NOLINTNEXTLINE(readability-function-size) */
 static uint8_t decode_symbol(uint32_t bits, uint8_t *symbol, void *userdata) {
-    (void)userdata;
+    AWS_UNUSED_PARAM(userdata);
 
     if (bits & 0x80000000) {
         goto node_1;

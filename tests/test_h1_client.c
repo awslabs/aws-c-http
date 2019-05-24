@@ -38,7 +38,7 @@ struct tester {
 };
 
 static void s_on_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
-    (void)connection;
+    AWS_UNUSED_PARAM(connection);
     struct tester *tester = user_data;
     tester->is_shut_down = true;
     tester->shutdown_error_code = error_code;
@@ -95,7 +95,7 @@ static int s_tester_clean_up(struct tester *tester) {
 
 /* Check that we can set and tear down the `tester` used by all other tests in this file */
 H1_CLIENT_TEST_CASE(h1_client_sanity_check) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -140,7 +140,7 @@ static int s_check_all_messages(struct tester *tester, const char *expected) {
 
 /* Send 1 line request, doesn't care about response */
 H1_CLIENT_TEST_CASE(h1_client_request_send_1liner) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -167,7 +167,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_1liner) {
 }
 
 H1_CLIENT_TEST_CASE(h1_client_request_send_headers) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -218,7 +218,7 @@ static enum aws_http_outgoing_body_state s_simple_send_body(
     struct aws_byte_buf *buf,
     void *user_data) {
 
-    (void)stream;
+    AWS_UNUSED_PARAM(stream);
     struct simple_body_sender *data = user_data;
     size_t remaining = data->src.len - data->progress;
     size_t available = buf->capacity - buf->len;
@@ -230,7 +230,7 @@ static enum aws_http_outgoing_body_state s_simple_send_body(
 }
 
 H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -328,7 +328,7 @@ static int s_check_multiple_messages(struct tester *tester, struct aws_byte_curs
 
 /* Send a request whose body doesn't fit in a single aws_io_message */
 H1_CLIENT_TEST_CASE(h1_client_request_send_large_body) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -394,7 +394,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body) {
 
 /* Send a request whose headers don't fit in a single aws_io_message */
 H1_CLIENT_TEST_CASE(h1_client_request_send_large_head) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -455,7 +455,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_head) {
 
 /* Check that as many requests as possible will be packed into each aws_io_message */
 H1_CLIENT_TEST_CASE(h1_client_request_send_multiple_in_1_io_message) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -523,7 +523,7 @@ static void s_response_tester_on_headers(
     size_t num_headers,
     void *user_data) {
 
-    (void)stream;
+    AWS_UNUSED_PARAM(stream);
     struct response_tester *response = user_data;
     response->on_response_headers_cb_count++;
 
@@ -547,7 +547,7 @@ static void s_response_tester_on_headers(
 }
 
 static void s_response_tester_on_header_block_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
-    (void)stream;
+    AWS_UNUSED_PARAM(stream);
     struct response_tester *response = user_data;
 
     AWS_FATAL_ASSERT(response->on_response_header_block_done_cb_count == 0);
@@ -564,7 +564,7 @@ static void s_response_tester_on_body(
     size_t *out_window_update_size,
     void *user_data) {
 
-    (void)stream;
+    AWS_UNUSED_PARAM(stream);
     struct response_tester *response = user_data;
     response->on_response_body_cb_count++;
 
@@ -588,7 +588,7 @@ static void s_response_tester_on_body(
 }
 
 static void s_response_tester_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
-    (void)stream;
+    AWS_UNUSED_PARAM(stream);
     struct response_tester *response = user_data;
     AWS_FATAL_ASSERT(response->on_complete_cb_count == 0);
     response->on_complete_cb_count++;
@@ -665,7 +665,7 @@ static int s_send_response_str_ignore_errors(struct tester *tester, const char *
 }
 
 H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -710,7 +710,7 @@ static int s_check_header(struct response_tester *response, size_t i, const char
 }
 
 H1_CLIENT_TEST_CASE(h1_client_response_get_headers) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -752,7 +752,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_headers) {
 }
 
 H1_CLIENT_TEST_CASE(h1_client_response_get_body) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -794,7 +794,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_body) {
 
 /* Check that a response spread across multiple aws_io_messages comes through */
 H1_CLIENT_TEST_CASE(h1_client_response_get_1_from_multiple_io_messages) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -838,7 +838,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1_from_multiple_io_messages) {
 
 /* Check that multiple responses in a single aws_io_message all come through */
 H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -880,7 +880,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
 }
 
 H1_CLIENT_TEST_CASE(h1_client_response_with_bad_data_shuts_down_connection) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -913,7 +913,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_with_bad_data_shuts_down_connection) {
 /* Test case is: 1 request has been sent. Then 2 responses arrive in 1 io message.
  * The 1st request should complete just fine, then the connection should shutdown with error */
 H1_CLIENT_TEST_CASE(h1_client_response_with_too_much_data_shuts_down_connection) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -965,7 +965,7 @@ static enum aws_http_outgoing_body_state s_slow_send_body(
     struct aws_byte_buf *buf,
     void *user_data) {
 
-    (void)stream;
+    AWS_UNUSED_PARAM(stream);
     struct response_tester *response = user_data;
     struct slow_body_sender *sender = response->specific_test_data;
     size_t dst_available = buf->capacity - buf->len;
@@ -992,7 +992,7 @@ static enum aws_http_outgoing_body_state s_slow_send_body(
 
 /* It should be fine to receive a response before the request has finished sending */
 H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1057,7 +1057,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
 
 /* Response data arrives, but there was no outstanding request */
 H1_CLIENT_TEST_CASE(h1_client_response_without_request_shuts_down_connection) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1074,7 +1074,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_without_request_shuts_down_connection) {
 
 /* By default, after reading an aws_io_message of N bytes, the connection should issue window update of N bytes */
 H1_CLIENT_TEST_CASE(h1_client_window_reopens_by_default) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1110,7 +1110,7 @@ H1_CLIENT_TEST_CASE(h1_client_window_reopens_by_default) {
 
 /* The user's body reading callback can prevent the window from fully re-opening. */
 H1_CLIENT_TEST_CASE(h1_client_window_shrinks_if_user_says_so) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1196,23 +1196,23 @@ static int s_window_update(struct aws_allocator *allocator, bool on_thread) {
 }
 
 H1_CLIENT_TEST_CASE(h1_client_window_manual_update) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     return s_window_update(allocator, true);
 }
 
 H1_CLIENT_TEST_CASE(h1_client_window_manual_update_off_thread) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     return s_window_update(allocator, false);
 }
 
 static void s_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
-    (void)stream;
+    AWS_UNUSED_PARAM(stream);
     int *completion_error_code = user_data;
     *completion_error_code = error_code;
 }
 
 H1_CLIENT_TEST_CASE(h1_client_request_cancelled_by_channel_shutdown) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1246,7 +1246,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_cancelled_by_channel_shutdown) {
 }
 
 H1_CLIENT_TEST_CASE(h1_client_multiple_requests_cancelled_by_channel_shutdown) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1289,7 +1289,7 @@ H1_CLIENT_TEST_CASE(h1_client_multiple_requests_cancelled_by_channel_shutdown) {
 }
 
 H1_CLIENT_TEST_CASE(h1_client_new_request_fails_if_channel_shut_down) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1351,7 +1351,7 @@ static enum aws_http_outgoing_body_state s_close_from_outgoing_body(
     struct aws_byte_buf *buf,
     void *user_data) {
 
-    (void)buf;
+    AWS_UNUSED_PARAM(buf);
     s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_OUTGOING_BODY);
 
     /* If we're closing from this function, try and keep going. It's a failure if we're invoked again. */
@@ -1369,13 +1369,13 @@ static void s_close_from_incoming_headers(
     size_t num_headers,
     void *user_data) {
 
-    (void)header_array;
-    (void)num_headers;
+    AWS_UNUSED_PARAM(header_array);
+    AWS_UNUSED_PARAM(num_headers);
     s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_INCOMING_HEADERS);
 }
 
 static void s_close_from_incoming_headers_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
-    (void)has_body;
+    AWS_UNUSED_PARAM(has_body);
     s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_INCOMING_HEADERS_DONE);
 }
 
@@ -1386,13 +1386,13 @@ static void s_close_from_incoming_body(
     size_t *out_window_update_size,
     void *user_data) {
 
-    (void)data;
-    (void)out_window_update_size;
+    AWS_UNUSED_PARAM(data);
+    AWS_UNUSED_PARAM(out_window_update_size);
     s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_INCOMING_BODY);
 }
 
 static void s_close_from_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
-    (void)error_code;
+    AWS_UNUSED_PARAM(error_code);
     s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_COMPLETE);
 }
 
@@ -1464,31 +1464,31 @@ static int s_test_close_from_callback(struct aws_allocator *allocator, enum requ
 }
 
 H1_CLIENT_TEST_CASE(h1_client_close_from_outgoing_body_callback_stops_decoder) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_OUTGOING_BODY));
     return AWS_OP_SUCCESS;
 }
 
 H1_CLIENT_TEST_CASE(h1_client_close_from_incoming_headers_callback_stops_decoder) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_INCOMING_HEADERS));
     return AWS_OP_SUCCESS;
 }
 
 H1_CLIENT_TEST_CASE(h1_client_close_from_incoming_headers_done_callback_stops_decoder) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_INCOMING_HEADERS_DONE));
     return AWS_OP_SUCCESS;
 }
 
 H1_CLIENT_TEST_CASE(h1_client_close_from_incoming_body_callback_stops_decoder) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_INCOMING_BODY));
     return AWS_OP_SUCCESS;
 }
 
 H1_CLIENT_TEST_CASE(h1_client_close_from_stream_complete_callback_stops_decoder) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_COMPLETE));
     return AWS_OP_SUCCESS;
 }
@@ -1496,7 +1496,7 @@ H1_CLIENT_TEST_CASE(h1_client_close_from_stream_complete_callback_stops_decoder)
 /* After aws_http_connection_close() is called, aws_http_connection_is_open() should return false,
  * even if both calls were made from outside the event-loop thread. */
 H1_CLIENT_TEST_CASE(h1_client_close_from_off_thread_makes_not_open) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1513,7 +1513,7 @@ H1_CLIENT_TEST_CASE(h1_client_close_from_off_thread_makes_not_open) {
 }
 
 H1_CLIENT_TEST_CASE(h1_client_close_from_on_thread_makes_not_open) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 

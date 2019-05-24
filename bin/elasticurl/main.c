@@ -238,8 +238,8 @@ static void s_on_incoming_body_fn(
     size_t *out_window_update_size,
     void *user_data) {
 
-    (void)stream;
-    (void)out_window_update_size;
+    AWS_UNUSED_PARAM(stream);
+    AWS_UNUSED_PARAM(out_window_update_size);
     struct elasticurl_ctx *app_ctx = user_data;
 
     fwrite(data->ptr, 1, data->len, app_ctx->output);
@@ -249,7 +249,7 @@ enum aws_http_outgoing_body_state s_stream_outgoing_body_fn(
     struct aws_http_stream *stream,
     struct aws_byte_buf *buf,
     void *user_data) {
-    (void)stream;
+    AWS_UNUSED_PARAM(stream);
     struct elasticurl_ctx *app_ctx = user_data;
 
     if (app_ctx->data.len) {
@@ -292,8 +292,8 @@ static void s_on_incoming_headers_fn(
     size_t num_headers,
     void *user_data) {
     struct elasticurl_ctx *app_ctx = user_data;
-    (void)app_ctx;
-    (void)stream;
+    AWS_UNUSED_PARAM(app_ctx);
+    AWS_UNUSED_PARAM(stream);
 
     if (app_ctx->include_headers) {
         if (!app_ctx->response_code_written) {
@@ -313,14 +313,14 @@ static void s_on_incoming_headers_fn(
 }
 
 static void s_on_incoming_header_block_done_fn(struct aws_http_stream *stream, bool has_body, void *user_data) {
-    (void)stream;
-    (void)has_body;
-    (void)user_data;
+    AWS_UNUSED_PARAM(stream);
+    AWS_UNUSED_PARAM(has_body);
+    AWS_UNUSED_PARAM(user_data);
 }
 
 static void s_on_stream_complete_fn(struct aws_http_stream *stream, int error_code, void *user_data) {
-    (void)error_code;
-    (void)user_data;
+    AWS_UNUSED_PARAM(error_code);
+    AWS_UNUSED_PARAM(user_data);
     aws_http_stream_release(stream);
 }
 
@@ -413,8 +413,8 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
 }
 
 static void s_on_client_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
-    (void)error_code;
-    (void)connection;
+    AWS_UNUSED_PARAM(error_code);
+    AWS_UNUSED_PARAM(connection);
     struct elasticurl_ctx *app_ctx = user_data;
 
     aws_mutex_lock(&app_ctx->mutex);

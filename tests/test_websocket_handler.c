@@ -117,7 +117,7 @@ struct readpush_frame {
 };
 
 static void s_on_connection_shutdown(struct aws_websocket *websocket, int error_code, void *user_data) {
-    (void)websocket;
+    AWS_UNUSED_PARAM(websocket);
     struct tester *tester = user_data;
     tester->on_shutdown_count++;
     tester->shutdown_error_code = error_code;
@@ -195,7 +195,7 @@ static bool s_on_incoming_frame_begin(
     const struct aws_websocket_incoming_frame *frame,
     void *user_data) {
 
-    (void)websocket;
+    AWS_UNUSED_PARAM(websocket);
     struct tester *tester = user_data;
 
     /* Make sure our arbitrarily-sized testing buffer hasn't overflowed */
@@ -233,8 +233,8 @@ static bool s_on_incoming_frame_payload(
     size_t *out_window_update_size,
     void *user_data) {
 
-    (void)websocket;
-    (void)frame;
+    AWS_UNUSED_PARAM(websocket);
+    AWS_UNUSED_PARAM(frame);
     struct tester *tester = user_data;
     struct incoming_frame *incoming_frame = &tester->incoming_frames[tester->num_incoming_frames];
     AWS_FATAL_ASSERT(incoming_frame->has_begun);
@@ -265,8 +265,8 @@ static bool s_on_incoming_frame_complete(
     int error_code,
     void *user_data) {
 
-    (void)websocket;
-    (void)frame;
+    AWS_UNUSED_PARAM(websocket);
+    AWS_UNUSED_PARAM(frame);
     struct tester *tester = user_data;
     struct incoming_frame *incoming_frame = &tester->incoming_frames[tester->num_incoming_frames++];
     AWS_FATAL_ASSERT(incoming_frame->has_begun);
@@ -629,7 +629,7 @@ static int s_check_written_message(struct send_tester *send, size_t expected_ord
 }
 
 TEST_CASE(websocket_handler_sanity_check) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
@@ -664,17 +664,17 @@ static int s_websocket_handler_send_frame_common(struct aws_allocator *allocator
 }
 
 TEST_CASE(websocket_handler_send_frame) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     return s_websocket_handler_send_frame_common(allocator, true);
 }
 
 TEST_CASE(websocket_handler_send_frame_off_thread) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     return s_websocket_handler_send_frame_common(allocator, false);
 }
 
 TEST_CASE(websocket_handler_send_multiple_frames) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -735,7 +735,7 @@ TEST_CASE(websocket_handler_send_multiple_frames) {
 }
 
 TEST_CASE(websocket_handler_send_huge_frame) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -793,7 +793,7 @@ TEST_CASE(websocket_handler_send_huge_frame) {
 }
 
 TEST_CASE(websocket_handler_send_payload_slowly) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -843,7 +843,7 @@ TEST_CASE(websocket_handler_send_payload_slowly) {
 }
 
 TEST_CASE(websocket_handler_send_payload_with_pauses) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -871,7 +871,7 @@ TEST_CASE(websocket_handler_send_payload_with_pauses) {
 }
 
 TEST_CASE(websocket_handler_send_high_priority_frame) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -932,7 +932,7 @@ TEST_CASE(websocket_handler_send_high_priority_frame) {
 }
 
 TEST_CASE(websocket_handler_sends_nothing_after_close_frame) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -993,7 +993,7 @@ TEST_CASE(websocket_handler_sends_nothing_after_close_frame) {
 /* Send a frame while the handler is in every conceivable state.
  * Ensure that the completion callback always fires. */
 TEST_CASE(websocket_handler_send_frames_always_complete) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1064,7 +1064,7 @@ TEST_CASE(websocket_handler_send_frames_always_complete) {
 }
 
 TEST_CASE(websocket_handler_send_one_io_msg_at_a_time) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1117,7 +1117,7 @@ TEST_CASE(websocket_handler_send_one_io_msg_at_a_time) {
 }
 
 TEST_CASE(websocket_handler_send_halts_if_payload_fn_returns_false) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1167,7 +1167,7 @@ TEST_CASE(websocket_handler_send_halts_if_payload_fn_returns_false) {
 }
 
 TEST_CASE(websocket_handler_shutdown_automatically_sends_close_frame) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1186,7 +1186,7 @@ TEST_CASE(websocket_handler_shutdown_automatically_sends_close_frame) {
 /* Ensure that, if user had queued their own CLOSE frame before shutdown,
  * The user frame is the only one that gets written. */
 TEST_CASE(websocket_handler_shutdown_handles_queued_close_frame) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1224,7 +1224,7 @@ TEST_CASE(websocket_handler_shutdown_handles_queued_close_frame) {
 }
 
 TEST_CASE(websocket_handler_shutdown_immediately_in_emergency) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1267,7 +1267,7 @@ TEST_CASE(websocket_handler_shutdown_immediately_in_emergency) {
 /* During normal shutdown, the websocket delays until a CLOSE frame can be sent.
  * This test checks that, if unexpected errors occur during that waiting period, shutdown doesn't hang forever */
 TEST_CASE(websocket_handler_shutdown_handles_unexpected_write_error) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1305,7 +1305,7 @@ TEST_CASE(websocket_handler_shutdown_handles_unexpected_write_error) {
 }
 
 TEST_CASE(websocket_handler_close_on_thread) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1319,7 +1319,7 @@ TEST_CASE(websocket_handler_close_on_thread) {
 }
 
 TEST_CASE(websocket_handler_close_off_thread) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1335,7 +1335,7 @@ TEST_CASE(websocket_handler_close_off_thread) {
 }
 
 TEST_CASE(websocket_handler_read_frame) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1364,7 +1364,7 @@ TEST_CASE(websocket_handler_read_frame) {
 }
 
 TEST_CASE(websocket_handler_read_multiple_frames) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1409,7 +1409,7 @@ TEST_CASE(websocket_handler_read_multiple_frames) {
 }
 
 TEST_CASE(websocket_handler_read_frames_split_across_io_messages) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1457,7 +1457,7 @@ TEST_CASE(websocket_handler_read_frames_split_across_io_messages) {
 }
 
 TEST_CASE(websocket_handler_read_frames_complete_on_shutdown) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1492,7 +1492,7 @@ TEST_CASE(websocket_handler_read_frames_complete_on_shutdown) {
 }
 
 TEST_CASE(websocket_handler_read_halts_if_begin_fn_returns_false) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1537,7 +1537,7 @@ TEST_CASE(websocket_handler_read_halts_if_begin_fn_returns_false) {
 }
 
 TEST_CASE(websocket_handler_read_halts_if_payload_fn_returns_false) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1583,7 +1583,7 @@ TEST_CASE(websocket_handler_read_halts_if_payload_fn_returns_false) {
 }
 
 TEST_CASE(websocket_handler_read_halts_if_complete_fn_returns_false) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1628,7 +1628,7 @@ TEST_CASE(websocket_handler_read_halts_if_complete_fn_returns_false) {
 }
 
 TEST_CASE(websocket_handler_window_reopens_by_default) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
@@ -1690,17 +1690,17 @@ static int s_window_manual_increment_common(struct aws_allocator *allocator, boo
 }
 
 TEST_CASE(websocket_handler_window_manual_increment) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     return s_window_manual_increment_common(allocator, true);
 }
 
 TEST_CASE(websocket_handler_window_manual_increment_off_thread) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     return s_window_manual_increment_common(allocator, false);
 }
 
 TEST_CASE(websocket_midchannel_sanity_check) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
     ASSERT_SUCCESS(s_install_downstream_handler(&tester, SIZE_MAX));
@@ -1709,7 +1709,7 @@ TEST_CASE(websocket_midchannel_sanity_check) {
 }
 
 TEST_CASE(websocket_midchannel_write_message) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
     ASSERT_SUCCESS(s_install_downstream_handler(&tester, SIZE_MAX));
@@ -1727,7 +1727,7 @@ TEST_CASE(websocket_midchannel_write_message) {
 }
 
 TEST_CASE(websocket_midchannel_write_multiple_messages) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
     ASSERT_SUCCESS(s_install_downstream_handler(&tester, SIZE_MAX));
@@ -1752,7 +1752,7 @@ TEST_CASE(websocket_midchannel_write_multiple_messages) {
 }
 
 TEST_CASE(websocket_midchannel_write_huge_message) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
     ASSERT_SUCCESS(s_install_downstream_handler(&tester, SIZE_MAX));

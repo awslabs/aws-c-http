@@ -39,15 +39,15 @@ static const bool s_response = false;
 static struct aws_logger s_logger;
 
 static int s_on_header_stub(const struct aws_http_decoded_header *header, void *user_data) {
-    (void)header;
-    (void)user_data;
+    AWS_UNUSED_PARAM(header);
+    AWS_UNUSED_PARAM(user_data);
     return AWS_OP_SUCCESS;
 }
 
 static int s_on_body_stub(const struct aws_byte_cursor *data, bool finished, void *user_data) {
-    (void)data;
-    (void)finished;
-    (void)user_data;
+    AWS_UNUSED_PARAM(data);
+    AWS_UNUSED_PARAM(finished);
+    AWS_UNUSED_PARAM(user_data);
     return AWS_OP_SUCCESS;
 }
 
@@ -60,8 +60,8 @@ static int s_on_response(int code, void *user_data) {
 }
 
 static int s_on_response_stub(int code, void *user_data) {
-    (void)code;
-    (void)user_data;
+    AWS_UNUSED_PARAM(code);
+    AWS_UNUSED_PARAM(user_data);
     return AWS_OP_SUCCESS;
 }
 
@@ -100,15 +100,15 @@ static int s_on_request_stub(
     const struct aws_byte_cursor *uri,
     void *user_data) {
 
-    (void)method_enum;
-    (void)method_str;
-    (void)uri;
-    (void)user_data;
+    AWS_UNUSED_PARAM(method_enum);
+    AWS_UNUSED_PARAM(method_str);
+    AWS_UNUSED_PARAM(uri);
+    AWS_UNUSED_PARAM(user_data);
     return AWS_OP_SUCCESS;
 }
 
 static int s_on_done(void *user_data) {
-    (void)user_data;
+    AWS_UNUSED_PARAM(user_data);
     return AWS_OP_SUCCESS;
 }
 
@@ -153,7 +153,7 @@ static void s_common_decoder_setup(
 
 AWS_TEST_CASE(http_test_get_request, s_http_test_get_request);
 static int s_http_test_get_request(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
 
     struct request_data request_data;
@@ -180,7 +180,7 @@ static int s_http_test_get_request(struct aws_allocator *allocator, void *ctx) {
 
 AWS_TEST_CASE(http_test_request_bad_version, s_http_test_request_bad_version);
 static int s_http_test_request_bad_version(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *msg = "GET / HTTP/1.0\r\n\r\n"; /* Note version is 1.0 */
 
@@ -198,7 +198,7 @@ static int s_http_test_request_bad_version(struct aws_allocator *allocator, void
 
 AWS_TEST_CASE(http_test_response_bad_version, s_http_test_response_bad_version);
 static int s_http_test_response_bad_version(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *msg = "HTTP/1.0 200 OK\r\n\r\n"; /* Note version is "1.0" */
 
@@ -216,7 +216,7 @@ static int s_http_test_response_bad_version(struct aws_allocator *allocator, voi
 
 AWS_TEST_CASE(http_test_get_status_code, s_http_test_get_status_code);
 static int s_http_test_get_status_code(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     int code;
 
@@ -237,7 +237,7 @@ static int s_http_test_get_status_code(struct aws_allocator *allocator, void *ct
 
 AWS_TEST_CASE(http_test_overflow_scratch_space, s_http_test_overflow_scratch_space);
 static int s_http_test_overflow_scratch_space(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
 
     const char *msg = s_typical_response;
@@ -278,7 +278,7 @@ static int s_got_header(const struct aws_http_decoded_header *header, void *user
 
 AWS_TEST_CASE(http_test_receive_request_headers, s_http_test_receive_request_headers);
 static int s_http_test_receive_request_headers(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *msg = s_typical_request;
     struct aws_http_decoder_params params;
@@ -305,7 +305,7 @@ static int s_http_test_receive_request_headers(struct aws_allocator *allocator, 
 
 AWS_TEST_CASE(http_test_receive_response_headers, s_http_test_receive_response_headers);
 static int s_http_test_receive_response_headers(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *msg = s_typical_response;
     struct aws_http_decoder_params params;
@@ -332,7 +332,7 @@ static int s_http_test_receive_response_headers(struct aws_allocator *allocator,
 
 AWS_TEST_CASE(http_test_get_transfer_encoding_flags, s_http_test_get_transfer_encoding_flags);
 static int s_http_test_get_transfer_encoding_flags(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *msg = "HTTP/1.1 200 OK\r\n"
                       "Server: some-server\r\n"
@@ -367,7 +367,7 @@ struct s_body_params {
 };
 
 static int s_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data) {
-    (void)finished;
+    AWS_UNUSED_PARAM(finished);
 
     struct s_body_params *params = (struct s_body_params *)user_data;
     for (int i = 0; i < (int)data->len; ++i) {
@@ -379,7 +379,7 @@ static int s_on_body(const struct aws_byte_cursor *data, bool finished, void *us
 
 AWS_TEST_CASE(http_test_body_unchunked, s_http_test_body_unchunked);
 static int s_http_test_body_unchunked(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *msg = s_typical_response;
     struct aws_http_decoder_params params;
@@ -408,7 +408,7 @@ static int s_http_test_body_unchunked(struct aws_allocator *allocator, void *ctx
 
 AWS_TEST_CASE(http_test_body_chunked, s_http_test_body_chunked);
 static int s_http_test_body_chunked(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *msg = "GET / HTTP/1.1\r\n"
                       "Host: amazon.com\r\n"
@@ -447,7 +447,7 @@ static int s_http_test_body_chunked(struct aws_allocator *allocator, void *ctx) 
 
 AWS_TEST_CASE(http_decode_trailers, s_http_decode_trailers);
 static int s_http_decode_trailers(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *request = "GET / HTTP/1.1\r\n"
                           "Host: amazon.com\r\n"
@@ -479,7 +479,7 @@ static int s_http_decode_trailers(struct aws_allocator *allocator, void *ctx) {
 
 AWS_TEST_CASE(http_decode_one_byte_at_a_time, s_http_decode_one_byte_at_a_time);
 static int s_http_decode_one_byte_at_a_time(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *request = s_typical_request;
 
@@ -503,7 +503,7 @@ static int s_rand(int lo, int hi) {
 
 AWS_TEST_CASE(http_decode_messages_at_random_intervals, s_http_decode_messages_at_random_intervals);
 static int s_http_decode_messages_at_random_intervals(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *requests[] = {
         "GET / HTTP/1.1\r\n"
@@ -590,7 +590,7 @@ static int s_http_decode_messages_at_random_intervals(struct aws_allocator *allo
 
 AWS_TEST_CASE(http_decode_bad_requests_and_assert_failure, s_http_decode_bad_requests_and_assert_failure);
 static int s_http_decode_bad_requests_and_assert_failure(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *requests[] = {
         /* Incorrect chunk size. */
@@ -723,7 +723,7 @@ static int s_http_decode_bad_requests_and_assert_failure(struct aws_allocator *a
 
 AWS_TEST_CASE(http_decode_bad_responses_and_assert_failure, s_http_decode_bad_responses_and_assert_failure);
 static int s_http_decode_bad_responses_and_assert_failure(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *responses[] = {
         /* Response code not 3 digits */
@@ -762,7 +762,7 @@ AWS_TEST_CASE(
     http_test_extraneous_buffer_data_ensure_not_processed,
     s_http_test_extraneous_buffer_data_ensure_not_processed);
 static int s_http_test_extraneous_buffer_data_ensure_not_processed(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *request = "GET / HTTP/1.1\r\n"
                           "Wow look here. That's a lot of extra random stuff!";
@@ -783,7 +783,7 @@ static int s_http_test_extraneous_buffer_data_ensure_not_processed(struct aws_al
 
 AWS_TEST_CASE(http_test_ignore_chunk_extensions, s_http_test_ignore_chunk_extensions);
 static int s_http_test_ignore_chunk_extensions(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
     s_test_init(allocator);
     const char *request = "GET / HTTP/1.1\r\n"
                           "Host: amazon.com\r\n"

@@ -62,7 +62,7 @@ void s_on_connection_setup(struct aws_http_connection *connection, int error_cod
 }
 
 void s_on_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
-    (void)connection;
+    AWS_UNUSED_PARAM(connection);
     struct test_ctx *test = user_data;
     AWS_FATAL_ASSERT(aws_mutex_lock(&test->wait_lock) == AWS_OP_SUCCESS);
 
@@ -103,7 +103,7 @@ static bool s_test_connection_shutdown_pred(void *user_data) {
  * notified. Connecting to port 80 on s3 or amazon.com and attempting TLS will get
  * you blackholed, and thus timed out */
 static int s_test_tls_negotiation_timeout(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
 
     aws_tls_init_static_state(allocator);
     aws_http_library_init(allocator);
@@ -185,10 +185,10 @@ static void s_on_stream_headers(
     const struct aws_http_header *headers,
     size_t num_headers,
     void *user_data) {
-    (void)stream;
-    (void)headers;
-    (void)num_headers;
-    (void)user_data;
+    AWS_UNUSED_PARAM(stream);
+    AWS_UNUSED_PARAM(headers);
+    AWS_UNUSED_PARAM(num_headers);
+    AWS_UNUSED_PARAM(user_data);
 }
 
 static void s_on_stream_body(
@@ -196,14 +196,14 @@ static void s_on_stream_body(
     const struct aws_byte_cursor *data,
     size_t *out_window_update_size, /* NOLINT(readability-non-const-parameter) */
     void *user_data) {
-    (void)stream;
-    (void)out_window_update_size;
+    AWS_UNUSED_PARAM(stream);
+    AWS_UNUSED_PARAM(out_window_update_size);
     struct test_ctx *test = user_data;
     test->body_size += data->len;
 }
 
 static void s_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
-    (void)stream;
+    AWS_UNUSED_PARAM(stream);
     struct test_ctx *test = user_data;
     test->wait_result = error_code;
     test->stream_complete = true;
@@ -215,7 +215,7 @@ static bool s_stream_wait_pred(void *user_data) {
 }
 
 static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    AWS_UNUSED_PARAM(ctx);
 
     aws_tls_init_static_state(allocator);
     aws_http_library_init(allocator);
