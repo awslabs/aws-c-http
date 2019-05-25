@@ -117,6 +117,8 @@ add_test_case(websocket_midchannel_write_huge_message)
 #add_test_case(websocket_midchannel_frames_sent_before_conversion_succeed)
 #add_test_case(websocket_midchannel_no_more_incoming_frame_callbacks)
 #add_test_case(websocket_midchannel_no_more_shutdown_callback) ???
+add_test_case(websocket_midchannel_read_message)
+add_test_case(websocket_midchannel_read_multiple_messages)
 
 add_test_case(hpack_encode_integer)
 add_test_case(hpack_decode_integer)

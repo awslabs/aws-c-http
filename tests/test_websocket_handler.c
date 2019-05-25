@@ -408,6 +408,37 @@ static int s_readpush_check(struct tester *tester, size_t frame_i, int expected_
     return AWS_OP_SUCCESS;
 }
 
+/* Check that a readpush_frame's payload was passed to the next handler downstream */
+static int s_readpush_midchannel_check(struct tester *tester, size_t frame_i) {
+    ASSERT_TRUE(frame_i < tester->num_readpush_frames);
+    struct readpush_frame *pushed = &tester->readpush_frames[frame_i];
+    struct aws_byte_cursor payload = pushed->payload;
+
+    struct aws_linked_list *downstream_messages = testing_channel_get_read_message_queue(&tester->testing_channel);
+
+    while (payload.len > 0) {
+        ASSERT_FALSE(aws_linked_list_empty(downstream_messages));
+        struct aws_linked_list_node *message_node = aws_linked_list_front(downstream_messages);
+        struct aws_io_message *message = AWS_CONTAINER_OF(message_node, struct aws_io_message, queueing_handle);
+
+        /* This function might be called multiple times, the copy_mark is used to track where the last check ended */
+        size_t message_remainder = message->message_data.len - message->copy_mark;
+        size_t compare_bytes = message_remainder < payload.len ? message_remainder : payload.len;
+        struct aws_byte_cursor message_chunk =
+            aws_byte_cursor_from_array(message->message_data.buffer + message->copy_mark, compare_bytes);
+
+        struct aws_byte_cursor payload_chunk = aws_byte_cursor_advance(&payload, compare_bytes);
+        ASSERT_TRUE(aws_byte_cursor_eq(&message_chunk, &payload_chunk));
+        message->copy_mark += compare_bytes;
+        if (message->copy_mark == message->message_data.len) {
+            aws_linked_list_pop_front(downstream_messages);
+            aws_mem_release(message->allocator, message);
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 static int s_writepush(struct tester *tester, struct aws_byte_cursor data) {
     if (!tester->all_writepush_data.allocator) {
         ASSERT_SUCCESS(aws_byte_buf_init(&tester->all_writepush_data, tester->alloc, data.len));
@@ -1774,6 +1805,83 @@ TEST_CASE(websocket_midchannel_write_huge_message) {
     ASSERT_SUCCESS(s_writepush_check(&tester, 0));
 
     aws_byte_buf_clean_up(&writing);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_midchannel_read_message) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+    ASSERT_SUCCESS(s_install_downstream_handler(&tester, SIZE_MAX));
+
+    struct readpush_frame pushing = {
+        .payload = aws_byte_cursor_from_c_str("Hello hello can you hear me Joe?"),
+        .def = {.opcode = AWS_WEBSOCKET_OPCODE_BINARY, .fin = true},
+    };
+
+    s_set_readpush_frames(&tester, &pushing, 1);
+    ASSERT_SUCCESS(s_do_readpush_all(&tester));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    ASSERT_SUCCESS(s_readpush_midchannel_check(&tester, 0));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(websocket_midchannel_read_multiple_messages) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+    ASSERT_SUCCESS(s_install_downstream_handler(&tester, SIZE_MAX));
+
+    /* Read a mix of different frame types, most of which shouldn't get passed along to next handler. */
+    struct readpush_frame pushing[] = {
+        {
+            .payload = aws_byte_cursor_from_c_str("Message 1."),
+            .def = {.opcode = AWS_WEBSOCKET_OPCODE_BINARY, .fin = true},
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Ignore ping frame"),
+            .def = {.opcode = AWS_WEBSOCKET_OPCODE_PING, .fin = true},
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Ignore text frame"),
+            .def = {.opcode = AWS_WEBSOCKET_OPCODE_TEXT, .fin = false},
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Ignore continuation of text frame"),
+            .def = {.opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION, .fin = true},
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Message 2 fragment 1/3."),
+            .def = {.opcode = AWS_WEBSOCKET_OPCODE_BINARY, .fin = false},
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Message 2 fragment 2/3"),
+            .def = {.opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION, .fin = false},
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Ignore ping frame"),
+            .def = {.opcode = AWS_WEBSOCKET_OPCODE_PING, .fin = true},
+        },
+        {
+            .payload = aws_byte_cursor_from_c_str("Message 2 fragment 3/3."),
+            .def = {.opcode = AWS_WEBSOCKET_OPCODE_CONTINUATION, .fin = true},
+        },
+    };
+
+    s_set_readpush_frames(&tester, pushing, AWS_ARRAY_SIZE(pushing));
+    ASSERT_SUCCESS(s_do_readpush_all(&tester));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Check that only BINARY (and continuation of BINARY) frames passed through */
+    ASSERT_SUCCESS(s_readpush_midchannel_check(&tester, 0));
+    ASSERT_SUCCESS(s_readpush_midchannel_check(&tester, 4));
+    ASSERT_SUCCESS(s_readpush_midchannel_check(&tester, 5));
+    ASSERT_SUCCESS(s_readpush_midchannel_check(&tester, 7));
+
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
