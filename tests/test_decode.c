@@ -217,12 +217,11 @@ static int s_http_test_response_old_version(struct aws_allocator *allocator, voi
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(http_test_response_bad_version, s_http_test_response_bad_version);
-static int s_http_test_response_bad_version(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(http_test_response_unsupported_version, s_http_test_response_unsupported_version);
+static int s_http_test_response_unsupported_version(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *msg =
-        "<HTML>\r\nhmm\r\n</HTML>\r\n\r\n"; /* Note version is implicitly 0.9, no headers, no status, only body*/
+    const char *msg = "HTTP/1.2 200 OK\r\n\r\n"; /* Note version is implicitly 0.9, no headers, no status, only body*/
 
     struct aws_http_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
