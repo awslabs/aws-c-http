@@ -196,11 +196,33 @@ static int s_http_test_request_bad_version(struct aws_allocator *allocator, void
     return AWS_OP_SUCCESS;
 }
 
+AWS_TEST_CASE(http_test_response_old_version, s_http_test_response_old_version);
+static int s_http_test_response_old_version(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    s_test_init(allocator);
+    int code;
+    const char *msg = "HTTP/1.0 200 OK\r\n\r\n";
+
+    struct aws_http_decoder_params params;
+    s_common_decoder_setup(allocator, 1024, &params, s_response, &code);
+    params.vtable.on_response = s_on_response;
+    struct aws_http_decoder *decoder = aws_http_decoder_new(&params);
+
+    size_t len = strlen(msg);
+    ASSERT_SUCCESS(aws_http_decode(decoder, msg, len, NULL));
+    ASSERT_INT_EQUALS(200, code);
+
+    aws_http_decoder_destroy(decoder);
+    s_test_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
 AWS_TEST_CASE(http_test_response_bad_version, s_http_test_response_bad_version);
 static int s_http_test_response_bad_version(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *msg = "HTTP/1.0 200 OK\r\n\r\n"; /* Note version is "1.0" */
+    const char *msg =
+        "<HTML>\r\nhmm\r\n</HTML>\r\n\r\n"; /* Note version is implicitly 0.9, no headers, no status, only body*/
 
     struct aws_http_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
