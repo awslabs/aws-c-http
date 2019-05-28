@@ -18,7 +18,7 @@
 #include <aws/common/math.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
-#include <aws/http/private/decode.h>
+#include <aws/http/private/h1_decoder.h>
 #include <aws/http/private/request_response_impl.h>
 #include <aws/io/logging.h>
 
@@ -73,7 +73,7 @@ static int s_decoder_on_header(const struct aws_http_decoded_header *header, voi
 static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data);
 static int s_decoder_on_done(void *user_data);
 
-static struct aws_http_connection_vtable s_connection_vtable = {
+static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .channel_handler_vtable =
         {
             .process_read_message = s_handler_process_read_message,
@@ -95,7 +95,7 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
     .update_window = s_stream_update_window,
 };
 
-static const struct aws_http_decoder_vtable s_decoder_vtable = {
+static const struct aws_h1_decoder_vtable s_decoder_vtable = {
     .on_request = s_decoder_on_request,
     .on_response = s_decoder_on_response,
     .on_header = s_decoder_on_header,
@@ -128,7 +128,7 @@ struct h1_connection {
 
         /* Points to the stream being decoded, which is always the first entry in `stream_list` */
         struct h1_stream *incoming_stream;
-        struct aws_http_decoder *incoming_stream_decoder;
+        struct aws_h1_decoder *incoming_stream_decoder;
 
         /* Amount to increment window after a channel message has been processed. */
         size_t incoming_message_window_update;
@@ -1069,9 +1069,9 @@ static int s_mark_head_done(struct h1_stream *incoming_stream) {
         AWS_CONTAINER_OF(incoming_stream->base.owning_connection, struct h1_connection, base);
 
     bool has_incoming_body = false;
-    int transfer_encoding = aws_http_decoder_get_encoding_flags(connection->thread_data.incoming_stream_decoder);
+    int transfer_encoding = aws_h1_decoder_get_encoding_flags(connection->thread_data.incoming_stream_decoder);
     has_incoming_body |= (transfer_encoding & AWS_HTTP_TRANSFER_ENCODING_CHUNKED);
-    has_incoming_body |= aws_http_decoder_get_content_length(connection->thread_data.incoming_stream_decoder);
+    has_incoming_body |= aws_h1_decoder_get_content_length(connection->thread_data.incoming_stream_decoder);
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
@@ -1173,9 +1173,9 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
     }
     AWS_ZERO_STRUCT(*connection);
 
-    connection->base.vtable = &s_connection_vtable;
+    connection->base.vtable = &s_h1_connection_vtable;
     connection->base.alloc = alloc;
-    connection->base.channel_handler.vtable = &s_connection_vtable.channel_handler_vtable;
+    connection->base.channel_handler.vtable = &s_h1_connection_vtable.channel_handler_vtable;
     connection->base.channel_handler.impl = connection;
     connection->base.http_version = AWS_HTTP_VERSION_1_1;
 
@@ -1197,14 +1197,14 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
 
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
 
-    struct aws_http_decoder_params options = {
+    struct aws_h1_decoder_params options = {
         .alloc = alloc,
         .is_decoding_requests = connection->base.server_data != NULL,
         .user_data = connection,
         .vtable = s_decoder_vtable,
         .scratch_space_initial_size = DECODER_INITIAL_SCRATCH_SIZE,
     };
-    connection->thread_data.incoming_stream_decoder = aws_http_decoder_new(&options);
+    connection->thread_data.incoming_stream_decoder = aws_h1_decoder_new(&options);
     if (!connection->thread_data.incoming_stream_decoder) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
@@ -1263,7 +1263,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stream_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
 
-    aws_http_decoder_destroy(connection->thread_data.incoming_stream_decoder);
+    aws_h1_decoder_destroy(connection->thread_data.incoming_stream_decoder);
     aws_mutex_clean_up(&connection->synced_data.lock);
     aws_mem_release(connection->base.alloc, connection);
 }
@@ -1313,11 +1313,11 @@ static int s_handler_process_read_message(
         }
 
         /* Decoder will invoke the internal s_decoder_X callbacks, which in turn invoke user callbacks */
-        aws_http_decoder_set_logging_id(
+        aws_h1_decoder_set_logging_id(
             connection->thread_data.incoming_stream_decoder, connection->thread_data.incoming_stream);
 
         size_t decoded_len = 0;
-        err = aws_http_decode(
+        err = aws_h1_decode(
             connection->thread_data.incoming_stream_decoder, message_cursor.ptr, message_cursor.len, &decoded_len);
         if (err) {
             AWS_LOGF_ERROR(
