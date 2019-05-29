@@ -36,7 +36,7 @@ AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API struct aws_h1_decoder *aws_h1_decoder_new(struct aws_h1_decoder_params *params);
 AWS_HTTP_API void aws_h1_decoder_destroy(struct aws_h1_decoder *decoder);
-AWS_HTTP_API int aws_h1_decode(struct aws_h1_decoder *decoder, const void *data, size_t data_bytes, size_t *bytes_read);
+AWS_HTTP_API int aws_h1_decode(struct aws_h1_decoder *decoder, struct aws_byte_cursor *data);
 
 AWS_HTTP_API void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, void *id);
 

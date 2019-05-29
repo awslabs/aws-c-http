@@ -22,8 +22,6 @@
 #include <aws/http/private/request_response_impl.h>
 #include <aws/io/logging.h>
 
-#include <stdio.h>
-
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
@@ -1316,9 +1314,7 @@ static int s_handler_process_read_message(
         aws_h1_decoder_set_logging_id(
             connection->thread_data.incoming_stream_decoder, connection->thread_data.incoming_stream);
 
-        size_t decoded_len = 0;
-        err = aws_h1_decode(
-            connection->thread_data.incoming_stream_decoder, message_cursor.ptr, message_cursor.len, &decoded_len);
+        err = aws_h1_decode(connection->thread_data.incoming_stream_decoder, &message_cursor);
         if (err) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
@@ -1329,9 +1325,6 @@ static int s_handler_process_read_message(
 
             goto error;
         }
-
-        AWS_FATAL_ASSERT(decoded_len > 0);
-        aws_byte_cursor_advance(&message_cursor, decoded_len);
     }
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Done processing message.", (void *)&connection->base);

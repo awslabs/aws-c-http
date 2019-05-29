@@ -22,16 +22,16 @@
 #include <ctype.h>
 #include <stdio.h>
 
-static const char *s_typical_request = "GET / HTTP/1.1\r\n"
-                                       "Host: amazon.com\r\n"
-                                       "Accept-Language: fr\r\n"
-                                       "\r\n";
+static const struct aws_byte_cursor s_typical_request = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                                                                              "Host: amazon.com\r\n"
+                                                                                              "Accept-Language: fr\r\n"
+                                                                                              "\r\n");
 
-static const char *s_typical_response = "HTTP/1.1 200 OK\r\n"
-                                        "Server: some-server\r\n"
-                                        "Content-Length: 11\r\n"
-                                        "\r\n"
-                                        "Hello noob.";
+static const struct aws_byte_cursor s_typical_response = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.1 200 OK\r\n"
+                                                                                               "Server: some-server\r\n"
+                                                                                               "Content-Length: 11\r\n"
+                                                                                               "\r\n"
+                                                                                               "Hello noob.");
 
 static const bool s_request = true;
 static const bool s_response = false;
@@ -158,15 +158,14 @@ static int s_h1_test_get_request(struct aws_allocator *allocator, void *ctx) {
 
     struct request_data request_data;
 
-    const char *msg = "HEAD / HTTP/1.1\r\n\r\n";
+    struct aws_byte_cursor msg = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HEAD / HTTP/1.1\r\n\r\n");
 
     struct aws_h1_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_request, &request_data);
     params.vtable.on_request = s_on_request;
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen(msg);
-    ASSERT_SUCCESS(aws_h1_decode(decoder, msg, len, NULL));
+    ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
     ASSERT_INT_EQUALS(AWS_HTTP_METHOD_HEAD, request_data.method_enum);
 
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request_data.method_str, "HEAD"));
@@ -182,14 +181,14 @@ AWS_TEST_CASE(h1_test_request_bad_version, s_h1_test_request_bad_version);
 static int s_h1_test_request_bad_version(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *msg = "GET / HTTP/1.0\r\n\r\n"; /* Note version is 1.0 */
+    struct aws_byte_cursor msg =
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.0\r\n\r\n"); /* Note version is 1.0 */
 
     struct aws_h1_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen(msg);
-    ASSERT_FAILS(aws_h1_decode(decoder, msg, len, NULL));
+    ASSERT_FAILS(aws_h1_decode(decoder, &msg));
 
     aws_h1_decoder_destroy(decoder);
     s_test_clean_up();
@@ -200,14 +199,14 @@ AWS_TEST_CASE(h1_test_response_bad_version, s_h1_test_response_bad_version);
 static int s_h1_test_response_bad_version(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *msg = "HTTP/1.0 200 OK\r\n\r\n"; /* Note version is "1.0" */
+    struct aws_byte_cursor msg =
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.0 200 OK\r\n\r\n"); /* Note version is "1.0" */
 
     struct aws_h1_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen(msg);
-    ASSERT_FAILS(aws_h1_decode(decoder, msg, len, NULL));
+    ASSERT_FAILS(aws_h1_decode(decoder, &msg));
 
     aws_h1_decoder_destroy(decoder);
     s_test_clean_up();
@@ -220,14 +219,13 @@ static int s_h1_test_get_status_code(struct aws_allocator *allocator, void *ctx)
     s_test_init(allocator);
     int code;
 
-    const char *msg = s_typical_response;
+    struct aws_byte_cursor msg = s_typical_response;
     struct aws_h1_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_response, &code);
     params.vtable.on_response = s_on_response;
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen(msg);
-    ASSERT_SUCCESS(aws_h1_decode(decoder, msg, len, NULL));
+    ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
     ASSERT_INT_EQUALS(200, code);
 
     aws_h1_decoder_destroy(decoder);
@@ -240,13 +238,12 @@ static int s_h1_test_overflow_scratch_space(struct aws_allocator *allocator, voi
     (void)ctx;
     s_test_init(allocator);
 
-    const char *msg = s_typical_response;
+    struct aws_byte_cursor msg = s_typical_response;
     struct aws_h1_decoder_params params;
     s_common_decoder_setup(allocator, 4, &params, s_response, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen(msg);
-    ASSERT_SUCCESS(aws_h1_decode(decoder, msg, len, NULL));
+    ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
 
     aws_h1_decoder_destroy(decoder);
     s_test_clean_up();
@@ -280,7 +277,7 @@ AWS_TEST_CASE(h1_test_receive_request_headers, s_h1_test_receive_request_headers
 static int s_h1_test_receive_request_headers(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *msg = s_typical_request;
+    struct aws_byte_cursor msg = s_typical_request;
     struct aws_h1_decoder_params params;
     struct s_header_params header_params;
     s_common_decoder_setup(allocator, 1024, &params, s_request, &header_params);
@@ -294,8 +291,7 @@ static int s_h1_test_receive_request_headers(struct aws_allocator *allocator, vo
     params.vtable.on_header = s_got_header;
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen(msg);
-    ASSERT_SUCCESS(aws_h1_decode(decoder, msg, len, NULL));
+    ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
     ASSERT_SUCCESS(header_params.first_error);
 
     aws_h1_decoder_destroy(decoder);
@@ -307,7 +303,7 @@ AWS_TEST_CASE(h1_test_receive_response_headers, s_h1_test_receive_response_heade
 static int s_h1_test_receive_response_headers(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *msg = s_typical_response;
+    struct aws_byte_cursor msg = s_typical_response;
     struct aws_h1_decoder_params params;
     struct s_header_params header_params;
     s_common_decoder_setup(allocator, 1024, &params, s_response, &header_params);
@@ -321,8 +317,7 @@ static int s_h1_test_receive_response_headers(struct aws_allocator *allocator, v
     params.vtable.on_header = s_got_header;
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen(msg);
-    ASSERT_SUCCESS(aws_h1_decode(decoder, msg, len, NULL));
+    ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
     ASSERT_SUCCESS(header_params.first_error);
 
     aws_h1_decoder_destroy(decoder);
@@ -334,23 +329,22 @@ AWS_TEST_CASE(h1_test_get_transfer_encoding_flags, s_h1_test_get_transfer_encodi
 static int s_h1_test_get_transfer_encoding_flags(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *msg = "HTTP/1.1 200 OK\r\n"
-                      "Server: some-server\r\n"
-                      "Transfer-Encoding: compress\r\n"
-                      "Transfer-Encoding: gzip, ,deflate\r\n"
-                      "Transfer-Encoding: chunked\r\n"
-                      "Transfer-Encoding:\r\n"
-                      "\r\n"
-                      "Hello noob.";
+    struct aws_byte_cursor msg = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.1 200 OK\r\n"
+                                                                       "Server: some-server\r\n"
+                                                                       "Transfer-Encoding: compress\r\n"
+                                                                       "Transfer-Encoding: gzip, ,deflate\r\n"
+                                                                       "Transfer-Encoding: chunked\r\n"
+                                                                       "Transfer-Encoding:\r\n"
+                                                                       "\r\n"
+                                                                       "Hello noob.");
     struct aws_h1_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen(msg);
     /* Not a valid HTTP1.1 message, but not the job of decoder to return error here. */
     /* Instead, the user should know their buffer has been processed without returning any body data, and
      * report the error in user-space. */
-    ASSERT_SUCCESS(aws_h1_decode(decoder, msg, len, NULL));
+    ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
     int flags = aws_h1_decoder_get_encoding_flags(decoder);
     ASSERT_INT_EQUALS(
         (AWS_HTTP_TRANSFER_ENCODING_CHUNKED | AWS_HTTP_TRANSFER_ENCODING_GZIP | AWS_HTTP_TRANSFER_ENCODING_DEFLATE |
@@ -381,7 +375,7 @@ AWS_TEST_CASE(h1_test_body_unchunked, s_h1_test_body_unchunked);
 static int s_h1_test_body_unchunked(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *msg = s_typical_response;
+    struct aws_byte_cursor msg = s_typical_response;
     struct aws_h1_decoder_params params;
     struct s_body_params body_params;
     s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
@@ -396,8 +390,7 @@ static int s_h1_test_body_unchunked(struct aws_allocator *allocator, void *ctx) 
     params.user_data = &body_params;
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen(msg);
-    ASSERT_SUCCESS(aws_h1_decode(decoder, msg, len, NULL));
+    ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
     ASSERT_SUCCESS(memcmp(body_params.body_data.data, "Hello noob.", body_params.body_data.length));
 
     aws_h1_decoder_destroy(decoder);
@@ -410,18 +403,18 @@ AWS_TEST_CASE(h1_test_body_chunked, s_h1_test_body_chunked);
 static int s_h1_test_body_chunked(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *msg = "GET / HTTP/1.1\r\n"
-                      "Host: amazon.com\r\n"
-                      "Transfer-Encoding: chunked\r\n"
-                      "\r\n"
-                      "D\r\n"
-                      "Hello, there \r\n"
-                      "1c\r\n"
-                      "should be a carriage return \r\n"
-                      "9\r\n"
-                      "in\r\nhere.\r\n"
-                      "0\r\n"
-                      "\r\n";
+    struct aws_byte_cursor msg = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                                                       "Host: amazon.com\r\n"
+                                                                       "Transfer-Encoding: chunked\r\n"
+                                                                       "\r\n"
+                                                                       "D\r\n"
+                                                                       "Hello, there \r\n"
+                                                                       "1c\r\n"
+                                                                       "should be a carriage return \r\n"
+                                                                       "9\r\n"
+                                                                       "in\r\nhere.\r\n"
+                                                                       "0\r\n"
+                                                                       "\r\n");
 
     struct aws_h1_decoder_params params;
     struct s_body_params body_params;
@@ -432,8 +425,7 @@ static int s_h1_test_body_chunked(struct aws_allocator *allocator, void *ctx) {
     params.vtable.on_body = s_on_body;
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen(msg);
-    ASSERT_SUCCESS(aws_h1_decode(decoder, msg, len, NULL));
+    ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
     ASSERT_SUCCESS(memcmp(
         body_params.body_data.data,
         "Hello, there should be a carriage return in\r\nhere.",
@@ -449,28 +441,27 @@ AWS_TEST_CASE(h1_decode_trailers, s_h1_decode_trailers);
 static int s_h1_decode_trailers(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *request = "GET / HTTP/1.1\r\n"
-                          "Host: amazon.com\r\n"
-                          "Accept-Language: fr\r\n"
-                          "Transfer-Encoding:   chunked     \r\n"
-                          "Trailer: Expires\r\n"
-                          "\r\n"
-                          "7\r\n"
-                          "Mozilla\r\n"
-                          "9\r\n"
-                          "Developer\r\n"
-                          "7\r\n"
-                          "Network\r\n"
-                          "0\r\n"
-                          "Expires: Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-                          "\r\n";
+    struct aws_byte_cursor msg = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                                                       "Host: amazon.com\r\n"
+                                                                       "Accept-Language: fr\r\n"
+                                                                       "Transfer-Encoding:   chunked     \r\n"
+                                                                       "Trailer: Expires\r\n"
+                                                                       "\r\n"
+                                                                       "7\r\n"
+                                                                       "Mozilla\r\n"
+                                                                       "9\r\n"
+                                                                       "Developer\r\n"
+                                                                       "7\r\n"
+                                                                       "Network\r\n"
+                                                                       "0\r\n"
+                                                                       "Expires: Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+                                                                       "\r\n");
 
     struct aws_h1_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen(request);
-    ASSERT_SUCCESS(aws_h1_decode(decoder, request, len, NULL));
+    ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
 
     aws_h1_decoder_destroy(decoder);
     s_test_clean_up();
@@ -481,15 +472,15 @@ AWS_TEST_CASE(h1_decode_one_byte_at_a_time, s_h1_decode_one_byte_at_a_time);
 static int s_h1_decode_one_byte_at_a_time(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *request = s_typical_request;
+    struct aws_byte_cursor msg = s_typical_request;
 
     struct aws_h1_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen(request);
-    for (int i = 0; i < (int)len; ++i) {
-        ASSERT_SUCCESS(aws_h1_decode(decoder, request + i, 1, NULL));
+    for (size_t i = 0; i < msg.len; ++i) {
+        struct aws_byte_cursor chunk = aws_byte_cursor_advance(&msg, 1);
+        ASSERT_SUCCESS(aws_h1_decode(decoder, &chunk));
     }
 
     aws_h1_decoder_destroy(decoder);
@@ -505,80 +496,78 @@ AWS_TEST_CASE(h1_decode_messages_at_random_intervals, s_h1_decode_messages_at_ra
 static int s_h1_decode_messages_at_random_intervals(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *requests[] = {
-        "GET / HTTP/1.1\r\n"
-        "Host: amazon.com\r\n"
-        "Accept-Language: fr\r\n"
-        "Content-Length: 6\r\n"
-        "\r\n"
-        "123456",
+    const struct aws_byte_cursor requests[] = {
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Host: amazon.com\r\n"
+                                              "Accept-Language: fr\r\n"
+                                              "Content-Length: 6\r\n"
+                                              "\r\n"
+                                              "123456"),
 
-        "CONNECT server.example.com:80 HTTP/1.1\r\n"
-        "Host: server.example.com:80\r\n"
-        "Proxy-Authorization: basic aGVsbG86d29ybGQ=\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("CONNECT server.example.com:80 HTTP/1.1\r\n"
+                                              "Host: server.example.com:80\r\n"
+                                              "Proxy-Authorization: basic aGVsbG86d29ybGQ=\r\n"),
 
-        "DELETE /file.html HTTP/1.1\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("DELETE /file.html HTTP/1.1\r\n"),
 
-        "HEAD /index.html HTTP/1.1\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HEAD /index.html HTTP/1.1\r\n"),
 
-        "OPTIONS /index.html HTTP/1.1\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("OPTIONS /index.html HTTP/1.1\r\n"),
 
-        "OPTIONS * HTTP/1.1\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("OPTIONS * HTTP/1.1\r\n"),
 
-        "PATCH /file.txt HTTP/1.1\r\n"
-        "Host: www.example.com\r\n"
-        "Content-Type: application/example\r\n"
-        "If-Match: \"e0023aa4e\"\r\n"
-        "Content-Length: 10\r\n"
-        "\r\n"
-        "0123456789",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PATCH /file.txt HTTP/1.1\r\n"
+                                              "Host: www.example.com\r\n"
+                                              "Content-Type: application/example\r\n"
+                                              "If-Match: \"e0023aa4e\"\r\n"
+                                              "Content-Length: 10\r\n"
+                                              "\r\n"
+                                              "0123456789"),
 
-        "POST / HTTP/1.1\r\n"
-        "Host: foo.com\r\n"
-        "Content-Type: application/x-www-form-urlencoded\r\n"
-        "Content-Length: 13\r\n"
-        "\r\n"
-        "say=Hi&to=Mom",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "Host: foo.com\r\n"
+                                              "Content-Type: application/x-www-form-urlencoded\r\n"
+                                              "Content-Length: 13\r\n"
+                                              "\r\n"
+                                              "say=Hi&to=Mom"),
 
-        "PUT /new.html HTTP/1.1\r\n"
-        "Host: example.com\r\n"
-        "Content-type: text/html\r\n"
-        "Content-length: 16\r\n"
-        "\r\n"
-        "<p>New File</p>",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PUT /new.html HTTP/1.1\r\n"
+                                              "Host: example.com\r\n"
+                                              "Content-type: text/html\r\n"
+                                              "Content-length: 16\r\n"
+                                              "\r\n"
+                                              "<p>New File</p>"),
 
-        "TRACE /index.html HTTP/1.1\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("TRACE /index.html HTTP/1.1\r\n"),
 
-        "GET /home.html HTTP/1.1\r\n"
-        "Host: example.com\r\n"
-        "a-fake-header:      oh   what is this odd     whitespace      \r\n"
-        "Content-Length: 1\r\n"
-        "\r\n"
-        "X",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET /home.html HTTP/1.1\r\n"
+                                              "Host: example.com\r\n"
+                                              "a-fake-header:      oh   what is this odd     whitespace      \r\n"
+                                              "Content-Length: 1\r\n"
+                                              "\r\n"
+                                              "X"),
     };
 
     /* Just seed something for determinism. */
     srand(1);
 
     for (int iter = 0; iter < AWS_ARRAY_SIZE(requests); ++iter) {
-        const char *request = requests[iter];
+        struct aws_byte_cursor request = requests[iter];
 
         struct aws_h1_decoder_params params;
         s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
         struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
         /* Decode message at randomized input buffer sizes from 0 to 10 bytes. */
-        size_t len = strlen(request);
-        while (len) {
+        while (request.len) {
             int lo = 1;
             int hi = 10;
-            if (hi > (int)len) {
-                hi = (int)len;
+            if (hi > (int)request.len) {
+                hi = (int)request.len;
             }
             int interval = s_rand(lo, hi);
-            ASSERT_SUCCESS(aws_h1_decode(decoder, request, interval, NULL));
-            request += interval;
-            len -= (size_t)interval;
+            struct aws_byte_cursor chunk = aws_byte_cursor_advance(&request, interval);
+            ASSERT_SUCCESS(aws_h1_decode(decoder, &chunk));
         }
 
         aws_h1_decoder_destroy(decoder);
@@ -592,127 +581,126 @@ AWS_TEST_CASE(h1_decode_bad_requests_and_assert_failure, s_h1_decode_bad_request
 static int s_h1_decode_bad_requests_and_assert_failure(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *requests[] = {
+    const struct aws_byte_cursor requests[] = {
         /* Incorrect chunk size. */
-        "GET / HTTP/1.1\r\n"
-        "Transfer-Encoding: chunked\r\n"
-        "\r\n"
-        "7\r\n"
-        "Mozilla\r\n"
-        "2\r\n" /* Incorrect chunk size here. */
-        "Developer\r\n"
-        "7\r\n"
-        "Network\r\n"
-        "0\r\n"
-        "\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: chunked\r\n"
+                                              "\r\n"
+                                              "7\r\n"
+                                              "Mozilla\r\n"
+                                              "2\r\n" /* Incorrect chunk size here. */
+                                              "Developer\r\n"
+                                              "7\r\n"
+                                              "Network\r\n"
+                                              "0\r\n"
+                                              "\r\n"),
 
         /* Chunked should be final encoding */
-        "GET / HTTP/1.1\r\n"
-        "Transfer-Encoding: chunked, gzip\r\n"
-        "\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: chunked, gzip\r\n"
+                                              "\r\n"),
 
         /* Chunked should be final encoding, p2 */
-        "GET / HTTP/1.1\r\n"
-        "Transfer-Encoding: chunked\r\n"
-        "Transfer-Encoding: gzip\r\n"
-        "\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: chunked\r\n"
+                                              "Transfer-Encoding: gzip\r\n"
+                                              "\r\n"),
 
         /* Invalid hex-int as chunk size. */
-        "GET / HTTP/1.1\r\n"
-        "Transfer-Encoding: chunked\r\n"
-        "\r\n"
-        "7\r\n"
-        "Mozilla\r\n"
-        "S\r\n" /* Incorrect chunk size here. */
-        "Developer\r\n"
-        "7\r\n"
-        "Network\r\n"
-        "0\r\n"
-        "\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: chunked\r\n"
+                                              "\r\n"
+                                              "7\r\n"
+                                              "Mozilla\r\n"
+                                              "S\r\n" /* Incorrect chunk size here. */
+                                              "Developer\r\n"
+                                              "7\r\n"
+                                              "Network\r\n"
+                                              "0\r\n"
+                                              "\r\n"),
 
         /* Chunk size should not have spaces. */
-        "GET / HTTP/1.1\r\n"
-        "Transfer-Encoding: chunked\r\n"
-        "\r\n"
-        " 7 \r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: chunked\r\n"
+                                              "\r\n"
+                                              " 7 \r\n"),
 
         /* Chunk size should not start with "0x". */
-        "GET / HTTP/1.1\r\n"
-        "Transfer-Encoding: chunked\r\n"
-        "\r\n"
-        "0x7\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: chunked\r\n"
+                                              "\r\n"
+                                              "0x7\r\n"),
 
         /* Invalid chunk size terminator. */
-        "GET / HTTP/1.1\r\n"
-        "Transfer-Encoding: chunked\r\n"
-        "\r\n"
-        "7\r0asa90\r\n"
-        "0\r\n"
-        "\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: chunked\r\n"
+                                              "\r\n"
+                                              "7\r0asa90\r\n"
+                                              "0\r\n"
+                                              "\r\n"),
 
         /* Invalid transfer coding. */
-        "GET / HTTP/1.1\r\n"
-        "Transfer-Encoding: shrinkydinky, chunked\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: shrinkydinky, chunked\r\n"),
 
         /* My chunk size is too big */
-        "GET / HTTP/1.1\r\n"
-        "Transfer-Encoding: chunked\r\n"
-        "\r\n"
-        "FFFFFFFFFFFFFFFFF\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Transfer-Encoding: chunked\r\n"
+                                              "\r\n"
+                                              "FFFFFFFFFFFFFFFFF\r\n"),
 
         /* My content-Length is too big */
-        "POST / HTTP/1.1\r\n"
-        "Content-Length: 99999999999999999999\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "Content-Length: 99999999999999999999\r\n"),
 
         /* My content-Length is empty */
-        "POST / HTTP/1.1\r\n"
-        "Content-Length:\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "Content-Length:\r\n"),
 
         /* Has both content-Length and transfer-encoding */
-        "POST / HTTP/1.1\r\n"
-        "Content-Length: 999\r\n"
-        "Transfer-Encoding: chunked\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "Content-Length: 999\r\n"
+                                              "Transfer-Encoding: chunked\r\n"),
 
         /* Header is missing colon */
-        "GET / HTTP/1.1\r\n"
-        "Header-Missing-Colon yes it is\r\n"
-        "\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Header-Missing-Colon yes it is\r\n"
+                                              "\r\n"),
 
         /* Header with empty name */
-        "GET / HTTP/1.1\r\n"
-        ": header with empty name\r\n"
-        "\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              ": header with empty name\r\n"
+                                              "\r\n"),
 
         /* Method is blank */
-        " / HTTP/1.1\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(" / HTTP/1.1\r\n"),
 
         /* URI is blank */
-        "GET  HTTP/1.1\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET  HTTP/1.1\r\n"),
 
         /* HTTP version is blank */
-        "GET / \r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / \r\n"),
 
         /* Missing spaces */
-        "GET /HTTP/1.1\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET /HTTP/1.1\r\n"),
 
         /* Missing spaces */
-        "GET/HTTP/1.1\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET/HTTP/1.1\r\n"),
 
         /* Extra space at end */
-        "GET / HTTP/1.1 \r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1 \r\n"),
 
         /* Go ahead and add more cases here. */
     };
 
     for (int iter = 0; iter < AWS_ARRAY_SIZE(requests); ++iter) {
-        const char *request = requests[iter];
+        struct aws_byte_cursor request = requests[iter];
 
         struct aws_h1_decoder_params params;
         s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
         struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-        size_t len = strlen(request);
-        ASSERT_FAILS(aws_h1_decode(decoder, request, len, NULL));
+        ASSERT_FAILS(aws_h1_decode(decoder, &request));
 
         aws_h1_decoder_destroy(decoder);
     }
@@ -725,31 +713,30 @@ AWS_TEST_CASE(h1_decode_bad_responses_and_assert_failure, s_h1_decode_bad_respon
 static int s_h1_decode_bad_responses_and_assert_failure(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *responses[] = {
+    const struct aws_byte_cursor responses[] = {
         /* Response code not 3 digits */
-        "HTTP/1.1 1000 PHRASE\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.1 1000 PHRASE\r\n"),
 
         /* Response code not 3 digits */
-        "HTTP/1.1 99 PHRASE\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.1 99 PHRASE\r\n"),
 
         /* Response code should not be in hex */
-        "HTTP/1.1 0x1 PHRASE\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.1 0x1 PHRASE\r\n"),
 
         /* Response code should not be in hex */
-        "HTTP/1.1 FFF PHRASE\r\n",
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.1 FFF PHRASE\r\n"),
 
         /* Go ahead and add more cases here. */
     };
 
     for (int iter = 0; iter < AWS_ARRAY_SIZE(responses); ++iter) {
-        const char *response = responses[iter];
+        struct aws_byte_cursor response = responses[iter];
 
         struct aws_h1_decoder_params params;
         s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
         struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-        size_t len = strlen(response);
-        ASSERT_FAILS(aws_h1_decode(decoder, response, len, NULL));
+        ASSERT_FAILS(aws_h1_decode(decoder, &response));
 
         aws_h1_decoder_destroy(decoder);
     }
@@ -764,17 +751,16 @@ AWS_TEST_CASE(
 static int s_h1_test_extraneous_buffer_data_ensure_not_processed(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *request = "GET / HTTP/1.1\r\n"
-                          "Wow look here. That's a lot of extra random stuff!";
+    struct aws_byte_cursor msg =
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Wow look here. That's a lot of extra random stuff!");
 
     struct aws_h1_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen("GET / HTTP/1.1\r\n");
-    size_t size_read;
-    ASSERT_SUCCESS(aws_h1_decode(decoder, request, len, &size_read));
-    ASSERT_INT_EQUALS(len, size_read);
+    ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
+    ASSERT_INT_EQUALS(0, msg.len);
 
     aws_h1_decoder_destroy(decoder);
     s_test_clean_up();
@@ -785,28 +771,28 @@ AWS_TEST_CASE(h1_test_ignore_chunk_extensions, s_h1_test_ignore_chunk_extensions
 static int s_h1_test_ignore_chunk_extensions(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *request = "GET / HTTP/1.1\r\n"
-                          "Host: amazon.com\r\n"
-                          "Accept-Language: fr\r\n"
-                          "Transfer-Encoding:   chunked     \r\n"
-                          "Trailer: Expires\r\n"
-                          "\r\n"
-                          "7;some-dumb-chunk-extension-name=some-dumb-chunk-extension-value\r\n"
-                          "Mozilla\r\n"
-                          "9\r\n"
-                          "Developer\r\n"
-                          "7\r\n"
-                          "Network\r\n"
-                          "0\r\n"
-                          "Expires: Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-                          "\r\n";
+    struct aws_byte_cursor msg =
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
+                                              "Host: amazon.com\r\n"
+                                              "Accept-Language: fr\r\n"
+                                              "Transfer-Encoding:   chunked     \r\n"
+                                              "Trailer: Expires\r\n"
+                                              "\r\n"
+                                              "7;some-dumb-chunk-extension-name=some-dumb-chunk-extension-value\r\n"
+                                              "Mozilla\r\n"
+                                              "9\r\n"
+                                              "Developer\r\n"
+                                              "7\r\n"
+                                              "Network\r\n"
+                                              "0\r\n"
+                                              "Expires: Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+                                              "\r\n");
 
     struct aws_h1_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
     struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-    size_t len = strlen(request);
-    ASSERT_SUCCESS(aws_h1_decode(decoder, request, len, NULL));
+    ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
 
     aws_h1_decoder_destroy(decoder);
     s_test_clean_up();

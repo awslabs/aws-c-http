@@ -30,7 +30,7 @@ AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_x_gzip, "x-gzip");
  * A common state is the "line state", which handles consuming one line ending in CRLF
  * and feeding the line to a linestate_fn, which should process data and set the next state.
  */
-typedef int(state_fn)(struct aws_h1_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed);
+typedef int(state_fn)(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input);
 typedef int(linestate_fn)(struct aws_h1_decoder *decoder, struct aws_byte_cursor input);
 
 struct aws_h1_decoder {
@@ -49,7 +49,7 @@ struct aws_h1_decoder {
     void *logging_id;
 
     /* User callbacks and settings. */
-    struct aws_h1_decoder_vtable vtable;
+    struct aws_http_decoder_vtable vtable;
     bool is_decoding_requests;
     void *user_data;
 };
@@ -116,9 +116,8 @@ static bool s_scan_for_crlf(struct aws_h1_decoder *decoder, struct aws_byte_curs
     return false;
 }
 
-static int s_cat(struct aws_h1_decoder *decoder, uint8_t *data, size_t len) {
+static int s_cat(struct aws_h1_decoder *decoder, struct aws_byte_cursor to_append) {
     struct aws_byte_buf *buffer = &decoder->scratch_space;
-    struct aws_byte_cursor to_append = aws_byte_cursor_from_array(data, len);
     int op = AWS_OP_ERR;
     if (buffer->buffer != NULL) {
         if ((aws_byte_buf_append(buffer, &to_append) == AWS_OP_SUCCESS)) {
@@ -133,7 +132,7 @@ static int s_cat(struct aws_h1_decoder *decoder, uint8_t *data, size_t len) {
             if (new_size == 0) { /* check for overflow */
                 return aws_raise_error(AWS_ERROR_OOM);
             }
-        } while (new_size < (buffer->len + len));
+        } while (new_size < (buffer->len + to_append.len));
 
         uint8_t *new_data = aws_mem_acquire(buffer->allocator, new_size);
         if (!new_data) {
@@ -200,16 +199,20 @@ static int s_read_size_hex(struct aws_byte_cursor cursor, size_t *size) {
 }
 
 /* This state consumes an entire line, then calls a linestate_fn to process the line. */
-static int s_state_getline(struct aws_h1_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
+static int s_state_getline(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input) {
     /* If preceding runs of this state failed to find CRLF, their data is stored in the scratch_space
      * and new data needs to be combined with the old data for processing. */
     bool has_prev_data = decoder->scratch_space.len;
 
-    bool found_crlf = s_scan_for_crlf(decoder, input, bytes_processed);
+    size_t line_length = 0;
+    bool found_crlf = s_scan_for_crlf(decoder, *input, &line_length);
+
+    /* Found end of line! Run the line processor on it */
+    struct aws_byte_cursor line = aws_byte_cursor_advance(input, line_length);
 
     bool use_scratch = !found_crlf | has_prev_data;
     if (AWS_UNLIKELY(use_scratch)) {
-        int err = s_cat(decoder, input.ptr, *bytes_processed);
+        int err = s_cat(decoder, line);
         if (err) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_STREAM,
@@ -220,17 +223,11 @@ static int s_state_getline(struct aws_h1_decoder *decoder, struct aws_byte_curso
 
             return AWS_OP_ERR;
         }
+        /* Line is actually the entire scratch buffer now */
+        line = aws_byte_cursor_from_buf(&decoder->scratch_space);
     }
 
     if (AWS_LIKELY(found_crlf)) {
-        /* Found end of line! Run the line processor on it */
-        struct aws_byte_cursor line;
-        if (use_scratch) {
-            line = aws_byte_cursor_from_buf(&decoder->scratch_space);
-        } else {
-            line = aws_byte_cursor_from_array(input.ptr, *bytes_processed);
-        }
-
         /* Backup so "\r\n" is not included. */
         /* RFC-7230 section 3 Message Format */
         AWS_ASSERT(line.len >= 2);
@@ -327,24 +324,21 @@ static void s_reset_state(struct aws_h1_decoder *decoder) {
     decoder->is_done = false;
 }
 
-static int s_state_unchunked_body(
-    struct aws_h1_decoder *decoder,
-    struct aws_byte_cursor input,
-    size_t *bytes_processed) {
+static int s_state_unchunked_body(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input) {
 
     size_t processed_bytes = 0;
     AWS_FATAL_ASSERT(decoder->content_processed < decoder->content_length); /* shouldn't be possible */
 
-    if ((decoder->content_processed + input.len) > decoder->content_length) {
+    if ((decoder->content_processed + input->len) > decoder->content_length) {
         processed_bytes = decoder->content_length - decoder->content_processed;
     } else {
-        processed_bytes = input.len;
+        processed_bytes = input->len;
     }
 
     decoder->content_processed += processed_bytes;
 
     bool finished = decoder->content_processed == decoder->content_length;
-    struct aws_byte_cursor body = aws_byte_cursor_from_array(input.ptr, processed_bytes);
+    struct aws_byte_cursor body = aws_byte_cursor_advance(input, processed_bytes);
     int err = decoder->vtable.on_body(&body, finished, decoder->user_data);
     if (err) {
         return AWS_OP_ERR;
@@ -356,8 +350,6 @@ static int s_state_unchunked_body(
             return AWS_OP_ERR;
         }
     }
-
-    *bytes_processed = processed_bytes;
 
     return AWS_OP_SUCCESS;
 }
@@ -377,20 +369,20 @@ static int s_linestate_chunk_terminator(struct aws_h1_decoder *decoder, struct a
     return AWS_OP_SUCCESS;
 }
 
-static int s_state_chunk(struct aws_h1_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
+static int s_state_chunk(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input) {
     size_t processed_bytes = 0;
     AWS_ASSERT(decoder->chunk_processed < decoder->chunk_size);
 
-    if ((decoder->chunk_processed + input.len) > decoder->chunk_size) {
+    if ((decoder->chunk_processed + input->len) > decoder->chunk_size) {
         processed_bytes = decoder->chunk_size - decoder->chunk_processed;
     } else {
-        processed_bytes = input.len;
+        processed_bytes = input->len;
     }
 
     decoder->chunk_processed += processed_bytes;
 
     bool finished = decoder->chunk_processed == decoder->chunk_size;
-    struct aws_byte_cursor body = aws_byte_cursor_from_array(input.ptr, decoder->chunk_size);
+    struct aws_byte_cursor body = aws_byte_cursor_advance(input, decoder->chunk_size);
     int err = decoder->vtable.on_body(&body, false, decoder->user_data);
     if (err) {
         return AWS_OP_ERR;
@@ -399,8 +391,6 @@ static int s_state_chunk(struct aws_h1_decoder *decoder, struct aws_byte_cursor 
     if (AWS_LIKELY(finished)) {
         s_set_line_state(decoder, s_linestate_chunk_terminator);
     }
-
-    *bytes_processed = processed_bytes;
 
     return AWS_OP_SUCCESS;
 }
@@ -758,26 +748,19 @@ void aws_h1_decoder_destroy(struct aws_h1_decoder *decoder) {
     aws_mem_release(decoder->alloc, decoder);
 }
 
-int aws_h1_decode(struct aws_h1_decoder *decoder, const void *data, size_t data_bytes, size_t *bytes_read) {
+int aws_h1_decode(struct aws_h1_decoder *decoder, struct aws_byte_cursor *data) {
     AWS_ASSERT(decoder);
     AWS_ASSERT(data);
 
-    struct aws_byte_cursor input = aws_byte_cursor_from_array(data, data_bytes);
-    size_t total_bytes_processed = 0;
+    struct aws_byte_cursor backup = *data;
 
-    while (data_bytes && !decoder->is_done) {
-        size_t bytes_processed = 0;
-        int err = decoder->run_state(decoder, input, &bytes_processed);
+    while (data->len && !decoder->is_done) {
+        int err = decoder->run_state(decoder, data);
         if (err) {
+            /* Reset the data param to how we found it */
+            *data = backup;
             return AWS_OP_ERR;
         }
-        data_bytes -= bytes_processed;
-        total_bytes_processed += bytes_processed;
-        aws_byte_cursor_advance(&input, bytes_processed);
-    }
-
-    if (bytes_read) {
-        *bytes_read = total_bytes_processed;
     }
 
     if (decoder->is_done) {
