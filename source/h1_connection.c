@@ -95,7 +95,7 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
     .update_window = s_stream_update_window,
 };
 
-static const struct aws_h1_decoder_vtable s_decoder_vtable = {
+static const struct aws_http_decoder_vtable s_h1_decoder_vtable = {
     .on_request = s_decoder_on_request,
     .on_response = s_decoder_on_response,
     .on_header = s_decoder_on_header,
@@ -1201,7 +1201,7 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
         .alloc = alloc,
         .is_decoding_requests = connection->base.server_data != NULL,
         .user_data = connection,
-        .vtable = s_decoder_vtable,
+        .vtable = s_h1_decoder_vtable,
         .scratch_space_initial_size = DECODER_INITIAL_SCRATCH_SIZE,
     };
     connection->thread_data.incoming_stream_decoder = aws_h1_decoder_new(&options);

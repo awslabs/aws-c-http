@@ -19,42 +19,6 @@
 #include <aws/http/private/http_impl.h>
 
 /**
- * Called from `aws_h1_decode` when an http header has been received.
- * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
- */
-typedef int(aws_h1_decoder_on_header_fn)(const struct aws_http_decoded_header *header, void *user_data);
-
-/**
- * Called from `aws_h1_decode` when a portion of the http body has been received.
- * `finished` is true if this is the last section of the http body, and false if more body data is yet to be received.
- * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
- */
-typedef int(aws_h1_decoder_on_body_fn)(const struct aws_byte_cursor *data, bool finished, void *user_data);
-
-typedef int(aws_h1_decoder_on_request_fn)(
-    enum aws_http_method method_enum,
-    const struct aws_byte_cursor *method_str,
-    const struct aws_byte_cursor *uri,
-    void *user_data);
-
-typedef int(aws_h1_decoder_on_response_fn)(int status_code, void *user_data);
-
-typedef int(aws_h1_decoder_done_fn)(void *user_data);
-
-struct aws_h1_decoder_vtable {
-    aws_h1_decoder_on_header_fn *on_header;
-    aws_h1_decoder_on_body_fn *on_body;
-
-    /* Only needed for requests, can be NULL for responses. */
-    aws_h1_decoder_on_request_fn *on_request;
-
-    /* Only needed for responses, can be NULL for requests. */
-    aws_h1_decoder_on_response_fn *on_response;
-
-    aws_h1_decoder_done_fn *on_done;
-};
-
-/**
  * Structure used to initialize an `aws_h1_decoder`.
  */
 struct aws_h1_decoder_params {
@@ -63,7 +27,7 @@ struct aws_h1_decoder_params {
     /* Set false if decoding responses */
     bool is_decoding_requests;
     void *user_data;
-    struct aws_h1_decoder_vtable vtable;
+    struct aws_http_decoder_vtable vtable;
 };
 
 struct aws_h1_decoder;
