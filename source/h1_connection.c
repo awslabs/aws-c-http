@@ -22,8 +22,6 @@
 #include <aws/http/private/request_response_impl.h>
 #include <aws/io/logging.h>
 
-#include <stdio.h>
-
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
@@ -95,7 +93,7 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
     .update_window = s_stream_update_window,
 };
 
-static const struct aws_h1_decoder_vtable s_decoder_vtable = {
+static const struct aws_http_decoder_vtable s_h1_decoder_vtable = {
     .on_request = s_decoder_on_request,
     .on_response = s_decoder_on_response,
     .on_header = s_decoder_on_header,
@@ -1201,7 +1199,7 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
         .alloc = alloc,
         .is_decoding_requests = connection->base.server_data != NULL,
         .user_data = connection,
-        .vtable = s_decoder_vtable,
+        .vtable = s_h1_decoder_vtable,
         .scratch_space_initial_size = DECODER_INITIAL_SCRATCH_SIZE,
     };
     connection->thread_data.incoming_stream_decoder = aws_h1_decoder_new(&options);
@@ -1316,9 +1314,7 @@ static int s_handler_process_read_message(
         aws_h1_decoder_set_logging_id(
             connection->thread_data.incoming_stream_decoder, connection->thread_data.incoming_stream);
 
-        size_t decoded_len = 0;
-        err = aws_h1_decode(
-            connection->thread_data.incoming_stream_decoder, message_cursor.ptr, message_cursor.len, &decoded_len);
+        err = aws_h1_decode(connection->thread_data.incoming_stream_decoder, &message_cursor);
         if (err) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
@@ -1329,9 +1325,6 @@ static int s_handler_process_read_message(
 
             goto error;
         }
-
-        AWS_FATAL_ASSERT(decoded_len > 0);
-        aws_byte_cursor_advance(&message_cursor, decoded_len);
     }
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Done processing message.", (void *)&connection->base);
