@@ -49,11 +49,29 @@ enum aws_http_status {
     AWS_HTTP_STATUS_CONTINUE = 100,
 };
 
+struct aws_http_decoded_header {
+    /* Name of the header. If the type is `AWS_HTTP_HEADER_NAME_UNKNOWN` then `name_data` must be parsed manually. */
+    enum aws_http_header_name name;
+
+    /* Raw buffer storing the header's name. */
+    struct aws_byte_cursor name_data;
+
+    /* Raw buffer storing the header's value. */
+    struct aws_byte_cursor value_data;
+
+    /* Raw buffer storing the entire header. */
+    struct aws_byte_cursor data;
+};
+
+AWS_EXTERN_C_BEGIN
+
 AWS_HTTP_API void aws_http_fatal_assert_library_initialized(void);
 
 AWS_HTTP_API struct aws_byte_cursor aws_http_version_to_str(enum aws_http_version version);
 
 AWS_HTTP_API enum aws_http_method aws_http_str_to_method(struct aws_byte_cursor cursor);
 AWS_HTTP_API enum aws_http_header_name aws_http_str_to_header_name(struct aws_byte_cursor cursor);
+
+AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_IMPL_H */

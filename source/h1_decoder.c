@@ -13,7 +13,7 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/private/decode.h>
+#include <aws/http/private/h1_decoder.h>
 
 #include <aws/common/string.h>
 #include <aws/io/logging.h>
@@ -30,10 +30,10 @@ AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_x_gzip, "x-gzip");
  * A common state is the "line state", which handles consuming one line ending in CRLF
  * and feeding the line to a linestate_fn, which should process data and set the next state.
  */
-typedef int(state_fn)(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed);
-typedef int(linestate_fn)(struct aws_http_decoder *decoder, struct aws_byte_cursor input);
+typedef int(state_fn)(struct aws_h1_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed);
+typedef int(linestate_fn)(struct aws_h1_decoder *decoder, struct aws_byte_cursor input);
 
-struct aws_http_decoder {
+struct aws_h1_decoder {
     /* Implementation data. */
     struct aws_allocator *alloc;
     struct aws_byte_buf scratch_space;
@@ -49,15 +49,15 @@ struct aws_http_decoder {
     void *logging_id;
 
     /* User callbacks and settings. */
-    struct aws_http_decoder_vtable vtable;
+    struct aws_h1_decoder_vtable vtable;
     bool is_decoding_requests;
     void *user_data;
 };
 
-static int s_linestate_request(struct aws_http_decoder *decoder, struct aws_byte_cursor input);
-static int s_linestate_response(struct aws_http_decoder *decoder, struct aws_byte_cursor input);
-static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_cursor input);
-static int s_linestate_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_cursor input);
+static int s_linestate_request(struct aws_h1_decoder *decoder, struct aws_byte_cursor input);
+static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_cursor input);
+static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cursor input);
+static int s_linestate_chunk_size(struct aws_h1_decoder *decoder, struct aws_byte_cursor input);
 
 static struct aws_byte_cursor s_trim_trailing_whitespace(struct aws_byte_cursor cursor) {
     while (cursor.len && cursor.ptr[cursor.len - 1] == (uint8_t)' ') {
@@ -80,7 +80,7 @@ static struct aws_byte_cursor s_trim_whitespace(struct aws_byte_cursor cursor) {
     return cursor;
 }
 
-static bool s_scan_for_crlf(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
+static bool s_scan_for_crlf(struct aws_h1_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     AWS_ASSERT(input.len > 0);
 
     /* In a loop, scan for "\n", then look one char back for "\r" */
@@ -116,7 +116,7 @@ static bool s_scan_for_crlf(struct aws_http_decoder *decoder, struct aws_byte_cu
     return false;
 }
 
-static int s_cat(struct aws_http_decoder *decoder, uint8_t *data, size_t len) {
+static int s_cat(struct aws_h1_decoder *decoder, uint8_t *data, size_t len) {
     struct aws_byte_buf *buffer = &decoder->scratch_space;
     struct aws_byte_cursor to_append = aws_byte_cursor_from_array(data, len);
     int op = AWS_OP_ERR;
@@ -200,7 +200,7 @@ static int s_read_size_hex(struct aws_byte_cursor cursor, size_t *size) {
 }
 
 /* This state consumes an entire line, then calls a linestate_fn to process the line. */
-static int s_state_getline(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
+static int s_state_getline(struct aws_h1_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     /* If preceding runs of this state failed to find CRLF, their data is stored in the scratch_space
      * and new data needs to be combined with the old data for processing. */
     bool has_prev_data = decoder->scratch_space.len;
@@ -292,26 +292,26 @@ static int s_cursor_split_exactly_n_times(
     return s_cursor_split_impl(input, split_on, cursor_array, num_cursors, true);
 }
 
-static void s_set_state(struct aws_http_decoder *decoder, state_fn *state) {
+static void s_set_state(struct aws_h1_decoder *decoder, state_fn *state) {
     decoder->scratch_space.len = 0;
     decoder->run_state = state;
     decoder->process_line = NULL;
 }
 
 /* Set next state to capture a full line, then call the specified linestate_fn on it */
-static void s_set_line_state(struct aws_http_decoder *decoder, linestate_fn *line_processor) {
+static void s_set_line_state(struct aws_h1_decoder *decoder, linestate_fn *line_processor) {
     s_set_state(decoder, s_state_getline);
     decoder->process_line = line_processor;
 }
 
-static int s_mark_done(struct aws_http_decoder *decoder) {
+static int s_mark_done(struct aws_h1_decoder *decoder) {
     decoder->is_done = true;
 
     return decoder->vtable.on_done(decoder->user_data);
 }
 
 /* Reset state, in preparation for processing a new message */
-void s_reset_state(struct aws_http_decoder *decoder) {
+static void s_reset_state(struct aws_h1_decoder *decoder) {
     if (decoder->is_decoding_requests) {
         s_set_line_state(decoder, s_linestate_request);
     } else {
@@ -328,7 +328,7 @@ void s_reset_state(struct aws_http_decoder *decoder) {
 }
 
 static int s_state_unchunked_body(
-    struct aws_http_decoder *decoder,
+    struct aws_h1_decoder *decoder,
     struct aws_byte_cursor input,
     size_t *bytes_processed) {
 
@@ -362,7 +362,7 @@ static int s_state_unchunked_body(
     return AWS_OP_SUCCESS;
 }
 
-static int s_linestate_chunk_terminator(struct aws_http_decoder *decoder, struct aws_byte_cursor input) {
+static int s_linestate_chunk_terminator(struct aws_h1_decoder *decoder, struct aws_byte_cursor input) {
 
     /* Expecting CRLF at end of each chunk */
     /* RFC-7230 section 4.1 Chunked Transfer Encoding */
@@ -377,7 +377,7 @@ static int s_linestate_chunk_terminator(struct aws_http_decoder *decoder, struct
     return AWS_OP_SUCCESS;
 }
 
-static int s_state_chunk(struct aws_http_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
+static int s_state_chunk(struct aws_h1_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     size_t processed_bytes = 0;
     AWS_ASSERT(decoder->chunk_processed < decoder->chunk_size);
 
@@ -405,7 +405,7 @@ static int s_state_chunk(struct aws_http_decoder *decoder, struct aws_byte_curso
     return AWS_OP_SUCCESS;
 }
 
-static int s_linestate_chunk_size(struct aws_http_decoder *decoder, struct aws_byte_cursor input) {
+static int s_linestate_chunk_size(struct aws_h1_decoder *decoder, struct aws_byte_cursor input) {
     struct aws_byte_cursor size;
     AWS_ZERO_STRUCT(size);
     if (!aws_byte_cursor_next_split(&input, ';', &size)) {
@@ -457,7 +457,7 @@ static int s_linestate_chunk_size(struct aws_http_decoder *decoder, struct aws_b
     return AWS_OP_SUCCESS;
 }
 
-static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_cursor input) {
+static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cursor input) {
     int err;
 
     /* The \r\n was just processed by `s_state_getline`. */
@@ -628,7 +628,7 @@ static int s_linestate_header(struct aws_http_decoder *decoder, struct aws_byte_
     return AWS_OP_SUCCESS;
 }
 
-static int s_linestate_request(struct aws_http_decoder *decoder, struct aws_byte_cursor input) {
+static int s_linestate_request(struct aws_h1_decoder *decoder, struct aws_byte_cursor input) {
     struct aws_byte_cursor cursors[3];
     int err = s_cursor_split_exactly_n_times(input, ' ', cursors, 3); /* extra spaces not allowed */
     if (err) {
@@ -680,7 +680,7 @@ static int s_linestate_request(struct aws_http_decoder *decoder, struct aws_byte
     return AWS_OP_SUCCESS;
 }
 
-static int s_linestate_response(struct aws_http_decoder *decoder, struct aws_byte_cursor input) {
+static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_cursor input) {
     struct aws_byte_cursor cursors[3];
     int err = s_cursor_split_first_n_times(input, ' ', cursors, 3); /* phrase may contain spaces */
     if (err) {
@@ -732,10 +732,10 @@ static int s_linestate_response(struct aws_http_decoder *decoder, struct aws_byt
     return AWS_OP_SUCCESS;
 }
 
-struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *params) {
+struct aws_h1_decoder *aws_h1_decoder_new(struct aws_h1_decoder_params *params) {
     AWS_ASSERT(params);
 
-    struct aws_http_decoder *decoder = aws_mem_acquire(params->alloc, sizeof(struct aws_http_decoder));
+    struct aws_h1_decoder *decoder = aws_mem_acquire(params->alloc, sizeof(struct aws_h1_decoder));
     if (!decoder) {
         return NULL;
     }
@@ -753,12 +753,12 @@ struct aws_http_decoder *aws_http_decoder_new(struct aws_http_decoder_params *pa
     return decoder;
 }
 
-void aws_http_decoder_destroy(struct aws_http_decoder *decoder) {
+void aws_h1_decoder_destroy(struct aws_h1_decoder *decoder) {
     aws_byte_buf_clean_up(&decoder->scratch_space);
     aws_mem_release(decoder->alloc, decoder);
 }
 
-int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t data_bytes, size_t *bytes_read) {
+int aws_h1_decode(struct aws_h1_decoder *decoder, const void *data, size_t data_bytes, size_t *bytes_read) {
     AWS_ASSERT(decoder);
     AWS_ASSERT(data);
 
@@ -787,14 +787,14 @@ int aws_http_decode(struct aws_http_decoder *decoder, const void *data, size_t d
     return AWS_OP_SUCCESS;
 }
 
-int aws_http_decoder_get_encoding_flags(const struct aws_http_decoder *decoder) {
+int aws_h1_decoder_get_encoding_flags(const struct aws_h1_decoder *decoder) {
     return decoder->transfer_encoding;
 }
 
-size_t aws_http_decoder_get_content_length(const struct aws_http_decoder *decoder) {
+size_t aws_h1_decoder_get_content_length(const struct aws_h1_decoder *decoder) {
     return decoder->content_length;
 }
 
-void aws_http_decoder_set_logging_id(struct aws_http_decoder *decoder, void *id) {
+void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, void *id) {
     decoder->logging_id = id;
 }
