@@ -222,7 +222,7 @@ static int s_h1_test_response_unsupported_version(struct aws_allocator *allocato
     (void)ctx;
     s_test_init(allocator);
     struct aws_byte_cursor msg =
-            AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.2 200 OK\r\n\r\n"); /* Note version is "1.0" */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.2 200 OK\r\n\r\n"); /* Note version is "1.0" */
 
     struct aws_h1_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
