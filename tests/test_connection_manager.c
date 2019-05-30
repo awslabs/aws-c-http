@@ -99,7 +99,7 @@ int s_cm_tester_init(struct cm_tester_options *options) {
     struct aws_socket_options socket_options = {
         .type = AWS_SOCKET_STREAM,
         .domain = AWS_SOCKET_IPV4,
-        .connect_timeout_ms = (uint32_t)aws_timestamp_convert(60, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
+        .connect_timeout_ms = (uint32_t)aws_timestamp_convert(10, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
     };
 
     aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, options->allocator);
@@ -153,6 +153,9 @@ void s_release_connections(size_t count, bool close_first) {
 
     struct cm_tester *tester = &s_tester;
 
+    struct aws_array_list to_release;
+    AWS_ZERO_STRUCT(to_release);
+
     aws_mutex_lock(&tester->lock);
 
     size_t release_count = aws_array_list_length(&tester->connections);
@@ -161,13 +164,12 @@ void s_release_connections(size_t count, bool close_first) {
     }
 
     if (release_count == 0) {
-        return;
+        goto release;
     }
 
-    struct aws_array_list to_release;
     if (aws_array_list_init_dynamic(
             &to_release, tester->allocator, release_count, sizeof(struct aws_http_connection *))) {
-        return;
+        goto release;
     }
 
     for (size_t i = 0; i < release_count; ++i) {
@@ -180,6 +182,8 @@ void s_release_connections(size_t count, bool close_first) {
 
         aws_array_list_push_back(&to_release, &connection);
     }
+
+release:
 
     aws_mutex_unlock(&tester->lock);
 
