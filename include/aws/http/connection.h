@@ -131,14 +131,22 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
  * Users must release the connection when they are done with it.
  * The connection's memory cannot be reclaimed until this is done.
  * If the connection was not already shutting down, it will be shut down.
+ *
+ * Users should always wait for the on_shutdown() callback to be called before releasing any data passed to the
+ * http_connection (Eg aws_tls_connection_options, aws_socket_options) otherwise there will be race conditions between
+ * http_connection shutdown tasks and memory release tasks, causing Segfaults.
+ *
  * A language binding will likely invoke this from the wrapper class's finalizer/destructor.
  */
 AWS_HTTP_API
 void aws_http_connection_release(struct aws_http_connection *connection);
 
 /**
- * Begin shutdown sequence of the connection if it hasn't already started. It's safe to call this
- * function regardless of the connection state as long as you hold a reference to the connection.
+ * Begin shutdown sequence of the connection if it hasn't already started. This will schedule shutdown tasks on the
+ * EventLoop that may send HTTP/TLS/TCP shutdown messages to peers if necessary, and will eventually cause internal
+ * connection memory to stop being accessed and on_shutdown() callback to be called.
+ *
+ * It's safe to call this function regardless of the connection state as long as you hold a reference to the connection.
  */
 AWS_HTTP_API
 void aws_http_connection_close(struct aws_http_connection *connection);

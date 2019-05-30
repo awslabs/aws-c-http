@@ -16,28 +16,47 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/common/byte_buf.h>
-
-AWS_EXTERN_C_BEGIN
+#include <aws/http/http.h>
 
 struct aws_http_header;
 struct aws_hpack_context;
 
+AWS_EXTERN_C_BEGIN
+
 /* Library-level init and shutdown */
+AWS_HTTP_API
 void aws_hpack_static_table_init(struct aws_allocator *allocator);
+
+AWS_HTTP_API
 void aws_hpack_static_table_clean_up(void);
 
 /* General HPACK API */
+AWS_HTTP_API
 struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator, size_t max_dynamic_elements);
+
+AWS_HTTP_API
 void aws_hpack_context_destroy(struct aws_hpack_context *context);
+
+AWS_HTTP_API
 struct aws_http_header *aws_hpack_get_header(struct aws_hpack_context *context, size_t index);
+
+AWS_HTTP_API
 int aws_hpack_find_index(struct aws_hpack_context *context, const struct aws_http_header *header, size_t *index);
+
+AWS_HTTP_API
 int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_http_header *header);
+
+AWS_HTTP_API
 int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new_max_elements);
 
 /* Public for testing purposes */
+AWS_HTTP_API
 int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_byte_buf *output);
+
+AWS_HTTP_API
 int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_size, uint64_t *integer);
+
+AWS_HTTP_API
 int aws_hpack_encode_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_encode,
