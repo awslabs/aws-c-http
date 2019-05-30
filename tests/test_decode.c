@@ -196,8 +196,8 @@ static int s_http_test_request_bad_version(struct aws_allocator *allocator, void
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(http_test_response_old_version, s_http_test_response_old_version);
-static int s_http_test_response_old_version(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(http_test_response_1_0, s_http_test_response_1_0);
+static int s_http_test_response_1_0(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     int code;
@@ -221,7 +221,7 @@ AWS_TEST_CASE(http_test_response_unsupported_version, s_http_test_response_unsup
 static int s_http_test_response_unsupported_version(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
-    const char *msg = "HTTP/1.2 200 OK\r\n\r\n"; 
+    const char *msg = "HTTP/1.2 200 OK\r\n\r\n";
 
     struct aws_http_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
