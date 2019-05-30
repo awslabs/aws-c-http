@@ -7,7 +7,8 @@ file(GLOB TESTS ${TEST_HDRS} ${TEST_SRC})
 
 add_test_case(h1_test_get_request)
 add_test_case(h1_test_request_bad_version)
-add_test_case(h1_test_response_bad_version)
+add_test_case(h1_test_response_unsupported_version)
+add_test_case(h1_test_response_1_0)
 add_test_case(h1_test_get_status_code)
 add_test_case(h1_test_overflow_scratch_space)
 add_test_case(h1_test_receive_request_headers)
@@ -22,6 +23,7 @@ add_test_case(h1_decode_bad_requests_and_assert_failure)
 add_test_case(h1_decode_bad_responses_and_assert_failure)
 add_test_case(h1_test_extraneous_buffer_data_ensure_not_processed)
 add_test_case(h1_test_ignore_chunk_extensions)
+
 # add_test_case(connection_setup_shutdown) TODO: diagnose occasional failures
 add_test_case(h1_client_sanity_check)
 add_test_case(h1_client_request_send_1liner)

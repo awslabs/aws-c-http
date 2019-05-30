@@ -688,8 +688,9 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
     struct aws_byte_cursor phrase = cursors[2];
     (void)phrase; /* Unused for now. */
 
-    struct aws_byte_cursor version_expected = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
-    if (!aws_byte_cursor_eq(&version, &version_expected)) {
+    struct aws_byte_cursor version_1_1_expected = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
+    struct aws_byte_cursor version_1_0_expected = aws_http_version_to_str(AWS_HTTP_VERSION_1_0);
+    if (!aws_byte_cursor_eq(&version, &version_1_1_expected) && !aws_byte_cursor_eq(&version, &version_1_0_expected)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_STREAM, "id=%p: Incoming response uses unsupported HTTP version.", decoder->logging_id);
         AWS_LOGF_DEBUG(
