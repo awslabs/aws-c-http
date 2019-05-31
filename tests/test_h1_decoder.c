@@ -195,12 +195,34 @@ static int s_h1_test_request_bad_version(struct aws_allocator *allocator, void *
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(h1_test_response_bad_version, s_h1_test_response_bad_version);
-static int s_h1_test_response_bad_version(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(h1_test_response_1_0, s_h1_test_response_1_0);
+static int s_h1_test_response_1_0(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    s_test_init(allocator);
+    int code = 0;
+
+    struct aws_byte_cursor msg =
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.0 200 OK\r\n\r\n"); /* Note version is "1.0" */
+
+    struct aws_h1_decoder_params params;
+    s_common_decoder_setup(allocator, 1024, &params, s_response, &code);
+    params.vtable.on_response = s_on_response;
+    struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
+
+    ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
+    ASSERT_INT_EQUALS(200, code);
+
+    aws_h1_decoder_destroy(decoder);
+    s_test_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(h1_test_response_unsupported_version, s_h1_test_response_unsupported_version);
+static int s_h1_test_response_unsupported_version(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_test_init(allocator);
     struct aws_byte_cursor msg =
-        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.0 200 OK\r\n\r\n"); /* Note version is "1.0" */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.2 200 OK\r\n\r\n"); /* Note version is "1.0" */
 
     struct aws_h1_decoder_params params;
     s_common_decoder_setup(allocator, 1024, &params, s_response, NULL);
