@@ -17,11 +17,6 @@
  */
 
 #include <aws/http/http.h>
-<<<<<<< Updated upstream
-=======
-
-AWS_EXTERN_C_BEGIN
->>>>>>> Stashed changes
 
 struct aws_byte_buf;
 struct aws_byte_cursor;
