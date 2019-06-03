@@ -49,11 +49,65 @@ enum aws_http_status {
     AWS_HTTP_STATUS_CONTINUE = 100,
 };
 
+struct aws_http_decoded_header {
+    /* Name of the header. If the type is `AWS_HTTP_HEADER_NAME_UNKNOWN` then `name_data` must be parsed manually. */
+    enum aws_http_header_name name;
+
+    /* Raw buffer storing the header's name. */
+    struct aws_byte_cursor name_data;
+
+    /* Raw buffer storing the header's value. */
+    struct aws_byte_cursor value_data;
+
+    /* Raw buffer storing the entire header. */
+    struct aws_byte_cursor data;
+};
+
+/**
+ * Called from `aws_h*_decode` when an http header has been received.
+ * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
+ */
+typedef int(aws_http_decoder_on_header_fn)(const struct aws_http_decoded_header *header, void *user_data);
+
+/**
+ * Called from `aws_h*_decode` when a portion of the http body has been received.
+ * `finished` is true if this is the last section of the http body, and false if more body data is yet to be received.
+ * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
+ */
+typedef int(aws_http_decoder_on_body_fn)(const struct aws_byte_cursor *data, bool finished, void *user_data);
+
+typedef int(aws_http_decoder_on_request_fn)(
+    enum aws_http_method method_enum,
+    const struct aws_byte_cursor *method_str,
+    const struct aws_byte_cursor *uri,
+    void *user_data);
+
+typedef int(aws_http_decoder_on_response_fn)(int status_code, void *user_data);
+
+typedef int(aws_http_decoder_done_fn)(void *user_data);
+
+struct aws_http_decoder_vtable {
+    aws_http_decoder_on_header_fn *on_header;
+    aws_http_decoder_on_body_fn *on_body;
+
+    /* Only needed for requests, can be NULL for responses. */
+    aws_http_decoder_on_request_fn *on_request;
+
+    /* Only needed for responses, can be NULL for requests. */
+    aws_http_decoder_on_response_fn *on_response;
+
+    aws_http_decoder_done_fn *on_done;
+};
+
+AWS_EXTERN_C_BEGIN
+
 AWS_HTTP_API void aws_http_fatal_assert_library_initialized(void);
 
 AWS_HTTP_API struct aws_byte_cursor aws_http_version_to_str(enum aws_http_version version);
 
 AWS_HTTP_API enum aws_http_method aws_http_str_to_method(struct aws_byte_cursor cursor);
 AWS_HTTP_API enum aws_http_header_name aws_http_str_to_header_name(struct aws_byte_cursor cursor);
+
+AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_IMPL_H */
