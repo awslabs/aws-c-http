@@ -18,6 +18,8 @@
 
 #include <aws/http/http.h>
 
+struct aws_byte_buf;
+struct aws_byte_cursor;
 struct aws_http_header;
 struct aws_hpack_context;
 
