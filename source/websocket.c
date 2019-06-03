@@ -1362,27 +1362,31 @@ static int s_decoder_on_midchannel_payload(struct aws_websocket *websocket, stru
         return AWS_OP_SUCCESS;
     }
 
-    if (!websocket->channel_slot->adj_right) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET, "id=%p: Expected another slot in read direction.", (void *)websocket);
-        aws_raise_error(AWS_ERROR_INVALID_STATE);
+    AWS_ASSERT(websocket->channel_slot->adj_right); /* Expected another slot in the read direction */
+
+    /* Note that current implementation of websocket handler does not buffer data travelling in the "read" direction,
+     * so the downstream read window needs to be large enough to immediately receive incoming data. */
+    if (aws_channel_slot_downstream_read_window(websocket->channel_slot) < data.len) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Cannot send entire message without exceeding read window.",
+            (void *)websocket);
+        aws_raise_error(AWS_IO_CHANNEL_READ_WOULD_EXCEED_WINDOW);
         goto error;
     }
 
-    size_t size_hint = aws_channel_slot_downstream_read_window(websocket->channel_slot);
-
     io_msg = aws_channel_acquire_message_from_pool(
-        websocket->channel_slot->channel, AWS_IO_MESSAGE_APPLICATION_DATA, size_hint);
+        websocket->channel_slot->channel, AWS_IO_MESSAGE_APPLICATION_DATA, data.len);
     if (!io_msg) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET, "id=%p: Failed to acquire message.", (void *)websocket);
         goto error;
     }
 
     if (io_msg->message_data.capacity < data.len) {
+        /* Probably can't happen. Data is coming an aws_io_message, should be able to acquire another just as big */
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_WEBSOCKET,
-            "id=%p: Cannot send entire message without exceeding read window.",
-            (void *)websocket);
-        aws_raise_error(AWS_IO_CHANNEL_READ_WOULD_EXCEED_WINDOW);
+            AWS_LS_HTTP_WEBSOCKET, "id=%p: Failed to acquire sufficiently large message.", (void *)websocket);
+        aws_raise_error(AWS_ERROR_UNKNOWN);
         goto error;
     }
 
