@@ -78,8 +78,14 @@ struct aws_websocket {
         struct aws_websocket_incoming_frame *current_incoming_frame;
         struct aws_websocket_incoming_frame incoming_frame_storage;
 
+        /* If current incoming frame is CONTINUATION, this is the data type it is a continuation of. */
+        enum aws_websocket_opcode continuation_of_opcode;
+
         /* Amount to increment window after a channel message has been processed. */
         size_t incoming_message_window_update;
+
+        /* Cached slot to right */
+        struct aws_channel_slot *last_known_right_slot;
 
         /* True when no more frames will be read, due to:
          * - a CLOSE frame was received
@@ -162,6 +168,8 @@ static int s_encoder_stream_outgoing_payload(struct aws_byte_buf *out_buf, void 
 
 static int s_decoder_on_frame(const struct aws_websocket_frame *frame, void *user_data);
 static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data);
+static int s_decoder_on_user_payload(struct aws_websocket *websocket, struct aws_byte_cursor data);
+static int s_decoder_on_midchannel_payload(struct aws_websocket *websocket, struct aws_byte_cursor data);
 
 static void s_destroy_outgoing_frame(struct aws_websocket *websocket, struct outgoing_frame *frame, int error_code);
 static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code, bool *out_callback_result);
@@ -1092,7 +1100,7 @@ static int s_handler_shutdown(
                 .opcode = AWS_WEBSOCKET_OPCODE_CLOSE,
                 .fin = true,
             };
-            err = aws_websocket_send_frame(websocket, &close_frame);
+            err = s_send_frame(websocket, &close_frame, false);
             if (err) {
                 AWS_LOGF_WARN(
                     AWS_LS_HTTP_WEBSOCKET,
@@ -1266,6 +1274,18 @@ static int s_decoder_on_frame(const struct aws_websocket_frame *frame, void *use
     websocket->thread_data.current_incoming_frame->rsv[1] = frame->rsv[1];
     websocket->thread_data.current_incoming_frame->rsv[2] = frame->rsv[2];
 
+    /* If CONTINUATION frames are expected, remember which type of data is being continued.
+     * RFC-6455 Section 5.4 Fragmentation */
+    if (aws_websocket_is_data_frame(frame->opcode)) {
+        if (frame->opcode != AWS_WEBSOCKET_OPCODE_CONTINUATION) {
+            if (frame->fin) {
+                websocket->thread_data.continuation_of_opcode = 0;
+            } else {
+                websocket->thread_data.continuation_of_opcode = frame->opcode;
+            }
+        }
+    }
+
     /* Invoke user cb */
     bool callback_result = true;
     if (websocket->on_incoming_frame_begin && !websocket->thread_data.is_midchannel_handler) {
@@ -1288,19 +1308,38 @@ static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
     AWS_ASSERT(websocket->thread_data.current_incoming_frame);
     AWS_ASSERT(!websocket->thread_data.is_reading_stopped);
 
-    /* Invoke user cb */
-    bool callback_result = true;
-    if (websocket->on_incoming_frame_payload && !websocket->thread_data.is_midchannel_handler) {
-        size_t window_update_size = data.len;
+    if (websocket->thread_data.is_midchannel_handler) {
+        return s_decoder_on_midchannel_payload(websocket, data);
+    }
 
-        callback_result = websocket->on_incoming_frame_payload(
-            websocket, websocket->thread_data.current_incoming_frame, data, &window_update_size, websocket->user_data);
+    return s_decoder_on_user_payload(websocket, data);
+}
 
-        /* If user reduced window_update_size, reduce how much the websocket will update its window */
+/* Invoke user cb */
+static int s_decoder_on_user_payload(struct aws_websocket *websocket, struct aws_byte_cursor data) {
+    if (!websocket->on_incoming_frame_payload) {
+        return AWS_OP_SUCCESS;
+    }
+
+    size_t window_update_size = data.len;
+
+    if (!websocket->on_incoming_frame_payload(
+            websocket,
+            websocket->thread_data.current_incoming_frame,
+            data,
+            &window_update_size,
+            websocket->user_data)) {
+
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET, "id=%p: Incoming payload callback has reported a failure.", (void *)websocket);
+        return aws_raise_error(AWS_ERROR_HTTP_CALLBACK_FAILURE);
+    }
+
+    /* If user reduced window_update_size, reduce how much the websocket will update its window */
+    if (data.len > window_update_size) {
         size_t reduce = data.len - window_update_size;
-        AWS_ASSERT(reduce <= websocket->thread_data.incoming_message_window_update);
+        AWS_ASSERT(websocket->thread_data.incoming_message_window_update >= reduce);
         websocket->thread_data.incoming_message_window_update -= reduce;
-
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_WEBSOCKET,
             "id=%p: Incoming payload callback changed window update size, window will shrink by %zu.",
@@ -1308,15 +1347,77 @@ static int s_decoder_on_payload(struct aws_byte_cursor data, void *user_data) {
             reduce);
     }
 
-    /* TODO: pass data to channel handler on right */
+    return AWS_OP_SUCCESS;
+}
 
-    if (!callback_result) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_WEBSOCKET, "id=%p: Incoming payload callback has reported a failure.", (void *)websocket);
-        return aws_raise_error(AWS_ERROR_HTTP_CALLBACK_FAILURE);
+/* Pass data to channel handler on the right */
+static int s_decoder_on_midchannel_payload(struct aws_websocket *websocket, struct aws_byte_cursor data) {
+    struct aws_io_message *io_msg = NULL;
+
+    /* Only pass data to next handler if it's from a BINARY frame (or the CONTINUATION of a BINARY frame) */
+    bool is_binary_data = websocket->thread_data.current_incoming_frame->opcode == AWS_WEBSOCKET_OPCODE_BINARY ||
+                          (websocket->thread_data.current_incoming_frame->opcode == AWS_WEBSOCKET_OPCODE_CONTINUATION &&
+                           websocket->thread_data.continuation_of_opcode == AWS_WEBSOCKET_OPCODE_BINARY);
+    if (!is_binary_data) {
+        return AWS_OP_SUCCESS;
     }
 
+    AWS_ASSERT(websocket->channel_slot->adj_right); /* Expected another slot in the read direction */
+
+    /* Note that current implementation of websocket handler does not buffer data travelling in the "read" direction,
+     * so the downstream read window needs to be large enough to immediately receive incoming data. */
+    if (aws_channel_slot_downstream_read_window(websocket->channel_slot) < data.len) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Cannot send entire message without exceeding read window.",
+            (void *)websocket);
+        aws_raise_error(AWS_IO_CHANNEL_READ_WOULD_EXCEED_WINDOW);
+        goto error;
+    }
+
+    io_msg = aws_channel_acquire_message_from_pool(
+        websocket->channel_slot->channel, AWS_IO_MESSAGE_APPLICATION_DATA, data.len);
+    if (!io_msg) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET, "id=%p: Failed to acquire message.", (void *)websocket);
+        goto error;
+    }
+
+    if (io_msg->message_data.capacity < data.len) {
+        /* Probably can't happen. Data is coming an aws_io_message, should be able to acquire another just as big */
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET, "id=%p: Failed to acquire sufficiently large message.", (void *)websocket);
+        aws_raise_error(AWS_ERROR_UNKNOWN);
+        goto error;
+    }
+
+    if (!aws_byte_buf_write_from_whole_cursor(&io_msg->message_data, data)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET, "id=%p: Unexpected error while copying data.", (void *)websocket);
+        aws_raise_error(AWS_ERROR_UNKNOWN);
+        goto error;
+    }
+
+    int err = aws_channel_slot_send_message(websocket->channel_slot, io_msg, AWS_CHANNEL_DIR_READ);
+    if (err) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Failed to send read message, error %d (%s).",
+            (void *)websocket,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        goto error;
+    }
+
+    /* Reduce amount by which websocket will update its read window */
+    AWS_ASSERT(websocket->thread_data.incoming_message_window_update >= data.len);
+    websocket->thread_data.incoming_message_window_update -= data.len;
+
     return AWS_OP_SUCCESS;
+
+error:
+    if (io_msg) {
+        aws_mem_release(io_msg->allocator, io_msg);
+    }
+    return AWS_OP_ERR;
 }
 
 static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code, bool *out_callback_result) {
@@ -1367,11 +1468,50 @@ static int s_handler_increment_read_window(
     struct aws_channel_slot *slot,
     size_t size) {
 
-    (void)handler;
-    (void)slot;
-    (void)size;
-    /* TODO: implement */
+    struct aws_websocket *websocket = handler->impl;
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(slot->channel));
+    AWS_ASSERT(websocket->thread_data.is_midchannel_handler);
+
+    /* NOTE: This is pretty hacky and should change if it ever causes issues.
+     *
+     * Currently, all read messages are processed the moment they're received.
+     * If the downstream read window is open enough to accept this data, we can send it right along.
+     * BUT if the downstream window were too small, we'd need to buffer the data and wait until
+     * the downstream window opened again to finish sending.
+     *
+     * To avoid that complexity, we go to pains here to ensure that the websocket's window exactly
+     * matches the window to the right, allowing us to avoid buffering in the read direction.
+     */
+    size_t increment = size;
+    if (websocket->thread_data.last_known_right_slot != slot->adj_right) {
+        if (size < slot->window_size) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_WEBSOCKET,
+                "id=%p: The websocket does not support downstream handlers with a smaller window.",
+                (void *)websocket);
+            aws_raise_error(AWS_IO_CHANNEL_READ_WOULD_EXCEED_WINDOW);
+            goto error;
+        }
+
+        /* New handler to the right, make sure websocket's window matches its window. */
+        websocket->thread_data.last_known_right_slot = slot->adj_right;
+        increment = size - slot->window_size;
+    }
+
+    if (increment != 0) {
+        int err = aws_channel_slot_increment_read_window(slot, increment);
+        if (err) {
+            goto error;
+        }
+    }
+
     return AWS_OP_SUCCESS;
+
+error:
+    websocket->thread_data.is_reading_stopped = true;
+    /* Shutting down channel because I know that no one ever checks these errors */
+    s_shutdown_due_to_read_err(websocket, aws_last_error());
+    return AWS_OP_ERR;
 }
 
 static void s_increment_read_window_action(struct aws_websocket *websocket, size_t size) {
