@@ -361,11 +361,10 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
         return NULL;
     }
 
-    struct h1_stream *stream = aws_mem_acquire(options->client_connection->alloc, sizeof(struct h1_stream));
+    struct h1_stream *stream = aws_mem_calloc(options->client_connection->alloc, 1, sizeof(struct h1_stream));
     if (!stream) {
         return NULL;
     }
-    AWS_ZERO_STRUCT(*stream);
 
     stream->base.vtable = &s_stream_vtable;
     stream->base.alloc = options->client_connection->alloc;
@@ -1163,19 +1162,19 @@ static int s_decoder_on_done(void *user_data) {
 }
 
 /* Common new() logic for server & client */
-static struct h1_connection *s_connection_new(struct aws_allocator *alloc) {
+static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_t initial_window_size) {
 
-    struct h1_connection *connection = aws_mem_acquire(alloc, sizeof(struct h1_connection));
+    struct h1_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct h1_connection));
     if (!connection) {
         goto error_connection_alloc;
     }
-    AWS_ZERO_STRUCT(*connection);
 
     connection->base.vtable = &s_h1_connection_vtable;
     connection->base.alloc = alloc;
     connection->base.channel_handler.vtable = &s_h1_connection_vtable.channel_handler_vtable;
     connection->base.channel_handler.impl = connection;
     connection->base.http_version = AWS_HTTP_VERSION_1_1;
+    connection->base.initial_window_size = initial_window_size;
 
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
@@ -1224,31 +1223,29 @@ error_connection_alloc:
 }
 
 struct aws_http_connection *aws_http_connection_new_http1_1_server(
-    const struct aws_http_server_connection_impl_options *options) {
+    struct aws_allocator *allocator,
+    size_t initial_window_size) {
 
-    struct h1_connection *connection = s_connection_new(options->alloc);
+    struct h1_connection *connection = s_connection_new(allocator, initial_window_size);
     if (!connection) {
         return NULL;
     }
 
-    connection->base.initial_window_size = options->initial_window_size;
     connection->base.server_data = &connection->base.client_or_server_data.server;
 
     return &connection->base;
 }
 
 struct aws_http_connection *aws_http_connection_new_http1_1_client(
-    const struct aws_http_client_connection_impl_options *options) {
+    struct aws_allocator *allocator,
+    size_t initial_window_size) {
 
-    struct h1_connection *connection = s_connection_new(options->alloc);
+    struct h1_connection *connection = s_connection_new(allocator, initial_window_size);
     if (!connection) {
         return NULL;
     }
 
-    connection->base.initial_window_size = options->initial_window_size;
-    connection->base.user_data = options->user_data;
     connection->base.client_data = &connection->base.client_or_server_data.client;
-    connection->base.client_data->on_shutdown = options->on_shutdown;
 
     return &connection->base;
 }
@@ -1410,13 +1407,6 @@ static int s_handler_shutdown(
         while (!aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
             struct aws_linked_list_node *node = aws_linked_list_front(&connection->synced_data.pending_stream_list);
             s_stream_complete(AWS_CONTAINER_OF(node, struct h1_stream, node), stream_error_code);
-        }
-
-        struct aws_http_connection *base = &connection->base;
-        if (base->server_data && base->server_data->on_shutdown) {
-            base->server_data->on_shutdown(base, error_code, base->user_data);
-        } else if (base->client_data && base->client_data->on_shutdown) {
-            base->client_data->on_shutdown(base, error_code, base->user_data);
         }
     }
 

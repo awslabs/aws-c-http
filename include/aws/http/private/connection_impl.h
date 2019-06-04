@@ -27,20 +27,6 @@
 struct aws_http_request_options;
 struct aws_http_stream;
 
-struct aws_http_server_connection_impl_options {
-    struct aws_allocator *alloc;
-    size_t initial_window_size;
-};
-
-struct aws_http_client_connection_impl_options {
-    struct aws_allocator *alloc;
-    bool is_using_tls;
-    size_t initial_window_size;
-    void *user_data;
-    aws_http_on_client_connection_setup_fn *on_setup;
-    aws_http_on_client_connection_shutdown_fn *on_shutdown;
-};
-
 struct aws_http_connection_vtable {
     struct aws_channel_handler_vtable channel_handler_vtable;
 
@@ -59,7 +45,6 @@ struct aws_http_connection {
     struct aws_channel_slot *channel_slot;
     struct aws_allocator *alloc;
     enum aws_http_version http_version;
-    void *user_data;
     size_t initial_window_size;
 
     /* Connection starts with 1 hold for the user.
@@ -68,10 +53,11 @@ struct aws_http_connection {
 
     union {
         struct client_data {
-            aws_http_on_client_connection_shutdown_fn *on_shutdown;
+            uint8_t delete_me; /* exists to prevent "empty struct" errors */
         } client;
 
         struct server_data {
+            void *connection_user_data;
             aws_http_on_incoming_request_fn *on_incoming_request;
             aws_http_on_server_connection_shutdown_fn *on_shutdown;
         } server;
@@ -87,11 +73,13 @@ AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http1_1_server(
-    const struct aws_http_server_connection_impl_options *options);
+    struct aws_allocator *allocator,
+    size_t initial_window_size);
 
 AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http1_1_client(
-    const struct aws_http_client_connection_impl_options *options);
+    struct aws_allocator *allocator,
+    size_t initial_window_size);
 
 AWS_EXTERN_C_END
 
