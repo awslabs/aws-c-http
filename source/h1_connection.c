@@ -1291,7 +1291,7 @@ static int s_handler_process_read_message(
                 (void *)&connection->base);
 
             aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
-            goto error;
+            goto shutdown;
         }
 
         if (!connection->thread_data.incoming_stream) {
@@ -1304,7 +1304,7 @@ static int s_handler_process_read_message(
                 (void *)&connection->base);
 
             aws_raise_error(AWS_ERROR_INVALID_STATE);
-            goto error;
+            goto shutdown;
         }
 
         /* Decoder will invoke the internal s_decoder_X callbacks, which in turn invoke user callbacks */
@@ -1320,7 +1320,7 @@ static int s_handler_process_read_message(
                 aws_last_error(),
                 aws_error_name(aws_last_error()));
 
-            goto error;
+            goto shutdown;
         }
     }
 
@@ -1336,16 +1336,17 @@ static int s_handler_process_read_message(
                 aws_last_error(),
                 aws_error_name(aws_last_error()));
 
-            goto error;
+            goto shutdown;
         }
     }
 
     aws_mem_release(message->allocator, message);
     return AWS_OP_SUCCESS;
-error:
+
+shutdown:
     aws_mem_release(message->allocator, message);
     s_shutdown_connection(connection, aws_last_error());
-    return AWS_OP_ERR;
+    return AWS_OP_SUCCESS;
 }
 
 static int s_handler_process_write_message(
