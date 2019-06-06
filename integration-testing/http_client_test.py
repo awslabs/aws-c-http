@@ -26,6 +26,28 @@ if elasticurl_path == None:
 def run_command(args):
     subprocess.check_call(args, shell=shell)
 
+def compare_files(filename_expected, filename_other):
+    if not filecmp.cmp(filename_expected, filename_other, shallow=False):
+        # Give a helpful error message
+        try:
+            bytes_expected = bytearray(open(filename_expected, 'rb').read())
+        except:
+            raise RuntimeError("Failed to open %s" % filename_expected)
+
+        try:
+            bytes_other = bytearray(open(filename_other, 'rb').read())
+        except:
+            raise RuntimeError("Failed to open %s" % filename_other)
+
+        if len(bytes_expected) != len(bytes_other):
+            raise RuntimeError("File lengths differ. Expected %d, got %d" % (len(bytes_expected), len(bytes_other)))
+
+        for i in range(len(bytes_expected)):
+            if bytes_expected[i] != bytes_other[i]:
+                raise RuntimeError("Files differ at byte[%d]. Expected %d, got %d." % (i, bytes_expected[i], bytes_other[i]))
+
+        print("filecmp says these files differ, but they are identical. what the heck.")
+
 
 class SimpleTests(unittest.TestCase):
 #make a simple GET request and make sure it succeeds
@@ -45,8 +67,7 @@ class SimpleTests(unittest.TestCase):
 
         urllib.request.urlretrieve('https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png', 'elastigirl_expected.png')
 
-        if not filecmp.cmp('elastigirl.png', 'elastigirl_expected.png', shallow=False):
-            raise RuntimeError('downloaded files do not match')
+        compare_files('elastigirl_expected.png', 'elastigirl.png')
 
 if __name__ == '__main__':
     unittest.main()
