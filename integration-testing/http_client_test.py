@@ -70,4 +70,4 @@ class SimpleTests(unittest.TestCase):
         compare_files('elastigirl_expected.png', 'elastigirl.png')
 
 if __name__ == '__main__':
-    unittest.main()
+    unittest.main(verbosity=2)
