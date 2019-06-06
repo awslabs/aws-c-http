@@ -18,7 +18,6 @@
 #include <aws/http/http.h>
 
 /* TODO: Document lifetime stuff */
-/* TODO: Should shutdown callback fire when it's a midchannel handler? */
 /* TODO: Document CLOSE frame behavior (when auto-sent during close, when auto-closed) */
 /* TODO: Document auto-pong behavior */
 
@@ -235,7 +234,7 @@ AWS_HTTP_API
 int aws_websocket_client_connect(const struct aws_websocket_client_connection_options *options);
 
 /**
- * Users must release the websocket when they are done with it (unless it's been converted to a mid-channel handler).
+ * Users must release the websocket when they are done with it.
  * The websocket's memory cannot be reclaimed until this is done.
  * If the websocket connection was not already shutting down, it will be shut down.
  * Callbacks may continue firing after this is called, with "shutdown" being the final callback.
@@ -281,16 +280,16 @@ void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t
  * This MUST be called from the websocket's thread.
  *
  * If successful, the channel that the websocket belongs to is returned and:
- * - The websocket will ignore all further calls to aws_websocket_X() functions.
+ * - Other than aws_websocket_release(), all calls to aws_websocket_x() functions are ignored.
  * - The websocket will no longer invoke any "incoming frame" callbacks.
- * - There is no need to invoke aws_websocket_release(), the websocket will be destroyed when the channel is destroyed.
- *   The caller should acquire a hold on the channel if they need to prevent its destruction.
  * - aws_io_messages written by a downstream handler will be wrapped in binary data frames and sent upstream.
  *   The data may be split/combined as it is sent along.
  * - aws_io_messages read from upstream handlers will be scanned for binary data frames.
  *   The payloads of these frames will be sent downstream.
  *   The payloads may be split/combined as they are sent along.
  * - An incoming close frame will automatically result in channel-shutdown.
+ * - aws_websocket_release() must still be called or the websocket and its channel will never be cleaned up.
+ * - The websocket will still invoke its "on connection shutdown" callback when channel shutdown completes.
  *
  * If unsuccessful, NULL is returned and the websocket is unchanged.
  */
