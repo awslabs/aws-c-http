@@ -32,17 +32,8 @@ struct tester {
     struct aws_allocator *alloc;
     struct testing_channel testing_channel;
     struct aws_http_connection *connection;
-    bool is_shut_down;
-    int shutdown_error_code;
     struct aws_logger logger;
 };
-
-static void s_on_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
-    (void)connection;
-    struct tester *tester = user_data;
-    tester->is_shut_down = true;
-    tester->shutdown_error_code = error_code;
-}
 
 static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
     aws_load_error_strings();
@@ -63,13 +54,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
 
     ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc));
 
-    struct aws_http_client_connection_impl_options options = {
-        .alloc = alloc,
-        .initial_window_size = SIZE_MAX,
-        .user_data = tester,
-        .on_shutdown = s_on_shutdown,
-    };
-    tester->connection = aws_http_connection_new_http1_1_client(&options);
+    tester->connection = aws_http_connection_new_http1_1_client(alloc, SIZE_MAX);
     ASSERT_NOT_NULL(tester->connection);
 
     struct aws_channel_slot *slot = aws_channel_slot_new(tester->testing_channel.channel);
@@ -947,8 +932,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_with_too_much_data_shuts_down_connection)
 
     /* extra data should have caused channel shutdown */
     testing_channel_drain_queued_tasks(&tester.testing_channel);
-    ASSERT_TRUE(tester.is_shut_down);
-    ASSERT_TRUE(tester.shutdown_error_code != AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
+    ASSERT_TRUE(testing_channel_get_shutdown_error_code(&tester.testing_channel) != AWS_ERROR_SUCCESS);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -1064,8 +1049,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_without_request_shuts_down_connection) {
     ASSERT_SUCCESS(s_send_response_str_ignore_errors(&tester, "HTTP/1.1 200 OK\r\n\r\n"));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
-    ASSERT_TRUE(tester.is_shut_down);
-    ASSERT_TRUE(tester.shutdown_error_code != AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
+    ASSERT_TRUE(testing_channel_get_shutdown_error_code(&tester.testing_channel) != AWS_ERROR_SUCCESS);
 
     /* clean up */
     ASSERT_SUCCESS(s_tester_clean_up(&tester));

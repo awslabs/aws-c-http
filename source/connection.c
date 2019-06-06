@@ -15,6 +15,7 @@
 
 #include <aws/http/private/connection_impl.h>
 
+#include <aws/common/hash_table.h>
 #include <aws/common/string.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/logging.h>
@@ -36,15 +37,30 @@ struct aws_http_server {
     void *user_data;
     aws_http_server_on_incoming_connection_fn *on_incoming_connection;
 
+    struct aws_hash_table channel_to_connection_map;
     struct aws_socket *socket;
+};
+
+/* Gets a client connection up and running.
+ * Responsible for firing on_setup and on_shutdown callbacks. */
+struct aws_http_client_bootstrap {
+    struct aws_allocator *alloc;
+    bool is_using_tls;
+    size_t initial_window_size;
+    void *user_data;
+    aws_http_on_client_connection_setup_fn *on_setup;
+    aws_http_on_client_connection_shutdown_fn *on_shutdown;
+
+    struct aws_http_connection *connection;
 };
 
 /* Determine the http-version, create appropriate type of connection, and insert it into the channel. */
 static struct aws_http_connection *s_connection_new(
+    struct aws_allocator *alloc,
     struct aws_channel *channel,
     bool is_server,
     bool is_using_tls,
-    void *options) {
+    size_t initial_window_size) {
 
     struct aws_channel_slot *connection_slot = NULL;
     struct aws_http_connection *connection = NULL;
@@ -107,9 +123,9 @@ static struct aws_http_connection *s_connection_new(
     switch (version) {
         case AWS_HTTP_VERSION_1_1:
             if (is_server) {
-                connection = aws_http_connection_new_http1_1_server(options);
+                connection = aws_http_connection_new_http1_1_server(alloc, initial_window_size);
             } else {
-                connection = aws_http_connection_new_http1_1_client(options);
+                connection = aws_http_connection_new_http1_1_client(alloc, initial_window_size);
             }
             break;
         default:
@@ -233,12 +249,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
         server->socket->local_endpoint.port);
 
     /* Create connection */
-    struct aws_http_server_connection_impl_options options = {
-        .alloc = server->alloc,
-        .initial_window_size = server->initial_window_size,
-    };
-
-    struct aws_http_connection *connection = s_connection_new(channel, true, server->is_using_tls, &options);
+    struct aws_http_connection *connection =
+        s_connection_new(server->alloc, channel, true, server->is_using_tls, server->initial_window_size);
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
@@ -251,12 +263,28 @@ static void s_server_bootstrap_on_accept_channel_setup(
         goto error;
     }
 
+    /* Remember which connection is on this channel */
+    int err = aws_hash_table_put(&server->channel_to_connection_map, channel, connection, NULL);
+    if (err) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_SERVER,
+            "%s:%d: Failed to store connection object, error %d (%s).",
+            server->socket->local_endpoint.address,
+            server->socket->local_endpoint.port,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
+        goto error;
+    }
+
     /* Tell user of successful connection. */
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
-        "id=%p: " PRInSTR " server connection established.",
+        "id=%p: " PRInSTR " server connection established at %s:%d.",
         (void *)connection,
-        AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->http_version)));
+        AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->http_version)),
+        server->socket->local_endpoint.address,
+        server->socket->local_endpoint.port);
 
     server->on_incoming_connection(server, connection, error_code, server->user_data);
     user_cb_invoked = true;
@@ -296,11 +324,23 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
     void *user_data) {
 
     (void)bootstrap;
-    (void)error_code;
-    (void)channel;
-    (void)user_data;
+    AWS_ASSERT(user_data);
+    struct aws_http_server *server = user_data;
 
-    /* No implementation because channel handler currently deals with shutdown logic and user callbacks. */
+    /* Figure out which connection this was, and remove that entry from the map.
+     * It won't be in the map if something went wrong while setting up the connection. */
+    struct aws_hash_element map_elem;
+    int was_present;
+    int err = aws_hash_table_remove(&server->channel_to_connection_map, channel, &map_elem, &was_present);
+    if (!err && was_present) {
+        struct aws_http_connection *connection = map_elem.value;
+        AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: Server connection shut down.", (void *)connection);
+
+        /* Tell user about shutdown */
+        if (connection->server_data->on_shutdown) {
+            connection->server_data->on_shutdown(connection, error_code, connection->server_data->connection_user_data);
+        }
+    }
 }
 
 struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options) {
@@ -316,11 +356,10 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
         goto error;
     }
 
-    server = aws_mem_acquire(options->allocator, sizeof(struct aws_http_server));
+    server = aws_mem_calloc(options->allocator, 1, sizeof(struct aws_http_server));
     if (!server) {
         goto error;
     }
-    AWS_ZERO_STRUCT(*server);
 
     server->alloc = options->allocator;
     server->bootstrap = options->bootstrap;
@@ -328,6 +367,17 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     server->initial_window_size = options->initial_window_size;
     server->user_data = options->server_user_data;
     server->on_incoming_connection = options->on_incoming_connection;
+
+    int err = aws_hash_table_init(
+        &server->channel_to_connection_map, server->alloc, 16, aws_hash_ptr, aws_ptr_eq, NULL, NULL);
+    if (err) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_SERVER,
+            "static: Cannot create server, error %d (%s).",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        goto error;
+    }
 
     if (options->tls_options) {
         server->is_using_tls = true;
@@ -369,16 +419,26 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     return server;
 
 error:
-    if (server) {
-        aws_http_server_destroy(server);
-    }
+    aws_http_server_destroy(server);
     return NULL;
 }
 
 void aws_http_server_destroy(struct aws_http_server *server) {
-    AWS_ASSERT(server);
+    if (!server) {
+        return;
+    }
 
     if (server->socket) {
+        /* TODO: Server shutdown probably needs multiple steps, and to be async, like:
+         * 1) stop accepting new connections.
+         * 2) issue shutdown to all existing connections.
+         * 3) wait for connections to finish shutting down.
+         * 4) issue a destroy_complete callback.
+         * 5) finally actually delete server.
+         *
+         * But for now, just assert that there are no outstanding connections */
+        AWS_FATAL_ASSERT(aws_hash_table_get_entry_count(&server->channel_to_connection_map) == 0);
+
         AWS_LOGF_INFO(
             AWS_LS_HTTP_SERVER,
             "%s:%d: Destroying server.",
@@ -388,20 +448,22 @@ void aws_http_server_destroy(struct aws_http_server *server) {
         aws_server_bootstrap_destroy_socket_listener(server->bootstrap, server->socket);
     }
 
+    aws_hash_table_clean_up(&server->channel_to_connection_map);
+
     aws_mem_release(server->alloc, server);
 }
 
-/* At this point, the client bootstrapper has established a connection to the server and set up a channel.
+/* At this point, the channel bootstrapper has established a connection to the server and set up a channel.
  * Now we need to create the aws_http_connection and insert it into the channel as a channel-handler. */
 static void s_client_bootstrap_on_channel_setup(
-    struct aws_client_bootstrap *bootstrap,
+    struct aws_client_bootstrap *channel_bootstrap,
     int error_code,
     struct aws_channel *channel,
     void *user_data) {
 
-    (void)bootstrap;
+    (void)channel_bootstrap;
     AWS_ASSERT(user_data);
-    struct aws_http_client_connection_impl_options *options = user_data;
+    struct aws_http_client_bootstrap *http_bootstrap = user_data;
 
     if (error_code) {
         AWS_LOGF_ERROR(
@@ -419,8 +481,9 @@ static void s_client_bootstrap_on_channel_setup(
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "static: Socket connected, creating client connection object.");
 
-    struct aws_http_connection *connection = s_connection_new(channel, false, options->is_using_tls, options);
-    if (!connection) {
+    http_bootstrap->connection = s_connection_new(
+        http_bootstrap->alloc, channel, false, http_bootstrap->is_using_tls, http_bootstrap->initial_window_size);
+    if (!http_bootstrap->connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "static: Failed to create the client connection object, error %d (%s).",
@@ -433,13 +496,11 @@ static void s_client_bootstrap_on_channel_setup(
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
         "id=%p: " PRInSTR " client connection established.",
-        (void *)connection,
-        AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->http_version)));
+        (void *)http_bootstrap->connection,
+        AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(http_bootstrap->connection->http_version)));
 
     /* Tell user of successful connection. */
-    options->on_setup(connection, AWS_ERROR_SUCCESS, options->user_data);
-
-    aws_mem_release(options->alloc, options);
+    http_bootstrap->on_setup(http_bootstrap->connection, AWS_ERROR_SUCCESS, http_bootstrap->user_data);
     return;
 
 error:
@@ -447,35 +508,47 @@ error:
         error_code = aws_last_error();
     }
 
+    /* Tell user of failed connection */
+    http_bootstrap->on_setup(NULL, error_code, http_bootstrap->user_data);
+
+    /* on_shutdown isn't allowed to be called if on_setup reports an error */
+    http_bootstrap->on_shutdown = NULL;
+
     if (channel) {
+        /* If channel exists, invoke shutdown. http_bootstrap must stay alive until channel shutdown completes. */
         aws_channel_shutdown(channel, error_code);
+    } else {
+        /* If channel does not exist, clean up the http_bootstrap. It has no more work to do. */
+        aws_mem_release(http_bootstrap->alloc, http_bootstrap);
     }
-
-    /* Tell user of failed connection. */
-    options->on_setup(NULL, error_code, options->user_data);
-
-    aws_mem_release(options->alloc, options);
 }
 
 /* At this point, the channel for a client connection has complete shutdown, but hasn't been destroyed yet. */
 static void s_client_bootstrap_on_channel_shutdown(
-    struct aws_client_bootstrap *bootstrap,
+    struct aws_client_bootstrap *channel_bootstrap,
     int error_code,
     struct aws_channel *channel,
     void *user_data) {
 
-    (void)bootstrap;
-    (void)error_code;
+    (void)channel_bootstrap;
     (void)channel;
-    (void)user_data;
 
-    /* No implementation because channel handler currently deals with shutdown logic and user callbacks. */
+    AWS_ASSERT(user_data);
+    struct aws_http_client_bootstrap *http_bootstrap = user_data;
+
+    /* Tell user about shutdown */
+    if (http_bootstrap->on_shutdown) {
+        http_bootstrap->on_shutdown(http_bootstrap->connection, error_code, http_bootstrap->user_data);
+    }
+
+    /* Clean up bootstrapper */
+    aws_mem_release(http_bootstrap->alloc, http_bootstrap);
 }
 
 int aws_http_client_connect(const struct aws_http_client_connection_options *options) {
     aws_http_fatal_assert_library_initialized();
 
-    struct aws_http_client_connection_impl_options *impl_options = NULL;
+    struct aws_http_client_bootstrap *http_bootstrap = NULL;
     struct aws_string *host_name = NULL;
     int err = 0;
 
@@ -493,17 +566,17 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
         goto error;
     }
 
-    impl_options = aws_mem_acquire(options->allocator, sizeof(struct aws_http_client_connection_impl_options));
-    if (!impl_options) {
+    http_bootstrap = aws_mem_calloc(options->allocator, 1, sizeof(struct aws_http_client_bootstrap));
+    if (!http_bootstrap) {
         goto error;
     }
 
-    impl_options->alloc = options->allocator;
-    impl_options->is_using_tls = options->tls_options != NULL;
-    impl_options->initial_window_size = options->initial_window_size;
-    impl_options->user_data = options->user_data;
-    impl_options->on_setup = options->on_setup;
-    impl_options->on_shutdown = options->on_shutdown;
+    http_bootstrap->alloc = options->allocator;
+    http_bootstrap->is_using_tls = options->tls_options != NULL;
+    http_bootstrap->initial_window_size = options->initial_window_size;
+    http_bootstrap->user_data = options->user_data;
+    http_bootstrap->on_setup = options->on_setup;
+    http_bootstrap->on_shutdown = options->on_shutdown;
 
     if (options->tls_options) {
         err = aws_client_bootstrap_new_tls_socket_channel(
@@ -514,7 +587,7 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
             options->tls_options,
             s_client_bootstrap_on_channel_setup,
             s_client_bootstrap_on_channel_shutdown,
-            impl_options);
+            http_bootstrap);
     } else {
         err = aws_client_bootstrap_new_socket_channel(
             options->bootstrap,
@@ -523,7 +596,7 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
             options->socket_options,
             s_client_bootstrap_on_channel_setup,
             s_client_bootstrap_on_channel_shutdown,
-            impl_options);
+            http_bootstrap);
     }
 
     if (err) {
@@ -540,8 +613,8 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
     return AWS_OP_SUCCESS;
 
 error:
-    if (impl_options) {
-        aws_mem_release(impl_options->alloc, impl_options);
+    if (http_bootstrap) {
+        aws_mem_release(http_bootstrap->alloc, http_bootstrap);
     }
 
     if (host_name) {
@@ -577,7 +650,7 @@ int aws_http_connection_configure_server(
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
-    connection->user_data = options->connection_user_data;
+    connection->server_data->connection_user_data = options->connection_user_data;
     connection->server_data->on_incoming_request = options->on_incoming_request;
     connection->server_data->on_shutdown = options->on_shutdown;
 
