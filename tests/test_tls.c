@@ -75,15 +75,7 @@ void s_on_connection_shutdown(struct aws_http_connection *connection, int error_
 
 static int s_test_wait(struct test_ctx *test, bool (*pred)(void *user_data)) {
     ASSERT_SUCCESS(aws_mutex_lock(&test->wait_lock));
-    int wait_result = 0;
-    do {
-        wait_result = aws_condition_variable_wait_for_pred(
-            &test->wait_cvar,
-            &test->wait_lock,
-            aws_timestamp_convert(TEST_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL),
-            pred,
-            test);
-    } while (wait_result == -1 && AWS_ERROR_COND_VARIABLE_TIMED_OUT == aws_last_error());
+    int wait_result = aws_condition_variable_wait_pred(&test->wait_cvar, &test->wait_lock, pred, test);
     ASSERT_SUCCESS(aws_mutex_unlock(&test->wait_lock));
     ASSERT_SUCCESS(wait_result);
     return AWS_OP_SUCCESS;
@@ -98,87 +90,6 @@ static bool s_test_connection_shutdown_pred(void *user_data) {
     struct test_ctx *test = user_data;
     return test->wait_result || test->client_connection_is_shutdown;
 }
-
-/* test that if a timeout occurs during negotiation that the user code is still
- * notified. Connecting to port 80 on s3 or amazon.com and attempting TLS will get
- * you blackholed, and thus timed out */
-static int s_test_tls_negotiation_timeout(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
-
-    aws_tls_init_static_state(allocator);
-    aws_http_library_init(allocator);
-    aws_load_error_strings();
-    aws_io_load_error_strings();
-    aws_io_load_log_subject_strings();
-
-    struct aws_byte_cursor url =
-        aws_byte_cursor_from_c_str("https://aws-crt-test-stuff.s3.amazonaws.com/http_test_doc.txt");
-    struct aws_uri uri;
-    aws_uri_init_parse(&uri, allocator, &url);
-
-    struct aws_socket_options socket_options = {
-        .type = AWS_SOCKET_STREAM, .domain = AWS_SOCKET_IPV4, .connect_timeout_ms = TEST_TIMEOUT_SEC * 1000};
-
-    struct test_ctx test;
-    AWS_ZERO_STRUCT(test);
-    test.alloc = allocator;
-
-    struct aws_logger_standard_options logger_options = {.file = stdout, .level = AWS_LL_TRACE};
-    ASSERT_SUCCESS(aws_logger_init_standard(&test.logger, allocator, &logger_options));
-    aws_logger_set(&test.logger);
-
-    aws_mutex_init(&test.wait_lock);
-    aws_condition_variable_init(&test.wait_cvar);
-
-    ASSERT_SUCCESS(aws_event_loop_group_default_init(&test.event_loop_group, test.alloc, 1));
-    ASSERT_SUCCESS(aws_host_resolver_init_default(&test.host_resolver, test.alloc, 1, &test.event_loop_group));
-    ASSERT_NOT_NULL(
-        test.client_bootstrap =
-            aws_client_bootstrap_new(test.alloc, &test.event_loop_group, &test.host_resolver, NULL));
-    struct aws_tls_ctx_options tls_ctx_options;
-    aws_tls_ctx_options_init_default_client(&tls_ctx_options, allocator);
-    ASSERT_NOT_NULL(test.tls_ctx = aws_tls_client_ctx_new(allocator, &tls_ctx_options));
-    struct aws_tls_connection_options tls_connection_options;
-    aws_tls_connection_options_init_from_ctx(&tls_connection_options, test.tls_ctx);
-    struct aws_http_client_connection_options http_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
-    http_options.allocator = test.alloc;
-    http_options.bootstrap = test.client_bootstrap;
-    http_options.host_name = *aws_uri_host_name(&uri);
-    http_options.port = 80; /* note that this is intentionally wrong and not 443 */
-    http_options.on_setup = s_on_connection_setup;
-    http_options.on_shutdown = s_on_connection_shutdown;
-    http_options.socket_options = &socket_options;
-    http_options.tls_options = &tls_connection_options;
-    http_options.user_data = &test;
-
-    ASSERT_SUCCESS(aws_http_client_connect(&http_options));
-    ASSERT_SUCCESS(s_test_wait(&test, s_test_connection_setup_pred));
-
-    /* the connection should have failed within TEST_TIMEOUT_SEC */
-    ASSERT_NULL(test.client_connection);
-    ASSERT_TRUE(0 != test.wait_result);
-
-    aws_client_bootstrap_release(test.client_bootstrap);
-    aws_host_resolver_clean_up(&test.host_resolver);
-    aws_event_loop_group_clean_up(&test.event_loop_group);
-
-    aws_tls_ctx_options_clean_up(&tls_ctx_options);
-    aws_tls_connection_options_clean_up(&tls_connection_options);
-    aws_tls_ctx_destroy(test.tls_ctx);
-
-    aws_logger_set(NULL);
-    aws_logger_clean_up(&test.logger);
-
-    aws_mutex_clean_up(&test.wait_lock);
-    aws_condition_variable_clean_up(&test.wait_cvar);
-    aws_uri_clean_up(&uri);
-
-    aws_http_library_clean_up();
-    aws_tls_clean_up_static_state();
-
-    return 0;
-}
-AWS_TEST_CASE(tls_negotiation_timeout, s_test_tls_negotiation_timeout);
 
 static void s_on_stream_headers(
     struct aws_http_stream *stream,
