@@ -65,7 +65,6 @@ struct aws_websocket_handler_options {
     size_t initial_window_size;
 
     void *user_data;
-    aws_websocket_on_connection_shutdown_fn *on_connection_shutdown;
     aws_websocket_on_incoming_frame_begin_fn *on_incoming_frame_begin;
     aws_websocket_on_incoming_frame_payload_fn *on_incoming_frame_payload;
     aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
