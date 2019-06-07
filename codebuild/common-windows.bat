@@ -9,9 +9,6 @@ set INSTALL_DIR=%BUILDS_DIR%\install
 mkdir %BUILDS_DIR%
 mkdir %INSTALL_DIR%
 
-REM deleteme
-dir /s
-
 CALL :install_library aws-c-common
 CALL :install_library aws-c-io
 CALL :install_library aws-c-compression
