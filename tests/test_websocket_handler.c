@@ -52,9 +52,6 @@ struct tester {
     struct aws_websocket *websocket;
     bool is_midchannel_handler;
 
-    size_t on_shutdown_count;
-    int shutdown_error_code;
-
     size_t on_send_complete_count;
 
     /* To make the written output of the websocket-handler easier to check,
@@ -115,13 +112,6 @@ struct readpush_frame {
     /* Everything below this is auto-configured */
     struct aws_byte_cursor cursor; /* advances as payload is written */
 };
-
-static void s_on_connection_shutdown(struct aws_websocket *websocket, int error_code, void *user_data) {
-    (void)websocket;
-    struct tester *tester = user_data;
-    tester->on_shutdown_count++;
-    tester->shutdown_error_code = error_code;
-}
 
 /* Run loop that keeps the websocket-handler chugging. We need this because:
  * 1) The websocket-handler won't write the next aws_io_message until the preceding one is processed.
@@ -503,7 +493,6 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
         .on_incoming_frame_begin = s_on_incoming_frame_begin,
         .on_incoming_frame_payload = s_on_incoming_frame_payload,
         .on_incoming_frame_complete = s_on_incoming_frame_complete,
-        .on_connection_shutdown = s_on_connection_shutdown,
     };
     tester->websocket = aws_websocket_handler_new(&ws_options);
     ASSERT_NOT_NULL(tester->websocket);
@@ -515,11 +504,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
 }
 
 static int s_tester_clean_up(struct tester *tester) {
-    if (tester->is_midchannel_handler) {
-        aws_channel_shutdown(tester->testing_channel.channel, AWS_ERROR_SUCCESS);
-    } else {
-        aws_websocket_release(tester->websocket);
-    }
+    aws_websocket_release(tester->websocket);
     ASSERT_SUCCESS(s_drain_written_messages(tester));
 
     ASSERT_SUCCESS(testing_channel_clean_up(&tester->testing_channel));
@@ -1186,7 +1171,7 @@ TEST_CASE(websocket_handler_send_halts_if_payload_fn_returns_false) {
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CALLBACK_FAILURE, sending[0].on_complete_error_code);
 
     /* The websocket should close when a callback returns false */
-    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
 
     /* Other send should have been cancelled without it payload callback ever being invoked */
     ASSERT_UINT_EQUALS(0, sending[1].on_payload_count);
@@ -1244,7 +1229,7 @@ TEST_CASE(websocket_handler_shutdown_handles_queued_close_frame) {
     /* Shutdown channel normally */
     aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
     ASSERT_SUCCESS(s_drain_written_messages(&tester));
-    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
 
     /* Check that user's CLOSE frame was written, and nothing further */
     ASSERT_SUCCESS(s_check_written_message(&send, 0));
@@ -1283,7 +1268,7 @@ TEST_CASE(websocket_handler_shutdown_immediately_in_emergency) {
     ASSERT_SUCCESS(s_drain_written_messages(&tester));
 
     /* Ensure shutdown is complete at this point*/
-    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
 
     /* Frame should not have sent completely, no CLOSE frame should have been sent either */
     ASSERT_UINT_EQUALS(1, send.on_complete_count);
@@ -1343,7 +1328,7 @@ TEST_CASE(websocket_handler_close_on_thread) {
     aws_websocket_close(tester.websocket, false);
 
     ASSERT_SUCCESS(s_drain_written_messages(&tester));
-    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -1359,7 +1344,7 @@ TEST_CASE(websocket_handler_close_off_thread) {
     testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
 
     ASSERT_SUCCESS(s_drain_written_messages(&tester));
-    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -1561,7 +1546,7 @@ TEST_CASE(websocket_handler_read_halts_if_begin_fn_returns_false) {
     ASSERT_UINT_EQUALS(1, tester.num_incoming_frames);
 
     /* Callback failure should have caused connection to close */
-    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -1607,7 +1592,7 @@ TEST_CASE(websocket_handler_read_halts_if_payload_fn_returns_false) {
     ASSERT_UINT_EQUALS(1, tester.num_incoming_frames);
 
     /* Callback failure should have caused connection to close */
-    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -1652,7 +1637,7 @@ TEST_CASE(websocket_handler_read_halts_if_complete_fn_returns_false) {
     ASSERT_UINT_EQUALS(1, tester.num_incoming_frames);
 
     /* Callback failure should have caused connection to close */
-    ASSERT_UINT_EQUALS(1, tester.on_shutdown_count);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
