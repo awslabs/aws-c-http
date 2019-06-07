@@ -9,6 +9,9 @@ set INSTALL_DIR=%BUILDS_DIR%\install
 mkdir %BUILDS_DIR%
 mkdir %INSTALL_DIR%
 
+rem attempting to figure out why install_library sometimes can't be found...
+dir %dp0
+
 CALL :install_library aws-c-common
 CALL :install_library aws-c-io
 CALL :install_library aws-c-compression
