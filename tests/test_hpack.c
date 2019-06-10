@@ -46,6 +46,7 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
     ASSERT_UINT_EQUALS(1, output_buf.len);
     ASSERT_UINT_EQUALS(10, output_buffer[0]);
     ASSERT_BIN_ARRAYS_EQUALS(zeros, 3, &output_buffer[1], 3);
+    ASSERT_UINT_EQUALS(1, aws_hpack_get_encoded_length_integer(10, 5));
 
     /* Test 42 in 8 bits */
     AWS_ZERO_ARRAY(output_buffer);
@@ -61,6 +62,7 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
     ASSERT_UINT_EQUALS(1, output_buf.len);
     ASSERT_UINT_EQUALS(42, output_buffer[0]);
     ASSERT_BIN_ARRAYS_EQUALS(zeros, 3, &output_buffer[1], 3);
+    ASSERT_UINT_EQUALS(1, aws_hpack_get_encoded_length_integer(42, 8));
 
     /* Test 1337 with 5bit prefix */
     AWS_ZERO_ARRAY(output_buffer);
@@ -80,6 +82,7 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
     ASSERT_UINT_EQUALS(154, output_buffer[1]);
     ASSERT_UINT_EQUALS(10, output_buffer[2]);
     ASSERT_UINT_EQUALS(0, output_buffer[3]);
+    ASSERT_UINT_EQUALS(3, aws_hpack_get_encoded_length_integer(1337, 5));
 
     /* Test 1337 with 5bit prefix and insufficient output space */
     AWS_ZERO_ARRAY(output_buffer);
@@ -207,21 +210,28 @@ static int test_hpack_static_table_find(struct aws_allocator *allocator, void *c
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, 0);
 
     size_t index = 0;
+    bool found_value = false;
 
     DEFINE_STATIC_HEADER(s_authority, ":authority", "amazon.com");
     DEFINE_STATIC_HEADER(s_get, ":method", "GET");
+    DEFINE_STATIC_HEADER(s_other_method, ":method", "TEAPOT");
     DEFINE_STATIC_HEADER(s_garbage, "colden's favorite ice cream flavor", "cookie dough");
 
     /* Test header without value */
-    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_authority, &index));
+    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_authority, &index, &found_value));
     ASSERT_UINT_EQUALS(1, index);
+    ASSERT_FALSE(found_value);
 
     /* Test header with value */
-    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_get, &index));
+    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_get, &index, &found_value));
     ASSERT_UINT_EQUALS(2, index);
+    ASSERT_TRUE(found_value);
+    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_other_method, &index, &found_value));
+    ASSERT_UINT_EQUALS(2, index);
+    ASSERT_FALSE(found_value);
 
     /* Check invalid header */
-    ASSERT_FAILS(aws_hpack_find_index(context, &s_garbage, &index));
+    ASSERT_FAILS(aws_hpack_find_index(context, &s_garbage, &index, &found_value));
 
     aws_hpack_context_destroy(context);
     aws_hpack_static_table_clean_up();
@@ -235,7 +245,7 @@ static int test_hpack_static_table_get(struct aws_allocator *allocator, void *ct
     aws_hpack_static_table_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, 0);
 
-    struct aws_http_header *found = NULL;
+    const struct aws_http_header *found = NULL;
 
     DEFINE_STATIC_HEADER(s_get, ":path", "/index.html");
     DEFINE_STATIC_HEADER(s_age, "age", "25");
@@ -267,32 +277,44 @@ static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, 2);
 
     size_t index = 0;
+    bool found_value = false;
 
     DEFINE_STATIC_HEADER(s_herp, "herp", "derp");
+    DEFINE_STATIC_HEADER(s_herp2, "herp", "something else");
     DEFINE_STATIC_HEADER(s_fizz, "fizz", "buzz");
 
-    /* Test header without value */
+    /* Test single header */
     ASSERT_SUCCESS(aws_hpack_insert_header(context, &s_herp));
-    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_herp, &index));
+    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_herp, &index, &found_value));
     ASSERT_UINT_EQUALS(62, index);
+    ASSERT_TRUE(found_value);
+    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_herp2, &index, &found_value));
+    ASSERT_UINT_EQUALS(62, index);
+    ASSERT_FALSE(found_value);
 
-    /* Test header with value */
+    /* Test 2 headers */
     ASSERT_SUCCESS(aws_hpack_insert_header(context, &s_fizz));
-    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_fizz, &index));
+    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_fizz, &index, &found_value));
     ASSERT_UINT_EQUALS(62, index);
-    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_herp, &index));
+    ASSERT_TRUE(found_value);
+    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_herp, &index, &found_value));
     ASSERT_UINT_EQUALS(63, index);
+    ASSERT_TRUE(found_value);
+    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_herp2, &index, &found_value));
+    ASSERT_UINT_EQUALS(63, index);
+    ASSERT_FALSE(found_value);
 
     /* Check invalid header */
     DEFINE_STATIC_HEADER(s_garbage, "colden's mother's maiden name", "nice try mr hacker");
-    ASSERT_FAILS(aws_hpack_find_index(context, &s_garbage, &index));
+    ASSERT_FAILS(aws_hpack_find_index(context, &s_garbage, &index, &found_value));
 
     /* Test resizing */
     ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 1));
 
-    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_fizz, &index));
+    ASSERT_SUCCESS(aws_hpack_find_index(context, &s_fizz, &index, &found_value));
     ASSERT_UINT_EQUALS(62, index);
-    ASSERT_FAILS(aws_hpack_find_index(context, &s_herp, &index));
+    ASSERT_TRUE(found_value);
+    ASSERT_FAILS(aws_hpack_find_index(context, &s_herp, &index, &found_value));
 
     aws_hpack_context_destroy(context);
     aws_hpack_static_table_clean_up();
@@ -306,7 +328,7 @@ static int test_hpack_dynamic_table_get(struct aws_allocator *allocator, void *c
     aws_hpack_static_table_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, 2);
 
-    struct aws_http_header *found = NULL;
+    const struct aws_http_header *found = NULL;
 
     DEFINE_STATIC_HEADER(s_herp, "herp", "derp");
     DEFINE_STATIC_HEADER(s_fizz, "fizz", "buzz");
