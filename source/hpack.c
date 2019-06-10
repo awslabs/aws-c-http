@@ -326,7 +326,7 @@ void aws_hpack_context_destroy(struct aws_hpack_context *context) {
     aws_mem_release(context->allocator, context);
 }
 
-const struct aws_http_header *aws_hpack_get_header(struct aws_hpack_context *context, uint64_t index) {
+const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_context *context, uint64_t index) {
     if (index == 0 || index >= s_static_header_table_size + context->dynamic_table.num_elements) {
         aws_raise_error(AWS_ERROR_INVALID_INDEX);
         return NULL;
@@ -344,28 +344,24 @@ const struct aws_http_header *aws_hpack_get_header(struct aws_hpack_context *con
                 .buffer[(context->dynamic_table.index_0 + index) % context->dynamic_table.max_elements];
 }
 
-int aws_hpack_find_index(
-    struct aws_hpack_context *context,
+uint64_t aws_hpack_find_index(
+    const struct aws_hpack_context *context,
     const struct aws_http_header *header,
-    uint64_t *index,
     bool *found_value) {
 
-    *index = 0;
     *found_value = false;
 
     /* Check static table */
     struct aws_hash_element *elem = NULL;
     aws_hash_table_find(&s_static_header_reverse_lookup, header, &elem);
     if (elem) {
-        *index = (uint64_t)elem->value;
         *found_value = ((const struct aws_http_header *)elem->key)->value.len;
-        return AWS_OP_SUCCESS;
+        return (uint64_t)elem->value;
     }
     /* If not found, check name only table. Don't set found_value, it will be false */
     aws_hash_table_find(&s_static_header_reverse_lookup_name_only, &header->name, &elem);
     if (elem) {
-        *index = (uint64_t)elem->value;
-        return AWS_OP_SUCCESS;
+        return (uint64_t)elem->value;
     }
 
     /* Check dynamic table */
@@ -379,18 +375,19 @@ int aws_hpack_find_index(
     }
 
     if (elem) {
+        size_t index;
         const uint64_t absolute_index = (uint64_t)elem->value;
         if (absolute_index >= context->dynamic_table.index_0) {
-            *index = absolute_index - context->dynamic_table.index_0;
+            index = absolute_index - context->dynamic_table.index_0;
         } else {
-            *index = (context->dynamic_table.max_elements - context->dynamic_table.index_0) + absolute_index;
+            index = (context->dynamic_table.max_elements - context->dynamic_table.index_0) + absolute_index;
         }
         /* Need to add the static table size to re-base indicies */
-        *index += s_static_header_table_size;
-        return AWS_OP_SUCCESS;
+        index += s_static_header_table_size;
+        return index;
     }
 
-    return AWS_OP_ERR;
+    return 0;
 }
 
 int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_http_header *header) {
@@ -589,6 +586,7 @@ int aws_hpack_encode_string(
     } else {
         bool result = aws_byte_buf_write_from_whole_cursor(output, *to_encode);
         if (!result) {
+            aws_raise_error(AWS_ERROR_SHORT_BUFFER);
             goto error;
         }
         aws_byte_cursor_advance(to_encode, to_encode->len);
@@ -611,7 +609,7 @@ int aws_hpack_decode_string(
     AWS_PRECONDITION(output);
 
     if (!to_decode->len) {
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
 
     bool use_huffman = *to_decode->ptr >> 7;
@@ -622,6 +620,7 @@ int aws_hpack_decode_string(
 
     struct aws_byte_cursor value = aws_byte_cursor_advance(to_decode, value_length);
     if (!value.len) {
+        aws_raise_error(AWS_ERROR_SHORT_BUFFER);
         return AWS_OP_ERR;
     }
 
@@ -631,7 +630,7 @@ int aws_hpack_decode_string(
         }
     } else {
         if (!aws_byte_buf_write_from_whole_cursor(output, value)) {
-            return AWS_OP_ERR;
+            return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
         }
     }
 
