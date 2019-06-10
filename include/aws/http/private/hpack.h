@@ -41,7 +41,11 @@ void aws_hpack_context_destroy(struct aws_hpack_context *context);
 AWS_HTTP_API
 const struct aws_http_header *aws_hpack_get_header(struct aws_hpack_context *context, uint64_t index);
 AWS_HTTP_API
-int aws_hpack_find_index(struct aws_hpack_context *context, const struct aws_http_header *header, uint64_t *index, bool *found_value);
+int aws_hpack_find_index(
+    struct aws_hpack_context *context,
+    const struct aws_http_header *header,
+    uint64_t *index,
+    bool *found_value);
 AWS_HTTP_API
 int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_http_header *header);
 

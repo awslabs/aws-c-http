@@ -1,4 +1,5 @@
 include(AwsTestHarness)
+include(AwsLibFuzzer)
 enable_testing()
 
 file(GLOB TEST_HDRS "*.h")
@@ -127,6 +128,19 @@ add_test_case(hpack_static_table_get)
 add_test_case(hpack_dynamic_table_find)
 add_test_case(hpack_dynamic_table_get)
 
+add_test_case(h2_header_ex_2_1)
+add_test_case(h2_header_ex_2_2)
+add_test_case(h2_header_ex_2_3)
+add_test_case(h2_header_ex_2_4)
+add_test_case(h2_header_ex_2_4x)
+
+add_test_case(h2_frame_data)
+add_test_case(h2_frame_priority)
+add_test_case(h2_frame_rst_stream)
+add_test_case(h2_frame_ping)
+add_test_case(h2_frame_goaway)
+add_test_case(h2_frame_window_update)
+
 add_test_case(server_new_destroy)
 add_test_case(test_connection_manager_setup_shutdown)
 add_net_test_case(test_connection_manager_single_connection)
@@ -141,6 +155,9 @@ add_test_case(test_connection_manager_success_then_cancel_pending_from_failure)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})
+
+file(GLOB FUZZ_TESTS "fuzz/*.c")
+aws_add_fuzz_tests("${FUZZ_TESTS}" "" "")
 
 #SSL certificates to use for testing.
 add_custom_command(TARGET ${TEST_BINARY_NAME} PRE_BUILD

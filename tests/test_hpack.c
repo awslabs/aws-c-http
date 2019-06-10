@@ -19,6 +19,10 @@
 
 #include <aws/http/request_response.h>
 
+#ifdef _MSC_VER
+#pragma warning(disable: 2099)
+#endif
+
 AWS_TEST_CASE(hpack_encode_integer, test_hpack_encode_integer)
 static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx) {
     (void)allocator;
