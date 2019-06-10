@@ -40,6 +40,7 @@ void aws_hpack_context_destroy(struct aws_hpack_context *context);
 
 AWS_HTTP_API
 const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_context *context, uint64_t index);
+/* A return value of 0 indicates that the header wasn't found */
 AWS_HTTP_API
 uint64_t aws_hpack_find_index(
     const struct aws_hpack_context *context,

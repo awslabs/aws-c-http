@@ -296,8 +296,7 @@ struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator,
             s_header_eq,
             NULL,
             NULL)) {
-        aws_mem_release(allocator, context->dynamic_table.buffer);
-        return NULL;
+        goto reverse_lookup_failed;
     }
 
     if (aws_hash_table_init(
@@ -308,12 +307,19 @@ struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator,
             (aws_hash_callback_eq_fn *)aws_byte_cursor_eq,
             NULL,
             NULL)) {
-        aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup);
-        aws_mem_release(allocator, context->dynamic_table.buffer);
-        return NULL;
+        goto name_only_failed;
     }
 
     return context;
+
+name_only_failed:
+    aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup);
+
+reverse_lookup_failed:
+    aws_mem_release(allocator, context->dynamic_table.buffer);
+    aws_mem_release(allocator, context);
+
+    return NULL;
 }
 
 void aws_hpack_context_destroy(struct aws_hpack_context *context) {
