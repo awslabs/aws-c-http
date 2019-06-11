@@ -166,7 +166,7 @@ struct aws_http_header s_static_header_table[] = {
 #undef HEADER
 #undef HEADER_WITH_VALUE
 };
-static const size_t s_static_header_table_size = AWS_ARRAY_SIZE(s_static_header_table);
+static const uint32_t s_static_header_table_size = AWS_ARRAY_SIZE(s_static_header_table);
 
 struct aws_byte_cursor s_static_header_table_name_only[] = {
 #define HEADER(_index, _name) [_index] = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_name),
@@ -255,18 +255,18 @@ struct aws_hpack_context {
 
     struct {
         struct aws_http_header *buffer;
-        size_t max_elements;
-        size_t num_elements;
-        size_t index_0;
+        uint32_t max_elements;
+        uint32_t num_elements;
+        uint32_t index_0;
 
-        /* aws_http_header * -> size_t */
+        /* aws_http_header * -> uint32_t */
         struct aws_hash_table reverse_lookup;
-        /* aws_byte_cursor * -> size_t */
+        /* aws_byte_cursor * -> uint32_t */
         struct aws_hash_table reverse_lookup_name_only;
     } dynamic_table;
 };
 
-struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator, size_t max_dynamic_elements) {
+struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator, uint32_t max_dynamic_elements) {
 
     struct aws_hpack_context *context = aws_mem_acquire(allocator, sizeof(struct aws_hpack_context));
     if (!context) {
@@ -332,7 +332,7 @@ void aws_hpack_context_destroy(struct aws_hpack_context *context) {
     aws_mem_release(context->allocator, context);
 }
 
-const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_context *context, uint64_t index) {
+const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_context *context, uint32_t index) {
     if (index == 0 || index >= s_static_header_table_size + context->dynamic_table.num_elements) {
         aws_raise_error(AWS_ERROR_INVALID_INDEX);
         return NULL;
@@ -350,7 +350,7 @@ const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_contex
                 .buffer[(context->dynamic_table.index_0 + index) % context->dynamic_table.max_elements];
 }
 
-uint64_t aws_hpack_find_index(
+uint32_t aws_hpack_find_index(
     const struct aws_hpack_context *context,
     const struct aws_http_header *header,
     bool *found_value) {
@@ -362,12 +362,12 @@ uint64_t aws_hpack_find_index(
     aws_hash_table_find(&s_static_header_reverse_lookup, header, &elem);
     if (elem) {
         *found_value = ((const struct aws_http_header *)elem->key)->value.len;
-        return (uint64_t)elem->value;
+        return (uint32_t)(size_t)elem->value;
     }
     /* If not found, check name only table. Don't set found_value, it will be false */
     aws_hash_table_find(&s_static_header_reverse_lookup_name_only, &header->name, &elem);
     if (elem) {
-        return (uint64_t)elem->value;
+        return (uint32_t)(size_t)elem->value;
     }
 
     /* Check dynamic table */
@@ -381,8 +381,8 @@ uint64_t aws_hpack_find_index(
     }
 
     if (elem) {
-        size_t index;
-        const uint64_t absolute_index = (uint64_t)elem->value;
+        uint32_t index;
+        const uint32_t absolute_index = (uint32_t)(size_t)elem->value;
         if (absolute_index >= context->dynamic_table.index_0) {
             index = absolute_index - context->dynamic_table.index_0;
         } else {
@@ -399,7 +399,7 @@ uint64_t aws_hpack_find_index(
 int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_http_header *header) {
 
     /* Cache state */
-    const size_t old_index_0 = context->dynamic_table.index_0;
+    const uint32_t old_index_0 = context->dynamic_table.index_0;
     bool removed_from_name_table = false;
 
     /* Decrement index 0, wrapping if necessary */
@@ -433,7 +433,10 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     struct aws_http_header old_header = *table_header;
     *table_header = *header;
     if (aws_hash_table_put(
-            &context->dynamic_table.reverse_lookup, table_header, (void *)context->dynamic_table.index_0, NULL)) {
+            &context->dynamic_table.reverse_lookup,
+            table_header,
+            (void *)(size_t)context->dynamic_table.index_0,
+            NULL)) {
         /* Roll back and handle the error */
         *table_header = old_header;
         goto error;
@@ -442,7 +445,7 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     if (aws_hash_table_put(
             &context->dynamic_table.reverse_lookup_name_only,
             &table_header->name,
-            (void *)context->dynamic_table.index_0,
+            (void *)(size_t)context->dynamic_table.index_0,
             NULL)) {
         /* Roll back and handle the error */
         aws_hash_table_remove(&context->dynamic_table.reverse_lookup, table_header, NULL, NULL);
@@ -460,12 +463,12 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
 error:
     /* Attempt to replace old header in map */
     aws_hash_table_put(
-        &context->dynamic_table.reverse_lookup, table_header, (void *)context->dynamic_table.index_0, NULL);
+        &context->dynamic_table.reverse_lookup, table_header, (void *)(size_t)context->dynamic_table.index_0, NULL);
     if (removed_from_name_table) {
         aws_hash_table_put(
             &context->dynamic_table.reverse_lookup_name_only,
             &table_header->name,
-            (void *)context->dynamic_table.index_0,
+            (void *)(size_t)context->dynamic_table.index_0,
             NULL);
     }
     /* Reset index 0 */
@@ -474,7 +477,7 @@ error:
     return AWS_OP_ERR;
 }
 
-int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new_max_elements) {
+int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, uint32_t new_max_elements) {
 
     /* Clear the old hash tables */
     aws_hash_table_clear(&context->dynamic_table.reverse_lookup);
@@ -520,10 +523,14 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
     context->dynamic_table.buffer = new_buffer;
 
     /* Re-insert all of the reverse lookup elements */
-    for (size_t i = 0; i < context->dynamic_table.num_elements; ++i) {
-        aws_hash_table_put(&context->dynamic_table.reverse_lookup, &context->dynamic_table.buffer[i], (void *)i, NULL);
+    for (uint32_t i = 0; i < context->dynamic_table.num_elements; ++i) {
         aws_hash_table_put(
-            &context->dynamic_table.reverse_lookup_name_only, &context->dynamic_table.buffer[i].name, (void *)i, NULL);
+            &context->dynamic_table.reverse_lookup, &context->dynamic_table.buffer[i], (void *)(size_t)i, NULL);
+        aws_hash_table_put(
+            &context->dynamic_table.reverse_lookup_name_only,
+            &context->dynamic_table.buffer[i].name,
+            (void *)(size_t)i,
+            NULL);
     }
 
     return AWS_OP_SUCCESS;
@@ -624,10 +631,13 @@ int aws_hpack_decode_string(
         return AWS_OP_ERR;
     }
 
-    struct aws_byte_cursor value = aws_byte_cursor_advance(to_decode, value_length);
+    if (value_length > SIZE_MAX) {
+        return aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
+    }
+
+    struct aws_byte_cursor value = aws_byte_cursor_advance(to_decode, (size_t)value_length);
     if (!value.len) {
-        aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
 
     if (use_huffman) {
