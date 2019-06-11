@@ -19,10 +19,6 @@
 
 #include <aws/http/request_response.h>
 
-#ifdef _MSC_VER
-#pragma warning(disable: 2099)
-#endif
-
 AWS_TEST_CASE(hpack_encode_integer, test_hpack_encode_integer)
 static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx) {
     (void)allocator;
@@ -231,7 +227,7 @@ static int test_hpack_static_table_find(struct aws_allocator *allocator, void *c
     ASSERT_FALSE(found_value);
 
     /* Check invalid header */
-    ASSERT_UINT_EQUALS(0,aws_hpack_find_index(context, &s_garbage, &found_value));
+    ASSERT_UINT_EQUALS(0, aws_hpack_find_index(context, &s_garbage, &found_value));
 
     aws_hpack_context_destroy(context);
     aws_hpack_static_table_clean_up();

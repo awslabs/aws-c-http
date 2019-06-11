@@ -22,10 +22,6 @@
 #include <ctype.h>
 #include <stdio.h>
 
-#ifdef _MSC_VER
-#    pragma warning(disable : 2099)
-#endif
-
 static const struct aws_byte_cursor s_typical_request = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1\r\n"
                                                                                               "Host: amazon.com\r\n"
                                                                                               "Accept-Language: fr\r\n"
