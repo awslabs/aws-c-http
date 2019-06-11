@@ -65,7 +65,7 @@ int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_s
 AWS_HTTP_API
 size_t aws_hpack_get_encoded_length_string(
     struct aws_hpack_context *context,
-    struct aws_byte_cursor *to_encode,
+    struct aws_byte_cursor to_encode,
     bool huffman_encode);
 AWS_HTTP_API
 int aws_hpack_encode_string(

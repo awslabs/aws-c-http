@@ -538,20 +538,20 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, uint32_t n
 
 size_t aws_hpack_get_encoded_length_string(
     struct aws_hpack_context *context,
-    struct aws_byte_cursor *to_encode,
+    struct aws_byte_cursor to_encode,
     bool huffman_encode) {
 
     AWS_PRECONDITION(context);
-    AWS_PRECONDITION(to_encode);
+    AWS_PRECONDITION(to_encode.ptr && to_encode.len);
 
     size_t length = 0;
 
     /* Get the header length */
     size_t encoded_length;
     if (huffman_encode) {
-        encoded_length = aws_huffman_get_encoded_length(&context->encoder, *to_encode);
+        encoded_length = aws_huffman_get_encoded_length(&context->encoder, to_encode);
     } else {
-        encoded_length = to_encode->len;
+        encoded_length = to_encode.len;
     }
     length += aws_hpack_get_encoded_length_integer(encoded_length, 7);
 
