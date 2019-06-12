@@ -1179,9 +1179,10 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
 
-    aws_channel_task_init(&connection->outgoing_stream_task, s_outgoing_stream_task, connection);
-    aws_channel_task_init(&connection->window_update_task, s_update_window_task, connection);
-    aws_channel_task_init(&connection->shutdown_delay_task, s_shutdown_delay_task, connection);
+    aws_channel_task_init(
+        &connection->outgoing_stream_task, s_outgoing_stream_task, connection, "http1_outgoing_stream");
+    aws_channel_task_init(&connection->window_update_task, s_update_window_task, connection, "http1_update_window");
+    aws_channel_task_init(&connection->shutdown_delay_task, s_shutdown_delay_task, connection, "http1_delay_shutdown");
     aws_linked_list_init(&connection->thread_data.stream_list);
 
     int err = aws_mutex_init(&connection->synced_data.lock);

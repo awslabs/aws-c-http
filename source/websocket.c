@@ -276,9 +276,18 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
 
     websocket->is_server = options->is_server;
 
-    aws_channel_task_init(&websocket->move_synced_data_to_thread_task, s_move_synced_data_to_thread_task, websocket);
-    aws_channel_task_init(&websocket->shutdown_channel_task, s_shutdown_channel_task, websocket);
-    aws_channel_task_init(&websocket->increment_read_window_task, s_increment_read_window_task, websocket);
+    aws_channel_task_init(
+        &websocket->move_synced_data_to_thread_task,
+        s_move_synced_data_to_thread_task,
+        websocket,
+        "websocket_move_synced_data_to_thread");
+    aws_channel_task_init(
+        &websocket->shutdown_channel_task, s_shutdown_channel_task, websocket, "websocket_shutdown_channel");
+    aws_channel_task_init(
+        &websocket->increment_read_window_task,
+        s_increment_read_window_task,
+        websocket,
+        "websocket_increment_read_window");
 
     aws_linked_list_init(&websocket->thread_data.outgoing_frame_list);
 
