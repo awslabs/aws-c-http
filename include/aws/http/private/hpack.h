@@ -77,8 +77,7 @@ AWS_HTTP_API
 int aws_hpack_decode_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_decode,
-    struct aws_byte_buf *output,
-    bool *huffman_encoded);
+    struct aws_byte_buf *output);
 
 AWS_EXTERN_C_END
 

@@ -100,15 +100,11 @@ int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_s
 
     const struct aws_byte_cursor to_decode_backup = *to_decode;
 
-    if (to_decode->len == 0) {
-        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-    }
     const uint8_t cut_bits = 8 - prefix_size;
     const uint8_t prefix_mask = UINT8_MAX >> cut_bits;
 
     uint8_t byte = 0;
     if (!aws_byte_cursor_read_u8(to_decode, &byte)) {
-        AWS_ASSERT(false); /* Look 8 lines up */
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
     /* Cut the prefix */
@@ -592,6 +588,7 @@ int aws_hpack_encode_string(
     }
 
     if (huffman_encode) {
+        aws_huffman_encoder_reset(&context->encoder);
         int result = aws_huffman_encode(&context->encoder, to_encode, output);
         if (result) {
             goto error;
@@ -614,8 +611,7 @@ error:
 int aws_hpack_decode_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_decode,
-    struct aws_byte_buf *output,
-    bool *huffman_encoded) {
+    struct aws_byte_buf *output) {
 
     AWS_PRECONDITION(context);
     AWS_PRECONDITION(to_decode);
@@ -641,6 +637,7 @@ int aws_hpack_decode_string(
     }
 
     if (use_huffman) {
+        aws_huffman_decoder_reset(&context->decoder);
         if (aws_huffman_decode(&context->decoder, &value, output)) {
             return AWS_OP_ERR;
         }
@@ -648,10 +645,6 @@ int aws_hpack_decode_string(
         if (!aws_byte_buf_write_from_whole_cursor(output, value)) {
             return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
         }
-    }
-
-    if (huffman_encoded) {
-        *huffman_encoded = use_huffman;
     }
 
     return AWS_OP_SUCCESS;
