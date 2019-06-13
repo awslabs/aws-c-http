@@ -21,8 +21,6 @@
 #include <aws/http/request_response.h>
 #include <aws/io/uri.h>
 
-/* TODO: what id to use for logging. CHANNEL_BOOTSTRAP? pre-allocate websocket? */
-
 /**
  * The websocket bootstrap brings a websocket connection into this world, and sees it out again.
  * Spins up an HTTP client, performs the opening handshake (HTTP Upgrade request),
@@ -78,12 +76,24 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
 int aws_websocket_client_connect(const struct aws_websocket_client_connection_options *options) {
     aws_http_fatal_assert_library_initialized();
     AWS_ASSERT(options);
+    struct aws_websocket_client_bootstrap *ws_bootstrap = NULL;
 
-    /* TODO: verify options */
-    AWS_ASSERT(options->num_handhake_headers > 0);
+    /* Validate options */
+    if (!options->allocator || !options->bootstrap || !options->socket_options || !options->uri ||
+        !aws_uri_port(options->uri) || !options->handshake_header_array || !options->num_handhake_headers ||
+        !options->on_connection_setup) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        goto error;
+    }
 
-    struct aws_websocket_client_bootstrap *ws_bootstrap =
-        aws_mem_calloc(options->allocator, 1, sizeof(struct aws_websocket_client_bootstrap));
+    /* Either no frame-handling callbacks are set, or they all must be set */
+    if (!options->on_incoming_frame_begin == !options->on_incoming_frame_complete ==
+        !options->on_incoming_frame_payload) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        goto error;
+    }
+
+    ws_bootstrap = aws_mem_calloc(options->allocator, 1, sizeof(struct aws_websocket_client_bootstrap));
     if (!ws_bootstrap) {
         goto error;
     }

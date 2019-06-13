@@ -135,7 +135,9 @@ typedef bool(aws_websocket_on_incoming_frame_complete_fn)(
     int error_code,
     void *user_data);
 
-/* WIP */
+/**
+ * Options for creating a websocket client connection.
+ */
 struct aws_websocket_client_connection_options {
     /**
      * Required.
