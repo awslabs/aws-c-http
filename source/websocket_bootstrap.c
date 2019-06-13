@@ -87,10 +87,16 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     }
 
     /* Either no frame-handling callbacks are set, or they all must be set */
-    if (!options->on_incoming_frame_begin == !options->on_incoming_frame_complete ==
-        !options->on_incoming_frame_payload) {
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        goto error;
+    if (options->on_incoming_frame_begin) {
+        if (!options->on_incoming_frame_payload || !options->on_incoming_frame_begin) {
+            aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+            goto error;
+        }
+    } else {
+        if (options->on_incoming_frame_payload || options->on_incoming_frame_begin) {
+            aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+            goto error;
+        }
     }
 
     ws_bootstrap = aws_mem_calloc(options->allocator, 1, sizeof(struct aws_websocket_client_bootstrap));
