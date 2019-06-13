@@ -1553,10 +1553,43 @@ H1_CLIENT_TEST_CASE(h1_client_close_from_on_thread_makes_not_open) {
     return AWS_OP_SUCCESS;
 }
 
-/* Send "Connection: Upgrade" request and receive "101 Switching Protocols" response. */
-static int s_switch_protocols(struct tester *tester) {
-    /* send request */
-    struct aws_http_header headers[] = {
+struct protocol_switcher {
+    /* Settings */
+    struct tester *tester;
+    size_t downstream_handler_window_size;
+    const char *data_after_upgrade_response;
+    bool dont_install_downstream_handler;
+
+    /* Results */
+    int upgrade_response_status;
+    bool is_upgrade_response_complete;
+    bool has_installed_downstream_handler;
+};
+
+static void s_switch_protocols_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    struct protocol_switcher *switcher = user_data;
+
+    switcher->is_upgrade_response_complete = true;
+    aws_http_stream_get_incoming_response_status(stream, &switcher->upgrade_response_status);
+
+    /* install downstream hander */
+    if (!error_code && (switcher->upgrade_response_status == AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS) &&
+        !switcher->dont_install_downstream_handler) {
+
+        int err = testing_channel_install_downstream_handler(
+            &switcher->tester->testing_channel, switcher->downstream_handler_window_size);
+        if (!err) {
+            switcher->has_installed_downstream_handler = true;
+        }
+    }
+}
+
+/* Send "Connection: Upgrade" request and receive "101 Switching Protocols" response.
+ * Optionally, install a downstream handler when response is received
+ */
+static int s_switch_protocols(struct protocol_switcher *switcher) {
+    /* send upgrade request */
+    struct aws_http_header request_headers[] = {
         {
             .name = aws_byte_cursor_from_c_str("Connection"),
             .value = aws_byte_cursor_from_c_str("Upgrade"),
@@ -1567,45 +1600,52 @@ static int s_switch_protocols(struct tester *tester) {
         },
     };
 
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester->connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
-    opt.header_array = headers;
-    opt.num_headers = AWS_ARRAY_SIZE(headers);
+    struct aws_http_request_options upgrade_request = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    upgrade_request.client_connection = switcher->tester->connection;
+    upgrade_request.method = aws_byte_cursor_from_c_str("GET");
+    upgrade_request.uri = aws_byte_cursor_from_c_str("/");
+    upgrade_request.header_array = request_headers;
+    upgrade_request.num_headers = AWS_ARRAY_SIZE(request_headers);
+    upgrade_request.user_data = switcher;
+    upgrade_request.on_complete = s_switch_protocols_on_stream_complete;
 
-    struct response_tester response;
-    ASSERT_SUCCESS(s_response_tester_init(&response, tester->alloc, &opt));
+    struct aws_http_stream *upgrade_stream = aws_http_stream_new_client_request(&upgrade_request);
+    ASSERT_NOT_NULL(upgrade_stream);
+    testing_channel_drain_queued_tasks(&switcher->tester->testing_channel);
 
-    /* clear all messages written thus far. */
-    testing_channel_drain_queued_tasks(&tester->testing_channel);
-    while (!aws_linked_list_empty(testing_channel_get_written_message_queue(&tester->testing_channel))) {
+    /* clear all messages written thus far to the testing-channel */
+    while (!aws_linked_list_empty(testing_channel_get_written_message_queue(&switcher->tester->testing_channel))) {
         struct aws_linked_list_node *node =
-            aws_linked_list_pop_front(testing_channel_get_written_message_queue(&tester->testing_channel));
+            aws_linked_list_pop_front(testing_channel_get_written_message_queue(&switcher->tester->testing_channel));
         struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
         aws_mem_release(msg->allocator, msg);
     }
 
-    /* send response */
-    ASSERT_SUCCESS(s_send_response_str(
-        tester,
-        "HTTP/1.1 101 Switching Protocols\r\n"
-        "Upgrade: MyProtocol\r\n"
-        "\r\n"));
+    /* send upgrade response (followed by any extra data) */
+    struct aws_byte_cursor response = aws_byte_cursor_from_c_str("HTTP/1.1 101 Switching Protocols\r\n"
+                                                                 "Upgrade: MyProtocol\r\n"
+                                                                 "\r\n");
+    struct aws_byte_cursor extra_data = aws_byte_cursor_from_c_str(switcher->data_after_upgrade_response);
+    struct aws_byte_buf sending_buf;
+    ASSERT_SUCCESS(aws_byte_buf_init(&sending_buf, switcher->tester->alloc, response.len + extra_data.len));
+    ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&sending_buf, response));
+    if (extra_data.len) {
+        ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&sending_buf, extra_data));
+    }
 
-    testing_channel_drain_queued_tasks(&tester->testing_channel);
+    s_send_response(switcher->tester, aws_byte_cursor_from_buf(&sending_buf));
 
-    /* confirm response */
-    ASSERT_UINT_EQUALS(1, response.on_complete_cb_count);
-    ASSERT_INT_EQUALS(101, response.status);
-    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+    /* wait for response to complete, and check results */
+    testing_channel_drain_queued_tasks(&switcher->tester->testing_channel);
+    ASSERT_TRUE(switcher->is_upgrade_response_complete);
+    ASSERT_INT_EQUALS(101, switcher->upgrade_response_status);
 
-    return AWS_OP_SUCCESS;
-}
+    /* if we wanted downstream handler installed, ensure that happened */
+    ASSERT_TRUE(switcher->dont_install_downstream_handler || switcher->has_installed_downstream_handler);
 
-static int s_switch_protocols_and_install_downstream_handler(struct tester *tester, size_t downstream_window) {
-    ASSERT_SUCCESS(s_switch_protocols(tester));
-    ASSERT_SUCCESS(testing_channel_install_downstream_handler(&tester->testing_channel, downstream_window));
+    /* cleanup */
+    aws_byte_buf_clean_up(&sending_buf);
+    aws_http_stream_release(upgrade_stream);
     return AWS_OP_SUCCESS;
 }
 
@@ -1613,7 +1653,11 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_sanity_check) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-    ASSERT_SUCCESS(s_switch_protocols_and_install_downstream_handler(&tester, SIZE_MAX));
+
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     /* clean up */
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
@@ -1625,11 +1669,38 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_read) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-    ASSERT_SUCCESS(s_switch_protocols_and_install_downstream_handler(&tester, SIZE_MAX));
+
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .downstream_handler_window_size = SIZE_MAX,
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     const char *test_str = "inmyprotocolspacesarestrictlyforbidden";
     ASSERT_SUCCESS(s_readpush(&tester, test_str));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
+    ASSERT_SUCCESS(s_check_midchannel_read_messages(&tester, test_str));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* confirm that, if new-protocol-data arrives packed into the same aws_io_message as the upgrade response,
+ * that data is properly passed dowstream. */
+H1_CLIENT_TEST_CASE(h1_client_midchannel_read_immediately) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    const char *test_str = "inmyprotocoleverythingwillbebetter";
+
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .downstream_handler_window_size = SIZE_MAX,
+        .data_after_upgrade_response = test_str, /* Note extra data */
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
+
     ASSERT_SUCCESS(s_check_midchannel_read_messages(&tester, test_str));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
@@ -1641,7 +1712,12 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_read_with_small_downstream_window) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-    ASSERT_SUCCESS(s_switch_protocols_and_install_downstream_handler(&tester, 1)); /* note tiny starting window */
+
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .downstream_handler_window_size = 1 /* Note tiny starting window. */,
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     const char *test_str = "inmyprotocolcapitallettersarethedevil";
     ASSERT_SUCCESS(s_readpush(&tester, test_str));
@@ -1674,7 +1750,12 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_write) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-    ASSERT_SUCCESS(s_switch_protocols_and_install_downstream_handler(&tester, SIZE_MAX));
+
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .downstream_handler_window_size = SIZE_MAX,
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     const char *test_str = "inmyprotocolthereisnomoney";
     s_writepush(&tester, test_str);
@@ -1808,7 +1889,10 @@ H1_CLIENT_TEST_CASE(h1_client_switching_protocols_fails_subsequent_requests) {
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* Successfully switch protocols */
-    ASSERT_SUCCESS(s_switch_protocols(&tester));
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     /* Attempting to send a request after this should fail. */
     struct aws_http_request_options request_opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
@@ -1837,8 +1921,13 @@ H1_CLIENT_TEST_CASE(h1_client_switching_protocols_requires_downstream_handler) {
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
-    /* Successfully switch protocols */
-    ASSERT_SUCCESS(s_switch_protocols(&tester));
+    /* Successfully switch protocols, but don't install downstream handler. */
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .dont_install_downstream_handler = true,
+    };
+
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     /* If new data arrives and no downstream handler is installed to deal with it, the connection should shut down. */
     ASSERT_SUCCESS(s_readpush_ignore_errors(&tester, "herecomesnewprotocoldatachoochoo"));
