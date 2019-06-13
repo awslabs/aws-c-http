@@ -1,4 +1,5 @@
 include(AwsTestHarness)
+include(AwsLibFuzzer)
 enable_testing()
 
 file(GLOB TEST_HDRS "*.h")
@@ -55,7 +56,18 @@ add_test_case(h1_client_close_from_incoming_body_callback_stops_decoder)
 add_test_case(h1_client_close_from_stream_complete_callback_stops_decoder)
 add_test_case(h1_client_close_from_off_thread_makes_not_open)
 add_test_case(h1_client_close_from_on_thread_makes_not_open)
+add_test_case(h1_client_midchannel_sanity_check)
+add_test_case(h1_client_midchannel_read)
+add_test_case(h1_client_midchannel_read_immediately)
+add_test_case(h1_client_midchannel_read_with_small_downstream_window)
+add_test_case(h1_client_midchannel_write)
+add_test_case(h1_client_midchannel_requires_switching_protocols)
+add_test_case(h1_client_switching_protocols_fails_pending_requests)
+add_test_case(h1_client_switching_protocols_fails_subsequent_requests)
+add_test_case(h1_client_switching_protocols_requires_downstream_handler)
+
 add_net_test_case(tls_download_medium_file)
+
 add_test_case(websocket_decoder_sanity_check)
 add_test_case(websocket_decoder_simplest_frame)
 add_test_case(websocket_decoder_rsv)
@@ -141,6 +153,9 @@ add_test_case(test_connection_manager_success_then_cancel_pending_from_failure)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})
+
+file(GLOB FUZZ_TESTS "fuzz/*.c")
+aws_add_fuzz_tests("${FUZZ_TESTS}" "" "")
 
 #SSL certificates to use for testing.
 add_custom_command(TARGET ${TEST_BINARY_NAME} PRE_BUILD

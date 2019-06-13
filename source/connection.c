@@ -193,6 +193,11 @@ bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
     return connection->vtable->is_open(connection);
 }
 
+struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    return connection->channel_slot->channel;
+}
+
 void aws_http_connection_release(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
@@ -465,18 +470,23 @@ static void s_client_bootstrap_on_channel_setup(
     AWS_ASSERT(user_data);
     struct aws_http_client_bootstrap *http_bootstrap = user_data;
 
+    /* Contract for setup callbacks is: channel is NULL if error_code is non-zero. */
+    AWS_FATAL_ASSERT((error_code != 0) == (channel == NULL));
+
     if (error_code) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "static: Client connection failed with error %d (%s).",
             error_code,
             aws_error_name(error_code));
-        goto error;
-    }
 
-    if (!channel) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Client connection did not produce a channel");
-        goto error;
+        /* Immediately tell user of failed connection.
+         * No channel exists, so there will be no channel_shutdown callback. */
+        http_bootstrap->on_setup(NULL, error_code, http_bootstrap->user_data);
+
+        /* Clean up the http_bootstrap, it has no more work to do. */
+        aws_mem_release(http_bootstrap->alloc, http_bootstrap);
+        return;
     }
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "static: Socket connected, creating client connection object.");
@@ -499,31 +509,20 @@ static void s_client_bootstrap_on_channel_setup(
         (void *)http_bootstrap->connection,
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(http_bootstrap->connection->http_version)));
 
-    /* Tell user of successful connection. */
+    /* Tell user of successful connection.
+     * Then clear the on_setup callback so that we know it's been called */
     http_bootstrap->on_setup(http_bootstrap->connection, AWS_ERROR_SUCCESS, http_bootstrap->user_data);
+    http_bootstrap->on_setup = NULL;
+
     return;
 
 error:
-    if (!error_code) {
-        error_code = aws_last_error();
-    }
-
-    /* Tell user of failed connection */
-    http_bootstrap->on_setup(NULL, error_code, http_bootstrap->user_data);
-
-    /* on_shutdown isn't allowed to be called if on_setup reports an error */
-    http_bootstrap->on_shutdown = NULL;
-
-    if (channel) {
-        /* If channel exists, invoke shutdown. http_bootstrap must stay alive until channel shutdown completes. */
-        aws_channel_shutdown(channel, error_code);
-    } else {
-        /* If channel does not exist, clean up the http_bootstrap. It has no more work to do. */
-        aws_mem_release(http_bootstrap->alloc, http_bootstrap);
-    }
+    /* Something went wrong. Invoke channel shutdown. Then wait for channel shutdown to complete
+     * before informing the user that setup failed and cleaning up the http_bootstrap.*/
+    aws_channel_shutdown(channel, aws_last_error());
 }
 
-/* At this point, the channel for a client connection has complete shutdown, but hasn't been destroyed yet. */
+/* At this point, the channel for a client connection has completed its shutdown */
 static void s_client_bootstrap_on_channel_shutdown(
     struct aws_client_bootstrap *channel_bootstrap,
     int error_code,
@@ -536,8 +535,30 @@ static void s_client_bootstrap_on_channel_shutdown(
     AWS_ASSERT(user_data);
     struct aws_http_client_bootstrap *http_bootstrap = user_data;
 
-    /* Tell user about shutdown */
-    if (http_bootstrap->on_shutdown) {
+    /* If on_setup hasn't been called yet, inform user of failed setup.
+     * If on_setup was already called, inform user that it's shut down now. */
+    if (http_bootstrap->on_setup) {
+        /* make super duper sure that failed setup receives a non-zero error_code */
+        if (error_code == 0) {
+            error_code = AWS_ERROR_UNKNOWN;
+        }
+
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Client setup failed with error %d (%s).",
+            error_code,
+            aws_error_name(error_code));
+
+        http_bootstrap->on_setup(NULL, error_code, http_bootstrap->user_data);
+
+    } else if (http_bootstrap->on_shutdown) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "%p: Client shutdown completed with error %d (%s).",
+            (void *)http_bootstrap->connection,
+            error_code,
+            aws_error_name(error_code));
+
         http_bootstrap->on_shutdown(http_bootstrap->connection, error_code, http_bootstrap->user_data);
     }
 

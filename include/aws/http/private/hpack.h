@@ -34,24 +34,28 @@ void aws_hpack_static_table_clean_up(void);
 
 /* General HPACK API */
 AWS_HTTP_API
-struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator, size_t max_dynamic_elements);
-
+struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator, uint32_t max_dynamic_elements);
 AWS_HTTP_API
 void aws_hpack_context_destroy(struct aws_hpack_context *context);
 
 AWS_HTTP_API
-struct aws_http_header *aws_hpack_get_header(struct aws_hpack_context *context, size_t index);
-
+const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_context *context, uint32_t index);
+/* A return value of 0 indicates that the header wasn't found */
 AWS_HTTP_API
-int aws_hpack_find_index(struct aws_hpack_context *context, const struct aws_http_header *header, size_t *index);
+uint32_t aws_hpack_find_index(
+    const struct aws_hpack_context *context,
+    const struct aws_http_header *header,
+    bool *found_value);
 
 AWS_HTTP_API
 int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_http_header *header);
 
 AWS_HTTP_API
-int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new_max_elements);
+int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, uint32_t new_max_elements);
 
 /* Public for testing purposes */
+AWS_HTTP_API
+size_t aws_hpack_get_encoded_length_integer(uint64_t integer, uint8_t prefix_size);
 AWS_HTTP_API
 int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_byte_buf *output);
 
@@ -59,11 +63,22 @@ AWS_HTTP_API
 int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_size, uint64_t *integer);
 
 AWS_HTTP_API
+size_t aws_hpack_get_encoded_length_string(
+    struct aws_hpack_context *context,
+    struct aws_byte_cursor to_encode,
+    bool huffman_encode);
+AWS_HTTP_API
 int aws_hpack_encode_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_encode,
     bool huffman_encode,
     struct aws_byte_buf *output);
+AWS_HTTP_API
+int aws_hpack_decode_string(
+    struct aws_hpack_context *context,
+    struct aws_byte_cursor *to_decode,
+    struct aws_byte_buf *output,
+    bool *huffman_encoded);
 
 AWS_EXTERN_C_END
 

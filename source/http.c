@@ -39,7 +39,10 @@ static struct aws_error_info s_errors[] = {
         "Encountered an unexpected form when parsing an http message."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_CLOSED,
-        "Message not sent, as the connection has closed or is closing."),
+        "The connection has closed or is closing."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_SWITCHED_PROTOCOLS,
+        "The connection has switched protocols."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL,
         "An unsupported protocol was encountered."),
