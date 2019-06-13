@@ -376,8 +376,9 @@ static int s_frame_header_encode(
     }
 
     /* Write length */
-    length = aws_hton24(length);
-    if (!aws_byte_buf_write(output, (uint8_t *)&length, 3)) {
+    uint32_t u32_len = (uint32_t)length;
+    u32_len = aws_hton24(u32_len);
+    if (!aws_byte_buf_write(output, (uint8_t *)&u32_len, 3)) {
         return AWS_OP_ERR;
     }
     /* Write type */
@@ -927,9 +928,11 @@ int aws_h2_frame_rst_stream_decode(struct aws_h2_frame_rst_stream *frame, struct
     frame->header = decoder->header;
 
     /* Decode the priority settings */
-    if (!aws_byte_cursor_read_be32(&decoder->payload, &frame->error_code)) {
+    uint32_t error_code = 0;
+    if (!aws_byte_cursor_read_be32(&decoder->payload, &error_code)) {
         goto read_error;
     }
+    frame->error_code = (enum aws_h2_error_codes)error_code;
     AWS_FATAL_ASSERT(decoder->payload.len == 0);
 
     return AWS_OP_SUCCESS;
@@ -1411,9 +1414,11 @@ int aws_h2_frame_goaway_decode(struct aws_h2_frame_goaway *frame, struct aws_h2_
     frame->last_stream_id = first_byte & s_31_bit_mask;
 
     /* Read error_code */
-    if (!aws_byte_cursor_read_be32(&decoder->payload, &frame->error_code)) {
+    uint32_t error_code = 0;
+    if (!aws_byte_cursor_read_be32(&decoder->payload, &error_code)) {
         goto read_error;
     }
+    frame->error_code = (enum aws_h2_error_codes)error_code;
 
     /* Read debug data */
     frame->debug_data = aws_byte_cursor_advance(&decoder->payload, decoder->payload.len);

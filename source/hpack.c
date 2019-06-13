@@ -162,7 +162,7 @@ struct aws_http_header s_static_header_table[] = {
 #undef HEADER
 #undef HEADER_WITH_VALUE
 };
-static const uint32_t s_static_header_table_size = AWS_ARRAY_SIZE(s_static_header_table);
+static const size_t s_static_header_table_size = AWS_ARRAY_SIZE(s_static_header_table);
 
 struct aws_byte_cursor s_static_header_table_name_only[] = {
 #define HEADER(_index, _name) [_index] = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_name),
@@ -395,7 +395,7 @@ size_t aws_hpack_find_index(
 int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_http_header *header) {
 
     /* Cache state */
-    const uint32_t old_index_0 = context->dynamic_table.index_0;
+    const size_t old_index_0 = context->dynamic_table.index_0;
     bool removed_from_name_table = false;
 
     /* Decrement index 0, wrapping if necessary */

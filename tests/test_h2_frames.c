@@ -236,7 +236,7 @@ static int s_test_headers_init(struct frame_test_fixture *fixture) {
         AWS_H2_FRAME_F_PADDED,          /* Flags */
         0x00, 0x00, 0x00, stream_id,    /* Stream id */
     };
-    static uint8_t frame_payload[] = {
+    uint8_t frame_payload[] = {
         pad_length,                     /* Pad length */
         0x00, 0x00, 0x00, 0x00,         /* Padding */
     };
