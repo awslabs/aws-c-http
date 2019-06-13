@@ -301,8 +301,7 @@ int aws_h2_frame_header_block_decode(
             } else {
                 const size_t scratch_len = decoder->header_scratch.len;
                 /* New name, decode as string */
-                if (aws_hpack_decode_string(
-                        decoder->hpack, &decoder->payload, &decoder->header_scratch)) {
+                if (aws_hpack_decode_string(decoder->hpack, &decoder->payload, &decoder->header_scratch)) {
                     return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
                 }
                 /* Get a cursor to the string we just decoded */
@@ -312,8 +311,7 @@ int aws_h2_frame_header_block_decode(
 
             const size_t scratch_len = decoder->header_scratch.len;
             /* Read the value */
-            if (aws_hpack_decode_string(
-                    decoder->hpack, &decoder->payload, &decoder->header_scratch)) {
+            if (aws_hpack_decode_string(decoder->hpack, &decoder->payload, &decoder->header_scratch)) {
                 return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
             }
             field.header.value = aws_byte_cursor_from_array(

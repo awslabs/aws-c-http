@@ -108,7 +108,13 @@ cleanup:
     aws_h2_frame_decoder_clean_up(&decoder);
     aws_hpack_static_table_clean_up();
 
-    AWS_FATAL_ASSERT(alloc_impl->allocated == alloc_impl->freed);
+    ASSERT_UINT_EQUALS(
+        alloc_impl->allocated,
+        alloc_impl->freed,
+        "Memory Leak Detected %d bytes were allocated, "
+        "but only %d were freed.",
+        alloc_impl->allocated,
+        alloc_impl->freed);
 
     return 0;
 }
