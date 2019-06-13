@@ -130,8 +130,8 @@ struct h1_connection {
         struct h1_stream *incoming_stream;
         struct aws_h1_decoder *incoming_stream_decoder;
 
-        /* Amount to increment window after a channel message has been processed. */
-        size_t incoming_message_window_update;
+        /* Amount to let read-window shrink after a channel message has been processed. */
+        size_t incoming_message_window_shrink_size;
 
         /* Messages received after the connection has switched protocols.
          * These are passed downstream to the next handler. */
@@ -1185,8 +1185,7 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
         /* If user reduced window_update_size, reduce how much the connection will update its window. */
         if (window_update_size < data->len) {
             size_t reduce = data->len - window_update_size;
-            AWS_ASSERT(reduce <= connection->thread_data.incoming_message_window_update);
-            connection->thread_data.incoming_message_window_update -= reduce;
+            connection->thread_data.incoming_message_window_shrink_size += reduce;
 
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_STREAM,
@@ -1365,7 +1364,8 @@ static void s_connection_try_send_read_messages(struct h1_connection *connection
         struct aws_linked_list_node *node = aws_linked_list_front(&connection->thread_data.midchannel_read_messages);
         struct aws_io_message *queued_msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
 
-        /* If we can't send the whole entire queued_msg, copy its data into a new aws_io_message and send that. */
+        /* If we can't send the whole entire queued_msg, copy its data into a new aws_io_message and send that.
+         * Note that copy_mark is used to mark the progress of partially sent messages. */
         if (queued_msg->copy_mark || queued_msg->message_data.len > downstream_window) {
             sending_msg = aws_channel_acquire_message_from_pool(
                 connection->base.channel_slot->channel, AWS_IO_MESSAGE_APPLICATION_DATA, downstream_window);
@@ -1438,9 +1438,11 @@ static int s_handler_process_read_message(
     struct h1_connection *connection = handler->impl;
     int err;
 
-    /* By default, we will increment the read window by the same amount we just read in.
-     * However, users have the opportunity to tweak this number in their aws_http_on_incoming_body_fn() callback. */
-    connection->thread_data.incoming_message_window_update = message->message_data.len;
+    const size_t incoming_message_size = message->message_data.len;
+
+    /* By default, after processing message, we will increment the read window by the same amount we just read in.
+     * But users can let the window shrink by tweaking numbers from their aws_http_on_incoming_body_fn() callback. */
+    connection->thread_data.incoming_message_window_shrink_size = 0;
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,
@@ -1467,24 +1469,27 @@ static int s_handler_process_read_message(
          * We need to do this check in the middle of the normal processing loop,
          * in case the switch happens in the middle of processing a message. */
         if (connection->thread_data.has_switched_protocols) {
-            /* Don't auto-increment read window for parts of message using the new protocol. */
-            if (message_cursor.len < connection->thread_data.incoming_message_window_update) {
-                connection->thread_data.incoming_message_window_update -= message_cursor.len;
-            } else {
-                connection->thread_data.incoming_message_window_update = 0;
-            }
+            size_t bytes_processed = message->message_data.len - message_cursor.len;
+            size_t bytes_to_be_processed = message_cursor.len;
 
-            message->copy_mark = message->message_data.len - message_cursor.len;
+            /* Don't auto-increment read window for parts of message using the new protocol. */
+            connection->thread_data.incoming_message_window_shrink_size += bytes_to_be_processed;
+
+            /* Use the copy_mark to indicate how much of this message was already processed. */
+            message->copy_mark = bytes_processed;
+
+            /* Queue the message, then try to send it (and any others that might be queued) */
             aws_linked_list_push_back(&connection->thread_data.midchannel_read_messages, &message->queueing_handle);
             s_connection_try_send_read_messages(connection);
 
-            /* Don't let the message be freed later in this function. */
+            /* Don't let the message be freed later in this function. It will be freed when it's finally sent. */
             message = NULL;
 
             /* Note that we break out of the loop. */
             break;
 
         } else {
+            /* Else processing message as normal HTTP data. */
             if (!connection->thread_data.incoming_stream) {
                 /* TODO: Server connection would create new request-handler stream at this point. */
 
@@ -1518,8 +1523,10 @@ static int s_handler_process_read_message(
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Done processing message.", (void *)&connection->base);
 
-    if (connection->thread_data.incoming_message_window_update > 0) {
-        err = aws_channel_slot_increment_read_window(slot, connection->thread_data.incoming_message_window_update);
+    /* Increment read window */
+    if (incoming_message_size > connection->thread_data.incoming_message_window_shrink_size) {
+        size_t increment = incoming_message_size - connection->thread_data.incoming_message_window_shrink_size;
+        err = aws_channel_slot_increment_read_window(slot, increment);
         if (err) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
