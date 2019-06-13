@@ -193,6 +193,11 @@ bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
     return connection->vtable->is_open(connection);
 }
 
+struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    return connection->channel_slot->channel;
+}
+
 void aws_http_connection_release(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
