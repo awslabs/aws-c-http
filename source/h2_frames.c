@@ -136,6 +136,9 @@ int aws_h2_frame_header_block_get_encoded_length(
                 case AWS_H2_HEADER_BEHAVIOR_NO_FORWARD_SAVE:
                     prefix_size = 5;
                     break;
+                default:
+                    /* Unreachable */
+                    AWS_FATAL_ASSERT(false);
             }
         }
 
@@ -196,6 +199,9 @@ int aws_h2_frame_header_block_encode(
                     mask = s_literal_no_forward_save_mask;
                     prefix_size = 4;
                     break;
+                default:
+                    /* Unreachable */
+                    AWS_FATAL_ASSERT(false);
             }
         }
 
