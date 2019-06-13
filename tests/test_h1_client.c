@@ -1558,7 +1558,7 @@ struct protocol_switcher {
     struct tester *tester;
     size_t downstream_handler_window_size;
     const char *data_after_upgrade_response;
-    bool dont_install_downstream_handler;
+    bool install_downstream_handler;
 
     /* Results */
     int upgrade_response_status;
@@ -1573,8 +1573,8 @@ static void s_switch_protocols_on_stream_complete(struct aws_http_stream *stream
     aws_http_stream_get_incoming_response_status(stream, &switcher->upgrade_response_status);
 
     /* install downstream hander */
-    if (!error_code && (switcher->upgrade_response_status == AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS) &&
-        !switcher->dont_install_downstream_handler) {
+    if (switcher->install_downstream_handler && !error_code &&
+        (switcher->upgrade_response_status == AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS)) {
 
         int err = testing_channel_install_downstream_handler(
             &switcher->tester->testing_channel, switcher->downstream_handler_window_size);
@@ -1641,7 +1641,9 @@ static int s_switch_protocols(struct protocol_switcher *switcher) {
     ASSERT_INT_EQUALS(101, switcher->upgrade_response_status);
 
     /* if we wanted downstream handler installed, ensure that happened */
-    ASSERT_TRUE(switcher->dont_install_downstream_handler || switcher->has_installed_downstream_handler);
+    if (switcher->install_downstream_handler) {
+        ASSERT_TRUE(switcher->has_installed_downstream_handler);
+    }
 
     /* cleanup */
     aws_byte_buf_clean_up(&sending_buf);
@@ -1656,6 +1658,7 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_sanity_check) {
 
     struct protocol_switcher switcher = {
         .tester = &tester,
+        .install_downstream_handler = true,
     };
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
@@ -1672,6 +1675,7 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_read) {
 
     struct protocol_switcher switcher = {
         .tester = &tester,
+        .install_downstream_handler = true,
         .downstream_handler_window_size = SIZE_MAX,
     };
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
@@ -1696,6 +1700,7 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_read_immediately) {
 
     struct protocol_switcher switcher = {
         .tester = &tester,
+        .install_downstream_handler = true,
         .downstream_handler_window_size = SIZE_MAX,
         .data_after_upgrade_response = test_str, /* Note extra data */
     };
@@ -1715,6 +1720,7 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_read_with_small_downstream_window) {
 
     struct protocol_switcher switcher = {
         .tester = &tester,
+        .install_downstream_handler = true,
         .downstream_handler_window_size = 1 /* Note tiny starting window. */,
     };
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
@@ -1753,6 +1759,7 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_write) {
 
     struct protocol_switcher switcher = {
         .tester = &tester,
+        .install_downstream_handler = true,
         .downstream_handler_window_size = SIZE_MAX,
     };
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
@@ -1891,6 +1898,7 @@ H1_CLIENT_TEST_CASE(h1_client_switching_protocols_fails_subsequent_requests) {
     /* Successfully switch protocols */
     struct protocol_switcher switcher = {
         .tester = &tester,
+        .install_downstream_handler = true,
     };
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
@@ -1924,7 +1932,7 @@ H1_CLIENT_TEST_CASE(h1_client_switching_protocols_requires_downstream_handler) {
     /* Successfully switch protocols, but don't install downstream handler. */
     struct protocol_switcher switcher = {
         .tester = &tester,
-        .dont_install_downstream_handler = true,
+        .install_downstream_handler = false,
     };
 
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
