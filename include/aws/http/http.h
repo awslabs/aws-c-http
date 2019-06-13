@@ -46,6 +46,7 @@ enum aws_http_log_subject {
     AWS_LS_HTTP_STREAM,
     AWS_LS_HTTP_CONNECTION_MANAGER,
     AWS_LS_HTTP_WEBSOCKET,
+    AWS_LS_HTTP_WEBSOCKET_SETUP,
 };
 
 enum aws_http_version {

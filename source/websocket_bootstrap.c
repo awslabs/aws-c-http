@@ -15,6 +15,7 @@
 
 #include <aws/http/private/websocket_impl.h>
 
+#include <aws/common/logging.h>
 #include <aws/http/connection.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/request_response.h>
@@ -134,9 +135,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
         write_success &= aws_byte_buf_write_from_whole_cursor(&ws_bootstrap->request_storage, src->value);
     }
 
-    if (!write_success) {
-        goto error;
-    }
+    AWS_ASSERT(write_success); /* Should only fail if we allocated the wrong amount. */
 
     /* Pre-allocate space for response headers */
     size_t estimated_response_headers = ws_bootstrap->num_request_headers + 10;
@@ -174,12 +173,31 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
 
     err = aws_http_client_connect(&http_options);
     if (err) {
-        goto error;
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=static: Websocket failed to initiate HTTP connection, error %d (%s)",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        goto error_already_logged;
     }
+
+    /* Success! (so far) */
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_WEBSOCKET_SETUP,
+        "id=%p: Websocket setup begun, connecting to " PRInSTR,
+        (void *)ws_bootstrap,
+        AWS_BYTE_BUF_PRI(options->uri->uri_str));
 
     return AWS_OP_SUCCESS;
 
 error:
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_WEBSOCKET_SETUP,
+        "id=static: Failed to initiate websocket connection, error %d (%s)",
+        aws_last_error(),
+        aws_error_name(aws_last_error()));
+
+error_already_logged:
     s_ws_bootstrap_destroy(ws_bootstrap);
     return AWS_OP_ERR;
 }
@@ -211,6 +229,13 @@ static void s_ws_bootstrap_cancel_setup_due_to_err(
     AWS_ASSERT(http_connection);
 
     if (!ws_bootstrap->setup_error_code) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=%p: Canceling websocket setup due to error %d (%s).",
+            (void *)ws_bootstrap,
+            error_code,
+            aws_error_name(error_code));
+
         ws_bootstrap->setup_error_code = error_code;
 
         aws_http_connection_close(http_connection);
@@ -227,6 +252,13 @@ static void s_ws_bootstrap_on_http_setup(struct aws_http_connection *http_connec
 
     /* If http connection failed, inform the user immediately and clean up the websocket boostrapper. */
     if (error_code) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=%p: Websocket setup failed to establish HTTP connection, error %d (%s).",
+            (void *)ws_bootstrap,
+            error_code,
+            aws_error_name(error_code));
+
         ws_bootstrap->websocket_setup_callback(
             NULL, error_code, AWS_HTTP_STATUS_UNKNOWN, NULL, 0, ws_bootstrap->user_data);
 
@@ -250,12 +282,25 @@ static void s_ws_bootstrap_on_http_setup(struct aws_http_connection *http_connec
     options.on_complete = s_ws_bootstrap_on_handshake_complete;
 
     struct aws_http_stream *handshake_stream = aws_http_stream_new_client_request(&options);
-    if (handshake_stream) {
-        // TODO: LOG
-    } else {
-        // TODO: LOG
-        s_ws_bootstrap_cancel_setup_due_to_err(ws_bootstrap, http_connection, aws_last_error());
+    if (!handshake_stream) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=%p: Failed to initiate websocket upgrade request, error %d (%s).",
+            (void *)ws_bootstrap,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        goto error;
     }
+
+    /* Success! (so far) */
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_WEBSOCKET_SETUP,
+        "id=%p: HTTP connection established, sending websocket upgrade request.",
+        (void *)ws_bootstrap);
+    return;
+
+error:
+    s_ws_bootstrap_cancel_setup_due_to_err(ws_bootstrap, http_connection, aws_last_error());
 }
 
 /* Invoked when the HTTP connection has shut down.
@@ -288,10 +333,26 @@ static void s_ws_bootstrap_on_http_shutdown(
             aws_array_list_get_at_ptr(&ws_bootstrap->response_headers, (void **)&header_array, 0);
         }
 
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=%p: Websocket setup failed, error %d (%s).",
+            (void *)ws_bootstrap,
+            error_code,
+            aws_error_name(error_code));
+
         ws_bootstrap->websocket_setup_callback(
             NULL, error_code, ws_bootstrap->response_status, header_array, num_headers, ws_bootstrap->user_data);
 
     } else if (ws_bootstrap->websocket_shutdown_callback) {
+        AWS_ASSERT(ws_bootstrap->websocket);
+
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Websocket client connection shut down with error %d (%s).",
+            (void *)ws_bootstrap->websocket,
+            error_code,
+            aws_error_name(error_code));
+
         ws_bootstrap->websocket_shutdown_callback(ws_bootstrap->websocket, error_code, ws_bootstrap->user_data);
     }
 
@@ -338,6 +399,13 @@ static void s_ws_bootstrap_on_handshake_response_headers(
 
     return;
 error:
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_WEBSOCKET_SETUP,
+        "id=%p: Error while processing response headers, %d (%s)",
+        (void *)ws_bootstrap,
+        aws_last_error(),
+        aws_error_name(aws_last_error()));
+
     s_ws_bootstrap_cancel_setup_due_to_err(ws_bootstrap, aws_http_stream_get_connection(stream), aws_last_error());
 }
 
@@ -355,6 +423,12 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
 
     /* Verify handshake response. RFC-6455 Section 1.3 */
     if (ws_bootstrap->response_status != AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=%p: Server refused websocket upgrade, responded with status code %d",
+            (void *)ws_bootstrap,
+            ws_bootstrap->response_status);
+
         aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
         goto error;
     }
@@ -373,15 +447,32 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
         .on_incoming_frame_begin = ws_bootstrap->websocket_frame_begin_callback,
         .on_incoming_frame_payload = ws_bootstrap->websocket_frame_payload_callback,
         .on_incoming_frame_complete = ws_bootstrap->websocket_frame_complete_callback,
-        .is_server = false
-    };
+        .is_server = false};
 
     ws_bootstrap->websocket = aws_websocket_handler_new(&ws_options);
     if (!ws_bootstrap->websocket) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=%p: Failed to create websocket handler, error %d (%s)",
+            (void *)ws_bootstrap,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
         goto error;
     }
 
-    /* Success! Finally, invoke setup callback */
+    /* Success! Setup complete! */
+    AWS_LOGF_TRACE(/* Log for tracing setup id to websocket id.  */
+                   AWS_LS_HTTP_WEBSOCKET_SETUP,
+                   "id=%p: Setup success, created websocket=%p",
+                   (void *)ws_bootstrap,
+                   (void *)ws_bootstrap->websocket);
+
+    AWS_LOGF_DEBUG(/* Debug log about creation of websocket. */
+                   AWS_LS_HTTP_WEBSOCKET,
+                   "id=%p: Websocket client connection established.",
+                   (void *)ws_bootstrap->websocket);
+
     size_t num_headers = aws_array_list_length(&ws_bootstrap->response_headers);
     const struct aws_http_header *header_array = NULL;
     if (num_headers) {
@@ -391,8 +482,9 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
     ws_bootstrap->websocket_setup_callback(
         ws_bootstrap->websocket, 0, ws_bootstrap->response_status, header_array, num_headers, ws_bootstrap->user_data);
 
-    /* Clear setup callback so that we know it's been called. */
+    /* Clear setup callback so that we know that it's been invoked. */
     ws_bootstrap->websocket_setup_callback = NULL;
+
     aws_http_stream_release(stream);
     return;
 
