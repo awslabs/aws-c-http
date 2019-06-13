@@ -29,8 +29,18 @@
  * The bootstrap is responsible for firing the on_connection_setup and on_connection_shutdown callbacks.
  */
 struct aws_websocket_client_bootstrap {
+    /* Settings copied in from aws_websocket_client_connection_options */
     struct aws_allocator *alloc;
-    struct aws_websocket *websocket;
+    size_t initial_window_size;
+    void *user_data;
+    /* Setup callback will be set NULL once it's invoked.
+     * This is used to determine whether setup or shutdown should be invoked
+     * from the HTTP-shutdown callback. */
+    aws_websocket_on_connection_setup_fn *websocket_setup_callback;
+    aws_websocket_on_connection_shutdown_fn *websocket_shutdown_callback;
+    aws_websocket_on_incoming_frame_begin_fn *websocket_frame_begin_callback;
+    aws_websocket_on_incoming_frame_payload_fn *websocket_frame_payload_callback;
+    aws_websocket_on_incoming_frame_complete_fn *websocket_frame_complete_callback;
 
     /* Handshake request data */
     struct aws_byte_cursor request_path;
@@ -43,14 +53,8 @@ struct aws_websocket_client_bootstrap {
     struct aws_array_list response_headers;
     struct aws_byte_buf response_storage;
 
-    /* Setup callback will be set NULL once it's invoked.
-     * This is used to determine whether setup or shutdown should be invoked
-     * from the HTTP-shutdown callback. */
-    aws_websocket_on_connection_setup_fn *websocket_setup_callback;
-    aws_websocket_on_connection_shutdown_fn *websocket_shutdown_callback;
-    void *user_data;
-
     int setup_error_code;
+    struct aws_websocket *websocket;
 };
 
 static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_bootstrap);
@@ -58,10 +62,7 @@ static void s_ws_bootstrap_cancel_setup_due_to_err(
     struct aws_websocket_client_bootstrap *ws_bootstrap,
     struct aws_http_connection *http_connection,
     int error_code);
-static void s_ws_bootstrap_on_http_setup(
-    struct aws_http_connection *http_connection,
-    int error_code,
-    void *user_data);
+static void s_ws_bootstrap_on_http_setup(struct aws_http_connection *http_connection, int error_code, void *user_data);
 static void s_ws_bootstrap_on_http_shutdown(
     struct aws_http_connection *http_connection,
     int error_code,
@@ -76,9 +77,9 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
 int aws_websocket_client_connect(const struct aws_websocket_client_connection_options *options) {
     aws_http_fatal_assert_library_initialized();
     AWS_ASSERT(options);
-    AWS_ASSERT(options->num_handhake_headers > 0);
-    int err;
+
     /* TODO: verify options */
+    AWS_ASSERT(options->num_handhake_headers > 0);
 
     struct aws_websocket_client_bootstrap *ws_bootstrap =
         aws_mem_calloc(options->allocator, 1, sizeof(struct aws_websocket_client_bootstrap));
@@ -87,6 +88,13 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     }
 
     ws_bootstrap->alloc = options->allocator;
+    ws_bootstrap->initial_window_size = options->initial_window_size;
+    ws_bootstrap->user_data = options->user_data;
+    ws_bootstrap->websocket_setup_callback = options->on_connection_setup;
+    ws_bootstrap->websocket_shutdown_callback = options->on_connection_shutdown;
+    ws_bootstrap->websocket_frame_begin_callback = options->on_incoming_frame_begin;
+    ws_bootstrap->websocket_frame_payload_callback = options->on_incoming_frame_payload;
+    ws_bootstrap->websocket_frame_complete_callback = options->on_incoming_frame_complete;
     ws_bootstrap->response_status = AWS_HTTP_STATUS_UNKNOWN;
 
     /* Deep-copy all request headers, plus the request path. */
@@ -96,7 +104,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
         request_storage_size += options->handshake_header_array[i].value.len;
     }
 
-    err = aws_byte_buf_init(&ws_bootstrap->request_storage, ws_bootstrap->alloc, request_storage_size);
+    int err = aws_byte_buf_init(&ws_bootstrap->request_storage, ws_bootstrap->alloc, request_storage_size);
     if (err) {
         goto error;
     }
@@ -191,11 +199,16 @@ static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_boo
     aws_mem_release(ws_bootstrap->alloc, ws_bootstrap);
 }
 
-/* Call if something goes wrong between an HTTP connection being established, and the websocket setup completing. */
+/* Called if something goes wrong after an HTTP connection is established.
+ * The HTTP connection is closed.
+ * We must wait for its shutdown to complete before informing user of the failed websocket setup. */
 static void s_ws_bootstrap_cancel_setup_due_to_err(
     struct aws_websocket_client_bootstrap *ws_bootstrap,
     struct aws_http_connection *http_connection,
     int error_code) {
+
+    AWS_ASSERT(error_code);
+    AWS_ASSERT(http_connection);
 
     if (!ws_bootstrap->setup_error_code) {
         ws_bootstrap->setup_error_code = error_code;
@@ -204,10 +217,8 @@ static void s_ws_bootstrap_cancel_setup_due_to_err(
     }
 }
 
-static void s_ws_bootstrap_on_http_setup(
-    struct aws_http_connection *http_connection,
-    int error_code,
-    void *user_data) {
+/* Invoked when HTTP connection has been established (or failed to be established) */
+static void s_ws_bootstrap_on_http_setup(struct aws_http_connection *http_connection, int error_code, void *user_data) {
 
     struct aws_websocket_client_bootstrap *ws_bootstrap = user_data;
 
@@ -247,6 +258,8 @@ static void s_ws_bootstrap_on_http_setup(
     }
 }
 
+/* Invoked when the HTTP connection has shut down.
+ * This is never called if the HTTP connection failed its setup */
 static void s_ws_bootstrap_on_http_shutdown(
     struct aws_http_connection *http_connection,
     int error_code,
@@ -258,6 +271,8 @@ static void s_ws_bootstrap_on_http_shutdown(
      * If setup callback still hasn't fired, invoke it now and indicate failure.
      * Otherwise, invoke shutdown callback. */
     if (ws_bootstrap->websocket_setup_callback) {
+        AWS_ASSERT(!ws_bootstrap->websocket);
+
         /* Ensure non-zero error_code is passed */
         if (!error_code) {
             error_code = ws_bootstrap->setup_error_code;
@@ -274,12 +289,7 @@ static void s_ws_bootstrap_on_http_shutdown(
         }
 
         ws_bootstrap->websocket_setup_callback(
-            NULL,
-            error_code,
-            ws_bootstrap->response_status,
-            header_array,
-            num_headers,
-            ws_bootstrap->user_data);
+            NULL, error_code, ws_bootstrap->response_status, header_array, num_headers, ws_bootstrap->user_data);
 
     } else if (ws_bootstrap->websocket_shutdown_callback) {
         ws_bootstrap->websocket_shutdown_callback(ws_bootstrap->websocket, error_code, ws_bootstrap->user_data);
@@ -333,32 +343,45 @@ error:
 
 static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     struct aws_websocket_client_bootstrap *ws_bootstrap = user_data;
+    struct aws_http_connection *http_connection = aws_http_stream_get_connection(stream);
+    AWS_ASSERT(http_connection);
 
     if (error_code) {
         goto error;
     }
 
-    int err = aws_http_stream_get_incoming_response_status(stream, &ws_bootstrap->response_status);
-    if (err) {
-        goto error;
-    }
-
-    aws_http_stream_release(stream);
-    stream = NULL;
+    /* Get data from stream */
+    aws_http_stream_get_incoming_response_status(stream, &ws_bootstrap->response_status);
 
     /* Verify handshake response. RFC-6455 Section 1.3 */
-    if (ws_bootstrap->response_status != AWS_HTTP_STATUS_SWITCHING_PROTOCOLS) {
+    if (ws_bootstrap->response_status != AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS) {
         aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE);
         goto error;
     }
 
     /* TODO: validate Sec-WebSocket-Accept header */
 
-    /* Upgrade http connection to midchannel handler */
-
     /* Insert websocket handler into channel */
+    struct aws_channel *channel = aws_http_connection_get_channel(http_connection);
+    AWS_ASSERT(channel);
 
-    /* Finally, invoke setup callback */
+    struct aws_websocket_handler_options ws_options = {
+        .allocator = ws_bootstrap->alloc,
+        .channel = channel,
+        .initial_window_size = ws_bootstrap->initial_window_size,
+        .user_data = ws_bootstrap->user_data,
+        .on_incoming_frame_begin = ws_bootstrap->websocket_frame_begin_callback,
+        .on_incoming_frame_payload = ws_bootstrap->websocket_frame_payload_callback,
+        .on_incoming_frame_complete = ws_bootstrap->websocket_frame_complete_callback,
+        .is_server = false
+    };
+
+    ws_bootstrap->websocket = aws_websocket_handler_new(&ws_options);
+    if (!ws_bootstrap->websocket) {
+        goto error;
+    }
+
+    /* Success! Finally, invoke setup callback */
     size_t num_headers = aws_array_list_length(&ws_bootstrap->response_headers);
     const struct aws_http_header *header_array = NULL;
     if (num_headers) {
@@ -370,17 +393,13 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
 
     /* Clear setup callback so that we know it's been called. */
     ws_bootstrap->websocket_setup_callback = NULL;
+    aws_http_stream_release(stream);
     return;
 
 error:
     if (!error_code) {
         error_code = aws_last_error();
     }
-
-    /* Release stream, if we haven't already done so. */
-    if (stream) {
-        aws_http_stream_release(stream);
-    }
-
-    s_ws_bootstrap_cancel_setup_due_to_err(ws_bootstrap, aws_http_stream_get_connection(stream), error_code);
+    s_ws_bootstrap_cancel_setup_due_to_err(ws_bootstrap, http_connection, error_code);
+    aws_http_stream_release(stream);
 }
