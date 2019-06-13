@@ -87,9 +87,11 @@ static void s_header_test_before(struct aws_allocator *allocator, void *ctx) {
 
     int ret_value = aws_h2_frame_header_block_init(&fixture->headers, allocator);
     AWS_FATAL_ASSERT(ret_value == AWS_OP_SUCCESS);
+    (void)ret_value;
 
     ret_value = aws_byte_buf_init(&fixture->buffer, allocator, S_BUFFER_SIZE);
     AWS_FATAL_ASSERT(ret_value == AWS_OP_SUCCESS);
+    (void)ret_value;
 }
 
 static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
