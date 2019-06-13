@@ -40,10 +40,8 @@ static const size_t s_hpack_dynamic_table_max_size = 4096;
 static size_t s_frame_priority_settings_size = 5;
 static int s_frame_priority_settings_encode(
     const struct aws_h2_frame_priority_settings *priority,
-    struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output) {
     AWS_PRECONDITION(priority);
-    AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(output);
     AWS_FATAL_ASSERT((priority->stream_dependency & s_u32_top_bit_mask) == 0);
 
@@ -500,6 +498,7 @@ int aws_h2_frame_data_init(struct aws_h2_frame_data *frame, struct aws_allocator
 }
 void aws_h2_frame_data_clean_up(struct aws_h2_frame_data *frame) {
     AWS_PRECONDITION(frame);
+    (void)frame;
 }
 
 int aws_h2_frame_data_encode(
@@ -509,6 +508,8 @@ int aws_h2_frame_data_encode(
     AWS_PRECONDITION(frame);
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(output);
+
+    (void)encoder;
 
     const size_t output_init_len = output->len;
 
@@ -657,7 +658,7 @@ int aws_h2_frame_headers_encode(
     }
     /* Write priority */
     if (frame->has_priority) {
-        if (s_frame_priority_settings_encode(&frame->priority, encoder, output)) {
+        if (s_frame_priority_settings_encode(&frame->priority, output)) {
             goto write_error;
         }
     }
@@ -763,6 +764,8 @@ int aws_h2_frame_priority_init(struct aws_h2_frame_priority *frame, struct aws_a
 }
 void aws_h2_frame_priority_clean_up(struct aws_h2_frame_priority *frame) {
     AWS_PRECONDITION(frame);
+
+    (void)frame;
 }
 
 int aws_h2_frame_priority_encode(
@@ -773,6 +776,8 @@ int aws_h2_frame_priority_encode(
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(output);
 
+    (void)encoder;
+
     const size_t output_init_len = output->len;
 
     /* Write the header data */
@@ -781,7 +786,7 @@ int aws_h2_frame_priority_encode(
     }
 
     /* Write the priority settings */
-    if (s_frame_priority_settings_encode(&frame->priority, encoder, output)) {
+    if (s_frame_priority_settings_encode(&frame->priority, output)) {
         goto write_error;
     }
 
@@ -846,6 +851,8 @@ int aws_h2_frame_rst_stream_init(struct aws_h2_frame_rst_stream *frame, struct a
 }
 void aws_h2_frame_rst_stream_clean_up(struct aws_h2_frame_rst_stream *frame) {
     AWS_PRECONDITION(frame);
+
+    (void)frame;
 }
 
 int aws_h2_frame_rst_stream_encode(
@@ -855,6 +862,8 @@ int aws_h2_frame_rst_stream_encode(
     AWS_PRECONDITION(frame);
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(output);
+
+    (void)encoder;
 
     const size_t output_init_len = output->len;
 
@@ -955,6 +964,8 @@ int aws_h2_frame_settings_encode(
     AWS_PRECONDITION(frame);
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(output);
+
+    (void)encoder;
 
     const size_t output_init_len = output->len;
 
@@ -1201,6 +1212,8 @@ int aws_h2_frame_ping_init(struct aws_h2_frame_ping *frame, struct aws_allocator
 }
 void aws_h2_frame_ping_clean_up(struct aws_h2_frame_ping *frame) {
     AWS_PRECONDITION(frame);
+
+    (void)frame;
 }
 
 int aws_h2_frame_ping_encode(
@@ -1210,6 +1223,8 @@ int aws_h2_frame_ping_encode(
     AWS_PRECONDITION(frame);
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(output);
+
+    (void)encoder;
 
     if (frame->header.stream_id != 0) {
         return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
@@ -1295,6 +1310,8 @@ int aws_h2_frame_goaway_init(struct aws_h2_frame_goaway *frame, struct aws_alloc
 }
 void aws_h2_frame_goaway_clean_up(struct aws_h2_frame_goaway *frame) {
     AWS_PRECONDITION(frame);
+
+    (void)frame;
 }
 
 int aws_h2_frame_goaway_encode(
@@ -1304,6 +1321,8 @@ int aws_h2_frame_goaway_encode(
     AWS_PRECONDITION(frame);
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(output);
+
+    (void)encoder;
 
     if (frame->header.stream_id != 0) {
         return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
@@ -1405,6 +1424,8 @@ int aws_h2_frame_window_update_init(struct aws_h2_frame_window_update *frame, st
 }
 void aws_h2_frame_window_update_clean_up(struct aws_h2_frame_window_update *frame) {
     AWS_PRECONDITION(frame);
+
+    (void)frame;
 }
 
 int aws_h2_frame_window_update_encode(
@@ -1414,6 +1435,8 @@ int aws_h2_frame_window_update_encode(
     AWS_PRECONDITION(frame);
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(output);
+
+    (void)encoder;
 
     const size_t output_init_len = output->len;
 
