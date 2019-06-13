@@ -136,6 +136,8 @@ static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
 
 static void s_header_test_after(struct aws_allocator *allocator, void *ctx) {
 
+    (void)allocator;
+
     struct header_test_fixture *fixture = ctx;
 
     /* Tear down the header & buffer */

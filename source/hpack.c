@@ -25,7 +25,7 @@
 
 struct aws_huffman_symbol_coder *hpack_get_coder(void);
 
-uint64_t aws_hpack_get_encoded_length_integer(uint64_t integer, uint8_t prefix_size) {
+size_t aws_hpack_get_encoded_length_integer(uint64_t integer, uint8_t prefix_size) {
     const uint8_t cut_bits = 8 - prefix_size;
     const uint8_t prefix_mask = UINT8_MAX >> cut_bits;
 

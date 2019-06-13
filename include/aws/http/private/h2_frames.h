@@ -261,7 +261,7 @@ AWS_HTTP_API
 int aws_h2_frame_header_block_get_encoded_length(
     const struct aws_h2_frame_header_block *header_block,
     struct aws_h2_frame_encoder *encoder,
-    uint64_t *length);
+    size_t *length);
 AWS_HTTP_API
 int aws_h2_frame_header_block_encode(
     const struct aws_h2_frame_header_block *header_block,
