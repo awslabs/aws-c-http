@@ -1592,6 +1592,16 @@ static int s_handler_increment_read_window(
 
     struct h1_connection *connection = handler->impl;
 
+    if (connection->thread_data.is_shutting_down) {
+        aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+        goto error;
+    }
+
+    if (!connection->thread_data.has_switched_protocols) {
+        aws_raise_error(AWS_ERROR_INVALID_STATE);
+        goto error;
+    }
+
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,
         "id=%p: Read window incremented by %zu. Sending queued messages, if any.",
@@ -1602,6 +1612,17 @@ static int s_handler_increment_read_window(
     s_connection_try_send_read_messages(connection);
 
     aws_channel_slot_increment_read_window(slot, size);
+    return AWS_OP_SUCCESS;
+
+error:
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Failed to increment read window, error %d (%s)",
+        (void *)&connection->base,
+        aws_last_error(),
+        aws_error_name(aws_last_error()));
+
+    s_shutdown_connection(connection, aws_last_error());
     return AWS_OP_SUCCESS;
 }
 

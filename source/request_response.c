@@ -41,7 +41,9 @@ struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http
 }
 
 void aws_http_stream_release(struct aws_http_stream *stream) {
-    AWS_ASSERT(stream);
+    if (!stream) {
+        return;
+    }
 
     size_t prev_refcount = aws_atomic_fetch_sub(&stream->refcount, 1);
     if (prev_refcount == 1) {
