@@ -54,7 +54,7 @@ enum aws_websocket_opcode {
  *                            -1 if the connection failed before a response was received.
  * handshake_response_header_array: Headers from the HTTP handshake response.
  *                            May be NULL if num_handshake_response_headers is 0.
- *                            Copy if necessary, this memory becomes invalid once the callback completes, copy if necessary.
+ *                            Copy if necessary, this memory becomes invalid once the callback completes.
  * num_handshake_response_headers: Number of entries in handshake_response_header_array.
  *                            May be 0 if the response did not complete, or was invalid.
  */
