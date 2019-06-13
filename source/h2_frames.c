@@ -38,6 +38,7 @@ static const size_t s_hpack_dynamic_table_max_size = 4096;
  * Priority
  **********************************************************************************************************************/
 static size_t s_frame_priority_settings_size = 5;
+
 static int s_frame_priority_settings_encode(
     const struct aws_h2_frame_priority_settings *priority,
     struct aws_byte_buf *output) {
@@ -100,7 +101,7 @@ void aws_h2_frame_header_block_clean_up(struct aws_h2_frame_header_block *header
 int aws_h2_frame_header_block_get_encoded_length(
     const struct aws_h2_frame_header_block *header_block,
     struct aws_h2_frame_encoder *encoder,
-    uint32_t *length) {
+    size_t *length) {
     AWS_PRECONDITION(header_block);
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(length);
@@ -118,7 +119,7 @@ int aws_h2_frame_header_block_get_encoded_length(
         AWS_ASSERT(field);
 
         bool found_value = false;
-        const uint64_t index = aws_hpack_find_index(encoder->hpack, &field->header, &found_value);
+        const size_t index = aws_hpack_find_index(encoder->hpack, &field->header, &found_value);
 
         uint8_t prefix_size;
         /* If a value was found, this is an indexed header */
@@ -176,7 +177,7 @@ int aws_h2_frame_header_block_encode(
         AWS_ASSERT(field);
 
         bool found_value = true;
-        const uint64_t index = aws_hpack_find_index(encoder->hpack, &field->header, &found_value);
+        const size_t index = aws_hpack_find_index(encoder->hpack, &field->header, &found_value);
 
         uint8_t mask;
         uint8_t prefix_size;
@@ -266,6 +267,10 @@ int aws_h2_frame_header_block_decode(
                 return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
             }
 
+            if (index > SIZE_MAX) {
+                return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+            }
+
             const struct aws_http_header *header = aws_hpack_get_header(decoder->hpack, (size_t)index);
             if (!header) {
                 return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
@@ -294,10 +299,14 @@ int aws_h2_frame_header_block_decode(
                 return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
             }
 
+            if (index > SIZE_MAX) {
+                return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+            }
+
             /* Read the name */
             if (index) {
                 /* Name is indexed, so just read it */
-                const struct aws_http_header *header = aws_hpack_get_header(decoder->hpack, index);
+                const struct aws_http_header *header = aws_hpack_get_header(decoder->hpack, (size_t)index);
                 if (!header) {
                     return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
                 }
@@ -341,7 +350,7 @@ int aws_h2_frame_header_block_decode(
                 return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
             }
 
-            if (aws_hpack_resize_dynamic_table(decoder->hpack, new_size)) {
+            if (aws_hpack_resize_dynamic_table(decoder->hpack, (size_t)new_size)) {
                 return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
             }
         }
@@ -355,11 +364,16 @@ int aws_h2_frame_header_block_decode(
  **********************************************************************************************************************/
 static int s_frame_header_encode(
     struct aws_h2_frame_header *header,
-    uint32_t length,
+    size_t length,
     uint8_t flags,
     struct aws_byte_buf *output) {
     AWS_PRECONDITION(header);
     AWS_PRECONDITION(output);
+
+    /* Length must fit in 24 bits */
+    if (length > 0x00FFFFFF) {
+        return AWS_OP_ERR;
+    }
 
     /* Write length */
     length = aws_hton24(length);
@@ -520,7 +534,7 @@ int aws_h2_frame_data_encode(
     const size_t output_init_len = output->len;
 
     /* Calculate length & flags */
-    uint32_t length = frame->data.len + frame->pad_length;
+    size_t length = frame->data.len + frame->pad_length;
 
     uint8_t flags = 0;
     if (frame->end_stream) {
@@ -630,7 +644,7 @@ int aws_h2_frame_headers_encode(
     const size_t output_init_len = output->len;
 
     /* Calculate length & flags */
-    uint32_t length = 0;
+    size_t length = 0;
     if (aws_h2_frame_header_block_get_encoded_length(&frame->header_block, encoder, &length)) {
         goto compression_error;
     }
@@ -758,7 +772,7 @@ compression_error:
 /***********************************************************************************************************************
  * PRIORITY
  **********************************************************************************************************************/
-static const uint32_t s_frame_priority_length = 5;
+static const size_t s_frame_priority_length = 5;
 
 int aws_h2_frame_priority_init(struct aws_h2_frame_priority *frame, struct aws_allocator *allocator) {
     (void)allocator;
@@ -845,7 +859,7 @@ protocol_error:
 /***********************************************************************************************************************
  * RST_STREAM
  **********************************************************************************************************************/
-static const uint32_t s_frame_rst_stream_length = 4;
+static const size_t s_frame_rst_stream_length = 4;
 
 int aws_h2_frame_rst_stream_init(struct aws_h2_frame_rst_stream *frame, struct aws_allocator *allocator) {
     (void)allocator;
@@ -1098,7 +1112,7 @@ int aws_h2_frame_push_promise_encode(
 
     /* Write header */
     uint8_t flags = 0;
-    uint32_t length = 0;
+    size_t length = 0;
     if (aws_h2_frame_header_block_get_encoded_length(&frame->header_block, encoder, &length)) {
         goto compression_error;
     }
@@ -1206,7 +1220,7 @@ compression_error:
 /***********************************************************************************************************************
  * PING
  **********************************************************************************************************************/
-static const uint32_t s_frame_ping_length = 8;
+static const size_t s_frame_ping_length = 8;
 
 int aws_h2_frame_ping_init(struct aws_h2_frame_ping *frame, struct aws_allocator *allocator) {
     (void)allocator;
@@ -1337,7 +1351,7 @@ int aws_h2_frame_goaway_encode(
     const size_t output_init_len = output->len;
 
     /* Write the header data */
-    uint32_t length = 8 + frame->debug_data.len;
+    size_t length = 8 + frame->debug_data.len;
     if (s_frame_header_encode(&frame->header, length, 0, output)) {
         goto write_error;
     }
@@ -1418,7 +1432,7 @@ protocol_error:
 /***********************************************************************************************************************
  * WINDOW_UPDATE
  **********************************************************************************************************************/
-static const uint32_t s_frame_window_update_length = 4;
+static const size_t s_frame_window_update_length = 4;
 
 int aws_h2_frame_window_update_init(struct aws_h2_frame_window_update *frame, struct aws_allocator *allocator) {
     (void)allocator;
@@ -1535,7 +1549,7 @@ int aws_h2_frame_continuation_encode(
     const size_t output_init_len = output->len;
 
     /* Calculate length & flags */
-    uint32_t length = 0;
+    size_t length = 0;
     if (aws_h2_frame_header_block_get_encoded_length(&frame->header_block, encoder, &length)) {
         goto compression_error;
     }

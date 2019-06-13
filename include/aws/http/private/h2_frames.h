@@ -98,7 +98,7 @@ struct aws_h2_frame_priority_settings {
 struct aws_h2_frame_header_field {
     struct aws_http_header header;
     enum aws_h2_header_field_hpack_behavior hpack_behavior;
-    const uint64_t index; /* DO NOT TOUCH unless you're pretty sure you know what you're doing */
+    const size_t index; /* DO NOT TOUCH unless you're pretty sure you know what you're doing */
 };
 struct aws_h2_frame_header_block {
     /* array_list of aws_h2_frame_header_field */
@@ -261,7 +261,7 @@ AWS_HTTP_API
 int aws_h2_frame_header_block_get_encoded_length(
     const struct aws_h2_frame_header_block *header_block,
     struct aws_h2_frame_encoder *encoder,
-    uint32_t *length);
+    uint64_t *length);
 AWS_HTTP_API
 int aws_h2_frame_header_block_encode(
     const struct aws_h2_frame_header_block *header_block,
