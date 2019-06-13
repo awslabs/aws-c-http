@@ -464,6 +464,8 @@ static int s_test_ping_init(struct frame_test_fixture *fixture) {
 }
 static bool s_frame_eq_ping(const void *a, const void *b, size_t size) {
 
+    (void)size;
+
     const struct aws_h2_frame_ping *l = a;
     const struct aws_h2_frame_ping *r = b;
 
@@ -511,6 +513,8 @@ static int s_test_goaway_init(struct frame_test_fixture *fixture) {
     return AWS_OP_SUCCESS;
 }
 static bool s_frame_eq_goaway(const void *a, const void *b, size_t size) {
+
+    (void)size;
 
     const struct aws_h2_frame_goaway *l = a;
     const struct aws_h2_frame_goaway *r = b;
