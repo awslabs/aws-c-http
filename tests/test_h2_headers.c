@@ -44,11 +44,11 @@ static bool s_header_block_eq(const struct aws_h2_frame_header_block *l, const s
     for (size_t i = 0; i < l_size; ++i) {
         const struct aws_h2_frame_header_field *l_field = NULL;
         aws_array_list_get_at_ptr(&l->header_fields, (void **)&l_field, i);
-        AWS_ASSERT(l_field);
+        AWS_FATAL_ASSERT(l_field);
 
         const struct aws_h2_frame_header_field *r_field = NULL;
         aws_array_list_get_at_ptr(&r->header_fields, (void **)&r_field, i);
-        AWS_ASSERT(r_field);
+        AWS_FATAL_ASSERT(r_field);
 
         if (l_field->hpack_behavior != r_field->hpack_behavior ||
             !aws_byte_cursor_eq(&l_field->header.name, &r_field->header.name) ||
@@ -86,10 +86,10 @@ static void s_header_test_before(struct aws_allocator *allocator, void *ctx) {
     aws_h2_frame_decoder_init(&fixture->decoder, allocator);
 
     int ret_value = aws_h2_frame_header_block_init(&fixture->headers, allocator);
-    AWS_ASSERT(ret_value == AWS_OP_SUCCESS);
+    AWS_FATAL_ASSERT(ret_value == AWS_OP_SUCCESS);
 
     ret_value = aws_byte_buf_init(&fixture->buffer, allocator, S_BUFFER_SIZE);
-    AWS_ASSERT(ret_value == AWS_OP_SUCCESS);
+    AWS_FATAL_ASSERT(ret_value == AWS_OP_SUCCESS);
 }
 
 static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {

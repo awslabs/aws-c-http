@@ -76,9 +76,11 @@ static void s_frame_test_before(struct aws_allocator *allocator, void *ctx) {
 
     int ret_value = aws_h2_frame_encoder_init(&fixture->encoder, allocator);
     AWS_ASSERT(ret_value == AWS_OP_SUCCESS);
+    (void)ret_value;
 
     ret_value = aws_h2_frame_decoder_init(&fixture->decoder, allocator);
     AWS_ASSERT(ret_value == AWS_OP_SUCCESS);
+    (void)ret_value;
 
     /* Setup the fixture */
     fixture->in_frame = aws_mem_acquire(allocator, fixture->size);
