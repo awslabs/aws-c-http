@@ -21,6 +21,7 @@
 #include <aws/common/mutex.h>
 #include <aws/http/connection.h>
 #include <aws/http/private/connection_manager_function_table.h>
+#include <aws/http/private/http_impl.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
@@ -395,6 +396,8 @@ static void s_aws_http_connection_manager_destroy(struct aws_http_connection_man
 struct aws_http_connection_manager *aws_http_connection_manager_new(
     struct aws_allocator *allocator,
     struct aws_http_connection_manager_options *options) {
+
+    aws_http_fatal_assert_library_initialized();
 
     if (!options || !options->socket_options || options->max_connections == 0) {
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
