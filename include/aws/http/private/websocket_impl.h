@@ -18,6 +18,10 @@
 
 #include <aws/http/websocket.h>
 
+struct aws_http_client_connection_options;
+struct aws_http_connection;
+struct aws_http_request_options;
+
 /* RFC-6455 Section 5.2 Base Framing Protocol
  * Payload length:  7 bits, 7+16 bits, or 7+64 bits
  *
@@ -72,6 +76,18 @@ struct aws_websocket_handler_options {
     bool is_server;
 };
 
+struct aws_websocket_client_bootstrap_function_table {
+    int (*aws_http_client_connect)(const struct aws_http_client_connection_options *options);
+    void (*aws_http_connection_release)(struct aws_http_connection *connection);
+    void (*aws_http_connection_close)(struct aws_http_connection *connection);
+    struct aws_channel *(*aws_http_connection_get_channel)(struct aws_http_connection *connection);
+    struct aws_http_stream *(*aws_http_stream_new_client_request)(const struct aws_http_request_options *options);
+    void (*aws_http_stream_release)(struct aws_http_stream *stream);
+    struct aws_http_connection *(*aws_http_stream_get_connection)(const struct aws_http_stream *stream);
+    int (*aws_http_stream_get_incoming_response_status)(const struct aws_http_stream *stream, int *out_status);
+    struct aws_websocket *(*aws_websocket_handler_new)(const struct aws_websocket_handler_options *options);
+};
+
 AWS_EXTERN_C_BEGIN
 
 /**
@@ -91,6 +107,13 @@ uint64_t aws_websocket_frame_encoded_size(const struct aws_websocket_frame *fram
  */
 AWS_HTTP_API
 struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handler_options *options);
+
+/**
+ * Override the functions that websocket bootstrap uses to interact with external systems.
+ * Used for unit testing.
+ */
+AWS_HTTP_API
+void aws_websocket_client_bootstrap_set_function_table(struct aws_websocket_client_bootstrap_function_table *table);
 
 AWS_EXTERN_C_END
 #endif /* AWS_HTTP_WEBSOCKET_IMPL_H */

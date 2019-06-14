@@ -38,6 +38,27 @@ static const struct scheme_port s_scheme_ports[] = {
 };
 
 /**
+ * Allow unit-tests to mock interactions with external systems.
+ */
+static struct aws_websocket_client_bootstrap_function_table s_default_function_table = {
+    .aws_http_client_connect = aws_http_client_connect,
+    .aws_http_connection_release = aws_http_connection_release,
+    .aws_http_connection_close = aws_http_connection_close,
+    .aws_http_connection_get_channel = aws_http_connection_get_channel,
+    .aws_http_stream_new_client_request = aws_http_stream_new_client_request,
+    .aws_http_stream_release = aws_http_stream_release,
+    .aws_http_stream_get_connection = aws_http_stream_get_connection,
+    .aws_http_stream_get_incoming_response_status = aws_http_stream_get_incoming_response_status,
+    .aws_websocket_handler_new = aws_websocket_handler_new,
+};
+
+static struct aws_websocket_client_bootstrap_function_table *s_function_table = &s_default_function_table;
+
+void aws_websocket_client_bootstrap_set_function_table(struct aws_websocket_client_bootstrap_function_table *table) {
+    s_function_table = table;
+}
+
+/**
  * The websocket bootstrap brings a websocket connection into this world, and sees it out again.
  * Spins up an HTTP client, performs the opening handshake (HTTP Upgrade request),
  * creates the websocket handler, and inserts it into the channel.
@@ -227,7 +248,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
         }
     }
 
-    err = aws_http_client_connect(&http_options);
+    err = s_function_table->aws_http_client_connect(&http_options);
     if (err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
@@ -294,7 +315,7 @@ static void s_ws_bootstrap_cancel_setup_due_to_err(
 
         ws_bootstrap->setup_error_code = error_code;
 
-        aws_http_connection_close(http_connection);
+        s_function_table->aws_http_connection_close(http_connection);
     }
 }
 
@@ -337,7 +358,7 @@ static void s_ws_bootstrap_on_http_setup(struct aws_http_connection *http_connec
     options.on_response_headers = s_ws_bootstrap_on_handshake_response_headers;
     options.on_complete = s_ws_bootstrap_on_handshake_complete;
 
-    struct aws_http_stream *handshake_stream = aws_http_stream_new_client_request(&options);
+    struct aws_http_stream *handshake_stream = s_function_table->aws_http_stream_new_client_request(&options);
     if (!handshake_stream) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
@@ -414,7 +435,7 @@ static void s_ws_bootstrap_on_http_shutdown(
 
     /* Clean up HTTP connection and websocket-bootstrap.
      * It's still up to the user to release the websocket itself. */
-    aws_http_connection_release(http_connection);
+    s_function_table->aws_http_connection_release(http_connection);
 
     s_ws_bootstrap_destroy(ws_bootstrap);
 }
@@ -462,12 +483,13 @@ error:
         aws_last_error(),
         aws_error_name(aws_last_error()));
 
-    s_ws_bootstrap_cancel_setup_due_to_err(ws_bootstrap, aws_http_stream_get_connection(stream), aws_last_error());
+    s_ws_bootstrap_cancel_setup_due_to_err(
+        ws_bootstrap, s_function_table->aws_http_stream_get_connection(stream), aws_last_error());
 }
 
 static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     struct aws_websocket_client_bootstrap *ws_bootstrap = user_data;
-    struct aws_http_connection *http_connection = aws_http_stream_get_connection(stream);
+    struct aws_http_connection *http_connection = s_function_table->aws_http_stream_get_connection(stream);
     AWS_ASSERT(http_connection);
 
     if (error_code) {
@@ -475,7 +497,7 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
     }
 
     /* Get data from stream */
-    aws_http_stream_get_incoming_response_status(stream, &ws_bootstrap->response_status);
+    s_function_table->aws_http_stream_get_incoming_response_status(stream, &ws_bootstrap->response_status);
 
     /* Verify handshake response. RFC-6455 Section 1.3 */
     if (ws_bootstrap->response_status != AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS) {
@@ -492,7 +514,7 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
     /* TODO: validate Sec-WebSocket-Accept header */
 
     /* Insert websocket handler into channel */
-    struct aws_channel *channel = aws_http_connection_get_channel(http_connection);
+    struct aws_channel *channel = s_function_table->aws_http_connection_get_channel(http_connection);
     AWS_ASSERT(channel);
 
     struct aws_websocket_handler_options ws_options = {
@@ -505,7 +527,7 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
         .on_incoming_frame_complete = ws_bootstrap->websocket_frame_complete_callback,
         .is_server = false};
 
-    ws_bootstrap->websocket = aws_websocket_handler_new(&ws_options);
+    ws_bootstrap->websocket = s_function_table->aws_websocket_handler_new(&ws_options);
     if (!ws_bootstrap->websocket) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
@@ -541,7 +563,7 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
     /* Clear setup callback so that we know that it's been invoked. */
     ws_bootstrap->websocket_setup_callback = NULL;
 
-    aws_http_stream_release(stream);
+    s_function_table->aws_http_stream_release(stream);
     return;
 
 error:
@@ -549,5 +571,5 @@ error:
         error_code = aws_last_error();
     }
     s_ws_bootstrap_cancel_setup_due_to_err(ws_bootstrap, http_connection, error_code);
-    aws_http_stream_release(stream);
+    s_function_table->aws_http_stream_release(stream);
 }
