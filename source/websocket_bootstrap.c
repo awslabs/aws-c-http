@@ -21,6 +21,10 @@
 #include <aws/http/request_response.h>
 #include <aws/io/uri.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#endif
+
 /**
  * The websocket bootstrap brings a websocket connection into this world, and sees it out again.
  * Spins up an HTTP client, performs the opening handshake (HTTP Upgrade request),
