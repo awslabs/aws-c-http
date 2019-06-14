@@ -25,6 +25,18 @@
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
+struct scheme_port {
+    struct aws_byte_cursor scheme;
+    uint16_t port;
+};
+
+static const struct scheme_port s_scheme_ports[] = {
+    {.scheme = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("http"), .port = 80},
+    {.scheme = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https"), .port = 443},
+    {.scheme = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("ws"), .port = 80},
+    {.scheme = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("wss"), .port = 443},
+};
+
 /**
  * The websocket bootstrap brings a websocket connection into this world, and sees it out again.
  * Spins up an HTTP client, performs the opening handshake (HTTP Upgrade request),
@@ -80,30 +92,39 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
 int aws_websocket_client_connect(const struct aws_websocket_client_connection_options *options) {
     aws_http_fatal_assert_library_initialized();
     AWS_ASSERT(options);
-    struct aws_websocket_client_bootstrap *ws_bootstrap = NULL;
 
     /* Validate options */
     if (!options->allocator || !options->bootstrap || !options->socket_options || !options->uri ||
-        !aws_uri_port(options->uri) || !options->handshake_header_array || !options->num_handhake_headers ||
         !options->on_connection_setup) {
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        goto error;
+
+        AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET_SETUP, "id=static: Missing required websocket connection options.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    /* Either no frame-handling callbacks are set, or they all must be set */
-    if (options->on_incoming_frame_begin) {
-        if (!options->on_incoming_frame_payload || !options->on_incoming_frame_begin) {
-            aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-            goto error;
-        }
-    } else {
-        if (options->on_incoming_frame_payload || options->on_incoming_frame_begin) {
-            aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-            goto error;
-        }
+    bool all_frame_callbacks_set =
+        options->on_incoming_frame_begin && options->on_incoming_frame_payload && options->on_incoming_frame_begin;
+
+    bool no_frame_callbacks_set =
+        !options->on_incoming_frame_begin && !options->on_incoming_frame_payload && !options->on_incoming_frame_begin;
+
+    if (all_frame_callbacks_set || no_frame_callbacks_set) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=static: Invalid websocket connection options,"
+            " either all frame-handling callbacks must be set, or none must be set.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    ws_bootstrap = aws_mem_calloc(options->allocator, 1, sizeof(struct aws_websocket_client_bootstrap));
+    if (!options->handshake_header_array || !options->num_handhake_headers) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_WEBSOCKET_SETUP,
+            "id=static: Invalid connection options, missing required headers for websocket client handshake.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    /* Create bootstrap */
+    struct aws_websocket_client_bootstrap *ws_bootstrap =
+        aws_mem_calloc(options->allocator, 1, sizeof(struct aws_websocket_client_bootstrap));
     if (!ws_bootstrap) {
         goto error;
     }
@@ -158,8 +179,8 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     AWS_ASSERT(write_success); /* Should only fail if we allocated the wrong amount. */
 
     /* Pre-allocate space for response headers */
-    size_t estimated_response_headers = ws_bootstrap->num_request_headers + 10;
-    size_t estimated_response_header_length = 64;
+    size_t estimated_response_headers = ws_bootstrap->num_request_headers + 10; /* just guesses */
+    size_t estimated_response_header_length = 64;                               /* just guesses */
 
     err = aws_array_list_init_dynamic(
         &ws_bootstrap->response_headers,
@@ -183,13 +204,28 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     http_options.allocator = ws_bootstrap->alloc;
     http_options.bootstrap = options->bootstrap;
     http_options.host_name = *aws_uri_host_name(options->uri);
-    http_options.port = aws_uri_port(options->uri); /* TODO: require user to specify port? or infer from scheme? */
     http_options.socket_options = options->socket_options;
     http_options.tls_options = options->tls_options;
     http_options.initial_window_size = 1024; /* Adequate space for response data to trickle in */
     http_options.user_data = ws_bootstrap;
     http_options.on_setup = s_ws_bootstrap_on_http_setup;
     http_options.on_shutdown = s_ws_bootstrap_on_http_shutdown;
+
+    /* Infer port, if not explicitly specified in URI */
+    http_options.port = aws_uri_port(options->uri);
+    if (!http_options.port) {
+        struct aws_byte_cursor scheme = *aws_uri_scheme(options->uri);
+        for (size_t i = 0; i < AWS_ARRAY_SIZE(s_scheme_ports); ++i) {
+            if (aws_byte_cursor_eq_ignore_case(&scheme, &s_scheme_ports[i].scheme)) {
+                http_options.port = s_scheme_ports[i].port;
+                break;
+            }
+        }
+
+        if (!http_options.port) {
+            http_options.port = options->tls_options ? 443 : 80;
+        }
+    }
 
     err = aws_http_client_connect(&http_options);
     if (err) {
