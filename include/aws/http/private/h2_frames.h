@@ -260,7 +260,7 @@ void aws_h2_frame_header_block_clean_up(struct aws_h2_frame_header_block *header
 AWS_HTTP_API
 int aws_h2_frame_header_block_get_encoded_length(
     const struct aws_h2_frame_header_block *header_block,
-    struct aws_h2_frame_encoder *encoder,
+    const struct aws_h2_frame_encoder *encoder,
     size_t *length);
 AWS_HTTP_API
 int aws_h2_frame_header_block_encode(

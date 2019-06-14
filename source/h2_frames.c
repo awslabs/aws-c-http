@@ -49,12 +49,12 @@ static int s_frame_priority_settings_encode(
     /* Write the top 4 bytes */
     uint32_t top_bytes = priority->stream_dependency | ((uint32_t)priority->stream_dependency_exclusive << 31);
     if (!aws_byte_buf_write_be32(output, top_bytes)) {
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
 
     /* Write the priority weight */
     if (!aws_byte_buf_write_u8(output, priority->weight)) {
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
 
     return AWS_OP_SUCCESS;
@@ -69,14 +69,14 @@ static int s_frame_priority_settings_decode(
     /* Read the top 4 bytes */
     uint32_t top_bytes = 0;
     if (!aws_byte_cursor_read_be32(&decoder->payload, &top_bytes)) {
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
     priority->stream_dependency = top_bytes & s_31_bit_mask;
     priority->stream_dependency_exclusive = top_bytes >> 31;
 
     /* Write the priority weight */
     if (!aws_byte_cursor_read_u8(&decoder->payload, &priority->weight)) {
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
 
     return AWS_OP_SUCCESS;
@@ -100,7 +100,7 @@ void aws_h2_frame_header_block_clean_up(struct aws_h2_frame_header_block *header
 
 int aws_h2_frame_header_block_get_encoded_length(
     const struct aws_h2_frame_header_block *header_block,
-    struct aws_h2_frame_encoder *encoder,
+    const struct aws_h2_frame_encoder *encoder,
     size_t *length) {
     AWS_PRECONDITION(header_block);
     AWS_PRECONDITION(encoder);
@@ -372,26 +372,26 @@ static int s_frame_header_encode(
 
     /* Length must fit in 24 bits */
     if (length > 0x00FFFFFF) {
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_H2_ERR_FRAME_SIZE_ERROR);
     }
 
     /* Write length */
     uint32_t u32_len = (uint32_t)length;
     u32_len = aws_hton24(u32_len);
     if (!aws_byte_buf_write(output, (uint8_t *)&u32_len, 3)) {
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
     /* Write type */
     if (!aws_byte_buf_write_u8(output, header->type)) {
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
     /* Write flags */
     if (!aws_byte_buf_write_u8(output, flags)) {
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
     /* Write stream id (with reserved first bit) */
     if (!aws_byte_buf_write_be32(output, header->stream_id & s_31_bit_mask)) {
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
 
     return AWS_OP_SUCCESS;

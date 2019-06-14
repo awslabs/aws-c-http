@@ -18,7 +18,6 @@
 #include <aws/http/private/h2_frames.h>
 
 #ifdef _MSC_VER
-#    pragma warning(push)
 #    pragma warning(disable : 4232) /* function pointer to dll symbol */
 #endif
 
