@@ -106,7 +106,7 @@ struct aws_http_request_options {
      * Optional.
      * For HTTP/2, if :method and :path headers not passed in they will be generated from the `method` and `uri`.
      */
-    struct aws_http_header *header_array;
+    const struct aws_http_header *header_array;
     size_t num_headers;
 
     void *user_data;
@@ -170,7 +170,7 @@ struct aws_http_response_options {
     size_t self_size;
 
     int status;
-    struct aws_http_header *header_array;
+    const struct aws_http_header *header_array;
     size_t num_headers;
     aws_http_stream_outgoing_body_fn *stream_outgoing_body;
 };
