@@ -128,7 +128,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     bool no_frame_callbacks_set =
         !options->on_incoming_frame_begin && !options->on_incoming_frame_payload && !options->on_incoming_frame_begin;
 
-    if (all_frame_callbacks_set || no_frame_callbacks_set) {
+    if (!(all_frame_callbacks_set || no_frame_callbacks_set)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
             "id=static: Invalid websocket connection options,"
@@ -136,7 +136,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    if (!options->handshake_header_array || !options->num_handhake_headers) {
+    if (!options->handshake_header_array || !options->num_handshake_headers) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
             "id=static: Invalid connection options, missing required headers for websocket client handshake.");
@@ -162,7 +162,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
 
     /* Deep-copy all request headers, plus the request path. */
     size_t request_storage_size = aws_uri_path_and_query(options->uri)->len;
-    for (size_t i = 0; i < options->num_handhake_headers; ++i) {
+    for (size_t i = 0; i < options->num_handshake_headers; ++i) {
         request_storage_size += options->handshake_header_array[i].name.len;
         request_storage_size += options->handshake_header_array[i].value.len;
     }
@@ -177,14 +177,14 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     bool write_success =
         aws_byte_buf_write_from_whole_cursor(&ws_bootstrap->request_storage, *aws_uri_path_and_query(options->uri));
 
-    ws_bootstrap->num_request_headers = options->num_handhake_headers;
+    ws_bootstrap->num_request_headers = options->num_handshake_headers;
     ws_bootstrap->request_header_array =
         aws_mem_calloc(ws_bootstrap->alloc, ws_bootstrap->num_request_headers, sizeof(struct aws_http_header));
     if (!ws_bootstrap->request_header_array) {
         goto error;
     }
 
-    for (size_t i = 0; i < options->num_handhake_headers; ++i) {
+    for (size_t i = 0; i < options->num_handshake_headers; ++i) {
         const struct aws_http_header *src = &options->handshake_header_array[i];
         struct aws_http_header *dst = &ws_bootstrap->request_header_array[i];
 
