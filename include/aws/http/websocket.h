@@ -184,7 +184,7 @@ struct aws_websocket_client_connection_options {
      *
      * Sec-Websocket-Key should be a random 16 bytes value, Base64 encoded.
      */
-    struct aws_http_header *handshake_header_array;
+    const struct aws_http_header *handshake_header_array;
 
     /**
      * Number of entries in handshake_header_array.

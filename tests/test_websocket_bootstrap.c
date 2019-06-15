@@ -15,6 +15,7 @@
 
 #include <aws/http/private/websocket_impl.h>
 
+#include <aws/common/atomics.h>
 #include <aws/http/connection.h>
 #include <aws/http/request_response.h>
 #include <aws/io/logging.h>
@@ -72,8 +73,6 @@ static struct tester {
     /* State */
     struct aws_logger logger;
 
-    bool websocket_connect_called_successfully;
-
     bool http_connect_called_successfully;
     aws_http_on_client_connection_setup_fn *http_connect_setup_callback;
     aws_http_on_client_connection_shutdown_fn *http_connect_shutdown_callback;
@@ -114,7 +113,10 @@ static int s_tester_init(struct aws_allocator *alloc) {
 
     aws_websocket_client_bootstrap_set_function_table(&s_mock_function_table);
 
-    s_tester.alloc = alloc;
+    /* Don't override if customer allocator is set. */
+    if (!s_tester.alloc) {
+        s_tester.alloc = alloc;
+    }
 
     return AWS_OP_SUCCESS;
 }
@@ -130,6 +132,44 @@ static struct aws_http_connection *s_mock_http_connection = (void *)"http connec
 static struct aws_http_stream *s_mock_stream = (void *)"stream";
 static struct aws_channel *s_mock_channel = (void *)"channel";
 static struct aws_websocket *s_mock_websocket = (void *)"websocket";
+
+static const struct aws_http_header s_upgrade_request_headers[] = {
+    {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("server.example.com"),
+    },
+    {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+    },
+    {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+    },
+    {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Key"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("dGhlIHNhbXBsZSBub25jZQ=="),
+    },
+    {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Version"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("13"),
+    },
+};
+
+static const struct aws_http_header s_upgrade_response_headers[] = {
+    {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+    },
+    {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+    },
+    {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+    },
+};
 
 static int s_mock_http_client_connect(const struct aws_http_client_connection_options *options) {
     AWS_FATAL_ASSERT(options);
@@ -251,59 +291,39 @@ static void s_on_websocket_shutdown(struct aws_websocket *websocket, int error_c
     s_tester.websocket_shutdown_error_code = error_code;
 }
 
-static int s_drive_websocket_connect(void) {
+/* Calls aws_websocket_client_connect(), and drives the async call to its conclusions.
+ * Reports the reason for the failure via `out_error_code`. */
+static int s_drive_websocket_connect(int *out_error_code) {
+    bool websocket_connect_called_successfully = false;
+    bool http_connect_setup_reported_success = false;
+
     /* Call websocket_connect() */
     struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("server.example.com");
     struct aws_uri uri;
-    ASSERT_SUCCESS(aws_uri_init_parse(&uri, s_tester.alloc, &uri_cursor));
-
-    struct aws_http_header request_headers[] = {
-        {
-            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
-            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("server.example.com"),
-        },
-        {
-            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
-            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
-        },
-        {
-            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
-            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
-        },
-        {
-            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Key"),
-            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("dGhlIHNhbXBsZSBub25jZQ=="),
-        },
-        {
-            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Version"),
-            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("13"),
-        },
-    };
+    int err = aws_uri_init_parse(&uri, s_tester.alloc, &uri_cursor);
+    if (err) {
+        goto finishing_checks;
+    }
 
     struct aws_websocket_client_connection_options ws_options = {
         .allocator = s_tester.alloc,
         .bootstrap = (void *)"client channel bootstrap",
         .socket_options = (void *)"socket options",
         .uri = &uri,
-        .handshake_header_array = request_headers,
-        .num_handshake_headers = AWS_ARRAY_SIZE(request_headers),
+        .handshake_header_array = s_upgrade_request_headers,
+        .num_handshake_headers = AWS_ARRAY_SIZE(s_upgrade_request_headers),
         .user_data = &s_tester,
         .on_connection_setup = s_on_websocket_setup,
         .on_connection_shutdown = s_on_websocket_shutdown,
     };
 
-    int websocket_connect_err = aws_websocket_client_connect(&ws_options);
+    err = aws_websocket_client_connect(&ws_options);
     aws_uri_clean_up(&uri);
 
-    if (s_tester.fail_at_step == BOOT_STEP_HTTP_CONNECT) {
-        ASSERT_ERROR(BOOT_STEP_HTTP_CONNECT, websocket_connect_err);
-        ASSERT_FALSE(s_tester.websocket_setup_invoked);
-        ASSERT_FALSE(s_tester.websocket_shutdown_invoked);
-        return AWS_OP_SUCCESS;
+    if (err) {
+        goto finishing_checks;
     }
-
-    ASSERT_SUCCESS(websocket_connect_err);
-    s_tester.websocket_connect_called_successfully = true;
+    websocket_connect_called_successfully = true;
 
     /* Bootstrap should have started HTTP connection */
     ASSERT_TRUE(s_tester.http_connect_called_successfully);
@@ -314,7 +334,12 @@ static int s_drive_websocket_connect(void) {
         goto finishing_checks;
     }
 
+    http_connect_setup_reported_success = true;
     s_tester.http_connect_setup_callback(s_mock_http_connection, AWS_ERROR_SUCCESS, s_tester.http_connect_user_data);
+
+    /* Once websocket has valid HTTP connection, if anything goes wrong, the HTTP connection must be closed in order to
+     * wrap things up. We manually check at every opportunity whether close has been called, and if so invoke the HTTP
+     * shutdown callback */
     if (s_tester.http_connection_close_called) {
         s_tester.http_connect_shutdown_callback(
             s_mock_http_connection, AWS_OP_SUCCESS, s_tester.http_connect_user_data);
@@ -324,24 +349,14 @@ static int s_drive_websocket_connect(void) {
     /* Bootstrap should have created new stream */
     ASSERT_TRUE(s_tester.http_stream_new_called_successfully);
 
-    /* Invoke stream response callbacks */
-    struct aws_http_header response_headers[] = {
-        {
-            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
-            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
-        },
-        {
-            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
-            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
-        },
-        {
-            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Accept"),
-            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
-        },
-    };
-
+    /* Invoke stream response callbacks.
+     * We don't check for HTTP close after each of these callbacks because HTTP connection is guaranteed to fire the
+     * stream-complete callbacks before the HTTP-connection-closed callback */
     s_tester.http_stream_on_response_headers(
-        s_mock_stream, response_headers, AWS_ARRAY_SIZE(response_headers), s_tester.http_stream_user_data);
+        s_mock_stream,
+        s_upgrade_response_headers,
+        AWS_ARRAY_SIZE(s_upgrade_response_headers),
+        s_tester.http_stream_user_data);
 
     if (s_tester.http_stream_on_response_header_block_done) {
         s_tester.http_stream_on_response_header_block_done(s_mock_stream, false, s_tester.http_stream_user_data);
@@ -364,7 +379,9 @@ static int s_drive_websocket_connect(void) {
 
     /* Bootstrap should have notified that setup was successful */
     ASSERT_TRUE(s_tester.websocket_setup_invoked);
-    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.websocket_setup_error_code);
+    if (s_tester.websocket_setup_error_code) {
+        goto finishing_checks;
+    }
 
     /* Invoke HTTP shutdown callback */
     if (s_tester.fail_at_step == BOOT_STEP_HTTP_SHUTDOWN) {
@@ -375,26 +392,27 @@ static int s_drive_websocket_connect(void) {
 
     s_tester.http_connect_shutdown_callback(s_mock_http_connection, AWS_ERROR_SUCCESS, s_tester.http_connect_user_data);
 
-    /* Bootstrap should have notified the shutdown had happend */
-    ASSERT_TRUE(s_tester.websocket_shutdown_invoked);
-    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.websocket_shutdown_error_code);
-
 finishing_checks:
 
-    /* If connection kicked off at all, setup callback must fire. */
-    ASSERT_TRUE(s_tester.websocket_setup_invoked);
-    if (s_tester.websocket_setup_error_code) {
-        /* If setup callback reported failure, shutdown callback must never fire. */
+    if (!websocket_connect_called_successfully) {
+        /* If we didn't even kick off the async process, aws_last_error() has reason for failure */
+        *out_error_code = aws_last_error();
+        ASSERT_FALSE(s_tester.websocket_setup_invoked);
         ASSERT_FALSE(s_tester.websocket_shutdown_invoked);
-
-        /* Check that setup failure reports the expected error code (or 0 if we never failed) */
-        ASSERT_INT_EQUALS(s_tester.fail_at_step, s_tester.websocket_setup_error_code);
     } else {
-        /* If setup callback reports success, shutdown callback must fire. */
-        ASSERT_TRUE(s_tester.websocket_shutdown_invoked);
+        /* If connection kicked off at all, setup callback must fire. */
+        ASSERT_TRUE(s_tester.websocket_setup_invoked);
+        if (s_tester.websocket_setup_error_code) {
+            *out_error_code = s_tester.websocket_setup_error_code;
 
-        /* Check that shutdown reports the expected error code. */
-        ASSERT_INT_EQUALS(s_tester.fail_at_step, s_tester.websocket_shutdown_error_code);
+            /* If setup callback reported failure, shutdown callback must never fire. */
+            ASSERT_FALSE(s_tester.websocket_shutdown_invoked);
+        } else {
+            *out_error_code = s_tester.websocket_shutdown_error_code;
+
+            /* If setup callback reports success, shutdown callback must fire. */
+            ASSERT_TRUE(s_tester.websocket_shutdown_invoked);
+        }
     }
 
     /* If request was created, it must be released eventually. */
@@ -403,19 +421,10 @@ finishing_checks:
     }
 
     /* If HTTP connection was established, it must be released eventually. */
-    if (s_tester.fail_at_step > BOOT_STEP_HTTP_CONNECT_COMPLETE) {
+    if (http_connect_setup_reported_success) {
         ASSERT_TRUE(s_tester.http_connection_release_called);
     }
 
-    return AWS_OP_SUCCESS;
-}
-
-static int s_websocket_boot_fail_at_step_test(struct aws_allocator *alloc, void *ctx, enum boot_step fail_at_step) {
-    (void)ctx;
-    s_tester.fail_at_step = fail_at_step;
-    ASSERT_SUCCESS(s_tester_init(alloc));
-    ASSERT_SUCCESS(s_drive_websocket_connect());
-    ASSERT_SUCCESS(s_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
 
@@ -432,7 +441,23 @@ TEST_CASE(websocket_boot_golden_path) {
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
 
-    ASSERT_SUCCESS(s_drive_websocket_connect());
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, websocket_connect_error_code);
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+/* Function to be reused by all the "fail at step X" tests. */
+static int s_websocket_boot_fail_at_step_test(struct aws_allocator *alloc, void *ctx, enum boot_step fail_at_step) {
+    (void)ctx;
+    s_tester.fail_at_step = fail_at_step;
+    ASSERT_SUCCESS(s_tester_init(alloc));
+
+    int websocket_connect_error_code;
+    ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+    ASSERT_INT_EQUALS(fail_at_step, websocket_connect_error_code);
 
     ASSERT_SUCCESS(s_tester_clean_up());
     return AWS_OP_SUCCESS;
@@ -464,4 +489,80 @@ TEST_CASE(websocket_boot_fail_at_new_handler) {
 
 TEST_CASE(websocket_boot_report_unexpected_http_shutdown) {
     return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_HTTP_SHUTDOWN);
+}
+
+#define TIMEBOMB_MAX_TIMER 0xFFFF
+
+struct timebomb_impl {
+    struct aws_allocator *real_allocator;
+    struct aws_atomic_var timer;
+};
+
+static void *s_timebomb_mem_acquire(struct aws_allocator *alloc, size_t size) {
+    struct timebomb_impl *timebomb = alloc->impl;
+
+    /* ALL allocations should fail after timer reaches zero.
+     * But timer is unsigned atomic.
+     * Therefore, when timer wraps around 0 and becomes huge, continue failing. */
+    size_t timer = aws_atomic_fetch_sub(&timebomb->timer, 1);
+    if (timer == 0 || timer > TIMEBOMB_MAX_TIMER) {
+        return NULL;
+    }
+
+    return timebomb->real_allocator->mem_acquire(timebomb->real_allocator, size);
+}
+
+static void s_timebomb_mem_release(struct aws_allocator *alloc, void *ptr) {
+    struct timebomb_impl *timebomb = alloc->impl;
+    return timebomb->real_allocator->mem_release(timebomb->real_allocator, ptr);
+
+}
+
+/* Run connection process with an allocator that fakes running out of memory after N allocations. */
+TEST_CASE(websocket_boot_fail_because_oom) {
+    (void)ctx;
+
+    struct timebomb_impl timebomb_impl = {
+        .real_allocator = allocator,
+    };
+    aws_atomic_init_int(&timebomb_impl.timer, TIMEBOMB_MAX_TIMER);
+
+    struct aws_allocator timebomb_alloc = {
+        .mem_acquire = s_timebomb_mem_acquire,
+        .mem_release = s_timebomb_mem_release,
+        .impl = &timebomb_impl,
+    };
+
+    /* Only use the timebomb allocator with actual the tester, not the logger or other systems. */
+    s_tester.alloc = &timebomb_alloc;
+
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    /* In a loop, keep trying to connect, allowing more and more allocations to succeed,
+     * until the connection completes successfully */
+    bool websocket_connect_eventually_succeeded = false;
+    const int max_tries = 10000;
+    int timer;
+    for (timer = 0; timer < max_tries; ++timer) {
+        aws_atomic_store_int(&timebomb_impl.timer, timer);
+
+        int websocket_connect_error_code;
+        ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
+
+        if (websocket_connect_error_code) {
+            /* Assert that proper error code bubbled all the way out */
+            ASSERT_TRUE(websocket_connect_error_code == AWS_ERROR_OOM);
+        } else {
+            /* Break out of loop once websocket_connect() succeeds. */
+            websocket_connect_eventually_succeeded = true;
+            break;
+        }
+    }
+
+    ASSERT_TRUE(websocket_connect_eventually_succeeded);
+    ASSERT_TRUE(timer >= 2); /* Assert that we actually did fail a few times */
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
 }
