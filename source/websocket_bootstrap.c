@@ -451,19 +451,19 @@ static void s_ws_bootstrap_on_handshake_response_headers(
 
     /* Deep-copy headers into ws_bootstrap */
     for (size_t i = 0; i < num_headers; ++i) {
-        struct aws_http_header src_header = header_array[i];
+        const struct aws_http_header *src_header = &header_array[i];
         struct aws_http_header dst_header;
 
-        dst_header.name.len = src_header.name.len;
+        dst_header.name.len = src_header->name.len;
         dst_header.name.ptr = ws_bootstrap->response_storage.buffer + ws_bootstrap->response_storage.len;
-        err = aws_byte_buf_append_dynamic(&ws_bootstrap->response_storage, &src_header.name);
+        err = aws_byte_buf_append_dynamic(&ws_bootstrap->response_storage, &src_header->name);
         if (err) {
             goto error;
         }
 
-        dst_header.value.len = src_header.value.len;
+        dst_header.value.len = src_header->value.len;
         dst_header.value.ptr = ws_bootstrap->response_storage.buffer + ws_bootstrap->response_storage.len;
-        err = aws_byte_buf_append_dynamic(&ws_bootstrap->response_storage, &src_header.value);
+        err = aws_byte_buf_append_dynamic(&ws_bootstrap->response_storage, &src_header->value);
         if (err) {
             goto error;
         }
