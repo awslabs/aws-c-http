@@ -342,7 +342,7 @@ static void s_on_websocket_setup(
             handshake_response_header_array,
             num_handshake_response_headers));
 
-        AWS_FATAL_ASSERT(101);
+        AWS_FATAL_ASSERT(handshake_response_status == 101);
     }
 
     AWS_FATAL_ASSERT(user_data == &s_tester);
