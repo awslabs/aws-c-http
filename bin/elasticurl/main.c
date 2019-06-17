@@ -26,6 +26,7 @@
 #include <aws/io/log_formatter.h>
 #include <aws/io/log_writer.h>
 #include <aws/io/logging.h>
+#include <aws/io/shared_library.h>
 #include <aws/io/socket.h>
 #include <aws/io/stream.h>
 #include <aws/io/tls_channel_handler.h>
@@ -57,6 +58,10 @@ struct elasticurl_ctx {
     size_t header_line_count;
     FILE *input_file;
     struct aws_input_stream *input_body;
+    const char *signing_library_path;
+    struct aws_shared_library signing_library;
+    const char *signing_function_name;
+    aws_transform_http_request_options_fn *signing_function;
     bool include_headers;
     bool insecure;
     FILE *output;
@@ -84,6 +89,8 @@ static void s_usage(int exit_code) {
     fprintf(stderr, "  -I, --head: uses HEAD for the verb.\n");
     fprintf(stderr, "  -i, --include: includes headers in output.\n");
     fprintf(stderr, "  -k, --insecure: turns off SSL/TLS validation.\n");
+    fprintf(stderr, "      --signing-lib: path to a shared library with an exported signing function to use\n");
+    fprintf(stderr, "      --signing-func: name of the signing function to use within the signing library\n");
     fprintf(stderr, "  -o, --output FILE: dumps content-body to FILE instead of stdout.\n");
     fprintf(stderr, "  -t, --trace FILE: dumps logs to FILE instead of stderr.\n");
     fprintf(stderr, "  -v, --verbose: ERROR|INFO|DEBUG|TRACE: log level to configure. Default is none.\n");
@@ -106,8 +113,10 @@ static struct aws_cli_option s_long_options[] = {
     {"get", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'G'},
     {"post", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'P'},
     {"head", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'I'},
+    {"signing-lib", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'j'},
     {"include", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'i'},
     {"insecure", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'k'},
+    {"signing-func", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'l'},
     {"output", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'o'},
     {"trace", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 't'},
     {"verbose", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'v'},
@@ -164,6 +173,16 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                     s_usage(1);
                 }
                 break;
+            case 'j':
+                ctx->signing_library_path = aws_cli_optarg;
+                if (aws_shared_library_init(&ctx->signing_library, aws_cli_optarg)) {
+                    fprintf(stderr, "unable to open signing library %s.\n", aws_cli_optarg);
+                    s_usage(1);
+                }
+                break;
+            case 'l':
+                ctx->signing_function_name = aws_cli_optarg;
+                break;
             case 'M':
                 ctx->verb = aws_cli_optarg;
                 break;
@@ -216,6 +235,26 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
             default:
                 fprintf(stderr, "Unknown option\n");
                 s_usage(1);
+        }
+    }
+
+    if (ctx->signing_function_name != NULL) {
+        if (ctx->signing_library_path == NULL) {
+            fprintf(
+                stderr,
+                "To sign a request made by Elasticurl you must supply both a signing library path and a signing "
+                "function name\n");
+            s_usage(1);
+        }
+
+        if (aws_shared_library_find_function(
+                &ctx->signing_library, ctx->signing_function_name, (aws_generic_function *)&ctx->signing_function)) {
+            fprintf(
+                stderr,
+                "Unable to find function %s in signing library %s",
+                ctx->signing_function_name,
+                ctx->signing_library_path);
+            s_usage(1);
         }
     }
 
@@ -419,7 +458,9 @@ int main(int argc, char **argv) {
     struct aws_allocator *allocator = aws_default_allocator();
 
     aws_load_error_strings();
+    aws_common_load_log_subject_strings();
     aws_io_load_error_strings();
+    aws_io_load_log_subject_strings();
     aws_http_library_init(allocator);
 
     struct elasticurl_ctx app_ctx;
@@ -598,6 +639,8 @@ int main(int argc, char **argv) {
     }
 
     aws_uri_clean_up(&app_ctx.uri);
+
+    aws_shared_library_clean_up(&app_ctx.signing_library);
 
     if (app_ctx.output != stdout) {
         fclose(app_ctx.output);

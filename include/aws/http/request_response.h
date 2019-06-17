@@ -143,6 +143,12 @@ struct aws_http_request_options {
     aws_http_on_stream_complete_fn *on_complete;
 };
 
+typedef void(aws_http_request_options_destroy_fn)(struct aws_http_request_options *request);
+typedef int(aws_transform_http_request_options_fn)(
+    const struct aws_http_request_options *request,
+    struct aws_http_request_options **out_transformed_request,
+    aws_http_request_options_destroy_fn **disposal_fn);
+
 /**
  * Initializes aws_http_request_options with default values.
  */
