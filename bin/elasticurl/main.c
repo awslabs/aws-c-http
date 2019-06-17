@@ -27,8 +27,11 @@
 #include <aws/io/log_writer.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
+#include <aws/io/stream.h>
 #include <aws/io/tls_channel_handler.h>
 #include <aws/io/uri.h>
+
+#include <inttypes.h>
 
 #ifdef _MSC_VER
 #    pragma warning(disable : 4996) /* Disable warnings about fopen() being insecure */
@@ -52,8 +55,8 @@ struct elasticurl_ctx {
     int connect_timeout;
     const char *header_lines[10];
     size_t header_line_count;
-    struct aws_byte_cursor data;
-    FILE *data_file;
+    FILE *input_file;
+    struct aws_input_stream *input_body;
     bool include_headers;
     bool insecure;
     FILE *output;
@@ -148,13 +151,15 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 }
                 ctx->header_lines[ctx->header_line_count++] = aws_cli_optarg;
                 break;
-            case 'd':
-                ctx->data = aws_byte_cursor_from_c_str(aws_cli_optarg);
+            case 'd': {
+                struct aws_byte_cursor data_cursor = aws_byte_cursor_from_c_str(aws_cli_optarg);
+                ctx->input_body = aws_input_stream_new_from_cursor(ctx->allocator, &data_cursor);
                 break;
+            }
             case 'g':
-
-                ctx->data_file = fopen(aws_cli_optarg, "rb");
-                if (!ctx->data_file) {
+                ctx->input_file = fopen(aws_cli_optarg, "rb");
+                ctx->input_body = aws_input_stream_new_from_open_file(ctx->allocator, ctx->input_file);
+                if (!ctx->input_file) {
                     fprintf(stderr, "unable to open file %s.\n", aws_cli_optarg);
                     s_usage(1);
                 }
@@ -252,38 +257,25 @@ enum aws_http_outgoing_body_state s_stream_outgoing_body_fn(
     (void)stream;
     struct elasticurl_ctx *app_ctx = user_data;
 
-    if (app_ctx->data.len) {
-        size_t max_cpy = buf->len > app_ctx->data.len ? app_ctx->data.len : buf->len;
-        struct aws_byte_cursor outgoing_data = aws_byte_cursor_advance(&app_ctx->data, max_cpy);
-        aws_byte_buf_append(buf, &outgoing_data);
-
-        /* if any data is left in the buffer, tell the client that we're still in progress,
-         * otherwise say we're done. */
-        if (app_ctx->data.len) {
-            return AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
-        }
-
+    if (!app_ctx->input_body) {
         return AWS_HTTP_OUTGOING_BODY_DONE;
     }
 
-    if (app_ctx->data_file) {
-#ifdef _WIN32
-        size_t read_val = fread(buf->buffer, 1, buf->len, app_ctx->data_file);
-        long long read = read_val == 0 ? ferror(app_ctx->data_file) : (long long)read_val;
-#else
-        ssize_t read = fread(buf->buffer, 1, buf->len, app_ctx->data_file);
-#endif
-
-        /* if any data is left in the buffer, tell the client that we're still in progress,
-         * otherwise say we're done. */
-        if (read > 0) {
-            return AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
-        }
-
+    struct aws_stream_status status;
+    if (aws_input_stream_get_status(app_ctx->input_body, &status)) {
         return AWS_HTTP_OUTGOING_BODY_DONE;
     }
 
-    return AWS_HTTP_OUTGOING_BODY_DONE;
+    if (status.is_end_of_stream || !status.is_valid) {
+        return AWS_HTTP_OUTGOING_BODY_DONE;
+    }
+
+    size_t amount_read = 0;
+    if (aws_input_stream_read(app_ctx->input_body, buf, &amount_read)) {
+        return AWS_HTTP_OUTGOING_BODY_DONE;
+    }
+
+    return AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
 }
 
 static void s_on_incoming_headers_fn(
@@ -361,23 +353,18 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     headers[2].name = aws_byte_cursor_from_c_str("user-agent");
     headers[2].value = aws_byte_cursor_from_c_str("elasticurl 1.0, Powered by the AWS Common Runtime.");
 
-    size_t data_len = 0;
-    if (app_ctx->data.len) {
-        data_len = app_ctx->data.len;
-    } else if (app_ctx->data_file) {
-        if (fseek(app_ctx->data_file, 0L, SEEK_END)) {
-            fprintf(stderr, "failed to seek data file.\n");
+    int64_t data_len = 0;
+    if (app_ctx->input_body) {
+        if (aws_input_stream_get_length(app_ctx->input_body, &data_len)) {
+            fprintf(stderr, "failed to get length of input stream.\n");
             exit(1);
         }
-
-        data_len = (size_t)ftell(app_ctx->data_file);
-        fseek(app_ctx->data_file, 0L, SEEK_SET);
     }
 
-    if (data_len) {
+    if (data_len > 0) {
         char content_length[64];
         AWS_ZERO_ARRAY(content_length);
-        sprintf(content_length, "%llu", (unsigned long long)data_len);
+        sprintf(content_length, "%" PRIi64, data_len);
         headers[3].name = aws_byte_cursor_from_c_str("content-length");
         headers[3].value = aws_byte_cursor_from_c_str(content_length);
         pre_header_count += 1;
@@ -616,8 +603,12 @@ int main(int argc, char **argv) {
         fclose(app_ctx.output);
     }
 
-    if (app_ctx.data_file) {
-        fclose(app_ctx.data_file);
+    if (app_ctx.input_body) {
+        aws_input_stream_destroy(app_ctx.input_body);
+    }
+
+    if (app_ctx.input_file) {
+        fclose(app_ctx.input_file);
     }
 
     return 0;
