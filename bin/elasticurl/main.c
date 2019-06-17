@@ -429,7 +429,25 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     request_options.header_array = headers;
     request_options.num_headers = header_count;
 
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&request_options);
+    struct aws_http_request_options *request = NULL;
+    aws_http_request_options_destroy_fn *destroy_fn = NULL;
+    if (app_ctx->signing_function != NULL) {
+        (app_ctx->signing_function)(&request_options, &request, &destroy_fn);
+    } else {
+        request = &request_options;
+    }
+
+    struct aws_http_stream *stream = aws_http_stream_new_client_request(request);
+
+    /*
+     * Sketchy to destroy now given the embedded stream could theoretically be created and
+     * destroyed.  The current implementation just copies
+     * the stream so kinda safe, but not a good long term solution.
+     */
+    if (destroy_fn) {
+        (destroy_fn)(request);
+    }
+
     if (!stream) {
         fprintf(stderr, "failed to create request.");
         exit(1);
