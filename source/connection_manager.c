@@ -20,7 +20,7 @@
 #include <aws/common/linked_list.h>
 #include <aws/common/mutex.h>
 #include <aws/http/connection.h>
-#include <aws/http/private/connection_manager_function_table.h>
+#include <aws/http/private/connection_manager_system_vtable.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/logging.h>
@@ -28,19 +28,18 @@
 #include <aws/io/tls_channel_handler.h>
 
 /*
- * Function table to use under normal circumstances
+ * System vtable to use under normal circumstances
  */
-static struct aws_http_connection_manager_function_table s_default_function_table = {
+static struct aws_http_connection_manager_system_vtable s_default_system_vtable = {
     .create_connection = aws_http_client_connect,
     .release_connection = aws_http_connection_release,
     .close_connection = aws_http_connection_close,
     .is_connection_open = aws_http_connection_is_open};
 
-const struct aws_http_connection_manager_function_table *g_aws_http_connection_manager_default_function_table_ptr =
-    &s_default_function_table;
+const struct aws_http_connection_manager_system_vtable *g_aws_http_connection_manager_default_system_vtable_ptr =
+    &s_default_system_vtable;
 
-bool aws_http_connection_manager_function_table_is_valid(
-    const struct aws_http_connection_manager_function_table *table) {
+bool aws_http_connection_manager_system_vtable_is_valid(const struct aws_http_connection_manager_system_vtable *table) {
     return table->create_connection && table->close_connection && table->release_connection &&
            table->is_connection_open;
 }
@@ -115,7 +114,7 @@ struct aws_http_connection_manager {
      * internal implementation references.  Selectively overridden by tests in order to
      * enable strong coverage of internal implementation details.
      */
-    const struct aws_http_connection_manager_function_table *function_table;
+    const struct aws_http_connection_manager_system_vtable *system_vtable;
 
     /*
      * Controls access to all mutable state on the connection manager
@@ -244,12 +243,12 @@ static void s_aws_http_connection_manager_log_snapshot(
     }
 }
 
-void aws_http_connection_manager_set_function_table(
+void aws_http_connection_manager_set_system_vtable(
     struct aws_http_connection_manager *manager,
-    const struct aws_http_connection_manager_function_table *function_table) {
-    AWS_FATAL_ASSERT(aws_http_connection_manager_function_table_is_valid(function_table));
+    const struct aws_http_connection_manager_system_vtable *system_vtable) {
+    AWS_FATAL_ASSERT(aws_http_connection_manager_system_vtable_is_valid(system_vtable));
 
-    manager->function_table = function_table;
+    manager->system_vtable = system_vtable;
 }
 
 /*
@@ -443,7 +442,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->max_connections = options->max_connections;
     manager->socket_options = *options->socket_options;
     manager->bootstrap = options->bootstrap;
-    manager->function_table = g_aws_http_connection_manager_default_function_table_ptr;
+    manager->system_vtable = g_aws_http_connection_manager_default_system_vtable_ptr;
     manager->external_ref_count = 1;
 
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Successfully created", (void *)manager);
@@ -534,7 +533,7 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
             continue;
         }
 
-        manager->function_table->release_connection(connection);
+        manager->system_vtable->release_connection(connection);
     }
 
     aws_array_list_clean_up(&connections_to_release);
@@ -609,7 +608,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.on_setup = s_aws_http_connection_manager_on_connection_setup;
     options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
 
-    if (manager->function_table->create_connection(&options)) {
+    if (manager->system_vtable->create_connection(&options)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION_MANAGER,
             "id=%p: http connection creation failed with error code %d(%s)",
@@ -755,7 +754,7 @@ int aws_http_connection_manager_release_connection(
     bool should_destroy = false;
     int result = AWS_OP_ERR;
     size_t new_connections = 0;
-    bool should_release_connection = !manager->function_table->is_connection_open(connection);
+    bool should_release_connection = !manager->system_vtable->is_connection_open(connection);
 
     struct aws_http_connection_manager_snapshot snapshot;
     AWS_ZERO_STRUCT(snapshot);
@@ -803,7 +802,7 @@ release:
     s_aws_http_connection_manager_execute_task_set(manager, &completions, new_connections);
 
     if (should_release_connection) {
-        manager->function_table->release_connection(connection);
+        manager->system_vtable->release_connection(connection);
     }
 
     if (should_destroy) {
@@ -888,7 +887,7 @@ static void s_aws_http_connection_manager_on_connection_setup(
             "id=%p: New connection (id=%p) releasing immediately due to shutdown state",
             (void *)manager,
             (void *)connection);
-        manager->function_table->release_connection(connection);
+        manager->system_vtable->release_connection(connection);
     }
 
     if (should_destroy) {
@@ -961,7 +960,7 @@ static void s_aws_http_connection_manager_on_connection_shutdown(
             "id=%p: Releasing held connection (id=%p)",
             (void *)manager,
             (void *)connection);
-        manager->function_table->release_connection(connection);
+        manager->system_vtable->release_connection(connection);
     }
 
     if (should_destroy) {

@@ -40,7 +40,7 @@ static struct aws_http_connection *s_mock_http_stream_get_connection(const struc
 static int s_mock_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status);
 static struct aws_websocket *s_mock_websocket_handler_new(const struct aws_websocket_handler_options *options);
 
-static const struct aws_websocket_client_bootstrap_function_table s_mock_function_table = {
+static const struct aws_websocket_client_bootstrap_system_vtable s_mock_system_vtable = {
     .aws_http_client_connect = s_mock_http_client_connect,
     .aws_http_connection_release = s_mock_http_connection_release,
     .aws_http_connection_close = s_mock_http_connection_close,
@@ -156,7 +156,7 @@ static int s_tester_init(struct aws_allocator *alloc) {
     ASSERT_SUCCESS(aws_logger_init_standard(&s_tester.logger, alloc, &logger_options));
     aws_logger_set(&s_tester.logger);
 
-    aws_websocket_client_bootstrap_set_function_table(&s_mock_function_table);
+    aws_websocket_client_bootstrap_set_system_vtable(&s_mock_system_vtable);
 
     /* Set default settings for tester (unless the test already configured it) */
     if (!s_tester.alloc) {

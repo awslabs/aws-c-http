@@ -76,7 +76,7 @@ struct aws_websocket_handler_options {
     bool is_server;
 };
 
-struct aws_websocket_client_bootstrap_function_table {
+struct aws_websocket_client_bootstrap_system_vtable {
     int (*aws_http_client_connect)(const struct aws_http_client_connection_options *options);
     void (*aws_http_connection_release)(struct aws_http_connection *connection);
     void (*aws_http_connection_close)(struct aws_http_connection *connection);
@@ -113,8 +113,8 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
  * Used for unit testing.
  */
 AWS_HTTP_API
-void aws_websocket_client_bootstrap_set_function_table(
-    const struct aws_websocket_client_bootstrap_function_table *table);
+void aws_websocket_client_bootstrap_set_system_vtable(
+    const struct aws_websocket_client_bootstrap_system_vtable *system_vtable);
 
 AWS_EXTERN_C_END
 #endif /* AWS_HTTP_WEBSOCKET_IMPL_H */
