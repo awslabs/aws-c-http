@@ -79,6 +79,7 @@ static void s_decoder_tester_reset(struct decoder_tester *tester) {
 
 static int s_decoder_tester_init(struct decoder_tester *tester, struct aws_allocator *alloc) {
     aws_load_error_strings();
+    aws_common_load_log_subject_strings();
     aws_io_load_error_strings();
     aws_io_load_log_subject_strings();
     aws_http_library_init(alloc);

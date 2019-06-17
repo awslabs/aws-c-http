@@ -63,7 +63,7 @@ typedef void(aws_websocket_on_connection_setup_fn)(
     int error_code,
     int handshake_response_status,
     const struct aws_http_header *handshake_response_header_array,
-    size_t num_handhake_response_headers,
+    size_t num_handshake_response_headers,
     void *user_data);
 
 /**
@@ -184,13 +184,13 @@ struct aws_websocket_client_connection_options {
      *
      * Sec-Websocket-Key should be a random 16 bytes value, Base64 encoded.
      */
-    struct aws_http_header *handshake_header_array;
+    const struct aws_http_header *handshake_header_array;
 
     /**
      * Number of entries in handshake_header_array.
      * Required.
      */
-    size_t num_handhake_headers;
+    size_t num_handshake_headers;
 
     /**
      * Initial window size for websocket.

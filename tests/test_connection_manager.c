@@ -23,7 +23,7 @@
 #include <aws/common/uuid.h>
 #include <aws/http/connection.h>
 #include <aws/http/connection_manager.h>
-#include <aws/http/private/connection_manager_function_table.h>
+#include <aws/http/private/connection_manager_system_vtable.h>
 #include <aws/http/server.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
@@ -39,7 +39,7 @@ struct mock_connection_proxy {
 
 struct cm_tester_options {
     struct aws_allocator *allocator;
-    struct aws_http_connection_manager_function_table *mock_table;
+    struct aws_http_connection_manager_system_vtable *mock_table;
     size_t max_connections;
 };
 
@@ -65,7 +65,7 @@ struct cm_tester {
 
     size_t wait_for_connection_count;
 
-    struct aws_http_connection_manager_function_table *mock_table;
+    struct aws_http_connection_manager_system_vtable *mock_table;
 
     struct aws_atomic_var next_connection_id;
     struct aws_array_list mock_connections;
@@ -122,7 +122,7 @@ int s_cm_tester_init(struct cm_tester_options *options) {
     ASSERT_NOT_NULL(tester->connection_manager);
 
     if (options->mock_table) {
-        aws_http_connection_manager_set_function_table(tester->connection_manager, options->mock_table);
+        aws_http_connection_manager_set_system_vtable(tester->connection_manager, options->mock_table);
     }
 
     tester->mock_table = options->mock_table;
@@ -469,7 +469,7 @@ static bool s_aws_http_connection_manager_is_connection_open_sync_mock(const str
     return !proxy->is_closed_on_release;
 }
 
-static struct aws_http_connection_manager_function_table s_synchronous_mocks = {
+static struct aws_http_connection_manager_system_vtable s_synchronous_mocks = {
     .create_connection = s_aws_http_connection_manager_create_connection_sync_mock,
     .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
     .close_connection = s_aws_http_connection_manager_close_connection_sync_mock,
