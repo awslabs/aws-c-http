@@ -113,7 +113,8 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
  * Used for unit testing.
  */
 AWS_HTTP_API
-void aws_websocket_client_bootstrap_set_function_table(struct aws_websocket_client_bootstrap_function_table *table);
+void aws_websocket_client_bootstrap_set_function_table(
+    const struct aws_websocket_client_bootstrap_function_table *table);
 
 AWS_EXTERN_C_END
 #endif /* AWS_HTTP_WEBSOCKET_IMPL_H */

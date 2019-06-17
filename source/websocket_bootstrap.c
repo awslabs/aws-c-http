@@ -40,7 +40,7 @@ static const struct scheme_port s_scheme_ports[] = {
 /**
  * Allow unit-tests to mock interactions with external systems.
  */
-static struct aws_websocket_client_bootstrap_function_table s_default_function_table = {
+static const struct aws_websocket_client_bootstrap_function_table s_default_function_table = {
     .aws_http_client_connect = aws_http_client_connect,
     .aws_http_connection_release = aws_http_connection_release,
     .aws_http_connection_close = aws_http_connection_close,
@@ -52,9 +52,11 @@ static struct aws_websocket_client_bootstrap_function_table s_default_function_t
     .aws_websocket_handler_new = aws_websocket_handler_new,
 };
 
-static struct aws_websocket_client_bootstrap_function_table *s_function_table = &s_default_function_table;
+static const struct aws_websocket_client_bootstrap_function_table *s_function_table = &s_default_function_table;
 
-void aws_websocket_client_bootstrap_set_function_table(struct aws_websocket_client_bootstrap_function_table *table) {
+void aws_websocket_client_bootstrap_set_function_table(
+    const struct aws_websocket_client_bootstrap_function_table *table) {
+
     s_function_table = table;
 }
 

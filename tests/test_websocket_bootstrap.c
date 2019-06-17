@@ -40,7 +40,7 @@ static struct aws_http_connection *s_mock_http_stream_get_connection(const struc
 static int s_mock_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status);
 static struct aws_websocket *s_mock_websocket_handler_new(const struct aws_websocket_handler_options *options);
 
-static struct aws_websocket_client_bootstrap_function_table s_mock_function_table = {
+static const struct aws_websocket_client_bootstrap_function_table s_mock_function_table = {
     .aws_http_client_connect = s_mock_http_client_connect,
     .aws_http_connection_release = s_mock_http_connection_release,
     .aws_http_connection_close = s_mock_http_connection_close,
@@ -144,6 +144,7 @@ static struct tester {
 
 static int s_tester_init(struct aws_allocator *alloc) {
     aws_load_error_strings();
+    aws_common_load_log_subject_strings();
     aws_io_load_error_strings();
     aws_io_load_log_subject_strings();
     aws_http_library_init(alloc);
@@ -299,6 +300,7 @@ static int s_mock_http_stream_get_incoming_response_status(const struct aws_http
     AWS_FATAL_ASSERT(stream == s_mock_stream);
     AWS_FATAL_ASSERT(!s_tester.http_connection_release_called);
     AWS_FATAL_ASSERT(!s_tester.http_stream_release_called);
+    AWS_FATAL_ASSERT(out_status);
 
     if (s_tester.fail_at_step == BOOT_STEP_VALIDATE_RESPONSE_STATUS) {
         *out_status = 403;
@@ -362,6 +364,8 @@ static void s_on_websocket_shutdown(struct aws_websocket *websocket, int error_c
 /* Calls aws_websocket_client_connect(), and drives the async call to its conclusions.
  * Reports the reason for the failure via `out_error_code`. */
 static int s_drive_websocket_connect(int *out_error_code) {
+    ASSERT_NOT_NULL(out_error_code);
+
     bool websocket_connect_called_successfully = false;
     bool http_connect_setup_reported_success = false;
 

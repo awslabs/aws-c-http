@@ -552,7 +552,7 @@ static void s_client_bootstrap_on_channel_shutdown(
         http_bootstrap->on_setup(NULL, error_code, http_bootstrap->user_data);
 
     } else if (http_bootstrap->on_shutdown) {
-        AWS_LOGF_ERROR(
+        AWS_LOGF_INFO(
             AWS_LS_HTTP_CONNECTION,
             "%p: Client shutdown completed with error %d (%s).",
             (void *)http_bootstrap->connection,
