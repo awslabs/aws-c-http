@@ -61,6 +61,8 @@ struct elasticurl_ctx {
     const char *signing_library_path;
     struct aws_shared_library signing_library;
     const char *signing_function_name;
+    const char *signing_region;
+    const char *signing_service;
     aws_transform_http_request_options_fn *signing_function;
     bool include_headers;
     bool insecure;
@@ -91,6 +93,8 @@ static void s_usage(int exit_code) {
     fprintf(stderr, "  -k, --insecure: turns off SSL/TLS validation.\n");
     fprintf(stderr, "      --signing-lib: path to a shared library with an exported signing function to use\n");
     fprintf(stderr, "      --signing-func: name of the signing function to use within the signing library\n");
+    fprintf(stderr, "      --signing-region: region to use during sigv4 request signing\n");
+    fprintf(stderr, "      --signing-service: service to use during sigv4 request signing\n");
     fprintf(stderr, "  -o, --output FILE: dumps content-body to FILE instead of stdout.\n");
     fprintf(stderr, "  -t, --trace FILE: dumps logs to FILE instead of stderr.\n");
     fprintf(stderr, "  -v, --verbose: ERROR|INFO|DEBUG|TRACE: log level to configure. Default is none.\n");
@@ -117,6 +121,8 @@ static struct aws_cli_option s_long_options[] = {
     {"include", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'i'},
     {"insecure", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'k'},
     {"signing-func", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'l'},
+    {"signing-region", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'm'},
+    {"signing-service", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'n'},
     {"output", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'o'},
     {"trace", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 't'},
     {"verbose", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'v'},
@@ -129,7 +135,7 @@ static struct aws_cli_option s_long_options[] = {
 static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
     while (true) {
         int option_index = 0;
-        int c = aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:j:l:M:GPHiko:t:v:Vh", s_long_options, &option_index);
+        int c = aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:j:l:m:M:n:GPHiko:t:v:Vh", s_long_options, &option_index);
         if (c == -1) {
             break;
         }
@@ -182,6 +188,12 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 break;
             case 'l':
                 ctx->signing_function_name = aws_cli_optarg;
+                break;
+            case 'm':
+                ctx->signing_region = aws_cli_optarg;
+                break;
+            case 'n':
+                ctx->signing_service = aws_cli_optarg;
                 break;
             case 'M':
                 ctx->verb = aws_cli_optarg;
@@ -256,6 +268,12 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 ctx->signing_library_path);
             s_usage(1);
         }
+    }
+
+    if (ctx->input_body == NULL) {
+        struct aws_byte_cursor empty_cursor;
+        AWS_ZERO_STRUCT(empty_cursor);
+        ctx->input_body = aws_input_stream_new_from_cursor(ctx->allocator, &empty_cursor);
     }
 
     if (aws_cli_optind < argc) {
@@ -432,7 +450,7 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     struct aws_http_request_options *request = NULL;
     aws_http_request_options_destroy_fn *destroy_fn = NULL;
     if (app_ctx->signing_function != NULL) {
-        (app_ctx->signing_function)(app_ctx->allocator, &request_options, &request, &destroy_fn);
+        (app_ctx->signing_function)(app_ctx->allocator, &request_options, app_ctx->input_body, app_ctx->signing_region, app_ctx->signing_service, &request, &destroy_fn);
     } else {
         request = &request_options;
     }
