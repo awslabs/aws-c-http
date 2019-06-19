@@ -68,7 +68,8 @@ struct aws_websocket {
     struct aws_channel_task waiting_on_payload_stream_task;
     bool is_server;
 
-    struct thread_data {
+    /* Data that should only be accessed from the websocket's channel thread. */
+    struct {
         struct aws_websocket_encoder encoder;
         struct aws_linked_list outgoing_frame_list;
         struct outgoing_frame *current_outgoing_frame;
@@ -116,7 +117,8 @@ struct aws_websocket {
         bool is_midchannel_handler;
     } thread_data;
 
-    struct synced_data {
+    /* Data that may be touched from any thread (lock must be held). */
+    struct {
         struct aws_mutex lock;
 
         struct aws_linked_list outgoing_frame_list;
