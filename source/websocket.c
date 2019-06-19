@@ -65,9 +65,10 @@ struct aws_websocket {
     struct aws_channel_task move_synced_data_to_thread_task;
     struct aws_channel_task shutdown_channel_task;
     struct aws_channel_task increment_read_window_task;
+    struct aws_channel_task waiting_on_payload_stream_task;
     bool is_server;
 
-    struct {
+    struct thread_data {
         struct aws_websocket_encoder encoder;
         struct aws_linked_list outgoing_frame_list;
         struct outgoing_frame *current_outgoing_frame;
@@ -106,12 +107,16 @@ struct aws_websocket {
          * the socket before sending the next aws_io_message */
         bool is_waiting_for_write_completion;
 
+        /* If, while writing out data from a payload stream, we experience "read would block",
+         * schedule a task to try again in the near-future. */
+        bool is_waiting_on_payload_stream_task;
+
         /* True if this websocket is being used as a dumb mid-channel handler.
          * The websocket will no longer respond to its public API or invoke callbacks. */
         bool is_midchannel_handler;
     } thread_data;
 
-    struct {
+    struct synced_data {
         struct aws_mutex lock;
 
         struct aws_linked_list outgoing_frame_list;
@@ -186,6 +191,7 @@ static void s_midchannel_send_complete(struct aws_websocket *websocket, int erro
 static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_increment_read_window_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_shutdown_channel_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
+static void s_waiting_on_payload_stream_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_schedule_channel_shutdown(struct aws_websocket *websocket, int error_code);
 static void s_shutdown_due_to_write_err(struct aws_websocket *websocket, int error_code);
 static void s_shutdown_due_to_read_err(struct aws_websocket *websocket, int error_code);
@@ -279,6 +285,7 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
     aws_channel_task_init(&websocket->move_synced_data_to_thread_task, s_move_synced_data_to_thread_task, websocket);
     aws_channel_task_init(&websocket->shutdown_channel_task, s_shutdown_channel_task, websocket);
     aws_channel_task_init(&websocket->increment_read_window_task, s_increment_read_window_task, websocket);
+    aws_channel_task_init(&websocket->waiting_on_payload_stream_task, s_waiting_on_payload_stream_task, websocket);
 
     aws_linked_list_init(&websocket->thread_data.outgoing_frame_list);
 
@@ -362,19 +369,21 @@ void aws_websocket_release(struct aws_websocket *websocket) {
     aws_channel_release_hold(websocket->channel_slot->channel);
 }
 
-struct aws_channel *aws_websocket_convert_to_midchannel_handler(struct aws_websocket *websocket) {
+struct aws_channel *aws_websocket_get_channel(const struct aws_websocket *websocket) {
+    return websocket->channel_slot->channel;
+}
+
+int aws_websocket_convert_to_midchannel_handler(struct aws_websocket *websocket) {
     if (!aws_channel_thread_is_callers_thread(websocket->channel_slot->channel)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET, "id=%p: Cannot convert to midchannel handler on this thread.", (void *)websocket);
-        aws_raise_error(AWS_ERROR_IO_EVENT_LOOP_THREAD_ONLY);
-        return NULL;
+        return aws_raise_error(AWS_ERROR_IO_EVENT_LOOP_THREAD_ONLY);
     }
 
     if (websocket->thread_data.is_midchannel_handler) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET, "id=%p: Websocket has already converted to midchannel handler.", (void *)websocket);
-        aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_IS_MIDCHANNEL_HANDLER);
-        return NULL;
+        return aws_raise_error(AWS_ERROR_HTTP_WEBSOCKET_IS_MIDCHANNEL_HANDLER);
     }
 
     if (websocket->thread_data.is_reading_stopped || websocket->thread_data.is_writing_stopped) {
@@ -382,7 +391,7 @@ struct aws_channel *aws_websocket_convert_to_midchannel_handler(struct aws_webso
             AWS_LS_HTTP_WEBSOCKET,
             "id=%p: Cannot convert websocket to midchannel handler because it is closed or closing.",
             (void *)websocket);
-        aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
     }
 
     if (websocket->thread_data.current_incoming_frame) {
@@ -390,8 +399,7 @@ struct aws_channel *aws_websocket_convert_to_midchannel_handler(struct aws_webso
             AWS_LS_HTTP_WEBSOCKET,
             "id=%p: Cannot convert to midchannel handler in the middle of an incoming frame.",
             (void *)websocket);
-        aws_raise_error(AWS_ERROR_INVALID_STATE);
-        return NULL;
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
     bool was_released = false;
@@ -411,13 +419,12 @@ struct aws_channel *aws_websocket_convert_to_midchannel_handler(struct aws_webso
             AWS_LS_HTTP_WEBSOCKET,
             "id=%p: Cannot convert websocket to midchannel handler because it was already released.",
             (void *)websocket);
-        aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
-        return NULL;
+        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
     }
 
     websocket->thread_data.is_midchannel_handler = true;
 
-    return websocket->channel_slot->channel;
+    return AWS_OP_SUCCESS;
 }
 
 /* Insert frame into list, sorting by priority, then by age (high-priority and older frames towards the front) */
@@ -500,7 +507,7 @@ static int s_send_frame(
 
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_WEBSOCKET,
-        "id=%p: Enqueuing frame with opcode=%" PRIu8 "(%s) length=%" PRIu64 " fin=%s priority=%s",
+        "id=%p: Enqueuing outgoing frame with opcode=%" PRIu8 "(%s) length=%" PRIu64 " fin=%s priority=%s",
         (void *)websocket,
         options->opcode,
         aws_websocket_opcode_str(options->opcode),
@@ -689,7 +696,7 @@ static void s_try_write_outgoing_frames(struct aws_websocket *websocket) {
         if (aws_websocket_encoder_is_frame_in_progress(&websocket->thread_data.encoder)) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_WEBSOCKET,
-                "id=%p: Frame still in progress, but no more data can be written at this time.",
+                "id=%p: Outgoing frame still in progress, but no more data can be written at this time.",
                 (void *)websocket);
             break;
         }
@@ -706,38 +713,59 @@ static void s_try_write_outgoing_frames(struct aws_websocket *websocket) {
         }
     }
 
-    /* Send aws_io_message up the channel */
+    /* If payload stream didn't have any bytes available to read right now, then the aws_io_message might be empty.
+     * If this is the case schedule a task to try again in the future. */
+    if (io_msg->message_data.len == 0) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_WEBSOCKET,
+            "id=%p: Reading from payload stream would block, will try again later.",
+            (void *)websocket);
+
+        if (!websocket->thread_data.is_waiting_on_payload_stream_task) {
+            websocket->thread_data.is_waiting_on_payload_stream_task = true;
+
+            /* Future Optimization Idea: Minimize work while we wait. Use some kind of backoff for the retry timing,
+             * or have some way for stream to notify when more data is available. */
+            aws_channel_schedule_task_now(websocket->channel_slot->channel, &websocket->waiting_on_payload_stream_task);
+        }
+
+        aws_mem_release(io_msg->allocator, io_msg);
+        return;
+    }
+
+    /* Prepare to send aws_io_message up the channel.
+     * Note that the write-completion callback may fire before send_message() returns */
+
+    /* If CLOSE frame was written, that's the last data we'll write */
+    if (wrote_close_frame) {
+        s_stop_writing(websocket, AWS_ERROR_HTTP_WEBSOCKET_CLOSE_FRAME_SENT);
+    }
+
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_WEBSOCKET,
-        "id=%p: Sending aws_io_message of size %zu.",
+        "id=%p: Sending aws_io_message of size %zu in write direction.",
         (void *)websocket,
         io_msg->message_data.len);
 
+    websocket->thread_data.is_waiting_for_write_completion = true;
     err = aws_channel_slot_send_message(websocket->channel_slot, io_msg, AWS_CHANNEL_DIR_WRITE);
     if (err) {
+        websocket->thread_data.is_waiting_for_write_completion = false;
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET,
-            "id=%p: Failed to send message up channel, error %d (%s).",
+            "id=%p: Failed to send message in write direction, error %d (%s).",
             (void *)websocket,
             aws_last_error(),
             aws_error_name(aws_last_error()));
         goto error;
     }
 
-    websocket->thread_data.is_waiting_for_write_completion = true;
+    /* Finish shutdown if we were waiting for theCLOSE frame to be written */
+    if (wrote_close_frame && websocket->thread_data.is_shutting_down_and_waiting_for_close_frame_to_be_written) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_WEBSOCKET, "id=%p: CLOSE frame sent, finishing handler shutdown sequence.", (void *)websocket);
 
-    /* If CLOSE frame was written, that's the last data we'll write */
-    if (wrote_close_frame) {
-        s_stop_writing(websocket, AWS_ERROR_HTTP_WEBSOCKET_CLOSE_FRAME_SENT);
-
-        if (websocket->thread_data.is_shutting_down_and_waiting_for_close_frame_to_be_written) {
-            AWS_LOGF_TRACE(
-                AWS_LS_HTTP_WEBSOCKET,
-                "id=%p: CLOSE frame sent, finishing handler shutdown sequence.",
-                (void *)websocket);
-
-            s_finish_shutdown(websocket);
-        }
+        s_finish_shutdown(websocket);
     }
 
     return;
@@ -767,6 +795,23 @@ static int s_encoder_stream_outgoing_payload(struct aws_byte_buf *out_buf, void 
     }
 
     return AWS_OP_SUCCESS;
+}
+
+static void s_waiting_on_payload_stream_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        /* If channel has shut down, don't need to resume sending payload */
+        return;
+    }
+
+    struct aws_websocket *websocket = arg;
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_WEBSOCKET, "id=%p: Done waiting for payload stream, sending more data...", (void *)websocket);
+
+    websocket->thread_data.is_waiting_on_payload_stream_task = false;
+    s_try_write_outgoing_frames(websocket);
 }
 
 static void s_io_message_write_completed(
@@ -836,7 +881,7 @@ static bool s_midchannel_send_payload(struct aws_websocket *websocket, struct aw
     struct aws_io_message *io_msg = user_data;
 
     /* copy_mark is used to track progress */
-    size_t src_available = io_msg->message_data.capacity - io_msg->copy_mark;
+    size_t src_available = io_msg->message_data.len - io_msg->copy_mark;
     size_t dst_available = out_buf->capacity - out_buf->len;
     size_t sending = dst_available < src_available ? dst_available : src_available;
 
@@ -1082,7 +1127,7 @@ static int s_handler_shutdown(
             } else {
                 AWS_LOGF_TRACE(
                     AWS_LS_HTTP_WEBSOCKET,
-                    "id=%p: CLOSE frame queued, handler will finish shutdown once it's sent.",
+                    "id=%p: Outgoing CLOSE frame queued, handler will finish shutdown once it's sent.",
                     (void *)websocket);
             }
         }
@@ -1151,7 +1196,7 @@ static int s_handler_process_read_message(
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_WEBSOCKET,
-        "id=%p: Begin processing message of size %zu.",
+        "id=%p: Begin processing incoming message of size %zu.",
         (void *)websocket,
         message->message_data.len);
 
@@ -1165,7 +1210,7 @@ static int s_handler_process_read_message(
         if (err) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_WEBSOCKET,
-                "id=%p: Message processing failed, error %d (%s). Closing connection.",
+                "id=%p: Failed processing incoming message, error %d (%s). Closing connection.",
                 (void *)websocket,
                 aws_last_error(),
                 aws_error_name(aws_last_error()));
@@ -1211,11 +1256,11 @@ clean_up:
     if (cursor.len > 0) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_WEBSOCKET,
-            "id=%p: Done processing message, final %zu bytes ignored.",
+            "id=%p: Done processing incoming message, final %zu bytes ignored.",
             (void *)websocket,
             cursor.len);
     } else {
-        AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Done processing message.", (void *)websocket);
+        AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: Done processing incoming message.", (void *)websocket);
     }
     aws_mem_release(message->allocator, message);
     return AWS_OP_SUCCESS;

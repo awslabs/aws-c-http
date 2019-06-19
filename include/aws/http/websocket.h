@@ -273,7 +273,7 @@ typedef void(
 /**
  * Options for sending a websocket frame.
  * This structure is copied immediately by aws_websocket_send().
- * For descriptions of sopcode, fin, rsv, and payload_length see in RFC-6455 Section 5.2.
+ * For descriptions of opcode, fin, rsv, and payload_length see in RFC-6455 Section 5.2.
  */
 struct aws_websocket_send_frame_options {
     /**
@@ -385,7 +385,7 @@ void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t
  * This must not be called in the middle of an incoming frame (between "frame begin" and "frame complete" callbacks).
  * This MUST be called from the websocket's thread.
  *
- * If successful, the channel that the websocket belongs to is returned and:
+ * If successful:
  * - Other than aws_websocket_release(), all calls to aws_websocket_x() functions are ignored.
  * - The websocket will no longer invoke any "incoming frame" callbacks.
  * - aws_io_messages written by a downstream handler will be wrapped in binary data frames and sent upstream.
@@ -400,7 +400,13 @@ void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t
  * If unsuccessful, NULL is returned and the websocket is unchanged.
  */
 AWS_HTTP_API
-struct aws_channel *aws_websocket_convert_to_midchannel_handler(struct aws_websocket *websocket);
+int aws_websocket_convert_to_midchannel_handler(struct aws_websocket *websocket);
+
+/**
+ * Returns the websocket's underlying I/O channel.
+ */
+AWS_HTTP_API
+struct aws_channel *aws_websocket_get_channel(const struct aws_websocket *websocket);
 
 AWS_EXTERN_C_END
 

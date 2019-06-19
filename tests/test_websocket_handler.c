@@ -435,8 +435,12 @@ static int s_writepush(struct tester *tester, struct aws_byte_cursor data) {
     }
 
     while (data.len) {
+        /* Ask for slightly more data than we need so that capacity != length.
+         * This is to repro a bug where capacity and length were confused */
+        size_t size_hint = data.len + 1;
+
         struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
-            tester->testing_channel.channel, AWS_IO_MESSAGE_APPLICATION_DATA, data.len);
+            tester->testing_channel.channel, AWS_IO_MESSAGE_APPLICATION_DATA, size_hint);
         ASSERT_NOT_NULL(msg);
         size_t chunk_size = msg->message_data.capacity < data.len ? msg->message_data.capacity : data.len;
         struct aws_byte_cursor chunk = aws_byte_cursor_advance(&data, chunk_size);
@@ -464,6 +468,7 @@ static int s_writepush_check(struct tester *tester, size_t ignore_n_written_fram
             ASSERT_TRUE(aws_byte_cursor_eq_byte_buf(&expected_i, &frame_i->payload));
         }
     }
+    ASSERT_UINT_EQUALS(0, expected_cursor.len);
     return AWS_OP_SUCCESS;
 }
 
@@ -526,7 +531,8 @@ static int s_tester_clean_up(struct tester *tester) {
 }
 
 static int s_install_downstream_handler(struct tester *tester, size_t initial_window) {
-    ASSERT_NOT_NULL(aws_websocket_convert_to_midchannel_handler(tester->websocket));
+
+    ASSERT_SUCCESS(aws_websocket_convert_to_midchannel_handler(tester->websocket));
     tester->is_midchannel_handler = true;
 
     ASSERT_SUCCESS(testing_channel_install_downstream_handler(&tester->testing_channel, initial_window));
@@ -1101,6 +1107,9 @@ TEST_CASE(websocket_handler_send_one_io_msg_at_a_time) {
         ASSERT_SUCCESS(s_send_frame(&tester, send));
     }
 
+    /* Turn off instant write completion */
+    testing_channel_complete_written_messages_immediately(&tester.testing_channel, false, AWS_OP_SUCCESS);
+
     /* Repeatedly drain event loop and ensure that only 1 aws_io_message is written */
     struct aws_linked_list *io_msgs = testing_channel_get_written_message_queue(&tester.testing_channel);
     size_t total_io_msg_count = 0;
@@ -1223,7 +1232,7 @@ TEST_CASE(websocket_handler_shutdown_handles_queued_close_frame) {
     ASSERT_SUCCESS(s_send_frame(&tester, &send));
 
     /* Assert that test has one aws_io_message written, containing a partially sent frame */
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
     ASSERT_TRUE(send.on_payload_count > 0);
     ASSERT_UINT_EQUALS(0, send.on_complete_count);
 
@@ -1260,7 +1269,7 @@ TEST_CASE(websocket_handler_shutdown_immediately_in_emergency) {
     ASSERT_SUCCESS(s_send_frame(&tester, &send));
 
     /* Assert that test is issuing shutdown while frame is partially written */
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
     ASSERT_TRUE(send.on_payload_count > 0);
     ASSERT_UINT_EQUALS(0, send.on_complete_count);
 
@@ -1303,7 +1312,7 @@ TEST_CASE(websocket_handler_shutdown_handles_unexpected_write_error) {
     ASSERT_SUCCESS(s_send_frame(&tester, &send));
 
     /* Assert that test is issuing shutdown while frame is partially written */
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
     ASSERT_TRUE(send.on_payload_count > 0);
     ASSERT_UINT_EQUALS(0, send.on_complete_count);
 
