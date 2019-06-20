@@ -17,6 +17,7 @@
 
 #include <aws/common/atomics.h>
 #include <aws/common/device_random.h>
+#include <aws/common/encoding.h>
 #include <aws/common/mutex.h>
 #include <aws/http/private/websocket_decoder.h>
 #include <aws/http/private/websocket_encoder.h>
@@ -1607,4 +1608,23 @@ void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t
             (void *)websocket,
             size);
     }
+}
+
+int aws_websocket_random_handshake_key(struct aws_byte_buf *dst) {
+    /* RFC-6455 Section 4.1.
+     * Derive random 16-byte value, base64-encoded, for the Sec-WebSocket-Key header */
+    uint8_t key_random_storage[16];
+    struct aws_byte_buf key_random_buf = aws_byte_buf_from_empty_array(key_random_storage, sizeof(key_random_storage));
+    int err = aws_device_random_buffer(&key_random_buf);
+    if (err) {
+        return AWS_OP_ERR;
+    }
+
+    struct aws_byte_cursor key_random_cur = aws_byte_cursor_from_buf(&key_random_buf);
+    err = aws_base64_encode(&key_random_cur, dst);
+    if (err) {
+        return AWS_OP_ERR;
+    }
+
+    return AWS_OP_SUCCESS;
 }
