@@ -138,6 +138,8 @@ add_test_case(websocket_boot_fail_at_response_status)
 add_test_case(websocket_boot_fail_at_new_handler)
 add_test_case(websocket_boot_report_unexpected_http_shutdown)
 add_test_case(websocket_boot_fail_because_oom)
+add_test_case(websocket_handshake_key_max_length)
+add_test_case(websocket_handshake_key_randomness)
 
 add_test_case(hpack_encode_integer)
 add_test_case(hpack_decode_integer)

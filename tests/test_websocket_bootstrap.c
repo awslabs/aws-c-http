@@ -637,3 +637,41 @@ TEST_CASE(websocket_boot_fail_because_oom) {
 
     return AWS_OP_SUCCESS;
 }
+
+/* Check that AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH is sufficiently large */
+TEST_CASE(websocket_handshake_key_max_length) {
+    (void)allocator;
+    (void)ctx;
+
+    uint8_t small_buf_storage[AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH];
+    struct aws_byte_buf small_buf = aws_byte_buf_from_empty_array(small_buf_storage, sizeof(small_buf_storage));
+    for (size_t i = 0; i < 100; ++i) {
+        ASSERT_SUCCESS(aws_websocket_random_handshake_key(&small_buf));
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Ensure keys are random */
+TEST_CASE(websocket_handshake_key_randomness) {
+    (void)ctx;
+
+    enum { count = 100 };
+    struct aws_byte_buf keys[count];
+
+    for (int i = 0; i < count; ++i) {
+        struct aws_byte_buf *key = &keys[i];
+        ASSERT_SUCCESS(aws_byte_buf_init(key, allocator, AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH));
+        ASSERT_SUCCESS(aws_websocket_random_handshake_key(key));
+        for (int existing_i = 0; existing_i < i; ++existing_i) {
+            struct aws_byte_buf *existing = &keys[existing_i];
+            ASSERT_FALSE(aws_byte_buf_eq(key, existing));
+        }
+    }
+
+    for (int i = 0; i < count; ++i) {
+        aws_byte_buf_clean_up(&keys[i]);
+    }
+
+    return AWS_OP_SUCCESS;
+}
