@@ -147,13 +147,13 @@ struct aws_http_request_options {
 typedef void(
     aws_http_request_options_destroy_fn)(struct aws_allocator *allocator, struct aws_http_request_options *request);
 typedef int(aws_transform_http_request_options_fn)(
-        struct aws_allocator *allocator,
-        struct aws_http_request_options *input_request,
-        struct aws_input_stream *payload_stream,
-        const char *signing_region,
-        const char *signing_service,
-        struct aws_http_request_options **output_request,
-        aws_http_request_options_destroy_fn **request_cleanup);
+    struct aws_allocator *allocator,
+    struct aws_http_request_options *input_request,
+    struct aws_input_stream *payload_stream,
+    const char *signing_region,
+    const char *signing_service,
+    struct aws_http_request_options **output_request,
+    aws_http_request_options_destroy_fn **request_cleanup);
 
 /**
  * Initializes aws_http_request_options with default values.

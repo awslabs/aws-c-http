@@ -135,7 +135,8 @@ static struct aws_cli_option s_long_options[] = {
 static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
     while (true) {
         int option_index = 0;
-        int c = aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:j:l:m:M:n:GPHiko:t:v:Vh", s_long_options, &option_index);
+        int c =
+            aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:j:l:m:M:n:GPHiko:t:v:Vh", s_long_options, &option_index);
         if (c == -1) {
             break;
         }
@@ -450,7 +451,14 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     struct aws_http_request_options *request = NULL;
     aws_http_request_options_destroy_fn *destroy_fn = NULL;
     if (app_ctx->signing_function != NULL) {
-        (app_ctx->signing_function)(app_ctx->allocator, &request_options, app_ctx->input_body, app_ctx->signing_region, app_ctx->signing_service, &request, &destroy_fn);
+        (app_ctx->signing_function)(
+            app_ctx->allocator,
+            &request_options,
+            app_ctx->input_body,
+            app_ctx->signing_region,
+            app_ctx->signing_service,
+            &request,
+            &destroy_fn);
     } else {
         request = &request_options;
     }
