@@ -25,11 +25,11 @@
 #endif
 
 enum {
-    /* Initial capacity for the aws_http_request.headers array-list. */
+    /* Initial capacity for the aws_http_request.headers array_list. */
     AWS_HTTP_REQUEST_NUM_RESERVED_HEADERS = 16,
 };
 
-/* Type stored within the aws_http_request.headers array-list.
+/* Type stored within the aws_http_request.headers array_list.
  * Different from aws_http_header in that it owns its string memory. */
 struct aws_http_header_impl {
     struct aws_string *name;
