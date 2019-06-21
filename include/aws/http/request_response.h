@@ -300,11 +300,11 @@ int aws_http_request_set_header(struct aws_http_request *request, struct aws_htt
  * Remove the header at the specified index.
  * Headers after this index are all shifted back one position.
  *
- * Nothing happens if an invalid index is specified,
- * a language binding might choose to throw an exception instead.
+ * This function cannot fail if a valid index is provided.
+ * Otherwise, AWS_ERROR_INVALID_INDEX will be raised.
  */
 AWS_HTTP_API
-void aws_http_request_erase_header(struct aws_http_request *request, size_t index);
+int aws_http_request_erase_header(struct aws_http_request *request, size_t index);
 
 /**
  * Create a stream, with a client connection sending a request.

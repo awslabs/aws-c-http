@@ -41,6 +41,8 @@ static int s_set_string_from_cursor(
     struct aws_byte_cursor cursor,
     struct aws_allocator *alloc) {
 
+    AWS_PRECONDITION(dst);
+
     /* If the cursor is empty, set dst to NULL */
     struct aws_string *new_str;
     if (cursor.len) {
@@ -70,6 +72,8 @@ static struct aws_byte_cursor s_get_cursor_from_string(const struct aws_string *
 }
 
 static void s_header_impl_clean_up(struct aws_http_header_impl *header_impl) {
+    AWS_PRECONDITION(header_impl);
+
     aws_string_destroy(header_impl->name);
     aws_string_destroy(header_impl->value);
     AWS_ZERO_STRUCT(*header_impl);
@@ -79,6 +83,8 @@ static int s_header_impl_init(
     struct aws_http_header_impl *header_impl,
     const struct aws_http_header *header_view,
     struct aws_allocator *alloc) {
+
+    AWS_PRECONDITION(header_impl);
 
     AWS_ZERO_STRUCT(*header_impl);
 
@@ -128,6 +134,7 @@ void aws_http_request_clean_up(struct aws_http_request *request) {
     for (size_t i = 0; i < length; ++i) {
         struct aws_http_header_impl *header_impl;
         aws_array_list_get_at_ptr(&request->headers, (void **)&header_impl, i);
+        AWS_ASSERT(header_impl);
         s_header_impl_clean_up(header_impl);
     }
 
@@ -231,15 +238,18 @@ error:
     return AWS_OP_ERR;
 }
 
-void aws_http_request_erase_header(struct aws_http_request *request, size_t index) {
+int aws_http_request_erase_header(struct aws_http_request *request, size_t index) {
     AWS_PRECONDITION(request);
 
     struct aws_http_header_impl *header_impl;
     int err = aws_array_list_get_at_ptr(&request->headers, (void **)&header_impl, index);
-    if (!err) {
-        s_header_impl_clean_up(header_impl);
-        aws_array_list_erase(&request->headers, index);
+    if (err) {
+        return AWS_OP_ERR;
     }
+
+    s_header_impl_clean_up(header_impl);
+    aws_array_list_erase(&request->headers, index);
+    return AWS_OP_SUCCESS;
 }
 
 size_t aws_http_request_get_header_count(const struct aws_http_request *request) {

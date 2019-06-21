@@ -144,7 +144,7 @@ TEST_CASE(request_erase_headers) {
 
     /* Remove a middle one and check */
     const size_t kill_i = 1;
-    aws_http_request_erase_header(&request, kill_i);
+    ASSERT_SUCCESS(aws_http_request_erase_header(&request, kill_i));
     ASSERT_UINT_EQUALS(AWS_ARRAY_SIZE(src_headers) - 1, aws_http_request_get_header_count(&request));
 
     for (size_t i = 0; i < aws_http_request_get_header_count(&request); ++i) {
@@ -156,8 +156,8 @@ TEST_CASE(request_erase_headers) {
     }
 
     /* Remove a front and a back header, only "NameC: ValueC" should remain */
-    aws_http_request_erase_header(&request, 0);
-    aws_http_request_erase_header(&request, aws_http_request_get_header_count(&request) - 1);
+    ASSERT_SUCCESS(aws_http_request_erase_header(&request, 0));
+    ASSERT_SUCCESS(aws_http_request_erase_header(&request, aws_http_request_get_header_count(&request) - 1));
 
     ASSERT_UINT_EQUALS(1, aws_http_request_get_header_count(&request));
     ASSERT_SUCCESS(s_check_header_eq(aws_http_request_get_header(&request, 0), "NameC", "ValueC"));
@@ -178,7 +178,7 @@ TEST_CASE(request_do_invalid_stuff) {
 
     /* Should be fine to try and erase non-existent headers */
     for (size_t i = 0; i < 10; ++i) {
-        aws_http_request_erase_header(&request, i);
+        ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_request_erase_header(&request, i));
     }
 
     /* Querying non-existent headers should just get you empty data */
