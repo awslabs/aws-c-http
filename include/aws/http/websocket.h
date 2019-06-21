@@ -42,6 +42,7 @@ enum aws_websocket_opcode {
 };
 
 #define AWS_WEBSOCKET_MAX_PAYLOAD_LENGTH 0x7FFFFFFFFFFFFFFF
+#define AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH 25
 
 /**
  * Called when websocket setup is complete.
@@ -63,7 +64,7 @@ typedef void(aws_websocket_on_connection_setup_fn)(
     int error_code,
     int handshake_response_status,
     const struct aws_http_header *handshake_response_header_array,
-    size_t num_handhake_response_headers,
+    size_t num_handshake_response_headers,
     void *user_data);
 
 /**
@@ -184,13 +185,13 @@ struct aws_websocket_client_connection_options {
      *
      * Sec-Websocket-Key should be a random 16 bytes value, Base64 encoded.
      */
-    struct aws_http_header *handshake_header_array;
+    const struct aws_http_header *handshake_header_array;
 
     /**
      * Number of entries in handshake_header_array.
      * Required.
      */
-    size_t num_handhake_headers;
+    size_t num_handshake_headers;
 
     /**
      * Initial window size for websocket.
@@ -273,7 +274,7 @@ typedef void(
 /**
  * Options for sending a websocket frame.
  * This structure is copied immediately by aws_websocket_send().
- * For descriptions of sopcode, fin, rsv, and payload_length see in RFC-6455 Section 5.2.
+ * For descriptions of opcode, fin, rsv, and payload_length see in RFC-6455 Section 5.2.
  */
 struct aws_websocket_send_frame_options {
     /**
@@ -385,7 +386,7 @@ void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t
  * This must not be called in the middle of an incoming frame (between "frame begin" and "frame complete" callbacks).
  * This MUST be called from the websocket's thread.
  *
- * If successful, the channel that the websocket belongs to is returned and:
+ * If successful:
  * - Other than aws_websocket_release(), all calls to aws_websocket_x() functions are ignored.
  * - The websocket will no longer invoke any "incoming frame" callbacks.
  * - aws_io_messages written by a downstream handler will be wrapped in binary data frames and sent upstream.
@@ -400,7 +401,23 @@ void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t
  * If unsuccessful, NULL is returned and the websocket is unchanged.
  */
 AWS_HTTP_API
-struct aws_channel *aws_websocket_convert_to_midchannel_handler(struct aws_websocket *websocket);
+int aws_websocket_convert_to_midchannel_handler(struct aws_websocket *websocket);
+
+/**
+ * Returns the websocket's underlying I/O channel.
+ */
+AWS_HTTP_API
+struct aws_channel *aws_websocket_get_channel(const struct aws_websocket *websocket);
+
+/**
+ * Generate value for a Sec-WebSocket-Key header and write it into `dst` buffer.
+ * The buffer should have at least AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH space available.
+ *
+ * This value is the base64 encoding of a random 16-byte value.
+ * RFC-6455 Section 4.1
+ */
+AWS_HTTP_API
+int aws_websocket_random_handshake_key(struct aws_byte_buf *dst);
 
 AWS_EXTERN_C_END
 

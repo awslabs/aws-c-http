@@ -1,5 +1,5 @@
-#ifndef AWS_HTTP_CONNECTION_MANAGER_FUNCTION_TABLE_H
-#define AWS_HTTP_CONNECTION_MANAGER_FUNCTION_TABLE_H
+#ifndef AWS_HTTP_CONNECTION_MANAGER_SYSTEM_VTABLE_H
+#define AWS_HTTP_CONNECTION_MANAGER_SYSTEM_VTABLE_H
 
 /*
  * Copyright 2010-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -25,7 +25,7 @@ typedef void(aws_http_connection_manager_close_connection_fn)(struct aws_http_co
 typedef void(aws_http_connection_manager_release_connection_fn)(struct aws_http_connection *connection);
 typedef bool(aws_http_connection_manager_is_connection_open_fn)(const struct aws_http_connection *connection);
 
-struct aws_http_connection_manager_function_table {
+struct aws_http_connection_manager_system_vtable {
     /*
      * Downstream http functions
      */
@@ -36,16 +36,14 @@ struct aws_http_connection_manager_function_table {
 };
 
 AWS_HTTP_API
-bool aws_http_connection_manager_function_table_is_valid(
-    const struct aws_http_connection_manager_function_table *table);
+bool aws_http_connection_manager_system_vtable_is_valid(const struct aws_http_connection_manager_system_vtable *table);
 
 AWS_HTTP_API
-void aws_http_connection_manager_set_function_table(
+void aws_http_connection_manager_set_system_vtable(
     struct aws_http_connection_manager *manager,
-    const struct aws_http_connection_manager_function_table *function_table);
+    const struct aws_http_connection_manager_system_vtable *system_vtable);
 
 AWS_HTTP_API
-extern const struct aws_http_connection_manager_function_table
-    *g_aws_http_connection_manager_default_function_table_ptr;
+extern const struct aws_http_connection_manager_system_vtable *g_aws_http_connection_manager_default_system_vtable_ptr;
 
-#endif /* AWS_HTTP_CONNECTION_MANAGER_FUNCTION_TABLE_H */
+#endif /* AWS_HTTP_CONNECTION_MANAGER_SYSTEM_VTABLE_H */

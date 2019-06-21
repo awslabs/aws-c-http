@@ -522,6 +522,7 @@ int main(int argc, char **argv) {
     AWS_ZERO_STRUCT(logger);
 
     if (app_ctx.log_level) {
+        aws_common_load_log_subject_strings();
         aws_io_load_log_subject_strings();
 
         struct aws_logger_standard_options options = {
