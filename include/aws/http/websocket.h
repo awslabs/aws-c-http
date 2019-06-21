@@ -421,8 +421,7 @@ AWS_HTTP_API
 int aws_websocket_random_handshake_key(struct aws_byte_buf *dst);
 
 /**
- * Initialize request with all required fields for a websocket upgrade request.
- * The request SHOULD NOT be initialized before it is passed in.
+ * Create request with all required fields for a websocket upgrade request.
  * The method and path are set, and the the following headers are added:
  *
  * Host: <host>
@@ -431,8 +430,7 @@ int aws_websocket_random_handshake_key(struct aws_byte_buf *dst);
  * Sec-WebSocket-Key: <base64 encoding of 16 random bytes>
  * Sec-WebSocket-Version: 13
  */
-int aws_http_request_init_websocket_handshake(
-    struct aws_http_request *request,
+struct aws_http_request *aws_http_request_new_websocket_handshake(
     struct aws_allocator *allocator,
     struct aws_byte_cursor path,
     struct aws_byte_cursor host);

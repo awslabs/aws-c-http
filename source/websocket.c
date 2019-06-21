@@ -1630,22 +1630,22 @@ int aws_websocket_random_handshake_key(struct aws_byte_buf *dst) {
     return AWS_OP_SUCCESS;
 }
 
-int aws_http_request_init_websocket_handshake(
-    struct aws_http_request *request,
+struct aws_http_request *aws_http_request_init_websocket_handshake(
     struct aws_allocator *allocator,
     struct aws_byte_cursor path,
     struct aws_byte_cursor host) {
 
-    AWS_PRECONDITION(request);
     AWS_PRECONDITION(allocator);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&path))
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&host))
 
-    int err = aws_http_request_init(request, allocator);
-    if (err) {
+    struct aws_http_request *request = aws_http_request_new(allocator);
+    if (!request) {
         goto error;
     }
 
     struct aws_byte_cursor method = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET");
-    err = aws_http_request_set_method(request, method);
+    int err = aws_http_request_set_method(request, method);
     if (err) {
         goto error;
     }
@@ -1692,9 +1692,9 @@ int aws_http_request_init_websocket_handshake(
         }
     }
 
-    return AWS_OP_SUCCESS;
+    return request;
 
 error:
-    aws_http_request_clean_up(request);
-    return AWS_OP_ERR;
+    aws_http_request_destroy(request);
+    return NULL;
 }
