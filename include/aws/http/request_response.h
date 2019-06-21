@@ -28,23 +28,36 @@ struct aws_http_connection;
  */
 struct aws_http_stream;
 
+/**
+ * A lightweight HTTP header struct.
+ * Note that the underlying strings are not owned by the byte cursors.
+ */
 struct aws_http_header {
     struct aws_byte_cursor name;
     struct aws_byte_cursor value;
 };
 
-/* Do not access members directly, use functions. */
+/**
+ * The definition for an HTTP request.
+ * This datastructure may be transformed (ex: signing the request) before it is used to create a stream.
+ *
+ * The request keeps internal copies of its trivial strings (method, path, headers)
+ * but does NOT take ownership of its body stream.
+ *
+ * Do not access the members of this struct directly, use the aws_http_request_XYZ() functions.
+ */
 struct aws_http_request {
     struct aws_allocator *allocator;
     struct aws_string *method;
     struct aws_string *path;
     struct aws_array_list headers;
-    struct aws_input_stream *body;
+    struct aws_input_stream *body_stream;
 };
 
 /**
  * A function that may modify the request before it is sent.
- * Return AWS_OP_SUCCESS to indicate that the transformation was successful, or AWS_OP_ERR to indicate failure.
+ * Return AWS_OP_SUCCESS to indicate that transformation was successful,
+ * or AWS_OP_ERR to indicate failure and cancel the operation.
  */
 typedef int aws_http_request_transform_fn(struct aws_http_request *request, void *user_data);
 
@@ -190,53 +203,108 @@ struct aws_http_response_options {
     aws_http_stream_outgoing_body_fn *stream_outgoing_body;
 };
 
-AWS_STATIC_IMPL
-bool aws_http_header_is_valid(const struct aws_http_header *header) {
-    return header && aws_byte_cursor_is_valid(&header->name) && aws_byte_cursor_is_valid(&header->value);
-}
-
 AWS_EXTERN_C_BEGIN
 
+/**
+ * Initialize the request.
+ * The request is blank, and all data (method, path, etc) must be set individually.
+ */
 AWS_HTTP_API
 int aws_http_request_init(struct aws_http_request *request, struct aws_allocator *allocator);
 
+/**
+ * Clean up the request.
+ * This function is idempotent, it has no effect if called on a request that has
+ * failed initialization or been zeroed out.
+ */
 AWS_HTTP_API
 void aws_http_request_clean_up(struct aws_http_request *request);
 
+/**
+ * Get the method.
+ * If no method is set, an empty byte cursor is returned.
+ */
 AWS_HTTP_API
 struct aws_byte_cursor aws_http_request_get_method(const struct aws_http_request *request);
 
+/**
+ * Set the method.
+ * The request makes its own copy of the underlying string.
+ */
 AWS_HTTP_API
 int aws_http_request_set_method(struct aws_http_request *request, struct aws_byte_cursor method);
 
+/**
+ * Get the path (and query) value.
+ * If no path is set, an empty byte cursor is returned.
+ */
 AWS_HTTP_API
 struct aws_byte_cursor aws_http_request_get_path(const struct aws_http_request *request);
 
+/**
+ * Set the path (and-query) value.
+ * The request makes its own copy of the underlying string.
+ */
 AWS_HTTP_API
 int aws_http_request_set_path(struct aws_http_request *request, struct aws_byte_cursor path);
 
+/**
+ * Get the body stream.
+ * Returns NULL if no body stream is set.
+ */
 AWS_HTTP_API
-struct aws_input_stream *aws_http_request_get_body(const struct aws_http_request *request);
+struct aws_input_stream *aws_http_request_get_body_stream(const struct aws_http_request *request);
 
+/**
+ * Set the body stream.
+ * NULL is an acceptable value for requests with no body.
+ * Note: The request does NOT take ownership of the body stream.
+ * The stream must not be destroyed until the request is complete.
+ */
 AWS_HTTP_API
-void aws_http_request_set_body(struct aws_http_request *request, struct aws_input_stream *body_stream);
+void aws_http_request_set_body_stream(struct aws_http_request *request, struct aws_input_stream *body_stream);
 
+/**
+ * Get the number of headers.
+ * Headers are stored in a linear array.
+ */
 AWS_HTTP_API
 size_t aws_http_request_get_header_count(const struct aws_http_request *request);
 
+/**
+ * Get the header at the specified index.
+ * If the index is invalid, a header is returned with a blank name and value,
+ * a language-binding should throw an exception instead.
+ *
+ * The underlying strings are stored within the request.
+ */
 AWS_HTTP_API
 struct aws_http_header aws_http_request_get_header(const struct aws_http_request *request, size_t index);
 
+/**
+ * Add a header to the end of the array.
+ * The request makes its own copy of the underlying strings.
+ */
 AWS_HTTP_API
 int aws_http_request_add_header(struct aws_http_request *request, struct aws_http_header header);
 
+/**
+ * Modify the header at the specified index.
+ * The request makes its own copy of the underlying strings.
+ * The previous strings may be destroyed.
+ */
 AWS_HTTP_API
 int aws_http_request_set_header(struct aws_http_request *request, struct aws_http_header header, size_t index);
 
+/**
+ * Remove the header at the specified index.
+ * Headers after this index are all shifted back one position.
+ *
+ * Nothing happens if an invalid index is specified,
+ * a language binding might choose to throw an exception instead.
+ */
 AWS_HTTP_API
 void aws_http_request_erase_header(struct aws_http_request *request, size_t index);
-
-
 
 /**
  * Create a stream, with a client connection sending a request.

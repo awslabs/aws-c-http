@@ -25,7 +25,7 @@
 #endif
 
 enum {
-    /* Initial capacity for the aws_http_request.headers array-list*/
+    /* Initial capacity for the aws_http_request.headers array-list. */
     AWS_HTTP_REQUEST_NUM_RESERVED_HEADERS = 16,
 };
 
@@ -124,16 +124,11 @@ void aws_http_request_clean_up(struct aws_http_request *request) {
     aws_string_destroy(request->method);
     aws_string_destroy(request->path);
 
-    /* Clean up headers in array */
-    size_t len = aws_array_list_length(&request->headers);
-    if (len > 0) {
+    const size_t length = aws_array_list_length(&request->headers);
+    for (size_t i = 0; i < length; ++i) {
         struct aws_http_header_impl *header_impl;
-        aws_array_list_get_at_ptr(&request->headers, (void **)&header_impl, 0);
-
-        struct aws_http_header_impl *end = header_impl + len;
-        while (header_impl != end) {
-            s_header_impl_clean_up(header_impl++);
-        }
+        aws_array_list_get_at_ptr(&request->headers, (void **)&header_impl, i);
+        s_header_impl_clean_up(header_impl);
     }
 
     aws_array_list_clean_up(&request->headers);
@@ -166,14 +161,14 @@ struct aws_byte_cursor aws_http_request_get_path(const struct aws_http_request *
     return s_get_cursor_from_string(request->path);
 }
 
-void aws_http_request_set_body(struct aws_http_request *request, struct aws_input_stream *body) {
+void aws_http_request_set_body_stream(struct aws_http_request *request, struct aws_input_stream *body_stream) {
     AWS_PRECONDITION(request);
-    request->body = body;
+    request->body_stream = body_stream;
 }
 
-struct aws_input_stream *aws_http_request_get_body(const struct aws_http_request *request) {
+struct aws_input_stream *aws_http_request_get_body_stream(const struct aws_http_request *request) {
     AWS_PRECONDITION(request);
-    return request->body;
+    return request->body_stream;
 }
 
 struct aws_http_header s_get_header_view_from_impl(struct aws_http_header_impl *impl) {
@@ -186,7 +181,7 @@ struct aws_http_header s_get_header_view_from_impl(struct aws_http_header_impl *
 
 int aws_http_request_add_header(struct aws_http_request *request, struct aws_http_header header) {
     AWS_PRECONDITION(request);
-    AWS_PRECONDITION(aws_http_header_is_valid(&header));
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&header.name) && aws_byte_cursor_is_valid(&header.value));
 
     struct aws_http_header_impl header_impl;
     int err = s_header_impl_init(&header_impl, &header, request->allocator);
@@ -208,7 +203,7 @@ error:
 
 int aws_http_request_set_header(struct aws_http_request *request, struct aws_http_header header, size_t index) {
     AWS_PRECONDITION(request);
-    AWS_PRECONDITION(aws_http_header_is_valid(&header));
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&header.name) && aws_byte_cursor_is_valid(&header.value));
 
     struct aws_http_header_impl *header_impl;
     int err = aws_array_list_get_at_ptr(&request->headers, (void **)&header_impl, index);
