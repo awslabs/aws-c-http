@@ -21,6 +21,7 @@
 #include <aws/common/mutex.h>
 #include <aws/http/private/websocket_decoder.h>
 #include <aws/http/private/websocket_encoder.h>
+#include <aws/http/request_response.h>
 #include <aws/io/channel.h>
 #include <aws/io/logging.h>
 
@@ -1627,4 +1628,73 @@ int aws_websocket_random_handshake_key(struct aws_byte_buf *dst) {
     }
 
     return AWS_OP_SUCCESS;
+}
+
+int aws_http_request_init_websocket_handshake(
+    struct aws_http_request *request,
+    struct aws_allocator *allocator,
+    struct aws_byte_cursor path,
+    struct aws_byte_cursor host) {
+
+    AWS_PRECONDITION(request);
+    AWS_PRECONDITION(allocator);
+
+    int err = aws_http_request_init(request, allocator);
+    if (err) {
+        goto error;
+    }
+
+    struct aws_byte_cursor method = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET");
+    err = aws_http_request_set_method(request, method);
+    if (err) {
+        goto error;
+    }
+
+    err = aws_http_request_set_path(request, path);
+    if (err) {
+        goto error;
+    }
+
+    uint8_t key_storage[AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH];
+    struct aws_byte_buf key_buf = aws_byte_buf_from_empty_array(key_storage, sizeof(key_storage));
+    err = aws_websocket_random_handshake_key(&key_buf);
+    if (err) {
+        goto error;
+    }
+
+    struct aws_http_header required_headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
+            .value = host,
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Key"),
+            .value = aws_byte_cursor_from_buf(&key_buf),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Version"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("13"),
+        },
+    };
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(required_headers); ++i) {
+        err = aws_http_request_add_header(request, required_headers[i]);
+        if (err) {
+            goto error;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+
+error:
+    aws_http_request_clean_up(request);
+    return AWS_OP_ERR;
 }
