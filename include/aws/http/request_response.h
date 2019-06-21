@@ -43,16 +43,8 @@ struct aws_http_header {
  *
  * The request keeps internal copies of its trivial strings (method, path, headers)
  * but does NOT take ownership of its body stream.
- *
- * Do not access the members of this struct directly, use the aws_http_request_XYZ() functions.
  */
-struct aws_http_request {
-    struct aws_allocator *allocator;
-    struct aws_string *method;
-    struct aws_string *path;
-    struct aws_array_list headers;
-    struct aws_input_stream *body_stream;
-};
+struct aws_http_request;
 
 /**
  * A function that may modify the request before it is sent.
@@ -206,26 +198,24 @@ struct aws_http_response_options {
 AWS_EXTERN_C_BEGIN
 
 /**
- * Initialize the request.
- * The request is blank, and all data (method, path, etc) must be set individually.
+ * Create a new request.
+ * The request is blank, all properties (method, path, etc) must be set individually.
  */
 AWS_HTTP_API
-int aws_http_request_init(struct aws_http_request *request, struct aws_allocator *allocator);
+struct aws_http_request *aws_http_request_new(struct aws_allocator *allocator);
 
 /**
- * Clean up the request.
- * This function is idempotent, it has no effect if called on a request that has
- * failed initialization or been zeroed out.
+ * Destroy the the request.
  */
 AWS_HTTP_API
-void aws_http_request_clean_up(struct aws_http_request *request);
+void aws_http_request_destroy(struct aws_http_request *request);
 
 /**
  * Get the method.
- * If no method is set, an empty byte cursor is returned.
+ * If no method is set, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE is raised.
  */
 AWS_HTTP_API
-struct aws_byte_cursor aws_http_request_get_method(const struct aws_http_request *request);
+int aws_http_request_get_method(const struct aws_http_request *request, struct aws_byte_cursor *out_method);
 
 /**
  * Set the method.
@@ -236,10 +226,10 @@ int aws_http_request_set_method(struct aws_http_request *request, struct aws_byt
 
 /**
  * Get the path (and query) value.
- * If no path is set, an empty byte cursor is returned.
+ * If no path is set, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE is raised.
  */
 AWS_HTTP_API
-struct aws_byte_cursor aws_http_request_get_path(const struct aws_http_request *request);
+int aws_http_request_get_path(const struct aws_http_request *request, struct aws_byte_cursor *out_path);
 
 /**
  * Set the path (and-query) value.
@@ -273,13 +263,16 @@ size_t aws_http_request_get_header_count(const struct aws_http_request *request)
 
 /**
  * Get the header at the specified index.
- * If the index is invalid, a header is returned with a blank name and value,
- * a language-binding should throw an exception instead.
+ * This function cannot fail if a valid index is provided.
+ * Otherwise, AWS_ERROR_INVALID_INDEX will be raised.
  *
  * The underlying strings are stored within the request.
  */
 AWS_HTTP_API
-struct aws_http_header aws_http_request_get_header(const struct aws_http_request *request, size_t index);
+int aws_http_request_get_header(
+    const struct aws_http_request *request,
+    struct aws_http_header *out_header,
+    size_t index);
 
 /**
  * Add a header to the end of the array.
@@ -300,11 +293,11 @@ int aws_http_request_set_header(struct aws_http_request *request, struct aws_htt
  * Remove the header at the specified index.
  * Headers after this index are all shifted back one position.
  *
- * Nothing happens if an invalid index is specified,
- * a language binding might choose to throw an exception instead.
+ * This function cannot fail if a valid index is provided.
+ * Otherwise, AWS_ERROR_INVALID_INDEX will be raised.
  */
 AWS_HTTP_API
-void aws_http_request_erase_header(struct aws_http_request *request, size_t index);
+int aws_http_request_erase_header(struct aws_http_request *request, size_t index);
 
 /**
  * Create a stream, with a client connection sending a request.

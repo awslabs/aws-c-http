@@ -24,27 +24,26 @@
 
 TEST_CASE(request_sanity_check) {
     (void)ctx;
-    struct aws_http_request request;
-    ASSERT_SUCCESS(aws_http_request_init(&request, allocator));
+    struct aws_http_request *request = aws_http_request_new(allocator);
+    ASSERT_NOT_NULL(request);
 
-    aws_http_request_clean_up(&request);
+    aws_http_request_destroy(request);
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(request_method) {
+TEST_CASE(request_path) {
     (void)ctx;
-    struct aws_http_request request;
-    ASSERT_SUCCESS(aws_http_request_init(&request, allocator));
+    struct aws_http_request *request = aws_http_request_new(allocator);
+    ASSERT_NOT_NULL(request);
 
-    /* Assert that an empty byte cursor is returned when no path has been set */
-    struct aws_byte_cursor get = aws_http_request_get_path(&request);
-    ASSERT_UINT_EQUALS(0, get.len);
-    ASSERT_TRUE(aws_byte_cursor_is_valid(&get));
+    /* Assert that query fails when there's no data */
+    struct aws_byte_cursor get;
+    ASSERT_ERROR(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE, aws_http_request_get_path(request, &get));
 
     /* Test simple set/get */
     char path1[] = "/";
-    ASSERT_SUCCESS(aws_http_request_set_path(&request, aws_byte_cursor_from_c_str(path1)));
-    get = aws_http_request_get_path(&request);
+    ASSERT_SUCCESS(aws_http_request_set_path(request, aws_byte_cursor_from_c_str(path1)));
+    ASSERT_SUCCESS(aws_http_request_get_path(request, &get));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, path1));
 
     /* Mutilate the original string to be sure request wasn't referencing its memory */
@@ -53,26 +52,39 @@ TEST_CASE(request_method) {
     ASSERT_TRUE(aws_byte_cursor_eq(&path1_repro, &get));
 
     /* Set a new path */
-    ASSERT_SUCCESS(aws_http_request_set_path(&request, aws_byte_cursor_from_c_str("/index.html")));
-    get = aws_http_request_get_path(&request);
+    ASSERT_SUCCESS(aws_http_request_set_path(request, aws_byte_cursor_from_c_str("/index.html")));
+    ASSERT_SUCCESS(aws_http_request_get_path(request, &get));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, "/index.html"));
 
-    aws_http_request_clean_up(&request);
+    aws_http_request_destroy(request);
     return AWS_OP_SUCCESS;
 }
-
-TEST_CASE(request_path) {
+TEST_CASE(request_method) {
     (void)ctx;
-    struct aws_http_request request;
-    ASSERT_SUCCESS(aws_http_request_init(&request, allocator));
+    struct aws_http_request *request = aws_http_request_new(allocator);
+    ASSERT_NOT_NULL(request);
 
-    ASSERT_SUCCESS(aws_http_request_set_method(&request, aws_byte_cursor_from_c_str("GET")));
-    struct aws_byte_cursor get = aws_http_request_get_method(&request);
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, "GET"));
+    /* Assert that query fails when there's no data */
+    struct aws_byte_cursor get;
+    ASSERT_ERROR(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE, aws_http_request_get_method(request, &get));
 
-    /* set_path and set_method use all the same helper functions, so this test is basic */
+    /* Test simple set/get */
+    char method1[] = "GET";
+    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_byte_cursor_from_c_str(method1)));
+    ASSERT_SUCCESS(aws_http_request_get_method(request, &get));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, method1));
 
-    aws_http_request_clean_up(&request);
+    /* Mutilate the original string to be sure request wasn't referencing its memory */
+    method1[0] = 'B';
+    struct aws_byte_cursor method1_repro = aws_byte_cursor_from_c_str("GET");
+    ASSERT_TRUE(aws_byte_cursor_eq(&method1_repro, &get));
+
+    /* Set a new method */
+    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_byte_cursor_from_c_str("POST")));
+    ASSERT_SUCCESS(aws_http_request_get_method(request, &get));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, "POST"));
+
+    aws_http_request_destroy(request);
     return AWS_OP_SUCCESS;
 }
 
@@ -97,35 +109,42 @@ static int s_check_header_eq(struct aws_http_header header, const char *name, co
 
 TEST_CASE(request_add_headers) {
     (void)ctx;
-    struct aws_http_request request;
-    ASSERT_SUCCESS(aws_http_request_init(&request, allocator));
+    struct aws_http_request *request = aws_http_request_new(allocator);
+    ASSERT_NOT_NULL(request);
 
-    ASSERT_UINT_EQUALS(0, aws_http_request_get_header_count(&request));
+    /* Test queries on 0 headers */
+    struct aws_http_header get;
+    ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_request_get_header(request, &get, 0));
+    ASSERT_UINT_EQUALS(0, aws_http_request_get_header_count(request));
 
     /* Add a header */
     char name_src[] = "Host";
     char value_src[] = "example.com";
 
-    ASSERT_SUCCESS(aws_http_request_add_header(&request, s_make_header(name_src, value_src)));
-    ASSERT_UINT_EQUALS(1, aws_http_request_get_header_count(&request));
+    ASSERT_SUCCESS(aws_http_request_add_header(request, s_make_header(name_src, value_src)));
+    ASSERT_UINT_EQUALS(1, aws_http_request_get_header_count(request));
 
     /* Mutilate source strings to be sure the request isn't referencing their memory */
     name_src[0] = 0;
     value_src[0] = 0;
 
     /* Check values */
-    struct aws_http_header get = aws_http_request_get_header(&request, 0);
+    ASSERT_SUCCESS(aws_http_request_get_header(request, &get, 0));
     ASSERT_SUCCESS(s_check_header_eq(get, "Host", "example.com"));
 
-    aws_http_request_clean_up(&request);
+    aws_http_request_destroy(request);
     return AWS_OP_SUCCESS;
 }
 
 TEST_CASE(request_erase_headers) {
     (void)ctx;
-    struct aws_http_request request;
-    ASSERT_SUCCESS(aws_http_request_init(&request, allocator));
+    struct aws_http_request *request = aws_http_request_new(allocator);
+    ASSERT_NOT_NULL(request);
 
+    /* Should have no effect to try and erase non-existent headers */
+    ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_request_erase_header(request, 0));
+
+    /* Add a bunch of headers */
     struct aws_http_header src_headers[] = {
         s_make_header("NameA", "ValueA"),
         s_make_header("NameB", "ValueB"),
@@ -134,57 +153,44 @@ TEST_CASE(request_erase_headers) {
     };
 
     for (size_t i = 0; i < AWS_ARRAY_SIZE(src_headers); ++i) {
-        ASSERT_SUCCESS(aws_http_request_add_header(&request, src_headers[i]));
+        ASSERT_SUCCESS(aws_http_request_add_header(request, src_headers[i]));
     }
 
+    struct aws_http_header get;
     for (size_t i = 0; i < AWS_ARRAY_SIZE(src_headers); ++i) {
-        struct aws_http_header header_i = aws_http_request_get_header(&request, i);
-        ASSERT_SUCCESS(s_check_headers_eq(src_headers[i], header_i));
+        ASSERT_SUCCESS(aws_http_request_get_header(request, &get, i));
+        ASSERT_SUCCESS(s_check_headers_eq(src_headers[i], get));
     }
 
     /* Remove a middle one and check */
     const size_t kill_i = 1;
-    aws_http_request_erase_header(&request, kill_i);
-    ASSERT_UINT_EQUALS(AWS_ARRAY_SIZE(src_headers) - 1, aws_http_request_get_header_count(&request));
+    ASSERT_SUCCESS(aws_http_request_erase_header(request, kill_i));
+    ASSERT_UINT_EQUALS(AWS_ARRAY_SIZE(src_headers) - 1, aws_http_request_get_header_count(request));
 
-    for (size_t i = 0; i < aws_http_request_get_header_count(&request); ++i) {
+    for (size_t i = 0; i < aws_http_request_get_header_count(request); ++i) {
         /* Headers to the right should have shifted over */
         size_t compare_i = (i < kill_i) ? i : (i + 1);
 
-        struct aws_http_header req_header = aws_http_request_get_header(&request, i);
-        ASSERT_SUCCESS(s_check_headers_eq(src_headers[compare_i], req_header));
+        ASSERT_SUCCESS(aws_http_request_get_header(request, &get, i));
+        ASSERT_SUCCESS(s_check_headers_eq(src_headers[compare_i], get));
     }
+
+    /* Removing an invalid index should have no effect */
+    ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_request_erase_header(request, 99));
 
     /* Remove a front and a back header, only "NameC: ValueC" should remain */
-    aws_http_request_erase_header(&request, 0);
-    aws_http_request_erase_header(&request, aws_http_request_get_header_count(&request) - 1);
+    ASSERT_SUCCESS(aws_http_request_erase_header(request, 0));
+    ASSERT_SUCCESS(aws_http_request_erase_header(request, aws_http_request_get_header_count(request) - 1));
 
-    ASSERT_UINT_EQUALS(1, aws_http_request_get_header_count(&request));
-    ASSERT_SUCCESS(s_check_header_eq(aws_http_request_get_header(&request, 0), "NameC", "ValueC"));
+    ASSERT_UINT_EQUALS(1, aws_http_request_get_header_count(request));
+    ASSERT_SUCCESS(aws_http_request_get_header(request, &get, 0));
+    ASSERT_SUCCESS(s_check_header_eq(get, "NameC", "ValueC"));
 
     /* Ensure that add() still works after remove() */
-    ASSERT_SUCCESS(aws_http_request_add_header(&request, s_make_header("Big", "Guy")));
-    struct aws_http_header get = aws_http_request_get_header(&request, aws_http_request_get_header_count(&request) - 1);
+    ASSERT_SUCCESS(aws_http_request_add_header(request, s_make_header("Big", "Guy")));
+    ASSERT_SUCCESS(aws_http_request_get_header(request, &get, aws_http_request_get_header_count(request) - 1));
     ASSERT_SUCCESS(s_check_header_eq(get, "Big", "Guy"));
 
-    aws_http_request_clean_up(&request);
-    return AWS_OP_SUCCESS;
-}
-
-TEST_CASE(request_do_invalid_stuff) {
-    (void)ctx;
-    struct aws_http_request request;
-    ASSERT_SUCCESS(aws_http_request_init(&request, allocator));
-
-    /* Should be fine to try and erase non-existent headers */
-    for (size_t i = 0; i < 10; ++i) {
-        aws_http_request_erase_header(&request, i);
-    }
-
-    /* Querying non-existent headers should just get you empty data */
-    struct aws_http_header get = aws_http_request_get_header(&request, 99);
-    ASSERT_SUCCESS(s_check_header_eq(get, "", ""));
-
-    aws_http_request_clean_up(&request);
+    aws_http_request_destroy(request);
     return AWS_OP_SUCCESS;
 }
