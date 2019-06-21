@@ -6,6 +6,12 @@ file(GLOB TEST_HDRS "*.h")
 file(GLOB TEST_SRC "*.c")
 file(GLOB TESTS ${TEST_HDRS} ${TEST_SRC})
 
+add_test_case(request_sanity_check)
+add_test_case(request_method)
+add_test_case(request_path)
+add_test_case(request_add_headers)
+add_test_case(request_erase_headers)
+
 add_test_case(h1_test_get_request)
 add_test_case(h1_test_request_bad_version)
 add_test_case(h1_test_response_unsupported_version)
