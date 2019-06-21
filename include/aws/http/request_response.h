@@ -33,6 +33,21 @@ struct aws_http_header {
     struct aws_byte_cursor value;
 };
 
+/* Do not access members directly, use functions. */
+struct aws_http_request {
+    struct aws_allocator *allocator;
+    struct aws_string *method;
+    struct aws_string *path;
+    struct aws_array_list headers;
+    struct aws_input_stream *body;
+};
+
+/**
+ * A function that may modify the request before it is sent.
+ * Return AWS_OP_SUCCESS to indicate that the transformation was successful, or AWS_OP_ERR to indicate failure.
+ */
+typedef int aws_http_request_transform_fn(struct aws_http_request *request, void *user_data);
+
 enum aws_http_outgoing_body_state {
     AWS_HTTP_OUTGOING_BODY_IN_PROGRESS,
     AWS_HTTP_OUTGOING_BODY_DONE,
@@ -175,7 +190,53 @@ struct aws_http_response_options {
     aws_http_stream_outgoing_body_fn *stream_outgoing_body;
 };
 
+AWS_STATIC_IMPL
+bool aws_http_header_is_valid(const struct aws_http_header *header) {
+    return header && aws_byte_cursor_is_valid(&header->name) && aws_byte_cursor_is_valid(&header->value);
+}
+
 AWS_EXTERN_C_BEGIN
+
+AWS_HTTP_API
+int aws_http_request_init(struct aws_http_request *request, struct aws_allocator *allocator);
+
+AWS_HTTP_API
+void aws_http_request_clean_up(struct aws_http_request *request);
+
+AWS_HTTP_API
+struct aws_byte_cursor aws_http_request_get_method(const struct aws_http_request *request);
+
+AWS_HTTP_API
+int aws_http_request_set_method(struct aws_http_request *request, struct aws_byte_cursor method);
+
+AWS_HTTP_API
+struct aws_byte_cursor aws_http_request_get_path(const struct aws_http_request *request);
+
+AWS_HTTP_API
+int aws_http_request_set_path(struct aws_http_request *request, struct aws_byte_cursor path);
+
+AWS_HTTP_API
+struct aws_input_stream *aws_http_request_get_body(const struct aws_http_request *request);
+
+AWS_HTTP_API
+void aws_http_request_set_body(struct aws_http_request *request, struct aws_input_stream *body_stream);
+
+AWS_HTTP_API
+size_t aws_http_request_get_header_count(const struct aws_http_request *request);
+
+AWS_HTTP_API
+struct aws_http_header aws_http_request_get_header(const struct aws_http_request *request, size_t index);
+
+AWS_HTTP_API
+int aws_http_request_add_header(struct aws_http_request *request, struct aws_http_header header);
+
+AWS_HTTP_API
+int aws_http_request_set_header(struct aws_http_request *request, struct aws_http_header header, size_t index);
+
+AWS_HTTP_API
+void aws_http_request_erase_header(struct aws_http_request *request, size_t index);
+
+
 
 /**
  * Create a stream, with a client connection sending a request.
