@@ -743,5 +743,7 @@ int main(int argc, char **argv) {
         fclose(app_ctx.input_file);
     }
 
+    aws_hash_table_clean_up(&app_ctx.signing_context);
+
     return 0;
 }
