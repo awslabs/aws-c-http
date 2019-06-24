@@ -39,7 +39,10 @@ static struct aws_error_info s_errors[] = {
         "Encountered an unexpected form when parsing an http message."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_CLOSED,
-        "Message not sent, as the connection has closed or is closing."),
+        "The connection has closed or is closing."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_SWITCHED_PROTOCOLS,
+        "The connection has switched protocols."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL,
         "An unsupported protocol was encountered."),
@@ -55,6 +58,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CALLBACK_FAILURE,
         "A callback has reported failure."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE,
+        "Failed to upgrade HTTP connection to Websocket."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_WEBSOCKET_CLOSE_FRAME_SENT,
         "Websocket has sent CLOSE frame, no more data will be sent."),
@@ -83,8 +89,9 @@ static struct aws_log_subject_info s_log_subject_infos[] = {
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION, "http-connection", "HTTP client or server connection"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_SERVER, "http-server", "HTTP server socket listening for incoming connections"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_STREAM, "http-stream", "HTTP request-response exchange"),
-    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "connection-manager", "Http connection manager"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "connection-manager", "HTTP connection manager"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET, "websocket", "Websocket"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET_SETUP, "websocket-setup", "Websocket setup"),
 };
 
 static struct aws_log_subject_info_list s_log_subject_list = {

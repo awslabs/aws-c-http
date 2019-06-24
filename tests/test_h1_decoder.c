@@ -115,6 +115,7 @@ static int s_on_done(void *user_data) {
 static void s_test_init(struct aws_allocator *allocator) {
 
     aws_load_error_strings();
+    aws_common_load_log_subject_strings();
     aws_io_load_error_strings();
     aws_io_load_log_subject_strings();
     aws_http_library_init(allocator);

@@ -26,9 +26,13 @@
 #include <aws/io/log_formatter.h>
 #include <aws/io/log_writer.h>
 #include <aws/io/logging.h>
+#include <aws/io/shared_library.h>
 #include <aws/io/socket.h>
+#include <aws/io/stream.h>
 #include <aws/io/tls_channel_handler.h>
 #include <aws/io/uri.h>
+
+#include <inttypes.h>
 
 #ifdef _MSC_VER
 #    pragma warning(disable : 4996) /* Disable warnings about fopen() being insecure */
@@ -52,8 +56,14 @@ struct elasticurl_ctx {
     int connect_timeout;
     const char *header_lines[10];
     size_t header_line_count;
-    struct aws_byte_cursor data;
-    FILE *data_file;
+    FILE *input_file;
+    struct aws_input_stream *input_body;
+    const char *signing_library_path;
+    struct aws_shared_library signing_library;
+    const char *signing_function_name;
+    const char *signing_region;
+    const char *signing_service;
+    aws_transform_http_request_options_fn *signing_function;
     bool include_headers;
     bool insecure;
     FILE *output;
@@ -81,6 +91,10 @@ static void s_usage(int exit_code) {
     fprintf(stderr, "  -I, --head: uses HEAD for the verb.\n");
     fprintf(stderr, "  -i, --include: includes headers in output.\n");
     fprintf(stderr, "  -k, --insecure: turns off SSL/TLS validation.\n");
+    fprintf(stderr, "      --signing-lib: path to a shared library with an exported signing function to use\n");
+    fprintf(stderr, "      --signing-func: name of the signing function to use within the signing library\n");
+    fprintf(stderr, "      --signing-region: region to use during sigv4 request signing\n");
+    fprintf(stderr, "      --signing-service: service to use during sigv4 request signing\n");
     fprintf(stderr, "  -o, --output FILE: dumps content-body to FILE instead of stdout.\n");
     fprintf(stderr, "  -t, --trace FILE: dumps logs to FILE instead of stderr.\n");
     fprintf(stderr, "  -v, --verbose: ERROR|INFO|DEBUG|TRACE: log level to configure. Default is none.\n");
@@ -103,8 +117,12 @@ static struct aws_cli_option s_long_options[] = {
     {"get", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'G'},
     {"post", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'P'},
     {"head", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'I'},
+    {"signing-lib", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'j'},
     {"include", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'i'},
     {"insecure", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'k'},
+    {"signing-func", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'l'},
+    {"signing-region", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'm'},
+    {"signing-service", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'n'},
     {"output", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'o'},
     {"trace", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 't'},
     {"verbose", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'v'},
@@ -117,7 +135,8 @@ static struct aws_cli_option s_long_options[] = {
 static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
     while (true) {
         int option_index = 0;
-        int c = aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:M:GPHiko:t:v:Vh", s_long_options, &option_index);
+        int c =
+            aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:j:l:m:M:n:GPHiko:t:v:Vh", s_long_options, &option_index);
         if (c == -1) {
             break;
         }
@@ -148,16 +167,34 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 }
                 ctx->header_lines[ctx->header_line_count++] = aws_cli_optarg;
                 break;
-            case 'd':
-                ctx->data = aws_byte_cursor_from_c_str(aws_cli_optarg);
+            case 'd': {
+                struct aws_byte_cursor data_cursor = aws_byte_cursor_from_c_str(aws_cli_optarg);
+                ctx->input_body = aws_input_stream_new_from_cursor(ctx->allocator, &data_cursor);
                 break;
+            }
             case 'g':
-
-                ctx->data_file = fopen(aws_cli_optarg, "rb");
-                if (!ctx->data_file) {
+                ctx->input_file = fopen(aws_cli_optarg, "rb");
+                ctx->input_body = aws_input_stream_new_from_open_file(ctx->allocator, ctx->input_file);
+                if (!ctx->input_file) {
                     fprintf(stderr, "unable to open file %s.\n", aws_cli_optarg);
                     s_usage(1);
                 }
+                break;
+            case 'j':
+                ctx->signing_library_path = aws_cli_optarg;
+                if (aws_shared_library_init(&ctx->signing_library, aws_cli_optarg)) {
+                    fprintf(stderr, "unable to open signing library %s.\n", aws_cli_optarg);
+                    s_usage(1);
+                }
+                break;
+            case 'l':
+                ctx->signing_function_name = aws_cli_optarg;
+                break;
+            case 'm':
+                ctx->signing_region = aws_cli_optarg;
+                break;
+            case 'n':
+                ctx->signing_service = aws_cli_optarg;
                 break;
             case 'M':
                 ctx->verb = aws_cli_optarg;
@@ -214,6 +251,32 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
         }
     }
 
+    if (ctx->signing_function_name != NULL) {
+        if (ctx->signing_library_path == NULL) {
+            fprintf(
+                stderr,
+                "To sign a request made by Elasticurl you must supply both a signing library path and a signing "
+                "function name\n");
+            s_usage(1);
+        }
+
+        if (aws_shared_library_find_function(
+                &ctx->signing_library, ctx->signing_function_name, (aws_generic_function *)&ctx->signing_function)) {
+            fprintf(
+                stderr,
+                "Unable to find function %s in signing library %s",
+                ctx->signing_function_name,
+                ctx->signing_library_path);
+            s_usage(1);
+        }
+    }
+
+    if (ctx->input_body == NULL) {
+        struct aws_byte_cursor empty_cursor;
+        AWS_ZERO_STRUCT(empty_cursor);
+        ctx->input_body = aws_input_stream_new_from_cursor(ctx->allocator, &empty_cursor);
+    }
+
     if (aws_cli_optind < argc) {
         struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str(argv[aws_cli_optind++]);
 
@@ -252,38 +315,25 @@ enum aws_http_outgoing_body_state s_stream_outgoing_body_fn(
     (void)stream;
     struct elasticurl_ctx *app_ctx = user_data;
 
-    if (app_ctx->data.len) {
-        size_t max_cpy = buf->len > app_ctx->data.len ? app_ctx->data.len : buf->len;
-        struct aws_byte_cursor outgoing_data = aws_byte_cursor_advance(&app_ctx->data, max_cpy);
-        aws_byte_buf_append(buf, &outgoing_data);
-
-        /* if any data is left in the buffer, tell the client that we're still in progress,
-         * otherwise say we're done. */
-        if (app_ctx->data.len) {
-            return AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
-        }
-
+    if (!app_ctx->input_body) {
         return AWS_HTTP_OUTGOING_BODY_DONE;
     }
 
-    if (app_ctx->data_file) {
-#ifdef _WIN32
-        size_t read_val = fread(buf->buffer, 1, buf->len, app_ctx->data_file);
-        long long read = read_val == 0 ? ferror(app_ctx->data_file) : (long long)read_val;
-#else
-        ssize_t read = fread(buf->buffer, 1, buf->len, app_ctx->data_file);
-#endif
-
-        /* if any data is left in the buffer, tell the client that we're still in progress,
-         * otherwise say we're done. */
-        if (read > 0) {
-            return AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
-        }
-
+    struct aws_stream_status status;
+    if (aws_input_stream_get_status(app_ctx->input_body, &status)) {
         return AWS_HTTP_OUTGOING_BODY_DONE;
     }
 
-    return AWS_HTTP_OUTGOING_BODY_DONE;
+    if (status.is_end_of_stream || !status.is_valid) {
+        return AWS_HTTP_OUTGOING_BODY_DONE;
+    }
+
+    size_t amount_read = 0;
+    if (aws_input_stream_read(app_ctx->input_body, buf, &amount_read)) {
+        return AWS_HTTP_OUTGOING_BODY_DONE;
+    }
+
+    return AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
 }
 
 static void s_on_incoming_headers_fn(
@@ -361,23 +411,18 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     headers[2].name = aws_byte_cursor_from_c_str("user-agent");
     headers[2].value = aws_byte_cursor_from_c_str("elasticurl 1.0, Powered by the AWS Common Runtime.");
 
-    size_t data_len = 0;
-    if (app_ctx->data.len) {
-        data_len = app_ctx->data.len;
-    } else if (app_ctx->data_file) {
-        if (fseek(app_ctx->data_file, 0L, SEEK_END)) {
-            fprintf(stderr, "failed to seek data file.\n");
+    int64_t data_len = 0;
+    if (app_ctx->input_body) {
+        if (aws_input_stream_get_length(app_ctx->input_body, &data_len)) {
+            fprintf(stderr, "failed to get length of input stream.\n");
             exit(1);
         }
-
-        data_len = (size_t)ftell(app_ctx->data_file);
-        fseek(app_ctx->data_file, 0L, SEEK_SET);
     }
 
-    if (data_len) {
+    if (data_len > 0) {
         char content_length[64];
         AWS_ZERO_ARRAY(content_length);
-        sprintf(content_length, "%llu", (unsigned long long)data_len);
+        sprintf(content_length, "%" PRIi64, data_len);
         headers[3].name = aws_byte_cursor_from_c_str("content-length");
         headers[3].value = aws_byte_cursor_from_c_str(content_length);
         pre_header_count += 1;
@@ -403,7 +448,32 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     request_options.header_array = headers;
     request_options.num_headers = header_count;
 
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&request_options);
+    struct aws_http_request_options *request = NULL;
+    aws_http_request_options_destroy_fn *destroy_fn = NULL;
+    if (app_ctx->signing_function != NULL) {
+        (app_ctx->signing_function)(
+            app_ctx->allocator,
+            &request_options,
+            app_ctx->input_body,
+            app_ctx->signing_region,
+            app_ctx->signing_service,
+            &request,
+            &destroy_fn);
+    } else {
+        request = &request_options;
+    }
+
+    struct aws_http_stream *stream = aws_http_stream_new_client_request(request);
+
+    /*
+     * Sketchy to destroy now given the embedded stream could theoretically be created and
+     * destroyed.  The current implementation just copies
+     * the stream so kinda safe, but not a good long term solution.
+     */
+    if (destroy_fn) {
+        (destroy_fn)(app_ctx->allocator, request);
+    }
+
     if (!stream) {
         fprintf(stderr, "failed to create request.");
         exit(1);
@@ -432,7 +502,9 @@ int main(int argc, char **argv) {
     struct aws_allocator *allocator = aws_default_allocator();
 
     aws_load_error_strings();
+    aws_common_load_log_subject_strings();
     aws_io_load_error_strings();
+    aws_io_load_log_subject_strings();
     aws_http_library_init(allocator);
 
     struct elasticurl_ctx app_ctx;
@@ -450,6 +522,7 @@ int main(int argc, char **argv) {
     AWS_ZERO_STRUCT(logger);
 
     if (app_ctx.log_level) {
+        aws_common_load_log_subject_strings();
         aws_io_load_log_subject_strings();
 
         struct aws_logger_standard_options options = {
@@ -612,12 +685,18 @@ int main(int argc, char **argv) {
 
     aws_uri_clean_up(&app_ctx.uri);
 
+    aws_shared_library_clean_up(&app_ctx.signing_library);
+
     if (app_ctx.output != stdout) {
         fclose(app_ctx.output);
     }
 
-    if (app_ctx.data_file) {
-        fclose(app_ctx.data_file);
+    if (app_ctx.input_body) {
+        aws_input_stream_destroy(app_ctx.input_body);
+    }
+
+    if (app_ctx.input_file) {
+        fclose(app_ctx.input_file);
     }
 
     return 0;
