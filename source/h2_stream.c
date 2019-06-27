@@ -14,16 +14,12 @@
  */
 
 #include <aws/http/private/h2_stream.h>
-#include <aws/http/private/request_response_impl.h>
 
-struct aws_h2_stream {
-    struct aws_http_stream base;
+#include <aws/http/private/connection_impl.h>
 
-    uint32_t id;
-    enum aws_h2_stream_state state;
-    bool expects_continuation;
-
-    uint64_t window_size; /* If anyone has any idea how the fuck this works I'm all ears */
+struct aws_http_stream_vtable s_h2_stream_vtable = {
+    .destroy = NULL,
+    .update_window = NULL,
 };
 
 /***********************************************************************************************************************
@@ -287,15 +283,31 @@ static int (*s_state_handlers[])(struct aws_h2_stream *, struct aws_h2_frame_dec
  * Public API
  **********************************************************************************************************************/
 
-struct aws_h2_stream *aws_h2_stream_new(struct aws_allocator *allocator, uint32_t stream_id) {
-    AWS_PRECONDITION(allocator);
+struct aws_h2_stream *aws_h2_stream_new(const struct aws_http_request_options *options, uint32_t stream_id) {
+    AWS_PRECONDITION(options);
+    AWS_PRECONDITION(stream_id != 0);
 
-    struct aws_h2_stream *stream = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_stream));
+    struct aws_h2_stream *stream = aws_mem_calloc(options->client_connection->alloc, 1, sizeof(struct aws_h2_stream));
     if (!stream) {
         return NULL;
     }
 
-    stream->base.alloc = allocator;
+    /* Initialize base stream */
+    stream->base.vtable = &s_h2_stream_vtable;
+    stream->base.alloc = options->client_connection->alloc;
+    stream->base.owning_connection = options->client_connection;
+    stream->base.user_data = options->user_data;
+    stream->base.stream_outgoing_body = options->stream_outgoing_body;
+    stream->base.on_incoming_headers = options->on_response_headers;
+    stream->base.on_incoming_header_block_done = options->on_response_header_block_done;
+    stream->base.on_incoming_body = options->on_response_body;
+    stream->base.on_complete = options->on_complete;
+    stream->base.incoming_response_status = AWS_HTTP_STATUS_UNKNOWN;
+
+    /* Stream refcount starts at 2. 1 for user and 1 for connection to release it's done with the stream */
+    aws_atomic_init_int(&stream->base.refcount, 2);
+
+    /* Init H2 specific stuff */
     stream->id = stream_id;
     stream->state = AWS_H2_STREAM_STATE_IDLE;
 

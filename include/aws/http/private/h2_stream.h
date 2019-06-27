@@ -17,6 +17,7 @@
  */
 
 #include <aws/http/private/h2_frames.h>
+#include <aws/http/private/request_response_impl.h>
 
 enum aws_h2_stream_state {
     AWS_H2_STREAM_STATE_IDLE,
@@ -30,12 +31,22 @@ enum aws_h2_stream_state {
     AWS_H2_STREAM_STATE_COUNT,
 };
 
+struct aws_h2_stream {
+    struct aws_http_stream base;
+
+    uint32_t id;
+    enum aws_h2_stream_state state;
+    bool expects_continuation;
+
+    uint64_t window_size; /* If anyone has any idea how the fuck this works I'm all ears */
+};
+
 struct aws_h2_stream;
 
 AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API
-struct aws_h2_stream *aws_h2_stream_new(struct aws_allocator *allocator, uint32_t stream_id);
+struct aws_h2_stream *aws_h2_stream_new(const struct aws_http_request_options *options, uint32_t stream_id);
 AWS_HTTP_API
 void aws_h2_stream_destroy(struct aws_h2_stream *stream);
 
