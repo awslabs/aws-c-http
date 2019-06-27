@@ -14,24 +14,16 @@
  */
 
 #include <aws/http/private/h2_stream.h>
+#include <aws/http/private/request_response_impl.h>
 
 struct aws_h2_stream {
-    struct aws_allocator *allocator;
+    struct aws_http_stream base;
 
     uint32_t id;
     enum aws_h2_stream_state state;
     bool expects_continuation;
 
     uint64_t window_size; /* If anyone has any idea how the fuck this works I'm all ears */
-
-    aws_http_on_incoming_headers_fn *on_headers;
-    void *on_headers_ud;
-
-    aws_http_on_incoming_body_fn *on_body;
-    void *on_body_ud;
-
-    aws_http_on_stream_complete_fn *on_close;
-    void *on_close_ud;
 };
 
 /***********************************************************************************************************************
@@ -47,11 +39,11 @@ static int s_h2_stream_handle_data(struct aws_h2_stream *stream, struct aws_h2_f
 
     /* Call user callback */
     size_t window_size_increment = 0;
-    stream->on_body(NULL, &frame.data, &window_size_increment, stream->on_body_ud);
+    stream->base.on_incoming_body(&stream->base, &frame.data, &window_size_increment, stream->base.user_data);
 
     /* Send window increment packet */
     struct aws_h2_frame_window_update window_update;
-    if (aws_h2_frame_window_update_init(&window_update, stream->allocator)) {
+    if (aws_h2_frame_window_update_init(&window_update, stream->base.alloc)) {
         return AWS_OP_ERR;
     }
     window_update.window_size_increment = window_size_increment;
@@ -67,11 +59,13 @@ static int s_h2_stream_handle_headers(struct aws_h2_stream *stream, struct aws_h
         return AWS_OP_ERR;
     }
 
-    if (!frame.end_headers) {
+    stream->base.on_incoming_headers(&stream->base, frame.header_block.header_fields.data, frame.header_block.header_fields.length, stream->base.user_data);
+
+    if (frame.end_headers) {
+        stream->base.on_incoming_header_block_done(&stream->base, false, stream->base.user_data);
+    } else {
         stream->expects_continuation = true;
     }
-
-    stream->on_headers(NULL, frame.header_block.header_fields.data, frame.header_block.header_fields.length, stream->on_headers_ud);
 
     return AWS_OP_SUCCESS;
 }
@@ -99,7 +93,7 @@ static int s_h2_stream_handle_rst_stream(struct aws_h2_stream *stream, struct aw
     stream->state = AWS_H2_STREAM_STATE_CLOSED;
 
     /* Call user callback stating frame was reset */
-    stream->on_close(NULL, frame.error_code, stream->on_close_ud);
+    stream->base.on_complete(&stream->base, frame.error_code, stream->base.user_data);
 
     return AWS_OP_SUCCESS;
 }
@@ -296,12 +290,12 @@ static int (*s_state_handlers[])(struct aws_h2_stream *, struct aws_h2_frame_dec
 struct aws_h2_stream *aws_h2_stream_new(struct aws_allocator *allocator, uint32_t stream_id) {
     AWS_PRECONDITION(allocator);
 
-    struct aws_h2_stream *stream = aws_mem_calloc(allocator, 0, sizeof(struct aws_h2_stream));
+    struct aws_h2_stream *stream = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_stream));
     if (!stream) {
         return NULL;
     }
 
-    stream->allocator = allocator;
+    stream->base.alloc = allocator;
     stream->id = stream_id;
     stream->state = AWS_H2_STREAM_STATE_IDLE;
 
@@ -310,7 +304,7 @@ struct aws_h2_stream *aws_h2_stream_new(struct aws_allocator *allocator, uint32_
 void aws_h2_stream_destroy(struct aws_h2_stream *stream) {
     AWS_PRECONDITION(stream);
 
-    aws_mem_release(stream->allocator, stream);
+    aws_mem_release(stream->base.alloc, stream);
 }
 
 int aws_h2_stream_handle_frame(struct aws_h2_stream *stream, struct aws_h2_frame_decoder *decoder) {
