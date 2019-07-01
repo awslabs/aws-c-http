@@ -1643,7 +1643,7 @@ int aws_websocket_random_handshake_key(struct aws_byte_buf *dst) {
     return AWS_OP_SUCCESS;
 }
 
-struct aws_http_request *aws_http_request_init_websocket_handshake(
+struct aws_http_request *aws_http_request_new_websocket_handshake(
     struct aws_allocator *allocator,
     struct aws_byte_cursor path,
     struct aws_byte_cursor host) {
