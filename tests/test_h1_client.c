@@ -37,6 +37,7 @@ struct tester {
 
 static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
     aws_load_error_strings();
+    aws_common_load_log_subject_strings();
     aws_io_load_error_strings();
     aws_io_load_log_subject_strings();
     aws_http_library_init(alloc);
@@ -89,7 +90,7 @@ H1_CLIENT_TEST_CASE(h1_client_sanity_check) {
 }
 
 /* Pop first message from queue and compare its contents to expected string. */
-static int s_check_message(struct tester *tester, const char *expected) {
+static int s_check_written_message(struct tester *tester, const char *expected) {
     struct aws_linked_list *msgs = testing_channel_get_written_message_queue(&tester->testing_channel);
     ASSERT_TRUE(!aws_linked_list_empty(msgs));
     struct aws_linked_list_node *node = aws_linked_list_pop_front(msgs);
@@ -103,11 +104,10 @@ static int s_check_message(struct tester *tester, const char *expected) {
 }
 
 /* Pop all messages from queue and compare their contents to expected string */
-static int s_check_all_messages(struct tester *tester, const char *expected) {
+static int s_check_messages_ex(struct tester *tester, const char *expected, struct aws_linked_list *msgs) {
     struct aws_byte_buf all_msgs;
     ASSERT_SUCCESS(aws_byte_buf_init(&all_msgs, tester->alloc, 1024));
 
-    struct aws_linked_list *msgs = testing_channel_get_written_message_queue(&tester->testing_channel);
     while (!aws_linked_list_empty(msgs)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(msgs);
         struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
@@ -121,6 +121,18 @@ static int s_check_all_messages(struct tester *tester, const char *expected) {
     ASSERT_TRUE(aws_byte_buf_eq_c_str(&all_msgs, expected));
     aws_byte_buf_clean_up(&all_msgs);
     return AWS_OP_SUCCESS;
+}
+
+/* Check contents of all messages sent in the write direction. */
+static int s_check_written_messages(struct tester *tester, const char *expected) {
+    struct aws_linked_list *msgs = testing_channel_get_written_message_queue(&tester->testing_channel);
+    return s_check_messages_ex(tester, expected, msgs);
+}
+
+/* Check contents of all read-messages sent in the read direction by a midchannel http-handler */
+static int s_check_midchannel_read_messages(struct tester *tester, const char *expected) {
+    struct aws_linked_list *msgs = testing_channel_get_read_message_queue(&tester->testing_channel);
+    return s_check_messages_ex(tester, expected, msgs);
 }
 
 /* Send 1 line request, doesn't care about response */
@@ -142,7 +154,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_1liner) {
     /* check result */
     const char *expected = "GET / HTTP/1.1\r\n"
                            "\r\n";
-    ASSERT_SUCCESS(s_check_message(&tester, expected));
+    ASSERT_SUCCESS(s_check_written_message(&tester, expected));
 
     /* clean up */
     aws_http_stream_release(stream);
@@ -184,7 +196,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_headers) {
                            "Host: example.com\r\n"
                            "Accept: */*\r\n"
                            "\r\n";
-    ASSERT_SUCCESS(s_check_message(&tester, expected));
+    ASSERT_SUCCESS(s_check_written_message(&tester, expected));
 
     /* clean up */
     aws_http_stream_release(stream);
@@ -249,7 +261,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
                            "Content-Length: 16\r\n"
                            "\r\n"
                            "write more tests";
-    ASSERT_SUCCESS(s_check_message(&tester, expected));
+    ASSERT_SUCCESS(s_check_written_message(&tester, expected));
 
     /* clean up */
     aws_http_stream_release(stream);
@@ -466,7 +478,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_multiple_in_1_io_message) {
                            "\r\n"
                            "GET / HTTP/1.1\r\n"
                            "\r\n";
-    ASSERT_SUCCESS(s_check_message(&tester, expected));
+    ASSERT_SUCCESS(s_check_written_message(&tester, expected));
 
     /* clean up */
     for (size_t i = 0; i < num_streams; ++i) {
@@ -603,7 +615,9 @@ static int s_response_tester_init_ex(
 
     response->specific_test_data = specific_test_data;
     response->stream = aws_http_stream_new_client_request(opt);
-    ASSERT_NOT_NULL(response->stream);
+    if (!response->stream) {
+        return AWS_OP_ERR;
+    }
 
     return AWS_OP_SUCCESS;
 }
@@ -622,14 +636,26 @@ static int s_response_tester_clean_up(struct response_tester *response) {
     return AWS_OP_SUCCESS;
 }
 
-static int s_send_response_ex(struct tester *tester, struct aws_byte_cursor data, bool ignore_send_message_errors) {
+/* For sending an aws_io_message into the channel, in the write or read direction */
+static int s_send_message_ex(
+    struct tester *tester,
+    struct aws_byte_cursor data,
+    enum aws_channel_direction dir,
+    bool ignore_send_message_errors) {
+
     struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
         tester->testing_channel.channel, AWS_IO_MESSAGE_APPLICATION_DATA, data.len);
     ASSERT_NOT_NULL(msg);
 
     ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&msg->message_data, data));
 
-    int err = testing_channel_push_read_message(&tester->testing_channel, msg);
+    int err;
+    if (dir == AWS_CHANNEL_DIR_READ) {
+        err = testing_channel_push_read_message(&tester->testing_channel, msg);
+    } else {
+        err = testing_channel_push_write_message(&tester->testing_channel, msg);
+    }
+
     if (!ignore_send_message_errors) {
         ASSERT_SUCCESS(err);
     }
@@ -638,15 +664,27 @@ static int s_send_response_ex(struct tester *tester, struct aws_byte_cursor data
 }
 
 static int s_send_response(struct tester *tester, struct aws_byte_cursor data) {
-    return s_send_response_ex(tester, data, false);
+    return s_send_message_ex(tester, data, AWS_CHANNEL_DIR_READ, false);
 }
 
 static int s_send_response_str(struct tester *tester, const char *str) {
-    return s_send_response(tester, aws_byte_cursor_from_c_str(str));
+    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_READ, false);
 }
 
 static int s_send_response_str_ignore_errors(struct tester *tester, const char *str) {
-    return s_send_response_ex(tester, aws_byte_cursor_from_c_str(str), true);
+    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_READ, true);
+}
+
+static int s_readpush(struct tester *tester, const char *str) {
+    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_READ, false);
+}
+
+static int s_readpush_ignore_errors(struct tester *tester, const char *str) {
+    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_READ, true);
+}
+
+static int s_writepush(struct tester *tester, const char *str) {
+    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_WRITE, false);
 }
 
 H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
@@ -913,11 +951,10 @@ H1_CLIENT_TEST_CASE(h1_client_response_with_too_much_data_shuts_down_connection)
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     /* send 2 responses in a single aws_io_message. */
-    ASSERT_SUCCESS(s_send_response_ex(
+    ASSERT_SUCCESS(s_send_response_str_ignore_errors(
         &tester,
-        aws_byte_cursor_from_c_str("HTTP/1.1 204 No Content\r\n\r\n"
-                                   "HTTP/1.1 204 No Content\r\n\r\n"),
-        true /* ignore send errors */));
+        "HTTP/1.1 204 No Content\r\n\r\n"
+        "HTTP/1.1 204 No Content\r\n\r\n"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -1025,7 +1062,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
                            "Content-Length: 16\r\n"
                            "\r\n"
                            "write more tests";
-    ASSERT_SUCCESS(s_check_all_messages(&tester, expected));
+    ASSERT_SUCCESS(s_check_written_messages(&tester, expected));
 
     ASSERT_TRUE(response.on_complete_cb_count == 1);
     ASSERT_TRUE(response.on_complete_error_code == AWS_ERROR_SUCCESS);
@@ -1513,6 +1550,402 @@ H1_CLIENT_TEST_CASE(h1_client_close_from_on_thread_makes_not_open) {
 
     testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
 
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+struct protocol_switcher {
+    /* Settings */
+    struct tester *tester;
+    size_t downstream_handler_window_size;
+    const char *data_after_upgrade_response;
+    bool install_downstream_handler;
+
+    /* Results */
+    int upgrade_response_status;
+    bool is_upgrade_response_complete;
+    bool has_installed_downstream_handler;
+};
+
+static void s_switch_protocols_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    struct protocol_switcher *switcher = user_data;
+
+    switcher->is_upgrade_response_complete = true;
+    aws_http_stream_get_incoming_response_status(stream, &switcher->upgrade_response_status);
+
+    /* install downstream hander */
+    if (switcher->install_downstream_handler && !error_code &&
+        (switcher->upgrade_response_status == AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS)) {
+
+        int err = testing_channel_install_downstream_handler(
+            &switcher->tester->testing_channel, switcher->downstream_handler_window_size);
+        if (!err) {
+            switcher->has_installed_downstream_handler = true;
+        }
+    }
+}
+
+/* Send "Connection: Upgrade" request and receive "101 Switching Protocols" response.
+ * Optionally, install a downstream handler when response is received
+ */
+static int s_switch_protocols(struct protocol_switcher *switcher) {
+    /* send upgrade request */
+    struct aws_http_header request_headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Connection"),
+            .value = aws_byte_cursor_from_c_str("Upgrade"),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str("Upgrade"),
+            .value = aws_byte_cursor_from_c_str("MyProtocol"),
+        },
+    };
+
+    struct aws_http_request_options upgrade_request = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    upgrade_request.client_connection = switcher->tester->connection;
+    upgrade_request.method = aws_byte_cursor_from_c_str("GET");
+    upgrade_request.uri = aws_byte_cursor_from_c_str("/");
+    upgrade_request.header_array = request_headers;
+    upgrade_request.num_headers = AWS_ARRAY_SIZE(request_headers);
+    upgrade_request.user_data = switcher;
+    upgrade_request.on_complete = s_switch_protocols_on_stream_complete;
+
+    struct aws_http_stream *upgrade_stream = aws_http_stream_new_client_request(&upgrade_request);
+    ASSERT_NOT_NULL(upgrade_stream);
+    testing_channel_drain_queued_tasks(&switcher->tester->testing_channel);
+
+    /* clear all messages written thus far to the testing-channel */
+    while (!aws_linked_list_empty(testing_channel_get_written_message_queue(&switcher->tester->testing_channel))) {
+        struct aws_linked_list_node *node =
+            aws_linked_list_pop_front(testing_channel_get_written_message_queue(&switcher->tester->testing_channel));
+        struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
+        aws_mem_release(msg->allocator, msg);
+    }
+
+    /* send upgrade response (followed by any extra data) */
+    struct aws_byte_cursor response = aws_byte_cursor_from_c_str("HTTP/1.1 101 Switching Protocols\r\n"
+                                                                 "Upgrade: MyProtocol\r\n"
+                                                                 "\r\n");
+    struct aws_byte_cursor extra_data = aws_byte_cursor_from_c_str(switcher->data_after_upgrade_response);
+    struct aws_byte_buf sending_buf;
+    ASSERT_SUCCESS(aws_byte_buf_init(&sending_buf, switcher->tester->alloc, response.len + extra_data.len));
+    ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&sending_buf, response));
+    if (extra_data.len) {
+        ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&sending_buf, extra_data));
+    }
+
+    s_send_response(switcher->tester, aws_byte_cursor_from_buf(&sending_buf));
+
+    /* wait for response to complete, and check results */
+    testing_channel_drain_queued_tasks(&switcher->tester->testing_channel);
+    ASSERT_TRUE(switcher->is_upgrade_response_complete);
+    ASSERT_INT_EQUALS(101, switcher->upgrade_response_status);
+
+    /* if we wanted downstream handler installed, ensure that happened */
+    if (switcher->install_downstream_handler) {
+        ASSERT_TRUE(switcher->has_installed_downstream_handler);
+    }
+
+    /* cleanup */
+    aws_byte_buf_clean_up(&sending_buf);
+    aws_http_stream_release(upgrade_stream);
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_midchannel_sanity_check) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .install_downstream_handler = true,
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
+
+    /* clean up */
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* confirm data passes through http-handler untouched in the read direction */
+H1_CLIENT_TEST_CASE(h1_client_midchannel_read) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .install_downstream_handler = true,
+        .downstream_handler_window_size = SIZE_MAX,
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
+
+    const char *test_str = "inmyprotocolspacesarestrictlyforbidden";
+    ASSERT_SUCCESS(s_readpush(&tester, test_str));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    ASSERT_SUCCESS(s_check_midchannel_read_messages(&tester, test_str));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* confirm that, if new-protocol-data arrives packed into the same aws_io_message as the upgrade response,
+ * that data is properly passed dowstream. */
+H1_CLIENT_TEST_CASE(h1_client_midchannel_read_immediately) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    const char *test_str = "inmyprotocoleverythingwillbebetter";
+
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .install_downstream_handler = true,
+        .downstream_handler_window_size = SIZE_MAX,
+        .data_after_upgrade_response = test_str, /* Note extra data */
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
+
+    ASSERT_SUCCESS(s_check_midchannel_read_messages(&tester, test_str));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Have a tiny downstream read-window and increment it in little chunks. */
+H1_CLIENT_TEST_CASE(h1_client_midchannel_read_with_small_downstream_window) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .install_downstream_handler = true,
+        .downstream_handler_window_size = 1 /* Note tiny starting window. */,
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
+
+    const char *test_str = "inmyprotocolcapitallettersarethedevil";
+    ASSERT_SUCCESS(s_readpush(&tester, test_str));
+
+    /* open window in tiny increments */
+    for (size_t i = 0; i < strlen(test_str); ++i) {
+        ASSERT_SUCCESS(testing_channel_increment_read_window(&tester.testing_channel, 1));
+        testing_channel_drain_queued_tasks(&tester.testing_channel);
+    }
+
+    /* ensure that the handler actually sent multiple messages */
+    size_t num_read_messages = 0;
+    struct aws_linked_list *list = testing_channel_get_read_message_queue(&tester.testing_channel);
+    struct aws_linked_list_node *node = aws_linked_list_front(list);
+    while (node != aws_linked_list_end(list)) {
+        num_read_messages++;
+        node = aws_linked_list_next(node);
+    }
+    ASSERT_TRUE(num_read_messages > 1);
+
+    ASSERT_SUCCESS(s_check_midchannel_read_messages(&tester, test_str));
+
+    /* cleanup */
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* confirm data passes through http-handler untouched in the write direction */
+H1_CLIENT_TEST_CASE(h1_client_midchannel_write) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .install_downstream_handler = true,
+        .downstream_handler_window_size = SIZE_MAX,
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
+
+    const char *test_str = "inmyprotocolthereisnomoney";
+    s_writepush(&tester, test_str);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    ASSERT_SUCCESS(s_check_written_messages(&tester, test_str));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+static void s_on_message_write_complete_save_error_code(
+    struct aws_channel *channel,
+    struct aws_io_message *message,
+    int err_code,
+    void *user_data) {
+
+    (void)channel;
+    (void)message;
+    int *save = user_data;
+    *save = err_code;
+}
+
+/* Ensure that things fail if a downstream handler is installed without switching protocols.
+ * This test is weird in that failure must occur, but we're not prescriptive about where it occurs. */
+H1_CLIENT_TEST_CASE(h1_client_midchannel_requires_switching_protocols) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* The act of installing the downstream handler might fail */
+    int err = testing_channel_install_downstream_handler(&tester.testing_channel, SIZE_MAX);
+    if (err) {
+        goto installation_failed;
+    }
+
+    /* Sending the message might fail */
+    int msg_completion_error_code = 0;
+    struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
+        tester.testing_channel.channel, AWS_IO_MESSAGE_APPLICATION_DATA, SIZE_MAX);
+    ASSERT_NOT_NULL(msg);
+    msg->on_completion = s_on_message_write_complete_save_error_code;
+    msg->user_data = &msg_completion_error_code;
+
+    err = testing_channel_push_write_message(&tester.testing_channel, msg);
+    if (err) {
+        aws_mem_release(msg->allocator, msg);
+        goto push_message_failed;
+    }
+
+    /* The message might fail to reach the socket */
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    if (msg_completion_error_code) {
+        goto message_completion_failed;
+    }
+
+    /* This is bad, we should have failed by now */
+    ASSERT_TRUE(false);
+
+message_completion_failed:
+push_message_failed:
+installation_failed:
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_switching_protocols_fails_pending_requests) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* queue a connection upgrade request */
+    struct aws_http_header headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Connection"),
+            .value = aws_byte_cursor_from_c_str("Upgrade"),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str("Upgrade"),
+            .value = aws_byte_cursor_from_c_str("MyProtocol"),
+        },
+    };
+
+    struct aws_http_request_options upgrade_req = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    upgrade_req.client_connection = tester.connection;
+    upgrade_req.method = aws_byte_cursor_from_c_str("GET");
+    upgrade_req.uri = aws_byte_cursor_from_c_str("/chat");
+    upgrade_req.header_array = headers;
+    upgrade_req.num_headers = AWS_ARRAY_SIZE(headers);
+
+    struct response_tester upgrade_response;
+    ASSERT_SUCCESS(s_response_tester_init(&upgrade_response, allocator, &upgrade_req));
+
+    /* queue another request behind it */
+    struct aws_http_request_options next_req = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    next_req.client_connection = tester.connection;
+    next_req.method = aws_byte_cursor_from_c_str("GET");
+    next_req.uri = aws_byte_cursor_from_c_str("/");
+
+    struct response_tester next_response;
+    ASSERT_SUCCESS(s_response_tester_init(&next_response, allocator, &next_req));
+
+    /* send upgrade response */
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    ASSERT_SUCCESS(s_send_response_str(
+        &tester,
+        "HTTP/1.1 101 Switching Protocols\r\n"
+        "Upgrade: MyProtocol\r\n"
+        "\r\n"));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    ASSERT_UINT_EQUALS(1, upgrade_response.on_complete_cb_count);
+    ASSERT_INT_EQUALS(101, upgrade_response.status);
+
+    /* confirm that the next request was cancelled */
+    ASSERT_UINT_EQUALS(1, next_response.on_complete_cb_count);
+    ASSERT_TRUE(next_response.on_complete_error_code != AWS_OP_SUCCESS);
+
+    /* clean up */
+    s_response_tester_clean_up(&upgrade_response);
+    s_response_tester_clean_up(&next_response);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_switching_protocols_fails_subsequent_requests) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* Successfully switch protocols */
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .install_downstream_handler = true,
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
+
+    /* Attempting to send a request after this should fail. */
+    struct aws_http_request_options request_opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
+    request_opt.client_connection = tester.connection;
+    request_opt.method = aws_byte_cursor_from_c_str("GET");
+    request_opt.uri = aws_byte_cursor_from_c_str("/");
+
+    struct response_tester response;
+    int err = s_response_tester_init(&response, allocator, &request_opt);
+    if (err) {
+        ASSERT_INT_EQUALS(AWS_ERROR_HTTP_SWITCHED_PROTOCOLS, aws_last_error());
+    } else {
+        testing_channel_drain_queued_tasks(&tester.testing_channel);
+        ASSERT_UINT_EQUALS(1, response.on_complete_cb_count);
+        ASSERT_INT_EQUALS(AWS_ERROR_HTTP_SWITCHED_PROTOCOLS, response.on_complete_error_code);
+    }
+
+    /* clean up */
+    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_switching_protocols_requires_downstream_handler) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* Successfully switch protocols, but don't install downstream handler. */
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .install_downstream_handler = false,
+    };
+
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
+
+    /* If new data arrives and no downstream handler is installed to deal with it, the connection should shut down. */
+    ASSERT_SUCCESS(s_readpush_ignore_errors(&tester, "herecomesnewprotocoldatachoochoo"));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
+    ASSERT_TRUE(testing_channel_get_shutdown_error_code(&tester.testing_channel) != AWS_ERROR_SUCCESS);
+
+    /* clean up */
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }

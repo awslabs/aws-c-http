@@ -193,6 +193,11 @@ bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
     return connection->vtable->is_open(connection);
 }
 
+struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    return connection->channel_slot->channel;
+}
+
 void aws_http_connection_release(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
@@ -547,7 +552,7 @@ static void s_client_bootstrap_on_channel_shutdown(
         http_bootstrap->on_setup(NULL, error_code, http_bootstrap->user_data);
 
     } else if (http_bootstrap->on_shutdown) {
-        AWS_LOGF_ERROR(
+        AWS_LOGF_INFO(
             AWS_LS_HTTP_CONNECTION,
             "%p: Client shutdown completed with error %d (%s).",
             (void *)http_bootstrap->connection,

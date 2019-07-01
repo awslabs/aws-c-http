@@ -99,13 +99,17 @@ struct aws_http_client_connection_options {
      * Required.
      * If unsuccessful, error_code will be set, connection will be NULL,
      * and the on_shutdown callback will never be invoked.
+     * If successful, the user is now responsible for the connection and must
+     * call aws_http_connection_release() when they are done with it.
      */
     aws_http_on_client_connection_setup_fn *on_setup;
 
     /**
-     * Invoked when the connection is closed.
+     * Invoked when the connection has finished shutting down.
      * Optional.
      * Never invoked if on_setup failed.
+     * Note that the connection is not completely done until on_shutdown has been invoked
+     * AND aws_http_connection_release() has been called.
      */
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
 };
@@ -135,8 +139,6 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
  * Users should always wait for the on_shutdown() callback to be called before releasing any data passed to the
  * http_connection (Eg aws_tls_connection_options, aws_socket_options) otherwise there will be race conditions between
  * http_connection shutdown tasks and memory release tasks, causing Segfaults.
- *
- * A language binding will likely invoke this from the wrapper class's finalizer/destructor.
  */
 AWS_HTTP_API
 void aws_http_connection_release(struct aws_http_connection *connection);
@@ -159,6 +161,13 @@ bool aws_http_connection_is_open(const struct aws_http_connection *connection);
 
 AWS_HTTP_API
 enum aws_http_version aws_http_connection_get_version(const struct aws_http_connection *connection);
+
+/**
+ * Returns the channel hosting the HTTP connection.
+ * Do not expose this function to language bindings.
+ */
+AWS_HTTP_API
+struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
 
 AWS_EXTERN_C_END
 

@@ -17,6 +17,9 @@
 
 #include <aws/http/http.h>
 
+struct aws_http_header;
+struct aws_http_request;
+
 /* TODO: Document lifetime stuff */
 /* TODO: Document CLOSE frame behavior (when auto-sent during close, when auto-closed) */
 /* TODO: Document auto-pong behavior */
@@ -40,17 +43,29 @@ enum aws_websocket_opcode {
 };
 
 #define AWS_WEBSOCKET_MAX_PAYLOAD_LENGTH 0x7FFFFFFFFFFFFFFF
+#define AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH 25
 
 /**
  * Called when websocket setup is complete.
- * If setup succeeds, error_code is zero and the websocket pointer is valid.
- * If setup failed, error_code will be non-zero and the pointer will be NULL.
+ * An error_code of zero indicates that setup was completely successful.
  * Called exactly once on the websocket's event-loop thread.
+ *
+ * websocket: if successful, a valid pointer to the websocket, otherwise NULL.
+ * error_code: the operation was completely successful if this value is zero.
+ * handshake_response_status: The response status code of the HTTP handshake, 101 if successful,
+ *                            -1 if the connection failed before a response was received.
+ * handshake_response_header_array: Headers from the HTTP handshake response.
+ *                            May be NULL if num_handshake_response_headers is 0.
+ *                            Copy if necessary, this memory becomes invalid once the callback completes.
+ * num_handshake_response_headers: Number of entries in handshake_response_header_array.
+ *                            May be 0 if the response did not complete, or was invalid.
  */
 typedef void(aws_websocket_on_connection_setup_fn)(
     struct aws_websocket *websocket,
     int error_code,
-    /* TODO: how to pass back misc response data like headers */
+    int handshake_response_status,
+    const struct aws_http_header *handshake_response_header_array,
+    size_t num_handshake_response_headers,
     void *user_data);
 
 /**
@@ -122,24 +137,114 @@ typedef bool(aws_websocket_on_incoming_frame_complete_fn)(
     int error_code,
     void *user_data);
 
-/* WIP */
+/**
+ * Options for creating a websocket client connection.
+ */
 struct aws_websocket_client_connection_options {
+    /**
+     * Required.
+     * Must outlive the connection.
+     */
     struct aws_allocator *allocator;
 
+    /**
+     * Required.
+     * Must outlive the connection.
+     */
     struct aws_client_bootstrap *bootstrap;
-    struct aws_byte_cursor host_name;
-    uint16_t port;
+
+    /**
+     * Required.
+     * aws_websocket_client_connect() makes a copy.
+     */
     struct aws_socket_options *socket_options;
+
+    /**
+     * Optional.
+     * aws_websocket_client_connect() deep-copies all contents except the `aws_tls_ctx`,
+     * which must outlive the the connection.
+     */
     struct aws_tls_connection_options *tls_options;
+
+    /**
+     * Required.
+     * aws_websocket_client_connect() makes a copy.
+     */
+    struct aws_uri *uri;
+
+    /**
+     * Array of headers for the HTTP Upgrade request.
+     * Required.
+     * aws_websocket_client_connect() deep-copies all contents.
+     * The following headers are required:
+     *
+     * Host: server.example.com
+     * Upgrade: websocket
+     * Connection: Upgrade
+     * Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+     * Sec-WebSocket-Version: 13
+     *
+     * Sec-Websocket-Key should be a random 16 bytes value, Base64 encoded.
+     */
+    const struct aws_http_header *handshake_header_array;
+
+    /**
+     * Number of entries in handshake_header_array.
+     * Required.
+     */
+    size_t num_handshake_headers;
+
+    /**
+     * Initial window size for websocket.
+     * Required.
+     * Set to 0 to prevent any incoming websocket frames until aws_websocket_increment_read_window() is called.
+     */
     size_t initial_window_size;
 
-    /* TODO: How to take handshake request params. related, could take URI instead of host_name:port. */
-
+    /**
+     * User data for callbacks.
+     * Optional.
+     */
     void *user_data;
+
+    /**
+     * Called when connect completes.
+     * Required.
+     * If unsuccessful, error_code will be set, connection will be NULL,
+     * and the on_connection_shutdown callback will never be called.
+     * If successful, the user is now responsible for the websocket and must
+     * call aws_websocket_release() when they are done with it.
+     */
     aws_websocket_on_connection_setup_fn *on_connection_setup;
+
+    /**
+     * Called when connection has finished shutting down.
+     * Optional.
+     * Never called if `on_connection_setup` reported failure.
+     * Note that the connection is not completely done until `on_connection_shutdown` has been called
+     * AND aws_websocket_release() has been called.
+     */
     aws_websocket_on_connection_shutdown_fn *on_connection_shutdown;
+
+    /**
+     * Called when each new frame arrives.
+     * Optional.
+     * See `aws_websocket_on_incoming_frame_begin_fn`.
+     */
     aws_websocket_on_incoming_frame_begin_fn *on_incoming_frame_begin;
+
+    /**
+     * Called repeatedly as payload data arrives.
+     * Required if `on_incoming_frame_begin` is set.
+     * See `aws_websocket_on_incoming_frame_payload_fn`.
+     */
     aws_websocket_on_incoming_frame_payload_fn *on_incoming_frame_payload;
+
+    /**
+     * Called when done processing an incoming frame.
+     * Required if `on_incoming_frame_begin` is set.
+     * See `aws_websocket_on_incoming_frame_complete_fn`.
+     */
     aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
 };
 
@@ -170,7 +275,7 @@ typedef void(
 /**
  * Options for sending a websocket frame.
  * This structure is copied immediately by aws_websocket_send().
- * For descriptions of sopcode, fin, rsv, and payload_length see in RFC-6455 Section 5.2.
+ * For descriptions of opcode, fin, rsv, and payload_length see in RFC-6455 Section 5.2.
  */
 struct aws_websocket_send_frame_options {
     /**
@@ -229,7 +334,10 @@ AWS_EXTERN_C_BEGIN
 AWS_HTTP_API
 bool aws_websocket_is_data_frame(uint8_t opcode);
 
-/* WIP */
+/**
+ * Asynchronously establish a client websocket connection.
+ * The on_connection_setup callback is invoked when the operation has finished creating a connection, or failed.
+ */
 AWS_HTTP_API
 int aws_websocket_client_connect(const struct aws_websocket_client_connection_options *options);
 
@@ -279,7 +387,7 @@ void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t
  * This must not be called in the middle of an incoming frame (between "frame begin" and "frame complete" callbacks).
  * This MUST be called from the websocket's thread.
  *
- * If successful, the channel that the websocket belongs to is returned and:
+ * If successful:
  * - Other than aws_websocket_release(), all calls to aws_websocket_x() functions are ignored.
  * - The websocket will no longer invoke any "incoming frame" callbacks.
  * - aws_io_messages written by a downstream handler will be wrapped in binary data frames and sent upstream.
@@ -294,7 +402,38 @@ void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t
  * If unsuccessful, NULL is returned and the websocket is unchanged.
  */
 AWS_HTTP_API
-struct aws_channel *aws_websocket_convert_to_midchannel_handler(struct aws_websocket *websocket);
+int aws_websocket_convert_to_midchannel_handler(struct aws_websocket *websocket);
+
+/**
+ * Returns the websocket's underlying I/O channel.
+ */
+AWS_HTTP_API
+struct aws_channel *aws_websocket_get_channel(const struct aws_websocket *websocket);
+
+/**
+ * Generate value for a Sec-WebSocket-Key header and write it into `dst` buffer.
+ * The buffer should have at least AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH space available.
+ *
+ * This value is the base64 encoding of a random 16-byte value.
+ * RFC-6455 Section 4.1
+ */
+AWS_HTTP_API
+int aws_websocket_random_handshake_key(struct aws_byte_buf *dst);
+
+/**
+ * Create request with all required fields for a websocket upgrade request.
+ * The method and path are set, and the the following headers are added:
+ *
+ * Host: <host>
+ * Upgrade: websocket
+ * Connection: Upgrade
+ * Sec-WebSocket-Key: <base64 encoding of 16 random bytes>
+ * Sec-WebSocket-Version: 13
+ */
+struct aws_http_request *aws_http_request_new_websocket_handshake(
+    struct aws_allocator *allocator,
+    struct aws_byte_cursor path,
+    struct aws_byte_cursor host);
 
 AWS_EXTERN_C_END
 
