@@ -18,14 +18,14 @@
 #include <aws/common/command_line_parser.h>
 #include <aws/common/condition_variable.h>
 #include <aws/common/hash_table.h>
+#include <aws/common/log_channel.h>
+#include <aws/common/log_formatter.h>
+#include <aws/common/log_writer.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
 
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
-#include <aws/io/log_channel.h>
-#include <aws/io/log_formatter.h>
-#include <aws/io/log_writer.h>
 #include <aws/io/logging.h>
 #include <aws/io/shared_library.h>
 #include <aws/io/socket.h>
