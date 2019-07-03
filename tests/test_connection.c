@@ -18,10 +18,10 @@
 
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
+#include <aws/common/log_writer.h>
 #include <aws/common/uuid.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
-#include <aws/io/log_writer.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
