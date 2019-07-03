@@ -109,6 +109,15 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_MANAGER_SHUTTING_DOWN,
         "Connection acquisition failed because connection manager is shutting down"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR,
+        "Peer violated protocol rules"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_CLOSED,
+        "Recieved frame on a closed stream"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_END_RANGE,
+        "Not a real error and should never be seen."),
 };
 /* clang-format on */
 

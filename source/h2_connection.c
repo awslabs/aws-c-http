@@ -66,7 +66,7 @@ static int s_decoder_on_header(const struct aws_http_decoded_header *header, voi
 static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data);
 static int s_decoder_on_done(void *user_data);
 
-static struct aws_http_connection_vtable s_h1_connection_vtable = {
+static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
         {
             .process_read_message = s_handler_process_read_message,
@@ -96,7 +96,7 @@ static const struct aws_http_decoder_vtable s_h1_decoder_vtable = {
     .on_done = s_decoder_on_done,
 };
 
-struct h1_connection {
+struct h2_connection {
     struct aws_http_connection base;
 
     /* Single task used repeatedly for sending data from streams. */
@@ -156,7 +156,7 @@ struct h1_connection {
  * This function can be called multiple times, from on-thread or off.
  * This function is always run once on-thread during channel shutdown.
  */
-static void s_shutdown_connection(struct h1_connection *connection, int error_code) {
+static void s_shutdown_connection(struct h2_connection *connection, int error_code) {
     bool on_thread = aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel);
     if (on_thread) {
         /* If thread_data already knew about shutdown, then no more work to do here. */
@@ -198,7 +198,7 @@ static void s_shutdown_connection(struct h1_connection *connection, int error_co
 
 static void s_shutdown_delay_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
     (void)task;
-    struct h1_connection *connection = arg;
+    struct h2_connection *connection = arg;
 
     if (status == AWS_TASK_STATUS_RUN_READY) {
         /* If channel is already shutting down, this call has no effect */
@@ -210,12 +210,12 @@ static void s_shutdown_delay_task(struct aws_channel_task *task, void *arg, enum
  * Public function for closing connection.
  */
 static void s_connection_close(struct aws_http_connection *connection_base) {
-    struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
+    struct h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct h2_connection, base);
     s_shutdown_connection(connection, AWS_ERROR_SUCCESS);
 }
 
 static bool s_connection_is_open(const struct aws_http_connection *connection_base) {
-    struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
+    struct h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct h2_connection, base);
     bool is_shutting_down;
 
     { /* BEGIN CRITICAL SECTION */
@@ -229,91 +229,6 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
     } /* END CRITICAL SECTION */
 
     return !is_shutting_down;
-}
-
-/**
- * Scan headers and determine the length necessary to write them all.
- * Also update the stream with any special data it needs to know from these headers.
- */
-static int s_stream_scan_outgoing_headers(
-    struct aws_h2_stream *stream,
-    const struct aws_http_header *header_array,
-    size_t num_headers,
-    size_t *out_header_lines_len) {
-
-    size_t total = 0;
-
-    for (size_t i = 0; i < num_headers; ++i) {
-        struct aws_http_header header = header_array[i];
-
-        enum aws_http_header_name name_enum;
-
-        if (header.name.len > 0) {
-            name_enum = aws_http_str_to_header_name(header.name);
-        } else {
-            AWS_LOGF_ERROR(
-                AWS_LS_HTTP_CONNECTION,
-                "id=%p: Failed to create stream, no name set for header[%zu].",
-                (void *)stream->base.owning_connection,
-                i);
-            return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        }
-
-        switch (name_enum) {
-            case AWS_HTTP_HEADER_CONTENT_LENGTH:
-            case AWS_HTTP_HEADER_TRANSFER_ENCODING:
-                stream->has_outgoing_body = true;
-
-                if (!stream->base.stream_outgoing_body) {
-                    AWS_LOGF_ERROR(
-                        AWS_LS_HTTP_CONNECTION,
-                        "id=%p: Failed to create stream, '" PRInSTR
-                        "' header specified but body-streaming callback is not set.",
-                        (void *)stream->base.owning_connection,
-                        AWS_BYTE_CURSOR_PRI(header.name));
-
-                    return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-                }
-                break;
-            default:
-                break;
-        }
-
-        /* header-line: "{name}: {value}\r\n" */
-        int err = 0;
-        err |= aws_add_size_checked(header.name.len, total, &total);
-        err |= aws_add_size_checked(header.value.len, total, &total);
-        err |= aws_add_size_checked(4, total, &total); /* ": " + "\r\n" */
-        if (err) {
-            AWS_LOGF_ERROR(
-                AWS_LS_HTTP_CONNECTION,
-                "id=%p: Failed to create stream, header size calculation produced error %d (%s)'",
-                (void *)stream->base.owning_connection,
-                aws_last_error(),
-                aws_error_name(aws_last_error()));
-            return AWS_OP_ERR;
-        }
-    }
-
-    *out_header_lines_len = total;
-    return AWS_OP_SUCCESS;
-}
-
-static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_header *header_array, size_t num_headers) {
-
-    bool wrote_all = true;
-    for (size_t i = 0; i < num_headers; ++i) {
-        struct aws_http_header header = header_array[i];
-
-        /* header-line: "{name}: {value}\r\n" */
-        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.name);
-        wrote_all &= aws_byte_buf_write_u8(dst, ':');
-        wrote_all &= aws_byte_buf_write_u8(dst, ' ');
-        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.value);
-        wrote_all &= aws_byte_buf_write_u8(dst, '\r');
-        wrote_all &= aws_byte_buf_write_u8(dst, '\n');
-    }
-    AWS_ASSERT(wrote_all);
 }
 
 struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options) {
@@ -330,32 +245,31 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     if (!stream) {
         return NULL;
     }
+    struct h2_connection *connection = AWS_CONTAINER_OF(options->client_connection, struct h2_connection, base);
 
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_2);
 
-    /**
-     * Calculate total size needed for outgoing_head_buffer, then write to buffer.
-     */
-
-    size_t header_lines_len;
-    int err = s_stream_scan_outgoing_headers(stream, options->header_array, options->num_headers, &header_lines_len);
+    /* Ssend a headers frame first */
+    struct aws_h2_frame_headers headers;
+    int err = aws_h2_frame_headers_init(&headers, options->client_connection->alloc);
     if (err) {
-        /* errors already logged by scan_outgoing_headers() function */
-        goto error_scanning_headers;
+        goto error_initing_headers;
     }
+    headers.end_headers = true;
 
-    /* request-line: "{method} {uri} {version}\r\n" */
-    size_t request_line_len = 4; /* 2 spaces + "\r\n" */
-    err |= aws_add_size_checked(options->method.len, request_line_len, &request_line_len);
-    err |= aws_add_size_checked(options->uri.len, request_line_len, &request_line_len);
-    err |= aws_add_size_checked(version.len, request_line_len, &request_line_len);
+    /* Add pseudo headers */
+    struct aws_http_header scratch;
+    scratch.name = (struct aws_byte_cursor)AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(":method");
+    scratch.value = options->method;
+    err |= aws_array_list_push_back(&headers.header_block.header_fields, &scratch);
 
-    /* head-end: "\r\n" */
-    size_t head_end_len = 2;
+    scratch.name = (struct aws_byte_cursor)AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(":path");
+    scratch.value = options->uri;
+    err |= aws_array_list_push_back(&headers.header_block.header_fields, &scratch);
 
-    size_t head_total_len = request_line_len;
-    err |= aws_add_size_checked(header_lines_len, head_total_len, &head_total_len);
-    err |= aws_add_size_checked(head_end_len, head_total_len, &head_total_len);
+    for (size_t i = 0; i < options->num_headers; ++i) {
+        err |= aws_array_list_push_back(&headers.header_block.header_fields, &options->header_array[i]);
+    }
 
     if (err) {
         AWS_LOGF_ERROR(
@@ -367,40 +281,10 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
         goto error_calculating_size;
     }
 
-    err = aws_byte_buf_init(&stream->outgoing_head_buf, stream->base.alloc, head_total_len);
-    if (err) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Failed to create request, buffer initialization had error %d (%s).",
-            (void *)options->client_connection,
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
-
-        goto error_initializing_buf;
-    }
-
-    bool wrote_all = true;
-
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, options->method);
-    wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, ' ');
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, options->uri);
-    wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, ' ');
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, version);
-    wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\r');
-    wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\n');
-
-    s_write_headers(&stream->outgoing_head_buf, options->header_array, options->num_headers);
-
-    wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\r');
-    wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\n');
-    (void)wrote_all;
-    AWS_ASSERT(wrote_all);
-
     /* Insert new stream into pending list, and schedule outgoing_stream_task if it's not already running. */
     int new_stream_error_code = AWS_ERROR_SUCCESS;
     bool should_schedule_task = false;
 
-    struct h1_connection *connection = AWS_CONTAINER_OF(options->client_connection, struct h1_connection, base);
     { /* BEGIN CRITICAL SECTION */
         err = aws_mutex_lock(&connection->synced_data.lock);
         AWS_FATAL_ASSERT(!err);
@@ -452,22 +336,18 @@ error_from_connection:
     aws_byte_buf_clean_up(&stream->outgoing_head_buf);
 error_initializing_buf:
 error_calculating_size:
-error_scanning_headers:
-    aws_mem_release(stream->base.alloc, stream);
+error_initing_headers:
+    aws_h2_stream_destroy(stream);
     return NULL;
 }
 
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
-    AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Stream destroyed.", (void *)stream_base);
 
-    struct h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct h1_stream, base);
-
-    aws_byte_buf_clean_up(&stream->incoming_storage_buf);
-    aws_byte_buf_clean_up(&stream->outgoing_head_buf);
-    aws_mem_release(stream->base.alloc, stream);
+    struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
+    aws_h2_stream_destroy(stream);
 }
 
-static void s_update_window_action(struct h1_connection *connection, size_t increment_size) {
+static void s_update_window_action(struct h2_connection *connection, size_t increment_size) {
     int err = aws_channel_slot_increment_read_window(connection->base.channel_slot, increment_size);
     if (err) {
         AWS_LOGF_ERROR(
@@ -483,7 +363,7 @@ static void s_update_window_action(struct h1_connection *connection, size_t incr
 
 static void s_update_window_task(struct aws_channel_task *channel_task, void *arg, enum aws_task_status status) {
     (void)channel_task;
-    struct h1_connection *connection = arg;
+    struct h2_connection *connection = arg;
 
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;
@@ -509,7 +389,7 @@ static void s_update_window_task(struct aws_channel_task *channel_task, void *ar
 }
 
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
-    struct h1_connection *connection = AWS_CONTAINER_OF(stream->owning_connection, struct h1_connection, base);
+    struct h2_connection *connection = AWS_CONTAINER_OF(stream->owning_connection, struct h2_connection, base);
 
     if (increment_size == 0) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Ignoring window update of size 0.", (void *)&connection->base);
@@ -658,7 +538,7 @@ static void s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io
 }
 
 static void s_stream_complete(struct h1_stream *stream, int error_code) {
-    struct h1_connection *connection = AWS_CONTAINER_OF(stream->base.owning_connection, struct h1_connection, base);
+    struct h2_connection *connection = AWS_CONTAINER_OF(stream->base.owning_connection, struct h2_connection, base);
 
     /* Remove stream from list. */
     aws_linked_list_remove(&stream->node);
@@ -754,7 +634,7 @@ finish_up:
 /**
  * Ensure `incoming_stream` is pointing at the correct stream, and update state if it changes.
  */
-static void s_update_incoming_stream_ptr(struct h1_connection *connection) {
+static void s_update_incoming_stream_ptr(struct h2_connection *connection) {
     struct aws_linked_list *list = &connection->thread_data.stream_list;
     struct h1_stream *desired;
     if (aws_linked_list_empty(list)) {
@@ -783,7 +663,7 @@ static void s_update_incoming_stream_ptr(struct h1_connection *connection) {
  * Called from event-loop thread.
  * This function has lots of side effects.
  */
-static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *connection) {
+static struct h1_stream *s_update_outgoing_stream_ptr(struct h2_connection *connection) {
     struct h1_stream *current = connection->thread_data.outgoing_stream;
     struct h1_stream *prev = current;
     int err;
@@ -860,7 +740,7 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         return;
     }
 
-    struct h1_connection *connection = arg;
+    struct h2_connection *connection = arg;
     struct aws_channel *channel = connection->base.channel_slot->channel;
     struct aws_io_message *msg = NULL;
     int err;
@@ -973,7 +853,7 @@ static int s_decoder_on_request(
     const struct aws_byte_cursor *uri,
     void *user_data) {
 
-    struct h1_connection *connection = user_data;
+    struct h2_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
 
     AWS_ASSERT(incoming_stream->base.incoming_request_method_str.len == 0);
@@ -1020,7 +900,7 @@ error:
 }
 
 static int s_decoder_on_response(int status_code, void *user_data) {
-    struct h1_connection *connection = user_data;
+    struct h2_connection *connection = user_data;
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
@@ -1036,7 +916,7 @@ static int s_decoder_on_response(int status_code, void *user_data) {
 }
 
 static int s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
-    struct h1_connection *connection = user_data;
+    struct h2_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
 
     AWS_LOGF_TRACE(
@@ -1072,8 +952,8 @@ static int s_mark_head_done(struct h1_stream *incoming_stream) {
     incoming_stream->is_incoming_head_done = true;
 
     /* Determine if message will have a body */
-    struct h1_connection *connection =
-        AWS_CONTAINER_OF(incoming_stream->base.owning_connection, struct h1_connection, base);
+    struct h2_connection *connection =
+        AWS_CONTAINER_OF(incoming_stream->base.owning_connection, struct h2_connection, base);
 
     bool has_incoming_body = false;
     int transfer_encoding = aws_h1_decoder_get_encoding_flags(connection->thread_data.incoming_stream_decoder);
@@ -1103,7 +983,7 @@ static int s_mark_head_done(struct h1_stream *incoming_stream) {
 static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data) {
     (void)finished;
 
-    struct h1_connection *connection = user_data;
+    struct h2_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
     AWS_ASSERT(incoming_stream);
 
@@ -1143,7 +1023,7 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
 }
 
 static int s_decoder_on_done(void *user_data) {
-    struct h1_connection *connection = user_data;
+    struct h2_connection *connection = user_data;
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
     AWS_ASSERT(incoming_stream);
 
@@ -1171,16 +1051,16 @@ static int s_decoder_on_done(void *user_data) {
 }
 
 /* Common new() logic for server & client */
-static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_t initial_window_size) {
+static struct h2_connection *s_connection_new(struct aws_allocator *alloc, size_t initial_window_size) {
 
-    struct h1_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct h1_connection));
+    struct h2_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct h2_connection));
     if (!connection) {
         goto error_connection_alloc;
     }
 
-    connection->base.vtable = &s_h1_connection_vtable;
+    connection->base.vtable = &s_h2_connection_vtable;
     connection->base.alloc = alloc;
-    connection->base.channel_handler.vtable = &s_h1_connection_vtable.channel_handler_vtable;
+    connection->base.channel_handler.vtable = &s_h2_connection_vtable.channel_handler_vtable;
     connection->base.channel_handler.impl = connection;
     connection->base.http_version = AWS_HTTP_VERSION_1_1;
     connection->base.initial_window_size = initial_window_size;
@@ -1236,7 +1116,7 @@ struct aws_http_connection *aws_http_connection_new_http1_1_server(
     struct aws_allocator *allocator,
     size_t initial_window_size) {
 
-    struct h1_connection *connection = s_connection_new(allocator, initial_window_size);
+    struct h2_connection *connection = s_connection_new(allocator, initial_window_size);
     if (!connection) {
         return NULL;
     }
@@ -1250,7 +1130,7 @@ struct aws_http_connection *aws_http_connection_new_http1_1_client(
     struct aws_allocator *allocator,
     size_t initial_window_size) {
 
-    struct h1_connection *connection = s_connection_new(allocator, initial_window_size);
+    struct h2_connection *connection = s_connection_new(allocator, initial_window_size);
     if (!connection) {
         return NULL;
     }
@@ -1261,7 +1141,7 @@ struct aws_http_connection *aws_http_connection_new_http1_1_client(
 }
 
 static void s_handler_destroy(struct aws_channel_handler *handler) {
-    struct h1_connection *connection = handler->impl;
+    struct h2_connection *connection = handler->impl;
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Destroying connection.", (void *)&connection->base);
 
@@ -1274,7 +1154,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     aws_mem_release(connection->base.alloc, connection);
 }
 
-static void s_connection_try_send_read_messages(struct h1_connection *connection) {
+static void s_connection_try_send_read_messages(struct h2_connection *connection) {
     AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
     AWS_ASSERT(connection->thread_data.has_switched_protocols);
     AWS_ASSERT(!connection->thread_data.is_shutting_down);
@@ -1374,7 +1254,7 @@ static int s_handler_process_read_message(
     struct aws_channel_slot *slot,
     struct aws_io_message *message) {
 
-    struct h1_connection *connection = handler->impl;
+    struct h2_connection *connection = handler->impl;
     int err;
 
     const size_t incoming_message_size = message->message_data.len;
@@ -1496,7 +1376,7 @@ static int s_handler_process_write_message(
     struct aws_channel_slot *slot,
     struct aws_io_message *message) {
 
-    struct h1_connection *connection = handler->impl;
+    struct h2_connection *connection = handler->impl;
 
     if (connection->thread_data.is_shutting_down) {
         aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
@@ -1536,7 +1416,7 @@ static int s_handler_increment_read_window(
     struct aws_channel_slot *slot,
     size_t size) {
 
-    struct h1_connection *connection = handler->impl;
+    struct h2_connection *connection = handler->impl;
 
     if (connection->thread_data.is_shutting_down) {
         aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
@@ -1580,7 +1460,7 @@ static int s_handler_shutdown(
     bool free_scarce_resources_immediately) {
 
     (void)free_scarce_resources_immediately;
-    struct h1_connection *connection = handler->impl;
+    struct h2_connection *connection = handler->impl;
 
     /* Shut everything down the first time we get this callback (DIR_READ). */
     if (dir == AWS_CHANNEL_DIR_READ) {
@@ -1623,7 +1503,7 @@ static int s_handler_shutdown(
 }
 
 static size_t s_handler_initial_window_size(struct aws_channel_handler *handler) {
-    struct h1_connection *connection = handler->impl;
+    struct h2_connection *connection = handler->impl;
     return connection->base.initial_window_size;
 }
 

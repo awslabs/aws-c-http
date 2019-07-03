@@ -46,6 +46,9 @@ struct aws_h2_stream;
 AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API
+const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);
+
+AWS_HTTP_API
 struct aws_h2_stream *aws_h2_stream_new(const struct aws_http_request_options *options, uint32_t stream_id);
 AWS_HTTP_API
 void aws_h2_stream_destroy(struct aws_h2_stream *stream);
