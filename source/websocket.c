@@ -21,6 +21,7 @@
 #include <aws/common/mutex.h>
 #include <aws/http/private/websocket_decoder.h>
 #include <aws/http/private/websocket_encoder.h>
+#include <aws/http/request_response.h>
 #include <aws/io/channel.h>
 #include <aws/io/logging.h>
 
@@ -285,10 +286,23 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
 
     websocket->is_server = options->is_server;
 
-    aws_channel_task_init(&websocket->move_synced_data_to_thread_task, s_move_synced_data_to_thread_task, websocket);
-    aws_channel_task_init(&websocket->shutdown_channel_task, s_shutdown_channel_task, websocket);
-    aws_channel_task_init(&websocket->increment_read_window_task, s_increment_read_window_task, websocket);
-    aws_channel_task_init(&websocket->waiting_on_payload_stream_task, s_waiting_on_payload_stream_task, websocket);
+    aws_channel_task_init(
+        &websocket->move_synced_data_to_thread_task,
+        s_move_synced_data_to_thread_task,
+        websocket,
+        "websocket_move_synced_data_to_thread");
+    aws_channel_task_init(
+        &websocket->shutdown_channel_task, s_shutdown_channel_task, websocket, "websocket_shutdown_channel");
+    aws_channel_task_init(
+        &websocket->increment_read_window_task,
+        s_increment_read_window_task,
+        websocket,
+        "websocket_increment_read_window");
+    aws_channel_task_init(
+        &websocket->waiting_on_payload_stream_task,
+        s_waiting_on_payload_stream_task,
+        websocket,
+        "websocket_waiting_on_payload_stream");
 
     aws_linked_list_init(&websocket->thread_data.outgoing_frame_list);
 
@@ -1627,4 +1641,73 @@ int aws_websocket_random_handshake_key(struct aws_byte_buf *dst) {
     }
 
     return AWS_OP_SUCCESS;
+}
+
+struct aws_http_request *aws_http_request_new_websocket_handshake(
+    struct aws_allocator *allocator,
+    struct aws_byte_cursor path,
+    struct aws_byte_cursor host) {
+
+    AWS_PRECONDITION(allocator);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&path))
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&host))
+
+    struct aws_http_request *request = aws_http_request_new(allocator);
+    if (!request) {
+        goto error;
+    }
+
+    struct aws_byte_cursor method = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET");
+    int err = aws_http_request_set_method(request, method);
+    if (err) {
+        goto error;
+    }
+
+    err = aws_http_request_set_path(request, path);
+    if (err) {
+        goto error;
+    }
+
+    uint8_t key_storage[AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH];
+    struct aws_byte_buf key_buf = aws_byte_buf_from_empty_array(key_storage, sizeof(key_storage));
+    err = aws_websocket_random_handshake_key(&key_buf);
+    if (err) {
+        goto error;
+    }
+
+    struct aws_http_header required_headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
+            .value = host,
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Key"),
+            .value = aws_byte_cursor_from_buf(&key_buf),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Version"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("13"),
+        },
+    };
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(required_headers); ++i) {
+        err = aws_http_request_add_header(request, required_headers[i]);
+        if (err) {
+            goto error;
+        }
+    }
+
+    return request;
+
+error:
+    aws_http_request_destroy(request);
+    return NULL;
 }
