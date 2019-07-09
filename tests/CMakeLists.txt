@@ -175,6 +175,7 @@ add_test_case(h2_frame_window_update)
 add_test_case(h2_frame_continuation)
 
 add_test_case(server_new_destroy)
+add_test_case(test_server_recieve_1line_request)
 add_test_case(test_connection_manager_setup_shutdown)
 add_net_test_case(test_connection_manager_single_connection)
 add_net_test_case(test_connection_manager_many_connections)

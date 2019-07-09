@@ -25,16 +25,17 @@
 #include <aws/io/channel.h>
 
 struct aws_http_request_options;
+struct aws_http_request_handler_options;
 struct aws_http_stream;
 
 struct aws_http_connection_vtable {
     struct aws_channel_handler_vtable channel_handler_vtable;
 
     struct aws_http_stream *(*new_client_request_stream)(const struct aws_http_request_options *options);
+    int (*configure_server_request_handler_stream)(struct aws_http_stream *stream, const struct aws_http_request_handler_options *options);
     void (*close)(struct aws_http_connection *connection);
     bool (*is_open)(const struct aws_http_connection *connection);
 };
-
 /**
  * Base class for connections.
  * There are specific implementations for each HTTP version.

@@ -27,6 +27,7 @@ struct aws_tls_connection_options;
  * creating a server-side aws_http_connection to handle each one.
  */
 struct aws_http_server;
+struct aws_http_stream;
 
 typedef void(aws_http_server_on_incoming_connection_fn)(
     struct aws_http_server *server,
@@ -102,7 +103,7 @@ struct aws_http_server_options {
 #define AWS_HTTP_SERVER_OPTIONS_INIT                                                                                   \
     { .self_size = sizeof(struct aws_http_server_options), .initial_window_size = SIZE_MAX, }
 
-typedef void(aws_http_on_incoming_request_fn)(struct aws_http_connection *connection, void *user_data);
+typedef void(aws_http_on_incoming_request_fn)( struct aws_http_connection *connection,  struct aws_http_stream *stream, void *user_data);
 
 typedef void(aws_http_on_server_connection_shutdown_fn)(
     struct aws_http_connection *connection,
@@ -129,7 +130,7 @@ struct aws_http_server_connection_options {
     /**
      * Invoked at the start of an incoming request.
      * Required.
-     * From this callback, user must call aws_http_create_request_handler().
+     * From this callback, user must call aws_http_stream_configure_server_request_handler().
      */
     aws_http_on_incoming_request_fn *on_incoming_request;
 

@@ -16,7 +16,6 @@
 #include <aws/http/connection.h>
 #include <aws/http/server.h>
 #include <aws/http/request_response.h>
-#include <aws/testing/io_testing_channel.h>
 
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
@@ -49,17 +48,6 @@ struct tester_options {
     bool no_connection; /* don't connect server to client */
 };
 
-struct tester_request {
-    struct aws_http_stream *stream;
-
-    struct aws_byte_cursor method;
-    struct aws_byte_cursor uri;
-    struct aws_http_header headers[100];
-    size_t num_headers;
-    struct aws_byte_cursor body;
-};
-
-
 /* Singleton used by tests in this file */
 struct tester {
     struct aws_allocator *alloc;
@@ -79,51 +67,17 @@ struct tester {
     /* If we need to wait for some async process*/
     struct aws_mutex wait_lock;
     struct aws_condition_variable wait_cvar;
-
-  //  struct tester_request request;
     int wait_result;
 };
 
-
-static void s_test_on_complete(struct aws_http_stream *stream, int error_code, void *user_data)
+static void s_tester_on_incoming_request(struct aws_http_connection *connection,  struct aws_http_stream *stream, void *user_data) 
 {
-    struct tester_request *request = user_data;
-    (void)stream;
-    
-    struct aws_byte_buf *storage_buf;
-    
-    size_t storage_size = 0;
-    int err = aws_add_size_checked(stream->incoming_request_method_str->len, 
-        stream->incoming_request_uri->len, &storage_size);
-
-    aws_byte_buf_init(storage_buf, tester->alloc, storage_size);
-    
-    aws_byte_buf_write_from_whole_cursor(storage_buf, stream->incoming_request_method_str);
-    tester->request.method = aws_byte_cursor_from_buf(storage_buf);
-
-    aws_byte_buf_write_from_whole_cursor(storage_buf, stream->incoming_request_uri);
-    tester->request.uri = aws_byte_cursor_from_buf(storage_buf);
-    aws_byte_cursor_advance(&tester->request.uri, storage_buf->len - stream->incoming_request_uri->len);
-    
-    aws_http_stream_release(request->stream);
-    if (error_code == AWS_ERROR_SUCCESS) {
-        /* Body callback should fire if and only if the response was reported to have a body */
-        
-    }
-}
-
-
-static void s_tester_on_incoming_request(struct aws_http_connection *connection, struct aws_http_stream *stream, void *user_data) {
-    (void)connection;
-    (void)user_data;
-    (void)stream;
     struct aws_http_request_handler_options options = AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT;
-    struct tester_request t_request;
-    options.user_data = &t_request;
+    options.user_data = user_data;
     options.server_connection = connection;
-    t_request.stream = stream;
-    options.on_complete = s_test_on_complete;
     aws_http_stream_configure_server_request_handler(stream, &options);
+    //options.on_request_headers = s_tester_on_request_header;
+    //TODO
 }
 
 static void s_tester_on_server_connection_shutdown(
@@ -331,12 +285,7 @@ static int s_tester_clean_up(struct tester *tester) {
 
         aws_client_bootstrap_release(tester->client_bootstrap);
     }
-    /* 
-    if(tester->request.stream)
-    {
-        aws_http_stream_release(tester->request.stream);
-    }
-    */
+
     aws_http_server_destroy(tester->server);
     aws_server_bootstrap_release(tester->server_bootstrap);
     aws_host_resolver_clean_up(&tester->host_resolver);
@@ -346,34 +295,7 @@ static int s_tester_clean_up(struct tester *tester) {
 
     return AWS_OP_SUCCESS;
 }
-
-static int s_test_server_new_destroy(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
-    struct tester_options options = {
-        .alloc = allocator,
-        .no_connection = false,
-    };
-    struct tester tester;
-    ASSERT_SUCCESS(s_tester_init(&tester, &options));
-
-    ASSERT_SUCCESS(s_tester_clean_up(&tester));
-    return AWS_OP_SUCCESS;
-}
-AWS_TEST_CASE(server_new_destroy, s_test_server_new_destroy);
-
-static int s_test_connection_setup_shutdown(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
-    struct tester_options options = {
-        .alloc = allocator,
-    };
-    struct tester tester;
-    ASSERT_SUCCESS(s_tester_init(&tester, &options));
-
-    ASSERT_SUCCESS(s_tester_clean_up(&tester));
-    return AWS_OP_SUCCESS;
-}
-AWS_TEST_CASE(connection_setup_shutdown, s_test_connection_setup_shutdown);
-
+/*
 static int s_test_server_recieve_1line_request(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     struct tester_options options = {
@@ -390,11 +312,11 @@ static int s_test_server_recieve_1line_request(struct aws_allocator *allocator, 
     struct aws_http_stream *client_stream = aws_http_stream_new_client_request(&opt);
     ASSERT_NOT_NULL(client_stream);
 
-    /* clean up */
-    aws_http_stream_release(client_stream);
     //testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_server_recieve_1line_request, s_test_server_recieve_1line_request);
+
+ */
