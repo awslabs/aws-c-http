@@ -545,6 +545,7 @@ struct h1_stream *new_server_stream(struct h1_connection *connection)
 
         err = aws_mutex_unlock(&connection->synced_data.lock);
         AWS_FATAL_ASSERT(!err);
+        AWS_FATAL_ASSERT(!new_stream_error_code);
     } /* END CRITICAL SECTION */
     return stream;
 }
