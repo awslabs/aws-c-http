@@ -16,6 +16,8 @@
 #include <aws/http/connection.h>
 #include <aws/http/server.h>
 #include <aws/http/request_response.h>
+#include <aws/http/private/connection_impl.h>
+#include <aws/http/private/request_response_impl.h>
 
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
@@ -28,295 +30,189 @@
 #include <aws/io/tls_channel_handler.h>
 #include <aws/testing/aws_test_harness.h>
 
+#include <aws/testing/io_testing_channel.h>
+
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
-#ifdef _WIN32
-#    define LOCAL_SOCK_TEST_FORMAT "\\\\.\\pipe\\testsock-%s"
-#else
-#    define LOCAL_SOCK_TEST_FORMAT "testsock-%s.sock"
-#endif
+#define TEST_CASE(NAME)                                                                                      \
+    AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
+    static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
-enum {
-    TESTER_TIMEOUT_SEC = 60, /* Give enough time for non-sudo users to enter password */
+
+/* get the request from the channel */
+struct tester_request {
+    struct aws_http_stream *request_handler;
+
+    struct aws_byte_cursor method;
+    struct aws_byte_cursor uri;
+    struct aws_http_header headers[100];
+    size_t num_headers;
+    struct aws_byte_cursor body;
 };
 
-/* Options for setting up `tester` singleton */
-struct tester_options {
-    struct aws_allocator *alloc;
-    bool no_connection; /* don't connect server to client */
-};
 
 /* Singleton used by tests in this file */
 struct tester {
     struct aws_allocator *alloc;
     struct aws_logger logger;
-    struct aws_event_loop_group event_loop_group;
-    struct aws_host_resolver host_resolver;
-    struct aws_server_bootstrap *server_bootstrap;
-    struct aws_http_server *server;
-    struct aws_client_bootstrap *client_bootstrap;
 
     struct aws_http_connection *server_connection;
-    struct aws_http_connection *client_connection;
+    struct testing_channel testing_channel;
 
-    bool client_connection_is_shutdown;
+    struct tester_request request;
     bool server_connection_is_shutdown;
 
-    /* If we need to wait for some async process*/
-    struct aws_mutex wait_lock;
-    struct aws_condition_variable wait_cvar;
-    int wait_result;
-};
+
+} s_tester;
+
+
+static void s_test_on_complete(struct aws_http_stream *stream, int error_code, void *user_data)
+{
+    struct tester_request *request = user_data;
+    (void)stream;
+    struct aws_http_stream *r_handler = request->request_handler;
+    struct aws_byte_buf storage_buf;
+    size_t storage_size = 0;
+    aws_add_size_checked(r_handler->incoming_request_method_str.len
+        ,request->request_handler->incoming_request_uri.len, &storage_size);
+
+    aws_byte_buf_init(&storage_buf, s_tester.alloc, storage_size);
+
+    aws_byte_buf_write_from_whole_cursor(&storage_buf, r_handler->incoming_request_method_str);
+    request->method = aws_byte_cursor_from_buf(&storage_buf);
+
+    aws_byte_buf_write_from_whole_cursor(&storage_buf, r_handler->incoming_request_uri);
+    request->uri = aws_byte_cursor_from_buf(&storage_buf);
+    aws_byte_cursor_advance(&request->uri, storage_buf.len - r_handler->incoming_request_uri.len);
+
+    aws_http_stream_release(r_handler);
+    aws_byte_buf_clean_up(&storage_buf);
+    if (error_code == AWS_ERROR_SUCCESS) {
+        /* Body callback should fire if and only if the response was reported to have a body */
+        
+    }
+}
 
 static void s_tester_on_incoming_request(struct aws_http_connection *connection,  struct aws_http_stream *stream, void *user_data) 
 {
     struct aws_http_request_handler_options options = AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT;
-    options.user_data = user_data;
+    struct tester *test = user_data;
+    options.user_data = &test->request;
     options.server_connection = connection;
+    test->request.request_handler = stream;
+    options.on_complete = s_test_on_complete;
     aws_http_stream_configure_server_request_handler(stream, &options);
     //options.on_request_headers = s_tester_on_request_header;
     //TODO
 }
 
-static void s_tester_on_server_connection_shutdown(
-    struct aws_http_connection *connection,
-    int error_code,
-    void *user_data) {
-
-    (void)connection;
-    (void)error_code;
-    struct tester *tester = user_data;
-    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
-
-    tester->server_connection_is_shutdown = true;
-
-    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
-    aws_condition_variable_notify_one(&tester->wait_cvar);
-}
-
-static void s_tester_on_server_connection_setup(
-    struct aws_http_server *server,
-    struct aws_http_connection *connection,
-    int error_code,
-    void *user_data) {
-
-    (void)server;
-    struct tester *tester = user_data;
-    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
-
-    if (error_code) {
-        tester->wait_result = error_code;
-        goto done;
-    }
-
-    struct aws_http_server_connection_options options = AWS_HTTP_SERVER_CONNECTION_OPTIONS_INIT;
-    options.connection_user_data = tester;
-    options.on_incoming_request = s_tester_on_incoming_request;
-    options.on_shutdown = s_tester_on_server_connection_shutdown;
-
-    int err = aws_http_connection_configure_server(connection, &options);
-    if (err) {
-        tester->wait_result = aws_last_error();
-        goto done;
-    }
-
-    tester->server_connection = connection;
-done:
-    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
-    aws_condition_variable_notify_one(&tester->wait_cvar);
-}
-
-static void s_tester_on_client_connection_setup(
-    struct aws_http_connection *connection,
-    int error_code,
-    void *user_data) {
-
-    struct tester *tester = user_data;
-    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
-
-    if (error_code) {
-        tester->wait_result = error_code;
-        goto done;
-    }
-
-    tester->client_connection = connection;
-done:
-    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
-    aws_condition_variable_notify_one(&tester->wait_cvar);
-}
-
-static void s_tester_on_client_connection_shutdown(
-    struct aws_http_connection *connection,
-    int error_code,
-    void *user_data) {
-
-    (void)connection;
-    (void)error_code;
-    struct tester *tester = user_data;
-    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
-
-    tester->client_connection_is_shutdown = true;
-
-    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
-    aws_condition_variable_notify_one(&tester->wait_cvar);
-}
-
-static int s_tester_wait(struct tester *tester, bool (*pred)(void *user_data)) {
-    ASSERT_SUCCESS(aws_mutex_lock(&tester->wait_lock));
-    ASSERT_SUCCESS(aws_condition_variable_wait_for_pred(
-        &tester->wait_cvar,
-        &tester->wait_lock,
-        aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL),
-        pred,
-        tester));
-    ASSERT_SUCCESS(aws_mutex_unlock(&tester->wait_lock));
-
-    if (tester->wait_result) {
-        return aws_raise_error(tester->wait_result);
-    }
-    return AWS_OP_SUCCESS;
-}
-
-static bool s_tester_connection_setup_pred(void *user_data) {
-    struct tester *tester = user_data;
-    return tester->wait_result || (tester->client_connection && tester->server_connection);
-}
-
-static bool s_tester_connection_shutdown_pred(void *user_data) {
-    struct tester *tester = user_data;
-    return tester->wait_result || (tester->client_connection_is_shutdown && tester->server_connection_is_shutdown);
-}
-
-static int s_tester_init(struct tester *tester, const struct tester_options *options) {
-    AWS_ZERO_STRUCT(*tester);
-
-    tester->alloc = options->alloc;
-
+static int s_tester_init(struct aws_allocator *alloc) {
     aws_load_error_strings();
     aws_common_load_log_subject_strings();
     aws_io_load_error_strings();
     aws_io_load_log_subject_strings();
+    aws_http_library_init(alloc);
 
-    aws_http_library_init(options->alloc);
+    AWS_ZERO_STRUCT(s_tester);
+
+    s_tester.alloc = alloc;
 
     struct aws_logger_standard_options logger_options = {
         .level = AWS_LOG_LEVEL_TRACE,
         .file = stderr,
     };
+    ASSERT_SUCCESS(aws_logger_init_standard(&s_tester.logger, s_tester.alloc, &logger_options));
+    aws_logger_set(&s_tester.logger);
 
-    ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->alloc, &logger_options));
-    aws_logger_set(&tester->logger);
+    ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc));
 
-    ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
-    ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
+    s_tester.server_connection = aws_http_connection_new_http1_1_server(alloc, SIZE_MAX);
+    ASSERT_NOT_NULL(s_tester.server_connection);
+    struct aws_http_server_connection_options options = AWS_HTTP_SERVER_CONNECTION_OPTIONS_INIT;
+    options.connection_user_data = &s_tester;
+    options.on_incoming_request = s_tester_on_incoming_request;
+    
+    ASSERT_SUCCESS(aws_http_connection_configure_server(s_tester.server_connection, &options));
 
-    ASSERT_SUCCESS(aws_event_loop_group_default_init(&tester->event_loop_group, tester->alloc, 1));
-    ASSERT_SUCCESS(aws_host_resolver_init_default(&tester->host_resolver, tester->alloc, 8, &tester->event_loop_group));
-    tester->server_bootstrap = aws_server_bootstrap_new(tester->alloc, &tester->event_loop_group);
-    ASSERT_NOT_NULL(tester->server_bootstrap);
+    struct aws_channel_slot *slot = aws_channel_slot_new(s_tester.testing_channel.channel);
+    ASSERT_NOT_NULL(slot);
+    s_tester.server_connection->channel_slot = slot;
+    ASSERT_SUCCESS(aws_channel_slot_insert_end(s_tester.testing_channel.channel, slot));
+    ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &s_tester.server_connection->channel_handler));
 
-    struct aws_socket_options socket_options = {
-        .type = AWS_SOCKET_STREAM,
-        .domain = AWS_SOCKET_LOCAL,
-        .connect_timeout_ms =
-            (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
-    };
+    aws_channel_acquire_hold(s_tester.testing_channel.channel);
 
-    /* Generate random address for endpoint */
-    struct aws_uuid uuid;
-    ASSERT_SUCCESS(aws_uuid_init(&uuid));
-    char uuid_str[AWS_UUID_STR_LEN];
-    struct aws_byte_buf uuid_buf = aws_byte_buf_from_empty_array(uuid_str, sizeof(uuid_str));
-    ASSERT_SUCCESS(aws_uuid_to_str(&uuid, &uuid_buf));
-    struct aws_socket_endpoint endpoint;
-    AWS_ZERO_STRUCT(endpoint);
-
-    snprintf(endpoint.address, sizeof(endpoint.address), LOCAL_SOCK_TEST_FORMAT, uuid_str);
-
-    /* Create server (listening socket) */
-    struct aws_http_server_options server_options = AWS_HTTP_SERVER_OPTIONS_INIT;
-    server_options.allocator = tester->alloc;
-    server_options.bootstrap = tester->server_bootstrap;
-    server_options.endpoint = &endpoint;
-    server_options.socket_options = &socket_options;
-    server_options.server_user_data = tester;
-    server_options.on_incoming_connection = s_tester_on_server_connection_setup;
-
-    tester->server = aws_http_server_new(&server_options);
-    ASSERT_NOT_NULL(tester->server);
-
-    /* If test doesn't need a connection, we're done setting up. */
-    if (options->no_connection) {
-        return AWS_OP_SUCCESS;
-    }
-
-    tester->client_bootstrap =
-        aws_client_bootstrap_new(tester->alloc, &tester->event_loop_group, &tester->host_resolver, NULL);
-    ASSERT_NOT_NULL(tester->client_bootstrap);
-
-    /* Connect */
-    struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
-    client_options.allocator = tester->alloc;
-    client_options.bootstrap = tester->client_bootstrap;
-    client_options.host_name = aws_byte_cursor_from_c_str(endpoint.address);
-    client_options.port = endpoint.port;
-    client_options.socket_options = &socket_options;
-    client_options.user_data = tester;
-    client_options.on_setup = s_tester_on_client_connection_setup;
-    client_options.on_shutdown = s_tester_on_client_connection_shutdown;
-
-    ASSERT_SUCCESS(aws_http_client_connect(&client_options));
-
-    /* Wait for server & client connections to finish setup */
-    ASSERT_SUCCESS(s_tester_wait(tester, s_tester_connection_setup_pred));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     return AWS_OP_SUCCESS;
 }
 
-static int s_tester_clean_up(struct tester *tester) {
-    /* If there's a connection, shut down the server and client side. */
-    if (tester->client_connection) {
-        aws_http_connection_release(tester->client_connection);
-        aws_http_connection_release(tester->server_connection);
-
-        ASSERT_SUCCESS(s_tester_wait(tester, s_tester_connection_shutdown_pred));
-
-        aws_client_bootstrap_release(tester->client_bootstrap);
-    }
-
-    aws_http_server_destroy(tester->server);
-    aws_server_bootstrap_release(tester->server_bootstrap);
-    aws_host_resolver_clean_up(&tester->host_resolver);
-    aws_event_loop_group_clean_up(&tester->event_loop_group);
+static int s_tester_clean_up() {
+    aws_http_connection_release(s_tester.server_connection);
+    ASSERT_SUCCESS(testing_channel_clean_up(&s_tester.testing_channel));
     aws_http_library_clean_up();
-    aws_logger_clean_up(&tester->logger);
+    aws_logger_clean_up(&s_tester.logger);
+    return AWS_OP_SUCCESS;
+}
+
+/* For sending an aws_io_message into the channel, in the write or read direction */
+static int s_send_message_ex(struct aws_byte_cursor data) 
+{
+
+    struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
+        s_tester.testing_channel.channel, AWS_IO_MESSAGE_APPLICATION_DATA, data.len);
+    ASSERT_NOT_NULL(msg);
+
+    ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&msg->message_data, data));
+
+    ASSERT_SUCCESS(testing_channel_push_read_message(&s_tester.testing_channel, msg));
 
     return AWS_OP_SUCCESS;
 }
-/*
-static int s_test_server_recieve_1line_request(struct aws_allocator *allocator, void *ctx) {
+
+static int s_send_request_str(const char *str) {
+    return s_send_message_ex(aws_byte_cursor_from_c_str(str));
+}
+
+/* Check that we can set and tear down the `tester` used by all other tests in this file */
+TEST_CASE(h1_server_sanity_check) {
     (void)ctx;
-    struct tester_options options = {
-        .alloc = allocator,
-        .no_connection = false,
-    };
-    struct tester tester;
-    ASSERT_SUCCESS(s_tester_init(&tester, &options));
+    ASSERT_SUCCESS(s_tester_init(allocator));
 
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.client_connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
-    struct aws_http_stream *client_stream = aws_http_stream_new_client_request(&opt);
-    ASSERT_NOT_NULL(client_stream);
-
-    //testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    ASSERT_SUCCESS(s_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_server_recieve_1line_request, s_test_server_recieve_1line_request);
 
- */
+TEST_CASE(h1_server_recieve_1line_request) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request = "GET / HTTP/1.1\r\n"
+                           "\r\n";
+    ASSERT_SUCCESS(s_send_request_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(aws_byte_cursor_eq_c_str(&s_tester.request.method , "GET"));
+    ASSERT_SUCCESS(aws_byte_cursor_eq_c_str(&s_tester.request.uri , "/"));
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_recieve_headers) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request = "GET / HTTP/1.1\r\n"
+                                    "Host: example.com\r\n"
+                                    "Accept: */*\r\n"
+                                    "\r\n";
+    ASSERT_SUCCESS(s_send_request_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(aws_byte_cursor_eq_c_str(&s_tester.request.method , "GET"));
+    ASSERT_SUCCESS(aws_byte_cursor_eq_c_str(&s_tester.request.uri , "/"));
+
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}

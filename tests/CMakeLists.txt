@@ -175,7 +175,6 @@ add_test_case(h2_frame_window_update)
 add_test_case(h2_frame_continuation)
 
 add_test_case(server_new_destroy)
-add_test_case(test_server_recieve_1line_request)
 add_test_case(test_connection_manager_setup_shutdown)
 add_net_test_case(test_connection_manager_single_connection)
 add_net_test_case(test_connection_manager_many_connections)
@@ -186,6 +185,9 @@ add_test_case(test_connection_manager_acquire_release_mix_synchronous)
 add_test_case(test_connection_manager_connect_callback_failure)
 add_test_case(test_connection_manager_connect_immediate_failure)
 add_test_case(test_connection_manager_success_then_cancel_pending_from_failure)
+
+add_test_case(h1_server_sanity_check)
+add_test_case(h1_server_recieve_1line_request)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})

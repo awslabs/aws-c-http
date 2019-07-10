@@ -90,20 +90,20 @@ static void s_test_on_complete(struct aws_http_stream *stream, int error_code, v
     struct tester_request *request = user_data;
     (void)stream;
     
-    struct aws_byte_buf *storage_buf;
+    // struct aws_byte_buf *storage_buf;
     
-    size_t storage_size = 0;
-    int err = aws_add_size_checked(stream->incoming_request_method_str->len, 
-        stream->incoming_request_uri->len, &storage_size);
+    // size_t storage_size = 0;
+    // int err = aws_add_size_checked(stream->incoming_request_method_str->len, 
+    //     stream->incoming_request_uri->len, &storage_size);
 
-    aws_byte_buf_init(storage_buf, tester->alloc, storage_size);
+    // aws_byte_buf_init(storage_buf, tester->alloc, storage_size);
     
-    aws_byte_buf_write_from_whole_cursor(storage_buf, stream->incoming_request_method_str);
-    tester->request.method = aws_byte_cursor_from_buf(storage_buf);
+    // aws_byte_buf_write_from_whole_cursor(storage_buf, stream->incoming_request_method_str);
+    // tester->request.method = aws_byte_cursor_from_buf(storage_buf);
 
-    aws_byte_buf_write_from_whole_cursor(storage_buf, stream->incoming_request_uri);
-    tester->request.uri = aws_byte_cursor_from_buf(storage_buf);
-    aws_byte_cursor_advance(&tester->request.uri, storage_buf->len - stream->incoming_request_uri->len);
+    // aws_byte_buf_write_from_whole_cursor(storage_buf, stream->incoming_request_uri);
+    // tester->request.uri = aws_byte_cursor_from_buf(storage_buf);
+    // aws_byte_cursor_advance(&tester->request.uri, storage_buf->len - stream->incoming_request_uri->len);
     
     aws_http_stream_release(request->stream);
     if (error_code == AWS_ERROR_SUCCESS) {
