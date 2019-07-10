@@ -18,7 +18,6 @@
 
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
-#include <aws/common/log_writer.h>
 #include <aws/common/uuid.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
@@ -69,9 +68,10 @@ struct tester {
     int wait_result;
 };
 
-static void s_tester_on_incoming_request(struct aws_http_connection *connection, void *user_data) {
+static void s_tester_on_incoming_request(struct aws_http_connection *connection, struct aws_http_stream *stream, void *user_data) {
     (void)connection;
     (void)user_data;
+    (void)stream;
 }
 
 static void s_tester_on_server_connection_shutdown(
