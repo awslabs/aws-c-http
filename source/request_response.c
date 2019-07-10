@@ -125,6 +125,7 @@ error:
 }
 
 void aws_http_request_destroy(struct aws_http_request *request) {
+    /* Note that request_destroy() may also used by request_new() to clean up if something goes wrong */
     AWS_PRECONDITION(!request || request->allocator);
     if (!request) {
         return;
