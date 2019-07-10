@@ -55,6 +55,9 @@ struct tester_request {
 
     bool header_done;
     bool has_incoming_body;
+
+    bool stop_auto_window_update;
+
     struct aws_byte_cursor body;
 };
 
@@ -154,7 +157,10 @@ void s_tester_on_request_body(
         request->body.ptr = request->storage.buffer + request->storage.len;
     }
     request->body.len += data->len;
-
+    
+    if (request->stop_auto_window_update) {
+            *out_window_update_size = 0;
+        }
     AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(&request->storage, *data));
 }
 
