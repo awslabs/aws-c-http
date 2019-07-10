@@ -133,14 +133,15 @@ void aws_http_request_destroy(struct aws_http_request *request) {
     aws_string_destroy(request->method);
     aws_string_destroy(request->path);
 
-    const size_t length = aws_array_list_length(&request->headers);
-    struct aws_http_header_impl *header_impl = NULL;
-    for (size_t i = 0; i < length; ++i) {
-        aws_array_list_get_at_ptr(&request->headers, (void **)&header_impl, i);
-        AWS_ASSERT(header_impl);
-        s_header_impl_clean_up(header_impl);
+    if (aws_array_list_is_valid(&request->headers)) {
+        const size_t length = aws_array_list_length(&request->headers);
+        struct aws_http_header_impl *header_impl = NULL;
+        for (size_t i = 0; i < length; ++i) {
+            aws_array_list_get_at_ptr(&request->headers, (void **)&header_impl, i);
+            AWS_ASSERT(header_impl);
+            s_header_impl_clean_up(header_impl);
+        }
     }
-
     aws_array_list_clean_up(&request->headers);
 
     aws_mem_release(request->allocator, request);
