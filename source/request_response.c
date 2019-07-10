@@ -318,8 +318,8 @@ struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http
 }
 
 int aws_http_stream_configure_server_request_handler(
-    struct aws_http_stream *stream, const struct aws_http_request_handler_options *options)
-{
+    struct aws_http_stream *stream,
+    const struct aws_http_request_handler_options *options) {
     if (!options || options->self_size == 0 || !options->server_connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,

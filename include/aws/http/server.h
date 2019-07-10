@@ -103,7 +103,10 @@ struct aws_http_server_options {
 #define AWS_HTTP_SERVER_OPTIONS_INIT                                                                                   \
     { .self_size = sizeof(struct aws_http_server_options), .initial_window_size = SIZE_MAX, }
 
-typedef void(aws_http_on_incoming_request_fn)( struct aws_http_connection *connection,  struct aws_http_stream *stream, void *user_data);
+typedef void(aws_http_on_incoming_request_fn)(
+    struct aws_http_connection *connection,
+    struct aws_http_stream *stream,
+    void *user_data);
 
 typedef void(aws_http_on_server_connection_shutdown_fn)(
     struct aws_http_connection *connection,

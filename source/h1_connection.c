@@ -59,7 +59,9 @@ static size_t s_handler_initial_window_size(struct aws_channel_handler *handler)
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
 static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
-int s_configure_server_request_handler_stream(struct aws_http_stream *stream, const struct aws_http_request_handler_options *options);
+int s_configure_server_request_handler_stream(
+    struct aws_http_stream *stream,
+    const struct aws_http_request_handler_options *options);
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static void s_stream_destroy(struct aws_http_stream *stream_base);
@@ -520,11 +522,9 @@ error_scanning_headers:
     return NULL;
 }
 
-struct h1_stream *new_server_stream(struct h1_connection *connection)
-{
+struct h1_stream *new_server_stream(struct h1_connection *connection) {
     struct h1_stream *stream = aws_mem_calloc(connection->base.alloc, 1, sizeof(struct h1_stream));
-    if (!stream) 
-    {
+    if (!stream) {
         /*log the bug */
         return NULL;
     }
@@ -550,8 +550,9 @@ struct h1_stream *new_server_stream(struct h1_connection *connection)
     return stream;
 }
 
-int s_configure_server_request_handler_stream(struct aws_http_stream *stream ,const struct aws_http_request_handler_options *options) 
-{
+int s_configure_server_request_handler_stream(
+    struct aws_http_stream *stream,
+    const struct aws_http_request_handler_options *options) {
     if (!stream || !options) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "id=%p: Invalid stream configuration options.", (void *)stream);
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -571,22 +572,21 @@ int s_configure_server_request_handler_stream(struct aws_http_stream *stream ,co
     aws_atomic_init_int(&stream->refcount, 2);
 
     /* Success! */
-    
+
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_STREAM,
         "id=%p: Created server request handler on connection=%p: " PRInSTR,
         (void *)stream,
         (void *)options->server_connection,
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(options->server_connection->http_version)));
-    
-    /* 
+
+    /*
     if (should_schedule_task) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling outgoing stream task.", (void *)&connection->base);
         aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
     }
     */
     return AWS_OP_SUCCESS;
-
 }
 
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
@@ -793,7 +793,7 @@ static void s_stream_complete(struct h1_stream *stream, int error_code) {
     struct h1_connection *connection = AWS_CONTAINER_OF(stream->base.owning_connection, struct h1_connection, base);
 
     /* Remove stream from list. */
-    aws_linked_list_remove(&stream->node);//? rmeove form where
+    aws_linked_list_remove(&stream->node); //? rmeove form where
 
     /* If stream completed successfully, check for ways it might alter the state of the connection.
      * If anything goes wrong here, modify error_code, and the connection will get shut down as a result. */
@@ -1108,21 +1108,19 @@ static int s_decoder_on_request(
     struct h1_connection *connection = user_data;
 
     AWS_ASSERT(!connection->thread_data.incoming_stream);
-    if(!connection->thread_data.incoming_stream)
-    {
-        /*make a new stream for this request and push it into the stream list wait for response 
+    if (!connection->thread_data.incoming_stream) {
+        /*make a new stream for this request and push it into the stream list wait for response
         //only for server side!*/
         struct h1_stream *stream = new_server_stream(connection);
         AWS_ASSERT(stream);
-        connection->base.server_data->on_incoming_request(&(connection->base), &(stream->base), 
-            connection->base.server_data->connection_user_data);
+        connection->base.server_data->on_incoming_request(
+            &(connection->base), &(stream->base), connection->base.server_data->connection_user_data);
         connection->thread_data.incoming_stream = stream;
     }
 
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
 
     /* one message is containing mutiple requests */
-    
 
     AWS_ASSERT(incoming_stream->base.incoming_request_method_str.len == 0);
     AWS_ASSERT(incoming_stream->base.incoming_request_uri.len == 0);
@@ -1302,17 +1300,15 @@ static int s_decoder_on_done(void *user_data) {
     }
 
     incoming_stream->is_incoming_message_done = true;
-    if(connection->base.server_data)
-    {
+    if (connection->base.server_data) {
         s_stream_complete(incoming_stream, AWS_ERROR_SUCCESS);
         connection->thread_data.incoming_stream = NULL;
-    }
-    else if (incoming_stream->outgoing_state == STREAM_OUTGOING_STATE_DONE) {
-            AWS_ASSERT(&incoming_stream->node == aws_linked_list_begin(&connection->thread_data.stream_list));
+    } else if (incoming_stream->outgoing_state == STREAM_OUTGOING_STATE_DONE) {
+        AWS_ASSERT(&incoming_stream->node == aws_linked_list_begin(&connection->thread_data.stream_list));
 
-            s_stream_complete(incoming_stream, AWS_ERROR_SUCCESS);
+        s_stream_complete(incoming_stream, AWS_ERROR_SUCCESS);
 
-            s_update_incoming_stream_ptr(connection);
+        s_update_incoming_stream_ptr(connection);
     }
 
     /* Report success even if user's on_complete() callback shuts down on the connection.
@@ -1584,11 +1580,11 @@ static int s_handler_process_read_message(
             /* Else processing message as normal HTTP data. */
             if (!connection->thread_data.incoming_stream) {
                 /* TODO: Server connection would create new request-handler stream at this point. */
-                if(connection->base.client_data)
-                /*client side*/ 
+                if (connection->base.client_data)
+                /*client side*/
                 {
-                    if(connection->base.server_data)
-                    {/*error should never reach here*/}
+                    if (connection->base.server_data) { /*error should never reach here*/
+                    }
                     AWS_LOGF_ERROR(
                         AWS_LS_HTTP_CONNECTION,
                         "id=%p: Cannot process message because no requests are currently awaiting response, closing "
@@ -1598,8 +1594,8 @@ static int s_handler_process_read_message(
                     aws_raise_error(AWS_ERROR_INVALID_STATE);
                     goto shutdown;
                 }
-                /* server side: do nothing and let the decoder to detect a new request and form a new request handler stream */
-                
+                /* server side: do nothing and let the decoder to detect a new request and form a new request handler
+                 * stream */
             }
 
             /* Decoder will invoke the internal s_decoder_X callbacks, which in turn invoke user callbacks */

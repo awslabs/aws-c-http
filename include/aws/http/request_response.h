@@ -188,7 +188,7 @@ struct aws_http_request_handler_options {
      * Required.
      */
     void *user_data;
-   
+
     aws_http_on_incoming_headers_fn *on_request_headers;
     aws_http_on_incoming_header_block_done_fn *on_request_header_block_done;
     aws_http_on_incoming_body_fn *on_request_body;
@@ -326,7 +326,8 @@ struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http
  */
 AWS_HTTP_API
 int aws_http_stream_configure_server_request_handler(
-    struct aws_http_stream *stream, const struct aws_http_request_handler_options *options);        //TODO
+    struct aws_http_stream *stream,
+    const struct aws_http_request_handler_options *options); // TODO
 
 /**
  * Users must release the stream when they are done with it, or its memory will never be cleaned up.
@@ -357,7 +358,9 @@ int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *strea
 
 /* only callable from "request handler" streams */
 AWS_HTTP_API
-int aws_http_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options); //TODO
+int aws_http_stream_send_response(
+    struct aws_http_stream *stream,
+    const struct aws_http_response_options *options); // TODO
 
 /**
  * Manually issue a window update.
