@@ -236,7 +236,7 @@ static int s_tester_init(struct aws_allocator *alloc)
     return AWS_OP_SUCCESS;
 }
 
-static int s_server_request_clean_up() 
+static int s_server_request_clean_up(void) 
 {
     for(int i = 0; i<s_tester.request_num; i++)
     {
@@ -246,7 +246,7 @@ static int s_server_request_clean_up()
     return AWS_OP_SUCCESS;
 }
 
-static int s_server_tester_clean_up() 
+static int s_server_tester_clean_up(void) 
 {
     s_server_request_clean_up();
     aws_http_connection_release(s_tester.server_connection);
