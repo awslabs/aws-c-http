@@ -125,6 +125,7 @@ error:
 }
 
 void aws_http_request_destroy(struct aws_http_request *request) {
+    /* Note that request_destroy() may also used by request_new() to clean up if something goes wrong */
     AWS_PRECONDITION(!request || request->allocator);
     if (!request) {
         return;
@@ -141,9 +142,8 @@ void aws_http_request_destroy(struct aws_http_request *request) {
             AWS_ASSERT(header_impl);
             s_header_impl_clean_up(header_impl);
         }
-
-        aws_array_list_clean_up(&request->headers);
     }
+    aws_array_list_clean_up(&request->headers);
 
     aws_mem_release(request->allocator, request);
 }
