@@ -80,12 +80,13 @@ static void s_test_on_complete(struct aws_http_stream *stream, int error_code, v
     struct aws_http_stream *r_handler = request->request_handler;
     struct aws_byte_buf storage_buf = request->storage;
 
+    request->method = r_handler->incoming_request_method_str;
+    request->method.ptr = storage_buf.buffer+storage_buf.len;
     aws_byte_buf_write_from_whole_cursor(&storage_buf, r_handler->incoming_request_method_str);
-    request->method = aws_byte_cursor_from_buf(&storage_buf);
-
+    
+    request->uri = r_handler->incoming_request_uri;
+    request->uri.ptr = storage_buf.buffer+storage_buf.len;
     aws_byte_buf_write_from_whole_cursor(&storage_buf, r_handler->incoming_request_uri);
-    request->uri = aws_byte_cursor_from_buf(&storage_buf);
-    aws_byte_cursor_advance(&request->uri, storage_buf.len - r_handler->incoming_request_uri.len);
 
     //aws_http_stream_release(r_handler);
     if (error_code == AWS_ERROR_SUCCESS) {
@@ -104,11 +105,25 @@ void s_tester_on_request_header(
     (void) header_array;
     (void) num_headers;
     (void) request;
+    struct aws_byte_buf *storage = &request->storage;
+    const struct aws_http_header *in_header = header_array;
+    struct aws_http_header *my_header = request->headers + request->num_headers;
+    for (size_t i = 0; i < num_headers; ++i) {
+        /* copy-by-value, then update cursors to point into permanent storage */
+        *my_header = *in_header;
 
+        my_header->name.ptr = storage->buffer + storage->len;
+        AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(storage, in_header->name));
+
+        my_header->value.ptr = storage->buffer + storage->len;
+        AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(storage, in_header->value));
+
+        in_header++;
+        my_header++;
+        request->num_headers++;
+    }
     // int index = request->num_headers;
     // request->headers[index];
-
-    // request->num_headers++;
 }
 
 //create a new request handler
@@ -240,6 +255,16 @@ TEST_CASE(h1_server_recieve_1line_request) {
     return AWS_OP_SUCCESS;
 }
 
+static int s_check_header(struct tester_request *request, size_t i, const char *name_str, const char *value) {
+
+    ASSERT_TRUE(i < request->num_headers);
+    struct aws_http_header *header = request->headers + i;
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str_ignore_case(&header->name, name_str));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str_ignore_case(&header->value, value));
+
+    return AWS_OP_SUCCESS;
+}
+
 TEST_CASE(h1_server_recieve_headers) {
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
@@ -250,8 +275,14 @@ TEST_CASE(h1_server_recieve_headers) {
                                     "\r\n";
     ASSERT_SUCCESS(s_send_request_str(incoming_request));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    ASSERT_SUCCESS(aws_byte_cursor_eq_c_str(&s_tester.requests[0].method , "GET"));
-    ASSERT_SUCCESS(aws_byte_cursor_eq_c_str(&s_tester.requests[0].uri , "/"));
+    ASSERT_TRUE(s_tester.request_num == 1);
+
+    struct tester_request request = s_tester.requests[0];
+    ASSERT_TRUE(request.num_headers == 2);
+    ASSERT_SUCCESS(s_check_header(&request, 0, "Host", "example.com"));
+    ASSERT_SUCCESS(s_check_header(&request, 1, "Accept", "*/*"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method , "GET"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri , "/"));
 
     ASSERT_SUCCESS(s_tester_clean_up());
     return AWS_OP_SUCCESS;
