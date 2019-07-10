@@ -18,6 +18,7 @@
 
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
+#include <aws/common/log_writer.h>
 #include <aws/common/uuid.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
