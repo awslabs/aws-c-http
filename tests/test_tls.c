@@ -182,15 +182,19 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
     ASSERT_INT_EQUALS(0, test.wait_result);
     ASSERT_NOT_NULL(test.client_connection);
 
-    struct aws_http_header headers[] = {
-        {.name = aws_byte_cursor_from_c_str("Host"), .value = *aws_uri_host_name(&uri)}};
+    struct aws_http_request *request = aws_http_request_new(allocator);
+    aws_http_request_set_method(request, aws_byte_cursor_from_c_str("GET"));
+    aws_http_request_set_path(request, *aws_uri_path_and_query(&uri));
+
+    struct aws_http_header header_host = {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
+        .value = *aws_uri_host_name(&uri),
+    };
+    aws_http_request_add_header(request, header_host);
 
     struct aws_http_request_options req_options = AWS_HTTP_REQUEST_OPTIONS_INIT;
     req_options.client_connection = test.client_connection;
-    req_options.method = aws_byte_cursor_from_c_str("GET");
-    req_options.uri = *aws_uri_path_and_query(&uri);
-    req_options.header_array = headers;
-    req_options.num_headers = AWS_ARRAY_SIZE(headers);
+    req_options.request = request;
     req_options.on_response_headers = s_on_stream_headers;
     req_options.on_response_body = s_on_stream_body;
     req_options.on_complete = s_on_stream_complete;

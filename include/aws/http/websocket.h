@@ -170,29 +170,30 @@ struct aws_websocket_client_connection_options {
      * Required.
      * aws_websocket_client_connect() makes a copy.
      */
-    struct aws_uri *uri;
+    struct aws_byte_cursor host;
 
     /**
-     * Array of headers for the HTTP Upgrade request.
+     * Optional.
+     * Defaults to 443 if tls_options is present, 80 if it is not.
+     */
+    uint16_t port;
+
+    /**
      * Required.
-     * aws_websocket_client_connect() deep-copies all contents.
-     * The following headers are required:
+     * The request must outlive the handshake process (it will be safe to release in on_connection_setup())
+     * Suggestion: create via aws_http_request_new_websocket_handshake()
      *
-     * Host: server.example.com
+     * The following headers are required (replace values in []):
+     *
+     * Host: [server.example.com]
      * Upgrade: websocket
      * Connection: Upgrade
-     * Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+     * Sec-WebSocket-Key: [dGhlIHNhbXBsZSBub25jZQ==]
      * Sec-WebSocket-Version: 13
      *
      * Sec-Websocket-Key should be a random 16 bytes value, Base64 encoded.
      */
-    const struct aws_http_header *handshake_header_array;
-
-    /**
-     * Number of entries in handshake_header_array.
-     * Required.
-     */
-    size_t num_handshake_headers;
+    struct aws_http_request *handshake_request;
 
     /**
      * Initial window size for websocket.

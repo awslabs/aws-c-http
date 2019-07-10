@@ -52,29 +52,6 @@ static const struct aws_websocket_client_bootstrap_system_vtable s_mock_system_v
     .aws_websocket_handler_new = s_mock_websocket_handler_new,
 };
 
-static const struct aws_http_header s_handshake_request_headers[] = {
-    {
-        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
-        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("server.example.com"),
-    },
-    {
-        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
-        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("websocket"),
-    },
-    {
-        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Connection"),
-        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
-    },
-    {
-        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Key"),
-        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("dGhlIHNhbXBsZSBub25jZQ=="),
-    },
-    {
-        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Sec-WebSocket-Version"),
-        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("13"),
-    },
-};
-
 static const struct aws_http_header s_handshake_response_headers[] = {
     {
         .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Upgrade"),
@@ -108,8 +85,7 @@ static struct tester {
     struct aws_allocator *alloc;
     enum boot_step fail_at_step;
 
-    const struct aws_http_header *handshake_request_headers;
-    size_t num_handshake_request_headers;
+    struct aws_http_request *handshake_request;
     const struct aws_http_header *handshake_response_headers;
     size_t num_handshake_response_headers;
 
@@ -162,10 +138,6 @@ static int s_tester_init(struct aws_allocator *alloc) {
     if (!s_tester.alloc) {
         s_tester.alloc = alloc;
     }
-    if (!s_tester.handshake_request_headers) {
-        s_tester.handshake_request_headers = s_handshake_request_headers;
-        s_tester.num_handshake_request_headers = AWS_ARRAY_SIZE(s_handshake_request_headers);
-    }
     if (!s_tester.handshake_response_headers) {
         s_tester.handshake_response_headers = s_handshake_response_headers;
         s_tester.num_handshake_response_headers = AWS_ARRAY_SIZE(s_handshake_response_headers);
@@ -197,6 +169,47 @@ static bool s_headers_eq(
 
         for (size_t b_i = 0; b_i < num_headers_b; ++b_i) {
             struct aws_http_header b = headers_b[b_i];
+
+            if (aws_byte_cursor_eq_ignore_case(&a.name, &b.name) &&
+                aws_byte_cursor_eq_ignore_case(&a.value, &b.value)) {
+
+                found_match = true;
+                break;
+            }
+        }
+
+        if (!found_match) {
+            printf(
+                "Failed to find header '" PRInSTR ": " PRInSTR "'\n",
+                AWS_BYTE_CURSOR_PRI(a.name),
+                AWS_BYTE_CURSOR_PRI(a.value));
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool s_request_eq(
+    const struct aws_http_request *request_a,
+    const struct aws_http_request *request_b) {
+
+    const size_t num_headers_a = aws_http_request_get_header_count(request_a);
+    const size_t num_headers_b = aws_http_request_get_header_count(request_b);
+
+    if (num_headers_a != num_headers_b) {
+        return false;
+    }
+
+    for (size_t a_i = 0; a_i < num_headers_a; ++a_i) {
+            struct aws_http_header a;
+            aws_http_request_get_header(request_a, &a, a_i);
+
+        bool found_match = false;
+
+        for (size_t b_i = 0; b_i < num_headers_b; ++b_i) {
+            struct aws_http_header b;
+            aws_http_request_get_header(request_b, &b, b_i);
 
             if (aws_byte_cursor_eq_ignore_case(&a.name, &b.name) &&
                 aws_byte_cursor_eq_ignore_case(&a.value, &b.value)) {
@@ -268,11 +281,7 @@ static struct aws_http_stream *s_mock_http_stream_new_client_request(const struc
     }
 
     /* Check that headers passed into websocket_connect() carry through. */
-    AWS_FATAL_ASSERT(s_headers_eq(
-        s_tester.handshake_request_headers,
-        s_tester.num_handshake_request_headers,
-        options->header_array,
-        options->num_headers));
+    AWS_FATAL_ASSERT(s_request_eq(s_tester.handshake_request, options->request));
 
     s_tester.http_stream_new_called_successfully = true;
     s_tester.http_stream_on_response_headers = options->on_response_headers;
@@ -351,6 +360,10 @@ static void s_on_websocket_setup(
 
     s_tester.websocket_setup_invoked = true;
     s_tester.websocket_setup_error_code = error_code;
+
+    /* Don't need the request anymore */
+    aws_http_request_destroy(s_tester.handshake_request);
+    s_tester.handshake_request = NULL;
 }
 
 static void s_on_websocket_shutdown(struct aws_websocket *websocket, int error_code, void *user_data) {
@@ -370,10 +383,11 @@ static int s_drive_websocket_connect(int *out_error_code) {
     bool http_connect_setup_reported_success = false;
 
     /* Call websocket_connect() */
-    struct aws_byte_cursor uri_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("server.example.com");
-    struct aws_uri uri;
-    int err = aws_uri_init_parse(&uri, s_tester.alloc, &uri_cursor);
-    if (err) {
+    static struct aws_byte_cursor path = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("/");
+    static const struct aws_byte_cursor host = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("server.example.com");
+
+    s_tester.handshake_request = aws_http_request_new_websocket_handshake(s_tester.alloc, path, host);
+    if (!s_tester.handshake_request) {
         goto finishing_checks;
     }
 
@@ -381,16 +395,14 @@ static int s_drive_websocket_connect(int *out_error_code) {
         .allocator = s_tester.alloc,
         .bootstrap = (void *)"client channel bootstrap",
         .socket_options = (void *)"socket options",
-        .uri = &uri,
-        .handshake_header_array = s_tester.handshake_request_headers,
-        .num_handshake_headers = s_tester.num_handshake_request_headers,
+        .host = host,
+        .handshake_request = s_tester.handshake_request,
         .user_data = &s_tester,
         .on_connection_setup = s_on_websocket_setup,
         .on_connection_shutdown = s_on_websocket_shutdown,
     };
 
-    err = aws_websocket_client_connect(&ws_options);
-    aws_uri_clean_up(&uri);
+    int err = aws_websocket_client_connect(&ws_options);
 
     if (err) {
         goto finishing_checks;
@@ -465,6 +477,12 @@ static int s_drive_websocket_connect(int *out_error_code) {
     s_tester.http_connect_shutdown_callback(s_mock_http_connection, AWS_ERROR_SUCCESS, s_tester.http_connect_user_data);
 
 finishing_checks:
+
+    /* Free the request */
+    if (s_tester.handshake_request) {
+        aws_http_request_destroy(s_tester.handshake_request);
+        s_tester.handshake_request = NULL;
+    }
 
     if (!websocket_connect_called_successfully) {
         /* If we didn't even kick off the async process, aws_last_error() has reason for failure */

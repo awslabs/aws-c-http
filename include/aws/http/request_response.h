@@ -112,32 +112,11 @@ struct aws_http_request_options {
     struct aws_http_connection *client_connection;
 
     /**
-     * Required for HTTP/1.
-     * Not required in HTTP/2 if :method header is passed in.
+     * Required.
      */
-    struct aws_byte_cursor method;
-
-    /**
-     * Required for HTTP/1.
-     * Not required in HTTP/2 if :path header is passed in.
-     */
-    struct aws_byte_cursor uri;
-
-    /**
-     * Array of request headers.
-     * Optional.
-     * For HTTP/2, if :method and :path headers not passed in they will be generated from the `method` and `uri`.
-     */
-    const struct aws_http_header *header_array;
-    size_t num_headers;
+    struct aws_http_request *request;
 
     void *user_data;
-
-    /**
-     * Callback responsible for sending the request body.
-     * Required if request has a body.
-     */
-    aws_http_stream_outgoing_body_fn *stream_outgoing_body;
 
     /**
      * Invoked repeatedly times as headers are received.
@@ -287,6 +266,19 @@ int aws_http_request_get_header(
  */
 AWS_HTTP_API
 int aws_http_request_add_header(struct aws_http_request *request, struct aws_http_header header);
+
+/**
+ * Add an array of headers to the end of the header array.
+ * The request makes its own copy of the underlying strings.
+ *
+ * This is a helper function useful when it's easier to define headers as a stack array, rather than calling add_header
+ * repeatedly.
+ */
+AWS_HTTP_API
+int aws_http_request_add_header_array(
+    struct aws_http_request *request,
+    struct aws_http_header *headers,
+    size_t num_headers);
 
 /**
  * Modify the header at the specified index.
