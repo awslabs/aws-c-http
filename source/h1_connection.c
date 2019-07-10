@@ -1112,10 +1112,7 @@ static int s_decoder_on_request(
         /*make a new stream for this request and push it into the stream list wait for response 
         //only for server side!*/
         struct h1_stream *stream = new_server_stream(connection);
-        if (!stream) 
-        {
-            /*log the bug */
-        }
+        AWS_ASSERT(stream);
         connection->base.server_data->on_incoming_request(&(connection->base), &(stream->base), 
             connection->base.server_data->connection_user_data);
         connection->thread_data.incoming_stream = stream;
