@@ -52,6 +52,9 @@ struct tester_request {
     struct aws_byte_cursor uri;
     struct aws_http_header headers[100];
     size_t num_headers;
+
+    bool header_done;
+    bool has_incoming_body;
     struct aws_byte_cursor body;
 };
 
@@ -102,9 +105,6 @@ void s_tester_on_request_header(
 {
     (void)stream;
     struct tester_request *request = user_data;    
-    (void) header_array;
-    (void) num_headers;
-    (void) request;
     struct aws_byte_buf *storage = &request->storage;
     const struct aws_http_header *in_header = header_array;
     struct aws_http_header *my_header = request->headers + request->num_headers;
@@ -126,6 +126,39 @@ void s_tester_on_request_header(
     // request->headers[index];
 }
 
+void s_tester_on_request_header_block_done(struct aws_http_stream *stream, bool has_body, void *user_data)
+{
+    (void) stream;
+    struct tester_request *request = user_data; 
+    AWS_FATAL_ASSERT(request->header_done == false);
+    request->header_done = true;
+    request->has_incoming_body = has_body;
+}
+
+void s_tester_on_request_body(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    size_t *out_window_update_size,
+    void *user_data)
+{
+    (void) out_window_update_size;
+    (void) stream;
+    struct tester_request *request = user_data;  
+
+    AWS_FATAL_ASSERT(request->header_done == true);
+
+    AWS_FATAL_ASSERT(request->has_incoming_body);
+
+    /* Copy data into storage, and point body cursor at that */
+    if (!request->body.ptr) {
+        request->body.ptr = request->storage.buffer + request->storage.len;
+    }
+    request->body.len += data->len;
+
+    AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(&request->storage, *data));
+}
+
+
 //create a new request handler
 static void s_tester_on_incoming_request(struct aws_http_connection *connection,  struct aws_http_stream *stream, void *user_data) 
 {
@@ -135,20 +168,26 @@ static void s_tester_on_incoming_request(struct aws_http_connection *connection,
     int index = test->request_num;
     //initialize the new request
     test->requests[index].num_headers = 0;
+    test->requests[index].has_incoming_body = false;
+    test->requests[index].header_done = false;
 
     aws_byte_buf_init(&(test->requests[index].storage), test->alloc, 1024 * 1024 * 1);
-    options.user_data = &test->requests;
+    options.user_data = &test->requests[index];
     options.server_connection = connection;
     test->requests[index].request_handler = stream;
     options.on_complete = s_test_on_complete;
     options.on_request_headers = s_tester_on_request_header;
-    
+    options.on_request_header_block_done = s_tester_on_request_header_block_done;
+    options.on_request_body = s_tester_on_request_body;
+
+
     test->request_num++;
     aws_http_stream_configure_server_request_handler(stream, &options);
     //TODO
 }
 
-static int s_tester_init(struct aws_allocator *alloc) {
+static int s_tester_init(struct aws_allocator *alloc) 
+{
     aws_load_error_strings();
     aws_common_load_log_subject_strings();
     aws_io_load_error_strings();
@@ -191,7 +230,8 @@ static int s_tester_init(struct aws_allocator *alloc) {
     return AWS_OP_SUCCESS;
 }
 
-static int s_request_clean_up() {
+static int s_request_clean_up() 
+{
     for(int i = 0; i<s_tester.request_num; i++)
     {
         aws_http_stream_release(s_tester.requests[i].request_handler);
@@ -200,7 +240,8 @@ static int s_request_clean_up() {
     return AWS_OP_SUCCESS;
 }
 
-static int s_tester_clean_up() {
+static int s_tester_clean_up() 
+{
     s_request_clean_up();
     aws_http_connection_release(s_tester.server_connection);
     ASSERT_SUCCESS(testing_channel_clean_up(&s_tester.testing_channel));
@@ -226,12 +267,14 @@ static int s_send_message_ex(struct aws_byte_cursor data)
     return AWS_OP_SUCCESS;
 }
 
-static int s_send_request_str(const char *str) {
+static int s_send_request_str(const char *str) 
+{
     return s_send_message_ex(aws_byte_cursor_from_c_str(str));
 }
 
 /* Check that we can set and tear down the `tester` used by all other tests in this file */
-TEST_CASE(h1_server_sanity_check) {
+TEST_CASE(h1_server_sanity_check) 
+{
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
 
@@ -239,7 +282,8 @@ TEST_CASE(h1_server_sanity_check) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(h1_server_recieve_1line_request) {
+TEST_CASE(h1_server_recieve_1line_request) 
+{
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
 
@@ -247,6 +291,7 @@ TEST_CASE(h1_server_recieve_1line_request) {
                            "\r\n";
     ASSERT_SUCCESS(s_send_request_str(incoming_request));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    
     ASSERT_TRUE(s_tester.request_num == 1);
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&s_tester.requests[0].method , "GET"));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&s_tester.requests[0].uri , "/"));
@@ -255,7 +300,8 @@ TEST_CASE(h1_server_recieve_1line_request) {
     return AWS_OP_SUCCESS;
 }
 
-static int s_check_header(struct tester_request *request, size_t i, const char *name_str, const char *value) {
+static int s_check_header(struct tester_request *request, size_t i, const char *name_str, const char *value) 
+{
 
     ASSERT_TRUE(i < request->num_headers);
     struct aws_http_header *header = request->headers + i;
@@ -265,7 +311,8 @@ static int s_check_header(struct tester_request *request, size_t i, const char *
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(h1_server_recieve_headers) {
+TEST_CASE(h1_server_recieve_headers) 
+{
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
 
@@ -275,6 +322,7 @@ TEST_CASE(h1_server_recieve_headers) {
                                     "\r\n";
     ASSERT_SUCCESS(s_send_request_str(incoming_request));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    
     ASSERT_TRUE(s_tester.request_num == 1);
 
     struct tester_request request = s_tester.requests[0];
@@ -283,7 +331,96 @@ TEST_CASE(h1_server_recieve_headers) {
     ASSERT_SUCCESS(s_check_header(&request, 1, "Accept", "*/*"));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method , "GET"));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri , "/"));
+    ASSERT_TRUE(request.body.len == 0);
 
+    /* clean up */
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_recieve_body) 
+{
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request = "PUT /plan.txt HTTP/1.1\r\n"
+                                    "Content-Length: 16\r\n"
+                                    "\r\n"
+                                    "write more tests";
+    ASSERT_SUCCESS(s_send_request_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    
+    ASSERT_TRUE(s_tester.request_num == 1);
+
+    struct tester_request request = s_tester.requests[0];
+    ASSERT_TRUE(request.num_headers == 1);
+    ASSERT_SUCCESS(s_check_header(&request, 0, "Content-Length", "16"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method , "PUT"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri , "/plan.txt"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.body, "write more tests"));
+
+    /* clean up */
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_recieve_1_request_from_multiple_io_messages) 
+{
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request = "PUT /plan.txt HTTP/1.1\r\n"
+                                    "Content-Length: 16\r\n"
+                                    "\r\n"
+                                    "write more tests";
+    size_t str_len = strlen(incoming_request);
+    for (size_t i = 0; i < str_len; ++i) {
+        s_send_message_ex(aws_byte_cursor_from_array(incoming_request + i, 1));
+    }
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    
+    ASSERT_TRUE(s_tester.request_num == 1);
+
+    struct tester_request request = s_tester.requests[0];
+    ASSERT_TRUE(request.num_headers == 1);
+    ASSERT_SUCCESS(s_check_header(&request, 0, "Content-Length", "16"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method , "PUT"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri , "/plan.txt"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.body, "write more tests"));
+
+    /* clean up */
+    ASSERT_SUCCESS(s_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_recieve_multiple_requests_from_1_io_messages) 
+{
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request = "PUT /plan.txt HTTP/1.1\r\n"
+                                    "Content-Length: 16\r\n"
+                                    "\r\n"
+                                    "write more tests"
+                                    "GET / HTTP/1.1\r\n"
+                                    "\r\n";
+    ASSERT_SUCCESS(s_send_request_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    
+    ASSERT_TRUE(s_tester.request_num == 2);
+
+    struct tester_request request = s_tester.requests[0];
+    ASSERT_TRUE(request.num_headers == 1);
+    ASSERT_SUCCESS(s_check_header(&request, 0, "Content-Length", "16"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method , "PUT"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri , "/plan.txt"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.body, "write more tests"));
+
+    request = s_tester.requests[1];
+    ASSERT_TRUE(request.num_headers == 0);
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method , "GET"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri , "/"));
+    /* clean up */
     ASSERT_SUCCESS(s_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
