@@ -157,7 +157,7 @@ void s_tester_on_request_body(
         request->body.ptr = request->storage.buffer + request->storage.len;
     }
     request->body.len += data->len;
-    
+
     if (request->stop_auto_window_update) {
             *out_window_update_size = 0;
         }
@@ -236,7 +236,7 @@ static int s_tester_init(struct aws_allocator *alloc)
     return AWS_OP_SUCCESS;
 }
 
-static int s_request_clean_up() 
+static int s_server_request_clean_up() 
 {
     for(int i = 0; i<s_tester.request_num; i++)
     {
@@ -246,9 +246,9 @@ static int s_request_clean_up()
     return AWS_OP_SUCCESS;
 }
 
-static int s_tester_clean_up() 
+static int s_server_tester_clean_up() 
 {
-    s_request_clean_up();
+    s_server_request_clean_up();
     aws_http_connection_release(s_tester.server_connection);
     ASSERT_SUCCESS(testing_channel_clean_up(&s_tester.testing_channel));
     aws_http_library_clean_up();
@@ -284,7 +284,7 @@ TEST_CASE(h1_server_sanity_check)
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
 
-    ASSERT_SUCCESS(s_tester_clean_up());
+    ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
 
@@ -302,7 +302,7 @@ TEST_CASE(h1_server_recieve_1line_request)
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&s_tester.requests[0].method , "GET"));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&s_tester.requests[0].uri , "/"));
 
-    ASSERT_SUCCESS(s_tester_clean_up());
+    ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
 
@@ -340,7 +340,7 @@ TEST_CASE(h1_server_recieve_headers)
     ASSERT_TRUE(request.body.len == 0);
 
     /* clean up */
-    ASSERT_SUCCESS(s_tester_clean_up());
+    ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
 
@@ -366,7 +366,7 @@ TEST_CASE(h1_server_recieve_body)
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.body, "write more tests"));
 
     /* clean up */
-    ASSERT_SUCCESS(s_tester_clean_up());
+    ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
 
@@ -395,7 +395,7 @@ TEST_CASE(h1_server_recieve_1_request_from_multiple_io_messages)
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.body, "write more tests"));
 
     /* clean up */
-    ASSERT_SUCCESS(s_tester_clean_up());
+    ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
 
@@ -427,6 +427,6 @@ TEST_CASE(h1_server_recieve_multiple_requests_from_1_io_messages)
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method , "GET"));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri , "/"));
     /* clean up */
-    ASSERT_SUCCESS(s_tester_clean_up());
+    ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
