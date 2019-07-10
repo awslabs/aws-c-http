@@ -45,6 +45,9 @@
 struct tester_request {
     struct aws_http_stream *request_handler;
 
+    /* All cursors in tester_request point into here */
+    struct aws_byte_buf storage;
+
     struct aws_byte_cursor method;
     struct aws_byte_cursor uri;
     struct aws_http_header headers[100];
@@ -61,7 +64,9 @@ struct tester {
     struct aws_http_connection *server_connection;
     struct testing_channel testing_channel;
 
-    struct tester_request request;
+    struct tester_request requests[100];
+    int request_num;
+
     bool server_connection_is_shutdown;
 
 
@@ -73,12 +78,7 @@ static void s_test_on_complete(struct aws_http_stream *stream, int error_code, v
     struct tester_request *request = user_data;
     (void)stream;
     struct aws_http_stream *r_handler = request->request_handler;
-    struct aws_byte_buf storage_buf;
-    size_t storage_size = 0;
-    aws_add_size_checked(r_handler->incoming_request_method_str.len
-        ,request->request_handler->incoming_request_uri.len, &storage_size);
-
-    aws_byte_buf_init(&storage_buf, s_tester.alloc, storage_size);
+    struct aws_byte_buf storage_buf = request->storage;
 
     aws_byte_buf_write_from_whole_cursor(&storage_buf, r_handler->incoming_request_method_str);
     request->method = aws_byte_cursor_from_buf(&storage_buf);
@@ -87,24 +87,49 @@ static void s_test_on_complete(struct aws_http_stream *stream, int error_code, v
     request->uri = aws_byte_cursor_from_buf(&storage_buf);
     aws_byte_cursor_advance(&request->uri, storage_buf.len - r_handler->incoming_request_uri.len);
 
-    aws_http_stream_release(r_handler);
-    aws_byte_buf_clean_up(&storage_buf);
+    //aws_http_stream_release(r_handler);
     if (error_code == AWS_ERROR_SUCCESS) {
-        /* Body callback should fire if and only if the response was reported to have a body */
         
     }
 }
 
+void s_tester_on_request_header(
+    struct aws_http_stream *stream,
+    const struct aws_http_header *header_array,
+    size_t num_headers,
+    void *user_data)
+{
+    (void)stream;
+    struct tester_request *request = user_data;    
+    (void) header_array;
+    (void) num_headers;
+    (void) request;
+
+    // int index = request->num_headers;
+    // request->headers[index];
+
+    // request->num_headers++;
+}
+
+//create a new request handler
 static void s_tester_on_incoming_request(struct aws_http_connection *connection,  struct aws_http_stream *stream, void *user_data) 
 {
     struct aws_http_request_handler_options options = AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT;
     struct tester *test = user_data;
-    options.user_data = &test->request;
+    
+    int index = test->request_num;
+    //initialize the new request
+    test->requests[index].num_headers = 0;
+
+    aws_byte_buf_init(&(test->requests[index].storage), test->alloc, 1024 * 1024 * 1);
+    options.user_data = &test->requests;
     options.server_connection = connection;
-    test->request.request_handler = stream;
+    test->requests[index].request_handler = stream;
     options.on_complete = s_test_on_complete;
+    options.on_request_headers = s_tester_on_request_header;
+    
+    test->request_num++;
     aws_http_stream_configure_server_request_handler(stream, &options);
-    //options.on_request_headers = s_tester_on_request_header;
     //TODO
 }
 
@@ -118,6 +143,8 @@ static int s_tester_init(struct aws_allocator *alloc) {
     AWS_ZERO_STRUCT(s_tester);
 
     s_tester.alloc = alloc;
+
+    s_tester.request_num = 0;
 
     struct aws_logger_standard_options logger_options = {
         .level = AWS_LOG_LEVEL_TRACE,
@@ -149,11 +176,23 @@ static int s_tester_init(struct aws_allocator *alloc) {
     return AWS_OP_SUCCESS;
 }
 
+static int s_request_clean_up() {
+    for(int i = 0; i<s_tester.request_num; i++)
+    {
+        aws_http_stream_release(s_tester.requests[i].request_handler);
+        aws_byte_buf_clean_up(&s_tester.requests[i].storage);
+    }
+    return AWS_OP_SUCCESS;
+}
+
 static int s_tester_clean_up() {
+    s_request_clean_up();
     aws_http_connection_release(s_tester.server_connection);
     ASSERT_SUCCESS(testing_channel_clean_up(&s_tester.testing_channel));
     aws_http_library_clean_up();
     aws_logger_clean_up(&s_tester.logger);
+
+    
     return AWS_OP_SUCCESS;
 }
 
@@ -193,8 +232,9 @@ TEST_CASE(h1_server_recieve_1line_request) {
                            "\r\n";
     ASSERT_SUCCESS(s_send_request_str(incoming_request));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    ASSERT_SUCCESS(aws_byte_cursor_eq_c_str(&s_tester.request.method , "GET"));
-    ASSERT_SUCCESS(aws_byte_cursor_eq_c_str(&s_tester.request.uri , "/"));
+    ASSERT_TRUE(s_tester.request_num == 1);
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&s_tester.requests[0].method , "GET"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&s_tester.requests[0].uri , "/"));
 
     ASSERT_SUCCESS(s_tester_clean_up());
     return AWS_OP_SUCCESS;
@@ -210,8 +250,8 @@ TEST_CASE(h1_server_recieve_headers) {
                                     "\r\n";
     ASSERT_SUCCESS(s_send_request_str(incoming_request));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    ASSERT_SUCCESS(aws_byte_cursor_eq_c_str(&s_tester.request.method , "GET"));
-    ASSERT_SUCCESS(aws_byte_cursor_eq_c_str(&s_tester.request.uri , "/"));
+    ASSERT_SUCCESS(aws_byte_cursor_eq_c_str(&s_tester.requests[0].method , "GET"));
+    ASSERT_SUCCESS(aws_byte_cursor_eq_c_str(&s_tester.requests[0].uri , "/"));
 
     ASSERT_SUCCESS(s_tester_clean_up());
     return AWS_OP_SUCCESS;

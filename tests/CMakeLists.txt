@@ -188,6 +188,7 @@ add_test_case(test_connection_manager_success_then_cancel_pending_from_failure)
 
 add_test_case(h1_server_sanity_check)
 add_test_case(h1_server_recieve_1line_request)
+add_test_case(h1_server_recieve_headers)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})
