@@ -60,15 +60,6 @@ enum aws_http_outgoing_body_state {
     AWS_HTTP_OUTGOING_BODY_DONE,
 };
 
-/**
- * Called repeatedly whenever body data can be sent.
- * User should write body to buffer using aws_byte_buf_write_X functions.
- * Note that the buffer might already be partially full.
- * Return AWS_HTTP_OUTGOING_BODY_DONE when the body has been written to its end.
- */
-typedef enum aws_http_outgoing_body_state(
-    aws_http_stream_outgoing_body_fn)(struct aws_http_stream *stream, struct aws_byte_buf *buf, void *user_data);
-
 typedef void(aws_http_on_incoming_headers_fn)(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
@@ -179,7 +170,7 @@ struct aws_http_response_options {
     int status;
     const struct aws_http_header *header_array;
     size_t num_headers;
-    aws_http_stream_outgoing_body_fn *stream_outgoing_body;
+    struct aws_input_stream *body_stream;
 };
 
 AWS_EXTERN_C_BEGIN
