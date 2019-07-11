@@ -320,10 +320,7 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
     }
 }
 
-static void s_on_incoming_body_fn(
-    struct aws_http_stream *stream,
-    const struct aws_byte_cursor *data,
-    void *user_data) {
+static void s_on_incoming_body_fn(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
 
     (void)stream;
     struct elasticurl_ctx *app_ctx = user_data;

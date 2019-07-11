@@ -102,10 +102,7 @@ static void s_on_stream_headers(
     (void)user_data;
 }
 
-static void s_on_stream_body(
-    struct aws_http_stream *stream,
-    const struct aws_byte_cursor *data,
-    void *user_data) {
+static void s_on_stream_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
     (void)stream;
     struct test_ctx *test = user_data;
     test->body_size += data->len;
