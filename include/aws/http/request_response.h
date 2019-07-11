@@ -191,11 +191,34 @@ struct aws_http_request_handler_options {
      */
     void *user_data;
 
+    /**
+     * Invoked repeatedly times as headers are received.
+     * Optional.
+     */
     aws_http_on_incoming_headers_fn *on_request_headers;
+
+    /**
+     * Invoked when the request header block has been completely read.
+     * Optional.
+     */
     aws_http_on_incoming_header_block_done_fn *on_request_header_block_done;
+
+    /**
+     * Invoked as body data is received.
+     * Optional.
+     */
     aws_http_on_incoming_body_fn *on_request_body;
+
+    /**
+     * TODO:: It should be required. The user should call aws_http_stream_send_response here.
+     */
+
     aws_http_on_incoming_request_complete_fn *on_incoming_request_complete;
 
+    /**
+     * Invoked when the request is finished and the response has sent.
+     * Optional.
+     */
     aws_http_on_stream_complete_fn *on_complete;
 };
 
