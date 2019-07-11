@@ -93,6 +93,11 @@ typedef void(aws_http_on_incoming_body_fn)(
     size_t *out_window_update_size,
     void *user_data);
 
+typedef void(aws_http_on_incoming_request_complete_fn)(
+    struct aws_http_stream *stream, 
+    void *user_data);
+
+
 typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
 
 /**
@@ -192,6 +197,8 @@ struct aws_http_request_handler_options {
     aws_http_on_incoming_headers_fn *on_request_headers;
     aws_http_on_incoming_header_block_done_fn *on_request_header_block_done;
     aws_http_on_incoming_body_fn *on_request_body;
+    aws_http_on_incoming_request_complete_fn *on_incoming_request_complete;
+
     aws_http_on_stream_complete_fn *on_complete;
 };
 
@@ -327,7 +334,7 @@ struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http
 AWS_HTTP_API
 int aws_http_stream_configure_server_request_handler(
     struct aws_http_stream *stream,
-    const struct aws_http_request_handler_options *options); // TODO
+    const struct aws_http_request_handler_options *options);
 
 /**
  * Users must release the stream when they are done with it, or its memory will never be cleaned up.
@@ -360,7 +367,9 @@ int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *strea
 AWS_HTTP_API
 int aws_http_stream_send_response(
     struct aws_http_stream *stream,
-    const struct aws_http_response_options *options); // TODO
+    const struct aws_http_response_options *options); 
+// TODO:: not impelement yet, sending the response back to the stream.
+// put the response into the stream outgoing buffer, and let the sechduler to send the message 
 
 /**
  * Manually issue a window update.

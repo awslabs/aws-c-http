@@ -325,8 +325,7 @@ int aws_http_stream_configure_server_request_handler(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Cannot create client request, options are invalid.",
             (void *)(options ? options->server_connection : NULL));
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
     /* Connection owns stream, and must outlive stream */

@@ -216,7 +216,7 @@ static enum aws_http_outgoing_body_state s_simple_send_body(
     void *user_data) {
 
     (void)stream;
-    struct simple_body_sender *data = (struct simple_body_sender *)user_data;
+    struct simple_body_sender *data = user_data;
     size_t remaining = data->src.len - data->progress;
     size_t available = buf->capacity - buf->len;
     size_t writing = remaining < available ? remaining : available;
