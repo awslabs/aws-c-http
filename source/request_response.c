@@ -222,7 +222,7 @@ error:
 
 int aws_http_request_add_header_array(
     struct aws_http_request *request,
-    struct aws_http_header *headers,
+    const struct aws_http_header *headers,
     size_t num_headers) {
 
     AWS_PRECONDITION(request);

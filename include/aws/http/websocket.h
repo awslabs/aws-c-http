@@ -183,6 +183,7 @@ struct aws_websocket_client_connection_options {
      * The request must outlive the handshake process (it will be safe to release in on_connection_setup())
      * Suggestion: create via aws_http_request_new_websocket_handshake()
      *
+     * The method MUST be set to GET.
      * The following headers are required (replace values in []):
      *
      * Host: [server.example.com]

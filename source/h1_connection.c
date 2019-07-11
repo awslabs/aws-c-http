@@ -183,7 +183,6 @@ enum stream_outgoing_state {
 struct h1_stream {
     struct aws_http_stream base;
 
-
     enum stream_type type;
     struct aws_linked_list_node node;
     enum stream_outgoing_state outgoing_state;
@@ -295,10 +294,7 @@ static int s_stream_scan_outgoing_headers(
 
     for (size_t i = 0; i < num_headers; ++i) {
         struct aws_http_header header;
-        if (aws_http_request_get_header(request, &header, i)) {
-            AWS_FATAL_ASSERT(false); /* i is guaranteed to be within the valid index range */
-            return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        }
+        aws_http_request_get_header(request, &header, i);
 
         enum aws_http_header_name name_enum;
 
@@ -359,9 +355,7 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_requ
     bool wrote_all = true;
     for (size_t i = 0; i < num_headers; ++i) {
         struct aws_http_header header;
-        if (aws_http_request_get_header(request, &header, i)) {
-            AWS_FATAL_ASSERT(false);
-        }
+        aws_http_request_get_header(request, &header, i);
 
         /* header-line: "{name}: {value}\r\n" */
         wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.name);
@@ -381,6 +375,19 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
             "id=%p: Cannot create client request, options are invalid.",
             (void *)options->client_connection);
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_byte_cursor method;
+    int err = aws_http_request_get_method(options->request, &method);
+    struct aws_byte_cursor uri;
+    err |= aws_http_request_get_path(options->request, &uri);
+    if (err) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Failed to create request, HTTP pethod and path must be set.",
+            (void *)options->client_connection);
+
         return NULL;
     }
 
@@ -410,18 +417,10 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
      */
 
     size_t header_lines_len;
-    int err = s_stream_scan_outgoing_headers(stream, options->request, &header_lines_len);
+    err |= s_stream_scan_outgoing_headers(stream, options->request, &header_lines_len);
     if (err) {
         /* errors already logged by scan_outgoing_headers() function */
         goto error_scanning_headers;
-    }
-
-    struct aws_byte_cursor method;
-    err |= aws_http_request_get_method(options->request, &method);
-    struct aws_byte_cursor uri;
-    err |= aws_http_request_get_path(options->request, &uri);
-    if (err) {
-        goto error_calculating_size;
     }
 
     /* request-line: "{method} {uri} {version}\r\n" */
@@ -701,18 +700,19 @@ static int s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io_
                 }
 
                 struct aws_stream_status status;
-                aws_input_stream_get_status(stream->base.outgoing_body, &status);
-                if (!status.is_valid) {
+                int err = aws_input_stream_get_status(stream->base.outgoing_body, &status);
+                if (err || !status.is_valid) {
                     AWS_LOGF_ERROR(
                         AWS_LS_HTTP_STREAM, "id=%p: Body stream reporting status invalid", (void *)&stream->base);
-                    return AWS_OP_ERR;
+                    return aws_raise_error(AWS_IO_STREAM_READ_FAILED);
                 }
 
                 size_t amount_read = 0;
-                if (aws_input_stream_read(stream->base.outgoing_body, dst, &amount_read)) {
+                err = aws_input_stream_read(stream->base.outgoing_body, dst, &amount_read);
+                if (err) {
                     AWS_LOGF_ERROR(
                         AWS_LS_HTTP_STREAM, "id=%p: Body stream reporting error reading", (void *)&stream->base);
-                    return AWS_OP_ERR;
+                    return aws_raise_error(AWS_IO_STREAM_READ_FAILED);
                 }
 
                 AWS_LOGF_TRACE(
@@ -721,7 +721,12 @@ static int s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io_
                     (void *)&stream->base,
                     amount_read);
 
-                aws_input_stream_get_status(stream->base.outgoing_body, &status);
+                err = aws_input_stream_get_status(stream->base.outgoing_body, &status);
+                if (err || !status.is_valid) {
+                    AWS_LOGF_ERROR(
+                        AWS_LS_HTTP_STREAM, "id=%p: Body stream reporting status invalid", (void *)&stream->base);
+                    return aws_raise_error(AWS_IO_STREAM_READ_FAILED);
+                }
                 if (status.is_end_of_stream) {
                     AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Done sending body.", (void *)&stream->base);
                     stream->outgoing_state++;

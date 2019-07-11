@@ -113,6 +113,7 @@ struct aws_http_request_options {
 
     /**
      * Required.
+     * This object must stay alive at least until on_complete is called.
      */
     struct aws_http_request *request;
 
@@ -277,7 +278,7 @@ int aws_http_request_add_header(struct aws_http_request *request, struct aws_htt
 AWS_HTTP_API
 int aws_http_request_add_header_array(
     struct aws_http_request *request,
-    struct aws_http_header *headers,
+    const struct aws_http_header *headers,
     size_t num_headers);
 
 /**

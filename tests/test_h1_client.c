@@ -32,7 +32,7 @@
 static struct aws_http_request *s_new_default_get_request(struct aws_allocator *allocator) {
     struct aws_http_request *request = aws_http_request_new(allocator);
     AWS_FATAL_ASSERT(request);
-    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_request_set_method(request, aws_byte_cursor_from_c_str("GET")));
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_request_set_method(request, aws_http_method_get));
     AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_request_set_path(request, aws_byte_cursor_from_c_str("/")));
 
     return request;
@@ -1529,7 +1529,7 @@ static int s_test_close_from_callback(struct aws_allocator *allocator, enum requ
 
     struct aws_http_request *request = aws_http_request_new(allocator);
     ASSERT_NOT_NULL(request);
-    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_byte_cursor_from_c_str("POST")));
+    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_http_method_post));
     ASSERT_SUCCESS(aws_http_request_set_path(request, aws_byte_cursor_from_c_str("/")));
     ASSERT_SUCCESS(aws_http_request_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
     aws_http_request_set_body_stream(request, &close_from_outgoing_body_stream);
@@ -1702,7 +1702,7 @@ static int s_switch_protocols(struct protocol_switcher *switcher) {
 
     struct aws_http_request *request = aws_http_request_new(switcher->tester->alloc);
     ASSERT_NOT_NULL(request);
-    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_byte_cursor_from_c_str("GET")));
+    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_http_method_get));
     ASSERT_SUCCESS(aws_http_request_set_path(request, aws_byte_cursor_from_c_str("/")));
     ASSERT_SUCCESS(aws_http_request_add_header_array(request, request_headers, AWS_ARRAY_SIZE(request_headers)));
 
@@ -1954,7 +1954,7 @@ H1_CLIENT_TEST_CASE(h1_client_switching_protocols_fails_pending_requests) {
 
     struct aws_http_request *upgrade_request = aws_http_request_new(allocator);
     ASSERT_NOT_NULL(upgrade_request);
-    ASSERT_SUCCESS(aws_http_request_set_method(upgrade_request, aws_byte_cursor_from_c_str("GET")));
+    ASSERT_SUCCESS(aws_http_request_set_method(upgrade_request, aws_http_method_get));
     ASSERT_SUCCESS(aws_http_request_set_path(upgrade_request, aws_byte_cursor_from_c_str("/")));
     ASSERT_SUCCESS(aws_http_request_add_header_array(upgrade_request, headers, AWS_ARRAY_SIZE(headers)));
 

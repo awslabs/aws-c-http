@@ -27,8 +27,6 @@
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
-static const struct aws_byte_cursor s_method_get = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET");
-
 /**
  * Allow unit-tests to mock interactions with external systems.
  */
@@ -117,7 +115,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
 
     struct aws_byte_cursor method;
     aws_http_request_get_method(options->handshake_request, &method);
-    if (!aws_byte_cursor_eq(&method, &s_method_get)) {
+    if (aws_http_str_to_method(method) != AWS_HTTP_METHOD_GET) {
 
         AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET_SETUP, "id=static: Websocket request must have method be 'GET'.");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -140,7 +138,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     if (!options->handshake_request) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
-            "id=static: Invalid connection options, missing required request websocket client handshake.");
+            "id=static: Invalid connection options, missing required request for websocket client handshake.");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
