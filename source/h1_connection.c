@@ -183,7 +183,6 @@ enum stream_outgoing_state {
 struct h1_stream {
     struct aws_http_stream base;
 
-    // struct aws_http_request *request;
 
     enum stream_type type;
     struct aws_linked_list_node node;
