@@ -546,7 +546,7 @@ static struct h1_stream *s_new_server_stream(struct h1_connection *connection) {
     return stream;
 }
 
-int s_configure_server_request_handler_stream(
+static int s_configure_server_request_handler_stream(
     struct aws_http_stream *stream,
     const struct aws_http_request_handler_options *options) {
     if (!stream || !options) {
