@@ -11,6 +11,7 @@ add_test_case(request_method)
 add_test_case(request_path)
 add_test_case(request_add_headers)
 add_test_case(request_erase_headers)
+add_test_case(request_handles_oom)
 
 add_test_case(h1_test_get_request)
 add_test_case(h1_test_request_bad_version)
