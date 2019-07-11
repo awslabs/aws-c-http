@@ -59,7 +59,9 @@ static size_t s_handler_initial_window_size(struct aws_channel_handler *handler)
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
 static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
-static int s_configure_server_request_handler_stream(struct aws_http_stream *stream, const struct aws_http_request_handler_options *options);
+static int s_configure_server_request_handler_stream(
+    struct aws_http_stream *stream,
+    const struct aws_http_request_handler_options *options);
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static void s_stream_destroy(struct aws_http_stream *stream_base);
@@ -1101,10 +1103,9 @@ static int s_decoder_on_request(
       only for server side!*/
     struct h1_stream *stream = s_new_server_stream(connection);
     AWS_ASSERT(stream);
-    connection->base.server_data->on_incoming_request(&connection->base, &stream->base, 
-        connection->base.server_data->connection_user_data);
+    connection->base.server_data->on_incoming_request(
+        &connection->base, &stream->base, connection->base.server_data->connection_user_data);
     connection->thread_data.incoming_stream = stream;
-    
 
     struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
 
@@ -1290,8 +1291,7 @@ static int s_decoder_on_done(void *user_data) {
     incoming_stream->is_incoming_message_done = true;
     if (connection->base.server_data) {
 
-        if(incoming_stream->base.on_incoming_request_complete)
-        {
+        if (incoming_stream->base.on_incoming_request_complete) {
             incoming_stream->base.on_incoming_request_complete(&incoming_stream->base, incoming_stream->base.user_data);
         }
         /* without sending the response back, it can complete here */

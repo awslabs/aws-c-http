@@ -93,10 +93,7 @@ typedef void(aws_http_on_incoming_body_fn)(
     size_t *out_window_update_size,
     void *user_data);
 
-typedef void(aws_http_on_incoming_request_complete_fn)(
-    struct aws_http_stream *stream, 
-    void *user_data);
-
+typedef void(aws_http_on_incoming_request_complete_fn)(struct aws_http_stream *stream, void *user_data);
 
 typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
 
@@ -365,11 +362,9 @@ int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *strea
 
 /* only callable from "request handler" streams */
 AWS_HTTP_API
-int aws_http_stream_send_response(
-    struct aws_http_stream *stream,
-    const struct aws_http_response_options *options); 
+int aws_http_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options);
 // TODO:: not impelement yet, sending the response back to the stream.
-// put the response into the stream outgoing buffer, and let the sechduler to send the message 
+// put the response into the stream outgoing buffer, and let the sechduler to send the message
 
 /**
  * Manually issue a window update.

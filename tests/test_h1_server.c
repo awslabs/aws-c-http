@@ -257,7 +257,7 @@ TEST_CASE(h1_server_sanity_check) {
 }
 
 TEST_CASE(h1_server_recieve_1line_request) {
-    
+
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
 
