@@ -220,6 +220,34 @@ error:
     return AWS_OP_ERR;
 }
 
+int aws_http_request_add_header_array(
+    struct aws_http_request *request,
+    const struct aws_http_header *headers,
+    size_t num_headers) {
+
+    AWS_PRECONDITION(request);
+    AWS_PRECONDITION(headers);
+    AWS_PRECONDITION(num_headers > 0);
+
+    const size_t beginning_headers_size = aws_array_list_length(&request->headers);
+
+    for (size_t i = 0; i < num_headers; ++i) {
+        if (aws_http_request_add_header(request, headers[i])) {
+            goto error;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+
+error:
+    /* Remove all headers we added */
+    for (size_t len = aws_array_list_length(&request->headers); len > beginning_headers_size; --len) {
+        aws_http_request_erase_header(request, len - 1);
+    }
+
+    return AWS_OP_ERR;
+}
+
 int aws_http_request_set_header(struct aws_http_request *request, struct aws_http_header header, size_t index) {
     AWS_PRECONDITION(request);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&header.name) && aws_byte_cursor_is_valid(&header.value));

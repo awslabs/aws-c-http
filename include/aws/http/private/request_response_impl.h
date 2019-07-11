@@ -35,9 +35,9 @@ struct aws_http_stream {
     const struct aws_http_stream_vtable *vtable;
     struct aws_allocator *alloc;
     struct aws_http_connection *owning_connection;
+    struct aws_input_stream *outgoing_body;
 
     void *user_data;
-    aws_http_stream_outgoing_body_fn *stream_outgoing_body;
     aws_http_on_incoming_headers_fn *on_incoming_headers;
     aws_http_on_incoming_header_block_done_fn *on_incoming_header_block_done;
     aws_http_on_incoming_body_fn *on_incoming_body;

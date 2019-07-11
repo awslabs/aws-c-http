@@ -491,19 +491,13 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     struct aws_http_request_options final_request;
     AWS_ZERO_STRUCT(final_request);
     final_request.self_size = sizeof(struct aws_http_request_options);
-    final_request.uri = app_ctx->uri.path_and_query;
     final_request.user_data = app_ctx;
     final_request.client_connection = connection;
-    final_request.method = aws_byte_cursor_from_c_str(app_ctx->verb);
-    final_request.header_array = headers;
-    final_request.num_headers = aws_http_request_get_header_count(request);
+    final_request.request = request;
     final_request.on_response_headers = s_on_incoming_headers_fn;
     final_request.on_response_header_block_done = s_on_incoming_header_block_done_fn;
     final_request.on_response_body = s_on_incoming_body_fn;
     final_request.on_complete = s_on_stream_complete_fn;
-    if (app_ctx->input_body) {
-        final_request.stream_outgoing_body = s_stream_outgoing_body_fn;
-    }
 
     app_ctx->response_code_written = false;
 

@@ -60,15 +60,6 @@ enum aws_http_outgoing_body_state {
     AWS_HTTP_OUTGOING_BODY_DONE,
 };
 
-/**
- * Called repeatedly whenever body data can be sent.
- * User should write body to buffer using aws_byte_buf_write_X functions.
- * Note that the buffer might already be partially full.
- * Return AWS_HTTP_OUTGOING_BODY_DONE when the body has been written to its end.
- */
-typedef enum aws_http_outgoing_body_state(
-    aws_http_stream_outgoing_body_fn)(struct aws_http_stream *stream, struct aws_byte_buf *buf, void *user_data);
-
 typedef void(aws_http_on_incoming_headers_fn)(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
@@ -112,32 +103,12 @@ struct aws_http_request_options {
     struct aws_http_connection *client_connection;
 
     /**
-     * Required for HTTP/1.
-     * Not required in HTTP/2 if :method header is passed in.
+     * Required.
+     * This object must stay alive at least until on_complete is called.
      */
-    struct aws_byte_cursor method;
-
-    /**
-     * Required for HTTP/1.
-     * Not required in HTTP/2 if :path header is passed in.
-     */
-    struct aws_byte_cursor uri;
-
-    /**
-     * Array of request headers.
-     * Optional.
-     * For HTTP/2, if :method and :path headers not passed in they will be generated from the `method` and `uri`.
-     */
-    const struct aws_http_header *header_array;
-    size_t num_headers;
+    struct aws_http_request *request;
 
     void *user_data;
-
-    /**
-     * Callback responsible for sending the request body.
-     * Required if request has a body.
-     */
-    aws_http_stream_outgoing_body_fn *stream_outgoing_body;
 
     /**
      * Invoked repeatedly times as headers are received.
@@ -199,7 +170,7 @@ struct aws_http_response_options {
     int status;
     const struct aws_http_header *header_array;
     size_t num_headers;
-    aws_http_stream_outgoing_body_fn *stream_outgoing_body;
+    struct aws_input_stream *body_stream;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -287,6 +258,19 @@ int aws_http_request_get_header(
  */
 AWS_HTTP_API
 int aws_http_request_add_header(struct aws_http_request *request, struct aws_http_header header);
+
+/**
+ * Add an array of headers to the end of the header array.
+ * The request makes its own copy of the underlying strings.
+ *
+ * This is a helper function useful when it's easier to define headers as a stack array, rather than calling add_header
+ * repeatedly.
+ */
+AWS_HTTP_API
+int aws_http_request_add_header_array(
+    struct aws_http_request *request,
+    const struct aws_http_header *headers,
+    size_t num_headers);
 
 /**
  * Modify the header at the specified index.
