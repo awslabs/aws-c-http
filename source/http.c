@@ -144,7 +144,8 @@ static struct aws_hash_table s_method_str_to_enum;                         /* fo
 static struct aws_byte_cursor s_method_enum_to_str[AWS_HTTP_METHOD_COUNT]; /* for enum -> string lookup */
 
 static void s_methods_init(struct aws_allocator *alloc) {
-    s_method_enum_to_str[AWS_HTTP_METHOD_HEAD] = aws_byte_cursor_from_c_str("HEAD");
+    s_method_enum_to_str[AWS_HTTP_METHOD_GET] = aws_http_method_get;
+    s_method_enum_to_str[AWS_HTTP_METHOD_HEAD] = aws_http_method_head;
 
     s_init_str_to_enum_hash_table(
         &s_method_str_to_enum,
@@ -383,3 +384,11 @@ void aws_http_fatal_assert_library_initialized() {
         AWS_FATAL_ASSERT(s_library_initialized);
     }
 }
+
+const struct aws_byte_cursor aws_http_method_get = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET");
+const struct aws_byte_cursor aws_http_method_head = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HEAD");
+const struct aws_byte_cursor aws_http_method_post = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST");
+const struct aws_byte_cursor aws_http_method_put = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PUT");
+const struct aws_byte_cursor aws_http_method_delete = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("DELETE");
+const struct aws_byte_cursor aws_http_method_connect = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("CONNECT");
+const struct aws_byte_cursor aws_http_method_options = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("OPTIONS");

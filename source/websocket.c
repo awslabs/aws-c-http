@@ -1657,8 +1657,7 @@ struct aws_http_request *aws_http_request_new_websocket_handshake(
         goto error;
     }
 
-    struct aws_byte_cursor method = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET");
-    int err = aws_http_request_set_method(request, method);
+    int err = aws_http_request_set_method(request, aws_http_method_get);
     if (err) {
         goto error;
     }

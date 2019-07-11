@@ -76,11 +76,10 @@ TEST_CASE(request_method) {
 
     /* Mutilate the original string to be sure request wasn't referencing its memory */
     method1[0] = 'B';
-    struct aws_byte_cursor method1_repro = aws_byte_cursor_from_c_str("GET");
-    ASSERT_TRUE(aws_byte_cursor_eq(&method1_repro, &get));
+    ASSERT_TRUE(aws_byte_cursor_eq(&aws_http_method_get, &get));
 
     /* Set a new method */
-    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_byte_cursor_from_c_str("POST")));
+    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_http_method_post));
     ASSERT_SUCCESS(aws_http_request_get_method(request, &get));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, "POST"));
 

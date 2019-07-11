@@ -21,6 +21,7 @@
 #include <aws/http/private/h1_decoder.h>
 #include <aws/http/private/request_response_impl.h>
 #include <aws/io/logging.h>
+#include <aws/io/stream.h>
 
 /* TODO: try to continue processing channel messages during shutdown */
 
@@ -284,14 +285,16 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
  */
 static int s_stream_scan_outgoing_headers(
     struct h1_stream *stream,
-    const struct aws_http_header *header_array,
-    size_t num_headers,
+    const struct aws_http_request *request,
     size_t *out_header_lines_len) {
 
     size_t total = 0;
 
+    const size_t num_headers = aws_http_request_get_header_count(request);
+
     for (size_t i = 0; i < num_headers; ++i) {
-        struct aws_http_header header = header_array[i];
+        struct aws_http_header header;
+        aws_http_request_get_header(request, &header, i);
 
         enum aws_http_header_name name_enum;
 
@@ -311,11 +314,10 @@ static int s_stream_scan_outgoing_headers(
             case AWS_HTTP_HEADER_TRANSFER_ENCODING:
                 stream->has_outgoing_body = true;
 
-                if (!stream->base.stream_outgoing_body) {
+                if (!stream->base.outgoing_body) {
                     AWS_LOGF_ERROR(
                         AWS_LS_HTTP_CONNECTION,
-                        "id=%p: Failed to create stream, '" PRInSTR
-                        "' header specified but body-streaming callback is not set.",
+                        "id=%p: Failed to create stream, '" PRInSTR "' header specified but body stream is not set.",
                         (void *)stream->base.owning_connection,
                         AWS_BYTE_CURSOR_PRI(header.name));
 
@@ -346,11 +348,14 @@ static int s_stream_scan_outgoing_headers(
     return AWS_OP_SUCCESS;
 }
 
-static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_header *header_array, size_t num_headers) {
+static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_request *request) {
+
+    const size_t num_headers = aws_http_request_get_header_count(request);
 
     bool wrote_all = true;
     for (size_t i = 0; i < num_headers; ++i) {
-        struct aws_http_header header = header_array[i];
+        struct aws_http_header header;
+        aws_http_request_get_header(request, &header, i);
 
         /* header-line: "{name}: {value}\r\n" */
         wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.name);
@@ -364,12 +369,25 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_head
 }
 
 struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options) {
-    if (options->uri.len == 0 || options->method.len == 0) {
+    if (options->request == NULL) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Cannot create client request, options are invalid.",
             (void *)options->client_connection);
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_byte_cursor method;
+    int err = aws_http_request_get_method(options->request, &method);
+    struct aws_byte_cursor uri;
+    err |= aws_http_request_get_path(options->request, &uri);
+    if (err) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Failed to create request, HTTP pethod and path must be set.",
+            (void *)options->client_connection);
+
         return NULL;
     }
 
@@ -381,8 +399,8 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     stream->base.vtable = &s_stream_vtable;
     stream->base.alloc = options->client_connection->alloc;
     stream->base.owning_connection = options->client_connection;
+    stream->base.outgoing_body = aws_http_request_get_body_stream(options->request);
     stream->base.user_data = options->user_data;
-    stream->base.stream_outgoing_body = options->stream_outgoing_body;
     stream->base.on_incoming_headers = options->on_response_headers;
     stream->base.on_incoming_header_block_done = options->on_response_header_block_done;
     stream->base.on_incoming_body = options->on_response_body;
@@ -399,7 +417,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
      */
 
     size_t header_lines_len;
-    int err = s_stream_scan_outgoing_headers(stream, options->header_array, options->num_headers, &header_lines_len);
+    err = s_stream_scan_outgoing_headers(stream, options->request, &header_lines_len);
     if (err) {
         /* errors already logged by scan_outgoing_headers() function */
         goto error_scanning_headers;
@@ -407,8 +425,8 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     /* request-line: "{method} {uri} {version}\r\n" */
     size_t request_line_len = 4; /* 2 spaces + "\r\n" */
-    err |= aws_add_size_checked(options->method.len, request_line_len, &request_line_len);
-    err |= aws_add_size_checked(options->uri.len, request_line_len, &request_line_len);
+    err |= aws_add_size_checked(method.len, request_line_len, &request_line_len);
+    err |= aws_add_size_checked(uri.len, request_line_len, &request_line_len);
     err |= aws_add_size_checked(version.len, request_line_len, &request_line_len);
 
     /* head-end: "\r\n" */
@@ -442,15 +460,15 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     bool wrote_all = true;
 
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, options->method);
+    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, method);
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, ' ');
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, options->uri);
+    wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, uri);
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, ' ');
     wrote_all &= aws_byte_buf_write_from_whole_cursor(&stream->outgoing_head_buf, version);
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\r');
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\n');
 
-    s_write_headers(&stream->outgoing_head_buf, options->header_array, options->num_headers);
+    s_write_headers(&stream->outgoing_head_buf, options->request);
 
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\r');
     wrote_all &= aws_byte_buf_write_u8(&stream->outgoing_head_buf, '\n');
@@ -498,8 +516,8 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
         "id=%p: Created client request on connection=%p: " PRInSTR " " PRInSTR " " PRInSTR,
         (void *)&stream->base,
         (void *)options->client_connection,
-        AWS_BYTE_CURSOR_PRI(options->method),
-        AWS_BYTE_CURSOR_PRI(options->uri),
+        AWS_BYTE_CURSOR_PRI(method),
+        AWS_BYTE_CURSOR_PRI(uri),
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->base.http_version)));
 
     if (should_schedule_task) {
@@ -626,7 +644,7 @@ static void s_stream_update_window(struct aws_http_stream *stream, size_t increm
  * Write as much data to msg as possible.
  * The stream's state is updated as necessary to track progress.
  */
-static void s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io_message *msg) {
+static int s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io_message *msg) {
     struct aws_byte_buf *dst = &msg->message_data;
 
     if (stream->outgoing_state == STREAM_OUTGOING_STATE_HEAD) {
@@ -635,7 +653,7 @@ static void s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io
             /* Can't write anymore */
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_STREAM, "id=%p: Cannot fit any more head data in this message.", (void *)&stream->base);
-            return;
+            return AWS_OP_SUCCESS;
         }
 
         /* Copy data from stream->outgoing_head_buf */
@@ -677,36 +695,52 @@ static void s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io
                         AWS_LS_HTTP_STREAM,
                         "id=%p: Cannot fit any more body data in this message.",
                         (void *)&stream->base);
-                    return;
+                    /* Return success because we want to try again later */
+                    return AWS_OP_SUCCESS;
                 }
 
-                size_t prev_len = dst->len;
+                struct aws_stream_status status;
+                int err = aws_input_stream_get_status(stream->base.outgoing_body, &status);
+                if (err || !status.is_valid) {
+                    AWS_LOGF_ERROR(
+                        AWS_LS_HTTP_STREAM, "id=%p: Body stream reporting status invalid", (void *)&stream->base);
+                    return aws_raise_error(AWS_IO_STREAM_READ_FAILED);
+                }
 
-                enum aws_http_outgoing_body_state state =
-                    stream->base.stream_outgoing_body(&stream->base, dst, stream->base.user_data);
-
-                AWS_FATAL_ASSERT(prev_len <= dst->len);
+                size_t amount_read = 0;
+                err = aws_input_stream_read(stream->base.outgoing_body, dst, &amount_read);
+                if (err) {
+                    AWS_LOGF_ERROR(
+                        AWS_LS_HTTP_STREAM, "id=%p: Body stream reporting error reading", (void *)&stream->base);
+                    return aws_raise_error(AWS_IO_STREAM_READ_FAILED);
+                }
 
                 AWS_LOGF_TRACE(
                     AWS_LS_HTTP_STREAM,
                     "id=%p: Writing %zu body bytes to message.",
                     (void *)&stream->base,
-                    dst->len - prev_len);
+                    amount_read);
 
-                if (state == AWS_HTTP_OUTGOING_BODY_DONE) {
+                err = aws_input_stream_get_status(stream->base.outgoing_body, &status);
+                if (err || !status.is_valid) {
+                    AWS_LOGF_ERROR(
+                        AWS_LS_HTTP_STREAM, "id=%p: Body stream reporting status invalid", (void *)&stream->base);
+                    return aws_raise_error(AWS_IO_STREAM_READ_FAILED);
+                }
+                if (status.is_end_of_stream) {
                     AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Done sending body.", (void *)&stream->base);
                     stream->outgoing_state++;
                     break;
                 }
 
                 /* Return if user failed to write anything. Maybe their data isn't ready yet. */
-                if (prev_len == dst->len) {
+                if (amount_read == 0) {
                     AWS_LOGF_TRACE(
                         AWS_LS_HTTP_STREAM,
                         "id=%p: No body data written, concluding this message."
                         " Will try to write body data again in the next message.",
                         (void *)&stream->base);
-                    return;
+                    return AWS_OP_SUCCESS;
                 }
             }
         }
@@ -714,8 +748,8 @@ static void s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io
 
     if (stream->outgoing_state == STREAM_OUTGOING_STATE_DONE) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Stream is done sending data.", (void *)&stream->base);
-        return;
     }
+    return AWS_OP_SUCCESS;
 }
 
 static void s_stream_complete(struct h1_stream *stream, int error_code) {
@@ -971,7 +1005,10 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
             break;
         }
 
-        s_stream_write_outgoing_data(outgoing_stream, msg);
+        if (s_stream_write_outgoing_data(outgoing_stream, msg)) {
+            /* Error sending data, abandon ship */
+            goto error;
+        }
 
         /* If stream is done sending data, loop and start sending the next stream's data */
     } while (outgoing_stream->outgoing_state == STREAM_OUTGOING_STATE_DONE);

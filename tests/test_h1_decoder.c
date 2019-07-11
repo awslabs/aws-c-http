@@ -169,7 +169,7 @@ static int s_h1_test_get_request(struct aws_allocator *allocator, void *ctx) {
     ASSERT_SUCCESS(aws_h1_decode(decoder, &msg));
     ASSERT_INT_EQUALS(AWS_HTTP_METHOD_HEAD, request_data.method_enum);
 
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request_data.method_str, "HEAD"));
+    ASSERT_TRUE(aws_byte_cursor_eq(&request_data.method_str, &aws_http_method_head));
 
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request_data.uri, "/"));
 
