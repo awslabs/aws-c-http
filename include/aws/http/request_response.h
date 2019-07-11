@@ -71,18 +71,9 @@ typedef void(aws_http_on_incoming_header_block_done_fn)(struct aws_http_stream *
 /**
  * Called repeatedly as body data is received.
  * The data must be copied immediately if you wish to preserve it.
- *
- * `out_window_update_size` is how much to increment the window once this data is processed.
- * By default, it is the size of the data which has just come in.
- * Leaving this value untouched will increment the window back to its original size.
- * Setting this value to 0 will prevent the update and let the window shrink.
- * The window can be manually updated via aws_http_stream_update_window()
  */
-typedef void(aws_http_on_incoming_body_fn)(
-    struct aws_http_stream *stream,
-    const struct aws_byte_cursor *data,
-    size_t *out_window_update_size,
-    void *user_data);
+typedef void(
+    aws_http_on_incoming_body_fn)(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data);
 
 typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
 
@@ -134,6 +125,17 @@ struct aws_http_request_options {
      * Optional.
      */
     aws_http_on_stream_complete_fn *on_complete;
+
+    /**
+     * Set to true to manually manage window size.
+     *
+     * If this is false, the connection will maintain a constant window size.
+     *
+     * If this is true, the caller must manually increment the window size using aws_http_stream_update_window().
+     * If the window is not incremented, it will shrink by the amount of body data received. If the window size
+     * reaches 0, no further data will be received.
+     */
+    bool manual_window_management;
 };
 
 typedef int(aws_transform_http_request_fn)(
@@ -340,7 +342,7 @@ int aws_http_stream_send_response(struct aws_http_stream *stream, const struct a
 /**
  * Manually issue a window update.
  * Note that the stream's default behavior is to issue updates which keep the window at its original size.
- * See aws_http_on_incoming_body_fn() for details on letting the window shrink.
+ * See aws_http_request_options.manual_window_management for details on letting the window shrink.
  */
 AWS_HTTP_API
 void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);

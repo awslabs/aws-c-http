@@ -323,12 +323,9 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
 static void s_on_incoming_body_fn(
     struct aws_http_stream *stream,
     const struct aws_byte_cursor *data,
-    /* NOLINTNEXTLINE(readability-non-const-parameter) */
-    size_t *out_window_update_size,
     void *user_data) {
 
     (void)stream;
-    (void)out_window_update_size;
     struct elasticurl_ctx *app_ctx = user_data;
 
     fwrite(data->ptr, 1, data->len, app_ctx->output);

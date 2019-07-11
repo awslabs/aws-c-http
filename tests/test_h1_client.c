@@ -558,7 +558,6 @@ static void s_response_tester_on_header_block_done(struct aws_http_stream *strea
 static void s_response_tester_on_body(
     struct aws_http_stream *stream,
     const struct aws_byte_cursor *data,
-    size_t *out_window_update_size,
     void *user_data) {
 
     (void)stream;
@@ -577,11 +576,6 @@ static void s_response_tester_on_body(
     response->body.len += data->len;
 
     AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(&response->storage, *data));
-
-    /* Stop the window size from auto updating */
-    if (response->stop_auto_window_update) {
-        *out_window_update_size = 0;
-    }
 }
 
 static void s_response_tester_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
@@ -1194,6 +1188,7 @@ H1_CLIENT_TEST_CASE(h1_client_window_shrinks_if_user_says_so) {
     struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
     opt.client_connection = tester.connection;
     opt.request = s_new_default_get_request(allocator);
+    opt.manual_window_management = true;
 
     struct response_tester response;
     ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
@@ -1489,12 +1484,9 @@ static void s_close_from_incoming_headers_done(struct aws_http_stream *stream, b
 static void s_close_from_incoming_body(
     struct aws_http_stream *stream,
     const struct aws_byte_cursor *data,
-    /* NOLINTNEXTLINE(readability-non-const-parameter) */
-    size_t *out_window_update_size,
     void *user_data) {
 
     (void)data;
-    (void)out_window_update_size;
     s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_INCOMING_BODY);
 }
 

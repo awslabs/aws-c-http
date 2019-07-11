@@ -400,6 +400,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     stream->base.alloc = options->client_connection->alloc;
     stream->base.owning_connection = options->client_connection;
     stream->base.outgoing_body = aws_http_request_get_body_stream(options->request);
+    stream->base.manual_window_management = options->manual_window_management;
     stream->base.user_data = options->user_data;
     stream->base.on_incoming_headers = options->on_response_headers;
     stream->base.on_incoming_header_block_done = options->on_response_header_block_done;
@@ -1213,23 +1214,13 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM, "id=%p: Incoming body: %zu bytes received.", (void *)&incoming_stream->base, data->len);
 
+    /* If the user wishes to manually increment windows, by default shrink the window by the amount of dta read. */
+    if (incoming_stream->base.manual_window_management) {
+        connection->thread_data.incoming_message_window_shrink_size = data->len;
+    }
+
     if (incoming_stream->base.on_incoming_body) {
-        size_t window_update_size = data->len;
-
-        incoming_stream->base.on_incoming_body(
-            &incoming_stream->base, data, &window_update_size, incoming_stream->base.user_data);
-
-        /* If user reduced window_update_size, reduce how much the connection will update its window. */
-        if (window_update_size < data->len) {
-            size_t reduce = data->len - window_update_size;
-            connection->thread_data.incoming_message_window_shrink_size += reduce;
-
-            AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_STREAM,
-                "id=%p: Incoming body callback changed window update size, window will shrink by %zu.",
-                (void *)&incoming_stream->base,
-                reduce);
-        }
+        incoming_stream->base.on_incoming_body(&incoming_stream->base, data, incoming_stream->base.user_data);
     }
 
     /* Stop decoding if user callback shut down the connection. */
@@ -1478,8 +1469,7 @@ static int s_handler_process_read_message(
 
     const size_t incoming_message_size = message->message_data.len;
 
-    /* By default, after processing message, we will increment the read window by the same amount we just read in.
-     * But users can let the window shrink by tweaking numbers from their aws_http_on_incoming_body_fn() callback. */
+    /* By default, after processing message, we will increment the read window by the same amount we just read in. */
     connection->thread_data.incoming_message_window_shrink_size = 0;
 
     AWS_LOGF_TRACE(

@@ -105,10 +105,8 @@ static void s_on_stream_headers(
 static void s_on_stream_body(
     struct aws_http_stream *stream,
     const struct aws_byte_cursor *data,
-    size_t *out_window_update_size, /* NOLINT(readability-non-const-parameter) */
     void *user_data) {
     (void)stream;
-    (void)out_window_update_size;
     struct test_ctx *test = user_data;
     test->body_size += data->len;
 }
