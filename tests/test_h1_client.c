@@ -1016,6 +1016,7 @@ int s_slow_stream_read(struct aws_input_stream *stream, struct aws_byte_buf *des
         }
     }
 
+    *amount_read = writing;
     aws_byte_buf_write(dest, sender->cursor.ptr, writing);
     aws_byte_cursor_advance(&sender->cursor, writing);
 
