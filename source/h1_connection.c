@@ -417,7 +417,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
      */
 
     size_t header_lines_len;
-    err |= s_stream_scan_outgoing_headers(stream, options->request, &header_lines_len);
+    err = s_stream_scan_outgoing_headers(stream, options->request, &header_lines_len);
     if (err) {
         /* errors already logged by scan_outgoing_headers() function */
         goto error_scanning_headers;
