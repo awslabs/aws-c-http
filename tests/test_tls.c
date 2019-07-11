@@ -183,14 +183,15 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
     ASSERT_NOT_NULL(test.client_connection);
 
     struct aws_http_request *request = aws_http_request_new(allocator);
-    aws_http_request_set_method(request, aws_http_method_get);
-    aws_http_request_set_path(request, *aws_uri_path_and_query(&uri));
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_http_method_get));
+    ASSERT_SUCCESS(aws_http_request_set_path(request, *aws_uri_path_and_query(&uri)));
 
     struct aws_http_header header_host = {
         .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
         .value = *aws_uri_host_name(&uri),
     };
-    aws_http_request_add_header(request, header_host);
+    ASSERT_SUCCESS(aws_http_request_add_header(request, header_host));
 
     struct aws_http_request_options req_options = AWS_HTTP_REQUEST_OPTIONS_INIT;
     req_options.client_connection = test.client_connection;

@@ -1508,10 +1508,11 @@ static int s_test_close_from_callback(struct aws_allocator *allocator, enum requ
 
     struct close_from_callback_tester close_tester = {
         .close_at = close_at,
-        .status = {
-            .is_valid = true,
-            .is_end_of_stream = false,
-        }
+        .status =
+            {
+                .is_valid = true,
+                .is_end_of_stream = false,
+            },
     };
     struct aws_input_stream close_from_outgoing_body_stream = {
         .allocator = allocator,

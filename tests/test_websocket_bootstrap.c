@@ -190,9 +190,7 @@ static bool s_headers_eq(
     return true;
 }
 
-static bool s_request_eq(
-    const struct aws_http_request *request_a,
-    const struct aws_http_request *request_b) {
+static bool s_request_eq(const struct aws_http_request *request_a, const struct aws_http_request *request_b) {
 
     const size_t num_headers_a = aws_http_request_get_header_count(request_a);
     const size_t num_headers_b = aws_http_request_get_header_count(request_b);
@@ -202,8 +200,8 @@ static bool s_request_eq(
     }
 
     for (size_t a_i = 0; a_i < num_headers_a; ++a_i) {
-            struct aws_http_header a;
-            aws_http_request_get_header(request_a, &a, a_i);
+        struct aws_http_header a;
+        aws_http_request_get_header(request_a, &a, a_i);
 
         bool found_match = false;
 
