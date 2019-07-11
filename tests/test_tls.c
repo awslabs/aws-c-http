@@ -207,6 +207,7 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
 
     ASSERT_INT_EQUALS(14428801, test.body_size);
 
+    aws_http_request_destroy(request);
     aws_http_stream_release(test.stream);
     test.stream = NULL;
 
