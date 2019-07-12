@@ -149,7 +149,7 @@ static void s_tester_on_incoming_request(
     struct tester *test = user_data;
 
     int index = test->request_num;
-    // initialize the new request
+    /* initialize the new request */
     test->requests[index].num_headers = 0;
     test->requests[index].has_incoming_body = false;
     test->requests[index].header_done = false;
