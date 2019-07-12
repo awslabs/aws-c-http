@@ -145,7 +145,7 @@ static void s_tester_on_incoming_request(
     struct aws_http_connection *connection,
     struct aws_http_stream *stream,
     void *user_data) {
-
+    (void) connection;
     struct aws_http_request_handler_options options = AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT;
     struct tester *test = user_data;
 
@@ -157,7 +157,6 @@ static void s_tester_on_incoming_request(
 
     aws_byte_buf_init(&test->requests[index].storage, test->alloc, 1024 * 1024 * 1);
     options.user_data = &test->requests[index];
-    options.server_connection = connection;
     test->requests[index].request_handler = stream;
     options.on_request_headers = s_tester_on_request_header;
     options.on_request_header_block_done = s_tester_on_request_header_block_done;
@@ -256,7 +255,7 @@ TEST_CASE(h1_server_sanity_check) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(h1_server_recieve_1line_request) {
+TEST_CASE(h1_server_receive_1line_request) {
 
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
@@ -284,7 +283,7 @@ static int s_check_header(struct tester_request *request, size_t i, const char *
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(h1_server_recieve_headers) {
+TEST_CASE(h1_server_receive_headers) {
 
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
@@ -311,7 +310,7 @@ TEST_CASE(h1_server_recieve_headers) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(h1_server_recieve_body) {
+TEST_CASE(h1_server_receive_body) {
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
 
@@ -336,7 +335,7 @@ TEST_CASE(h1_server_recieve_body) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(h1_server_recieve_1_request_from_multiple_io_messages) {
+TEST_CASE(h1_server_receive_1_request_from_multiple_io_messages) {
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
 
@@ -364,7 +363,7 @@ TEST_CASE(h1_server_recieve_1_request_from_multiple_io_messages) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(h1_server_recieve_multiple_requests_from_1_io_messages) {
+TEST_CASE(h1_server_receive_multiple_requests_from_1_io_messages) {
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
 
@@ -391,6 +390,53 @@ TEST_CASE(h1_server_recieve_multiple_requests_from_1_io_messages) {
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method, "GET"));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri, "/"));
     /* clean up */
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+
+/* Pop first message from queue and compare its contents to expected string. */
+static int s_check_written_message(struct tester *tester, const char *expected) {
+    struct aws_linked_list *msgs = testing_channel_get_written_message_queue(&tester->testing_channel);
+    ASSERT_TRUE(!aws_linked_list_empty(msgs));
+    struct aws_linked_list_node *node = aws_linked_list_pop_front(msgs);
+    struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
+
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&msg->message_data, expected));
+
+    aws_mem_release(msg->allocator, msg);
+
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_send_1line_response) {
+
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request = "GET / HTTP/1.1\r\n"
+                                   "\r\n";
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(s_tester.request_num == 1);
+
+    struct tester_request request = s_tester.requests[0];
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method, "GET"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri, "/"));
+
+
+    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
+    opt.status = 204;
+    opt.num_headers = 0;
+    ASSERT_SUCCESS(aws_http_stream_send_response(request.request_handler, &opt));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    const char *expected = "HTTP/1.1 204 No Content\r\n"
+                           "\r\n";
+
+    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+
     ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }

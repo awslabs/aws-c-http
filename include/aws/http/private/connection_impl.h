@@ -27,6 +27,7 @@
 struct aws_http_request_options;
 struct aws_http_request_handler_options;
 struct aws_http_stream;
+struct aws_http_response_options;
 
 struct aws_http_connection_vtable {
     struct aws_channel_handler_vtable channel_handler_vtable;
@@ -35,6 +36,7 @@ struct aws_http_connection_vtable {
     int (*configure_server_request_handler_stream)(
         struct aws_http_stream *stream,
         const struct aws_http_request_handler_options *options);
+    int (*stream_send_response)(struct aws_http_stream *stream, const struct aws_http_response_options *options);
     void (*close)(struct aws_http_connection *connection);
     bool (*is_open)(const struct aws_http_connection *connection);
 };

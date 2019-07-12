@@ -320,18 +320,32 @@ struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http
 int aws_http_stream_configure_server_request_handler(
     struct aws_http_stream *stream,
     const struct aws_http_request_handler_options *options) {
-    if (!options || options->self_size == 0 || !options->server_connection) {
+
+    if (!options || options->self_size == 0 || !stream) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "id=%p: Cannot create client request, options are invalid.",
-            (void *)(options ? options->server_connection : NULL));
+            "id=%p: Cannot configure server request handler stream, options are invalid.",
+            (void *)(stream ? stream->owning_connection : NULL));
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
     /* Connection owns stream, and must outlive stream */
-    aws_atomic_fetch_add(&options->server_connection->refcount, 1);
+    aws_atomic_fetch_add(&stream->owning_connection->refcount, 1);
 
-    return options->server_connection->vtable->configure_server_request_handler_stream(stream, options);
+    return stream->owning_connection->vtable->configure_server_request_handler_stream(stream, options);
+}
+
+int aws_http_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options)
+{
+    if (!options || options->self_size == 0 || !stream) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Cannot send response, options are invalid.",
+            (void *)(stream ? stream->owning_connection : NULL));
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    return stream->owning_connection->vtable->stream_send_response(stream, options);
 }
 
 void aws_http_stream_release(struct aws_http_stream *stream) {
