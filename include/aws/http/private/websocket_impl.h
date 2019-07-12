@@ -74,6 +74,7 @@ struct aws_websocket_handler_options {
     aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
 
     bool is_server;
+    bool manual_window_update;
 };
 
 struct aws_websocket_client_bootstrap_system_vtable {
