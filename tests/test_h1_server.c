@@ -145,7 +145,7 @@ static void s_tester_on_incoming_request(
     struct aws_http_connection *connection,
     struct aws_http_stream *stream,
     void *user_data) {
-    (void) connection;
+    (void)connection;
     struct aws_http_request_handler_options options = AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT;
     struct tester *test = user_data;
 
@@ -394,7 +394,6 @@ TEST_CASE(h1_server_receive_multiple_requests_from_1_io_messages) {
     return AWS_OP_SUCCESS;
 }
 
-
 /* Pop first message from queue and compare its contents to expected string. */
 static int s_check_written_message(struct tester *tester, const char *expected) {
     struct aws_linked_list *msgs = testing_channel_get_written_message_queue(&tester->testing_channel);
@@ -425,7 +424,6 @@ TEST_CASE(h1_server_send_1line_response) {
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method, "GET"));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri, "/"));
 
-
     struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
     opt.status = 204;
     opt.num_headers = 0;
@@ -433,6 +431,51 @@ TEST_CASE(h1_server_send_1line_response) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     const char *expected = "HTTP/1.1 204 No Content\r\n"
+                           "\r\n";
+
+    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_send_response_headers) {
+
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request = "GET / HTTP/1.1\r\n"
+                                   "\r\n";
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(s_tester.request_num == 1);
+
+    struct tester_request request = s_tester.requests[0];
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method, "GET"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri, "/"));
+
+    /* send response */
+    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
+    opt.status = 308;
+    opt.num_headers = 2;
+    struct aws_http_header headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Date"),
+            .value = aws_byte_cursor_from_c_str("Fri, 01 Mar 2019 17:18:55 GMT"),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str("Location"),
+            .value = aws_byte_cursor_from_c_str("/index.html"),
+        },
+    };
+    opt.header_array = headers;
+    ASSERT_SUCCESS(aws_http_stream_send_response(request.request_handler, &opt));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    const char *expected = "HTTP/1.1 308 Permanent Redirect\r\n"
+                           "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
+                           "Location: /index.html\r\n"
                            "\r\n";
 
     ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
