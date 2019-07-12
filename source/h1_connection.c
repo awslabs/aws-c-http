@@ -1066,8 +1066,9 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
                 /* The front of pending_stream list is not ready to be sent */
                 if (!AWS_CONTAINER_OF(
                          aws_linked_list_front(&connection->thread_data.waiting_stream_list), struct h1_stream, node)
-                         ->synced_data.has_response)
+                         ->synced_data.has_response) {
                     break;
+                }
                 aws_linked_list_push_back(
                     &connection->thread_data.stream_list,
                     aws_linked_list_pop_front(&connection->thread_data.waiting_stream_list));
@@ -1120,8 +1121,9 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
 
         connection->thread_data.outgoing_stream = current;
         /* incoming_stream update is only for client */
-        if (connection->base.client_data)
+        if (connection->base.client_data) {
             s_update_incoming_stream_ptr(connection);
+        }
     }
 
     return current;
