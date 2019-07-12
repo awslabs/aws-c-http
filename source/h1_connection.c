@@ -206,8 +206,6 @@ struct h1_stream {
     /* Buffer for incoming data that needs to stick around. */
     struct aws_byte_buf incoming_storage_buf;
 
-    bool has_response;
-
     /* Any thread may touch this data, but the lock must be held
      * only for case like multiple server user all want to write response into a same stream*/
     struct {
@@ -556,13 +554,13 @@ static int s_configure_server_request_handler_stream(
             (void *)stream->owning_connection);
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
-    if (stream->configured) {
+    if (stream->request_handler_configured) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_STREAM, "id=%p: Stream configuration is already done, ignoring call.", (void *)stream);
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
-    stream->configured = true;
+    stream->request_handler_configured = true;
     stream->user_data = options->user_data;
     stream->on_incoming_headers = options->on_request_headers;
     stream->on_incoming_header_block_done = options->on_request_header_block_done;
@@ -604,11 +602,6 @@ static int s_write_response_to_stream_buffer(
     status_code_str[1] = ((options->status % 100) / 10) % 10 + '0';
     status_code_str[2] = options->status % 10 + '0';
     struct aws_byte_cursor status_code = aws_byte_cursor_from_c_str(status_code_str);
-
-    /* just for my own debug, deleted after test! */
-    if (status_code.len != 3) {
-        return AWS_OP_ERR;
-    }
 
     /* reponse-line: "{version} {status} {status_text}\r\n" */
     size_t reponse_line_len = 4; /* 2 spaces + "\r\n" */
@@ -673,7 +666,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, const struct a
     { /* BEGIN CRITICAL SECTION */
         err = aws_mutex_lock(&connection->synced_data.lock);
         if (h1_stream->synced_data.has_response) {
-            AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "id=%p: Response already created on the stream", (void *)h1_stream);
+            AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "id=%p: Response already created on the stream", (void *)stream);
             return AWS_OP_ERR;
         }
         h1_stream->synced_data.has_response = true;
@@ -688,10 +681,10 @@ static int s_stream_send_response(struct aws_http_stream *stream, const struct a
     } /* END CRITICAL SECTION */
     err = s_write_response_to_stream_buffer(h1_stream, options);
     AWS_FATAL_ASSERT(!err);
-    h1_stream->base.stream_outgoing_body = options->stream_outgoing_body;
+    stream->stream_outgoing_body = options->stream_outgoing_body;
     /* Success! */
     AWS_LOGF_DEBUG(
-        AWS_LS_HTTP_STREAM, "id=%p: Created response on connection=%p: ", (void *)&h1_stream->base, (void *)connection);
+        AWS_LS_HTTP_STREAM, "id=%p: Created response on connection=%p: ", (void *)stream, (void *)connection);
 
     if (should_schedule_task) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling outgoing stream task.", (void *)&connection->base);
@@ -1734,19 +1727,17 @@ static int s_handler_process_read_message(
                             "id=%p: Failed to create a new stream in connection. Closing connection.",
                             (void *)&connection->base);
                         goto shutdown;
-                        ;
                     }
                     connection->base.server_data->on_incoming_request(
                         &connection->base, &stream->base, connection->base.server_data->connection_user_data);
 
-                    if (!stream->base.configured) {
+                    if (!stream->base.request_handler_configured) {
                         AWS_LOGF_ERROR(
                             AWS_LS_HTTP_CONNECTION,
-                            "id=%p: The request handler stream is not configured,"
+                            "id=%p: The request handler stream is not request_handler_configured,"
                             "please make sure call aws_http_stream_configure_server_request_handler",
                             (void *)&connection->base);
                         goto shutdown;
-                        ;
                     }
                     /* Making new list in thread data. */
                     aws_linked_list_push_back(&connection->thread_data.waiting_stream_list, &stream->node);

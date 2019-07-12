@@ -40,7 +40,7 @@
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
-/* get the request from the channel */
+
 struct tester_request {
     struct aws_http_stream *request_handler;
 
@@ -140,7 +140,7 @@ static void s_tester_on_request_body(
     }
 }
 
-// create a new request handler
+/* Create a new request handler */
 static void s_tester_on_incoming_request(
     struct aws_http_connection *connection,
     struct aws_http_stream *stream,

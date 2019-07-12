@@ -45,7 +45,7 @@ struct aws_http_stream {
     aws_http_on_stream_complete_fn *on_complete;
 
     struct aws_atomic_var refcount;
-    bool configured;
+    bool request_handler_configured;
 
     int incoming_response_status;
     enum aws_http_method incoming_request_method;
