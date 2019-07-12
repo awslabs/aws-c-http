@@ -40,7 +40,6 @@
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
-
 struct tester_request {
     struct aws_http_stream *request_handler;
 
