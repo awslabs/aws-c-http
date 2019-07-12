@@ -378,6 +378,18 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_head
     AWS_ASSERT(wrote_all);
 }
 
+static struct h1_stream *s_new_stream(struct aws_http_connection *connection) {
+    struct h1_stream *stream = aws_mem_calloc(connection->alloc, 1, sizeof(struct h1_stream));
+    if (!stream) {
+        return NULL;
+    }
+    stream->base.owning_connection = connection;
+    stream->base.vtable = &s_stream_vtable;
+    stream->base.alloc = connection->alloc;
+
+    return stream;
+}
+
 struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options) {
     if (options->uri.len == 0 || options->method.len == 0) {
         AWS_LOGF_ERROR(
@@ -388,14 +400,8 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
         return NULL;
     }
 
-    struct h1_stream *stream = aws_mem_calloc(options->client_connection->alloc, 1, sizeof(struct h1_stream));
-    if (!stream) {
-        return NULL;
-    }
+    struct h1_stream *stream = s_new_stream(options->client_connection);
 
-    stream->base.vtable = &s_stream_vtable;
-    stream->base.alloc = options->client_connection->alloc;
-    stream->base.owning_connection = options->client_connection;
     stream->base.user_data = options->user_data;
     stream->base.stream_outgoing_body = options->stream_outgoing_body;
     stream->base.on_incoming_headers = options->on_response_headers;
@@ -531,21 +537,6 @@ error_calculating_size:
 error_scanning_headers:
     aws_mem_release(stream->base.alloc, stream);
     return NULL;
-}
-
-static struct h1_stream *s_new_server_stream(struct h1_connection *connection) {
-    struct h1_stream *stream = aws_mem_calloc(connection->base.alloc, 1, sizeof(struct h1_stream));
-    if (!stream) {
-        return NULL;
-    }
-    stream->base.owning_connection = &connection->base;
-    stream->base.vtable = &s_stream_vtable;
-    stream->base.alloc = connection->base.alloc;
-
-    /* Making new list in thread data. */
-    aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &stream->node);
-
-    return stream;
 }
 
 static int s_configure_server_request_handler_stream(
@@ -1732,7 +1723,7 @@ static int s_handler_process_read_message(
                 {
                     /* Server side
                      * Make a new stream for this request and push it into the stream list wait for response */
-                    struct h1_stream *stream = s_new_server_stream(connection);
+                    struct h1_stream *stream = s_new_stream(&connection->base);
                     if (!stream) {
                         AWS_LOGF_ERROR(
                             AWS_LS_HTTP_CONNECTION,
@@ -1751,6 +1742,9 @@ static int s_handler_process_read_message(
                             (void *)&connection->base);
                         goto shutdown;;
                     }
+                        /* Making new list in thread data. */
+                    aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &stream->node);
+
                     connection->thread_data.incoming_stream = stream;
                 }
             }
