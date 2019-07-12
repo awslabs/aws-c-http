@@ -1348,10 +1348,7 @@ static int s_decoder_on_user_payload(struct aws_websocket *websocket, struct aws
     }
 
     if (!websocket->on_incoming_frame_payload(
-            websocket,
-            websocket->thread_data.current_incoming_frame,
-            data,
-            websocket->user_data)) {
+            websocket, websocket->thread_data.current_incoming_frame, data, websocket->user_data)) {
 
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET, "id=%p: Incoming payload callback has reported a failure.", (void *)websocket);

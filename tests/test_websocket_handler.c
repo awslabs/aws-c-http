@@ -43,9 +43,7 @@ struct incoming_frame {
     bool is_complete;
 };
 
-static struct tester_options {
-    bool manual_window_update;
-} s_tester_options;
+static struct tester_options { bool manual_window_update; } s_tester_options;
 
 struct tester {
     struct aws_allocator *alloc;
@@ -69,9 +67,9 @@ struct tester {
     /* Frames reported via the websocket's on_incoming_frame callbacks are recorded here */
     struct incoming_frame incoming_frames[100];
     size_t num_incoming_frames;
-    size_t fail_on_incoming_frame_begin_n;          /* If set, return false on Nth incoming_frame_begin callback */
-    size_t fail_on_incoming_frame_payload_n;        /* If set, return false on Nth incoming_frame_payload callback */
-    size_t fail_on_incoming_frame_complete_n;       /* If set, return false on Nth incoming_frame_complete callback */
+    size_t fail_on_incoming_frame_begin_n;    /* If set, return false on Nth incoming_frame_begin callback */
+    size_t fail_on_incoming_frame_payload_n;  /* If set, return false on Nth incoming_frame_payload callback */
+    size_t fail_on_incoming_frame_complete_n; /* If set, return false on Nth incoming_frame_complete callback */
 
     /* For pushing messages downstream, to be read by websocket handler.
      * readpush_frame is for tests to define websocket frames to be pushed downstream.
