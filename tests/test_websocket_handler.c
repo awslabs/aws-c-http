@@ -43,6 +43,10 @@ struct incoming_frame {
     bool is_complete;
 };
 
+static struct tester_options {
+    bool manual_window_update;
+} s_tester_options;
+
 struct tester {
     struct aws_allocator *alloc;
     struct aws_logger logger;
@@ -67,7 +71,6 @@ struct tester {
     size_t num_incoming_frames;
     size_t fail_on_incoming_frame_begin_n;          /* If set, return false on Nth incoming_frame_begin callback */
     size_t fail_on_incoming_frame_payload_n;        /* If set, return false on Nth incoming_frame_payload callback */
-    size_t zero_window_on_incoming_frame_payload_n; /* If set, zero out window on Nth incoming_frame_payload callback */
     size_t fail_on_incoming_frame_complete_n;       /* If set, return false on Nth incoming_frame_complete callback */
 
     /* For pushing messages downstream, to be read by websocket handler.
@@ -220,7 +223,6 @@ static bool s_on_incoming_frame_payload(
     struct aws_websocket *websocket,
     const struct aws_websocket_incoming_frame *frame,
     struct aws_byte_cursor data,
-    size_t *out_window_update_size,
     void *user_data) {
 
     (void)websocket;
@@ -234,10 +236,6 @@ static bool s_on_incoming_frame_payload(
     AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(&incoming_frame->payload, data));
 
     incoming_frame->on_payload_count++;
-
-    if (tester->zero_window_on_incoming_frame_payload_n == incoming_frame->on_payload_count) {
-        *out_window_update_size = 0;
-    }
 
     if (tester->fail_on_incoming_frame_payload_n) {
         AWS_FATAL_ASSERT(incoming_frame->on_payload_count <= tester->fail_on_incoming_frame_payload_n);
@@ -499,6 +497,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
         .on_incoming_frame_begin = s_on_incoming_frame_begin,
         .on_incoming_frame_payload = s_on_incoming_frame_payload,
         .on_incoming_frame_complete = s_on_incoming_frame_complete,
+        .manual_window_update = s_tester_options.manual_window_update,
     };
     tester->websocket = aws_websocket_handler_new(&ws_options);
     ASSERT_NOT_NULL(tester->websocket);
@@ -1681,6 +1680,7 @@ TEST_CASE(websocket_handler_window_reopens_by_default) {
 
 static int s_window_manual_increment_common(struct aws_allocator *allocator, bool on_thread) {
     struct tester tester;
+    s_tester_options.manual_window_update = true;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     struct readpush_frame pushing = {
@@ -1691,8 +1691,6 @@ static int s_window_manual_increment_common(struct aws_allocator *allocator, boo
                 .fin = true,
             },
     };
-
-    tester.zero_window_on_incoming_frame_payload_n = 1;
 
     s_set_readpush_frames(&tester, &pushing, 1);
     ASSERT_SUCCESS(s_do_readpush_all(&tester));

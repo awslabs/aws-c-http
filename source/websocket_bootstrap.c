@@ -60,6 +60,7 @@ struct aws_websocket_client_bootstrap {
     /* Settings copied in from aws_websocket_client_connection_options */
     struct aws_allocator *alloc;
     size_t initial_window_size;
+    bool manual_window_update;
     void *user_data;
     /* Setup callback will be set NULL once it's invoked.
      * This is used to determine whether setup or shutdown should be invoked
@@ -151,6 +152,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
 
     ws_bootstrap->alloc = options->allocator;
     ws_bootstrap->initial_window_size = options->initial_window_size;
+    ws_bootstrap->manual_window_update = options->manual_window_management;
     ws_bootstrap->user_data = options->user_data;
     ws_bootstrap->websocket_setup_callback = options->on_connection_setup;
     ws_bootstrap->websocket_shutdown_callback = options->on_connection_shutdown;
@@ -472,7 +474,9 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
         .on_incoming_frame_begin = ws_bootstrap->websocket_frame_begin_callback,
         .on_incoming_frame_payload = ws_bootstrap->websocket_frame_payload_callback,
         .on_incoming_frame_complete = ws_bootstrap->websocket_frame_complete_callback,
-        .is_server = false};
+        .is_server = false,
+        .manual_window_update = ws_bootstrap->manual_window_update,
+    };
 
     ws_bootstrap->websocket = s_system_vtable->aws_websocket_handler_new(&ws_options);
     if (!ws_bootstrap->websocket) {
