@@ -126,6 +126,9 @@ struct h1_connection {
         /* List of streams being worked on. */
         struct aws_linked_list stream_list;
 
+        /* List of streams waiting for response. */
+        struct aws_linked_list waiting_stream_list;
+
         /* Points to the stream whose data is currently being sent.
          * This stream is ALWAYS in the `stream_list`.
          * HTTP pipelining is supported, so once the stream is completely written
@@ -1060,39 +1063,52 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
         }
     }
 
-    /* If current stream is NULL, look in synced_data.pending_stream_list for more work */
+    /* If current stream is NULL, 
+     * Client side: look in synced_data.pending_stream_list for more work 
+     * Server side: look in thread_data.waiting_stream_list for more work*/
     if (!current) {
-
-        /* BEGIN CRITICAL SECTION */
-        err = aws_mutex_lock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
-
-        if (aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
-            /* No more work to do. Set this false while we're holding the lock. */
-            connection->synced_data.is_outgoing_stream_task_active = false;
-
-        } else {
-            current = AWS_CONTAINER_OF(
-                aws_linked_list_front(&connection->synced_data.pending_stream_list), struct h1_stream, node);
-            
+        if(connection->base.server_data){
             /* server side should check the stream have response or not */
-            if(connection->base.server_data){
-                do{
-                    /* The front of pending_stream list is not ready to be sent */
-                    if(!AWS_CONTAINER_OF(
-                        aws_linked_list_front(&connection->synced_data.pending_stream_list), 
-                        struct h1_stream, node)->synced_data.has_response)
-                        break;
-                    aws_linked_list_push_back(
-                        &connection->thread_data.stream_list,
-                        aws_linked_list_pop_front(&connection->synced_data.pending_stream_list));
-
-                } while (!aws_linked_list_empty(&connection->synced_data.pending_stream_list));
-                
-                
-            }
-            else
+            while (!aws_linked_list_empty(&connection->thread_data.waiting_stream_list))
             {
+                /* The front of pending_stream list is not ready to be sent */
+                if(!AWS_CONTAINER_OF(
+                    aws_linked_list_front(&connection->thread_data.waiting_stream_list), 
+                    struct h1_stream, node)->synced_data.has_response)
+                    break;
+                aws_linked_list_push_back(
+                    &connection->thread_data.stream_list,
+                    aws_linked_list_pop_front(&connection->thread_data.waiting_stream_list));
+            }
+            if (aws_linked_list_empty(&connection->thread_data.stream_list)) {
+                /* BEGIN CRITICAL SECTION */
+                err = aws_mutex_lock(&connection->synced_data.lock);
+                AWS_FATAL_ASSERT(!err);
+                /* No work to do. Set this false while we're holding the lock. */
+                connection->synced_data.is_outgoing_stream_task_active = false;
+                err = aws_mutex_unlock(&connection->synced_data.lock);
+                AWS_FATAL_ASSERT(!err);
+                /* END CRITICAL SECTION */
+            }
+            else{
+                current = AWS_CONTAINER_OF(
+                    aws_linked_list_front(&connection->thread_data.stream_list), struct h1_stream, node);
+            }    
+        }
+        else
+        {
+            /* BEGIN CRITICAL SECTION */
+            err = aws_mutex_lock(&connection->synced_data.lock);
+            AWS_FATAL_ASSERT(!err);
+
+            if (aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
+                /* No more work to do. Set this false while we're holding the lock. */
+                connection->synced_data.is_outgoing_stream_task_active = false;
+
+            } else {
+                current = AWS_CONTAINER_OF(
+                    aws_linked_list_front(&connection->synced_data.pending_stream_list), struct h1_stream, node);
+
                 /* Move contents from pending_stream_list to stream_list. */
                 do {
                     aws_linked_list_push_back(
@@ -1101,11 +1117,11 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
 
                 } while (!aws_linked_list_empty(&connection->synced_data.pending_stream_list));
             }
-        }
 
-        err = aws_mutex_unlock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
-        /* END CRITICAL SECTION */
+            err = aws_mutex_unlock(&connection->synced_data.lock);
+            AWS_FATAL_ASSERT(!err);
+            /* END CRITICAL SECTION */
+        }
     }
 
     /* Update current incoming and outgoing streams. */
@@ -1469,6 +1485,7 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     aws_channel_task_init(&connection->window_update_task, s_update_window_task, connection, "http1_update_window");
     aws_channel_task_init(&connection->shutdown_delay_task, s_shutdown_delay_task, connection, "http1_delay_shutdown");
     aws_linked_list_init(&connection->thread_data.stream_list);
+    aws_linked_list_init(&connection->thread_data.waiting_stream_list);
     aws_linked_list_init(&connection->thread_data.midchannel_read_messages);
 
     int err = aws_mutex_init(&connection->synced_data.lock);
@@ -1544,6 +1561,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
 
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.midchannel_read_messages));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stream_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.waiting_stream_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
 
     aws_h1_decoder_destroy(connection->thread_data.incoming_stream_decoder);
@@ -1742,8 +1760,8 @@ static int s_handler_process_read_message(
                             (void *)&connection->base);
                         goto shutdown;;
                     }
-                        /* Making new list in thread data. */
-                    aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &stream->node);
+                    /* Making new list in thread data. */
+                    aws_linked_list_push_back(&connection->thread_data.waiting_stream_list, &stream->node);
 
                     connection->thread_data.incoming_stream = stream;
                 }
@@ -1915,6 +1933,11 @@ static int s_handler_shutdown(
 
         while (!aws_linked_list_empty(&connection->thread_data.stream_list)) {
             struct aws_linked_list_node *node = aws_linked_list_front(&connection->thread_data.stream_list);
+            s_stream_complete(AWS_CONTAINER_OF(node, struct h1_stream, node), stream_error_code);
+        }
+
+        while (!aws_linked_list_empty(&connection->thread_data.waiting_stream_list)) {
+            struct aws_linked_list_node *node = aws_linked_list_front(&connection->thread_data.waiting_stream_list);
             s_stream_complete(AWS_CONTAINER_OF(node, struct h1_stream, node), stream_error_code);
         }
 
