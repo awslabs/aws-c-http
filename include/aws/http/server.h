@@ -134,7 +134,8 @@ struct aws_http_server_connection_options {
      * Invoked when a new "request handler" stream is created to handle an incoming request.
      * Required.
      * From this callback, the user must call aws_http_stream_configure_server_request_handler().
-     * The user must call aws_stream_release() on the stream when they are done with it or its memory will never be cleaned up.
+     * The user must call aws_stream_release() on the stream when they are done with it or its memory will never be
+     * cleaned up.
      */
     aws_http_on_incoming_request_fn *on_incoming_request;
 

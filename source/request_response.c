@@ -335,8 +335,7 @@ int aws_http_stream_configure_server_request_handler(
     return stream->owning_connection->vtable->configure_server_request_handler_stream(stream, options);
 }
 
-int aws_http_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options)
-{
+int aws_http_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options) {
     if (!options || options->self_size == 0 || !stream) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,

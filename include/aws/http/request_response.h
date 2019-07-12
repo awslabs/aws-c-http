@@ -232,7 +232,7 @@ struct aws_http_response_options {
     aws_http_stream_outgoing_body_fn *stream_outgoing_body;
 };
 
-#define AWS_HTTP_RESPONSE_OPTIONS_INIT                                                                          \
+#define AWS_HTTP_RESPONSE_OPTIONS_INIT                                                                                 \
     { .self_size = sizeof(struct aws_http_response_options), }
 
 AWS_EXTERN_C_BEGIN
