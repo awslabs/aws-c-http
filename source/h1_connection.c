@@ -1069,6 +1069,9 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
     if (!current) {
         if(connection->base.server_data){
             /* server side should check the stream have response or not */
+            /* BEGIN CRITICAL SECTION */
+            err = aws_mutex_lock(&connection->synced_data.lock);
+            AWS_FATAL_ASSERT(!err);
             while (!aws_linked_list_empty(&connection->thread_data.waiting_stream_list))
             {
                 /* The front of pending_stream list is not ready to be sent */
@@ -1081,19 +1084,16 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
                     aws_linked_list_pop_front(&connection->thread_data.waiting_stream_list));
             }
             if (aws_linked_list_empty(&connection->thread_data.stream_list)) {
-                /* BEGIN CRITICAL SECTION */
-                err = aws_mutex_lock(&connection->synced_data.lock);
-                AWS_FATAL_ASSERT(!err);
                 /* No work to do. Set this false while we're holding the lock. */
                 connection->synced_data.is_outgoing_stream_task_active = false;
-                err = aws_mutex_unlock(&connection->synced_data.lock);
-                AWS_FATAL_ASSERT(!err);
-                /* END CRITICAL SECTION */
-            }
+            } 
             else{
                 current = AWS_CONTAINER_OF(
                     aws_linked_list_front(&connection->thread_data.stream_list), struct h1_stream, node);
-            }    
+            } 
+            err = aws_mutex_unlock(&connection->synced_data.lock);
+            AWS_FATAL_ASSERT(!err);
+            /* END CRITICAL SECTION */   
         }
         else
         {
