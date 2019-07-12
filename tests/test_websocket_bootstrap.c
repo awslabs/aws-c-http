@@ -20,7 +20,7 @@
 #include <aws/http/request_response.h>
 #include <aws/io/logging.h>
 #include <aws/io/uri.h>
-#include <aws/testing/aws_test_harness.h>
+#include <aws/testing/aws_test_allocators.h>
 
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
@@ -563,46 +563,12 @@ TEST_CASE(websocket_boot_report_unexpected_http_shutdown) {
     return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_HTTP_SHUTDOWN);
 }
 
-#define TIMEBOMB_MAX_TIMER 0xFFFF
-
-struct timebomb_impl {
-    struct aws_allocator *real_allocator;
-    struct aws_atomic_var timer;
-};
-
-static void *s_timebomb_mem_acquire(struct aws_allocator *alloc, size_t size) {
-    struct timebomb_impl *timebomb = alloc->impl;
-
-    /* ALL allocations should fail after timer reaches zero.
-     * But timer is unsigned atomic.
-     * Therefore, when timer wraps around 0 and becomes huge, continue failing. */
-    size_t timer = aws_atomic_fetch_sub(&timebomb->timer, 1);
-    if (timer == 0 || timer > TIMEBOMB_MAX_TIMER) {
-        return NULL;
-    }
-
-    return timebomb->real_allocator->mem_acquire(timebomb->real_allocator, size);
-}
-
-static void s_timebomb_mem_release(struct aws_allocator *alloc, void *ptr) {
-    struct timebomb_impl *timebomb = alloc->impl;
-    timebomb->real_allocator->mem_release(timebomb->real_allocator, ptr);
-}
-
 /* Run connection process with an allocator that fakes running out of memory after N allocations. */
 TEST_CASE(websocket_boot_fail_because_oom) {
     (void)ctx;
 
-    struct timebomb_impl timebomb_impl = {
-        .real_allocator = allocator,
-    };
-    aws_atomic_init_int(&timebomb_impl.timer, TIMEBOMB_MAX_TIMER);
-
-    struct aws_allocator timebomb_alloc = {
-        .mem_acquire = s_timebomb_mem_acquire,
-        .mem_release = s_timebomb_mem_release,
-        .impl = &timebomb_impl,
-    };
+    struct aws_allocator timebomb_alloc;
+    ASSERT_SUCCESS(aws_timebomb_allocator_init(&timebomb_alloc, allocator, SIZE_MAX));
 
     /* Only use the timebomb allocator with actual the tester, not the logger or other systems. */
     s_tester.alloc = &timebomb_alloc;
@@ -615,7 +581,7 @@ TEST_CASE(websocket_boot_fail_because_oom) {
     const int max_tries = 10000;
     int timer;
     for (timer = 0; timer < max_tries; ++timer) {
-        aws_atomic_store_int(&timebomb_impl.timer, timer);
+        aws_timebomb_allocator_reset_countdown(&timebomb_alloc, timer);
 
         int websocket_connect_error_code;
         ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
@@ -634,7 +600,7 @@ TEST_CASE(websocket_boot_fail_because_oom) {
     ASSERT_TRUE(timer >= 2); /* Assert that we actually did fail a few times */
 
     ASSERT_SUCCESS(s_tester_clean_up());
-
+    aws_timebomb_allocator_clean_up(&timebomb_alloc);
     return AWS_OP_SUCCESS;
 }
 
