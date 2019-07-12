@@ -208,7 +208,6 @@ struct h1_stream {
     /* Any thread may touch this data, but the lock must be held 
      * only for case like multiple server user all want to write response into a same stream*/
     struct {
-        struct aws_mutex lock;
         /* For check the response is already made by a user or not */
         bool has_response;
     } synced_data;
@@ -543,8 +542,6 @@ static struct h1_stream *s_new_server_stream(struct h1_connection *connection) {
     stream->base.vtable = &s_stream_vtable;
     stream->base.alloc = connection->base.alloc;
 
-    int err = aws_mutex_init(&stream->synced_data.lock);
-    AWS_FATAL_ASSERT(!err);
     /* Making new list in thread data. */
     aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &stream->node);
 
@@ -558,7 +555,19 @@ static int s_configure_server_request_handler_stream(
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "id=%p: Invalid stream configuration options.", (void *)stream);
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
+    if (!stream->owning_connection->server_data) {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Server-only function invoked on client, ignoring call.",
+            (void *)stream->owning_connection);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+    if(stream->configured){
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Stream configuration is already done, ignoring call.", (void *)stream);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
 
+    stream->configured = true;
     stream->user_data = options->user_data;
     stream->on_incoming_headers = options->on_request_headers;
     stream->on_incoming_header_block_done = options->on_request_header_block_done;
@@ -1727,17 +1736,23 @@ static int s_handler_process_read_message(
                     if (!stream) {
                         AWS_LOGF_ERROR(
                             AWS_LS_HTTP_CONNECTION,
-                            "id=%p: Failed to create a new stream in conneciton. Closing connection.",
+                            "id=%p: Failed to create a new stream in connection. Closing connection.",
                             (void *)&connection->base);
                         goto shutdown;;
                     }
                     connection->base.server_data->on_incoming_request(
                         &connection->base, &stream->base, connection->base.server_data->connection_user_data);
-                    connection->thread_data.incoming_stream = stream;
 
+                    if(!stream->base.configured){
+                        AWS_LOGF_ERROR(
+                            AWS_LS_HTTP_CONNECTION,
+                            "id=%p: The request handler stream is not configured," 
+                            "please make sure call aws_http_stream_configure_server_request_handler",
+                            (void *)&connection->base);
+                        goto shutdown;;
+                    }
+                    connection->thread_data.incoming_stream = stream;
                 }
-                
-                
             }
 
             /* Decoder will invoke the internal s_decoder_X callbacks, which in turn invoke user callbacks */
