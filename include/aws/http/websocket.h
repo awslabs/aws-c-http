@@ -106,13 +106,6 @@ typedef bool(aws_websocket_on_incoming_frame_begin_fn)(
  * Payload data will not be valid after this call, so copy if necessary.
  * The payload data is always unmasked at this point.
  *
- * `out_increment_window` is how much to increment the read window after this data is processed.
- * The read window shrinks as payload data is received, and reading stops when its size reaches 0.
- * The initial value of `out_increment_window` will match the size of the data which has just come in,
- * so leaving `out_increment_window` untouched results in the window incrementing back to its original size.
- * Setting `out_increment_window` to 0 will let the window shrink, and aws_websocket_increment_read_window()
- * will need to be called when the user is ready to receive more data.
- *
  * Return true to proceed normally. If false is returned, the websocket will read no further data,
  * the frame will complete with an error-code, and the connection will close.
  */
@@ -120,7 +113,6 @@ typedef bool(aws_websocket_on_incoming_frame_payload_fn)(
     struct aws_websocket *websocket,
     const struct aws_websocket_incoming_frame *frame,
     struct aws_byte_cursor data,
-    size_t *out_increment_window,
     void *user_data);
 
 /**
@@ -248,6 +240,17 @@ struct aws_websocket_client_connection_options {
      * See `aws_websocket_on_incoming_frame_complete_fn`.
      */
     aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
+
+    /**
+     * Set to true to manually manage the read window size.
+     *
+     * If this is false, the connection will maintain a constant window size.
+     *
+     * If this is true, the caller must manually increment the window size using aws_websocket_increment_read_window().
+     * If the window is not incremented, it will shrink by the amount of payload data received. If the window size
+     * reaches 0, no further data will be received.
+     */
+    bool manual_window_management;
 };
 
 /**
