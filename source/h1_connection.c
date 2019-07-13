@@ -1723,7 +1723,7 @@ static int s_handler_process_read_message(
                     goto shutdown;
                 } else {
                     /* Server side
-                     * Make a new stream for this request and push it into the stream list wait for response */
+                     * Make a new stream for this request and push it into the waiting stream list wait for response */
                     struct h1_stream *stream = s_new_stream(&connection->base);
                     if (!stream) {
                         AWS_LOGF_ERROR(
@@ -1743,7 +1743,7 @@ static int s_handler_process_read_message(
                             (void *)&connection->base);
                         goto shutdown;
                     }
-                    /* Making new list in thread data. */
+                    /* Waiting for response. */
                     aws_linked_list_push_back(&connection->thread_data.waiting_stream_list, &stream->node);
 
                     connection->thread_data.incoming_stream = stream;
