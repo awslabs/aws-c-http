@@ -27,7 +27,7 @@
 #    pragma GCC diagnostic ignored "-Wpointer-to-int-cast"
 #endif
 
-#define AWS_DEFINE_ERROR_INFO_HTTP(CODE, STR) AWS_DEFINE_ERROR_INFO(CODE, STR, "aws-c-http")
+#define AWS_DEFINE_ERROR_INFO_HTTP(CODE, STR) [(CODE)-0x0800] = AWS_DEFINE_ERROR_INFO(CODE, STR, "aws-c-http")
 
 /* clang-format off */
 static struct aws_error_info s_errors[] = {
@@ -73,9 +73,6 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_MANAGER_VENDED_CONNECTION_UNDERFLOW,
         "Release called when the connection manager's vended connection count was zero"),
-    AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_END_RANGE,
-        "Not a real error and should never be seen."),
 };
 /* clang-format on */
 
