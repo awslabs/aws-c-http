@@ -1426,6 +1426,10 @@ static int s_decoder_on_done(void *user_data) {
         if (incoming_stream->base.on_request_end) {
             incoming_stream->base.on_request_end(&incoming_stream->base, incoming_stream->base.user_data);
         }
+        if (incoming_stream->outgoing_state == STREAM_OUTGOING_STATE_DONE) {
+            AWS_ASSERT(&incoming_stream->node == aws_linked_list_begin(&connection->thread_data.stream_list));
+            s_stream_complete(incoming_stream, AWS_ERROR_SUCCESS);
+        }
         connection->thread_data.incoming_stream = NULL;
 
     } else if (incoming_stream->outgoing_state == STREAM_OUTGOING_STATE_DONE) {

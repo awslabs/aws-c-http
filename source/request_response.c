@@ -323,7 +323,7 @@ int aws_http_stream_configure_server_request_handler(
 
     if (!options || options->self_size == 0 || !stream) {
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
+            AWS_LS_HTTP_STREAM,
             "id=%p: Cannot configure server request handler stream, options are invalid.",
             (void *)(stream ? stream->owning_connection : NULL));
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
