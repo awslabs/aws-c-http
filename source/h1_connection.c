@@ -425,6 +425,9 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     }
 
     struct aws_h1_stream *stream = aws_h1_stream_new(options);
+    if (!stream) {
+        return NULL;
+    }
 
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
 

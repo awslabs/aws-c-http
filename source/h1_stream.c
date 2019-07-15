@@ -39,6 +39,8 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
 struct aws_h1_stream *aws_h1_stream_new(const struct aws_http_request_options *options) {
     struct aws_h1_stream *stream = aws_mem_calloc(options->client_connection->alloc, 1, sizeof(struct aws_h1_stream));
     if (!stream) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION, "id=%p: Failed to create stream object.", (void *)options->client_connection);
         return NULL;
     }
 
