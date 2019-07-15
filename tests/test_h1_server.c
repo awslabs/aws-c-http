@@ -438,8 +438,6 @@ TEST_CASE(h1_server_send_1line_response) {
     ASSERT_TRUE(s_tester.request_num == 1);
 
     struct tester_request request = s_tester.requests[0];
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method, "GET"));
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri, "/"));
 
     struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
     opt.status = 204;
@@ -469,8 +467,6 @@ TEST_CASE(h1_server_send_response_headers) {
     ASSERT_TRUE(s_tester.request_num == 1);
 
     struct tester_request request = s_tester.requests[0];
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method, "GET"));
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri, "/"));
 
     /* send response */
     struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
@@ -532,8 +528,6 @@ TEST_CASE(h1_server_send_response_body) {
     ASSERT_TRUE(s_tester.request_num == 1);
 
     struct tester_request *request = s_tester.requests;
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request->method, "GET"));
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request->uri, "/"));
 
     /* send response */
     struct simple_body_sender body_sender = {
@@ -593,14 +587,8 @@ TEST_CASE(h1_server_send_multiple_responses_in_order) {
     ASSERT_TRUE(s_tester.request_num == 3);
 
     struct tester_request *request1 = s_tester.requests;
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request1->method, "GET"));
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request1->uri, "/"));
     struct tester_request *request2 = s_tester.requests + 1;
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request2->method, "GET"));
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request2->uri, "/"));
     struct tester_request *request3 = s_tester.requests + 2;
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request3->method, "GET"));
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request3->uri, "/"));
 
     /* send response */
     /* response1 */
@@ -764,14 +752,8 @@ TEST_CASE(h1_server_send_multiple_responses_out_of_order_only_one_sent) {
     ASSERT_TRUE(s_tester.request_num == 3);
 
     struct tester_request *request1 = s_tester.requests;
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request1->method, "GET"));
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request1->uri, "/"));
     struct tester_request *request2 = s_tester.requests + 1;
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request2->method, "GET"));
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request2->uri, "/"));
     struct tester_request *request3 = s_tester.requests + 2;
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request3->method, "GET"));
-    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request3->uri, "/"));
 
     /* send response */
     /* response1 */
@@ -818,7 +800,6 @@ TEST_CASE(h1_server_send_multiple_responses_out_of_order_only_one_sent) {
     ASSERT_TRUE(request1->on_complete_error_code == AWS_ERROR_SUCCESS);
     /* last two failed, response 2 is missing */
     ASSERT_TRUE(request2->on_complete_error_code == AWS_ERROR_HTTP_CONNECTION_CLOSED);
-    /* do we need a new error code for this situation? */
     ASSERT_TRUE(request3->on_complete_error_code == AWS_ERROR_HTTP_CONNECTION_CLOSED);
     return AWS_OP_SUCCESS;
 }
