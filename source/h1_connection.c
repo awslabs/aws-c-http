@@ -19,6 +19,7 @@
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
 #include <aws/http/private/h1_decoder.h>
+#include <aws/http/private/h1_stream.h>
 #include <aws/http/private/request_response_impl.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
@@ -63,8 +64,6 @@ static struct aws_http_stream *s_new_client_request_stream(const struct aws_http
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
-static void s_stream_destroy(struct aws_http_stream *stream_base);
-static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 static int s_decoder_on_request(
     enum aws_http_method method_enum,
     const struct aws_byte_cursor *method_str,
@@ -91,11 +90,6 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .close = s_connection_close,
     .is_open = s_connection_is_open,
     .update_window = s_connection_update_window,
-};
-
-static const struct aws_http_stream_vtable s_stream_vtable = {
-    .destroy = s_stream_destroy,
-    .update_window = s_stream_update_window,
 };
 
 static const struct aws_http_decoder_vtable s_h1_decoder_vtable = {
@@ -169,36 +163,6 @@ struct h1_connection {
         /* If non-zero, then window_update_task is scheduled */
         size_t window_update_size;
     } synced_data;
-};
-
-enum aws_h1_stream_type {
-    AWS_H1_STREAM_TYPE_OUTGOING_REQUEST,
-    AWS_H1_STREAM_TYPE_INCOMING_REQUEST,
-};
-
-enum aws_h1_stream_outgoing_state {
-    AWS_H1_STREAM_OUTGOING_STATE_HEAD,
-    AWS_H1_STREAM_OUTGOING_STATE_BODY,
-    AWS_H1_STREAM_OUTGOING_STATE_DONE,
-};
-
-struct aws_h1_stream {
-    struct aws_http_stream base;
-
-    enum aws_h1_stream_type type;
-    struct aws_linked_list_node node;
-    enum aws_h1_stream_outgoing_state outgoing_state;
-
-    /* Upon creation, the "head" (everything preceding body) is buffered here. */
-    struct aws_byte_buf outgoing_head_buf;
-    size_t outgoing_head_progress;
-    bool has_outgoing_body;
-
-    bool is_incoming_message_done;
-    bool is_incoming_head_done;
-
-    /* Buffer for incoming data that needs to stick around. */
-    struct aws_byte_buf incoming_storage_buf;
 };
 
 /**
@@ -460,25 +424,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
         return NULL;
     }
 
-    struct aws_h1_stream *stream = aws_mem_calloc(options->client_connection->alloc, 1, sizeof(struct aws_h1_stream));
-    if (!stream) {
-        return NULL;
-    }
-
-    stream->base.vtable = &s_stream_vtable;
-    stream->base.alloc = options->client_connection->alloc;
-    stream->base.owning_connection = options->client_connection;
-    stream->base.outgoing_body = aws_http_request_get_body_stream(options->request);
-    stream->base.manual_window_management = options->manual_window_management;
-    stream->base.user_data = options->user_data;
-    stream->base.on_incoming_headers = options->on_response_headers;
-    stream->base.on_incoming_header_block_done = options->on_response_header_block_done;
-    stream->base.on_incoming_body = options->on_response_body;
-    stream->base.on_complete = options->on_complete;
-    stream->base.incoming_response_status = AWS_HTTP_STATUS_UNKNOWN;
-
-    /* Stream refcount starts at 2. 1 for user and 1 for connection to release it's done with the stream */
-    aws_atomic_init_int(&stream->base.refcount, 2);
+    struct aws_h1_stream *stream = aws_h1_stream_new(options);
 
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
 
@@ -606,16 +552,6 @@ error_scanning_headers:
     return NULL;
 }
 
-static void s_stream_destroy(struct aws_http_stream *stream_base) {
-    AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Stream destroyed.", (void *)stream_base);
-
-    struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
-
-    aws_byte_buf_clean_up(&stream->incoming_storage_buf);
-    aws_byte_buf_clean_up(&stream->outgoing_head_buf);
-    aws_mem_release(stream->base.alloc, stream);
-}
-
 static void s_update_window_task(struct aws_channel_task *channel_task, void *arg, enum aws_task_status status) {
     (void)channel_task;
     struct h1_connection *connection = arg;
@@ -641,10 +577,6 @@ static void s_update_window_task(struct aws_channel_task *channel_task, void *ar
     /* END CRITICAL SECTION */
 
     s_update_window_action(connection, window_update_size);
-}
-
-static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
-    aws_http_connection_update_window(stream->owning_connection, increment_size);
 }
 
 /**
