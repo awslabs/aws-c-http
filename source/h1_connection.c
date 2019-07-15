@@ -678,7 +678,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, const struct a
         err = aws_mutex_unlock(&connection->synced_data.lock);
         AWS_FATAL_ASSERT(!err);
     } /* END CRITICAL SECTION */
-    
+
     stream->stream_outgoing_body = options->stream_outgoing_body;
     err = s_write_response_to_stream_buffer(h1_stream, options);
     AWS_FATAL_ASSERT(!err);

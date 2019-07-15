@@ -142,9 +142,9 @@ static void s_tester_on_request_body(
     }
 }
 
-static void s_tester_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data){
+static void s_tester_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     struct tester_request *request = user_data;
-    (void) stream;
+    (void)stream;
     request->on_complete_cb_count++;
     request->on_complete_error_code = error_code;
 }
