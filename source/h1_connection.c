@@ -125,10 +125,10 @@ struct h1_connection {
          * This stream is ALWAYS in the `stream_list`.
          * HTTP pipelining is supported, so once the stream is completely written
          * we'll start working on the next stream in the list */
-        struct h1_stream *outgoing_stream;
+        struct aws_h1_stream *outgoing_stream;
 
         /* Points to the stream being decoded, which is always the first entry in `stream_list` */
-        struct h1_stream *incoming_stream;
+        struct aws_h1_stream *incoming_stream;
         struct aws_h1_decoder *incoming_stream_decoder;
 
         /* Amount to let read-window shrink after a channel message has been processed. */
@@ -169,23 +169,23 @@ struct h1_connection {
     } synced_data;
 };
 
-enum stream_type {
-    STREAM_TYPE_OUTGOING_REQUEST,
-    STREAM_TYPE_INCOMING_REQUEST,
+enum aws_h1_stream_type {
+    AWS_H1_STREAM_TYPE_OUTGOING_REQUEST,
+    AWS_H1_STREAM_TYPE_INCOMING_REQUEST,
 };
 
-enum stream_outgoing_state {
-    STREAM_OUTGOING_STATE_HEAD,
-    STREAM_OUTGOING_STATE_BODY,
-    STREAM_OUTGOING_STATE_DONE,
+enum aws_h1_stream_outgoing_state {
+    AWS_H1_STREAM_OUTGOING_STATE_HEAD,
+    AWS_H1_STREAM_OUTGOING_STATE_BODY,
+    AWS_H1_STREAM_OUTGOING_STATE_DONE,
 };
 
-struct h1_stream {
+struct aws_h1_stream {
     struct aws_http_stream base;
 
-    enum stream_type type;
+    enum aws_h1_stream_type type;
     struct aws_linked_list_node node;
-    enum stream_outgoing_state outgoing_state;
+    enum aws_h1_stream_outgoing_state outgoing_state;
 
     /* Upon creation, the "head" (everything preceding body) is buffered here. */
     struct aws_byte_buf outgoing_head_buf;
@@ -284,7 +284,7 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
  * Also update the stream with any special data it needs to know from these headers.
  */
 static int s_stream_scan_outgoing_headers(
-    struct h1_stream *stream,
+    struct aws_h1_stream *stream,
     const struct aws_http_request *request,
     size_t *out_header_lines_len) {
 
@@ -391,7 +391,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
         return NULL;
     }
 
-    struct h1_stream *stream = aws_mem_calloc(options->client_connection->alloc, 1, sizeof(struct h1_stream));
+    struct aws_h1_stream *stream = aws_mem_calloc(options->client_connection->alloc, 1, sizeof(struct aws_h1_stream));
     if (!stream) {
         return NULL;
     }
@@ -540,7 +540,7 @@ error_scanning_headers:
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
     AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Stream destroyed.", (void *)stream_base);
 
-    struct h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct h1_stream, base);
+    struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
 
     aws_byte_buf_clean_up(&stream->incoming_storage_buf);
     aws_byte_buf_clean_up(&stream->outgoing_head_buf);
@@ -645,10 +645,10 @@ static void s_stream_update_window(struct aws_http_stream *stream, size_t increm
  * Write as much data to msg as possible.
  * The stream's state is updated as necessary to track progress.
  */
-static int s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io_message *msg) {
+static int s_stream_write_outgoing_data(struct aws_h1_stream *stream, struct aws_io_message *msg) {
     struct aws_byte_buf *dst = &msg->message_data;
 
-    if (stream->outgoing_state == STREAM_OUTGOING_STATE_HEAD) {
+    if (stream->outgoing_state == AWS_H1_STREAM_OUTGOING_STATE_HEAD) {
         size_t dst_available = dst->capacity - dst->len;
         if (dst_available == 0) {
             /* Can't write anymore */
@@ -684,7 +684,7 @@ static int s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io_
         }
     }
 
-    if (stream->outgoing_state == STREAM_OUTGOING_STATE_BODY) {
+    if (stream->outgoing_state == AWS_H1_STREAM_OUTGOING_STATE_BODY) {
         if (!stream->has_outgoing_body) {
             AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: No body to send.", (void *)&stream->base);
             stream->outgoing_state++;
@@ -747,13 +747,13 @@ static int s_stream_write_outgoing_data(struct h1_stream *stream, struct aws_io_
         }
     }
 
-    if (stream->outgoing_state == STREAM_OUTGOING_STATE_DONE) {
+    if (stream->outgoing_state == AWS_H1_STREAM_OUTGOING_STATE_DONE) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Stream is done sending data.", (void *)&stream->base);
     }
     return AWS_OP_SUCCESS;
 }
 
-static void s_stream_complete(struct h1_stream *stream, int error_code) {
+static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     struct h1_connection *connection = AWS_CONTAINER_OF(stream->base.owning_connection, struct h1_connection, base);
 
     /* Remove stream from list. */
@@ -819,7 +819,7 @@ finish_up:
             error_code,
             aws_error_name(error_code));
 
-    } else if (stream->type == STREAM_TYPE_OUTGOING_REQUEST) {
+    } else if (stream->type == AWS_H1_STREAM_TYPE_OUTGOING_REQUEST) {
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_STREAM,
             "id=%p: Client request complete, response status: %d (%s).",
@@ -852,11 +852,11 @@ finish_up:
  */
 static void s_update_incoming_stream_ptr(struct h1_connection *connection) {
     struct aws_linked_list *list = &connection->thread_data.stream_list;
-    struct h1_stream *desired;
+    struct aws_h1_stream *desired;
     if (aws_linked_list_empty(list)) {
         desired = NULL;
     } else {
-        desired = AWS_CONTAINER_OF(aws_linked_list_begin(list), struct h1_stream, node);
+        desired = AWS_CONTAINER_OF(aws_linked_list_begin(list), struct aws_h1_stream, node);
     }
 
     if (connection->thread_data.incoming_stream == desired) {
@@ -879,13 +879,13 @@ static void s_update_incoming_stream_ptr(struct h1_connection *connection) {
  * Called from event-loop thread.
  * This function has lots of side effects.
  */
-static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *connection) {
-    struct h1_stream *current = connection->thread_data.outgoing_stream;
-    struct h1_stream *prev = current;
+static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *connection) {
+    struct aws_h1_stream *current = connection->thread_data.outgoing_stream;
+    struct aws_h1_stream *prev = current;
     int err;
 
     /* If current stream is done sending data... */
-    if (current && (current->outgoing_state == STREAM_OUTGOING_STATE_DONE)) {
+    if (current && (current->outgoing_state == AWS_H1_STREAM_OUTGOING_STATE_DONE)) {
         struct aws_linked_list_node *next_node = aws_linked_list_next(&current->node);
 
         /* If it's also done receiving data, then it's complete! */
@@ -901,7 +901,7 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
         if (next_node == aws_linked_list_end(&connection->thread_data.stream_list)) {
             current = NULL;
         } else {
-            current = AWS_CONTAINER_OF(next_node, struct h1_stream, node);
+            current = AWS_CONTAINER_OF(next_node, struct aws_h1_stream, node);
         }
     }
 
@@ -919,7 +919,7 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
         } else {
             /* Front of pending_stream_list becomes new current_stream */
             current = AWS_CONTAINER_OF(
-                aws_linked_list_front(&connection->synced_data.pending_stream_list), struct h1_stream, node);
+                aws_linked_list_front(&connection->synced_data.pending_stream_list), struct aws_h1_stream, node);
 
             /* Move contents from pending_stream_list to stream_list. */
             do {
@@ -999,7 +999,7 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
      * Loop until no more streams have data to send,
      * OR a stream still is unable to continue writing to the msg (probably because msg is full).
      */
-    struct h1_stream *outgoing_stream;
+    struct aws_h1_stream *outgoing_stream;
     do {
         outgoing_stream = s_update_outgoing_stream_ptr(connection);
         if (!outgoing_stream) {
@@ -1012,7 +1012,7 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         }
 
         /* If stream is done sending data, loop and start sending the next stream's data */
-    } while (outgoing_stream->outgoing_state == STREAM_OUTGOING_STATE_DONE);
+    } while (outgoing_stream->outgoing_state == AWS_H1_STREAM_OUTGOING_STATE_DONE);
 
     if (msg->message_data.len > 0) {
         AWS_LOGF_TRACE(
@@ -1073,7 +1073,7 @@ static int s_decoder_on_request(
     void *user_data) {
 
     struct h1_connection *connection = user_data;
-    struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
+    struct aws_h1_stream *incoming_stream = connection->thread_data.incoming_stream;
 
     AWS_ASSERT(incoming_stream->base.incoming_request_method_str.len == 0);
     AWS_ASSERT(incoming_stream->base.incoming_request_uri.len == 0);
@@ -1136,7 +1136,7 @@ static int s_decoder_on_response(int status_code, void *user_data) {
 
 static int s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
     struct h1_connection *connection = user_data;
-    struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
+    struct aws_h1_stream *incoming_stream = connection->thread_data.incoming_stream;
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
@@ -1162,7 +1162,7 @@ static int s_decoder_on_header(const struct aws_http_decoded_header *header, voi
     return AWS_OP_SUCCESS;
 }
 
-static int s_mark_head_done(struct h1_stream *incoming_stream) {
+static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
     /* Bail out if we've already done this */
     if (incoming_stream->is_incoming_head_done) {
         return AWS_OP_SUCCESS;
@@ -1203,7 +1203,7 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
     (void)finished;
 
     struct h1_connection *connection = user_data;
-    struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
+    struct aws_h1_stream *incoming_stream = connection->thread_data.incoming_stream;
     AWS_ASSERT(incoming_stream);
 
     int err = s_mark_head_done(incoming_stream);
@@ -1233,7 +1233,7 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
 
 static int s_decoder_on_done(void *user_data) {
     struct h1_connection *connection = user_data;
-    struct h1_stream *incoming_stream = connection->thread_data.incoming_stream;
+    struct aws_h1_stream *incoming_stream = connection->thread_data.incoming_stream;
     AWS_ASSERT(incoming_stream);
 
     /* Ensure head was marked done */
@@ -1244,7 +1244,7 @@ static int s_decoder_on_done(void *user_data) {
 
     incoming_stream->is_incoming_message_done = true;
 
-    if (incoming_stream->outgoing_state == STREAM_OUTGOING_STATE_DONE) {
+    if (incoming_stream->outgoing_state == AWS_H1_STREAM_OUTGOING_STATE_DONE) {
         AWS_ASSERT(&incoming_stream->node == aws_linked_list_begin(&connection->thread_data.stream_list));
 
         s_stream_complete(incoming_stream, AWS_ERROR_SUCCESS);
@@ -1696,14 +1696,14 @@ static int s_handler_shutdown(
 
         while (!aws_linked_list_empty(&connection->thread_data.stream_list)) {
             struct aws_linked_list_node *node = aws_linked_list_front(&connection->thread_data.stream_list);
-            s_stream_complete(AWS_CONTAINER_OF(node, struct h1_stream, node), stream_error_code);
+            s_stream_complete(AWS_CONTAINER_OF(node, struct aws_h1_stream, node), stream_error_code);
         }
 
         /* It's OK to access synced_data.pending_stream_list without holding the lock because
          * no more streams can be added after s_shutdown_connection() has been invoked. */
         while (!aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
             struct aws_linked_list_node *node = aws_linked_list_front(&connection->synced_data.pending_stream_list);
-            s_stream_complete(AWS_CONTAINER_OF(node, struct h1_stream, node), stream_error_code);
+            s_stream_complete(AWS_CONTAINER_OF(node, struct aws_h1_stream, node), stream_error_code);
         }
     }
 
