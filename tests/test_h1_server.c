@@ -816,8 +816,9 @@ TEST_CASE(h1_server_send_multiple_responses_out_of_order_only_one_sent) {
     ASSERT_TRUE(request3->on_complete_cb_count == 1);
 
     ASSERT_TRUE(request1->on_complete_error_code == AWS_ERROR_SUCCESS);
-    /* last two failed  */
+    /* last two failed, response 2 is missing */
     ASSERT_TRUE(request2->on_complete_error_code == AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    /* do we need a new error code for this situation? */
     ASSERT_TRUE(request3->on_complete_error_code == AWS_ERROR_HTTP_CONNECTION_CLOSED);
     return AWS_OP_SUCCESS;
 }
