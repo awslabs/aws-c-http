@@ -62,6 +62,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler);
 static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
+static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
 static void s_stream_destroy(struct aws_http_stream *stream_base);
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 static int s_decoder_on_request(
@@ -89,6 +90,7 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .new_client_request_stream = s_new_client_request_stream,
     .close = s_connection_close,
     .is_open = s_connection_is_open,
+    .update_window = s_connection_update_window,
 };
 
 static const struct aws_http_stream_vtable s_stream_vtable = {
@@ -277,6 +279,73 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
     } /* END CRITICAL SECTION */
 
     return !is_shutting_down;
+}
+
+static void s_update_window_action(struct h1_connection *connection, size_t increment_size) {
+    int err = aws_channel_slot_increment_read_window(connection->base.channel_slot, increment_size);
+    if (err) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Failed to increment read window, error %d (%s). Closing connection.",
+            (void *)&connection->base,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
+        s_shutdown_connection(connection, aws_last_error());
+    }
+}
+
+static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size) {
+    struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
+
+    if (increment_size == 0) {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Ignoring window update of size 0.", (void *)&connection->base);
+        return;
+    }
+
+    /* If we're on the thread, just do it. */
+    if (aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel)) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Issuing immediate window update of %zu.",
+            (void *)&connection->base,
+            increment_size);
+        s_update_window_action(connection, increment_size);
+        return;
+    }
+
+    /* Otherwise, schedule a task to do it.
+     * If task is already scheduled, just increase size to be updated */
+
+    /* BEGIN CRITICAL SECTION */
+    int err = aws_mutex_lock(&connection->synced_data.lock);
+    AWS_FATAL_ASSERT(!err);
+
+    /* if this is not volatile, gcc-4x will load window_update_size's address into a register
+     * and then read it as should_schedule_task down below, which will invert its meaning */
+    volatile bool should_schedule_task = (connection->synced_data.window_update_size == 0);
+    connection->synced_data.window_update_size =
+        aws_add_size_saturating(connection->synced_data.window_update_size, increment_size);
+
+    err = aws_mutex_unlock(&connection->synced_data.lock);
+    AWS_FATAL_ASSERT(!err);
+    /* END CRITICAL SECTION */
+
+    if (should_schedule_task) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Scheduling task for window update of %zu.",
+            (void *)&connection->base,
+            increment_size);
+
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->window_update_task);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Window update must already scheduled, increased scheduled size by %zu.",
+            (void *)&connection->base,
+            increment_size);
+    }
 }
 
 /**
@@ -547,20 +616,6 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     aws_mem_release(stream->base.alloc, stream);
 }
 
-static void s_update_window_action(struct h1_connection *connection, size_t increment_size) {
-    int err = aws_channel_slot_increment_read_window(connection->base.channel_slot, increment_size);
-    if (err) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Failed to increment read window, error %d (%s). Closing connection.",
-            (void *)&connection->base,
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
-
-        s_shutdown_connection(connection, aws_last_error());
-    }
-}
-
 static void s_update_window_task(struct aws_channel_task *channel_task, void *arg, enum aws_task_status status) {
     (void)channel_task;
     struct h1_connection *connection = arg;
@@ -589,56 +644,7 @@ static void s_update_window_task(struct aws_channel_task *channel_task, void *ar
 }
 
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
-    struct h1_connection *connection = AWS_CONTAINER_OF(stream->owning_connection, struct h1_connection, base);
-
-    if (increment_size == 0) {
-        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Ignoring window update of size 0.", (void *)&connection->base);
-        return;
-    }
-
-    /* If we're on the thread, just do it. */
-    if (aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel)) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Issuing immediate window update of %zu.",
-            (void *)&connection->base,
-            increment_size);
-        s_update_window_action(connection, increment_size);
-        return;
-    }
-
-    /* Otherwise, schedule a task to do it.
-     * If task is already scheduled, just increase size to be updated */
-
-    /* BEGIN CRITICAL SECTION */
-    int err = aws_mutex_lock(&connection->synced_data.lock);
-    AWS_FATAL_ASSERT(!err);
-
-    /* if this is not volatile, gcc-4x will load window_update_size's address into a register
-     * and then read it as should_schedule_task down below, which will invert its meaning */
-    volatile bool should_schedule_task = (connection->synced_data.window_update_size == 0);
-    connection->synced_data.window_update_size =
-        aws_add_size_saturating(connection->synced_data.window_update_size, increment_size);
-
-    err = aws_mutex_unlock(&connection->synced_data.lock);
-    AWS_FATAL_ASSERT(!err);
-    /* END CRITICAL SECTION */
-
-    if (should_schedule_task) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Scheduling task for window update of %zu.",
-            (void *)&connection->base,
-            increment_size);
-
-        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->window_update_task);
-    } else {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Window update must already scheduled, increased scheduled size by %zu.",
-            (void *)&connection->base,
-            increment_size);
-    }
+    aws_http_connection_update_window(stream->owning_connection, increment_size);
 }
 
 /**
