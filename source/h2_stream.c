@@ -37,8 +37,10 @@
         aws_h2_stream_state_to_str((stream)->state),                                                                   \
         __VA_ARGS__)
 
+static void s_stream_destroy(struct aws_http_stream *stream_base);
+
 struct aws_http_stream_vtable s_h2_stream_vtable = {
-    .destroy = NULL,
+    .destroy = s_stream_destroy,
     .update_window = NULL,
 };
 
@@ -424,8 +426,9 @@ struct aws_h2_stream *aws_h2_stream_new(const struct aws_http_request_options *o
 
     return stream;
 }
-void aws_h2_stream_destroy(struct aws_h2_stream *stream) {
-    AWS_PRECONDITION(stream);
+static void s_stream_destroy(struct aws_http_stream *stream_base) {
+    AWS_PRECONDITION(stream_base);
+    struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
 
     STREAM_LOG(DEBUG, stream, "Destroying stream");
 
@@ -436,7 +439,7 @@ int aws_h2_stream_handle_frame(struct aws_h2_stream *stream, struct aws_h2_frame
     AWS_PRECONDITION(stream);
     AWS_PRECONDITION(decoder);
 
-    STREAM_LOGF(DEBUG, stream, "Recieved frame of type %s", aws_h2_frame_type_to_str(decoder->header.type));
+    STREAM_LOGF(DEBUG, stream, "Received frame of type %s", aws_h2_frame_type_to_str(decoder->header.type));
 
     return s_state_handlers[stream->state](stream, decoder);
 }

@@ -50,8 +50,6 @@ const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);
 
 AWS_HTTP_API
 struct aws_h2_stream *aws_h2_stream_new(const struct aws_http_request_options *options, uint32_t stream_id);
-AWS_HTTP_API
-void aws_h2_stream_destroy(struct aws_h2_stream *stream);
 
 AWS_HTTP_API
 int aws_h2_stream_handle_frame(struct aws_h2_stream *stream, struct aws_h2_frame_decoder *decoder);
