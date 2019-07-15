@@ -193,6 +193,11 @@ bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
     return connection->vtable->is_open(connection);
 }
 
+void aws_http_connection_update_window(struct aws_http_connection *connection, size_t increment_size) {
+    AWS_ASSERT(connection);
+    connection->vtable->update_window(connection, increment_size);
+}
+
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     return connection->channel_slot->channel;
