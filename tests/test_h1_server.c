@@ -54,6 +54,9 @@ struct tester_request {
     bool header_done;
     bool has_incoming_body;
 
+    size_t on_complete_cb_count;
+    int on_complete_error_code;
+
     bool stop_auto_window_update;
 
     struct aws_byte_cursor body;
@@ -139,6 +142,13 @@ static void s_tester_on_request_body(
     }
 }
 
+static void s_tester_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data){
+    struct tester_request *request = user_data;
+    (void) stream;
+    request->on_complete_cb_count++;
+    request->on_complete_error_code = error_code;
+}
+
 /* Create a new request handler */
 static void s_tester_on_incoming_request(
     struct aws_http_connection *connection,
@@ -160,6 +170,7 @@ static void s_tester_on_incoming_request(
     options.on_request_headers = s_tester_on_request_header;
     options.on_request_header_block_done = s_tester_on_request_header_block_done;
     options.on_request_body = s_tester_on_request_body;
+    options.on_complete = s_tester_on_stream_complete;
 
     test->request_num++;
     aws_http_stream_configure_server_request_handler(stream, &options);
@@ -476,6 +487,85 @@ TEST_CASE(h1_server_send_response_headers) {
                            "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
                            "Location: /index.html\r\n"
                            "\r\n";
+
+    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+struct simple_body_sender {
+    struct aws_byte_cursor src;
+    size_t progress;
+} s_body_sender;
+
+static enum aws_http_outgoing_body_state s_simple_send_body(
+    struct aws_http_stream *stream,
+    struct aws_byte_buf *buf,
+    void *user_data) {
+
+    (void)user_data;
+    (void)stream;
+    struct simple_body_sender *data = &s_body_sender;
+    size_t remaining = data->src.len - data->progress;
+    size_t available = buf->capacity - buf->len;
+    size_t writing = remaining < available ? remaining : available;
+    aws_byte_buf_write(buf, data->src.ptr + data->progress, writing);
+    data->progress += writing;
+
+    return (writing == remaining) ? AWS_HTTP_OUTGOING_BODY_DONE : AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
+}
+
+TEST_CASE(h1_server_send_response_body) {
+
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request = "GET / HTTP/1.1\r\n"
+                                   "\r\n";
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(s_tester.request_num == 1);
+
+    struct tester_request request = s_tester.requests[0];
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.method, "GET"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request.uri, "/"));
+
+    /* send response */
+    struct simple_body_sender body_sender = {
+        .src = aws_byte_cursor_from_c_str("write more tests"),
+        .progress = 0,
+    };
+    s_body_sender = body_sender;
+    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
+    opt.status = 308;
+    opt.num_headers = 3;
+    struct aws_http_header headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Date"),
+            .value = aws_byte_cursor_from_c_str("Fri, 01 Mar 2019 17:18:55 GMT"),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str("Location"),
+            .value = aws_byte_cursor_from_c_str("/index.html"),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str("Content-Length"),
+            .value = aws_byte_cursor_from_c_str("16"),
+        },
+    };
+    opt.header_array = headers;
+    opt.stream_outgoing_body = s_simple_send_body;
+    ASSERT_SUCCESS(aws_http_stream_send_response(request.request_handler, &opt));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    const char *expected = "HTTP/1.1 308 Permanent Redirect\r\n"
+                           "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
+                           "Location: /index.html\r\n"
+                           "Content-Length: 16\r\n"
+                           "\r\n"
+                           "write more tests";
 
     ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
 

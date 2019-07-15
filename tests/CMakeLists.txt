@@ -196,6 +196,7 @@ add_test_case(h1_server_receive_multiple_requests_from_1_io_messages)
 
 add_test_case(h1_server_send_1line_response)
 add_test_case(h1_server_send_response_headers)
+add_test_case(h1_server_send_response_body)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})

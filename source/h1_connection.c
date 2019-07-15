@@ -206,8 +206,7 @@ struct h1_stream {
     /* Buffer for incoming data that needs to stick around. */
     struct aws_byte_buf incoming_storage_buf;
 
-    /* Any thread may touch this data, but the lock must be held
-     * only for case like multiple server user all want to write response into a same stream*/
+    /* Any thread may touch this data, but the lock must be held */
     struct {
         /* For check the response is already made by a user or not */
         bool has_response;
@@ -679,9 +678,10 @@ static int s_stream_send_response(struct aws_http_stream *stream, const struct a
         err = aws_mutex_unlock(&connection->synced_data.lock);
         AWS_FATAL_ASSERT(!err);
     } /* END CRITICAL SECTION */
+    
+    stream->stream_outgoing_body = options->stream_outgoing_body;
     err = s_write_response_to_stream_buffer(h1_stream, options);
     AWS_FATAL_ASSERT(!err);
-    stream->stream_outgoing_body = options->stream_outgoing_body;
     /* Success! */
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_STREAM, "id=%p: Created response on connection=%p: ", (void *)stream, (void *)connection);
