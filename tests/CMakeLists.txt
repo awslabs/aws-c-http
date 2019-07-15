@@ -199,6 +199,7 @@ add_test_case(h1_server_send_response_headers)
 add_test_case(h1_server_send_response_body)
 add_test_case(h1_server_send_multiple_responses_in_order)
 add_test_case(h1_server_send_multiple_responses_out_of_order)
+add_test_case(h1_server_send_multiple_responses_out_of_order_only_one_sent)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})

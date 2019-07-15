@@ -650,6 +650,14 @@ TEST_CASE(h1_server_send_multiple_responses_in_order) {
     ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
 
     ASSERT_SUCCESS(s_server_tester_clean_up());
+
+    ASSERT_TRUE(request1->on_complete_cb_count == 1);
+    ASSERT_TRUE(request2->on_complete_cb_count == 1);
+    ASSERT_TRUE(request3->on_complete_cb_count == 1);
+
+    ASSERT_TRUE(request1->on_complete_error_code == AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(request2->on_complete_error_code == AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(request3->on_complete_error_code == AWS_ERROR_SUCCESS);
     return AWS_OP_SUCCESS;
 }
 
@@ -733,8 +741,83 @@ TEST_CASE(h1_server_send_multiple_responses_out_of_order) {
     ASSERT_TRUE(request2->on_complete_cb_count == 1);
     ASSERT_TRUE(request3->on_complete_cb_count == 1);
 
-    ASSERT_TRUE(request1->on_complete_error_code == AWS_OP_SUCCESS);
-    ASSERT_TRUE(request2->on_complete_error_code == AWS_OP_SUCCESS);
-    ASSERT_TRUE(request3->on_complete_error_code == AWS_OP_SUCCESS);
+    ASSERT_TRUE(request1->on_complete_error_code == AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(request2->on_complete_error_code == AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(request3->on_complete_error_code == AWS_ERROR_SUCCESS);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_send_multiple_responses_out_of_order_only_one_sent) {
+
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request = "GET / HTTP/1.1\r\n"
+                                   "\r\n"
+                                   "GET / HTTP/1.1\r\n"
+                                   "\r\n"
+                                   "GET / HTTP/1.1\r\n"
+                                   "\r\n";
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(s_tester.request_num == 3);
+
+    struct tester_request *request1 = s_tester.requests;
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request1->method, "GET"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request1->uri, "/"));
+    struct tester_request *request2 = s_tester.requests + 1;
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request2->method, "GET"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request2->uri, "/"));
+    struct tester_request *request3 = s_tester.requests + 2;
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request3->method, "GET"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request3->uri, "/"));
+
+    /* send response */
+    /* response1 */
+    struct simple_body_sender body_sender = {
+        .src = aws_byte_cursor_from_c_str("response1"),
+        .progress = 0,
+    };
+    request1->response_body = body_sender;
+    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
+    opt.status = 200;
+    struct aws_http_header headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Content-Length"),
+            .value = aws_byte_cursor_from_c_str("9"),
+        },
+    };
+    opt.num_headers = AWS_ARRAY_SIZE(headers);
+    opt.header_array = headers;
+    opt.stream_outgoing_body = s_simple_send_body;
+    ASSERT_SUCCESS(aws_http_stream_send_response(request1->request_handler, &opt));
+
+    /* response3 */
+    body_sender.src = aws_byte_cursor_from_c_str("response3");
+    body_sender.progress = 0;
+    request3->response_body = body_sender;
+    ASSERT_SUCCESS(aws_http_stream_send_response(request3->request_handler, &opt));
+    /* no response2 */
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    const char *expected = "HTTP/1.1 200 OK\r\n"
+                           "Content-Length: 9\r\n"
+                           "\r\n"
+                           "response1";
+
+    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+
+    ASSERT_TRUE(request1->on_complete_cb_count == 1);
+    ASSERT_TRUE(request2->on_complete_cb_count == 1);
+    ASSERT_TRUE(request3->on_complete_cb_count == 1);
+
+    ASSERT_TRUE(request1->on_complete_error_code == AWS_ERROR_SUCCESS);
+    /* last two failed  */
+    ASSERT_TRUE(request2->on_complete_error_code == AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    ASSERT_TRUE(request3->on_complete_error_code == AWS_ERROR_HTTP_CONNECTION_CLOSED);
     return AWS_OP_SUCCESS;
 }
