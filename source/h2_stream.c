@@ -21,13 +21,6 @@
 
 #include <inttypes.h>
 
-#define STREAM_LOG(level, stream, text)                                                                                \
-    AWS_LOGF_##level(                                                                                                  \
-        AWS_LS_HTTP_STREAM,                                                                                            \
-        "id=%" PRIu32 "(%p) state=%s: " text,                                                                          \
-        (stream)->id,                                                                                                  \
-        (void *)(stream),                                                                                              \
-        aws_h2_stream_state_to_str((stream)->state))
 #define STREAM_LOGF(level, stream, text, ...)                                                                          \
     AWS_LOGF_##level(                                                                                                  \
         AWS_LS_HTTP_STREAM,                                                                                            \
@@ -36,6 +29,7 @@
         (void *)(stream),                                                                                              \
         aws_h2_stream_state_to_str((stream)->state),                                                                   \
         __VA_ARGS__)
+#define STREAM_LOG(level, stream, text) STREAM_LOGF(level, stream, "%s", text)
 
 static void s_stream_destroy(struct aws_http_stream *stream_base);
 
@@ -49,7 +43,7 @@ static int s_h2_stream_raise_invalid_frame(struct aws_h2_stream *stream, enum aw
     STREAM_LOGF(
         ERROR,
         stream,
-        "Not allowed to recieve frame of type %s when in %s state, raising %s",
+        "Not allowed to receive frame of type %s when in %s state, raising %s",
         aws_h2_frame_type_to_str(type),
         aws_h2_stream_state_to_str(stream->state),
         aws_error_name(error_code));
