@@ -622,6 +622,7 @@ TEST_CASE(h1_server_send_multiple_responses_in_order) {
     ASSERT_SUCCESS(aws_http_stream_send_response(request3->request_handler, &opt));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
+    /* Check the result */
     const char *expected = "HTTP/1.1 200 OK\r\n"
                            "Content-Length: 9\r\n"
                            "\r\n"
@@ -708,6 +709,7 @@ TEST_CASE(h1_server_send_multiple_responses_out_of_order) {
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
+    /* Check the result */
     const char *expected = "HTTP/1.1 200 OK\r\n"
                            "Content-Length: 9\r\n"
                            "\r\n"
@@ -784,6 +786,7 @@ TEST_CASE(h1_server_send_multiple_responses_out_of_order_only_one_sent) {
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
+    /* Check the result */
     const char *expected = "HTTP/1.1 200 OK\r\n"
                            "Content-Length: 9\r\n"
                            "\r\n"

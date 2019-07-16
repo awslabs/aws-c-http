@@ -658,15 +658,22 @@ static int s_write_response_to_stream_buffer(
 }
 
 static int s_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options) {
+    int err;
+    int send_err = AWS_ERROR_SUCCESS;
+
+    if (!stream || !options) {
+        send_err = AWS_ERROR_INVALID_ARGUMENT;
+        goto response_error;
+    }
+
     struct h1_stream *h1_stream = AWS_CONTAINER_OF(stream, struct h1_stream, base);
     struct h1_connection *connection = AWS_CONTAINER_OF(stream->owning_connection, struct h1_connection, base);
-    int err;
     bool should_schedule_task = false;
     { /* BEGIN CRITICAL SECTION */
         err = aws_mutex_lock(&connection->synced_data.lock);
         if (h1_stream->synced_data.has_response) {
             AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "id=%p: Response already created on the stream", (void *)stream);
-            return AWS_OP_ERR;
+            send_err = AWS_ERROR_INVALID_STATE;
         }
         h1_stream->synced_data.has_response = true;
         AWS_FATAL_ASSERT(!err);
@@ -674,14 +681,18 @@ static int s_stream_send_response(struct aws_http_stream *stream, const struct a
             connection->synced_data.is_outgoing_stream_task_active = true;
             should_schedule_task = true;
         }
-
         err = aws_mutex_unlock(&connection->synced_data.lock);
         AWS_FATAL_ASSERT(!err);
     } /* END CRITICAL SECTION */
 
+    if (send_err != AWS_ERROR_SUCCESS) {
+        goto response_error;
+    }
+
     stream->stream_outgoing_body = options->stream_outgoing_body;
-    err = s_write_response_to_stream_buffer(h1_stream, options);
-    AWS_FATAL_ASSERT(!err);
+    if (s_write_response_to_stream_buffer(h1_stream, options) != AWS_ERROR_SUCCESS) {
+        goto response_error;
+    }
     /* Success! */
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_STREAM, "id=%p: Created response on connection=%p: ", (void *)stream, (void *)connection);
@@ -692,6 +703,15 @@ static int s_stream_send_response(struct aws_http_stream *stream, const struct a
     }
 
     return AWS_OP_SUCCESS;
+
+response_error:
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_STREAM,
+        "id=%p: Sending response on the stream failed, error %d (%s)",
+        (void *)stream,
+        aws_last_error(),
+        aws_error_name(aws_last_error()));
+    return AWS_OP_ERR;
 }
 
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
