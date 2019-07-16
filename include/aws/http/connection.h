@@ -19,6 +19,7 @@
 #include <aws/http/http.h>
 
 struct aws_client_bootstrap;
+struct aws_http_request;
 struct aws_socket_options;
 struct aws_tls_connection_options;
 
@@ -130,6 +131,9 @@ AWS_EXTERN_C_BEGIN
  */
 AWS_HTTP_API
 int aws_http_client_connect(const struct aws_http_client_connection_options *options);
+
+AWS_HTTP_API
+int aws_http_client_connect_with_request(const struct aws_http_client_connection_options *options, struct aws_http_request *request);
 
 /**
  * Users must release the connection when they are done with it.
