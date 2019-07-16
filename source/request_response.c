@@ -204,7 +204,11 @@ int s_header_block_get_header(
     return AWS_OP_SUCCESS;
 }
 
-int s_header_block_set_header(struct aws_http_header_block *block, struct aws_allocator *allocator, struct aws_http_header header, size_t index) {
+int s_header_block_set_header(
+    struct aws_http_header_block *block,
+    struct aws_allocator *allocator,
+    struct aws_http_header header,
+    size_t index) {
     struct aws_http_header_impl *header_impl;
     int err = aws_array_list_get_at_ptr(&block->headers, (void **)&header_impl, index);
     if (err) {
