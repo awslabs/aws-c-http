@@ -685,12 +685,13 @@ static int s_stream_send_response(struct aws_http_stream *stream, const struct a
         AWS_FATAL_ASSERT(!err);
     } /* END CRITICAL SECTION */
 
-    if (send_err != AWS_ERROR_SUCCESS) {
+    if (send_err) {
         goto response_error;
     }
 
     stream->stream_outgoing_body = options->stream_outgoing_body;
-    if (s_write_response_to_stream_buffer(h1_stream, options) != AWS_ERROR_SUCCESS) {
+    send_err = s_write_response_to_stream_buffer(h1_stream, options);
+    if (send_err) {
         goto response_error;
     }
     /* Success! */
@@ -705,6 +706,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, const struct a
     return AWS_OP_SUCCESS;
 
 response_error:
+    aws_raise_error(send_err);
     AWS_LOGF_ERROR(
         AWS_LS_HTTP_STREAM,
         "id=%p: Sending response on the stream failed, error %d (%s)",
@@ -1068,7 +1070,7 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
 
     /* If current stream is NULL,
      * Client side: look in synced_data.pending_stream_list for more work
-     * Server side: look in thread_data.waiting_stream_list for more work*/
+     * Server side: look in thread_data.waiting_stream_list for more work */
     if (!current) {
         if (connection->base.server_data) {
             /* server side should check the stream have response or not */
