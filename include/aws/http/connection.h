@@ -35,6 +35,94 @@ typedef void(
 typedef void(
     aws_http_on_client_connection_shutdown_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
+/*
+ * Connection target properties
+ */
+struct aws_http_endpoint_options {
+
+    /*
+     * Required
+     */
+    struct aws_byte_cursor schema;
+
+    /**
+     * Required.
+     */
+    struct aws_byte_cursor host_name;
+
+    /**
+     * Required.
+     */
+    uint16_t port;
+};
+
+/*
+ * All of the currently supported ways of connecting to an http proxy
+ */
+enum aws_http_proxy_auth_type {
+    AWS_HPAT_NAME_AND_PASS
+};
+
+/*
+ * Configuration for username/password based proxy authentication
+ */
+struct aws_http_client_proxy_name_and_pass_options {
+
+    /*
+     * Required
+     */
+    struct aws_byte_cursor username;
+
+    /*
+     * Required
+     */
+    struct aws_byte_cursor password;
+};
+
+/*
+ * Optional configuration for proxy connection authorization.  At the moment, only supports
+ * standard username/password auth via Proxy-Authorization header.
+ */
+struct aws_http_client_proxy_auth_options {
+
+    enum aws_http_proxy_auth_type type;
+
+    union {
+        struct aws_http_client_proxy_name_and_pass_options name_and_pass_options;
+    } options;
+};
+
+/*
+ * For connections established through a proxy, controls the proxy endpoint,
+ * authentication method, and any additional headers to be sent
+ */
+struct aws_http_client_proxy_options {
+
+    /*
+     * Required
+     * Deep copied upon invoking aws_http_client_connect
+     */
+    struct aws_http_endpoint_options endpoint;
+
+    /*
+     * Optional
+     * Deep copied upon invoking aws_http_client_connect
+     */
+    struct aws_http_client_proxy_auth_options auth_options;
+
+    /*
+     * Optional
+     * Deep copied upon invoking aws_http_client_connect
+     */
+    size_t connect_header_count;
+
+    /*
+     * Optional
+     * Deep copied upon invoking aws_http_client_connect
+     */
+    struct aws_http_header *connect_headers;
+};
+
 /**
  * Options for creating an HTTP client connection.
  * Initialize with AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT to set default values.
@@ -62,12 +150,13 @@ struct aws_http_client_connection_options {
      * Required.
      * aws_http_client_connect() makes a copy.
      */
-    struct aws_byte_cursor host_name;
+    struct aws_http_endpoint_options endpoint;
 
-    /**
-     * Required.
+    /*
+     * Optional
+     * aws_http_client_connect() makes a copy.
      */
-    uint16_t port;
+    struct aws_http_client_proxy_options proxy_options;
 
     /**
      * Required.
