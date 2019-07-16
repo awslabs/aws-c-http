@@ -401,7 +401,9 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     }
 
     struct h1_stream *stream = s_new_stream(options->client_connection);
-
+    if (!stream) {
+        return NULL;
+    }
     stream->base.user_data = options->user_data;
     stream->base.stream_outgoing_body = options->stream_outgoing_body;
     stream->base.on_incoming_headers = options->on_response_headers;
