@@ -692,9 +692,9 @@ static int s_stream_send_response(struct aws_http_stream *stream, const struct a
     }
 
     stream->stream_outgoing_body = options->stream_outgoing_body;
-    send_err = s_write_response_to_stream_buffer(h1_stream, options);
-    if (send_err) {
-        goto response_error;
+    if (s_write_response_to_stream_buffer(h1_stream, options)) {
+        /* the error is already logged */
+        return AWS_OP_ERR;
     }
     /* Success! */
     AWS_LOGF_DEBUG(
