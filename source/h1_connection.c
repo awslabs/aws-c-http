@@ -1075,7 +1075,8 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
      * Server side: look in thread_data.waiting_stream_list for more work */
     if (!current) {
         if (connection->base.server_data) {
-            /* server side should check the stream have response or not */
+            /* server side should check the stream already has response or not 
+             * Require a lock to prevent the user makes any change to the stream state */
             /* BEGIN CRITICAL SECTION */
             err = aws_mutex_lock(&connection->synced_data.lock);
             AWS_FATAL_ASSERT(!err);
@@ -1756,9 +1757,13 @@ static int s_handler_process_read_message(
                             (void *)&connection->base);
                         goto shutdown;
                     }
+                    /* Connection must have an on_incoming_request callback
+                     * If not the error will be record in the connection configure function */
                     connection->base.server_data->on_incoming_request(
                         &connection->base, &stream->base, connection->base.server_data->connection_user_data);
-
+                    
+                    /* The request handler must be configured in on_incoming_request
+                     * If not, raise an error */
                     if (!stream->base.request_handler_configured) {
                         AWS_LOGF_ERROR(
                             AWS_LS_HTTP_CONNECTION,
