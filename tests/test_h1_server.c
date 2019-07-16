@@ -411,6 +411,23 @@ TEST_CASE(h1_server_receive_multiple_requests_from_1_io_messages) {
     return AWS_OP_SUCCESS;
 }
 
+TEST_CASE(h1_server_receive_bad_request_shut_down_connection) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request = "Mmmm garbage data\r\n\r\n";
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(s_tester.request_num == 1);
+    struct tester_request request = s_tester.requests[0];
+    ASSERT_TRUE(request.on_complete_cb_count == 1);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PARSE, request.on_complete_error_code);
+    /* clean up */
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
 /* Pop first message from queue and compare its contents to expected string. */
 static int s_check_written_message(struct tester *tester, const char *expected) {
     struct aws_linked_list *msgs = testing_channel_get_written_message_queue(&tester->testing_channel);
@@ -804,5 +821,239 @@ TEST_CASE(h1_server_send_multiple_responses_out_of_order_only_one_sent) {
     /* last two failed, response 2 is missing */
     ASSERT_TRUE(request2->on_complete_error_code == AWS_ERROR_HTTP_CONNECTION_CLOSED);
     ASSERT_TRUE(request3->on_complete_error_code == AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_send_response_before_request_finished) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request_part1 = "PUT /plan.txt HTTP/1.1\r\n"
+                                         "Content-Length: 16\r\n"
+                                         "\r\n"
+                                         "write ";
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request_part1));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Only part 1 is sent and the response is made and sent */
+    ASSERT_TRUE(s_tester.request_num == 1);
+    struct tester_request *request = s_tester.requests;
+    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
+    opt.status = 200;
+    opt.num_headers = 0;
+    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, &opt));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* stream is not completed */
+    ASSERT_TRUE(request->on_complete_cb_count == 0);
+
+    /* check the response */
+    const char *expected = "HTTP/1.1 200 OK\r\n"
+                           "\r\n";
+
+    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+
+    const char *incoming_request_part2 = "more tests"
+                                         "GET / HTTP/1.1\r\n"
+                                         "\r\n";
+
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request_part2));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* finish sending the whole request
+     * the stream should be completed now */
+    ASSERT_TRUE(request->on_complete_cb_count == 1);
+    ASSERT_TRUE(request->on_complete_error_code == AWS_ERROR_SUCCESS);
+    /* check the request */
+    ASSERT_SUCCESS(s_check_header(request, 0, "Content-Length", "16"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request->method, "PUT"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request->uri, "/plan.txt"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request->body, "write more tests"));
+
+    ASSERT_TRUE(s_tester.request_num == 2);
+    request = s_tester.requests + 1;
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request->method, "GET"));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request->uri, "/"));
+    /* clean up */
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+/* Check that expected matches data stretched across multiple messages.
+ * The event-loop is ticked, and messages are dequed, as this function progresses. */
+static int s_check_multiple_messages(struct tester *tester, struct aws_byte_cursor expected, size_t *out_num_messages) {
+    size_t num_messages = 0;
+
+    struct aws_linked_list *msgs = testing_channel_get_written_message_queue(&tester->testing_channel);
+
+    size_t progress = 0;
+    size_t remaining = expected.len;
+
+    while (remaining > 0) {
+        /* Tick event loop if there are no messages already */
+        if (aws_linked_list_empty(msgs)) {
+            testing_channel_run_currently_queued_tasks(&tester->testing_channel);
+        }
+
+        /* There should be EXACTLY 1 aws_io_message after ticking. */
+        ASSERT_TRUE(!aws_linked_list_empty(msgs));
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(msgs);
+        ASSERT_TRUE(aws_linked_list_empty(msgs));
+
+        num_messages++;
+
+        struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
+
+        /* */
+        ASSERT_TRUE(msg->message_data.len <= remaining);
+
+        size_t comparing = msg->message_data.len < remaining ? msg->message_data.len : remaining;
+
+        struct aws_byte_cursor compare_cur = aws_byte_cursor_from_array(expected.ptr + progress, comparing);
+        ASSERT_TRUE(aws_byte_cursor_eq_byte_buf(&compare_cur, &msg->message_data));
+
+        aws_mem_release(msg->allocator, msg);
+
+        progress += comparing;
+        remaining -= comparing;
+    }
+
+    /* Check that no more messages are produced unexpectedly */
+    testing_channel_drain_queued_tasks(&tester->testing_channel);
+    ASSERT_TRUE(aws_linked_list_empty(msgs));
+
+    *out_num_messages = num_messages;
+    return AWS_OP_SUCCESS;
+}
+
+/* Send a response whose body doesn't fit in a single aws_io_message */
+TEST_CASE(h1_server_send_response_large_body) {
+
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request = "GET / HTTP/1.1\r\n"
+                                   "\r\n";
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(s_tester.request_num == 1);
+
+    struct tester_request *request = s_tester.requests;
+
+    /* send response */
+    size_t body_len = 1024 * 1024 * 1; /* 1MB */
+    struct aws_byte_buf body_buf;
+    ASSERT_SUCCESS(aws_byte_buf_init(&body_buf, allocator, body_len));
+    while (body_buf.len < body_len) {
+        int r = rand();
+        aws_byte_buf_write_be32(&body_buf, (uint32_t)r);
+    }
+
+    struct simple_body_sender body_sender = {
+        .src = aws_byte_cursor_from_buf(&body_buf),
+        .progress = 0,
+    };
+    request->response_body = body_sender;
+
+    char content_length_value[100];
+    snprintf(content_length_value, sizeof(content_length_value), "%zu", body_len);
+
+    struct aws_http_header headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Content-Length"),
+            .value = aws_byte_cursor_from_c_str(content_length_value),
+        },
+    };
+
+    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
+    opt.status = 200;
+    opt.num_headers = AWS_ARRAY_SIZE(headers);
+    opt.header_array = headers;
+    opt.stream_outgoing_body = s_simple_send_body;
+    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, &opt));
+
+    const char *expected_head_fmt = "HTTP/1.1 200 OK\r\n"
+                                    "Content-Length: %zu\r\n"
+                                    "\r\n";
+
+    char expected_head[1024];
+    int expected_head_len = snprintf(expected_head, sizeof(expected_head), expected_head_fmt, body_len);
+
+    struct aws_byte_buf expected_buf;
+    ASSERT_SUCCESS(aws_byte_buf_init(&expected_buf, allocator, body_len + expected_head_len));
+    ASSERT_TRUE(aws_byte_buf_write(&expected_buf, (uint8_t *)expected_head, expected_head_len));
+    ASSERT_TRUE(aws_byte_buf_write_from_whole_buffer(&expected_buf, body_buf));
+
+    size_t num_io_messages;
+    ASSERT_SUCCESS(s_check_multiple_messages(&s_tester, aws_byte_cursor_from_buf(&expected_buf), &num_io_messages));
+
+    ASSERT_TRUE(num_io_messages > 1);
+
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    aws_byte_buf_clean_up(&body_buf);
+    aws_byte_buf_clean_up(&expected_buf);
+    return AWS_OP_SUCCESS;
+}
+
+/* Send a response whose headers doesn't fit in a single aws_io_message */
+TEST_CASE(h1_server_send_response_large_head) {
+
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request = "GET / HTTP/1.1\r\n"
+                                   "\r\n";
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(s_tester.request_num == 1);
+
+    struct tester_request *request = s_tester.requests;
+
+    /* send response */
+
+    /* Generate headers while filling in contents of `expected` buffer */
+    struct aws_http_header headers[1000];
+    size_t num_headers = AWS_ARRAY_SIZE(headers);
+    AWS_ZERO_STRUCT(headers);
+
+    struct aws_byte_buf expected;
+    aws_byte_buf_init(&expected, allocator, num_headers * 128); /* approx capacity */
+
+    struct aws_byte_cursor request_line = aws_byte_cursor_from_c_str("HTTP/1.1 200 OK\r\n");
+    ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&expected, request_line));
+
+    /* Each header just has a UUID for its name and value */
+    for (size_t i = 0; i < num_headers; ++i) {
+        struct aws_http_header *header = headers + i;
+
+        /* Point to where the UUID is going to be written in the `expected` buffer */
+        header->name = aws_byte_cursor_from_array(expected.buffer + expected.len, AWS_UUID_STR_LEN - 1);
+        header->value = header->name;
+
+        struct aws_uuid uuid;
+        ASSERT_SUCCESS(aws_uuid_init(&uuid));
+
+        ASSERT_SUCCESS(aws_uuid_to_str(&uuid, &expected));
+        ASSERT_TRUE(aws_byte_buf_write(&expected, (uint8_t *)": ", 2));
+        ASSERT_SUCCESS(aws_uuid_to_str(&uuid, &expected));
+        ASSERT_TRUE(aws_byte_buf_write(&expected, (uint8_t *)"\r\n", 2));
+    }
+
+    ASSERT_TRUE(aws_byte_buf_write(&expected, (uint8_t *)"\r\n", 2));
+
+    /* sending response */
+    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
+    opt.status = 200;
+    opt.num_headers = num_headers;
+    opt.header_array = headers;
+    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, &opt));
+
+    /* check result */
+    size_t num_io_messages;
+    ASSERT_SUCCESS(s_check_multiple_messages(&s_tester, aws_byte_cursor_from_buf(&expected), &num_io_messages));
+
+    ASSERT_TRUE(num_io_messages > 1);
+
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    aws_byte_buf_clean_up(&expected);
     return AWS_OP_SUCCESS;
 }

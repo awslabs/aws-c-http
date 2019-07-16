@@ -1097,6 +1097,14 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
             } else {
                 current = AWS_CONTAINER_OF(
                     aws_linked_list_front(&connection->thread_data.stream_list), struct h1_stream, node);
+                if (current->outgoing_state == STREAM_OUTGOING_STATE_DONE) {
+                    /* the stream is still waiting for the incoming request to be finished
+                     * but the outgoing task is already finished and no more work to do now
+                     * only for http1.1, if a request is not finished receiving,
+                     * there will be no more request waiting for response */
+                    current = NULL;
+                    connection->synced_data.is_outgoing_stream_task_active = false;
+                }
             }
             err = aws_mutex_unlock(&connection->synced_data.lock);
             AWS_FATAL_ASSERT(!err);
@@ -1751,10 +1759,6 @@ static int s_handler_process_read_message(
                      * Make a new stream for this request and push it into the waiting stream list wait for response */
                     struct h1_stream *stream = s_new_stream(&connection->base);
                     if (!stream) {
-                        AWS_LOGF_ERROR(
-                            AWS_LS_HTTP_CONNECTION,
-                            "id=%p: Failed to create a new stream in connection. Closing connection.",
-                            (void *)&connection->base);
                         goto shutdown;
                     }
                     /* Connection must have an on_incoming_request callback
