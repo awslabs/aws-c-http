@@ -320,43 +320,17 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
     }
 }
 
-static void s_on_incoming_body_fn(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
+static int s_on_incoming_body_fn(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
 
     (void)stream;
     struct elasticurl_ctx *app_ctx = user_data;
 
     fwrite(data->ptr, 1, data->len, app_ctx->output);
+
+    return AWS_OP_SUCCESS;
 }
 
-enum aws_http_outgoing_body_state s_stream_outgoing_body_fn(
-    struct aws_http_stream *stream,
-    struct aws_byte_buf *buf,
-    void *user_data) {
-    (void)stream;
-    struct elasticurl_ctx *app_ctx = user_data;
-
-    if (!app_ctx->input_body) {
-        return AWS_HTTP_OUTGOING_BODY_DONE;
-    }
-
-    struct aws_stream_status status;
-    if (aws_input_stream_get_status(app_ctx->input_body, &status)) {
-        return AWS_HTTP_OUTGOING_BODY_DONE;
-    }
-
-    if (status.is_end_of_stream || !status.is_valid) {
-        return AWS_HTTP_OUTGOING_BODY_DONE;
-    }
-
-    size_t amount_read = 0;
-    if (aws_input_stream_read(app_ctx->input_body, buf, &amount_read)) {
-        return AWS_HTTP_OUTGOING_BODY_DONE;
-    }
-
-    return AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
-}
-
-static void s_on_incoming_headers_fn(
+static int s_on_incoming_headers_fn(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
     size_t num_headers,
@@ -380,12 +354,16 @@ static void s_on_incoming_headers_fn(
             fprintf(stdout, "\n");
         }
     }
+
+    return AWS_OP_SUCCESS;
 }
 
-static void s_on_incoming_header_block_done_fn(struct aws_http_stream *stream, bool has_body, void *user_data) {
+static int s_on_incoming_header_block_done_fn(struct aws_http_stream *stream, bool has_body, void *user_data) {
     (void)stream;
     (void)has_body;
     (void)user_data;
+
+    return AWS_OP_SUCCESS;
 }
 
 static void s_on_stream_complete_fn(struct aws_http_stream *stream, int error_code, void *user_data) {

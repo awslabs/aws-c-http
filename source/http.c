@@ -73,9 +73,6 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_MANAGER_VENDED_CONNECTION_UNDERFLOW,
         "Release called when the connection manager's vended connection count was zero"),
-    AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_END_RANGE,
-        "Not a real error and should never be seen."),
 };
 /* clang-format on */
 

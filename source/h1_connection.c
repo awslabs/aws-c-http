@@ -641,20 +641,17 @@ static int s_stream_write_outgoing_data(struct aws_h1_stream *stream, struct aws
                     return AWS_OP_SUCCESS;
                 }
 
-                struct aws_stream_status status;
-                int err = aws_input_stream_get_status(stream->base.outgoing_body, &status);
-                if (err || !status.is_valid) {
-                    AWS_LOGF_ERROR(
-                        AWS_LS_HTTP_STREAM, "id=%p: Body stream reporting status invalid", (void *)&stream->base);
-                    return aws_raise_error(AWS_IO_STREAM_READ_FAILED);
-                }
-
                 size_t amount_read = 0;
-                err = aws_input_stream_read(stream->base.outgoing_body, dst, &amount_read);
+                int err = aws_input_stream_read(stream->base.outgoing_body, dst, &amount_read);
                 if (err) {
                     AWS_LOGF_ERROR(
-                        AWS_LS_HTTP_STREAM, "id=%p: Body stream reporting error reading", (void *)&stream->base);
-                    return aws_raise_error(AWS_IO_STREAM_READ_FAILED);
+                        AWS_LS_HTTP_STREAM,
+                        "id=%p: Failed to read body stream, error %d (%s)",
+                        (void *)&stream->base,
+                        aws_last_error(),
+                        aws_error_name(aws_last_error()));
+
+                    return AWS_OP_ERR;
                 }
 
                 AWS_LOGF_TRACE(
@@ -663,11 +660,17 @@ static int s_stream_write_outgoing_data(struct aws_h1_stream *stream, struct aws
                     (void *)&stream->base,
                     amount_read);
 
+                struct aws_stream_status status;
                 err = aws_input_stream_get_status(stream->base.outgoing_body, &status);
-                if (err || !status.is_valid) {
+                if (err) {
                     AWS_LOGF_ERROR(
-                        AWS_LS_HTTP_STREAM, "id=%p: Body stream reporting status invalid", (void *)&stream->base);
-                    return aws_raise_error(AWS_IO_STREAM_READ_FAILED);
+                        AWS_LS_HTTP_STREAM,
+                        "id=%p: Failed to query body stream status, error %d (%s)",
+                        (void *)&stream->base,
+                        aws_last_error(),
+                        aws_error_name(aws_last_error()));
+
+                    return AWS_OP_ERR;
                 }
                 if (status.is_end_of_stream) {
                     AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Done sending body.", (void *)&stream->base);
@@ -1092,12 +1095,19 @@ static int s_decoder_on_header(const struct aws_http_decoded_header *header, voi
             .value = header->value_data,
         };
 
-        incoming_stream->base.on_incoming_headers(&incoming_stream->base, &deliver, 1, incoming_stream->base.user_data);
-    }
+        int err = incoming_stream->base.on_incoming_headers(
+            &incoming_stream->base, &deliver, 1, incoming_stream->base.user_data);
 
-    /* Stop decoding if user callback shut down the connection. */
-    if (connection->thread_data.is_shutting_down) {
-        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+        if (err) {
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Incoming header callback raised error %d (%s).",
+                (void *)&incoming_stream->base,
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
+
+            return AWS_OP_ERR;
+        }
     }
 
     return AWS_OP_SUCCESS;
@@ -1128,13 +1138,18 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
 
     /* Invoke user cb */
     if (incoming_stream->base.on_incoming_header_block_done) {
-        incoming_stream->base.on_incoming_header_block_done(
+        int err = incoming_stream->base.on_incoming_header_block_done(
             &incoming_stream->base, has_incoming_body, incoming_stream->base.user_data);
-    }
+        if (err) {
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Incoming headers done callback raised error %d (%s).",
+                (void *)&incoming_stream->base,
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
 
-    /* Stop decoding if user callback shut down the connection. */
-    if (connection->thread_data.is_shutting_down) {
-        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+            return AWS_OP_ERR;
+        }
     }
 
     return AWS_OP_SUCCESS;
@@ -1155,18 +1170,23 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM, "id=%p: Incoming body: %zu bytes received.", (void *)&incoming_stream->base, data->len);
 
-    /* If the user wishes to manually increment windows, by default shrink the window by the amount of dta read. */
+    /* If the user wishes to manually increment windows, by default shrink the window by the amount of data read. */
     if (incoming_stream->base.manual_window_management) {
-        connection->thread_data.incoming_message_window_shrink_size = data->len;
+        connection->thread_data.incoming_message_window_shrink_size += data->len;
     }
 
     if (incoming_stream->base.on_incoming_body) {
-        incoming_stream->base.on_incoming_body(&incoming_stream->base, data, incoming_stream->base.user_data);
-    }
+        err = incoming_stream->base.on_incoming_body(&incoming_stream->base, data, incoming_stream->base.user_data);
+        if (err) {
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Incoming body callback raised error %d (%s).",
+                (void *)&incoming_stream->base,
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
 
-    /* Stop decoding if user callback shut down the connection. */
-    if (connection->thread_data.is_shutting_down) {
-        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+            return AWS_OP_ERR;
+        }
     }
 
     return AWS_OP_SUCCESS;

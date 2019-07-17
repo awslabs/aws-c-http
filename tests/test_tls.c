@@ -91,21 +91,11 @@ static bool s_test_connection_shutdown_pred(void *user_data) {
     return test->wait_result || test->client_connection_is_shutdown;
 }
 
-static void s_on_stream_headers(
-    struct aws_http_stream *stream,
-    const struct aws_http_header *headers,
-    size_t num_headers,
-    void *user_data) {
-    (void)stream;
-    (void)headers;
-    (void)num_headers;
-    (void)user_data;
-}
-
-static void s_on_stream_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
+static int s_on_stream_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
     (void)stream;
     struct test_ctx *test = user_data;
     test->body_size += data->len;
+    return AWS_OP_SUCCESS;
 }
 
 static void s_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
@@ -191,7 +181,6 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
     struct aws_http_request_options req_options = AWS_HTTP_REQUEST_OPTIONS_INIT;
     req_options.client_connection = test.client_connection;
     req_options.request = request;
-    req_options.on_response_headers = s_on_stream_headers;
     req_options.on_response_body = s_on_stream_body;
     req_options.on_complete = s_on_stream_complete;
     req_options.user_data = &test;
