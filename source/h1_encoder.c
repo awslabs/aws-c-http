@@ -18,111 +18,48 @@
 #include <aws/io/stream.h>
 
 #define ENCODER_LOGF(level, encoder, text, ...)                                                                        \
-    AWS_LOGF_##level(AWS_LS_HTTP_ENCODER, "id=%p: " text, (void *)(encoder), __VA_ARGS__)
+    AWS_LOGF_##level(AWS_LS_HTTP_STREAM, "id=%p: " text, encoder->logging_id, __VA_ARGS__)
 #define ENCODER_LOG(level, encoder, text) ENCODER_LOGF(level, encoder, "%s", text)
 
 void aws_h1_encoder_init(struct aws_h1_encoder *encoder, struct aws_allocator *allocator) {
-
     AWS_ZERO_STRUCT(*encoder);
     encoder->allocator = allocator;
 }
 
-/**
- * Scan headers and determine the length necessary to write them all.
- * Also update the stream with any special data it needs to know from these headers.
- */
-static int s_scan_outgoing_headers(
-    struct aws_h1_encoder *encoder,
-    const struct aws_http_request *request,
-    size_t *out_header_lines_len) {
-
-    size_t total = 0;
-
-    const size_t num_headers = aws_http_request_get_header_count(request);
-
-    for (size_t i = 0; i < num_headers; ++i) {
-        struct aws_http_header header;
-        aws_http_request_get_header(request, &header, i);
-
-        enum aws_http_header_name name_enum;
-
-        if (header.name.len > 0) {
-            name_enum = aws_http_str_to_header_name(header.name);
-        } else {
-            ENCODER_LOGF(ERROR, encoder, "Failed to create stream, no name set for header[%zu].", i);
-            return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        }
-
-        switch (name_enum) {
-            case AWS_HTTP_HEADER_CONTENT_LENGTH:
-            case AWS_HTTP_HEADER_TRANSFER_ENCODING:
-                if (!encoder->body) {
-                    ENCODER_LOGF(
-                        ERROR,
-                        encoder,
-                        "Failed to create stream, '" PRInSTR "' header specified but body stream is not set.",
-                        AWS_BYTE_CURSOR_PRI(header.name));
-
-                    return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-                }
-                break;
-            default:
-                break;
-        }
-
-        /* header-line: "{name}: {value}\r\n" */
-        int err = 0;
-        err |= aws_add_size_checked(header.name.len, total, &total);
-        err |= aws_add_size_checked(header.value.len, total, &total);
-        err |= aws_add_size_checked(4, total, &total); /* ": " + "\r\n" */
-        if (err) {
-            ENCODER_LOGF(
-                ERROR,
-                encoder,
-                "Failed to create stream, header size calculation produced error %d (%s)'",
-                aws_last_error(),
-                aws_error_name(aws_last_error()));
-            return AWS_OP_ERR;
-        }
-    }
-
-    *out_header_lines_len = total;
-    return AWS_OP_SUCCESS;
+void aws_h1_encoder_clean_up(struct aws_h1_encoder *encoder) {
+    aws_byte_buf_clean_up(&encoder->outgoing_head_buf);
 }
 
-int aws_h1_encoder_start_request(struct aws_h1_encoder *encoder, const struct aws_http_request *request) {
+int aws_h1_encoder_start_request(
+    struct aws_h1_encoder *encoder,
+    const struct aws_http_request *request,
+    void *logging_id) {
+
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(request);
 
     if (encoder->is_stream_in_progress) {
-        ENCODER_LOG(ERROR, encoder, "Attemting to start new request while previous request is in progress.");
+        ENCODER_LOG(ERROR, encoder, "Attempting to start new request while previous request is in progress.");
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
+    void *prev_logging_id = encoder->logging_id;
+    encoder->logging_id = logging_id;
+
     struct aws_byte_cursor method;
     int err = aws_http_request_get_method(request, &method);
-    struct aws_byte_cursor uri;
-    err |= aws_http_request_get_path(request, &uri);
-    if (err) {
-        ENCODER_LOG(ERROR, encoder, "Failed to create request, HTTP pethod and path must be set.");
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-    }
+    AWS_ASSERT(!err);
 
-    encoder->is_stream_in_progress = true;
-    encoder->body = aws_http_request_get_body_stream(request);
+    struct aws_byte_cursor uri;
+    err = aws_http_request_get_path(request, &uri);
+    AWS_ASSERT(!err);
 
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
+    const size_t num_headers = aws_http_request_get_header_count(request);
 
     /**
      * Calculate total size needed for outgoing_head_buffer, then write to buffer.
      */
-
-    size_t header_lines_len;
-    err = s_scan_outgoing_headers(encoder, request, &header_lines_len);
-    if (err) {
-        /* errors already logged by scan_outgoing_headers() function */
-        goto error;
-    }
 
     /* request-line: "{method} {uri} {version}\r\n" */
     size_t request_line_len = 4; /* 2 spaces + "\r\n" */
@@ -133,6 +70,18 @@ int aws_h1_encoder_start_request(struct aws_h1_encoder *encoder, const struct aw
     /* head-end: "\r\n" */
     size_t head_end_len = 2;
 
+    /* header-line: "{name}: {value}\r\n" */
+    size_t header_lines_len = 0;
+    for (size_t i = 0; i < num_headers; ++i) {
+        struct aws_http_header header;
+        aws_http_request_get_header(request, &header, i);
+        AWS_ASSERT((header.name.len > 0) && (header.value.len > 0));
+
+        err |= aws_add_size_checked(header.name.len, header_lines_len, &header_lines_len);
+        err |= aws_add_size_checked(header.value.len, header_lines_len, &header_lines_len);
+        err |= aws_add_size_checked(4, header_lines_len, &header_lines_len); /* ": " + "\r\n" */
+    }
+
     size_t head_total_len = request_line_len;
     err |= aws_add_size_checked(header_lines_len, head_total_len, &head_total_len);
     err |= aws_add_size_checked(head_end_len, head_total_len, &head_total_len);
@@ -141,7 +90,7 @@ int aws_h1_encoder_start_request(struct aws_h1_encoder *encoder, const struct aw
         ENCODER_LOGF(
             ERROR,
             encoder,
-            "Failed to create request, size calculation had error %d (%s).",
+            "Encoding failure, size calculation had error %d (%s).",
             aws_last_error(),
             aws_error_name(aws_last_error()));
         goto error;
@@ -152,7 +101,7 @@ int aws_h1_encoder_start_request(struct aws_h1_encoder *encoder, const struct aw
         ENCODER_LOGF(
             ERROR,
             encoder,
-            "Failed to create request, buffer initialization had error %d (%s).",
+            "Encoding failure, buffer initialization had error %d (%s).",
             aws_last_error(),
             aws_error_name(aws_last_error()));
 
@@ -168,8 +117,6 @@ int aws_h1_encoder_start_request(struct aws_h1_encoder *encoder, const struct aw
     wrote_all &= aws_byte_buf_write_from_whole_cursor(&encoder->outgoing_head_buf, version);
     wrote_all &= aws_byte_buf_write_u8(&encoder->outgoing_head_buf, '\r');
     wrote_all &= aws_byte_buf_write_u8(&encoder->outgoing_head_buf, '\n');
-
-    const size_t num_headers = aws_http_request_get_header_count(request);
 
     for (size_t i = 0; i < num_headers; ++i) {
         struct aws_http_header header;
@@ -190,12 +137,15 @@ int aws_h1_encoder_start_request(struct aws_h1_encoder *encoder, const struct aw
     AWS_ASSERT(wrote_all);
 
     /* Can start writing head next */
+    encoder->is_stream_in_progress = true;
+    encoder->body = aws_http_request_get_body_stream(request);
     encoder->state = AWS_H1_ENCODER_STATE_HEAD;
     encoder->outgoing_head_progress = 0;
 
     return AWS_OP_SUCCESS;
 
 error:
+    encoder->logging_id = prev_logging_id;
     return AWS_OP_ERR;
 }
 

@@ -31,8 +31,9 @@ struct aws_h1_encoder {
     enum aws_h1_encoder_state state;
     struct aws_input_stream *body;
     bool is_stream_in_progress;
+    void *logging_id;
 
-    /* Upon creation, the "head" (everything preceding body) is buffered here. */
+    /* Upon message start, the "head" (everything preceding body) is buffered here. */
     struct aws_byte_buf outgoing_head_buf;
     size_t outgoing_head_progress;
 };
@@ -43,7 +44,13 @@ AWS_HTTP_API
 void aws_h1_encoder_init(struct aws_h1_encoder *encoder, struct aws_allocator *allocator);
 
 AWS_HTTP_API
-int aws_h1_encoder_start_request(struct aws_h1_encoder *encoder, const struct aws_http_request *request);
+void aws_h1_encoder_clean_up(struct aws_h1_encoder *encoder);
+
+AWS_HTTP_API
+int aws_h1_encoder_start_request(
+    struct aws_h1_encoder *encoder,
+    const struct aws_http_request *request,
+    void *log_as_stream);
 
 AWS_HTTP_API
 int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *out_buf);

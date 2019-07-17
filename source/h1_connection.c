@@ -617,10 +617,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
 
     /* Update current incoming and outgoing streams. */
     if (!current) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: All outgoing streams complete.",
-            (void *)&connection->base);
+        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: All outgoing streams complete.", (void *)&connection->base);
     } else if (prev != current) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
@@ -632,7 +629,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
 
         if (current->base.client_data) {
             err = aws_h1_encoder_start_request(
-                &connection->thread_data.encoder, current->base.client_data->outgoing_request);
+                &connection->thread_data.encoder, current->base.client_data->outgoing_request, &current->base);
 
             AWS_FATAL_ASSERT(!err);
         }
@@ -1077,6 +1074,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
 
     aws_h1_decoder_destroy(connection->thread_data.incoming_stream_decoder);
+    aws_h1_encoder_clean_up(&connection->thread_data.encoder);
     aws_mutex_clean_up(&connection->synced_data.lock);
     aws_mem_release(connection->base.alloc, connection);
 }
