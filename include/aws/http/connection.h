@@ -132,9 +132,6 @@ AWS_EXTERN_C_BEGIN
 AWS_HTTP_API
 int aws_http_client_connect(const struct aws_http_client_connection_options *options);
 
-AWS_HTTP_API
-int aws_http_client_connect_with_request(const struct aws_http_client_connection_options *options, struct aws_http_request *request);
-
 /**
  * Users must release the connection when they are done with it.
  * The connection's memory cannot be reclaimed until this is done.
