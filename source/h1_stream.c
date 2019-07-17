@@ -23,7 +23,6 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
 
     aws_byte_buf_clean_up(&stream->incoming_storage_buf);
-    aws_byte_buf_clean_up(&stream->outgoing_head_buf);
     aws_mem_release(stream->base.alloc, stream);
 }
 
@@ -54,7 +53,7 @@ struct aws_h1_stream *aws_h1_stream_new(const struct aws_http_request_options *o
     stream->base.on_incoming_header_block_done = options->on_response_header_block_done;
     stream->base.on_incoming_body = options->on_response_body;
     stream->base.on_complete = options->on_complete;
-    stream->base.incoming_response_status = AWS_HTTP_STATUS_UNKNOWN;
+    stream->base.client_or_server_data.client.incoming_response_status = AWS_HTTP_STATUS_UNKNOWN;
 
     /* Stream refcount starts at 2. 1 for user and 1 for connection to release it's done with the stream */
     aws_atomic_init_int(&stream->base.refcount, 2);

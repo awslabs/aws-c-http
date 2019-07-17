@@ -418,14 +418,14 @@ struct aws_http_connection *aws_http_stream_get_connection(const struct aws_http
 }
 
 int aws_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status) {
-    AWS_ASSERT(stream);
+    AWS_ASSERT(stream && stream->client_data);
 
-    if (stream->incoming_response_status == (int)AWS_HTTP_STATUS_UNKNOWN) {
+    if (stream->client_data->incoming_response_status == (int)AWS_HTTP_STATUS_UNKNOWN) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Status code not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
 
-    *out_status = stream->incoming_response_status;
+    *out_status = stream->client_data->incoming_response_status;
     return AWS_OP_SUCCESS;
 }
 
@@ -433,26 +433,26 @@ int aws_http_stream_get_incoming_request_method(
     const struct aws_http_stream *stream,
     struct aws_byte_cursor *out_method) {
 
-    AWS_ASSERT(stream);
+    AWS_ASSERT(stream && stream->server_data);
 
-    if (!stream->incoming_request_method_str.ptr) {
+    if (!stream->server_data->incoming_request_method_str.ptr) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Request method not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
 
-    *out_method = stream->incoming_request_method_str;
+    *out_method = stream->server_data->incoming_request_method_str;
     return AWS_OP_SUCCESS;
 }
 
 int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *stream, struct aws_byte_cursor *out_uri) {
-    AWS_ASSERT(stream);
+    AWS_ASSERT(stream && stream->server_data);
 
-    if (!stream->incoming_request_uri.ptr) {
+    if (!stream->server_data->incoming_request_uri.ptr) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Request URI not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
 
-    *out_uri = stream->incoming_request_uri;
+    *out_uri = stream->server_data->incoming_request_uri;
     return AWS_OP_SUCCESS;
 }
 

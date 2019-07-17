@@ -23,23 +23,13 @@ enum aws_h1_stream_type {
     AWS_H1_STREAM_TYPE_INCOMING_REQUEST,
 };
 
-enum aws_h1_stream_outgoing_state {
-    AWS_H1_STREAM_OUTGOING_STATE_HEAD,
-    AWS_H1_STREAM_OUTGOING_STATE_BODY,
-    AWS_H1_STREAM_OUTGOING_STATE_DONE,
-};
-
 struct aws_h1_stream {
     struct aws_http_stream base;
 
     enum aws_h1_stream_type type;
     struct aws_linked_list_node node;
-    enum aws_h1_stream_outgoing_state outgoing_state;
 
-    /* Upon creation, the "head" (everything preceding body) is buffered here. */
-    struct aws_byte_buf outgoing_head_buf;
-    size_t outgoing_head_progress;
-    bool has_outgoing_body;
+    bool is_outgoing_message_done;
 
     bool is_incoming_message_done;
     bool is_incoming_head_done;
@@ -52,8 +42,6 @@ AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API
 struct aws_h1_stream *aws_h1_stream_new(const struct aws_http_request_options *options);
-AWS_HTTP_API
-void aws_h1_stream_destroy(struct aws_h1_stream *stream);
 
 AWS_EXTERN_C_END
 

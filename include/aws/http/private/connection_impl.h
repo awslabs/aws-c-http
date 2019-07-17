@@ -53,11 +53,11 @@ struct aws_http_connection {
     struct aws_atomic_var refcount;
 
     union {
-        struct client_data {
+        struct aws_http_connection_client_data {
             uint8_t delete_me; /* exists to prevent "empty struct" errors */
         } client;
 
-        struct server_data {
+        struct aws_http_connection_server_data {
             void *connection_user_data;
             aws_http_on_incoming_request_fn *on_incoming_request;
             aws_http_on_server_connection_shutdown_fn *on_shutdown;
@@ -66,8 +66,8 @@ struct aws_http_connection {
 
     /* On client connections, `client_data` points to client_or_server_data.client and `server_data` is null.
      * Opposite is true on server connections */
-    struct client_data *client_data;
-    struct server_data *server_data;
+    struct aws_http_connection_client_data *client_data;
+    struct aws_http_connection_server_data *server_data;
 };
 
 AWS_EXTERN_C_BEGIN
