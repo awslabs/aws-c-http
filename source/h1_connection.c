@@ -135,7 +135,7 @@ struct h1_connection {
          * we'll start working on the next stream in the list */
         struct h1_stream *outgoing_stream;
 
-        /* Points to the stream being decoded, which is always the first entry in `stream_list` */
+        /* Points to the stream being decoded */
         struct h1_stream *incoming_stream;
         struct aws_h1_decoder *incoming_stream_decoder;
 
@@ -208,8 +208,8 @@ struct h1_stream {
 
     /* Any thread may touch this data, but the lock must be held */
     struct {
-        /* For check the response is already made by a user or not */
-        bool has_response;
+        /* Whether a "request handler" stream has a response to send. */
+        bool has_outgoing_response;
     } synced_data;
 };
 
@@ -673,11 +673,11 @@ static int s_stream_send_response(struct aws_http_stream *stream, const struct a
     bool should_schedule_task = false;
     { /* BEGIN CRITICAL SECTION */
         err = aws_mutex_lock(&connection->synced_data.lock);
-        if (h1_stream->synced_data.has_response) {
+        if (h1_stream->synced_data.has_outgoing_response) {
             AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "id=%p: Response already created on the stream", (void *)stream);
             send_err = AWS_ERROR_INVALID_STATE;
         }
-        h1_stream->synced_data.has_response = true;
+        h1_stream->synced_data.has_outgoing_response = true;
         AWS_FATAL_ASSERT(!err);
         if (!connection->synced_data.is_outgoing_stream_task_active) {
             connection->synced_data.is_outgoing_stream_task_active = true;
@@ -1015,7 +1015,7 @@ finish_up:
 /**
  * Ensure `incoming_stream` is pointing at the correct stream, and update state if it changes.
  */
-static void s_update_incoming_stream_ptr(struct h1_connection *connection) {
+static void s_client_update_incoming_stream_ptr(struct h1_connection *connection) {
     struct aws_linked_list *list = &connection->thread_data.stream_list;
     struct h1_stream *desired;
     if (aws_linked_list_empty(list)) {
@@ -1084,7 +1084,7 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
                 /* The front of pending_stream list is not ready to be sent */
                 if (!AWS_CONTAINER_OF(
                          aws_linked_list_front(&connection->thread_data.waiting_stream_list), struct h1_stream, node)
-                         ->synced_data.has_response) {
+                         ->synced_data.has_outgoing_response) {
                     break;
                 }
                 aws_linked_list_push_back(
@@ -1148,7 +1148,7 @@ static struct h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *conn
         connection->thread_data.outgoing_stream = current;
         /* incoming_stream update is only for client */
         if (connection->base.client_data) {
-            s_update_incoming_stream_ptr(connection);
+            s_client_update_incoming_stream_ptr(connection);
         }
     }
 
@@ -1455,7 +1455,7 @@ static int s_decoder_on_done(void *user_data) {
 
     incoming_stream->is_incoming_message_done = true;
     if (connection->base.server_data) {
-
+        /* Server side */
         if (incoming_stream->base.on_request_end) {
             incoming_stream->base.on_request_end(&incoming_stream->base, incoming_stream->base.user_data);
         }
@@ -1466,11 +1466,12 @@ static int s_decoder_on_done(void *user_data) {
         connection->thread_data.incoming_stream = NULL;
 
     } else if (incoming_stream->outgoing_state == STREAM_OUTGOING_STATE_DONE) {
+        /* Client side */
         AWS_ASSERT(&incoming_stream->node == aws_linked_list_begin(&connection->thread_data.stream_list));
 
         s_stream_complete(incoming_stream, AWS_ERROR_SUCCESS);
 
-        s_update_incoming_stream_ptr(connection);
+        s_client_update_incoming_stream_ptr(connection);
     }
 
     /* Report success even if user's on_complete() callback shuts down on the connection.
@@ -1682,6 +1683,39 @@ error:
     s_shutdown_connection(connection, aws_last_error());
 }
 
+static struct h1_stream *new_server_request_handler_stream(struct h1_connection *connection) {
+    struct h1_stream *stream = s_new_stream(&connection->base);
+    if (!stream) {
+        return NULL;
+    }
+    /* Connection must have an on_incoming_request callback
+     * If not the error will be record in the connection configure function */
+    connection->base.server_data->on_incoming_request(
+        &connection->base, &stream->base, connection->base.server_data->connection_user_data);
+
+    /* The request handler must be configured in on_incoming_request
+     * If not, raise an error */
+    if (!stream->base.request_handler_configured) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: The request handler stream is not request_handler_configured,"
+            "please make sure call aws_http_stream_configure_server_request_handler",
+            (void *)&connection->base);
+        /* no need to release the stream here
+         * the configuration is not call the ref count is still 0 */
+        return NULL;
+    }
+    /* Waiting for response. */
+    aws_linked_list_push_back(&connection->thread_data.waiting_stream_list, &stream->node);
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_STREAM,
+        "id=%p: Created request handler stream on server connection=%p",
+        (void *)&stream->base,
+        (void *)stream->base.owning_connection);
+    return stream;
+}
+
 static int s_handler_process_read_message(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
@@ -1757,28 +1791,11 @@ static int s_handler_process_read_message(
                 } else {
                     /* Server side
                      * Make a new stream for this request and push it into the waiting stream list wait for response */
-                    struct h1_stream *stream = s_new_stream(&connection->base);
+                    struct h1_stream *stream = new_server_request_handler_stream(connection);
                     if (!stream) {
+                        /* Error already logged */
                         goto shutdown;
                     }
-                    /* Connection must have an on_incoming_request callback
-                     * If not the error will be record in the connection configure function */
-                    connection->base.server_data->on_incoming_request(
-                        &connection->base, &stream->base, connection->base.server_data->connection_user_data);
-
-                    /* The request handler must be configured in on_incoming_request
-                     * If not, raise an error */
-                    if (!stream->base.request_handler_configured) {
-                        AWS_LOGF_ERROR(
-                            AWS_LS_HTTP_CONNECTION,
-                            "id=%p: The request handler stream is not request_handler_configured,"
-                            "please make sure call aws_http_stream_configure_server_request_handler",
-                            (void *)&connection->base);
-                        goto shutdown;
-                    }
-                    /* Waiting for response. */
-                    aws_linked_list_push_back(&connection->thread_data.waiting_stream_list, &stream->node);
-
                     connection->thread_data.incoming_stream = stream;
                 }
             }

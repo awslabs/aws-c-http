@@ -321,7 +321,8 @@ int aws_http_stream_configure_server_request_handler(
     struct aws_http_stream *stream,
     const struct aws_http_request_handler_options *options) {
 
-    if (!options || options->self_size == 0 || !stream) {
+    AWS_PRECONDITION(stream);
+    if (!options || options->self_size == 0) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_STREAM,
             "id=%p: Cannot configure server request handler stream, options are invalid.",
@@ -336,7 +337,9 @@ int aws_http_stream_configure_server_request_handler(
 }
 
 int aws_http_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options) {
-    if (!options || options->self_size == 0 || !stream) {
+
+    AWS_PRECONDITION(stream);
+    if (!options || options->self_size == 0) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Cannot send response, options are invalid.",
