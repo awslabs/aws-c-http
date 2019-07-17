@@ -336,7 +336,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     if (err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "id=%p: Failed to create request, HTTP pethod and path must be set.",
+            "id=%p: Failed to create request, HTTP method and path must be set.",
             (void *)options->client_connection);
 
         return NULL;
