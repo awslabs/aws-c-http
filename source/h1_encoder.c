@@ -44,32 +44,6 @@ static int s_scan_outgoing_headers(
         struct aws_http_header header;
         aws_http_request_get_header(request, &header, i);
 
-        enum aws_http_header_name name_enum;
-
-        if (header.name.len > 0) {
-            name_enum = aws_http_str_to_header_name(header.name);
-        } else {
-            ENCODER_LOGF(ERROR, encoder, "Failed to create stream, no name set for header[%zu].", i);
-            return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        }
-
-        switch (name_enum) {
-            case AWS_HTTP_HEADER_CONTENT_LENGTH:
-            case AWS_HTTP_HEADER_TRANSFER_ENCODING:
-                if (!encoder->body) {
-                    ENCODER_LOGF(
-                        ERROR,
-                        encoder,
-                        "Failed to create stream, '" PRInSTR "' header specified but body stream is not set.",
-                        AWS_BYTE_CURSOR_PRI(header.name));
-
-                    return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-                }
-                break;
-            default:
-                break;
-        }
-
         /* header-line: "{name}: {value}\r\n" */
         int err = 0;
         err |= aws_add_size_checked(header.name.len, total, &total);

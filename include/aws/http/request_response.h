@@ -272,6 +272,21 @@ int aws_http_request_get_header(
     size_t index);
 
 /**
+ * Find the header with the specified name.
+ * If multiple headers with the same name are present (e.g. cookies), the most recently modified will be returned.
+ * out_header may be set to NULL to just check for presence.
+ *
+ * Returns whether or not the header was found.
+ *
+ * The underlying strings are stored within the request.
+ */
+AWS_HTTP_API
+bool aws_http_request_find_header(
+    const struct aws_http_request *request,
+    struct aws_http_header *out_header,
+    const struct aws_byte_cursor *name);
+
+/**
  * Add a header to the end of the array.
  * The request makes its own copy of the underlying strings.
  */

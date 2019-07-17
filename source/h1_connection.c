@@ -36,6 +36,9 @@ enum {
     DECODER_INITIAL_SCRATCH_SIZE = 256,
 };
 
+static const struct aws_byte_cursor s_content_length = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("content-length");
+static const struct aws_byte_cursor s_transfer_encoding = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("transfer_encoding");
+
 static int s_handler_process_read_message(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
@@ -339,6 +342,37 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
         return NULL;
     }
 
+    /* If content-length or transfer-encoding is set, check that there's a body */
+    struct aws_http_header body_header;
+    bool has_body_header = aws_http_request_find_header(options->request, &body_header, &s_content_length) ||
+                            aws_http_request_find_header(options->request, &body_header, &s_transfer_encoding);
+
+    bool has_body = aws_http_request_get_body_stream(options->request);
+
+    if (has_body_header && !has_body) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Failed to create stream, '" PRInSTR "' header specified but body stream is not set.",
+            (void *)options->client_connection,
+            AWS_BYTE_CURSOR_PRI(body_header.name));
+
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    if (!has_body_header && has_body) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Failed to create stream, if body stream is set, "
+            "header \"" PRInSTR "\" or \"" PRInSTR "\" must also be set.",
+            (void *)options->client_connection,
+            AWS_BYTE_CURSOR_PRI(s_content_length),
+            AWS_BYTE_CURSOR_PRI(s_transfer_encoding));
+
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
     struct h1_connection *connection = AWS_CONTAINER_OF(options->client_connection, struct h1_connection, base);
 
     struct aws_h1_stream *stream = aws_h1_stream_new(options);
@@ -617,10 +651,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
 
     /* Update current incoming and outgoing streams. */
     if (!current) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: All outgoing streams complete.",
-            (void *)&connection->base);
+        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: All outgoing streams complete.", (void *)&connection->base);
     } else if (prev != current) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
@@ -742,7 +773,8 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
     if (outgoing_stream) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
-            "id=%p: Outgoing stream task has written all it can, but there's still more work to do, rescheduling task.",
+            "id=%p: Outgoing stream task has written all it can, but there's still more work to do, rescheduling "
+            "task.",
             (void *)&connection->base);
 
         aws_channel_schedule_task_now(channel, task);
@@ -1186,7 +1218,8 @@ static int s_handler_process_read_message(
 
     const size_t incoming_message_size = message->message_data.len;
 
-    /* By default, after processing message, we will increment the read window by the same amount we just read in. */
+    /* By default, after processing message, we will increment the read window by the same amount we just read in.
+     */
     connection->thread_data.incoming_message_window_shrink_size = 0;
 
     AWS_LOGF_TRACE(
