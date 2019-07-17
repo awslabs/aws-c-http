@@ -55,26 +55,40 @@ struct aws_http_request;
  */
 typedef int aws_http_request_transform_fn(struct aws_http_request *request, void *user_data);
 
-enum aws_http_outgoing_body_state {
-    AWS_HTTP_OUTGOING_BODY_IN_PROGRESS,
-    AWS_HTTP_OUTGOING_BODY_DONE,
-};
-
-typedef void(aws_http_on_incoming_headers_fn)(
+/**
+ * Invoked repeatedly times as headers are received.
+ * At this point, aws_http_stream_get_incoming_response_status() can be called.
+ *
+ * Return AWS_OP_SUCCESS to continue processing the stream.
+ * Return AWS_OP_ERR to indicate failure and cancel the stream.
+ */
+typedef int(aws_http_on_incoming_headers_fn)(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data);
 
-typedef void(aws_http_on_incoming_header_block_done_fn)(struct aws_http_stream *stream, bool has_body, void *user_data);
+/**
+ * Invoked when response header block has been completely read.
+ *
+ * Return AWS_OP_SUCCESS to continue processing the stream.
+ * Return AWS_OP_ERR to indicate failure and cancel the stream.
+ */
+typedef int(aws_http_on_incoming_header_block_done_fn)(struct aws_http_stream *stream, bool has_body, void *user_data);
 
 /**
  * Called repeatedly as body data is received.
  * The data must be copied immediately if you wish to preserve it.
+ *
+ * Return AWS_OP_SUCCESS to continue processing the stream.
+ * Return AWS_OP_ERR to indicate failure and cancel the stream.
  */
-typedef void(
+typedef int(
     aws_http_on_incoming_body_fn)(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data);
 
+/**
+ * Invoked when request/response stream is complete, whether successful or unsuccessful
+ */
 typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
 
 /**
@@ -103,26 +117,29 @@ struct aws_http_request_options {
 
     /**
      * Invoked repeatedly times as headers are received.
-     * At this point, aws_http_stream_get_incoming_response_status() can be called.
      * Optional.
+     * See `aws_http_on_incoming_headers_fn`.
      */
     aws_http_on_incoming_headers_fn *on_response_headers;
 
     /**
      * Invoked when response header block has been completely read.
      * Optional.
+     * See `aws_http_on_incoming_header_block_done_fn`.
      */
     aws_http_on_incoming_header_block_done_fn *on_response_header_block_done;
 
     /**
      * Invoked repeatedly as body data is received.
      * Optional.
+     * See `aws_http_on_incoming_body_fn`.
      */
     aws_http_on_incoming_body_fn *on_response_body;
 
     /**
      * Invoked when request/response stream is complete, whether successful or unsuccessful
      * Optional.
+     * See `aws_http_on_stream_complete_fn`.
      */
     aws_http_on_stream_complete_fn *on_complete;
 

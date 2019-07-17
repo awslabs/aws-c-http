@@ -93,7 +93,7 @@ static void s_ws_bootstrap_on_http_shutdown(
     struct aws_http_connection *http_connection,
     int error_code,
     void *user_data);
-static void s_ws_bootstrap_on_handshake_response_headers(
+static int s_ws_bootstrap_on_handshake_response_headers(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
     size_t num_headers,
@@ -389,7 +389,7 @@ static void s_ws_bootstrap_on_http_shutdown(
     s_ws_bootstrap_destroy(ws_bootstrap);
 }
 
-static void s_ws_bootstrap_on_handshake_response_headers(
+static int s_ws_bootstrap_on_handshake_response_headers(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
     size_t num_headers,
@@ -423,7 +423,7 @@ static void s_ws_bootstrap_on_handshake_response_headers(
         }
     }
 
-    return;
+    return AWS_OP_SUCCESS;
 error:
     AWS_LOGF_ERROR(
         AWS_LS_HTTP_WEBSOCKET_SETUP,
@@ -434,6 +434,8 @@ error:
 
     s_ws_bootstrap_cancel_setup_due_to_err(
         ws_bootstrap, s_system_vtable->aws_http_stream_get_connection(stream), aws_last_error());
+
+    return AWS_OP_ERR;
 }
 
 static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
