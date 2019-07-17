@@ -163,23 +163,23 @@ static void s_tester_on_incoming_request(
     void *user_data) {
     (void)connection;
     struct aws_http_request_handler_options options = AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT;
-    struct tester *test = user_data;
+    struct tester *tester = user_data;
 
-    int index = test->request_num;
+    int index = tester->request_num;
     /* initialize the new request */
-    test->requests[index].num_headers = 0;
-    test->requests[index].has_incoming_body = false;
-    test->requests[index].header_done = false;
+    tester->requests[index].num_headers = 0;
+    tester->requests[index].has_incoming_body = false;
+    tester->requests[index].header_done = false;
 
-    aws_byte_buf_init(&test->requests[index].storage, test->alloc, 1024 * 1024 * 1);
-    options.user_data = &test->requests[index];
-    test->requests[index].request_handler = stream;
+    aws_byte_buf_init(&tester->requests[index].storage, tester->alloc, 1024 * 1024 * 1);
+    options.user_data = &tester->requests[index];
+    tester->requests[index].request_handler = stream;
     options.on_request_headers = s_tester_on_request_header;
     options.on_request_header_block_done = s_tester_on_request_header_block_done;
     options.on_request_body = s_tester_on_request_body;
     options.on_complete = s_tester_on_stream_complete;
 
-    test->request_num++;
+    tester->request_num++;
     aws_http_stream_configure_server_request_handler(stream, &options);
 }
 
@@ -1055,5 +1055,329 @@ TEST_CASE(h1_server_send_response_large_head) {
 
     ASSERT_SUCCESS(s_server_tester_clean_up());
     aws_byte_buf_clean_up(&expected);
+    return AWS_OP_SUCCESS;
+}
+
+/* Test for close connection */
+
+enum request_handler_callback {
+    REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS,
+    REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS_DONE,
+    REQUEST_HANDLER_CALLBACK_INCOMING_BODY,
+    REQUEST_HANDLER_CALLBACK_OUTGOING_BODY,
+    REQUEST_HANDLER_CALLBACK_COMPLETE,
+    REQUEST_HANDLER_CALLBACK_COUNT,
+};
+
+struct close_from_callback_tester {
+    enum request_handler_callback close_at;
+    int callback_counts[REQUEST_HANDLER_CALLBACK_COUNT];
+    bool is_closed;
+
+    struct aws_allocator *alloc;
+    struct aws_logger logger;
+
+    struct aws_http_connection *server_connection;
+    struct testing_channel testing_channel;
+
+    struct tester_request requests[100];
+    int request_num;
+
+    bool server_connection_is_shutdown;
+};
+
+static void s_close_from_callback_common(
+    struct aws_http_stream *stream,
+    struct close_from_callback_tester *close_tester,
+    enum request_handler_callback current_callback) {
+
+    close_tester->callback_counts[current_callback]++;
+
+    /* After connection closed, no more callbacks should fire (except for on_complete) */
+    if (current_callback == REQUEST_HANDLER_CALLBACK_COMPLETE) {
+        if (close_tester->close_at < REQUEST_HANDLER_CALLBACK_COMPLETE) {
+            AWS_FATAL_ASSERT(close_tester->is_closed);
+        }
+    } else {
+        AWS_FATAL_ASSERT(!close_tester->is_closed);
+        AWS_FATAL_ASSERT(current_callback <= close_tester->close_at);
+    }
+
+    if (current_callback == close_tester->close_at) {
+        aws_http_connection_close(aws_http_stream_get_connection(stream));
+        close_tester->is_closed = true;
+    }
+}
+
+static enum aws_http_outgoing_body_state s_close_from_outgoing_body(
+    struct aws_http_stream *stream,
+    struct aws_byte_buf *buf,
+    void *user_data) {
+
+    (void)buf;
+    s_close_from_callback_common(stream, user_data, REQUEST_HANDLER_CALLBACK_OUTGOING_BODY);
+
+    /* If we're closing from this function, try and keep going. It's a failure if we're invoked again. */
+    struct close_from_callback_tester *close_tester = user_data;
+    if (close_tester->close_at == REQUEST_HANDLER_CALLBACK_OUTGOING_BODY) {
+        return AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
+    } else {
+        return AWS_HTTP_OUTGOING_BODY_DONE;
+    }
+}
+
+static void s_close_from_incoming_headers(
+    struct aws_http_stream *stream,
+    const struct aws_http_header *header_array,
+    size_t num_headers,
+    void *user_data) {
+
+    (void)header_array;
+    (void)num_headers;
+    s_close_from_callback_common(stream, user_data, REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS);
+}
+
+static void s_close_from_incoming_headers_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
+    (void)has_body;
+    s_close_from_callback_common(stream, user_data, REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS_DONE);
+}
+
+static void s_close_from_incoming_body(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    /* NOLINTNEXTLINE(readability-non-const-parameter) */
+    size_t *out_window_update_size,
+    void *user_data) {
+
+    (void)data;
+    (void)out_window_update_size;
+    s_close_from_callback_common(stream, user_data, REQUEST_HANDLER_CALLBACK_INCOMING_BODY);
+}
+
+static void s_close_from_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)error_code;
+    s_close_from_callback_common(stream, user_data, REQUEST_HANDLER_CALLBACK_COMPLETE);
+}
+
+static void s_tester_close_on_incoming_request(
+    struct aws_http_connection *connection,
+    struct aws_http_stream *stream,
+    void *user_data) {
+    (void)connection;
+    struct aws_http_request_handler_options options = AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT;
+    struct close_from_callback_tester *tester = user_data;
+
+    int index = tester->request_num;
+    /* initialize the new request */
+    tester->requests[index].num_headers = 0;
+    tester->requests[index].has_incoming_body = false;
+    tester->requests[index].header_done = false;
+
+    aws_byte_buf_init(&tester->requests[index].storage, tester->alloc, 1024 * 1024 * 1);
+    options.user_data = tester;
+    tester->requests[index].request_handler = stream;
+    options.on_request_headers = s_close_from_incoming_headers;
+    options.on_request_header_block_done = s_close_from_incoming_headers_done;
+    options.on_request_body = s_close_from_incoming_body;
+    options.on_complete = s_close_from_stream_complete;
+
+    tester->request_num++;
+    aws_http_stream_configure_server_request_handler(stream, &options);
+}
+
+static int s_close_tester_init(struct aws_allocator *alloc, struct close_from_callback_tester *tester) {
+
+    aws_load_error_strings();
+    aws_common_load_log_subject_strings();
+    aws_io_load_error_strings();
+    aws_io_load_log_subject_strings();
+    aws_http_library_init(alloc);
+
+    tester->alloc = alloc;
+
+    tester->request_num = 0;
+
+    struct aws_logger_standard_options logger_options = {
+        .level = AWS_LOG_LEVEL_TRACE,
+        .file = stderr,
+    };
+    ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->alloc, &logger_options));
+    aws_logger_set(&tester->logger);
+
+    ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc));
+
+    tester->server_connection = aws_http_connection_new_http1_1_server(alloc, SIZE_MAX);
+    ASSERT_NOT_NULL(tester->server_connection);
+    struct aws_http_server_connection_options options = AWS_HTTP_SERVER_CONNECTION_OPTIONS_INIT;
+    options.connection_user_data = tester;
+    options.on_incoming_request = s_tester_close_on_incoming_request;
+
+    ASSERT_SUCCESS(aws_http_connection_configure_server(tester->server_connection, &options));
+
+    struct aws_channel_slot *slot = aws_channel_slot_new(tester->testing_channel.channel);
+    ASSERT_NOT_NULL(slot);
+    tester->server_connection->channel_slot = slot;
+    ASSERT_SUCCESS(aws_channel_slot_insert_end(tester->testing_channel.channel, slot));
+    ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &tester->server_connection->channel_handler));
+
+    aws_channel_acquire_hold(tester->testing_channel.channel);
+
+    testing_channel_drain_queued_tasks(&tester->testing_channel);
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_server_close_request_clean_up(struct close_from_callback_tester *tester) {
+    for (int i = 0; i < tester->request_num; i++) {
+        aws_http_stream_release(tester->requests[i].request_handler);
+        aws_byte_buf_clean_up(&tester->requests[i].storage);
+    }
+    return AWS_OP_SUCCESS;
+}
+
+static int s_server_close_tester_clean_up(struct close_from_callback_tester *tester) {
+    s_server_close_request_clean_up(tester);
+    aws_http_connection_release(tester->server_connection);
+    ASSERT_SUCCESS(testing_channel_clean_up(&tester->testing_channel));
+    aws_http_library_clean_up();
+    aws_logger_clean_up(&tester->logger);
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_send_message_cursor_close(struct aws_byte_cursor data, struct close_from_callback_tester *tester) {
+
+    struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
+        tester->testing_channel.channel, AWS_IO_MESSAGE_APPLICATION_DATA, data.len);
+    ASSERT_NOT_NULL(msg);
+
+    ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&msg->message_data, data));
+
+    ASSERT_SUCCESS(testing_channel_push_read_message(&tester->testing_channel, msg));
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_test_close_from_callback(struct aws_allocator *allocator, enum request_handler_callback close_at) {
+
+    struct close_from_callback_tester close_tester;
+
+    AWS_ZERO_STRUCT(close_tester);
+    close_tester.close_at = close_at;
+
+    ASSERT_SUCCESS(s_close_tester_init(allocator, &close_tester));
+
+    /* send request */
+    const char *incoming_request = "POST / HTTP/1.1\r\n"
+                                   "Transfer-Encoding: chunked\r\n"
+                                   "\r\n"
+                                   "3\r\n"
+                                   "two\r\n"
+                                   "6\r\n"
+                                   "chunks\r\n"
+                                   "0\r\n"
+                                   "\r\n";
+    ASSERT_SUCCESS(s_send_message_cursor_close(aws_byte_cursor_from_c_str(incoming_request), &close_tester));
+    testing_channel_drain_queued_tasks(&close_tester.testing_channel);
+
+    ASSERT_TRUE(close_tester.request_num == 1);
+    struct tester_request *request = close_tester.requests;
+
+    /* send response */
+    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
+
+    struct aws_http_header headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Content-Length"),
+            .value = aws_byte_cursor_from_c_str("999"),
+        },
+    };
+
+    opt.status = 200;
+    opt.num_headers = AWS_ARRAY_SIZE(headers);
+    opt.header_array = headers;
+    opt.stream_outgoing_body = s_close_from_outgoing_body;
+    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, &opt));
+    testing_channel_drain_queued_tasks(&close_tester.testing_channel);
+    /* check that callbacks were invoked before close_at, but not after */
+    for (int i = 0; i < REQUEST_HANDLER_CALLBACK_COMPLETE; ++i) {
+        if (i <= close_at) {
+            ASSERT_TRUE(close_tester.callback_counts[i] > 0);
+        } else {
+            ASSERT_INT_EQUALS(0, close_tester.callback_counts[i]);
+        }
+    }
+
+    /* the on_complete callback should always fire though */
+    ASSERT_INT_EQUALS(1, close_tester.callback_counts[REQUEST_HANDLER_CALLBACK_COMPLETE]);
+
+    ASSERT_SUCCESS(s_server_close_tester_clean_up(&close_tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_close_from_incoming_headers_callback_stops_decoder) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_close_from_incoming_headers_done_callback_stops_decoder) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS_DONE));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_close_from_incoming_body_callback_stops_decoder) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_HANDLER_CALLBACK_INCOMING_BODY));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_close_from_outgoing_body_callback_stops_sending) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_HANDLER_CALLBACK_OUTGOING_BODY));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_close_from_stream_complete_callback_stops_decoder) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_HANDLER_CALLBACK_COMPLETE));
+    return AWS_OP_SUCCESS;
+}
+
+/* After aws_http_connection_close() is called, aws_http_connection_is_open() should return false,
+ * even if both calls were made from outside the event-loop thread. */
+TEST_CASE(h1_server_close_from_off_thread_makes_not_open) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    testing_channel_set_is_on_users_thread(&s_tester.testing_channel, false);
+
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.server_connection));
+    aws_http_connection_close(s_tester.server_connection);
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.server_connection));
+
+    testing_channel_set_is_on_users_thread(&s_tester.testing_channel, true);
+
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_close_from_on_thread_makes_not_open) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    testing_channel_set_is_on_users_thread(&s_tester.testing_channel, false);
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.server_connection));
+
+    testing_channel_set_is_on_users_thread(&s_tester.testing_channel, true);
+    aws_http_connection_close(s_tester.server_connection);
+
+    testing_channel_set_is_on_users_thread(&s_tester.testing_channel, false);
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.server_connection));
+
+    testing_channel_set_is_on_users_thread(&s_tester.testing_channel, true);
+
+    ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
