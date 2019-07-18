@@ -18,6 +18,7 @@
 #include <aws/common/hash_table.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
+#include <aws/common/mutex.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
@@ -41,6 +42,13 @@ struct aws_http_server {
 
     struct aws_hash_table channel_to_connection_map;
     struct aws_socket *socket;
+
+    /* Any thread may touch this data, but the lock must be held */
+    struct {
+        struct aws_mutex lock;
+        /* For checking status from outside the event-loop thread. Duplicates thread_data.is_shutting_down */
+        bool is_shutting_down;
+    } synced_data;
 };
 
 /* Gets a client connection up and running.
@@ -291,7 +299,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
     }
 
     /* Remember which connection is on this channel */
-    int err = aws_hash_table_put(&server->channel_to_connection_map, channel, connection, NULL);
+    err = aws_hash_table_put(&server->channel_to_connection_map, channel, connection, NULL);
     if (err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
@@ -447,7 +455,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
         goto error;
     }
 
-    int err = aws_hash_table_init(
+    err = aws_hash_table_init(
         &server->channel_to_connection_map, server->alloc, 16, aws_hash_ptr, aws_ptr_eq, NULL, NULL);
     if (err) {
         AWS_LOGF_ERROR(
