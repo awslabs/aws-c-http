@@ -273,18 +273,23 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     return AWS_OP_SUCCESS;
 }
 
-static int s_tester_clean_up(struct tester *tester) {
+static int s_tester_clean_up(struct tester *tester, bool release_connection) {
     /* If there's a connection, shut down the server and client side. */
-    if (tester->client_connection) {
+    if (tester->client_connection && release_connection) {
         aws_http_connection_release(tester->client_connection);
         aws_http_connection_release(tester->server_connection);
-
         ASSERT_SUCCESS(s_tester_wait(tester, s_tester_connection_shutdown_pred));
 
         aws_client_bootstrap_release(tester->client_bootstrap);
     }
 
-    aws_http_server_destroy(tester->server);
+    aws_http_server_release(tester->server);
+    ASSERT_SUCCESS(s_tester_wait(tester, s_tester_connection_shutdown_pred));
+    if (!release_connection) {
+        aws_http_connection_release(tester->client_connection);
+        aws_http_connection_release(tester->server_connection);
+        aws_client_bootstrap_release(tester->client_bootstrap);
+    }
     aws_server_bootstrap_release(tester->server_bootstrap);
     aws_host_resolver_clean_up(&tester->host_resolver);
     aws_event_loop_group_clean_up(&tester->event_loop_group);
@@ -303,7 +308,7 @@ static int s_test_server_new_destroy(struct aws_allocator *allocator, void *ctx)
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, &options));
 
-    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester, true));
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(server_new_destroy, s_test_server_new_destroy);
@@ -316,7 +321,22 @@ static int s_test_connection_setup_shutdown(struct aws_allocator *allocator, voi
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, &options));
 
-    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester, true));
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(connection_setup_shutdown, s_test_connection_setup_shutdown);
+
+static int s_test_connection_destroy_server_with_connection_existing(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    struct tester_options options = {
+        .alloc = allocator,
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, &options));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester, false));
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_connection_destroy_server_with_connection_existing,
+    s_test_connection_destroy_server_with_connection_existing);
