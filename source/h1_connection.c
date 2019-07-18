@@ -722,7 +722,7 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
      * OR a stream still is unable to continue writing to the msg (probably because msg is full).
      */
     struct aws_h1_stream *outgoing_stream;
-    while ((outgoing_stream = s_update_outgoing_stream_ptr(connection))) {
+    while ((outgoing_stream = s_update_outgoing_stream_ptr(connection)) != NULL) {
         if (aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
             /* Error sending data, abandon ship */
             goto error;
