@@ -284,7 +284,7 @@ AWS_HTTP_API
 bool aws_http_request_find_header(
     const struct aws_http_request *request,
     struct aws_http_header *out_header,
-    const struct aws_byte_cursor *name);
+    struct aws_byte_cursor name);
 
 /**
  * Add a header to the end of the array.

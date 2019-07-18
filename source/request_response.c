@@ -16,7 +16,6 @@
 #include <aws/http/private/request_response_impl.h>
 
 #include <aws/common/array_list.h>
-#include <aws/common/hash_table.h>
 #include <aws/common/string.h>
 #include <aws/http/private/connection_impl.h>
 #include <aws/io/logging.h>
@@ -31,8 +30,7 @@ enum {
 };
 
 struct aws_http_header_block {
-    struct aws_array_list headers;    /* Contains aws_http_header_impl */
-    struct aws_hash_table header_map; /* byte_cursor (name) -> aws_http_header_impl * */
+    struct aws_array_list headers; /* Contains aws_http_header_impl */
 };
 
 struct aws_http_request {
@@ -48,7 +46,6 @@ struct aws_http_request {
 struct aws_http_header_impl {
     struct aws_string *name;
     struct aws_string *value;
-    struct aws_byte_cursor name_cursor; /* Used as the key in header_map */
 };
 
 static int s_set_string_from_cursor(
@@ -107,8 +104,6 @@ static int s_header_impl_init(
         goto error;
     }
 
-    header_impl->name_cursor = aws_byte_cursor_from_string(header_impl->name);
-
     return AWS_OP_SUCCESS;
 
 error:
@@ -117,33 +112,10 @@ error:
 }
 
 static int s_header_block_init(struct aws_http_header_block *block, struct aws_allocator *allocator) {
-    int err = aws_array_list_init_dynamic(
+    return aws_array_list_init_dynamic(
         &block->headers, allocator, AWS_HTTP_REQUEST_NUM_RESERVED_HEADERS, sizeof(struct aws_http_header_impl));
-
-    if (err) {
-        goto error_init_list;
-    }
-
-    err = aws_hash_table_init(
-        &block->header_map,
-        allocator,
-        AWS_HTTP_REQUEST_NUM_RESERVED_HEADERS,
-        aws_hash_byte_cursor_ptr_ignore_case,
-        (aws_hash_callback_eq_fn *)aws_byte_cursor_eq_ignore_case,
-        NULL,
-        NULL);
-
-    if (err) {
-        goto error_init_map;
-    }
-
-    return AWS_OP_SUCCESS;
-
-error_init_map:
-    aws_array_list_clean_up(&block->headers);
-error_init_list:
-    return AWS_OP_ERR;
 }
+
 static void s_header_block_clean_up(struct aws_http_header_block *block) {
     if (aws_array_list_is_valid(&block->headers)) {
         const size_t length = aws_array_list_length(&block->headers);
@@ -155,10 +127,9 @@ static void s_header_block_clean_up(struct aws_http_header_block *block) {
         }
     }
     aws_array_list_clean_up(&block->headers);
-    aws_hash_table_clean_up(&block->header_map);
 }
 
-int s_header_block_erase_header(struct aws_http_header_block *block, size_t index) {
+static int s_header_block_erase_header(struct aws_http_header_block *block, size_t index) {
     struct aws_http_header_impl *header_impl;
     int err = aws_array_list_get_at_ptr(&block->headers, (void **)&header_impl, index);
     if (err) {
@@ -170,37 +141,25 @@ int s_header_block_erase_header(struct aws_http_header_block *block, size_t inde
     return AWS_OP_SUCCESS;
 }
 
-static int s_header_block_add_header(
+int s_header_block_add_header(
     struct aws_http_header_block *block,
     struct aws_allocator *allocator,
     struct aws_http_header header) {
-
     struct aws_http_header_impl header_impl;
     int err = s_header_impl_init(&header_impl, &header, allocator);
     if (err) {
-        goto error_init_impl;
+        goto error;
     }
 
     err = aws_array_list_push_back(&block->headers, &header_impl);
     if (err) {
-        goto error_add_list;
-    }
-
-    struct aws_http_header_impl *pimpl;
-    aws_array_list_get_at_ptr(&block->headers, (void **)&pimpl, aws_array_list_length(&block->headers) - 1);
-
-    err = aws_hash_table_put(&block->header_map, &pimpl->name_cursor, pimpl, NULL);
-    if (err) {
-        goto error_add_map;
+        goto error;
     }
 
     return AWS_OP_SUCCESS;
 
-error_add_map:
-    aws_array_list_pop_back(&block->headers);
-error_add_list:
+error:
     s_header_impl_clean_up(&header_impl);
-error_init_impl:
     return AWS_OP_ERR;
 }
 
@@ -251,22 +210,31 @@ static int s_header_block_get_header(
 static bool s_header_block_find_header(
     const struct aws_http_header_block *block,
     struct aws_http_header *out_header,
-    const struct aws_byte_cursor *name) {
-
-    struct aws_hash_element *elem = NULL;
-    aws_hash_table_find(&block->header_map, name, &elem);
-    if (!elem) {
-        return false;
-    }
-    struct aws_http_header_impl *header_impl = elem->value;
+    struct aws_byte_cursor name) {
 
     if (out_header) {
-        out_header->name = aws_byte_cursor_from_string(header_impl->name);
-        if (header_impl->value) {
-            out_header->value = aws_byte_cursor_from_string(header_impl->value);
+        AWS_ZERO_STRUCT(*out_header);
+    }
+
+    size_t count = aws_array_list_length(&block->headers);
+    if (!count) {
+        return false;
+    }
+
+    struct aws_http_header_impl *header_impl;
+    aws_array_list_get_at_ptr(&block->headers, (void **)&header_impl, 0);
+
+    for (size_t i = 0; i < count; ++header_impl, ++i) {
+        if (aws_string_eq_byte_cursor_ignore_case(header_impl->name, &name)) {
+            out_header->name = aws_byte_cursor_from_string(header_impl->name);
+            if (header_impl->value) {
+                out_header->value = aws_byte_cursor_from_string(header_impl->value);
+            }
+            return true;
         }
     }
-    return true;
+
+    return false;
 }
 
 static int s_header_block_set_header(
@@ -280,39 +248,23 @@ static int s_header_block_set_header(
     if (err) {
         return AWS_OP_ERR;
     }
-    struct aws_http_header_impl old_impl = *header_impl;
 
     /* Prepare new value */
     struct aws_http_header_impl new_impl;
     err = s_header_impl_init(&new_impl, &header, allocator);
     if (err) {
-        goto error_init;
-    }
-
-    /* Remove from the hash table if present */
-    struct aws_hash_element *elem = NULL;
-    aws_hash_table_find(&block->header_map, &header_impl->name_cursor, &elem);
-    if (elem && elem->value == header_impl) {
-        aws_hash_table_remove_element(&block->header_map, elem);
-    }
-
-    /* Overwrite old value */
-    *header_impl = new_impl;
-
-    /* Add back to the hash table */
-    if (aws_hash_table_put(&block->header_map, &header_impl->name_cursor, header_impl, NULL)) {
-        goto error_hash_table_put;
+        goto error;
     }
 
     /* Destroy existing strings (if any) */
-    aws_string_destroy(old_impl.name);
-    aws_string_destroy(old_impl.value);
+    aws_string_destroy(header_impl->name);
+    aws_string_destroy(header_impl->value);
 
+    /* Overwrite old value */
+    *header_impl = new_impl;
     return AWS_OP_SUCCESS;
 
-error_hash_table_put:
-    *header_impl = old_impl;
-error_init:
+error:
     s_header_impl_clean_up(&new_impl);
     return AWS_OP_ERR;
 }
@@ -454,7 +406,10 @@ int aws_http_request_get_header(
 bool aws_http_request_find_header(
     const struct aws_http_request *request,
     struct aws_http_header *out_header,
-    const struct aws_byte_cursor *name) {
+    struct aws_byte_cursor name) {
+
+    AWS_PRECONDITION(request);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
 
     return s_header_block_find_header(&request->headers, out_header, name);
 }

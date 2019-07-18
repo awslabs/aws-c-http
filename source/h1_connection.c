@@ -344,15 +344,15 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     /* If content-length or transfer-encoding is set, check that there's a body */
     struct aws_http_header body_header;
-    bool has_body_header = aws_http_request_find_header(options->request, &body_header, &s_content_length) ||
-                            aws_http_request_find_header(options->request, &body_header, &s_transfer_encoding);
+    bool has_body_header = aws_http_request_find_header(options->request, &body_header, s_content_length) ||
+                           aws_http_request_find_header(options->request, &body_header, s_transfer_encoding);
 
     bool has_body = aws_http_request_get_body_stream(options->request);
 
     if (has_body_header && !has_body) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "id=%p: Failed to create stream, '" PRInSTR "' header specified but body stream is not set.",
+            "id=%p: Failed to create stream, message has '" PRInSTR "' header but no body.",
             (void *)options->client_connection,
             AWS_BYTE_CURSOR_PRI(body_header.name));
 
@@ -363,8 +363,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     if (!has_body_header && has_body) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "id=%p: Failed to create stream, if body stream is set, "
-            "header \"" PRInSTR "\" or \"" PRInSTR "\" must also be set.",
+            "id=%p: Failed to create stream, message has body but no '" PRInSTR "' or '" PRInSTR "' header.",
             (void *)options->client_connection,
             AWS_BYTE_CURSOR_PRI(s_content_length),
             AWS_BYTE_CURSOR_PRI(s_transfer_encoding));

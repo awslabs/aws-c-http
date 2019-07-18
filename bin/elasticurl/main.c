@@ -381,8 +381,6 @@ static struct aws_http_request *s_build_http_request(struct elasticurl_ctx *app_
 
     aws_http_request_set_method(request, aws_byte_cursor_from_c_str(app_ctx->verb));
     aws_http_request_set_path(request, app_ctx->uri.path_and_query);
-    aws_http_request_set_body_stream(request, app_ctx->input_body);
-
     struct aws_http_header accept_header = {.name = aws_byte_cursor_from_c_str("accept"),
                                             .value = aws_byte_cursor_from_c_str("*/*")};
     aws_http_request_add_header(request, accept_header);
@@ -409,6 +407,7 @@ static struct aws_http_request *s_build_http_request(struct elasticurl_ctx *app_
             struct aws_http_header content_length_header = {.name = aws_byte_cursor_from_c_str("content-length"),
                                                             .value = aws_byte_cursor_from_c_str(content_length)};
             aws_http_request_add_header(request, content_length_header);
+            aws_http_request_set_body_stream(request, app_ctx->input_body);
         }
     }
 

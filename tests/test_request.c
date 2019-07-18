@@ -193,3 +193,47 @@ TEST_CASE(request_erase_headers) {
     aws_http_request_destroy(request);
     return AWS_OP_SUCCESS;
 }
+
+TEST_CASE(request_find_headers) {
+    (void)ctx;
+    struct aws_http_request *request = aws_http_request_new(allocator);
+    ASSERT_NOT_NULL(request);
+
+    /* Simple checks that header isn't found, then is found after adding, then isn't found after erasing */
+    {
+        struct aws_http_header src_header = s_make_header("host", "example.com");
+
+        ASSERT_FALSE(aws_http_request_find_header(request, NULL, src_header.name));
+
+        ASSERT_SUCCESS(aws_http_request_add_header(request, src_header));
+        struct aws_http_header get;
+        ASSERT_TRUE(aws_http_request_find_header(request, &get, src_header.name));
+        ASSERT_SUCCESS(s_check_headers_eq(get, src_header));
+
+        /* ensure check is case-insensitive */
+        ASSERT_TRUE(aws_http_request_find_header(request, &get, aws_byte_cursor_from_c_str("HoSt")));
+        ASSERT_SUCCESS(s_check_headers_eq(get, src_header));
+
+        ASSERT_SUCCESS(aws_http_request_erase_header(request, 0));
+        ASSERT_FALSE(aws_http_request_find_header(request, NULL, src_header.name));
+    }
+
+    /* Check that shuffling around the internal memory of the headers doesn't invalidate how find() works */
+    {
+        ASSERT_SUCCESS(aws_http_request_add_header(request, s_make_header("NameA", "ValueA")));
+        ASSERT_SUCCESS(aws_http_request_add_header(request, s_make_header("NameB", "ValueB")));
+        ASSERT_SUCCESS(aws_http_request_add_header(request, s_make_header("NameC", "ValueC")));
+        ASSERT_SUCCESS(aws_http_request_add_header(request, s_make_header("NameD", "ValueD")));
+
+        ASSERT_SUCCESS(aws_http_request_erase_header(request, 0)); /* shuffle memory back by 1 */
+
+        struct aws_http_header get;
+        ASSERT_TRUE(aws_http_request_find_header(request, &get, aws_byte_cursor_from_c_str("NameC")));
+        ASSERT_SUCCESS(s_check_header_eq(get, "NameC", "ValueC"));
+
+        ASSERT_SUCCESS(aws_http_request_erase_header(request, 0)); /* shuffle memory back by 1 */
+        ASSERT_SUCCESS(s_check_header_eq(get, "NameC", "ValueC"));
+    }
+    aws_http_request_destroy(request);
+    return AWS_OP_SUCCESS;
+}
