@@ -386,7 +386,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     bool should_schedule_task = false;
 
     { /* BEGIN CRITICAL SECTION */
-        int err = aws_mutex_lock(&connection->synced_data.lock);
+        err = aws_mutex_lock(&connection->synced_data.lock);
         AWS_FATAL_ASSERT(!err);
 
         if (connection->synced_data.new_stream_error_code) {

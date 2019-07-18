@@ -226,9 +226,11 @@ static bool s_header_block_find_header(
 
     for (size_t i = 0; i < count; ++header_impl, ++i) {
         if (aws_string_eq_byte_cursor_ignore_case(header_impl->name, &name)) {
-            out_header->name = aws_byte_cursor_from_string(header_impl->name);
-            if (header_impl->value) {
-                out_header->value = aws_byte_cursor_from_string(header_impl->value);
+            if (out_header) {
+                out_header->name = aws_byte_cursor_from_string(header_impl->name);
+                if (header_impl->value) {
+                    out_header->value = aws_byte_cursor_from_string(header_impl->value);
+                }
             }
             return true;
         }

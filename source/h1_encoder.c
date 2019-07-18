@@ -33,7 +33,7 @@ void aws_h1_encoder_clean_up(struct aws_h1_encoder *encoder) {
 int aws_h1_encoder_start_request(
     struct aws_h1_encoder *encoder,
     const struct aws_http_request *request,
-    void *logging_id) {
+    void *log_as_stream) {
 
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(request);
@@ -44,15 +44,17 @@ int aws_h1_encoder_start_request(
     }
 
     void *prev_logging_id = encoder->logging_id;
-    encoder->logging_id = logging_id;
+    encoder->logging_id = log_as_stream;
 
     struct aws_byte_cursor method;
-    int err = aws_http_request_get_method(request, &method);
-    AWS_ASSERT(!err);
+    if (aws_http_request_get_method(request, &method)) {
+        AWS_ASSERT(0);
+    }
 
     struct aws_byte_cursor uri;
-    err = aws_http_request_get_path(request, &uri);
-    AWS_ASSERT(!err);
+    if (aws_http_request_get_path(request, &uri)) {
+        AWS_ASSERT(0);
+    }
 
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
     const size_t num_headers = aws_http_request_get_header_count(request);
@@ -60,6 +62,7 @@ int aws_h1_encoder_start_request(
     /**
      * Calculate total size needed for outgoing_head_buffer, then write to buffer.
      */
+    int err = 0;
 
     /* request-line: "{method} {uri} {version}\r\n" */
     size_t request_line_len = 4; /* 2 spaces + "\r\n" */
