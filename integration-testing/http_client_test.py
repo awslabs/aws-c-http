@@ -29,15 +29,17 @@ def run_command(args):
 def compare_files(filename_expected, filename_other):
     if not filecmp.cmp(filename_expected, filename_other, shallow=False):
         # Give a helpful error message
-        try:
-            bytes_expected = bytearray(open(filename_expected, 'rb').read())
-        except:
-            raise RuntimeError("Failed to open %s" % filename_expected)
+        with open(filename_expected, 'rb') as expected:
+            try:
+                bytes_expected = bytearray(expected.read())
+            except:
+                raise RuntimeError("Failed to open %s" % filename_expected)
 
-        try:
-            bytes_other = bytearray(open(filename_other, 'rb').read())
-        except:
-            raise RuntimeError("Failed to open %s" % filename_other)
+        with open(filename_other, 'rb') as other:
+            try:
+                bytes_other = bytearray(other.read())
+            except:
+                raise RuntimeError("Failed to open %s" % filename_other)
 
         if len(bytes_expected) != len(bytes_other):
             raise RuntimeError("File lengths differ. Expected %d, got %d" % (len(bytes_expected), len(bytes_other)))
