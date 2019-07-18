@@ -35,7 +35,7 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
     .update_window = s_stream_update_window,
 };
 
-struct aws_h1_stream *aws_h1_stream_new(const struct aws_http_request_options *options) {
+struct aws_h1_stream *aws_h1_stream_new_request(const struct aws_http_request_options *options) {
     struct aws_h1_stream *stream = aws_mem_calloc(options->client_connection->alloc, 1, sizeof(struct aws_h1_stream));
     if (!stream) {
         AWS_LOGF_ERROR(

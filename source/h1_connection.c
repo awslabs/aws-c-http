@@ -374,7 +374,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     struct h1_connection *connection = AWS_CONTAINER_OF(options->client_connection, struct h1_connection, base);
 
-    struct aws_h1_stream *stream = aws_h1_stream_new(options);
+    struct aws_h1_stream *stream = aws_h1_stream_new_request(options);
     if (!stream) {
         return NULL;
     }
