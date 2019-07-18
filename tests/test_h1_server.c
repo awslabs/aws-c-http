@@ -1321,7 +1321,7 @@ static int s_test_close_from_callback(struct aws_allocator *allocator, enum requ
 
 TEST_CASE(h1_server_close_before_message_is_sent) {
     (void)ctx;
-    
+
     struct close_from_callback_tester close_tester;
 
     AWS_ZERO_STRUCT(close_tester);
