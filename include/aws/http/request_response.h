@@ -93,6 +93,8 @@ typedef void(aws_http_on_incoming_body_fn)(
     size_t *out_window_update_size,
     void *user_data);
 
+typedef void(aws_http_on_request_end_fn)(struct aws_http_stream *stream, void *user_data);
+
 typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
 
 /**
@@ -180,12 +182,40 @@ struct aws_http_request_handler_options {
     /* Set to sizeof() this struct, used for versioning. */
     size_t self_size;
 
-    struct aws_http_connection *server_connection;
+    /**
+     * user_data passed to callbacks.
+     * Optional.
+     */
     void *user_data;
 
+    /**
+     * Invoked repeatedly times as headers are received.
+     * Optional.
+     */
     aws_http_on_incoming_headers_fn *on_request_headers;
+
+    /**
+     * Invoked when the request header block has been completely read.
+     * Optional.
+     */
     aws_http_on_incoming_header_block_done_fn *on_request_header_block_done;
+
+    /**
+     * Invoked as body data is received.
+     * Optional.
+     */
     aws_http_on_incoming_body_fn *on_request_body;
+
+    /**
+     * Invoked when request has been completely read.
+     * Optional.
+     */
+    aws_http_on_request_end_fn *on_request_end;
+
+    /**
+     * Invoked when request/response stream is complete, whether successful or unsuccessful
+     * Optional.
+     */
     aws_http_on_stream_complete_fn *on_complete;
 };
 
@@ -201,6 +231,9 @@ struct aws_http_response_options {
     size_t num_headers;
     aws_http_stream_outgoing_body_fn *stream_outgoing_body;
 };
+
+#define AWS_HTTP_RESPONSE_OPTIONS_INIT                                                                                 \
+    { .self_size = sizeof(struct aws_http_response_options), }
 
 AWS_EXTERN_C_BEGIN
 
@@ -315,11 +348,12 @@ AWS_HTTP_API
 struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http_request_options *options);
 
 /**
- * Create a stream, with a server connection receiving and responding to a request.
- * aws_http_stream_send_response() should be used to send a response.
+ * Configure a server connection's new "request handler" stream.
+ * This MUST be called from a server's on_incoming_request callback.
  */
 AWS_HTTP_API
-struct aws_http_stream *aws_http_stream_new_server_request_handler(
+int aws_http_stream_configure_server_request_handler(
+    struct aws_http_stream *stream,
     const struct aws_http_request_handler_options *options);
 
 /**

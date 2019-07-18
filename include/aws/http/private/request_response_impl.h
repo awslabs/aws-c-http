@@ -41,9 +41,11 @@ struct aws_http_stream {
     aws_http_on_incoming_headers_fn *on_incoming_headers;
     aws_http_on_incoming_header_block_done_fn *on_incoming_header_block_done;
     aws_http_on_incoming_body_fn *on_incoming_body;
+    aws_http_on_request_end_fn *on_request_end;
     aws_http_on_stream_complete_fn *on_complete;
 
     struct aws_atomic_var refcount;
+    bool request_handler_configured;
 
     int incoming_response_status;
     enum aws_http_method incoming_request_method;
