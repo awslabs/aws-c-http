@@ -1059,8 +1059,10 @@ TEST_CASE(h1_server_send_response_large_head) {
 }
 
 /* Test for close connection */
+/* The connection is closed before the message is sent */
 
 enum request_handler_callback {
+    REQUEST_HANDLER_CALLBACK_INCOMING_REQUEST,
     REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS,
     REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS_DONE,
     REQUEST_HANDLER_CALLBACK_INCOMING_BODY,
@@ -1183,6 +1185,8 @@ static void s_tester_close_on_incoming_request(
 
     tester->request_num++;
     aws_http_stream_configure_server_request_handler(stream, &options);
+
+    s_close_from_callback_common(stream, user_data, REQUEST_HANDLER_CALLBACK_INCOMING_REQUEST);
 }
 
 static int s_close_tester_init(struct aws_allocator *alloc, struct close_from_callback_tester *tester) {
@@ -1312,6 +1316,48 @@ static int s_test_close_from_callback(struct aws_allocator *allocator, enum requ
     ASSERT_INT_EQUALS(1, close_tester.callback_counts[REQUEST_HANDLER_CALLBACK_COMPLETE]);
 
     ASSERT_SUCCESS(s_server_close_tester_clean_up(&close_tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_close_before_message_is_sent) {
+    (void)ctx;
+    
+    struct close_from_callback_tester close_tester;
+
+    AWS_ZERO_STRUCT(close_tester);
+
+    ASSERT_SUCCESS(s_close_tester_init(allocator, &close_tester));
+
+    /* close the connection */
+    aws_http_connection_close(close_tester.server_connection);
+    /* send request */
+    const char *incoming_request = "POST / HTTP/1.1\r\n"
+                                   "Transfer-Encoding: chunked\r\n"
+                                   "\r\n"
+                                   "3\r\n"
+                                   "two\r\n"
+                                   "6\r\n"
+                                   "chunks\r\n"
+                                   "0\r\n"
+                                   "\r\n";
+    ASSERT_SUCCESS(s_send_message_cursor_close(aws_byte_cursor_from_c_str(incoming_request), &close_tester));
+    testing_channel_drain_queued_tasks(&close_tester.testing_channel);
+
+    /* no request handler was made */
+    ASSERT_TRUE(close_tester.request_num == 0);
+
+    /* all callbacks were not invoked */
+    for (int i = 0; i < REQUEST_HANDLER_CALLBACK_COMPLETE; ++i) {
+        ASSERT_INT_EQUALS(0, close_tester.callback_counts[i]);
+    }
+
+    ASSERT_SUCCESS(s_server_close_tester_clean_up(&close_tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_close_from_incoming_request_callback_stops_decoder) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_HANDLER_CALLBACK_INCOMING_REQUEST));
     return AWS_OP_SUCCESS;
 }
 

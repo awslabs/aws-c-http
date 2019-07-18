@@ -1310,6 +1310,11 @@ static int s_decoder_on_request(
 
     incoming_stream->base.incoming_request_method = method_enum;
 
+    /* Stop decoding if user callback shut down the connection. */
+    if (connection->thread_data.is_shutting_down) {
+        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    }
+
     /* No user callbacks, so we're not checking for shutdown */
     return AWS_OP_SUCCESS;
 
@@ -1330,6 +1335,11 @@ static int s_decoder_on_response(int status_code, void *user_data) {
         aws_http_status_text(status_code));
 
     connection->thread_data.incoming_stream->base.incoming_response_status = status_code;
+
+    /* Stop decoding if user callback shut down the connection. */
+    if (connection->thread_data.is_shutting_down) {
+        return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    }
 
     /* No user callbacks, so we're not checking for shutdown */
     return AWS_OP_SUCCESS;
