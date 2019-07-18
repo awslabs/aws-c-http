@@ -1702,7 +1702,9 @@ static struct h1_stream *new_server_request_handler_stream(struct h1_connection 
             "please make sure call aws_http_stream_configure_server_request_handler",
             (void *)&connection->base);
         /* no need to release the stream here
-         * the configuration is not call the ref count is still 0 */
+         * the configuration is not call the ref count is still 0 
+         * but destroy is needed*/
+        stream->base.vtable->destroy(&stream->base);
         return NULL;
     }
     /* Waiting for response. */
