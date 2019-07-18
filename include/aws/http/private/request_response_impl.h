@@ -47,10 +47,22 @@ struct aws_http_stream {
 
     struct aws_atomic_var refcount;
 
-    int incoming_response_status;
-    enum aws_http_method incoming_request_method;
-    struct aws_byte_cursor incoming_request_method_str;
-    struct aws_byte_cursor incoming_request_uri;
+    union {
+        struct aws_http_stream_client_data {
+            struct aws_http_request *outgoing_request;
+            int incoming_response_status;
+        } client;
+        struct aws_http_stream_server_data {
+            enum aws_http_method incoming_request_method;
+            struct aws_byte_cursor incoming_request_method_str;
+            struct aws_byte_cursor incoming_request_uri;
+        } server;
+    } client_or_server_data;
+
+    /* On client connections, `client_data` points to client_or_server_data.client and `server_data` is null.
+     * Opposite is true on server connections */
+    struct aws_http_stream_client_data *client_data;
+    struct aws_http_stream_server_data *server_data;
 };
 
 #endif /* AWS_HTTP_REQUEST_RESPONSE_IMPL_H */

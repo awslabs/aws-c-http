@@ -59,6 +59,7 @@ struct elasticurl_ctx {
     size_t header_line_count;
     FILE *input_file;
     struct aws_input_stream *input_body;
+    struct aws_http_request *request;
     const char *signing_library_path;
     struct aws_shared_library signing_library;
     const char *signing_function_name;
@@ -381,8 +382,6 @@ static struct aws_http_request *s_build_http_request(struct elasticurl_ctx *app_
 
     aws_http_request_set_method(request, aws_byte_cursor_from_c_str(app_ctx->verb));
     aws_http_request_set_path(request, app_ctx->uri.path_and_query);
-    aws_http_request_set_body_stream(request, app_ctx->input_body);
-
     struct aws_http_header accept_header = {.name = aws_byte_cursor_from_c_str("accept"),
                                             .value = aws_byte_cursor_from_c_str("*/*")};
     aws_http_request_add_header(request, accept_header);
@@ -409,6 +408,7 @@ static struct aws_http_request *s_build_http_request(struct elasticurl_ctx *app_
             struct aws_http_header content_length_header = {.name = aws_byte_cursor_from_c_str("content-length"),
                                                             .value = aws_byte_cursor_from_c_str(content_length)};
             aws_http_request_add_header(request, content_length_header);
+            aws_http_request_set_body_stream(request, app_ctx->input_body);
         }
     }
 
@@ -442,22 +442,22 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
         return;
     }
 
-    struct aws_http_request *request = s_build_http_request(app_ctx);
+    app_ctx->request = s_build_http_request(app_ctx);
 
     if (app_ctx->signing_function) {
-        if (app_ctx->signing_function(request, app_ctx->allocator, &app_ctx->signing_context)) {
+        if (app_ctx->signing_function(app_ctx->request, app_ctx->allocator, &app_ctx->signing_context)) {
             fprintf(stderr, "Signing failure\n");
             exit(1);
         }
     }
 
-    size_t final_header_count = aws_http_request_get_header_count(request);
+    size_t final_header_count = aws_http_request_get_header_count(app_ctx->request);
 
     struct aws_http_header headers[20];
     AWS_ASSERT(final_header_count <= AWS_ARRAY_SIZE(headers));
     AWS_ZERO_ARRAY(headers);
     for (size_t i = 0; i < final_header_count; ++i) {
-        aws_http_request_get_header(request, &headers[i], i);
+        aws_http_request_get_header(app_ctx->request, &headers[i], i);
     }
 
     struct aws_http_request_options final_request;
@@ -465,7 +465,7 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     final_request.self_size = sizeof(struct aws_http_request_options);
     final_request.user_data = app_ctx;
     final_request.client_connection = connection;
-    final_request.request = request;
+    final_request.request = app_ctx->request;
     final_request.on_response_headers = s_on_incoming_headers_fn;
     final_request.on_response_header_block_done = s_on_incoming_header_block_done_fn;
     final_request.on_response_body = s_on_incoming_body_fn;
@@ -480,8 +480,6 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     }
 
     aws_http_connection_release(connection);
-
-    aws_http_request_destroy(request);
 }
 
 static void s_on_client_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
@@ -694,6 +692,8 @@ int main(int argc, char **argv) {
     }
 
     aws_uri_clean_up(&app_ctx.uri);
+
+    aws_http_request_destroy(app_ctx.request);
 
     aws_shared_library_clean_up(&app_ctx.signing_library);
 

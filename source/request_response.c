@@ -90,6 +90,10 @@ static int s_header_impl_init(
 
     AWS_ZERO_STRUCT(*header_impl);
 
+    if (!header_view->name.len) {
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
     int err = s_set_string_from_cursor(&header_impl->name, header_view->name, alloc);
     if (err) {
         goto error;
@@ -111,6 +115,7 @@ static int s_header_block_init(struct aws_http_header_block *block, struct aws_a
     return aws_array_list_init_dynamic(
         &block->headers, allocator, AWS_HTTP_REQUEST_NUM_RESERVED_HEADERS, sizeof(struct aws_http_header_impl));
 }
+
 static void s_header_block_clean_up(struct aws_http_header_block *block) {
     if (aws_array_list_is_valid(&block->headers)) {
         const size_t length = aws_array_list_length(&block->headers);
@@ -124,7 +129,7 @@ static void s_header_block_clean_up(struct aws_http_header_block *block) {
     aws_array_list_clean_up(&block->headers);
 }
 
-int s_header_block_erase_header(struct aws_http_header_block *block, size_t index) {
+static int s_header_block_erase_header(struct aws_http_header_block *block, size_t index) {
     struct aws_http_header_impl *header_impl;
     int err = aws_array_list_get_at_ptr(&block->headers, (void **)&header_impl, index);
     if (err) {
@@ -158,7 +163,7 @@ error:
     return AWS_OP_ERR;
 }
 
-int s_header_block_add_header_array(
+static int s_header_block_add_header_array(
     struct aws_http_header_block *block,
     struct aws_allocator *allocator,
     const struct aws_http_header *headers,
@@ -182,7 +187,7 @@ error:
     return AWS_OP_ERR;
 }
 
-int s_header_block_get_header(
+static int s_header_block_get_header(
     const struct aws_http_header_block *block,
     struct aws_http_header *out_header,
     size_t index) {
@@ -195,20 +200,51 @@ int s_header_block_get_header(
         return AWS_OP_ERR;
     }
 
-    if (header_impl->name) {
-        out_header->name = aws_byte_cursor_from_string(header_impl->name);
-    }
+    out_header->name = aws_byte_cursor_from_string(header_impl->name);
     if (header_impl->value) {
         out_header->value = aws_byte_cursor_from_string(header_impl->value);
     }
     return AWS_OP_SUCCESS;
 }
 
-int s_header_block_set_header(
+static bool s_header_block_find_header(
+    const struct aws_http_header_block *block,
+    struct aws_http_header *out_header,
+    struct aws_byte_cursor name) {
+
+    if (out_header) {
+        AWS_ZERO_STRUCT(*out_header);
+    }
+
+    size_t count = aws_array_list_length(&block->headers);
+    if (!count) {
+        return false;
+    }
+
+    struct aws_http_header_impl *header_impl;
+    aws_array_list_get_at_ptr(&block->headers, (void **)&header_impl, 0);
+
+    for (size_t i = 0; i < count; ++header_impl, ++i) {
+        if (aws_string_eq_byte_cursor_ignore_case(header_impl->name, &name)) {
+            if (out_header) {
+                out_header->name = aws_byte_cursor_from_string(header_impl->name);
+                if (header_impl->value) {
+                    out_header->value = aws_byte_cursor_from_string(header_impl->value);
+                }
+            }
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static int s_header_block_set_header(
     struct aws_http_header_block *block,
     struct aws_allocator *allocator,
     struct aws_http_header header,
     size_t index) {
+
     struct aws_http_header_impl *header_impl;
     int err = aws_array_list_get_at_ptr(&block->headers, (void **)&header_impl, index);
     if (err) {
@@ -369,6 +405,17 @@ int aws_http_request_get_header(
     return s_header_block_get_header(&request->headers, out_header, index);
 }
 
+bool aws_http_request_find_header(
+    const struct aws_http_request *request,
+    struct aws_http_header *out_header,
+    struct aws_byte_cursor name) {
+
+    AWS_PRECONDITION(request);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
+
+    return s_header_block_find_header(&request->headers, out_header, name);
+}
+
 struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http_request_options *options) {
     if (!options || options->self_size == 0 || !options->client_connection) {
         AWS_LOGF_ERROR(
@@ -418,14 +465,14 @@ struct aws_http_connection *aws_http_stream_get_connection(const struct aws_http
 }
 
 int aws_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status) {
-    AWS_ASSERT(stream);
+    AWS_ASSERT(stream && stream->client_data);
 
-    if (stream->incoming_response_status == (int)AWS_HTTP_STATUS_UNKNOWN) {
+    if (stream->client_data->incoming_response_status == (int)AWS_HTTP_STATUS_UNKNOWN) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Status code not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
 
-    *out_status = stream->incoming_response_status;
+    *out_status = stream->client_data->incoming_response_status;
     return AWS_OP_SUCCESS;
 }
 
@@ -433,26 +480,26 @@ int aws_http_stream_get_incoming_request_method(
     const struct aws_http_stream *stream,
     struct aws_byte_cursor *out_method) {
 
-    AWS_ASSERT(stream);
+    AWS_ASSERT(stream && stream->server_data);
 
-    if (!stream->incoming_request_method_str.ptr) {
+    if (!stream->server_data->incoming_request_method_str.ptr) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Request method not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
 
-    *out_method = stream->incoming_request_method_str;
+    *out_method = stream->server_data->incoming_request_method_str;
     return AWS_OP_SUCCESS;
 }
 
 int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *stream, struct aws_byte_cursor *out_uri) {
-    AWS_ASSERT(stream);
+    AWS_ASSERT(stream && stream->server_data);
 
-    if (!stream->incoming_request_uri.ptr) {
+    if (!stream->server_data->incoming_request_uri.ptr) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Request URI not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
 
-    *out_uri = stream->incoming_request_uri;
+    *out_uri = stream->server_data->incoming_request_uri;
     return AWS_OP_SUCCESS;
 }
 
