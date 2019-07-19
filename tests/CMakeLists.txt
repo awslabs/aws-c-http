@@ -215,6 +215,7 @@ add_test_case(h1_server_close_from_off_thread_makes_not_open)
 add_test_case(h1_server_close_from_on_thread_makes_not_open)
 
 add_test_case(test_proxy_connection_setup_shutdown)
+add_test_case(test_https)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})
