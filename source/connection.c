@@ -506,7 +506,6 @@ void aws_http_server_release(struct aws_http_server *server) {
     if (!server) {
         return;
     }
-
     if (server->socket) {
         /* BEGIN CRITICAL SECTION */
         bool already_shutting_down = false;
