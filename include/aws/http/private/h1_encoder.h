@@ -18,6 +18,16 @@
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
 
+/**
+ * Message to be submitted to encoder.
+ * Contains data necessary for encoder to write an outgoing request or response.
+ */
+struct aws_h1_encoder_message {
+    /* Upon creation, the "head" (everything preceding body) is buffered here. */
+    struct aws_byte_buf outgoing_head_buf;
+    struct aws_input_stream *body;
+};
+
 enum aws_h1_encoder_state {
     AWS_H1_ENCODER_STATE_INIT,
     AWS_H1_ENCODER_STATE_HEAD,
@@ -29,16 +39,22 @@ struct aws_h1_encoder {
     struct aws_allocator *allocator;
 
     enum aws_h1_encoder_state state;
-    struct aws_input_stream *body;
-    bool is_stream_in_progress;
-    void *logging_id;
-
-    /* Upon message start, the "head" (everything preceding body) is buffered here. */
-    struct aws_byte_buf outgoing_head_buf;
+    struct aws_h1_encoder_message *message;
     size_t outgoing_head_progress;
+    void *logging_id;
 };
 
 AWS_EXTERN_C_BEGIN
+
+/* Validate request and cache any info the encoder will need later in the "encoder message". */
+AWS_HTTP_API
+int aws_h1_encoder_message_init_from_request(
+    struct aws_h1_encoder_message *message,
+    struct aws_allocator *allocator,
+    const struct aws_http_request *request);
+
+AWS_HTTP_API
+void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message);
 
 AWS_HTTP_API
 void aws_h1_encoder_init(struct aws_h1_encoder *encoder, struct aws_allocator *allocator);
@@ -47,13 +63,16 @@ AWS_HTTP_API
 void aws_h1_encoder_clean_up(struct aws_h1_encoder *encoder);
 
 AWS_HTTP_API
-int aws_h1_encoder_start_request(
+int aws_h1_encoder_start_message(
     struct aws_h1_encoder *encoder,
-    const struct aws_http_request *request,
+    struct aws_h1_encoder_message *message,
     void *log_as_stream);
 
 AWS_HTTP_API
 int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *out_buf);
+
+AWS_HTTP_API
+bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder);
 
 AWS_EXTERN_C_END
 

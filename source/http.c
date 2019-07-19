@@ -38,6 +38,18 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_PARSE,
         "Encountered an unexpected form when parsing an http message."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_INVALID_METHOD,
+        "Method is invalid."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_INVALID_PATH,
+        "Path is invalid."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_MISSING_BODY_STREAM,
+        "Given the provided headers (ex: Content-Length), a body is expected."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_MISSING_BODY_HEADERS,
+        "Missing headers (ex: Content-Length) required to send a body."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_CLOSED,
         "The connection has closed or is closing."),
     AWS_DEFINE_ERROR_INFO_HTTP(
