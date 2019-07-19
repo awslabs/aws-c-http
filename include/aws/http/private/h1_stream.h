@@ -15,6 +15,7 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/http/private/h1_encoder.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
 
@@ -29,6 +30,7 @@ struct aws_h1_stream {
     enum aws_h1_stream_type type;
     struct aws_linked_list_node node;
 
+    struct aws_h1_encoder_message encoder_message;
     bool is_outgoing_message_done;
 
     bool is_incoming_message_done;

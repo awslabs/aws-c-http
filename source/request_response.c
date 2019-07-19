@@ -417,7 +417,7 @@ bool aws_http_request_find_header(
 }
 
 struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http_request_options *options) {
-    if (!options || options->self_size == 0 || !options->client_connection) {
+    if (!options || options->self_size == 0 || !options->client_connection || !options->request) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Cannot create client request, options are invalid.",

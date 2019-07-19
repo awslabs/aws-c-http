@@ -36,9 +36,6 @@ enum {
     DECODER_INITIAL_SCRATCH_SIZE = 256,
 };
 
-static const struct aws_byte_cursor s_content_length = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("content-length");
-static const struct aws_byte_cursor s_transfer_encoding = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("transfer_encoding");
-
 static int s_handler_process_read_message(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
@@ -320,62 +317,18 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
 }
 
 struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options) {
-    if (options->request == NULL) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Cannot create client request, options are invalid.",
-            (void *)options->client_connection);
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        return NULL;
-    }
-
-    struct aws_byte_cursor method;
-    int err = aws_http_request_get_method(options->request, &method);
-    struct aws_byte_cursor uri;
-    err |= aws_http_request_get_path(options->request, &uri);
-    if (err) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Failed to create request, HTTP method and path must be set.",
-            (void *)options->client_connection);
-
-        return NULL;
-    }
-
-    /* If content-length or transfer-encoding is set, check that there's a body */
-    struct aws_http_header body_header;
-    bool has_body_header = aws_http_request_find_header(options->request, &body_header, s_content_length) ||
-                           aws_http_request_find_header(options->request, &body_header, s_transfer_encoding);
-
-    bool has_body = aws_http_request_get_body_stream(options->request);
-
-    if (has_body_header && !has_body) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Failed to create stream, message has '" PRInSTR "' header but no body.",
-            (void *)options->client_connection,
-            AWS_BYTE_CURSOR_PRI(body_header.name));
-
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        return NULL;
-    }
-
-    if (!has_body_header && has_body) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Failed to create stream, message has body but no '" PRInSTR "' or '" PRInSTR "' header.",
-            (void *)options->client_connection,
-            AWS_BYTE_CURSOR_PRI(s_content_length),
-            AWS_BYTE_CURSOR_PRI(s_transfer_encoding));
-
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        return NULL;
-    }
 
     struct h1_connection *connection = AWS_CONTAINER_OF(options->client_connection, struct h1_connection, base);
 
     struct aws_h1_stream *stream = aws_h1_stream_new_request(options);
     if (!stream) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Cannot create request stream, error %d (%s)",
+            (void *)options->client_connection,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
         return NULL;
     }
     stream->base.client_data = &stream->base.client_or_server_data.client;
@@ -406,7 +359,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     if (new_stream_error_code) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "id=%p: Cannot create request, error %d (%s)",
+            "id=%p: Cannot create request stream, error %d (%s)",
             (void *)options->client_connection,
             new_stream_error_code,
             aws_error_name(new_stream_error_code));

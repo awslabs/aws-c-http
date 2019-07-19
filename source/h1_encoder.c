@@ -21,48 +21,106 @@
     AWS_LOGF_##level(AWS_LS_HTTP_STREAM, "id=%p: " text, encoder->logging_id, __VA_ARGS__)
 #define ENCODER_LOG(level, encoder, text) ENCODER_LOGF(level, encoder, "%s", text)
 
-void aws_h1_encoder_init(struct aws_h1_encoder *encoder, struct aws_allocator *allocator) {
-    AWS_ZERO_STRUCT(*encoder);
-    encoder->allocator = allocator;
-}
-
-void aws_h1_encoder_clean_up(struct aws_h1_encoder *encoder) {
-    aws_byte_buf_clean_up(&encoder->outgoing_head_buf);
-}
-
-int aws_h1_encoder_start_request(
-    struct aws_h1_encoder *encoder,
+/**
+ * Scan headers and determine the length necessary to write them all.
+ * Also update the stream with any special data it needs to know from these headers.
+ */
+static int s_scan_outgoing_headers(
     const struct aws_http_request *request,
-    void *log_as_stream) {
+    size_t *out_header_lines_len) {
 
-    AWS_PRECONDITION(encoder);
-    AWS_PRECONDITION(request);
+    size_t total = 0;
 
-    if (encoder->is_stream_in_progress) {
-        ENCODER_LOG(ERROR, encoder, "Attempting to start new request while previous request is in progress.");
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    bool has_body_stream = aws_http_request_get_body_stream(request);
+    bool has_body_headers = false;
+
+    const size_t num_headers = aws_http_request_get_header_count(request);
+    for (size_t i = 0; i < num_headers; ++i) {
+        struct aws_http_header header;
+        aws_http_request_get_header(request, &header, i);
+
+        enum aws_http_header_name name_enum = aws_http_str_to_header_name(header.name);
+        switch (name_enum) {
+            case AWS_HTTP_HEADER_CONTENT_LENGTH:
+            case AWS_HTTP_HEADER_TRANSFER_ENCODING:
+                has_body_headers = true;
+                break;
+        }
+
+        /* header-line: "{name}: {value}\r\n" */
+        int err = 0;
+        err |= aws_add_size_checked(header.name.len, total, &total);
+        err |= aws_add_size_checked(header.value.len, total, &total);
+        err |= aws_add_size_checked(4, total, &total); /* ": " + "\r\n" */
+        if (err) {
+            return AWS_OP_ERR;
+        }
     }
 
-    void *prev_logging_id = encoder->logging_id;
-    encoder->logging_id = log_as_stream;
+    if (has_body_headers && !has_body_stream) {
+        return aws_raise_error(AWS_ERROR_HTTP_MISSING_BODY_STREAM);
+    }
+
+    if (!has_body_headers && has_body_stream) {
+        return aws_raise_error(AWS_ERROR_MISSING_BODY_HEADERS);
+    }
+
+    *out_header_lines_len = total;
+    return AWS_OP_SUCCESS;
+}
+
+static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_request *request) {
+
+    const size_t num_headers = aws_http_request_get_header_count(request);
+
+    bool wrote_all = true;
+    for (size_t i = 0; i < num_headers; ++i) {
+        struct aws_http_header header;
+        aws_http_request_get_header(request, &header, i);
+
+        /* header-line: "{name}: {value}\r\n" */
+        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.name);
+        wrote_all &= aws_byte_buf_write_u8(dst, ':');
+        wrote_all &= aws_byte_buf_write_u8(dst, ' ');
+        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.value);
+        wrote_all &= aws_byte_buf_write_u8(dst, '\r');
+        wrote_all &= aws_byte_buf_write_u8(dst, '\n');
+    }
+    AWS_ASSERT(wrote_all);
+}
+
+int aws_h1_encoder_message_init_from_request(
+    struct aws_h1_encoder_message *message,
+    struct aws_allocator *allocator,
+    const struct aws_http_request *request) {
+
+    AWS_ZERO_STRUCT(*message);
 
     struct aws_byte_cursor method;
-    if (aws_http_request_get_method(request, &method)) {
-        AWS_ASSERT(0);
+    int err = aws_http_request_get_method(request, &method);
+    if (err) {
+        aws_raise_error(AWS_ERROR_HTTP_INVALID_METHOD);
+        goto error;
     }
 
     struct aws_byte_cursor uri;
-    if (aws_http_request_get_path(request, &uri)) {
-        AWS_ASSERT(0);
+    err = aws_http_request_get_path(request, &uri);
+    if (err) {
+        aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
+        goto error;
     }
 
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
-    const size_t num_headers = aws_http_request_get_header_count(request);
 
     /**
      * Calculate total size needed for outgoing_head_buffer, then write to buffer.
      */
-    int err = 0;
+
+    size_t header_lines_len;
+    err = s_scan_outgoing_headers(request, &header_lines_len);
+    if (err) {
+        goto error;
+    }
 
     /* request-line: "{method} {uri} {version}\r\n" */
     size_t request_line_len = 4; /* 2 spaces + "\r\n" */
@@ -73,75 +131,71 @@ int aws_h1_encoder_start_request(
     /* head-end: "\r\n" */
     size_t head_end_len = 2;
 
-    /* header-line: "{name}: {value}\r\n" */
-    size_t header_lines_len = 0;
-    for (size_t i = 0; i < num_headers; ++i) {
-        struct aws_http_header header;
-        aws_http_request_get_header(request, &header, i);
-        AWS_ASSERT((header.name.len > 0) && (header.value.len > 0));
-
-        err |= aws_add_size_checked(header.name.len, header_lines_len, &header_lines_len);
-        err |= aws_add_size_checked(header.value.len, header_lines_len, &header_lines_len);
-        err |= aws_add_size_checked(4, header_lines_len, &header_lines_len); /* ": " + "\r\n" */
-    }
-
     size_t head_total_len = request_line_len;
     err |= aws_add_size_checked(header_lines_len, head_total_len, &head_total_len);
     err |= aws_add_size_checked(head_end_len, head_total_len, &head_total_len);
-
     if (err) {
-        ENCODER_LOGF(
-            ERROR,
-            encoder,
-            "Encoding failure, size calculation had error %d (%s).",
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
         goto error;
     }
 
-    err = aws_byte_buf_init(&encoder->outgoing_head_buf, encoder->allocator, head_total_len);
+    err = aws_byte_buf_init(&message->outgoing_head_buf, allocator, head_total_len);
     if (err) {
-        ENCODER_LOGF(
-            ERROR,
-            encoder,
-            "Encoding failure, buffer initialization had error %d (%s).",
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
-
         goto error;
     }
 
     bool wrote_all = true;
 
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(&encoder->outgoing_head_buf, method);
-    wrote_all &= aws_byte_buf_write_u8(&encoder->outgoing_head_buf, ' ');
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(&encoder->outgoing_head_buf, uri);
-    wrote_all &= aws_byte_buf_write_u8(&encoder->outgoing_head_buf, ' ');
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(&encoder->outgoing_head_buf, version);
-    wrote_all &= aws_byte_buf_write_u8(&encoder->outgoing_head_buf, '\r');
-    wrote_all &= aws_byte_buf_write_u8(&encoder->outgoing_head_buf, '\n');
+    wrote_all &= aws_byte_buf_write_from_whole_cursor(&message->outgoing_head_buf, method);
+    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, ' ');
+    wrote_all &= aws_byte_buf_write_from_whole_cursor(&message->outgoing_head_buf, uri);
+    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, ' ');
+    wrote_all &= aws_byte_buf_write_from_whole_cursor(&message->outgoing_head_buf, version);
+    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\r');
+    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\n');
 
-    for (size_t i = 0; i < num_headers; ++i) {
-        struct aws_http_header header;
-        aws_http_request_get_header(request, &header, i);
+    s_write_headers(&message->outgoing_head_buf, options->request);
 
-        /* header-line: "{name}: {value}\r\n" */
-        wrote_all &= aws_byte_buf_write_from_whole_cursor(&encoder->outgoing_head_buf, header.name);
-        wrote_all &= aws_byte_buf_write_u8(&encoder->outgoing_head_buf, ':');
-        wrote_all &= aws_byte_buf_write_u8(&encoder->outgoing_head_buf, ' ');
-        wrote_all &= aws_byte_buf_write_from_whole_cursor(&encoder->outgoing_head_buf, header.value);
-        wrote_all &= aws_byte_buf_write_u8(&encoder->outgoing_head_buf, '\r');
-        wrote_all &= aws_byte_buf_write_u8(&encoder->outgoing_head_buf, '\n');
-    }
-
-    wrote_all &= aws_byte_buf_write_u8(&encoder->outgoing_head_buf, '\r');
-    wrote_all &= aws_byte_buf_write_u8(&encoder->outgoing_head_buf, '\n');
+    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\r');
+    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\n');
     (void)wrote_all;
     AWS_ASSERT(wrote_all);
+    
+    return AWS_OP_SUCCESS;    
+error:
+    aws_h1_encoder_message_clean_up(message);
+    return AWS_OP_ERR;
+}
+
+void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message) {
+    aws_byte_buf_clean_up(&message->outgoing_head_buf);
+    AWS_ZERO_STRUCT(*message);
+}
+
+void aws_h1_encoder_init(struct aws_h1_encoder *encoder, struct aws_allocator *allocator) {
+    AWS_ZERO_STRUCT(*encoder);
+    encoder->allocator = allocator;
+}
+
+void aws_h1_encoder_clean_up(struct aws_h1_encoder *encoder) {
+    aws_byte_buf_clean_up(&encoder->outgoing_head_buf);
+}
+
+int aws_h1_encoder_start_message(
+    struct aws_h1_encoder *encoder,
+    struct aws_h1_encoder_message *message,
+    void *log_as_stream) {
+
+    AWS_PRECONDITION(encoder);
+    AWS_PRECONDITION(message);
+
+    if (encoder->message) {
+        ENCODER_LOG(ERROR, encoder, "Attempting to start new request while previous request is in progress.");
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
 
     /* Can start writing head next */
-    encoder->is_stream_in_progress = true;
-    encoder->body = aws_http_request_get_body_stream(request);
+    encoder->logging_id = log_as_stream;
+    encoder->message = message;
     encoder->state = AWS_H1_ENCODER_STATE_HEAD;
     encoder->outgoing_head_progress = 0;
 
