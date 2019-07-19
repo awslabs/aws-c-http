@@ -22,12 +22,9 @@
 #define ENCODER_LOG(level, encoder, text) ENCODER_LOGF(level, encoder, "%s", text)
 
 /**
- * Scan headers and determine the length necessary to write them all.
- * Also update the stream with any special data it needs to know from these headers.
+ * Scan headers to detect errors and determine anything we'll need to know later (ex: total length).
  */
-static int s_scan_outgoing_headers(
-    const struct aws_http_request *request,
-    size_t *out_header_lines_len) {
+static int s_scan_outgoing_headers(const struct aws_http_request *request, size_t *out_header_lines_len) {
 
     size_t total = 0;
 
@@ -44,6 +41,8 @@ static int s_scan_outgoing_headers(
             case AWS_HTTP_HEADER_CONTENT_LENGTH:
             case AWS_HTTP_HEADER_TRANSFER_ENCODING:
                 has_body_headers = true;
+                break;
+            default:
                 break;
         }
 
@@ -62,7 +61,7 @@ static int s_scan_outgoing_headers(
     }
 
     if (!has_body_headers && has_body_stream) {
-        return aws_raise_error(AWS_ERROR_MISSING_BODY_HEADERS);
+        return aws_raise_error(AWS_ERROR_HTTP_MISSING_BODY_HEADERS);
     }
 
     *out_header_lines_len = total;
@@ -95,6 +94,8 @@ int aws_h1_encoder_message_init_from_request(
     const struct aws_http_request *request) {
 
     AWS_ZERO_STRUCT(*message);
+
+    message->body = aws_http_request_get_body_stream(request);
 
     struct aws_byte_cursor method;
     int err = aws_http_request_get_method(request, &method);
@@ -153,14 +154,14 @@ int aws_h1_encoder_message_init_from_request(
     wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\r');
     wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\n');
 
-    s_write_headers(&message->outgoing_head_buf, options->request);
+    s_write_headers(&message->outgoing_head_buf, request);
 
     wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\r');
     wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\n');
     (void)wrote_all;
     AWS_ASSERT(wrote_all);
-    
-    return AWS_OP_SUCCESS;    
+
+    return AWS_OP_SUCCESS;
 error:
     aws_h1_encoder_message_clean_up(message);
     return AWS_OP_ERR;
@@ -177,7 +178,7 @@ void aws_h1_encoder_init(struct aws_h1_encoder *encoder, struct aws_allocator *a
 }
 
 void aws_h1_encoder_clean_up(struct aws_h1_encoder *encoder) {
-    aws_byte_buf_clean_up(&encoder->outgoing_head_buf);
+    AWS_ZERO_STRUCT(*encoder);
 }
 
 int aws_h1_encoder_start_message(
@@ -200,15 +201,16 @@ int aws_h1_encoder_start_message(
     encoder->outgoing_head_progress = 0;
 
     return AWS_OP_SUCCESS;
-
-error:
-    encoder->logging_id = prev_logging_id;
-    return AWS_OP_ERR;
 }
 
 int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *out_buf) {
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(out_buf);
+
+    if (!encoder->message) {
+        ENCODER_LOG(ERROR, encoder, "No message is currently set for encoding.");
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
 
     struct aws_byte_buf *dst = out_buf;
 
@@ -220,8 +222,8 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
             return AWS_OP_SUCCESS;
         }
 
-        /* Copy data from stream->outgoing_head_buf */
-        struct aws_byte_buf *src = &encoder->outgoing_head_buf;
+        /* Copy data from outgoing_head_buf */
+        struct aws_byte_buf *src = &encoder->message->outgoing_head_buf;
         size_t src_progress = encoder->outgoing_head_progress;
         size_t src_remaining = src->len - src_progress;
         size_t transferring = src_remaining < dst_available ? src_remaining : dst_available;
@@ -237,18 +239,18 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
             encoder,
             "Writing to message, outgoing head progress %zu/%zu.",
             encoder->outgoing_head_progress,
-            encoder->outgoing_head_buf.len);
+            encoder->message->outgoing_head_buf.len);
 
         if (encoder->outgoing_head_progress == src->len) {
             /* Don't NEED to free this buffer now, but we don't need it anymore, so why not */
-            aws_byte_buf_clean_up(&encoder->outgoing_head_buf);
+            aws_byte_buf_clean_up(&encoder->message->outgoing_head_buf);
 
             encoder->state++;
         }
     }
 
     if (encoder->state == AWS_H1_ENCODER_STATE_BODY) {
-        if (!encoder->body) {
+        if (!encoder->message->body) {
             ENCODER_LOG(TRACE, encoder, "No body to send.")
             encoder->state++;
         } else {
@@ -262,7 +264,7 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
                 }
 
                 size_t amount_read = 0;
-                int err = aws_input_stream_read(encoder->body, dst, &amount_read);
+                int err = aws_input_stream_read(encoder->message->body, dst, &amount_read);
                 if (err) {
                     ENCODER_LOGF(
                         ERROR,
@@ -277,7 +279,7 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
                 ENCODER_LOGF(TRACE, encoder, "Writing %zu body bytes to message", amount_read);
 
                 struct aws_stream_status status;
-                err = aws_input_stream_get_status(encoder->body, &status);
+                err = aws_input_stream_get_status(encoder->message->body, &status);
                 if (err) {
                     ENCODER_LOGF(
                         TRACE,
@@ -311,9 +313,12 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
     if (encoder->state == AWS_H1_ENCODER_STATE_DONE) {
         ENCODER_LOG(TRACE, encoder, "Done sending data.");
 
-        encoder->is_stream_in_progress = false;
-        aws_byte_buf_clean_up(&encoder->outgoing_head_buf);
+        encoder->message = NULL;
     }
 
     return AWS_OP_SUCCESS;
+}
+
+bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder) {
+    return encoder->message;
 }

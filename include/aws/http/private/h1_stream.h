@@ -30,7 +30,9 @@ struct aws_h1_stream {
     enum aws_h1_stream_type type;
     struct aws_linked_list_node node;
 
+    /* Message (derived from outgoing request or response) to be submitted to encoder */
     struct aws_h1_encoder_message encoder_message;
+
     bool is_outgoing_message_done;
 
     bool is_incoming_message_done;

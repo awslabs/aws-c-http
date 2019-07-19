@@ -20,6 +20,7 @@
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
     struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
 
+    aws_h1_encoder_message_clean_up(&stream->encoder_message);
     aws_byte_buf_clean_up(&stream->incoming_storage_buf);
     aws_mem_release(stream->base.alloc, stream);
 }
@@ -40,7 +41,8 @@ struct aws_h1_stream *aws_h1_stream_new_request(const struct aws_http_request_op
     }
 
     /* Validate request and cache info that the encoder will eventually need */
-    int err = aws_h1_encoder_message_init_from_request(&stream->encoder_message, options->allocator, options->request);
+    int err = aws_h1_encoder_message_init_from_request(
+        &stream->encoder_message, options->client_connection->alloc, options->request);
     if (err) {
         goto error;
     }
@@ -54,7 +56,9 @@ struct aws_h1_stream *aws_h1_stream_new_request(const struct aws_http_request_op
     stream->base.on_incoming_header_block_done = options->on_response_header_block_done;
     stream->base.on_incoming_body = options->on_response_body;
     stream->base.on_complete = options->on_complete;
-    stream->base.client_or_server_data.client.incoming_response_status = AWS_HTTP_STATUS_UNKNOWN;
+    stream->base.client_data = &stream->base.client_or_server_data.client;
+    stream->base.client_data->incoming_response_status = AWS_HTTP_STATUS_UNKNOWN;
+    stream->base.client_data->outgoing_request = options->request;
 
     /* Stream refcount starts at 2. 1 for user and 1 for connection to release it's done with the stream */
     aws_atomic_init_int(&stream->base.refcount, 2);

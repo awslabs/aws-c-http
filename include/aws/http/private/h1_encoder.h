@@ -18,6 +18,16 @@
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
 
+/**
+ * Message to be submitted to encoder.
+ * Contains data necessary for encoder to write an outgoing request or response.
+ */
+struct aws_h1_encoder_message {
+    /* Upon creation, the "head" (everything preceding body) is buffered here. */
+    struct aws_byte_buf outgoing_head_buf;
+    struct aws_input_stream *body;
+};
+
 enum aws_h1_encoder_state {
     AWS_H1_ENCODER_STATE_INIT,
     AWS_H1_ENCODER_STATE_HEAD,
@@ -25,20 +35,13 @@ enum aws_h1_encoder_state {
     AWS_H1_ENCODER_STATE_DONE,
 };
 
-/* Message to be submitted to encoder */
-struct aws_h1_encoder_message {
-    /* Upon creation, the "head" (everything preceding body) is buffered here. */
-    struct aws_byte_buf outgoing_head_buf;
-    struct aws_input_stream *body_stream;
-};
-
 struct aws_h1_encoder {
     struct aws_allocator *allocator;
 
     enum aws_h1_encoder_state state;
-    void *logging_id;
     struct aws_h1_encoder_message *message;
     size_t outgoing_head_progress;
+    void *logging_id;
 };
 
 AWS_EXTERN_C_BEGIN

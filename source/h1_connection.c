@@ -317,9 +317,6 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
 }
 
 struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options) {
-
-    struct h1_connection *connection = AWS_CONTAINER_OF(options->client_connection, struct h1_connection, base);
-
     struct aws_h1_stream *stream = aws_h1_stream_new_request(options);
     if (!stream) {
         AWS_LOGF_ERROR(
@@ -331,15 +328,15 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
         return NULL;
     }
-    stream->base.client_data = &stream->base.client_or_server_data.client;
-    stream->base.client_data->outgoing_request = options->request;
+
+    struct h1_connection *connection = AWS_CONTAINER_OF(options->client_connection, struct h1_connection, base);
 
     /* Insert new stream into pending list, and schedule outgoing_stream_task if it's not already running. */
     int new_stream_error_code = AWS_ERROR_SUCCESS;
     bool should_schedule_task = false;
 
     { /* BEGIN CRITICAL SECTION */
-        err = aws_mutex_lock(&connection->synced_data.lock);
+        int err = aws_mutex_lock(&connection->synced_data.lock);
         AWS_FATAL_ASSERT(!err);
 
         if (connection->synced_data.new_stream_error_code) {
@@ -369,13 +366,17 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     }
 
     /* Success! */
+    struct aws_byte_cursor method;
+    aws_http_request_get_method(options->request, &method);
+    struct aws_byte_cursor path;
+    aws_http_request_get_path(options->request, &path);
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_STREAM,
         "id=%p: Created client request on connection=%p: " PRInSTR " " PRInSTR " " PRInSTR,
         (void *)&stream->base,
         (void *)options->client_connection,
         AWS_BYTE_CURSOR_PRI(method),
-        AWS_BYTE_CURSOR_PRI(uri),
+        AWS_BYTE_CURSOR_PRI(path),
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->base.http_version)));
 
     if (should_schedule_task) {
@@ -551,7 +552,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
     int err;
 
     /* If current stream is done sending data... */
-    if (current && !connection->thread_data.encoder.is_stream_in_progress) {
+    if (current && !aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
         struct aws_linked_list_node *next_node = aws_linked_list_next(&current->node);
 
         /* If it's also done receiving data, then it's complete! */
@@ -614,8 +615,8 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
         connection->thread_data.outgoing_stream = current;
 
         if (current->base.client_data) {
-            err = aws_h1_encoder_start_request(
-                &connection->thread_data.encoder, current->base.client_data->outgoing_request, &current->base);
+            err = aws_h1_encoder_start_message(
+                &connection->thread_data.encoder, &current->encoder_message, &current->base);
 
             AWS_FATAL_ASSERT(!err);
         }
@@ -682,7 +683,7 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         }
 
         /* If there is a stream in progress, it means msg filled up before we finished a stream */
-        if (connection->thread_data.encoder.is_stream_in_progress) {
+        if (aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
             break;
         }
 
