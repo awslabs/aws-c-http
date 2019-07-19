@@ -293,8 +293,10 @@ static void s_tester_on_tls_negotiation_result(
     /* if an error occurred, the user callback will be delivered in shutdown */
     if (err_code) {
         aws_channel_shutdown(slot->channel, err_code);
-        return;
     }
+
+    size_t window = aws_channel_slot_downstream_read_window(slot);
+    aws_channel_slot_increment_read_window(slot, window);
 
     struct tester *tester = user_data;
     aws_mutex_lock(&tester->wait_lock);
