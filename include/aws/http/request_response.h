@@ -20,7 +20,6 @@
 
 struct aws_http_connection;
 struct aws_input_stream;
-struct aws_hash_table;
 
 /**
  * A stream exists for the duration of a request/response exchange.
@@ -166,7 +165,7 @@ struct aws_http_request_options {
 typedef int(aws_transform_http_request_fn)(
     struct aws_http_request *request,
     struct aws_allocator *allocator,
-    const struct aws_hash_table *context);
+    void *context);
 
 /**
  * Initializes aws_http_request_options with default values.

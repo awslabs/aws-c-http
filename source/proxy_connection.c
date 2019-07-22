@@ -15,6 +15,8 @@
 
 #include <aws/http/proxy_connection.h>
 
+#ifdef NEVER
+
 #include <aws/http/request_response.h>
 
 enum connection_with_request_state {
@@ -213,3 +215,57 @@ on_error:
     return AWS_OP_ERR;
 }
 
+#endif // NEVER
+
+/*
+struct aws_http_proxy_target {
+    struct aws_byte_cursor host;
+    uint16_t port;
+};
+
+static int s_proxy_http_request_transform(struct aws_http_request *request,
+                                          struct aws_allocator *allocator,
+                                          const struct aws_hash_table *context)
+{
+
+}
+*/
+
+static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client_connection_options *options,
+                                      const struct aws_http_proxy_options *proxy_options)
+{
+    (void)options;
+    (void)proxy_options;
+
+    AWS_FATAL_ASSERT(options->tls_options == NULL);
+
+    struct aws_http_client_connection_options options_copy = *options;
+
+    options_copy.host_name = proxy_options->host;
+    options_copy.port = proxy_options->port;
+    //options_copy.request_transform = s_proxy_http_request_transform;
+    //options_copy.request_transform_user_data = proxy_options;
+
+    return aws_http_client_connect(&options_copy);
+}
+
+static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_client_connection_options *options,
+                                      const struct aws_http_proxy_options *proxy_options)
+{
+    (void)options;
+    (void)proxy_options;
+
+    AWS_FATAL_ASSERT(options->tls_options != NULL);
+
+    return AWS_OP_ERR;
+}
+
+int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_options *options,
+                                      const struct aws_http_proxy_options *proxy_options)
+{
+    if (options->tls_options != NULL) {
+        return s_aws_http_client_connect_via_proxy_http(options, proxy_options);
+    } else {
+        return s_aws_http_client_connect_via_proxy_https(options, proxy_options);
+    }
+}
