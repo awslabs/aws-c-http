@@ -437,7 +437,7 @@ static int s_test_connection_destroy_server_with_multiple_connections_existing(s
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
     aws_client_bootstrap_release(tester.client_bootstrap);
-
+    aws_client_bootstrap_release(client_options.bootstrap);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
