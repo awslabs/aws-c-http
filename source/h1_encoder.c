@@ -197,9 +197,7 @@ int aws_h1_encoder_message_init_from_response(
     }
 
     char status_code_str[4] = "XXX";
-    status_code_str[0] = (response->status / 100) + '0';
-    status_code_str[1] = ((response->status % 100) / 10) + '0';
-    status_code_str[2] = response->status % 10 + '0';
+    snprintf(status_code_str, sizeof(status_code_str), "%03d", response->status);
     struct aws_byte_cursor status_code = aws_byte_cursor_from_c_str(status_code_str);
 
     struct aws_byte_cursor status_text = aws_byte_cursor_from_c_str(aws_http_status_text(response->status));

@@ -723,7 +723,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
         if (current) {
             err = aws_h1_encoder_start_message(
                 &connection->thread_data.encoder, &current->encoder_message, &current->base);
-
+            (void)err;
             AWS_ASSERT(!err);
         }
 
