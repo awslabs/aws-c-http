@@ -446,7 +446,7 @@ AWS_TEST_CASE(
     s_test_connection_destroy_server_with_multiple_connections_existing);
 
 /* when we shutdown the server, no more new connection will be accept */
-static int s_test_connection_server_shutdown_new_connection_fail(struct aws_allocator *allocator, void *ctx) {
+static int s_test_connection_server_shutting_down_new_connection_fail(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     struct tester_options options = {
         .alloc = allocator,
@@ -499,4 +499,4 @@ static int s_test_connection_server_shutdown_new_connection_fail(struct aws_allo
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(connection_server_shutdown_new_connection_fail, s_test_connection_server_shutdown_new_connection_fail);
+AWS_TEST_CASE(connection_server_shutting_down_new_connection_fail, s_test_connection_server_shutting_down_new_connection_fail);
