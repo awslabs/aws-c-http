@@ -435,6 +435,7 @@ int aws_websocket_random_handshake_key(struct aws_byte_buf *dst);
  * Sec-WebSocket-Key: <base64 encoding of 16 random bytes>
  * Sec-WebSocket-Version: 13
  */
+AWS_HTTP_API
 struct aws_http_request *aws_http_request_new_websocket_handshake(
     struct aws_allocator *allocator,
     struct aws_byte_cursor path,
