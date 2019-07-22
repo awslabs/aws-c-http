@@ -229,7 +229,7 @@ static int s_tester_clean_up(struct tester *tester) {
     return AWS_OP_SUCCESS;
 }
 
-static void s_aws_http_on_incoming_headers_test(
+static int s_aws_http_on_incoming_headers_test(
         struct aws_http_stream *stream,
         const struct aws_http_header *header_array,
         size_t num_headers,
@@ -243,9 +243,11 @@ static void s_aws_http_on_incoming_headers_test(
         const struct aws_byte_cursor *value = &header_array[i].value;
         AWS_LOGF_INFO(AWS_LS_HTTP_GENERAL, "< " PRInSTR " : " PRInSTR, AWS_BYTE_CURSOR_PRI(*name), AWS_BYTE_CURSOR_PRI(*value));
     }
+
+    return AWS_OP_SUCCESS;
 }
 
-static void s_aws_http_on_incoming_header_block_done_test(struct aws_http_stream *stream, bool has_body, void *user_data)
+static int s_aws_http_on_incoming_header_block_done_test(struct aws_http_stream *stream, bool has_body, void *user_data)
 {
     (void)has_body;
 
@@ -254,14 +256,18 @@ static void s_aws_http_on_incoming_header_block_done_test(struct aws_http_stream
     if (aws_http_stream_get_incoming_response_status(stream, &status) == AWS_OP_SUCCESS) {
         context->request_successful = status == 200;
     }
+
+    return AWS_OP_SUCCESS;
 }
 
-static void s_aws_http_on_incoming_body_test(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data)
+static int s_aws_http_on_incoming_body_test(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data)
 {
     (void)stream;
     (void)user_data;
 
     AWS_LOGF_INFO(AWS_LS_HTTP_GENERAL, "< " PRInSTR, AWS_BYTE_CURSOR_PRI(*data));
+
+    return AWS_OP_SUCCESS;
 }
 
 static void s_aws_http_on_stream_complete_test(struct aws_http_stream *stream, int error_code, void *user_data)
