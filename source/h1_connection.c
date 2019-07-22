@@ -23,7 +23,6 @@
 #include <aws/http/private/h1_stream.h>
 #include <aws/http/private/request_response_impl.h>
 #include <aws/io/logging.h>
-#include <aws/io/stream.h>
 
 /* TODO: try to continue processing channel messages during shutdown */
 
@@ -62,6 +61,7 @@ static size_t s_handler_initial_window_size(struct aws_channel_handler *handler)
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
 static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
+static int s_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options);
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
@@ -88,6 +88,7 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
         },
 
     .new_client_request_stream = s_new_client_request_stream,
+    .stream_send_response = s_stream_send_response,
     .close = s_connection_close,
     .is_open = s_connection_is_open,
     .update_window = s_connection_update_window,
@@ -118,13 +119,16 @@ struct h1_connection {
         /* List of streams being worked on. */
         struct aws_linked_list stream_list;
 
+        /* List of streams waiting for response. */
+        struct aws_linked_list waiting_stream_list;
+
         /* Points to the stream whose data is currently being sent.
          * This stream is ALWAYS in the `stream_list`.
          * HTTP pipelining is supported, so once the stream is completely written
          * we'll start working on the next stream in the list */
         struct aws_h1_stream *outgoing_stream;
 
-        /* Points to the stream being decoded, which is always the first entry in `stream_list` */
+        /* Points to the stream being decoded */
         struct aws_h1_stream *incoming_stream;
         struct aws_h1_decoder *incoming_stream_decoder;
 
@@ -161,7 +165,7 @@ struct h1_connection {
         /* For checking status from outside the event-loop thread. Duplicates thread_data.is_shutting_down */
         bool is_shutting_down;
 
-        /* If non-zero, reason to immediately reject new streams. (ex: closing, switched protocols, */
+        /* If non-zero, reason to immediately reject new streams. (ex: closing, switched protocols) */
         int new_stream_error_code;
 
         /* If non-zero, then window_update_task is scheduled */
@@ -247,6 +251,70 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
     } /* END CRITICAL SECTION */
 
     return !is_shutting_down;
+}
+
+static int s_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options) {
+    AWS_PRECONDITION(stream);
+    AWS_PRECONDITION(options);
+
+    int err;
+    int send_err = AWS_ERROR_SUCCESS;
+    struct aws_h1_stream *h1_stream = AWS_CONTAINER_OF(stream, struct aws_h1_stream, base);
+    struct h1_connection *connection = AWS_CONTAINER_OF(stream->owning_connection, struct h1_connection, base);
+
+    /* Validate the response and cache info that encoder will eventually need.
+     * The encoder_message object will be moved into the stream later while holding the lock */
+    struct aws_h1_encoder_message encoder_message;
+    err = aws_h1_encoder_message_init_from_response(&encoder_message, stream->alloc, options);
+    if (err) {
+        send_err = aws_last_error();
+        goto response_error;
+    }
+
+    bool should_schedule_task = false;
+    { /* BEGIN CRITICAL SECTION */
+        err = aws_mutex_lock(&connection->synced_data.lock);
+        AWS_FATAL_ASSERT(!err);
+        if (h1_stream->synced_data.has_outgoing_response) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "id=%p: Response already created on the stream", (void *)stream);
+            send_err = AWS_ERROR_INVALID_STATE;
+        } else {
+            h1_stream->synced_data.has_outgoing_response = true;
+            h1_stream->encoder_message = encoder_message;
+            if (!connection->synced_data.is_outgoing_stream_task_active) {
+                connection->synced_data.is_outgoing_stream_task_active = true;
+                should_schedule_task = true;
+            }
+        }
+        err = aws_mutex_unlock(&connection->synced_data.lock);
+        AWS_FATAL_ASSERT(!err);
+    } /* END CRITICAL SECTION */
+
+    if (send_err) {
+        goto response_error;
+    }
+
+    /* Success! */
+    AWS_LOGF_DEBUG(
+        AWS_LS_HTTP_STREAM, "id=%p: Created response on connection=%p: ", (void *)stream, (void *)connection);
+
+    if (should_schedule_task) {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling outgoing stream task.", (void *)&connection->base);
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
+    }
+
+    return AWS_OP_SUCCESS;
+
+response_error:
+    aws_h1_encoder_message_clean_up(&encoder_message);
+    aws_raise_error(send_err);
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_STREAM,
+        "id=%p: Sending response on the stream failed, error %d (%s)",
+        (void *)stream,
+        aws_last_error(),
+        aws_error_name(aws_last_error()));
+    return AWS_OP_ERR;
 }
 
 static void s_update_window_action(struct h1_connection *connection, size_t increment_size) {
@@ -432,7 +500,7 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
 
         /* Check whether connection is switching protocols. */
         if (stream->base.client_data &&
-            stream->base.client_data->incoming_response_status == AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS) {
+            stream->base.client_data->response_status == AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS) {
             /* TODO: confirm that request had sent "Connection: Upgrade" header */
 
             /* Switching protocols while there are pending streams is too complex to deal with. */
@@ -486,19 +554,20 @@ finish_up:
             error_code,
             aws_error_name(error_code));
 
-    } else if (stream->type == AWS_H1_STREAM_TYPE_OUTGOING_REQUEST) {
+    } else if (stream->base.client_data) {
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_STREAM,
             "id=%p: Client request complete, response status: %d (%s).",
             (void *)&stream->base,
-            stream->base.client_data->incoming_response_status,
-            aws_http_status_text(stream->base.client_data->incoming_response_status));
-    } else if (stream->base.server_data) {
+            stream->base.client_data->response_status,
+            aws_http_status_text(stream->base.client_data->response_status));
+    } else {
+        AWS_ASSERT(stream->base.server_data);
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_STREAM,
             "id=%p: Server response to " PRInSTR " request complete.",
             (void *)&stream->base,
-            AWS_BYTE_CURSOR_PRI(stream->base.server_data->incoming_request_method_str));
+            AWS_BYTE_CURSOR_PRI(stream->base.server_data->request_method_str));
     }
 
     /* Invoke callback and clean up stream. */
@@ -517,7 +586,7 @@ finish_up:
 /**
  * Ensure `incoming_stream` is pointing at the correct stream, and update state if it changes.
  */
-static void s_update_incoming_stream_ptr(struct h1_connection *connection) {
+static void s_client_update_incoming_stream_ptr(struct h1_connection *connection) {
     struct aws_linked_list *list = &connection->thread_data.stream_list;
     struct aws_h1_stream *desired;
     if (aws_linked_list_empty(list)) {
@@ -572,40 +641,77 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
         }
     }
 
-    /* If current stream is NULL, look in synced_data.pending_stream_list for more work */
+    /* If current stream is NULL,
+     * Client side: look in synced_data.pending_stream_list for more work
+     * Server side: look in thread_data.waiting_stream_list for more work */
     if (!current) {
-
-        /* BEGIN CRITICAL SECTION */
-        err = aws_mutex_lock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
-
-        if (aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
-            /* No more work to do. Set this false while we're holding the lock. */
-            connection->synced_data.is_outgoing_stream_task_active = false;
-
-        } else {
-            /* Front of pending_stream_list becomes new current_stream */
-            current = AWS_CONTAINER_OF(
-                aws_linked_list_front(&connection->synced_data.pending_stream_list), struct aws_h1_stream, node);
-
-            /* Move contents from pending_stream_list to stream_list. */
-            do {
+        if (connection->base.server_data) {
+            /* server side should check the stream already has response or not
+             * Require a lock to prevent the user makes any change to the stream state */
+            /* BEGIN CRITICAL SECTION */
+            err = aws_mutex_lock(&connection->synced_data.lock);
+            AWS_FATAL_ASSERT(!err);
+            while (!aws_linked_list_empty(&connection->thread_data.waiting_stream_list)) {
+                /* The front of pending_stream list is not ready to be sent */
+                if (!AWS_CONTAINER_OF(
+                         aws_linked_list_front(&connection->thread_data.waiting_stream_list),
+                         struct aws_h1_stream,
+                         node)
+                         ->synced_data.has_outgoing_response) {
+                    break;
+                }
                 aws_linked_list_push_back(
                     &connection->thread_data.stream_list,
-                    aws_linked_list_pop_front(&connection->synced_data.pending_stream_list));
+                    aws_linked_list_pop_front(&connection->thread_data.waiting_stream_list));
+            }
+            if (aws_linked_list_empty(&connection->thread_data.stream_list)) {
+                /* No work to do. Set this false while we're holding the lock. */
+                connection->synced_data.is_outgoing_stream_task_active = false;
+            } else {
+                current = AWS_CONTAINER_OF(
+                    aws_linked_list_front(&connection->thread_data.stream_list), struct aws_h1_stream, node);
+                if (current->is_outgoing_message_done) {
+                    /* the stream is still waiting for the incoming request to be finished
+                     * but the outgoing task is already finished and no more work to do now
+                     * only for http1.1, if a request is not finished receiving,
+                     * there will be no more request waiting for response */
+                    current = NULL;
+                    connection->synced_data.is_outgoing_stream_task_active = false;
+                }
+            }
+            err = aws_mutex_unlock(&connection->synced_data.lock);
+            AWS_FATAL_ASSERT(!err);
+            /* END CRITICAL SECTION */
+        } else {
+            /* BEGIN CRITICAL SECTION */
+            err = aws_mutex_lock(&connection->synced_data.lock);
+            AWS_FATAL_ASSERT(!err);
 
-            } while (!aws_linked_list_empty(&connection->synced_data.pending_stream_list));
+            if (aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
+                /* No more work to do. Set this false while we're holding the lock. */
+                connection->synced_data.is_outgoing_stream_task_active = false;
+
+            } else {
+                current = AWS_CONTAINER_OF(
+                    aws_linked_list_front(&connection->synced_data.pending_stream_list), struct aws_h1_stream, node);
+
+                /* Move contents from pending_stream_list to stream_list. */
+                do {
+                    aws_linked_list_push_back(
+                        &connection->thread_data.stream_list,
+                        aws_linked_list_pop_front(&connection->synced_data.pending_stream_list));
+
+                } while (!aws_linked_list_empty(&connection->synced_data.pending_stream_list));
+            }
+
+            err = aws_mutex_unlock(&connection->synced_data.lock);
+            AWS_FATAL_ASSERT(!err);
+            /* END CRITICAL SECTION */
         }
-
-        err = aws_mutex_unlock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
-        /* END CRITICAL SECTION */
     }
 
     /* Update current incoming and outgoing streams. */
-    if (!current) {
-        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: All outgoing streams complete.", (void *)&connection->base);
-    } else if (prev != current) {
+    if (prev != current) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Current outgoing stream is now %p.",
@@ -614,14 +720,17 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
 
         connection->thread_data.outgoing_stream = current;
 
-        if (current->base.client_data) {
+        if (current) {
             err = aws_h1_encoder_start_message(
                 &connection->thread_data.encoder, &current->encoder_message, &current->base);
 
-            AWS_FATAL_ASSERT(!err);
+            AWS_ASSERT(!err);
         }
 
-        s_update_incoming_stream_ptr(connection);
+        /* incoming_stream update is only for client */
+        if (connection->base.client_data) {
+            s_client_update_incoming_stream_ptr(connection);
+        }
     }
 
     return current;
@@ -755,8 +864,8 @@ static int s_decoder_on_request(
 
     AWS_FATAL_ASSERT(connection->thread_data.incoming_stream->base.server_data); /* Request but I'm a client?!?!? */
 
-    AWS_ASSERT(incoming_stream->base.server_data->incoming_request_method_str.len == 0);
-    AWS_ASSERT(incoming_stream->base.server_data->incoming_request_uri.len == 0);
+    AWS_ASSERT(incoming_stream->base.server_data->request_method_str.len == 0);
+    AWS_ASSERT(incoming_stream->base.server_data->request_path.len == 0);
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
@@ -781,14 +890,13 @@ static int s_decoder_on_request(
     }
 
     aws_byte_buf_write_from_whole_cursor(storage_buf, *method_str);
-    incoming_stream->base.server_data->incoming_request_method_str = aws_byte_cursor_from_buf(storage_buf);
+    incoming_stream->base.server_data->request_method_str = aws_byte_cursor_from_buf(storage_buf);
 
     aws_byte_buf_write_from_whole_cursor(storage_buf, *uri);
-    incoming_stream->base.server_data->incoming_request_uri = aws_byte_cursor_from_buf(storage_buf);
-    aws_byte_cursor_advance(
-        &incoming_stream->base.server_data->incoming_request_method_str, storage_buf->len - uri->len);
+    incoming_stream->base.server_data->request_path = aws_byte_cursor_from_buf(storage_buf);
+    aws_byte_cursor_advance(&incoming_stream->base.server_data->request_path, storage_buf->len - uri->len);
 
-    incoming_stream->base.server_data->incoming_request_method = method_enum;
+    incoming_stream->base.server_data->request_method = method_enum;
 
     /* No user callbacks, so we're not checking for shutdown */
     return AWS_OP_SUCCESS;
@@ -811,7 +919,7 @@ static int s_decoder_on_response(int status_code, void *user_data) {
         status_code,
         aws_http_status_text(status_code));
 
-    connection->thread_data.incoming_stream->base.client_data->incoming_response_status = status_code;
+    connection->thread_data.incoming_stream->base.client_data->response_status = status_code;
 
     /* No user callbacks, so we're not checking for shutdown */
     return AWS_OP_SUCCESS;
@@ -943,13 +1051,34 @@ static int s_decoder_on_done(void *user_data) {
     }
 
     incoming_stream->is_incoming_message_done = true;
+    if (connection->base.server_data) {
+        /* Server side */
+        aws_http_on_incoming_request_done_fn *on_request_done = incoming_stream->base.server_data->on_request_done;
+        if (on_request_done) {
+            err = on_request_done(&incoming_stream->base, incoming_stream->base.user_data);
+            if (err) {
+                AWS_LOGF_TRACE(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Incoming request done callback raised error %d (%s).",
+                    (void *)&incoming_stream->base,
+                    aws_last_error(),
+                    aws_error_name(aws_last_error()));
+                return AWS_OP_ERR;
+            }
+        }
+        if (incoming_stream->is_outgoing_message_done) {
+            AWS_ASSERT(&incoming_stream->node == aws_linked_list_begin(&connection->thread_data.stream_list));
+            s_stream_complete(incoming_stream, AWS_ERROR_SUCCESS);
+        }
+        connection->thread_data.incoming_stream = NULL;
 
-    if (incoming_stream->is_outgoing_message_done) {
+    } else if (incoming_stream->is_outgoing_message_done) {
+        /* Client side */
         AWS_ASSERT(&incoming_stream->node == aws_linked_list_begin(&connection->thread_data.stream_list));
 
         s_stream_complete(incoming_stream, AWS_ERROR_SUCCESS);
 
-        s_update_incoming_stream_ptr(connection);
+        s_client_update_incoming_stream_ptr(connection);
     }
 
     /* Report success even if user's on_complete() callback shuts down on the connection.
@@ -960,7 +1089,7 @@ static int s_decoder_on_done(void *user_data) {
 }
 
 /* Common new() logic for server & client */
-static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_t initial_window_size) {
+static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_t initial_window_size, bool server) {
 
     struct h1_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct h1_connection));
     if (!connection) {
@@ -984,6 +1113,7 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     aws_channel_task_init(&connection->window_update_task, s_update_window_task, connection, "http1_update_window");
     aws_channel_task_init(&connection->shutdown_delay_task, s_shutdown_delay_task, connection, "http1_delay_shutdown");
     aws_linked_list_init(&connection->thread_data.stream_list);
+    aws_linked_list_init(&connection->thread_data.waiting_stream_list);
     aws_linked_list_init(&connection->thread_data.midchannel_read_messages);
 
     int err = aws_mutex_init(&connection->synced_data.lock);
@@ -998,7 +1128,7 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
 
     struct aws_h1_decoder_params options = {
         .alloc = alloc,
-        .is_decoding_requests = connection->base.server_data != NULL,
+        .is_decoding_requests = server,
         .user_data = connection,
         .vtable = s_h1_decoder_vtable,
         .scratch_space_initial_size = DECODER_INITIAL_SCRATCH_SIZE,
@@ -1028,7 +1158,7 @@ struct aws_http_connection *aws_http_connection_new_http1_1_server(
     struct aws_allocator *allocator,
     size_t initial_window_size) {
 
-    struct h1_connection *connection = s_connection_new(allocator, initial_window_size);
+    struct h1_connection *connection = s_connection_new(allocator, initial_window_size, true);
     if (!connection) {
         return NULL;
     }
@@ -1042,7 +1172,7 @@ struct aws_http_connection *aws_http_connection_new_http1_1_client(
     struct aws_allocator *allocator,
     size_t initial_window_size) {
 
-    struct h1_connection *connection = s_connection_new(allocator, initial_window_size);
+    struct h1_connection *connection = s_connection_new(allocator, initial_window_size, false);
     if (!connection) {
         return NULL;
     }
@@ -1059,6 +1189,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
 
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.midchannel_read_messages));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stream_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.waiting_stream_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
 
     aws_h1_decoder_destroy(connection->thread_data.incoming_stream_decoder);
@@ -1093,8 +1224,9 @@ static void s_connection_try_send_read_messages(struct h1_connection *connection
             break;
         }
 
-        struct aws_linked_list_node *node = aws_linked_list_front(&connection->thread_data.midchannel_read_messages);
-        struct aws_io_message *queued_msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
+        struct aws_linked_list_node *queued_msg_node =
+            aws_linked_list_front(&connection->thread_data.midchannel_read_messages);
+        struct aws_io_message *queued_msg = AWS_CONTAINER_OF(queued_msg_node, struct aws_io_message, queueing_handle);
 
         /* If we can't send the whole entire queued_msg, copy its data into a new aws_io_message and send that.
          * Note that copy_mark is used to mark the progress of partially sent messages. */
@@ -1125,7 +1257,7 @@ static void s_connection_try_send_read_messages(struct h1_connection *connection
 
             /* If the last of queued_msg has been copied, it can be deleted now. */
             if (queued_msg->copy_mark == queued_msg->message_data.len) {
-                aws_linked_list_pop_front(&connection->thread_data.midchannel_read_messages);
+                aws_linked_list_remove(queued_msg_node);
                 aws_mem_release(queued_msg->allocator, queued_msg);
             }
 
@@ -1137,7 +1269,7 @@ static void s_connection_try_send_read_messages(struct h1_connection *connection
                 (void *)&connection->base,
                 queued_msg->message_data.len);
 
-            aws_linked_list_pop_front(&connection->thread_data.midchannel_read_messages);
+            aws_linked_list_remove(queued_msg_node);
             sending_msg = queued_msg;
         }
 
@@ -1162,6 +1294,52 @@ error:
     s_shutdown_connection(connection, aws_last_error());
 }
 
+static struct aws_h1_stream *new_server_request_handler_stream(struct h1_connection *connection) {
+    AWS_PRECONDITION(connection->base.server_data);
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
+    /* Connection owns stream, and must outlive stream */
+    aws_atomic_fetch_add(&connection->base.refcount, 1);
+
+    struct aws_h1_stream *stream = aws_h1_stream_new_request_handler(&connection->base);
+    if (!stream) {
+        goto error_new_stream;
+    }
+
+    /* Stream is waiting for response. */
+    aws_linked_list_push_back(&connection->thread_data.waiting_stream_list, &stream->node);
+
+    /* Connection must have an on_incoming_request callback. */
+    connection->base.server_data->on_incoming_request(
+        &connection->base, &stream->base, connection->base.server_data->connection_user_data);
+
+    /* The request handler must be configured in on_incoming_request
+     * If not, raise an error */
+    if (!stream->base.server_data->configured) {
+        AWS_LOGF_FATAL(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: The request handler stream is not request_handler_configured,"
+            "please make sure call aws_http_stream_configure_server_request_handler",
+            (void *)&connection->base);
+
+        aws_raise_error(AWS_ERROR_HTTP_REACTION_REQUIRED);
+
+        /* Memory ownership is too unclear at this point, so just explode */
+        AWS_FATAL_ASSERT(0);
+    }
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_STREAM,
+        "id=%p: Created request handler stream on server connection=%p",
+        (void *)&stream->base,
+        (void *)stream->base.owning_connection);
+    return stream;
+
+error_new_stream:
+    aws_http_connection_release(&connection->base);
+    return NULL;
+}
+
 static int s_handler_process_read_message(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
@@ -1172,8 +1350,7 @@ static int s_handler_process_read_message(
 
     const size_t incoming_message_size = message->message_data.len;
 
-    /* By default, after processing message, we will increment the read window by the same amount we just read in.
-     */
+    /* By default, after processing message, we will increment the read window by the same amount we just read in. */
     connection->thread_data.incoming_message_window_shrink_size = 0;
 
     AWS_LOGF_TRACE(
@@ -1223,22 +1400,45 @@ static int s_handler_process_read_message(
         } else {
             /* Else processing message as normal HTTP data. */
             if (!connection->thread_data.incoming_stream) {
-                /* TODO: Server connection would create new request-handler stream at this point. */
+                if (connection->base.client_data)
+                /* Client side*/
+                {
+                    AWS_LOGF_ERROR(
+                        AWS_LS_HTTP_CONNECTION,
+                        "id=%p: Cannot process message because no requests are currently awaiting response, closing "
+                        "connection.",
+                        (void *)&connection->base);
 
-                AWS_LOGF_ERROR(
-                    AWS_LS_HTTP_CONNECTION,
-                    "id=%p: Cannot process message because no requests are currently awaiting response, closing "
-                    "connection.",
-                    (void *)&connection->base);
+                    aws_raise_error(AWS_ERROR_INVALID_STATE);
+                    goto shutdown;
+                } else {
+                    /* Server side
+                     * Make a new stream for this request and push it into the waiting stream list wait for response */
+                    struct aws_h1_stream *stream = new_server_request_handler_stream(connection);
+                    if (!stream) {
+                        /* Error already logged */
+                        goto shutdown;
+                    }
+                    connection->thread_data.incoming_stream = stream;
 
-                aws_raise_error(AWS_ERROR_INVALID_STATE);
-                goto shutdown;
+                    /* Stop decoding if user callback shut down the connection. */
+                    if (connection->thread_data.is_shutting_down) {
+                        AWS_LOGF_ERROR(
+                            AWS_LS_HTTP_CONNECTION,
+                            "id=%p: Cannot process message because connection is shutting down.",
+                            (void *)&connection->base);
+
+                        aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+                        goto shutdown;
+                    }
+                }
             }
 
             /* Decoder will invoke the internal s_decoder_X callbacks, which in turn invoke user callbacks */
             aws_h1_decoder_set_logging_id(
                 connection->thread_data.incoming_stream_decoder, connection->thread_data.incoming_stream);
 
+            /* Decoder will stop once it hits the end of the request/response OR the end of the message data. */
             err = aws_h1_decode(connection->thread_data.incoming_stream_decoder, &message_cursor);
             if (err) {
                 AWS_LOGF_ERROR(
@@ -1400,6 +1600,11 @@ static int s_handler_shutdown(
 
         while (!aws_linked_list_empty(&connection->thread_data.stream_list)) {
             struct aws_linked_list_node *node = aws_linked_list_front(&connection->thread_data.stream_list);
+            s_stream_complete(AWS_CONTAINER_OF(node, struct aws_h1_stream, node), stream_error_code);
+        }
+
+        while (!aws_linked_list_empty(&connection->thread_data.waiting_stream_list)) {
+            struct aws_linked_list_node *node = aws_linked_list_front(&connection->thread_data.waiting_stream_list);
             s_stream_complete(AWS_CONTAINER_OF(node, struct aws_h1_stream, node), stream_error_code);
         }
 

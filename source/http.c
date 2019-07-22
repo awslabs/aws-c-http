@@ -44,6 +44,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_INVALID_PATH,
         "Path is invalid."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_INVALID_STATUS_CODE,
+        "Status code is invalid."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_MISSING_BODY_STREAM,
         "Given the provided headers (ex: Content-Length), a body is expected."),
     AWS_DEFINE_ERROR_INFO_HTTP(

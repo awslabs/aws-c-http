@@ -438,6 +438,48 @@ struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http
     return stream;
 }
 
+int aws_http_stream_configure_server_request_handler(
+    struct aws_http_stream *stream,
+    const struct aws_http_request_handler_options *options) {
+
+    AWS_PRECONDITION(stream);
+    if (!options || options->self_size == 0) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Cannot configure server request handler stream, options are invalid.",
+            (void *)(stream ? stream->owning_connection : NULL));
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (!stream->server_data) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM, "id=%p: Server-only function invoked on client, ignoring call.", (void *)stream);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    if (stream->server_data->configured) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM, "id=%p: Stream configuration is already done, ignoring call.", (void *)stream);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    return stream->vtable->configure_server_request_handler(stream, options);
+}
+
+int aws_http_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options) {
+
+    AWS_PRECONDITION(stream);
+    if (!options || options->self_size == 0) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Cannot send response, options are invalid.",
+            (void *)(stream ? stream->owning_connection : NULL));
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    return stream->owning_connection->vtable->stream_send_response(stream, options);
+}
+
 void aws_http_stream_release(struct aws_http_stream *stream) {
     if (!stream) {
         return;
@@ -467,12 +509,12 @@ struct aws_http_connection *aws_http_stream_get_connection(const struct aws_http
 int aws_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status) {
     AWS_ASSERT(stream && stream->client_data);
 
-    if (stream->client_data->incoming_response_status == (int)AWS_HTTP_STATUS_UNKNOWN) {
+    if (stream->client_data->response_status == (int)AWS_HTTP_STATUS_UNKNOWN) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Status code not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
 
-    *out_status = stream->client_data->incoming_response_status;
+    *out_status = stream->client_data->response_status;
     return AWS_OP_SUCCESS;
 }
 
@@ -482,24 +524,24 @@ int aws_http_stream_get_incoming_request_method(
 
     AWS_ASSERT(stream && stream->server_data);
 
-    if (!stream->server_data->incoming_request_method_str.ptr) {
+    if (!stream->server_data->request_method_str.ptr) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Request method not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
 
-    *out_method = stream->server_data->incoming_request_method_str;
+    *out_method = stream->server_data->request_method_str;
     return AWS_OP_SUCCESS;
 }
 
 int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *stream, struct aws_byte_cursor *out_uri) {
     AWS_ASSERT(stream && stream->server_data);
 
-    if (!stream->server_data->incoming_request_uri.ptr) {
+    if (!stream->server_data->request_path.ptr) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Request URI not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
 
-    *out_uri = stream->server_data->incoming_request_uri;
+    *out_uri = stream->server_data->request_path;
     return AWS_OP_SUCCESS;
 }
 

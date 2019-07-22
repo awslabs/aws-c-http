@@ -25,6 +25,9 @@
 struct aws_http_stream_vtable {
     void (*destroy)(struct aws_http_stream *stream);
     void (*update_window)(struct aws_http_stream *stream, size_t increment_size);
+    int (*configure_server_request_handler)(
+        struct aws_http_stream *stream,
+        const struct aws_http_request_handler_options *options);
 };
 
 /**
@@ -49,13 +52,15 @@ struct aws_http_stream {
 
     union {
         struct aws_http_stream_client_data {
-            struct aws_http_request *outgoing_request;
-            int incoming_response_status;
+            struct aws_http_request *request;
+            int response_status;
         } client;
         struct aws_http_stream_server_data {
-            enum aws_http_method incoming_request_method;
-            struct aws_byte_cursor incoming_request_method_str;
-            struct aws_byte_cursor incoming_request_uri;
+            enum aws_http_method request_method;
+            struct aws_byte_cursor request_method_str;
+            struct aws_byte_cursor request_path;
+            aws_http_on_incoming_request_done_fn *on_request_done;
+            bool configured;
         } server;
     } client_or_server_data;
 

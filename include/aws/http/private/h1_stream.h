@@ -19,15 +19,9 @@
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
 
-enum aws_h1_stream_type {
-    AWS_H1_STREAM_TYPE_OUTGOING_REQUEST,
-    AWS_H1_STREAM_TYPE_INCOMING_REQUEST,
-};
-
 struct aws_h1_stream {
     struct aws_http_stream base;
 
-    enum aws_h1_stream_type type;
     struct aws_linked_list_node node;
 
     /* Message (derived from outgoing request or response) to be submitted to encoder */
@@ -40,12 +34,21 @@ struct aws_h1_stream {
 
     /* Buffer for incoming data that needs to stick around. */
     struct aws_byte_buf incoming_storage_buf;
+
+    /* Any thread may touch this data, but the lock must be held */
+    struct {
+        /* Whether a "request handler" stream has a response to send. */
+        bool has_outgoing_response;
+    } synced_data;
 };
 
 AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API
 struct aws_h1_stream *aws_h1_stream_new_request(const struct aws_http_request_options *options);
+
+AWS_HTTP_API
+struct aws_h1_stream *aws_h1_stream_new_request_handler(struct aws_http_connection *server_connection);
 
 AWS_EXTERN_C_END
 

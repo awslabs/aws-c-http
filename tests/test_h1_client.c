@@ -1402,7 +1402,7 @@ enum request_callback {
     REQUEST_CALLBACK_COUNT,
 };
 
-const int ERROR_FROM_CALLBACK_ERROR_CODE = 0xBEEFCAFE;
+static const int ERROR_FROM_CALLBACK_ERROR_CODE = 0xBEEFCAFE;
 
 struct error_from_callback_tester {
     enum request_callback error_at;
@@ -1430,13 +1430,13 @@ static int s_error_from_callback_common(
 }
 
 static int s_error_from_outgoing_body_read(
-    struct aws_input_stream *stream,
+    struct aws_input_stream *body,
     struct aws_byte_buf *dest,
     size_t *amount_read) {
 
     (void)dest;
 
-    struct error_from_callback_tester *error_tester = stream->impl;
+    struct error_from_callback_tester *error_tester = body->impl;
     ASSERT_SUCCESS(s_error_from_callback_common(error_tester, REQUEST_CALLBACK_OUTGOING_BODY));
 
     /* If the common fn was successful, write out some data and end the stream */
@@ -1445,11 +1445,13 @@ static int s_error_from_outgoing_body_read(
     error_tester->status.is_end_of_stream = true;
     return AWS_OP_SUCCESS;
 }
-static int s_error_from_outgoing_body_get_status(struct aws_input_stream *stream, struct aws_stream_status *status) {
-    struct error_from_callback_tester *error_tester = stream->impl;
+
+static int s_error_from_outgoing_body_get_status(struct aws_input_stream *body, struct aws_stream_status *status) {
+    struct error_from_callback_tester *error_tester = body->impl;
     *status = error_tester->status;
     return AWS_OP_SUCCESS;
 }
+
 static void s_error_from_outgoing_body_clean_up(struct aws_input_stream *stream) {
     (void)stream;
 }

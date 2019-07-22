@@ -87,6 +87,14 @@ typedef int(
     aws_http_on_incoming_body_fn)(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data);
 
 /**
+ * Invoked when request has been completely read.
+ *
+ * Return AWS_OP_SUCCESS to continue processing the stream.
+ * Return AWS_OP_ERR to indicate failure and cancel the stream.
+ */
+typedef int(aws_http_on_incoming_request_done_fn)(struct aws_http_stream *stream, void *user_data);
+
+/**
  * Invoked when request/response stream is complete, whether successful or unsuccessful
  */
 typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
@@ -148,8 +156,8 @@ struct aws_http_request_options {
      *
      * If this is false, the connection will maintain a constant window size.
      *
-     * If this is true, the caller must manually increment the window size using aws_websocket_increment_read_window().
-     * If the window is not incremented, it will shrink by the amount of payload data received. If the window size
+     * If this is true, the caller must manually increment the window size using aws_http_stream_update_window().
+     * If the window is not incremented, it will shrink by the amount of body data received. If the window size
      * reaches 0, no further data will be received.
      */
     bool manual_window_management;
@@ -170,13 +178,58 @@ struct aws_http_request_handler_options {
     /* Set to sizeof() this struct, used for versioning. */
     size_t self_size;
 
-    struct aws_http_connection *server_connection;
+    /**
+     * user_data passed to callbacks.
+     * Optional.
+     */
     void *user_data;
 
+    /**
+     * Invoked repeatedly times as headers are received.
+     * Optional.
+     * See `aws_http_on_incoming_headers_fn`.
+     * Optional.
+     */
     aws_http_on_incoming_headers_fn *on_request_headers;
+
+    /**
+     * Invoked when the request header block has been completely read.
+     * Optional.
+     * See `aws_http_on_incoming_header_block_done_fn`.
+     */
     aws_http_on_incoming_header_block_done_fn *on_request_header_block_done;
+
+    /**
+     * Invoked as body data is received.
+     * Optional.
+     * See `aws_http_on_incoming_body_fn`.
+     */
     aws_http_on_incoming_body_fn *on_request_body;
+
+    /**
+     * Invoked when request has been completely read.
+     * Optional.
+     * See `aws_http_on_incoming_request_done_fn`.
+     */
+    aws_http_on_incoming_request_done_fn *on_request_done;
+
+    /**
+     * Invoked when request/response stream is complete, whether successful or unsuccessful
+     * Optional.
+     * See `aws_http_on_stream_complete_fn`.
+     */
     aws_http_on_stream_complete_fn *on_complete;
+
+    /**
+     * Set to true to manually manage the read window size.
+     *
+     * If this is false, the connection will maintain a constant window size.
+     *
+     * If this is true, the caller must manually increment the window size using aws_http_stream_update_window().
+     * If the window is not incremented, it will shrink by the amount of body data received. If the window size
+     * reaches 0, no further data will be received.
+     */
+    bool manual_window_management;
 };
 
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
@@ -191,6 +244,9 @@ struct aws_http_response_options {
     size_t num_headers;
     struct aws_input_stream *body_stream;
 };
+
+#define AWS_HTTP_RESPONSE_OPTIONS_INIT                                                                                 \
+    { .self_size = sizeof(struct aws_http_response_options), }
 
 AWS_EXTERN_C_BEGIN
 
@@ -333,11 +389,12 @@ AWS_HTTP_API
 struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http_request_options *options);
 
 /**
- * Create a stream, with a server connection receiving and responding to a request.
- * aws_http_stream_send_response() should be used to send a response.
+ * Configure a server connection's new "request handler" stream.
+ * This MUST be called from a server's on_incoming_request callback.
  */
 AWS_HTTP_API
-struct aws_http_stream *aws_http_stream_new_server_request_handler(
+int aws_http_stream_configure_server_request_handler(
+    struct aws_http_stream *stream,
     const struct aws_http_request_handler_options *options);
 
 /**
