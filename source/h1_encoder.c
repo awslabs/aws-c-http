@@ -24,17 +24,17 @@
 /**
  * Scan headers to detect errors and determine anything we'll need to know later (ex: total length).
  */
-static int s_scan_outgoing_headers(const struct aws_http_request *request, size_t *out_header_lines_len) {
+static int s_scan_outgoing_headers(const struct aws_http_message *message, size_t *out_header_lines_len) {
 
     size_t total = 0;
 
-    bool has_body_stream = aws_http_request_get_body_stream(request);
+    bool has_body_stream = aws_http_message_get_body_stream(message);
     bool has_body_headers = false;
 
-    const size_t num_headers = aws_http_request_get_header_count(request);
+    const size_t num_headers = aws_http_message_get_header_count(message);
     for (size_t i = 0; i < num_headers; ++i) {
         struct aws_http_header header;
-        aws_http_request_get_header(request, &header, i);
+        aws_http_message_get_header(message, &header, i);
 
         enum aws_http_header_name name_enum = aws_http_str_to_header_name(header.name);
         switch (name_enum) {
@@ -68,14 +68,14 @@ static int s_scan_outgoing_headers(const struct aws_http_request *request, size_
     return AWS_OP_SUCCESS;
 }
 
-static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_request *request) {
+static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_message *message) {
 
-    const size_t num_headers = aws_http_request_get_header_count(request);
+    const size_t num_headers = aws_http_message_get_header_count(message);
 
     bool wrote_all = true;
     for (size_t i = 0; i < num_headers; ++i) {
         struct aws_http_header header;
-        aws_http_request_get_header(request, &header, i);
+        aws_http_message_get_header(message, &header, i);
 
         /* header-line: "{name}: {value}\r\n" */
         wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.name);
@@ -91,21 +91,21 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_requ
 int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
-    const struct aws_http_request *request) {
+    const struct aws_http_message *request) {
 
     AWS_ZERO_STRUCT(*message);
 
-    message->body = aws_http_request_get_body_stream(request);
+    message->body = aws_http_message_get_body_stream(request);
 
     struct aws_byte_cursor method;
-    int err = aws_http_request_get_method(request, &method);
+    int err = aws_http_message_get_request_method(request, &method);
     if (err) {
         aws_raise_error(AWS_ERROR_HTTP_INVALID_METHOD);
         goto error;
     }
 
     struct aws_byte_cursor uri;
-    err = aws_http_request_get_path(request, &uri);
+    err = aws_http_message_get_request_path(request, &uri);
     if (err) {
         aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
         goto error;
@@ -175,13 +175,13 @@ int aws_h1_encoder_message_init_from_response(
     AWS_ZERO_STRUCT(*message);
 
     /* Until we write the aws_http_response class, interact with header functions via an aws_http_request */
-    struct aws_http_request *tmp_request = aws_http_request_new(allocator);
+    struct aws_http_message *tmp_request = aws_http_message_new_request(allocator);
     if (!tmp_request) {
         goto error;
     }
-    aws_http_request_set_body_stream(tmp_request, response->body_stream);
+    aws_http_message_set_body_stream(tmp_request, response->body_stream);
     for (size_t i = 0; i < response->num_headers; ++i) {
-        if (aws_http_request_add_header(tmp_request, response->header_array[i])) {
+        if (aws_http_message_add_header(tmp_request, response->header_array[i])) {
             goto error;
         }
     }
@@ -213,15 +213,15 @@ int aws_h1_encoder_message_init_from_response(
     }
 
     /* valid status must be three digital code, change it into byte_cursor */
-    /* reponse-line: "{version} {status} {status_text}\r\n" */
-    size_t reponse_line_len = 4; /* 2 spaces + "\r\n" */
-    err |= aws_add_size_checked(version.len, reponse_line_len, &reponse_line_len);
-    err |= aws_add_size_checked(status_code.len, reponse_line_len, &reponse_line_len);
-    err |= aws_add_size_checked(status_text.len, reponse_line_len, &reponse_line_len);
+    /* response-line: "{version} {status} {status_text}\r\n" */
+    size_t response_line_len = 4; /* 2 spaces + "\r\n" */
+    err |= aws_add_size_checked(version.len, response_line_len, &response_line_len);
+    err |= aws_add_size_checked(status_code.len, response_line_len, &response_line_len);
+    err |= aws_add_size_checked(status_text.len, response_line_len, &response_line_len);
 
     /* head-end: "\r\n" */
     size_t head_end_len = 2;
-    size_t head_total_len = reponse_line_len;
+    size_t head_total_len = response_line_len;
     err |= aws_add_size_checked(header_lines_len, head_total_len, &head_total_len);
     err |= aws_add_size_checked(head_end_len, head_total_len, &head_total_len);
     if (err) {
@@ -251,11 +251,11 @@ int aws_h1_encoder_message_init_from_response(
     AWS_ASSERT(wrote_all);
 
     /* Success! */
-    aws_http_request_destroy(tmp_request);
+    aws_http_message_destroy(tmp_request);
     return AWS_OP_SUCCESS;
 
 error:
-    aws_http_request_destroy(tmp_request);
+    aws_http_message_destroy(tmp_request);
     aws_h1_encoder_message_clean_up(message);
     return AWS_OP_ERR;
 }

@@ -59,7 +59,7 @@ struct elasticurl_ctx {
     size_t header_line_count;
     FILE *input_file;
     struct aws_input_stream *input_body;
-    struct aws_http_request *request;
+    struct aws_http_message *request;
     const char *signing_library_path;
     struct aws_shared_library signing_library;
     const char *signing_function_name;
@@ -373,26 +373,26 @@ static void s_on_stream_complete_fn(struct aws_http_stream *stream, int error_co
     aws_http_stream_release(stream);
 }
 
-static struct aws_http_request *s_build_http_request(struct elasticurl_ctx *app_ctx) {
-    struct aws_http_request *request = aws_http_request_new(app_ctx->allocator);
+static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_ctx) {
+    struct aws_http_message *request = aws_http_message_new_request(app_ctx->allocator);
     if (request == NULL) {
         fprintf(stderr, "failed to allocate request\n");
         exit(1);
     }
 
-    aws_http_request_set_method(request, aws_byte_cursor_from_c_str(app_ctx->verb));
-    aws_http_request_set_path(request, app_ctx->uri.path_and_query);
+    aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str(app_ctx->verb));
+    aws_http_message_set_request_path(request, app_ctx->uri.path_and_query);
     struct aws_http_header accept_header = {.name = aws_byte_cursor_from_c_str("accept"),
                                             .value = aws_byte_cursor_from_c_str("*/*")};
-    aws_http_request_add_header(request, accept_header);
+    aws_http_message_add_header(request, accept_header);
 
     struct aws_http_header host_header = {.name = aws_byte_cursor_from_c_str("host"), .value = app_ctx->uri.host_name};
-    aws_http_request_add_header(request, host_header);
+    aws_http_message_add_header(request, host_header);
 
     struct aws_http_header user_agent_header = {
         .name = aws_byte_cursor_from_c_str("user-agent"),
         .value = aws_byte_cursor_from_c_str("elasticurl 1.0, Powered by the AWS Common Runtime.")};
-    aws_http_request_add_header(request, user_agent_header);
+    aws_http_message_add_header(request, user_agent_header);
 
     if (app_ctx->input_body) {
         int64_t data_len = 0;
@@ -407,8 +407,8 @@ static struct aws_http_request *s_build_http_request(struct elasticurl_ctx *app_
             sprintf(content_length, "%" PRIi64, data_len);
             struct aws_http_header content_length_header = {.name = aws_byte_cursor_from_c_str("content-length"),
                                                             .value = aws_byte_cursor_from_c_str(content_length)};
-            aws_http_request_add_header(request, content_length_header);
-            aws_http_request_set_body_stream(request, app_ctx->input_body);
+            aws_http_message_add_header(request, content_length_header);
+            aws_http_message_set_body_stream(request, app_ctx->input_body);
         }
     }
 
@@ -424,7 +424,7 @@ static struct aws_http_request *s_build_http_request(struct elasticurl_ctx *app_
         struct aws_http_header custom_header = {
             .name = aws_byte_cursor_from_array(app_ctx->header_lines[i], delimiter - app_ctx->header_lines[i]),
             .value = aws_byte_cursor_from_c_str(delimiter + 1)};
-        aws_http_request_add_header(request, custom_header);
+        aws_http_message_add_header(request, custom_header);
     }
 
     return request;
@@ -451,13 +451,13 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
         }
     }
 
-    size_t final_header_count = aws_http_request_get_header_count(app_ctx->request);
+    size_t final_header_count = aws_http_message_get_header_count(app_ctx->request);
 
     struct aws_http_header headers[20];
     AWS_ASSERT(final_header_count <= AWS_ARRAY_SIZE(headers));
     AWS_ZERO_ARRAY(headers);
     for (size_t i = 0; i < final_header_count; ++i) {
-        aws_http_request_get_header(app_ctx->request, &headers[i], i);
+        aws_http_message_get_header(app_ctx->request, &headers[i], i);
     }
 
     struct aws_http_request_options final_request;
@@ -693,7 +693,7 @@ int main(int argc, char **argv) {
 
     aws_uri_clean_up(&app_ctx.uri);
 
-    aws_http_request_destroy(app_ctx.request);
+    aws_http_message_destroy(app_ctx.request);
 
     aws_shared_library_clean_up(&app_ctx.signing_library);
 

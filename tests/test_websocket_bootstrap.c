@@ -85,7 +85,7 @@ static struct tester {
     struct aws_allocator *alloc;
     enum boot_step fail_at_step;
 
-    struct aws_http_request *handshake_request;
+    struct aws_http_message *handshake_request;
     const struct aws_http_header *handshake_response_headers;
     size_t num_handshake_response_headers;
 
@@ -190,10 +190,10 @@ static bool s_headers_eq(
     return true;
 }
 
-static bool s_request_eq(const struct aws_http_request *request_a, const struct aws_http_request *request_b) {
+static bool s_request_eq(const struct aws_http_message *request_a, const struct aws_http_message *request_b) {
 
-    const size_t num_headers_a = aws_http_request_get_header_count(request_a);
-    const size_t num_headers_b = aws_http_request_get_header_count(request_b);
+    const size_t num_headers_a = aws_http_message_get_header_count(request_a);
+    const size_t num_headers_b = aws_http_message_get_header_count(request_b);
 
     if (num_headers_a != num_headers_b) {
         return false;
@@ -201,13 +201,13 @@ static bool s_request_eq(const struct aws_http_request *request_a, const struct 
 
     for (size_t a_i = 0; a_i < num_headers_a; ++a_i) {
         struct aws_http_header a;
-        aws_http_request_get_header(request_a, &a, a_i);
+        aws_http_message_get_header(request_a, &a, a_i);
 
         bool found_match = false;
 
         for (size_t b_i = 0; b_i < num_headers_b; ++b_i) {
             struct aws_http_header b;
-            aws_http_request_get_header(request_b, &b, b_i);
+            aws_http_message_get_header(request_b, &b, b_i);
 
             if (aws_byte_cursor_eq_ignore_case(&a.name, &b.name) &&
                 aws_byte_cursor_eq_ignore_case(&a.value, &b.value)) {
@@ -360,7 +360,7 @@ static void s_on_websocket_setup(
     s_tester.websocket_setup_error_code = error_code;
 
     /* Don't need the request anymore */
-    aws_http_request_destroy(s_tester.handshake_request);
+    aws_http_message_destroy(s_tester.handshake_request);
     s_tester.handshake_request = NULL;
 }
 
@@ -384,7 +384,7 @@ static int s_drive_websocket_connect(int *out_error_code) {
     static struct aws_byte_cursor path = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("/");
     static const struct aws_byte_cursor host = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("server.example.com");
 
-    s_tester.handshake_request = aws_http_request_new_websocket_handshake(s_tester.alloc, path, host);
+    s_tester.handshake_request = aws_http_message_new_websocket_handshake_request(s_tester.alloc, path, host);
     if (!s_tester.handshake_request) {
         goto finishing_checks;
     }
@@ -478,7 +478,7 @@ finishing_checks:
 
     /* Free the request */
     if (s_tester.handshake_request) {
-        aws_http_request_destroy(s_tester.handshake_request);
+        aws_http_message_destroy(s_tester.handshake_request);
         s_tester.handshake_request = NULL;
     }
 

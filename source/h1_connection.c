@@ -435,9 +435,9 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
 
     /* Success! */
     struct aws_byte_cursor method;
-    aws_http_request_get_method(options->request, &method);
+    aws_http_message_get_request_method(options->request, &method);
     struct aws_byte_cursor path;
-    aws_http_request_get_path(options->request, &path);
+    aws_http_message_get_request_path(options->request, &path);
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_STREAM,
         "id=%p: Created client request on connection=%p: " PRInSTR " " PRInSTR " " PRInSTR,

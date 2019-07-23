@@ -72,7 +72,7 @@ struct aws_websocket_client_bootstrap {
     aws_websocket_on_incoming_frame_complete_fn *websocket_frame_complete_callback;
 
     /* Handshake request data */
-    struct aws_http_request *handshake_request;
+    struct aws_http_message *handshake_request;
 
     /* Handshake response data */
     int response_status;
@@ -106,7 +106,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
 
     /* Validate options */
     struct aws_byte_cursor path;
-    aws_http_request_get_path(options->handshake_request, &path);
+    aws_http_message_get_request_path(options->handshake_request, &path);
     if (!options->allocator || !options->bootstrap || !options->socket_options || !options->host.len || !path.len ||
         !options->on_connection_setup) {
 
@@ -115,7 +115,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     }
 
     struct aws_byte_cursor method;
-    aws_http_request_get_method(options->handshake_request, &method);
+    aws_http_message_get_request_method(options->handshake_request, &method);
     if (aws_http_str_to_method(method) != AWS_HTTP_METHOD_GET) {
 
         AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET_SETUP, "id=static: Websocket request must have method be 'GET'.");
@@ -164,7 +164,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
 
     /* Pre-allocate space for response headers */
     /* Values are just guesses */
-    size_t estimated_response_headers = aws_http_request_get_header_count(ws_bootstrap->handshake_request) + 10;
+    size_t estimated_response_headers = aws_http_message_get_header_count(ws_bootstrap->handshake_request) + 10;
     size_t estimated_response_header_length = 64;
 
     int err = aws_array_list_init_dynamic(
