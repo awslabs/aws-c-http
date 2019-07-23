@@ -92,6 +92,7 @@ TEST_CASE(message_request_method) {
 }
 
 TEST_CASE(message_response_status) {
+    (void)ctx;
     struct aws_http_message *response = aws_http_message_new_response(allocator);
     ASSERT_NOT_NULL(response);
 
