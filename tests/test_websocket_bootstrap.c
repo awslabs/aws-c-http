@@ -610,8 +610,8 @@ TEST_CASE(websocket_handshake_key_max_length) {
     (void)ctx;
 
     uint8_t small_buf_storage[AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH];
-    struct aws_byte_buf small_buf = aws_byte_buf_from_empty_array(small_buf_storage, sizeof(small_buf_storage));
     for (size_t i = 0; i < 100; ++i) {
+        struct aws_byte_buf small_buf = aws_byte_buf_from_empty_array(small_buf_storage, sizeof(small_buf_storage));
         ASSERT_SUCCESS(aws_websocket_random_handshake_key(&small_buf));
     }
 
