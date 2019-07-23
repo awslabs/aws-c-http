@@ -52,7 +52,7 @@ struct aws_http_stream {
 
     union {
         struct aws_http_stream_client_data {
-            struct aws_http_request *request;
+            struct aws_http_message *request;
             int response_status;
         } client;
         struct aws_http_stream_server_data {

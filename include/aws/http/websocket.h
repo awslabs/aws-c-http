@@ -18,7 +18,7 @@
 #include <aws/http/http.h>
 
 struct aws_http_header;
-struct aws_http_request;
+struct aws_http_message;
 
 /* TODO: Document lifetime stuff */
 /* TODO: Document CLOSE frame behavior (when auto-sent during close, when auto-closed) */
@@ -173,7 +173,7 @@ struct aws_websocket_client_connection_options {
     /**
      * Required.
      * The request must outlive the handshake process (it will be safe to release in on_connection_setup())
-     * Suggestion: create via aws_http_request_new_websocket_handshake()
+     * Suggestion: create via aws_http_message_new_websocket_handshake_request()
      *
      * The method MUST be set to GET.
      * The following headers are required (replace values in []):
@@ -186,7 +186,7 @@ struct aws_websocket_client_connection_options {
      *
      * Sec-Websocket-Key should be a random 16 bytes value, Base64 encoded.
      */
-    struct aws_http_request *handshake_request;
+    struct aws_http_message *handshake_request;
 
     /**
      * Initial window size for websocket.
@@ -436,7 +436,7 @@ int aws_websocket_random_handshake_key(struct aws_byte_buf *dst);
  * Sec-WebSocket-Version: 13
  */
 AWS_HTTP_API
-struct aws_http_request *aws_http_request_new_websocket_handshake(
+struct aws_http_message *aws_http_message_new_websocket_handshake_request(
     struct aws_allocator *allocator,
     struct aws_byte_cursor path,
     struct aws_byte_cursor host);

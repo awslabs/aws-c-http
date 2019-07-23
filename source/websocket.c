@@ -1638,7 +1638,7 @@ int aws_websocket_random_handshake_key(struct aws_byte_buf *dst) {
     return AWS_OP_SUCCESS;
 }
 
-struct aws_http_request *aws_http_request_new_websocket_handshake(
+struct aws_http_message *aws_http_message_new_websocket_handshake_request(
     struct aws_allocator *allocator,
     struct aws_byte_cursor path,
     struct aws_byte_cursor host) {
@@ -1647,17 +1647,17 @@ struct aws_http_request *aws_http_request_new_websocket_handshake(
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&path))
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&host))
 
-    struct aws_http_request *request = aws_http_request_new(allocator);
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
     if (!request) {
         goto error;
     }
 
-    int err = aws_http_request_set_method(request, aws_http_method_get);
+    int err = aws_http_message_set_request_method(request, aws_http_method_get);
     if (err) {
         goto error;
     }
 
-    err = aws_http_request_set_path(request, path);
+    err = aws_http_message_set_request_path(request, path);
     if (err) {
         goto error;
     }
@@ -1693,7 +1693,7 @@ struct aws_http_request *aws_http_request_new_websocket_handshake(
     };
 
     for (size_t i = 0; i < AWS_ARRAY_SIZE(required_headers); ++i) {
-        err = aws_http_request_add_header(request, required_headers[i]);
+        err = aws_http_message_add_header(request, required_headers[i]);
         if (err) {
             goto error;
         }
@@ -1702,6 +1702,6 @@ struct aws_http_request *aws_http_request_new_websocket_handshake(
     return request;
 
 error:
-    aws_http_request_destroy(request);
+    aws_http_message_destroy(request);
     return NULL;
 }

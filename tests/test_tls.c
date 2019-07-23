@@ -167,16 +167,16 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
     ASSERT_INT_EQUALS(0, test.wait_result);
     ASSERT_NOT_NULL(test.client_connection);
 
-    struct aws_http_request *request = aws_http_request_new(allocator);
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
-    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_http_method_get));
-    ASSERT_SUCCESS(aws_http_request_set_path(request, *aws_uri_path_and_query(&uri)));
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_http_method_get));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, *aws_uri_path_and_query(&uri)));
 
     struct aws_http_header header_host = {
         .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
         .value = *aws_uri_host_name(&uri),
     };
-    ASSERT_SUCCESS(aws_http_request_add_header(request, header_host));
+    ASSERT_SUCCESS(aws_http_message_add_header(request, header_host));
 
     struct aws_http_request_options req_options = AWS_HTTP_REQUEST_OPTIONS_INIT;
     req_options.client_connection = test.client_connection;
@@ -192,7 +192,7 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
 
     ASSERT_INT_EQUALS(14428801, test.body_size);
 
-    aws_http_request_destroy(request);
+    aws_http_message_destroy(request);
     aws_http_stream_release(test.stream);
     test.stream = NULL;
 
