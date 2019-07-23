@@ -15,6 +15,7 @@
 
 #include <aws/http/proxy_connection.h>
 
+#include <aws/common/encoding.h>
 #include <aws/common/string.h>
 
 #ifdef NEVER
@@ -317,14 +318,47 @@ AWS_STATIC_STRING_FROM_LITERAL(s_proxy_authorization_header_name, "Proxy-Authori
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_authorization_header_basic_prefix, "Basic ");
 
 static int s_add_basic_proxy_authentication_header(struct aws_http_request *request, struct aws_http_proxy_user_data *proxy_user_data) {
+    struct aws_byte_buf base64_input_value;
+    AWS_ZERO_STRUCT(base64_input_value);
+
     struct aws_byte_buf header_value;
     AWS_ZERO_STRUCT(header_value);
 
-    if (aws_byte_buf_init(&header_value, proxy_user_data->allocator, DEFAULT_BASIC_AUTH_HEADER_VALUE_SIZE)) {
-        return AWS_OP_ERR;
+    int result = AWS_OP_ERR;
+
+    if (aws_byte_buf_init(&base64_input_value, proxy_user_data->allocator, proxy_user_data->username->len + proxy_user_data->password->len + 1)) {
+        goto done;
     }
 
-    int result = AWS_OP_ERR;
+    struct aws_byte_cursor username_cursor = aws_byte_cursor_from_string(proxy_user_data->username);
+    if (aws_byte_buf_append(&base64_input_value, &username_cursor)) {
+        goto done;
+    }
+
+    struct aws_byte_cursor colon_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(":");
+    if (aws_byte_buf_append(&base64_input_value, &colon_cursor)) {
+        goto done;
+    }
+
+    struct aws_byte_cursor password_cursor = aws_byte_cursor_from_string(proxy_user_data->password);
+    if (aws_byte_buf_append(&base64_input_value, &password_cursor)) {
+        goto done;
+    }
+
+    struct aws_byte_cursor base64_source_cursor = aws_byte_cursor_from_array(base64_input_value.buffer, base64_input_value.len);
+    if (aws_base64_encode(&base64_source_cursor, &header_value)) {
+        goto done;
+    }
+
+    size_t required_size = 0;
+    if (aws_base64_compute_encoded_len(base64_source_cursor.len, &required_size)) {
+        goto done;
+    }
+
+    required_size += s_proxy_authorization_header_basic_prefix->len + 1;
+    if (aws_byte_buf_init(&header_value, proxy_user_data->allocator, required_size)) {
+        goto done;
+    }
 
     struct aws_byte_cursor basic_prefix = aws_byte_cursor_from_string(s_proxy_authorization_header_basic_prefix);
     if (aws_byte_buf_append_dynamic(&header_value, &basic_prefix)) {
@@ -345,6 +379,7 @@ static int s_add_basic_proxy_authentication_header(struct aws_http_request *requ
 done:
 
     aws_byte_buf_clean_up(&header_value);
+    aws_byte_buf_clean_up(&base64_input_value);
 
     return result;
 }
@@ -363,7 +398,7 @@ static int s_proxy_http_request_transform(struct aws_http_request *request,
         goto done;
     }
 
-    ??
+    result = AWS_OP_SUCCESS;
 
 done:
 
