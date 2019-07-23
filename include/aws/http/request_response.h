@@ -238,19 +238,6 @@ struct aws_http_request_handler_options {
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
     { .self_size = sizeof(struct aws_http_request_handler_options), }
 
-struct aws_http_response_options {
-    /* Set to sizeof() this struct, used for versioning. */
-    size_t self_size;
-
-    int status;
-    const struct aws_http_header *header_array;
-    size_t num_headers;
-    struct aws_input_stream *body_stream;
-};
-
-#define AWS_HTTP_RESPONSE_OPTIONS_INIT                                                                                 \
-    { .self_size = sizeof(struct aws_http_response_options), }
-
 AWS_EXTERN_C_BEGIN
 
 /**
@@ -437,9 +424,12 @@ int aws_http_stream_get_incoming_request_method(
 AWS_HTTP_API
 int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *stream, struct aws_byte_cursor *out_uri);
 
-/* only callable from "request handler" streams */
+/**
+ * Send response (only callable from "request handler" streams)
+ * The response object must stay alive at least until the stream's on_complete is called.
+ */
 AWS_HTTP_API
-int aws_http_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options);
+int aws_http_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response);
 
 /**
  * Manually issue a window update.

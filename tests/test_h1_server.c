@@ -435,6 +435,25 @@ static int s_check_written_message(struct tester *tester, const char *expected) 
     return AWS_OP_SUCCESS;
 }
 
+/* Response creation helper function */
+static int s_create_response(
+    struct aws_http_message **out_response,
+    int status_code,
+    const struct aws_http_header *header_array,
+    size_t num_headers,
+    struct aws_input_stream *body) {
+
+    struct aws_http_message *response = aws_http_message_new_response(s_tester.alloc);
+    ASSERT_NOT_NULL(response);
+    ASSERT_SUCCESS(aws_http_message_set_response_status(response, status_code));
+    if (num_headers) {
+        ASSERT_SUCCESS(aws_http_message_add_header_array(response, header_array, num_headers));
+    }
+    aws_http_message_set_body_stream(response, body);
+    *out_response = response;
+    return AWS_OP_SUCCESS;
+}
+
 TEST_CASE(h1_server_send_1line_response) {
 
     (void)ctx;
@@ -449,10 +468,9 @@ TEST_CASE(h1_server_send_1line_response) {
 
     struct tester_request request = s_tester.requests[0];
 
-    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
-    opt.status = 204;
-    opt.num_headers = 0;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request.request_handler, &opt));
+    struct aws_http_message *response;
+    ASSERT_SUCCESS(s_create_response(&response, 204, NULL, 0, NULL));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request.request_handler, response));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     const char *expected = "HTTP/1.1 204 No Content\r\n"
@@ -460,6 +478,7 @@ TEST_CASE(h1_server_send_1line_response) {
 
     ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
 
+    aws_http_message_destroy(response);
     ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
@@ -479,9 +498,6 @@ TEST_CASE(h1_server_send_response_headers) {
     struct tester_request request = s_tester.requests[0];
 
     /* send response */
-    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
-    opt.status = 308;
-    opt.num_headers = 2;
     struct aws_http_header headers[] = {
         {
             .name = aws_byte_cursor_from_c_str("Date"),
@@ -492,8 +508,9 @@ TEST_CASE(h1_server_send_response_headers) {
             .value = aws_byte_cursor_from_c_str("/index.html"),
         },
     };
-    opt.header_array = headers;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request.request_handler, &opt));
+    struct aws_http_message *response;
+    ASSERT_SUCCESS(s_create_response(&response, 308, headers, AWS_ARRAY_SIZE(headers), NULL));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request.request_handler, response));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     const char *expected = "HTTP/1.1 308 Permanent Redirect\r\n"
@@ -503,6 +520,7 @@ TEST_CASE(h1_server_send_response_headers) {
 
     ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
 
+    aws_http_message_destroy(response);
     ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
@@ -525,8 +543,6 @@ TEST_CASE(h1_server_send_response_body) {
     struct aws_byte_cursor body_src = aws_byte_cursor_from_c_str("write more tests");
     request->response_body = aws_input_stream_new_from_cursor(allocator, &body_src);
     ASSERT_NOT_NULL(request->response_body);
-    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
-    opt.status = 308;
     struct aws_http_header headers[] = {
         {
             .name = aws_byte_cursor_from_c_str("Date"),
@@ -541,10 +557,10 @@ TEST_CASE(h1_server_send_response_body) {
             .value = aws_byte_cursor_from_c_str("16"),
         },
     };
-    opt.num_headers = AWS_ARRAY_SIZE(headers);
-    opt.header_array = headers;
-    opt.body_stream = request->response_body;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, &opt));
+    struct aws_http_message *response;
+    ASSERT_SUCCESS(s_create_response(&response, 308, headers, AWS_ARRAY_SIZE(headers), request->response_body));
+
+    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, response));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     const char *expected = "HTTP/1.1 308 Permanent Redirect\r\n"
@@ -556,6 +572,7 @@ TEST_CASE(h1_server_send_response_body) {
 
     ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
 
+    aws_http_message_destroy(response);
     ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
@@ -585,31 +602,30 @@ TEST_CASE(h1_server_send_multiple_responses_in_order) {
     struct aws_byte_cursor body_src = aws_byte_cursor_from_c_str("response1");
     request1->response_body = aws_input_stream_new_from_cursor(allocator, &body_src);
     ASSERT_NOT_NULL(request1->response_body);
-    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
-    opt.status = 200;
     struct aws_http_header headers[] = {
         {
             .name = aws_byte_cursor_from_c_str("Content-Length"),
             .value = aws_byte_cursor_from_c_str("9"),
         },
     };
-    opt.num_headers = AWS_ARRAY_SIZE(headers);
-    opt.header_array = headers;
-    opt.body_stream = request1->response_body;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request1->request_handler, &opt));
+    struct aws_http_message *response1;
+    ASSERT_SUCCESS(s_create_response(&response1, 200, headers, AWS_ARRAY_SIZE(headers), request1->response_body));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request1->request_handler, response1));
 
     /* response2 */
     body_src = aws_byte_cursor_from_c_str("response2");
     request2->response_body = aws_input_stream_new_from_cursor(allocator, &body_src);
     ASSERT_NOT_NULL(request2->response_body);
-    opt.body_stream = request2->response_body;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request2->request_handler, &opt));
+    struct aws_http_message *response2;
+    ASSERT_SUCCESS(s_create_response(&response2, 200, headers, AWS_ARRAY_SIZE(headers), request2->response_body));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request2->request_handler, response2));
     /* response3 */
     body_src = aws_byte_cursor_from_c_str("response3");
     request3->response_body = aws_input_stream_new_from_cursor(allocator, &body_src);
     ASSERT_NOT_NULL(request3->response_body);
-    opt.body_stream = request3->response_body;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request3->request_handler, &opt));
+    struct aws_http_message *response3;
+    ASSERT_SUCCESS(s_create_response(&response3, 200, headers, AWS_ARRAY_SIZE(headers), request3->response_body));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request3->request_handler, response3));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* Check the result */
@@ -627,6 +643,10 @@ TEST_CASE(h1_server_send_multiple_responses_in_order) {
                            "response3";
 
     ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+
+    aws_http_message_destroy(response1);
+    aws_http_message_destroy(response2);
+    aws_http_message_destroy(response3);
 
     ASSERT_SUCCESS(s_server_tester_clean_up());
 
@@ -671,31 +691,30 @@ TEST_CASE(h1_server_send_multiple_responses_out_of_order) {
     struct aws_byte_cursor body_src = aws_byte_cursor_from_c_str("response1");
     request1->response_body = aws_input_stream_new_from_cursor(allocator, &body_src);
     ASSERT_NOT_NULL(request1->response_body);
-    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
-    opt.status = 200;
     struct aws_http_header headers[] = {
         {
             .name = aws_byte_cursor_from_c_str("Content-Length"),
             .value = aws_byte_cursor_from_c_str("9"),
         },
     };
-    opt.num_headers = AWS_ARRAY_SIZE(headers);
-    opt.header_array = headers;
-    opt.body_stream = request1->response_body;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request1->request_handler, &opt));
+    struct aws_http_message *response1;
+    ASSERT_SUCCESS(s_create_response(&response1, 200, headers, AWS_ARRAY_SIZE(headers), request1->response_body));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request1->request_handler, response1));
 
     /* response3 */
     body_src = aws_byte_cursor_from_c_str("response3");
     request3->response_body = aws_input_stream_new_from_cursor(allocator, &body_src);
     ASSERT_NOT_NULL(request3->response_body);
-    opt.body_stream = request3->response_body;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request3->request_handler, &opt));
+    struct aws_http_message *response3;
+    ASSERT_SUCCESS(s_create_response(&response3, 200, headers, AWS_ARRAY_SIZE(headers), request3->response_body));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request3->request_handler, response3));
     /* response2 */
     body_src = aws_byte_cursor_from_c_str("response2");
     request2->response_body = aws_input_stream_new_from_cursor(allocator, &body_src);
     ASSERT_NOT_NULL(request2->response_body);
-    opt.body_stream = request2->response_body;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request2->request_handler, &opt));
+    struct aws_http_message *response2;
+    ASSERT_SUCCESS(s_create_response(&response2, 200, headers, AWS_ARRAY_SIZE(headers), request2->response_body));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request2->request_handler, response2));
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
@@ -714,6 +733,10 @@ TEST_CASE(h1_server_send_multiple_responses_out_of_order) {
                            "response3";
 
     ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+
+    aws_http_message_destroy(response1);
+    aws_http_message_destroy(response2);
+    aws_http_message_destroy(response3);
 
     ASSERT_SUCCESS(s_server_tester_clean_up());
 
@@ -752,25 +775,23 @@ TEST_CASE(h1_server_send_multiple_responses_out_of_order_only_one_sent) {
     struct aws_byte_cursor body_src = aws_byte_cursor_from_c_str("response1");
     request1->response_body = aws_input_stream_new_from_cursor(allocator, &body_src);
     ASSERT_NOT_NULL(request1->response_body);
-    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
-    opt.status = 200;
     struct aws_http_header headers[] = {
         {
             .name = aws_byte_cursor_from_c_str("Content-Length"),
             .value = aws_byte_cursor_from_c_str("9"),
         },
     };
-    opt.num_headers = AWS_ARRAY_SIZE(headers);
-    opt.header_array = headers;
-    opt.body_stream = request1->response_body;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request1->request_handler, &opt));
+    struct aws_http_message *response1;
+    ASSERT_SUCCESS(s_create_response(&response1, 200, headers, AWS_ARRAY_SIZE(headers), request1->response_body));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request1->request_handler, response1));
 
     /* response3 */
     body_src = aws_byte_cursor_from_c_str("response3");
     request3->response_body = aws_input_stream_new_from_cursor(allocator, &body_src);
     ASSERT_NOT_NULL(request3->response_body);
-    opt.body_stream = request3->response_body;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request3->request_handler, &opt));
+    struct aws_http_message *response3;
+    ASSERT_SUCCESS(s_create_response(&response3, 200, headers, AWS_ARRAY_SIZE(headers), request1->response_body));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request3->request_handler, response3));
     /* no response2 */
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -782,6 +803,9 @@ TEST_CASE(h1_server_send_multiple_responses_out_of_order_only_one_sent) {
                            "response1";
 
     ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+
+    aws_http_message_destroy(response1);
+    aws_http_message_destroy(response3);
 
     ASSERT_SUCCESS(s_server_tester_clean_up());
 
@@ -809,10 +833,9 @@ TEST_CASE(h1_server_send_response_before_request_finished) {
     /* Only part 1 is sent and the response is made and sent */
     ASSERT_TRUE(s_tester.request_num == 1);
     struct tester_request *request = s_tester.requests;
-    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
-    opt.status = 200;
-    opt.num_headers = 0;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, &opt));
+    struct aws_http_message *response;
+    ASSERT_SUCCESS(s_create_response(&response, 200, NULL, 0, NULL));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, response));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* stream is not completed */
     ASSERT_TRUE(request->on_complete_cb_count == 0);
@@ -844,6 +867,7 @@ TEST_CASE(h1_server_send_response_before_request_finished) {
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request->method, "GET"));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request->uri, "/"));
     /* clean up */
+    aws_http_message_destroy(response);
     ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
@@ -933,12 +957,9 @@ TEST_CASE(h1_server_send_response_large_body) {
         },
     };
 
-    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
-    opt.status = 200;
-    opt.num_headers = AWS_ARRAY_SIZE(headers);
-    opt.header_array = headers;
-    opt.body_stream = request->response_body;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, &opt));
+    struct aws_http_message *response;
+    ASSERT_SUCCESS(s_create_response(&response, 200, headers, AWS_ARRAY_SIZE(headers), request->response_body));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, response));
 
     const char *expected_head_fmt = "HTTP/1.1 200 OK\r\n"
                                     "Content-Length: %zu\r\n"
@@ -958,6 +979,7 @@ TEST_CASE(h1_server_send_response_large_body) {
     ASSERT_TRUE(num_io_messages > 1);
 
     ASSERT_SUCCESS(s_server_tester_clean_up());
+    aws_http_message_destroy(response);
     aws_byte_buf_clean_up(&body_buf);
     aws_byte_buf_clean_up(&expected_buf);
     return AWS_OP_SUCCESS;
@@ -1011,11 +1033,9 @@ TEST_CASE(h1_server_send_response_large_head) {
     ASSERT_TRUE(aws_byte_buf_write(&expected, (uint8_t *)"\r\n", 2));
 
     /* sending response */
-    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
-    opt.status = 200;
-    opt.num_headers = num_headers;
-    opt.header_array = headers;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, &opt));
+    struct aws_http_message *response;
+    ASSERT_SUCCESS(s_create_response(&response, 200, headers, num_headers, NULL));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, response));
 
     /* check result */
     size_t num_io_messages;
@@ -1024,6 +1044,7 @@ TEST_CASE(h1_server_send_response_large_head) {
     ASSERT_TRUE(num_io_messages > 1);
 
     ASSERT_SUCCESS(s_server_tester_clean_up());
+    aws_http_message_destroy(response);
     aws_byte_buf_clean_up(&expected);
     return AWS_OP_SUCCESS;
 }
@@ -1189,6 +1210,7 @@ static int s_error_tester_init(struct aws_allocator *alloc, struct error_from_ca
     aws_http_library_init(alloc);
 
     tester->alloc = alloc;
+    s_tester.alloc = alloc;
 
     tester->request_num = 0;
     tester->outgoing_body_status.is_valid = true;
@@ -1280,8 +1302,6 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
     struct tester_request *request = error_tester.requests;
 
     /* send response */
-    struct aws_http_response_options opt = AWS_HTTP_RESPONSE_OPTIONS_INIT;
-
     struct aws_http_header headers[] = {
         {
             .name = aws_byte_cursor_from_c_str("Content-Length"),
@@ -1295,11 +1315,10 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
         .vtable = &s_error_from_outgoing_body_vtable,
     };
 
-    opt.status = 200;
-    opt.num_headers = AWS_ARRAY_SIZE(headers);
-    opt.header_array = headers;
-    opt.body_stream = &error_from_outgoing_body_stream;
-    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, &opt));
+    struct aws_http_message *response;
+    ASSERT_SUCCESS(
+        s_create_response(&response, 200, headers, AWS_ARRAY_SIZE(headers), &error_from_outgoing_body_stream));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, response));
     testing_channel_drain_queued_tasks(&error_tester.testing_channel);
     /* check that callbacks were invoked before error_at, but not after */
     for (int i = 0; i < REQUEST_HANDLER_CALLBACK_COMPLETE; ++i) {
@@ -1314,6 +1333,7 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
     ASSERT_INT_EQUALS(1, error_tester.callback_counts[REQUEST_HANDLER_CALLBACK_COMPLETE]);
     ASSERT_INT_EQUALS(ERROR_FROM_CALLBACK_ERROR_CODE, error_tester.on_complete_error_code);
 
+    aws_http_message_destroy(response);
     ASSERT_SUCCESS(s_server_error_tester_clean_up(&error_tester));
     return AWS_OP_SUCCESS;
 }

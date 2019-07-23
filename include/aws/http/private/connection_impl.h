@@ -24,16 +24,16 @@
 #include <aws/common/atomics.h>
 #include <aws/io/channel.h>
 
+struct aws_http_message;
 struct aws_http_request_options;
 struct aws_http_request_handler_options;
 struct aws_http_stream;
-struct aws_http_response_options;
 
 struct aws_http_connection_vtable {
     struct aws_channel_handler_vtable channel_handler_vtable;
 
     struct aws_http_stream *(*new_client_request_stream)(const struct aws_http_request_options *options);
-    int (*stream_send_response)(struct aws_http_stream *stream, const struct aws_http_response_options *options);
+    int (*stream_send_response)(struct aws_http_stream *stream, struct aws_http_message *response);
     void (*close)(struct aws_http_connection *connection);
     bool (*is_open)(const struct aws_http_connection *connection);
     void (*update_window)(struct aws_http_connection *connection, size_t increment_size);
