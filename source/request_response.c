@@ -416,7 +416,10 @@ int aws_http_message_get_header(
 }
 
 struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http_request_options *options) {
-    if (!options || options->self_size == 0 || !options->client_connection || !options->request) {
+    AWS_PRECONDITION(options);
+    if (options->self_size == 0 || !options->client_connection || !options->request ||
+        !aws_http_message_is_request(options->request)) {
+
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Cannot create client request, options are invalid.",
@@ -468,6 +471,7 @@ int aws_http_stream_configure_server_request_handler(
 int aws_http_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response) {
     AWS_PRECONDITION(stream);
     AWS_PRECONDITION(response);
+    AWS_PRECONDITION(aws_http_message_is_response(response));
     return stream->owning_connection->vtable->stream_send_response(stream, response);
 }
 
