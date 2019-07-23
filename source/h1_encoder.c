@@ -170,44 +170,34 @@ error:
 int aws_h1_encoder_message_init_from_response(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
-    const struct aws_http_response_options *response) {
+    const struct aws_http_message *response) {
 
     AWS_ZERO_STRUCT(*message);
 
-    /* Until we write the aws_http_response class, interact with header functions via an aws_http_request */
-    struct aws_http_message *tmp_request = aws_http_message_new_request(allocator);
-    if (!tmp_request) {
-        goto error;
-    }
-    aws_http_message_set_body_stream(tmp_request, response->body_stream);
-    for (size_t i = 0; i < response->num_headers; ++i) {
-        if (aws_http_message_add_header(tmp_request, response->header_array[i])) {
-            goto error;
-        }
-    }
-
-    message->body = response->body_stream;
+    message->body = aws_http_message_get_body_stream(response);
 
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
 
-    /* Status code must fit in 3 digits */
-    if (response->status < 0 || response->status > 999) {
-        aws_raise_error(AWS_ERROR_HTTP_INVALID_STATUS_CODE);
-        goto error;
+    int status_int;
+    int err = aws_http_message_get_response_status(response, &status_int);
+    if (err) {
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_STATUS_CODE);
     }
 
+    /* Status code must fit in 3 digits */
+    AWS_ASSERT(status_int >= 0 && status_int <= 999); /* aws_http_message should have already checked this */
     char status_code_str[4] = "XXX";
-    snprintf(status_code_str, sizeof(status_code_str), "%03d", response->status);
+    snprintf(status_code_str, sizeof(status_code_str), "%03d", status_int);
     struct aws_byte_cursor status_code = aws_byte_cursor_from_c_str(status_code_str);
 
-    struct aws_byte_cursor status_text = aws_byte_cursor_from_c_str(aws_http_status_text(response->status));
+    struct aws_byte_cursor status_text = aws_byte_cursor_from_c_str(aws_http_status_text(status_int));
 
     /**
      * Calculate total size needed for outgoing_head_buffer, then write to buffer.
      */
 
     size_t header_lines_len;
-    int err = s_scan_outgoing_headers(tmp_request, &header_lines_len);
+    err = s_scan_outgoing_headers(response, &header_lines_len);
     if (err) {
         goto error;
     }
@@ -243,7 +233,7 @@ int aws_h1_encoder_message_init_from_response(
     wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\r');
     wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\n');
 
-    s_write_headers(&message->outgoing_head_buf, tmp_request);
+    s_write_headers(&message->outgoing_head_buf, response);
 
     wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\r');
     wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\n');
@@ -251,11 +241,9 @@ int aws_h1_encoder_message_init_from_response(
     AWS_ASSERT(wrote_all);
 
     /* Success! */
-    aws_http_message_destroy(tmp_request);
     return AWS_OP_SUCCESS;
 
 error:
-    aws_http_message_destroy(tmp_request);
     aws_h1_encoder_message_clean_up(message);
     return AWS_OP_ERR;
 }

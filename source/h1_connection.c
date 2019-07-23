@@ -61,7 +61,7 @@ static size_t s_handler_initial_window_size(struct aws_channel_handler *handler)
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
 static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
-static int s_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options);
+static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response);
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
@@ -253,9 +253,9 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
     return !is_shutting_down;
 }
 
-static int s_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options) {
+static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response) {
     AWS_PRECONDITION(stream);
-    AWS_PRECONDITION(options);
+    AWS_PRECONDITION(response);
 
     int err;
     int send_err = AWS_ERROR_SUCCESS;
@@ -265,7 +265,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, const struct a
     /* Validate the response and cache info that encoder will eventually need.
      * The encoder_message object will be moved into the stream later while holding the lock */
     struct aws_h1_encoder_message encoder_message;
-    err = aws_h1_encoder_message_init_from_response(&encoder_message, stream->alloc, options);
+    err = aws_h1_encoder_message_init_from_response(&encoder_message, stream->alloc, response);
     if (err) {
         send_err = aws_last_error();
         goto response_error;

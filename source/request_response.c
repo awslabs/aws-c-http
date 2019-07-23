@@ -120,7 +120,6 @@ error:
 }
 
 static struct aws_http_message *s_message_new_common(struct aws_allocator *allocator) {
-    AWS_PRECONDITION(allocator);
     struct aws_http_message *message = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_message));
     if (!message) {
         goto error;
@@ -141,6 +140,8 @@ error:
 }
 
 struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allocator) {
+    AWS_PRECONDITION(allocator);
+
     struct aws_http_message *message = s_message_new_common(allocator);
     if (message) {
         message->request_data = &message->subclass_data.request;
@@ -149,6 +150,8 @@ struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allo
 }
 
 struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator) {
+    AWS_PRECONDITION(allocator);
+
     struct aws_http_message *message = s_message_new_common(allocator);
     if (message) {
         message->response_data = &message->subclass_data.response;
@@ -413,7 +416,10 @@ int aws_http_message_get_header(
 }
 
 struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http_request_options *options) {
-    if (!options || options->self_size == 0 || !options->client_connection || !options->request) {
+    AWS_PRECONDITION(options);
+    if (options->self_size == 0 || !options->client_connection || !options->request ||
+        !aws_http_message_is_request(options->request)) {
+
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Cannot create client request, options are invalid.",
@@ -462,18 +468,11 @@ int aws_http_stream_configure_server_request_handler(
     return stream->vtable->configure_server_request_handler(stream, options);
 }
 
-int aws_http_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options) {
-
+int aws_http_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response) {
     AWS_PRECONDITION(stream);
-    if (!options || options->self_size == 0) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Cannot send response, options are invalid.",
-            (void *)(stream ? stream->owning_connection : NULL));
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-    }
-
-    return stream->owning_connection->vtable->stream_send_response(stream, options);
+    AWS_PRECONDITION(response);
+    AWS_PRECONDITION(aws_http_message_is_response(response));
+    return stream->owning_connection->vtable->stream_send_response(stream, response);
 }
 
 void aws_http_stream_release(struct aws_http_stream *stream) {
