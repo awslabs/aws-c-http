@@ -18,7 +18,6 @@
 #include <aws/common/hash_table.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
-#include <aws/common/mutex.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
@@ -271,6 +270,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
             AWS_LS_HTTP_SERVER, "id=%p: Incoming connection failed. The server is shutting down.", (void *)server);
         error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
     }
+    /* no matter the server is shutting down or not, the channel is already set up, we need a ref_count to keep server alive */
     server->synced_data.ref_count++;
     err = aws_mutex_unlock(&server->synced_data.lock);
     AWS_FATAL_ASSERT(!err);
@@ -402,16 +402,13 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
         clean_up_server = true;
     }
     int remove_err = aws_hash_table_remove(&server->channel_to_connection_map, channel, &map_elem, &was_present);
-    if (!remove_err && was_present) {
-        struct aws_http_connection *connection = map_elem.value;
-        AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: Server connection shut down.", (void *)connection);
-    }
     err = aws_mutex_unlock(&server->synced_data.lock);
     AWS_FATAL_ASSERT(!err);
     /* END CRITICAL SECTION */
     /* Tell user about shutdown */
     if (!remove_err && was_present) {
         struct aws_http_connection *connection = map_elem.value;
+        AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: Server connection shut down.", (void *)connection);
         if (connection->server_data->on_shutdown) {
             connection->server_data->on_shutdown(connection, error_code, connection->server_data->connection_user_data);
         }
