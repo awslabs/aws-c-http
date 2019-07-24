@@ -1311,7 +1311,7 @@ static struct aws_h1_stream *new_server_request_handler_stream(struct h1_connect
 
     /* Connection must have an on_incoming_request callback. */
     connection->base.server_data->on_incoming_request(
-        &connection->base, &stream->base, connection->base.server_data->connection_user_data);
+        &connection->base, &stream->base, connection->base.user_data);
 
     /* The request handler must be configured in on_incoming_request
      * If not, raise an error */

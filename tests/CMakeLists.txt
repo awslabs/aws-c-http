@@ -214,8 +214,16 @@ add_test_case(h1_server_error_from_outgoing_body_callback_stops_sending)
 add_test_case(h1_server_close_from_off_thread_makes_not_open)
 add_test_case(h1_server_close_from_on_thread_makes_not_open)
 
-add_test_case(test_proxy_connection_setup_shutdown)
-add_test_case(test_https)
+add_test_case(test_http_proxy_connection_proxy_target)
+add_test_case(test_http_proxy_connection_real_target)
+add_test_case(test_http_proxy_connection_channel_failure)
+add_test_case(test_http_proxy_connection_connect_failure)
+add_test_case(test_http_proxy_connection_request_transform)
+
+#add_test_case(test_proxy_connection_setup_shutdown)
+#add_test_case(test_https)
+#add_test_case(test_http_proxy_connection_new_destroy)
+#add_test_case(test_http_proxy_connection_get)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})

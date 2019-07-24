@@ -38,6 +38,34 @@ typedef void(
 typedef void(
     aws_http_on_client_connection_shutdown_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
+enum aws_http_proxy_authentication_type {
+    AWS_HPAT_NONE,
+    AWS_HPAT_BASIC
+};
+
+struct aws_http_proxy_authentication_basic_options {
+    struct aws_byte_cursor user;
+    struct aws_byte_cursor password;
+};
+
+struct aws_http_proxy_authentication_options {
+    enum aws_http_proxy_authentication_type type;
+
+    union {
+        struct aws_http_proxy_authentication_basic_options basic_options;
+    } type_options;
+};
+
+struct aws_http_proxy_options {
+
+    struct aws_byte_cursor host;
+
+    uint16_t port;
+
+    struct aws_http_proxy_authentication_options auth;
+
+};
+
 /**
  * Options for creating an HTTP client connection.
  * Initialize with AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT to set default values.
@@ -84,6 +112,8 @@ struct aws_http_client_connection_options {
      * which must outlive the the connection.
      */
     struct aws_tls_connection_options *tls_options;
+
+    struct aws_http_proxy_options *proxy_options;
 
     /**
      * Optional.
