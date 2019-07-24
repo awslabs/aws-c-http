@@ -211,6 +211,11 @@ static bool s_tester_connection_shutdown_pred(void *user_data) {
             tester->server_connection_is_shutdown == tester->wait_server_connection_is_shutdown);
 }
 
+static bool s_tester_server_shutdown_pre(void *user_data) {
+    struct tester *tester = user_data;
+    return tester->wait_result || tester->server_is_shutdown;
+}
+
 static int s_tester_init(struct tester *tester, const struct tester_options *options) {
     AWS_ZERO_STRUCT(*tester);
 
@@ -416,10 +421,12 @@ static int s_test_connection_destroy_server_with_multiple_connections_existing(s
     client_options.user_data = &tester;
     client_options.on_setup = s_tester_on_client_connection_setup;
     client_options.on_shutdown = s_tester_on_client_connection_shutdown;
-    int more_connection_num = 1;
+    int more_connection_num = 3;
+    /* set waiting condition */
+    tester.wait_client_connection_num += more_connection_num;
+    tester.wait_server_connection_num += more_connection_num;
+    /* connect */
     for(int i = 0; i< more_connection_num; i++){
-        tester.wait_client_connection_num++;
-        tester.wait_server_connection_num++;
         aws_http_client_connect(&client_options);
     }
     /* wait for connections */
@@ -483,13 +490,12 @@ static int s_test_connection_server_shutting_down_new_connection_fail(struct aws
     
     ASSERT_SUCCESS(aws_mutex_init(&tester.wait_lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester.wait_cvar));
+    
     /* wait for all connections to be shut down */
     tester.wait_client_connection_is_shutdown = tester.client_connection_num;
     tester.wait_server_connection_is_shutdown = tester.server_connection_num;
-    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_server_shutdown_pre));
 
-    /* check the server is destroyed */
-    ASSERT_TRUE(tester.server_is_shutdown);
     /* release memory */
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
