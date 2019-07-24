@@ -18,6 +18,7 @@
 #include <aws/common/array_list.h>
 #include <aws/common/string.h>
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/server.h>
 #include <aws/io/logging.h>
 
 #if _MSC_VER
@@ -417,7 +418,8 @@ int aws_http_message_get_header(
 
 struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http_request_options *options) {
     AWS_PRECONDITION(options);
-    if (options->self_size == 0 || !options->client_connection || !options->request ||
+    if (options->self_size == 0 || !options->client_connection ||
+        !aws_http_connection_is_client(options->client_connection) || !options->request ||
         !aws_http_message_is_request(options->request)) {
 
         AWS_LOGF_ERROR(
@@ -440,32 +442,22 @@ struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http
     return stream;
 }
 
-int aws_http_stream_configure_server_request_handler(
-    struct aws_http_stream *stream,
+struct aws_http_stream *aws_http_stream_new_server_request_handler(
     const struct aws_http_request_handler_options *options) {
 
-    AWS_PRECONDITION(stream);
-    if (!options || options->self_size == 0) {
+    AWS_PRECONDITION(options);
+    if (options->self_size == 0 || !options->server_connection ||
+        !aws_http_connection_is_server(options->server_connection)) {
+
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM,
-            "id=%p: Cannot configure server request handler stream, options are invalid.",
-            (void *)(stream ? stream->owning_connection : NULL));
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Cannot create server request handler stream, options are invalid.",
+            (void *)options->server_connection);
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
     }
 
-    if (!stream->server_data) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM, "id=%p: Server-only function invoked on client, ignoring call.", (void *)stream);
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
-    }
-
-    if (stream->server_data->configured) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM, "id=%p: Stream configuration is already done, ignoring call.", (void *)stream);
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
-    }
-
-    return stream->vtable->configure_server_request_handler(stream, options);
+    return options->server_connection->vtable->new_server_request_handler_stream(options);
 }
 
 int aws_http_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response) {

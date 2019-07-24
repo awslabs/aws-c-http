@@ -69,13 +69,10 @@ struct tester {
     int wait_result;
 };
 
-static void s_tester_on_incoming_request(
-    struct aws_http_connection *connection,
-    struct aws_http_stream *stream,
-    void *user_data) {
+static int s_tester_on_incoming_request(struct aws_http_connection *connection, void *user_data) {
     (void)connection;
     (void)user_data;
-    (void)stream;
+    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
 }
 
 static void s_tester_on_server_connection_shutdown(

@@ -103,10 +103,14 @@ struct aws_http_server_options {
 #define AWS_HTTP_SERVER_OPTIONS_INIT                                                                                   \
     { .self_size = sizeof(struct aws_http_server_options), .initial_window_size = SIZE_MAX, }
 
-typedef void(aws_http_on_incoming_request_fn)(
-    struct aws_http_connection *connection,
-    struct aws_http_stream *stream,
-    void *user_data);
+/**
+ * Invoked at the start of an incoming request.
+ * From this callback, the user MUST call aws_http_stream_new_server_request_handler().
+ *
+ * Return AWS_OP_SUCCESS to continue processing the stream.
+ * Return AWS_OP_ERR to indicate failure and cancel the stream.
+ */
+typedef int(aws_http_on_incoming_request_fn)(struct aws_http_connection *connection, void *user_data);
 
 typedef void(aws_http_on_server_connection_shutdown_fn)(
     struct aws_http_connection *connection,
@@ -131,11 +135,10 @@ struct aws_http_server_connection_options {
     void *connection_user_data;
 
     /**
-     * Invoked when a new "request handler" stream is created to handle an incoming request.
+     * Invoked at the start of an incoming request.
      * Required.
-     * From this callback, the user must call aws_http_stream_configure_server_request_handler().
-     * The user must call aws_stream_release() on the stream when they are done with it or its memory will never be
-     * cleaned up.
+     * From this callback, user must call aws_http_stream_new_server_request_handler().
+     * See `aws_http_on_incoming_request_fn`.
      */
     aws_http_on_incoming_request_fn *on_incoming_request;
 
@@ -178,6 +181,12 @@ AWS_HTTP_API
 int aws_http_connection_configure_server(
     struct aws_http_connection *connection,
     const struct aws_http_server_connection_options *options);
+
+/**
+ * Returns true if this is a server connection.
+ */
+AWS_HTTP_API
+bool aws_http_connection_is_server(const struct aws_http_connection *connection);
 
 AWS_EXTERN_C_END
 

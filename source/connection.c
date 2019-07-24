@@ -193,6 +193,14 @@ bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
     return connection->vtable->is_open(connection);
 }
 
+bool aws_http_connection_is_client(const struct aws_http_connection *connection) {
+    return connection->client_data;
+}
+
+bool aws_http_connection_is_server(const struct aws_http_connection *connection) {
+    return connection->server_data;
+}
+
 void aws_http_connection_update_window(struct aws_http_connection *connection, size_t increment_size) {
     AWS_ASSERT(connection);
     connection->vtable->update_window(connection, increment_size);

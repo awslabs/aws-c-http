@@ -48,7 +48,7 @@ AWS_HTTP_API
 struct aws_h1_stream *aws_h1_stream_new_request(const struct aws_http_request_options *options);
 
 AWS_HTTP_API
-struct aws_h1_stream *aws_h1_stream_new_request_handler(struct aws_http_connection *server_connection);
+struct aws_h1_stream *aws_h1_stream_new_request_handler(const struct aws_http_request_handler_options *options);
 
 AWS_EXTERN_C_END
 
