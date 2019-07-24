@@ -60,6 +60,11 @@ struct aws_h1_stream *aws_h1_stream_new_request(const struct aws_http_request_op
     if (!stream) {
         return NULL;
     }
+
+    if (options->client_connection->request_transform(options->request, options->client_connection->user_data)) {
+        goto error;
+    }
+
     /* Validate request and cache info that the encoder will eventually need */
     int err = aws_h1_encoder_message_init_from_request(
         &stream->encoder_message, options->client_connection->alloc, options->request);
