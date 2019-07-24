@@ -51,12 +51,12 @@ AWS_HTTP_API
 int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
-    const struct aws_http_request *request);
+    const struct aws_http_message *request);
 
 int aws_h1_encoder_message_init_from_response(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
-    const struct aws_http_response_options *response);
+    const struct aws_http_message *response);
 
 AWS_HTTP_API
 void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message);

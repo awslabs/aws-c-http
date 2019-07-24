@@ -75,7 +75,6 @@ struct aws_h1_stream *aws_h1_stream_new_request(const struct aws_http_request_op
     stream->base.on_complete = options->on_complete;
     stream->base.client_data = &stream->base.client_or_server_data.client;
     stream->base.client_data->response_status = AWS_HTTP_STATUS_UNKNOWN;
-    stream->base.client_data->request = options->request;
 
     return stream;
 

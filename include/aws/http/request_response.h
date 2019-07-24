@@ -40,20 +40,23 @@ struct aws_http_header {
 };
 
 /**
- * The definition for an HTTP request.
- * This datastructure may be transformed (ex: signing the request) before it is used to create a stream.
+ * The definition for an outgoing HTTP request or response.
+ * The message may be transformed (ex: signing the request) before its data is eventually sent.
  *
- * The request keeps internal copies of its trivial strings (method, path, headers)
+ * The message keeps internal copies of its trivial strings (method, path, headers)
  * but does NOT take ownership of its body stream.
+ *
+ * A language binding would likely present this as an HttpMessage base class with
+ * HttpRequest and HttpResponse subclasses.
  */
-struct aws_http_request;
+struct aws_http_message;
 
 /**
  * A function that may modify the request before it is sent.
  * Return AWS_OP_SUCCESS to indicate that transformation was successful,
  * or AWS_OP_ERR to indicate failure and cancel the operation.
  */
-typedef int aws_http_request_transform_fn(struct aws_http_request *request, void *user_data);
+typedef int aws_http_message_transform_fn(struct aws_http_message *message, void *user_data);
 
 /**
  * Invoked repeatedly times as headers are received.
@@ -119,7 +122,7 @@ struct aws_http_request_options {
      * Required.
      * This object must stay alive at least until on_complete is called.
      */
-    struct aws_http_request *request;
+    struct aws_http_message *request;
 
     void *user_data;
 
@@ -164,7 +167,7 @@ struct aws_http_request_options {
 };
 
 typedef int(aws_transform_http_request_fn)(
-    struct aws_http_request *request,
+    struct aws_http_message *request,
     struct aws_allocator *allocator,
     const struct aws_hash_table *context);
 
@@ -235,140 +238,137 @@ struct aws_http_request_handler_options {
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
     { .self_size = sizeof(struct aws_http_request_handler_options), }
 
-struct aws_http_response_options {
-    /* Set to sizeof() this struct, used for versioning. */
-    size_t self_size;
-
-    int status;
-    const struct aws_http_header *header_array;
-    size_t num_headers;
-    struct aws_input_stream *body_stream;
-};
-
-#define AWS_HTTP_RESPONSE_OPTIONS_INIT                                                                                 \
-    { .self_size = sizeof(struct aws_http_response_options), }
-
 AWS_EXTERN_C_BEGIN
 
 /**
- * Create a new request.
- * The request is blank, all properties (method, path, etc) must be set individually.
+ * Create a new request message.
+ * The message is blank, all properties (method, path, etc) must be set individually.
  */
 AWS_HTTP_API
-struct aws_http_request *aws_http_request_new(struct aws_allocator *allocator);
+struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allocator);
 
 /**
- * Destroy the the request.
+ * Create a new response message.
+ * The message is blank, all properties (status, headers, etc) must be set individually.
  */
 AWS_HTTP_API
-void aws_http_request_destroy(struct aws_http_request *request);
+struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator);
 
 /**
- * Get the method.
- * If no method is set, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE is raised.
+ * Destroy the message.
  */
 AWS_HTTP_API
-int aws_http_request_get_method(const struct aws_http_request *request, struct aws_byte_cursor *out_method);
+void aws_http_message_destroy(struct aws_http_message *message);
+
+AWS_HTTP_API
+bool aws_http_message_is_request(const struct aws_http_message *message);
+
+AWS_HTTP_API
+bool aws_http_message_is_response(const struct aws_http_message *message);
 
 /**
- * Set the method.
+ * Get the method (request messages only).
+ */
+AWS_HTTP_API
+int aws_http_message_get_request_method(
+    const struct aws_http_message *request_message,
+    struct aws_byte_cursor *out_method);
+
+/**
+ * Set the method (request messages only).
  * The request makes its own copy of the underlying string.
  */
 AWS_HTTP_API
-int aws_http_request_set_method(struct aws_http_request *request, struct aws_byte_cursor method);
+int aws_http_message_set_request_method(struct aws_http_message *request_message, struct aws_byte_cursor method);
 
-/**
- * Get the path (and query) value.
- * If no path is set, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE is raised.
+/*
+ * Get the path-and-query value (request messages only).
  */
 AWS_HTTP_API
-int aws_http_request_get_path(const struct aws_http_request *request, struct aws_byte_cursor *out_path);
+int aws_http_message_get_request_path(const struct aws_http_message *request_message, struct aws_byte_cursor *out_path);
 
 /**
- * Set the path (and-query) value.
+ * Set the path-and-query value (request messages only).
  * The request makes its own copy of the underlying string.
  */
 AWS_HTTP_API
-int aws_http_request_set_path(struct aws_http_request *request, struct aws_byte_cursor path);
+int aws_http_message_set_request_path(struct aws_http_message *request_message, struct aws_byte_cursor path);
+
+/**
+ * Get the status code (response messages only).
+ * If no status is set, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE is raised.
+ */
+AWS_HTTP_API
+int aws_http_message_get_response_status(const struct aws_http_message *response_message, int *out_status_code);
+
+/**
+ * Set the status code (response messages only).
+ */
+AWS_HTTP_API
+int aws_http_message_set_response_status(struct aws_http_message *response_message, int status_code);
 
 /**
  * Get the body stream.
  * Returns NULL if no body stream is set.
  */
 AWS_HTTP_API
-struct aws_input_stream *aws_http_request_get_body_stream(const struct aws_http_request *request);
+struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_message *message);
 
 /**
  * Set the body stream.
- * NULL is an acceptable value for requests with no body.
- * Note: The request does NOT take ownership of the body stream.
- * The stream must not be destroyed until the request is complete.
+ * NULL is an acceptable value for messages with no body.
+ * Note: The message does NOT take ownership of the body stream.
+ * The stream must not be destroyed until the message is complete.
  */
 AWS_HTTP_API
-void aws_http_request_set_body_stream(struct aws_http_request *request, struct aws_input_stream *body_stream);
+void aws_http_message_set_body_stream(struct aws_http_message *message, struct aws_input_stream *body_stream);
 
 /**
  * Get the number of headers.
- * Headers are stored in a linear array.
  */
 AWS_HTTP_API
-size_t aws_http_request_get_header_count(const struct aws_http_request *request);
+size_t aws_http_message_get_header_count(const struct aws_http_message *message);
 
 /**
  * Get the header at the specified index.
  * This function cannot fail if a valid index is provided.
  * Otherwise, AWS_ERROR_INVALID_INDEX will be raised.
  *
- * The underlying strings are stored within the request.
+ * The underlying strings are stored within the message.
  */
 AWS_HTTP_API
-int aws_http_request_get_header(
-    const struct aws_http_request *request,
+int aws_http_message_get_header(
+    const struct aws_http_message *message,
     struct aws_http_header *out_header,
     size_t index);
 
 /**
- * Find the header with the specified name.
- * If multiple headers with the same name are present (e.g. cookies), the most recently modified will be returned.
- * out_header may be set to NULL to just check for presence.
- *
- * Returns whether or not the header was found.
- *
- * The underlying strings are stored within the request.
- */
-AWS_HTTP_API
-bool aws_http_request_find_header(
-    const struct aws_http_request *request,
-    struct aws_http_header *out_header,
-    struct aws_byte_cursor name);
-
-/**
  * Add a header to the end of the array.
- * The request makes its own copy of the underlying strings.
+ * The message makes its own copy of the underlying strings.
  */
 AWS_HTTP_API
-int aws_http_request_add_header(struct aws_http_request *request, struct aws_http_header header);
+int aws_http_message_add_header(struct aws_http_message *message, struct aws_http_header header);
 
 /**
  * Add an array of headers to the end of the header array.
- * The request makes its own copy of the underlying strings.
+ * The message makes its own copy of the underlying strings.
  *
  * This is a helper function useful when it's easier to define headers as a stack array, rather than calling add_header
  * repeatedly.
  */
 AWS_HTTP_API
-int aws_http_request_add_header_array(
-    struct aws_http_request *request,
+int aws_http_message_add_header_array(
+    struct aws_http_message *message,
     const struct aws_http_header *headers,
     size_t num_headers);
 
 /**
  * Modify the header at the specified index.
- * The request makes its own copy of the underlying strings.
+ * The message makes its own copy of the underlying strings.
  * The previous strings may be destroyed.
  */
 AWS_HTTP_API
-int aws_http_request_set_header(struct aws_http_request *request, struct aws_http_header header, size_t index);
+int aws_http_message_set_header(struct aws_http_message *message, struct aws_http_header header, size_t index);
 
 /**
  * Remove the header at the specified index.
@@ -378,7 +378,7 @@ int aws_http_request_set_header(struct aws_http_request *request, struct aws_htt
  * Otherwise, AWS_ERROR_INVALID_INDEX will be raised.
  */
 AWS_HTTP_API
-int aws_http_request_erase_header(struct aws_http_request *request, size_t index);
+int aws_http_message_erase_header(struct aws_http_message *message, size_t index);
 
 /**
  * Create a stream, with a client connection sending a request.
@@ -424,9 +424,12 @@ int aws_http_stream_get_incoming_request_method(
 AWS_HTTP_API
 int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *stream, struct aws_byte_cursor *out_uri);
 
-/* only callable from "request handler" streams */
+/**
+ * Send response (only callable from "request handler" streams)
+ * The response object must stay alive at least until the stream's on_complete is called.
+ */
 AWS_HTTP_API
-int aws_http_stream_send_response(struct aws_http_stream *stream, const struct aws_http_response_options *options);
+int aws_http_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response);
 
 /**
  * Manually issue a window update.

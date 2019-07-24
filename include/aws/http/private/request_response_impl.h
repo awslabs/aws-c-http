@@ -38,7 +38,6 @@ struct aws_http_stream {
     const struct aws_http_stream_vtable *vtable;
     struct aws_allocator *alloc;
     struct aws_http_connection *owning_connection;
-    struct aws_input_stream *outgoing_body;
 
     bool manual_window_management;
 
@@ -52,7 +51,6 @@ struct aws_http_stream {
 
     union {
         struct aws_http_stream_client_data {
-            struct aws_http_request *request;
             int response_status;
         } client;
         struct aws_http_stream_server_data {
