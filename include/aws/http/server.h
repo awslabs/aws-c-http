@@ -105,12 +105,11 @@ struct aws_http_server_options {
 
 /**
  * Invoked at the start of an incoming request.
- * From this callback, the user MUST call aws_http_stream_new_server_request_handler().
- *
- * Return AWS_OP_SUCCESS to continue processing the stream.
- * Return AWS_OP_ERR to indicate failure and cancel the stream.
+ * To process the request, the user must create a request handler stream and return it to the connection.
+ * If NULL is returned, the request will not be processed and the last error will be reported as the reason for failure.
  */
-typedef int(aws_http_on_incoming_request_fn)(struct aws_http_connection *connection, void *user_data);
+typedef struct aws_http_stream *(
+    aws_http_on_incoming_request_fn)(struct aws_http_connection *connection, void *user_data);
 
 typedef void(aws_http_on_server_connection_shutdown_fn)(
     struct aws_http_connection *connection,
@@ -137,7 +136,7 @@ struct aws_http_server_connection_options {
     /**
      * Invoked at the start of an incoming request.
      * Required.
-     * From this callback, user must call aws_http_stream_new_server_request_handler().
+     * The user must create a request handler stream and return it to the connection.
      * See `aws_http_on_incoming_request_fn`.
      */
     aws_http_on_incoming_request_fn *on_incoming_request;

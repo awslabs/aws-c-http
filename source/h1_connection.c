@@ -1335,10 +1335,6 @@ static struct aws_http_stream *s_new_server_request_handler_stream(
     /* Prevent further streams from being created until it's ok to do so. */
     connection->thread_data.can_create_request_handler_stream = false;
 
-    /* New stream becomes current incoming stream */
-    AWS_ASSERT(!connection->thread_data.incoming_stream);
-    connection->thread_data.incoming_stream = stream;
-
     /* Stream is waiting for response. */
     aws_linked_list_push_back(&connection->thread_data.waiting_stream_list, &stream->node);
 
@@ -1354,7 +1350,8 @@ static struct aws_http_stream *s_new_server_request_handler_stream(
     return &stream->base;
 }
 
-static int s_server_invoke_on_incoming_request(struct h1_connection *connection) {
+/* Invokes the on_incoming_request callback and returns new stream. */
+static struct aws_h1_stream *s_server_invoke_on_incoming_request(struct h1_connection *connection) {
     AWS_PRECONDITION(connection->base.server_data);
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
     AWS_PRECONDITION(!connection->thread_data.can_create_request_handler_stream);
@@ -1365,31 +1362,12 @@ static int s_server_invoke_on_incoming_request(struct h1_connection *connection)
      */
     connection->thread_data.can_create_request_handler_stream = true;
 
-    int err = connection->base.server_data->on_incoming_request(
+    struct aws_http_stream *new_stream = connection->base.server_data->on_incoming_request(
         &connection->base, connection->base.server_data->connection_user_data);
 
     connection->thread_data.can_create_request_handler_stream = false;
 
-    if (err) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Incoming request callback raised error %d (%s).",
-            (void *)&connection->base,
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
-        return AWS_OP_ERR;
-    }
-
-    /* If user created new stream, incoming_stream is pointing at it. */
-    if (!connection->thread_data.incoming_stream) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: New server stream must be created during incoming request callback.",
-            (void *)&connection->base);
-        return aws_raise_error(AWS_ERROR_HTTP_REACTION_REQUIRED);
-    }
-
-    return AWS_OP_SUCCESS;
+    return new_stream ? AWS_CONTAINER_OF(new_stream, struct aws_h1_stream, base) : NULL;
 }
 
 static int s_handler_process_read_message(
@@ -1467,18 +1445,18 @@ static int s_handler_process_read_message(
                     /* Server side.
                      * Invoke on-incoming-request callback. The user MUST create a new stream from this callback.
                      * The new stream becomes the current incoming stream */
-                    err = s_server_invoke_on_incoming_request(connection);
-                    if (err) {
+                    connection->thread_data.incoming_stream = s_server_invoke_on_incoming_request(connection);
+                    if (!connection->thread_data.incoming_stream) {
                         AWS_LOGF_ERROR(
                             AWS_LS_HTTP_CONNECTION,
-                            "id=%p: Failure during incoming request callback, error %d (%s). Closing connection.",
+                            "id=%p: Incoming request callback failed to provide a new stream, last error %d (%s). "
+                            "Closing connection.",
                             (void *)&connection->base,
                             aws_last_error(),
                             aws_error_name(aws_last_error()));
 
                         goto shutdown;
                     }
-                    AWS_ASSERT(connection->thread_data.incoming_stream);
                 }
             }
 
