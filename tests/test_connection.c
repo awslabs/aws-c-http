@@ -93,7 +93,6 @@ static void s_tester_http_server_on_destroy(void *user_data) {
     struct tester *tester = user_data;
     tester->server_is_shutdown = true;
     tester->server = NULL;
-    return;
 }
 
 static void s_tester_on_server_connection_shutdown(
@@ -421,7 +420,7 @@ static int s_test_connection_destroy_server_with_multiple_connections_existing(s
     client_options.user_data = &tester;
     client_options.on_setup = s_tester_on_client_connection_setup;
     client_options.on_shutdown = s_tester_on_client_connection_shutdown;
-    int more_connection_num = 3;
+    int more_connection_num = 1;
     /* set waiting condition */
     tester.wait_client_connection_num += more_connection_num;
     tester.wait_server_connection_num += more_connection_num;
