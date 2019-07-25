@@ -221,8 +221,7 @@ add_test_case(test_http_proxy_connection_connect_failure)
 add_test_case(test_http_proxy_connection_request_transform)
 add_test_case(test_http_proxy_connection_request_transform_basic_auth)
 
-#add_test_case(test_proxy_connection_setup_shutdown)
-#add_test_case(test_https)
+# integration (no mocks) tests that require a locally-installed proxy server
 #add_test_case(test_http_proxy_connection_new_destroy)
 #add_test_case(test_http_proxy_connection_get)
 

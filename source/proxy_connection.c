@@ -122,6 +122,7 @@ static int s_add_basic_proxy_authentication_header(
         goto done;
     }
 
+    /* First build a buffer with "username:password" in it */
     struct aws_byte_cursor username_cursor = aws_byte_cursor_from_string(proxy_user_data->username);
     if (aws_byte_buf_append(&base64_input_value, &username_cursor)) {
         goto done;
@@ -140,6 +141,7 @@ static int s_add_basic_proxy_authentication_header(
     struct aws_byte_cursor base64_source_cursor =
         aws_byte_cursor_from_array(base64_input_value.buffer, base64_input_value.len);
 
+    /* Figure out how much room we need in our final header value buffer */
     size_t required_size = 0;
     if (aws_base64_compute_encoded_len(base64_source_cursor.len, &required_size)) {
         goto done;
@@ -150,6 +152,7 @@ static int s_add_basic_proxy_authentication_header(
         goto done;
     }
 
+    /* Build the final header value by appending the authorization type and the base64 encoding string together */
     struct aws_byte_cursor basic_prefix = aws_byte_cursor_from_string(s_proxy_authorization_header_basic_prefix);
     if (aws_byte_buf_append_dynamic(&header_value, &basic_prefix)) {
         goto done;
@@ -193,6 +196,7 @@ static int s_rewrite_uri_for_proxy_request(
         goto done;
     }
 
+    /* Pull out the original path/query */
     struct aws_uri uri;
     if (aws_uri_init_parse(&uri, proxy_user_data->allocator, &path_cursor)) {
         goto done;
@@ -201,6 +205,7 @@ static int s_rewrite_uri_for_proxy_request(
     const struct aws_byte_cursor *actual_path_cursor = aws_uri_path(&uri);
     const struct aws_byte_cursor *actual_query_cursor = aws_uri_query_string(&uri);
 
+    /* now rebuild the uri with scheme, host and port subbed in from the original connection options */
     struct aws_uri_builder_options target_uri_builder;
     AWS_ZERO_STRUCT(target_uri_builder);
     target_uri_builder.scheme = aws_byte_cursor_from_string(s_http_scheme);
@@ -216,6 +221,7 @@ static int s_rewrite_uri_for_proxy_request(
     struct aws_byte_cursor full_target_uri =
         aws_byte_cursor_from_array(target_uri.uri_str.buffer, target_uri.uri_str.len);
 
+    /* mutate the request with the new path value */
     if (aws_http_message_set_request_path(request, full_target_uri)) {
         goto done;
     }
@@ -262,6 +268,7 @@ done:
 static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client_connection_options *options) {
     AWS_FATAL_ASSERT(options->tls_options == NULL);
 
+    /* Create a wrapper user data that contains the connection options we'll need to rewrite requests */
     struct aws_http_proxy_user_data *proxy_user_data = s_aws_http_proxy_user_data_new(options->allocator, options);
     if (proxy_user_data == NULL) {
         return AWS_OP_ERR;
@@ -269,6 +276,7 @@ static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client
 
     AWS_FATAL_ASSERT(options->proxy_options != NULL);
 
+    /* Fill in a new connection options pointing at the proxy */
     struct aws_http_client_connection_options options_copy = *options;
 
     options_copy.proxy_options = NULL;

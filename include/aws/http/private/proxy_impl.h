@@ -22,6 +22,14 @@
 
 struct aws_string;
 
+/*
+ * When a proxy connection is made, we wrap the user-supplied user data with this
+ * proxy user data.  Callbacks are passed properly to the user.  By having this data
+ * available, the proxy request transform that was attached to the connection can extract
+ * the proxy settings it needs in order to properly transform the requests.
+ *
+ * Another possibility would be to fold this data into the connection itself.
+ */
 struct aws_http_proxy_user_data {
     struct aws_allocator *allocator;
 
