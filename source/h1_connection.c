@@ -1312,6 +1312,8 @@ static struct aws_http_stream *s_new_server_request_handler_stream(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: aws_http_stream_new_server_request_handler() can only be called during incoming request callback.",
             (void *)&connection->base);
+
+        aws_raise_error(AWS_ERROR_INVALID_STATE);
         return NULL;
     }
 
