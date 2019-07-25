@@ -534,6 +534,10 @@ void aws_http_server_release(struct aws_http_server *server) {
             clean_up = true;
         };
 
+        if (clean_up) {
+            /* no existing connection, safe to clean up */
+            s_http_server_clean_up(server);
+        }
         err = aws_mutex_unlock(&server->synced_data.lock);
         AWS_FATAL_ASSERT(!err);
         /* END CRITICAL SECTION */
@@ -542,9 +546,8 @@ void aws_http_server_release(struct aws_http_server *server) {
             /* nothing to do */
             return;
         }
-        if (clean_up) {
-            /* no existing connection, safe to clean up */
-            s_http_server_clean_up(server);
+        
+        if(clean_up){
             return;
         }
 
