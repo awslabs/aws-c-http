@@ -81,10 +81,7 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
 
 int proxy_tester_clean_up(struct proxy_tester *tester);
 
-void proxy_tester_on_client_connection_setup(
-    struct aws_http_connection *connection,
-    int error_code,
-    void *user_data);
+void proxy_tester_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data);
 
 void proxy_tester_on_client_connection_shutdown(
     struct aws_http_connection *connection,

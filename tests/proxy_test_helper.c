@@ -36,10 +36,7 @@ enum {
     TESTER_TIMEOUT_SEC = 60, /* Give enough time for non-sudo users to enter password */
 };
 
-void proxy_tester_on_client_connection_setup(
-    struct aws_http_connection *connection,
-    int error_code,
-    void *user_data) {
+void proxy_tester_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
 
     struct proxy_tester *tester = user_data;
     AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
@@ -74,11 +71,7 @@ void proxy_tester_on_client_connection_shutdown(
 
 int proxy_tester_wait(struct proxy_tester *tester, bool (*pred)(void *user_data)) {
     ASSERT_SUCCESS(aws_mutex_lock(&tester->wait_lock));
-    ASSERT_SUCCESS(aws_condition_variable_wait_pred(
-        &tester->wait_cvar,
-        &tester->wait_lock,
-        pred,
-        tester));
+    ASSERT_SUCCESS(aws_condition_variable_wait_pred(&tester->wait_cvar, &tester->wait_lock, pred, tester));
     ASSERT_SUCCESS(aws_mutex_unlock(&tester->wait_lock));
 
     return AWS_OP_SUCCESS;
@@ -136,7 +129,7 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
         .type = AWS_SOCKET_STREAM,
         .domain = AWS_SOCKET_IPV4,
         .connect_timeout_ms =
-        (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
+            (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
     };
 
     tester->client_bootstrap =
@@ -144,8 +137,7 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
     ASSERT_NOT_NULL(tester->client_bootstrap);
 
 #ifdef NEVER
-    if (options->use_tls)
-    {
+    if (options->use_tls) {
         aws_tls_init_static_state(tester->alloc);
 
         aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, tester->alloc);

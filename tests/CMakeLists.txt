@@ -219,6 +219,7 @@ add_test_case(test_http_proxy_connection_real_target)
 add_test_case(test_http_proxy_connection_channel_failure)
 add_test_case(test_http_proxy_connection_connect_failure)
 add_test_case(test_http_proxy_connection_request_transform)
+add_test_case(test_http_proxy_connection_request_transform_basic_auth)
 
 #add_test_case(test_proxy_connection_setup_shutdown)
 #add_test_case(test_https)

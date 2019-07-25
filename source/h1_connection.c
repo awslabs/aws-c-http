@@ -1310,8 +1310,7 @@ static struct aws_h1_stream *new_server_request_handler_stream(struct h1_connect
     aws_linked_list_push_back(&connection->thread_data.waiting_stream_list, &stream->node);
 
     /* Connection must have an on_incoming_request callback. */
-    connection->base.server_data->on_incoming_request(
-        &connection->base, &stream->base, connection->base.user_data);
+    connection->base.server_data->on_incoming_request(&connection->base, &stream->base, connection->base.user_data);
 
     /* The request handler must be configured in on_incoming_request
      * If not, raise an error */

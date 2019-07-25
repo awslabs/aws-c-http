@@ -25,25 +25,27 @@
 #ifdef NEVER
 
 static int s_aws_http_on_incoming_headers_test(
-        struct aws_http_stream *stream,
-        const struct aws_http_header *header_array,
-        size_t num_headers,
-        void *user_data)
-{
+    struct aws_http_stream *stream,
+    const struct aws_http_header *header_array,
+    size_t num_headers,
+    void *user_data) {
     (void)stream;
     (void)user_data;
 
     for (size_t i = 0; i < num_headers; ++i) {
         const struct aws_byte_cursor *name = &header_array[i].name;
         const struct aws_byte_cursor *value = &header_array[i].value;
-        AWS_LOGF_INFO(AWS_LS_HTTP_GENERAL, "< " PRInSTR " : " PRInSTR, AWS_BYTE_CURSOR_PRI(*name), AWS_BYTE_CURSOR_PRI(*value));
+        AWS_LOGF_INFO(
+            AWS_LS_HTTP_GENERAL, "< " PRInSTR " : " PRInSTR, AWS_BYTE_CURSOR_PRI(*name), AWS_BYTE_CURSOR_PRI(*value));
     }
 
     return AWS_OP_SUCCESS;
 }
 
-static int s_aws_http_on_incoming_header_block_done_test(struct aws_http_stream *stream, bool has_body, void *user_data)
-{
+static int s_aws_http_on_incoming_header_block_done_test(
+    struct aws_http_stream *stream,
+    bool has_body,
+    void *user_data) {
     (void)has_body;
 
     struct proxy_tester *context = user_data;
@@ -55,8 +57,10 @@ static int s_aws_http_on_incoming_header_block_done_test(struct aws_http_stream 
     return AWS_OP_SUCCESS;
 }
 
-static int s_aws_http_on_incoming_body_test(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data)
-{
+static int s_aws_http_on_incoming_body_test(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    void *user_data) {
     (void)stream;
     (void)user_data;
 
@@ -65,8 +69,7 @@ static int s_aws_http_on_incoming_body_test(struct aws_http_stream *stream, cons
     return AWS_OP_SUCCESS;
 }
 
-static void s_aws_http_on_stream_complete_test(struct aws_http_stream *stream, int error_code, void *user_data)
-{
+static void s_aws_http_on_stream_complete_test(struct aws_http_stream *stream, int error_code, void *user_data) {
     struct tester *context = user_data;
 
     aws_mutex_lock(&context->wait_lock);
@@ -109,11 +112,7 @@ static void s_tester_on_tls_negotiation_result(
 
 static int s_test_proxy_connection_setup_shutdown(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
-    struct tester_options options = {
-            .alloc = allocator,
-            .host = aws_byte_cursor_from_c_str("127.0.0.1"),
-            .port = 8080
-    };
+    struct tester_options options = {.alloc = allocator, .host = aws_byte_cursor_from_c_str("127.0.0.1"), .port = 8080};
 
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, &options));
@@ -127,26 +126,31 @@ static int s_test_proxy_connection_setup_shutdown(struct aws_allocator *allocato
 
     aws_tls_connection_options_init_from_ctx(&tester.tls_connection_options, tester.tls_ctx);
 
-    struct aws_byte_cursor tls_host =  aws_byte_cursor_from_c_str("www.amazon.com");
+    struct aws_byte_cursor tls_host = aws_byte_cursor_from_c_str("www.amazon.com");
     aws_tls_connection_options_set_server_name(&tester.tls_connection_options, tester.alloc, &tls_host);
 
     struct aws_http_request *request = aws_http_request_new(allocator);
     aws_http_request_set_method(request, aws_byte_cursor_from_c_str("CONNECT"));
     aws_http_request_set_path(request, aws_byte_cursor_from_c_str("www.amazon.com:443"));
 
-    struct aws_http_header host = { .name = aws_byte_cursor_from_c_str("Host"), .value = aws_byte_cursor_from_c_str("www.amazon.com")};
+    struct aws_http_header host = {.name = aws_byte_cursor_from_c_str("Host"),
+                                   .value = aws_byte_cursor_from_c_str("www.amazon.com")};
     aws_http_request_add_header(request, host);
 
-    struct aws_http_header keep_alive = { .name = aws_byte_cursor_from_c_str("Proxy-Connection"), .value = aws_byte_cursor_from_c_str("Keep-Alive")};
+    struct aws_http_header keep_alive = {.name = aws_byte_cursor_from_c_str("Proxy-Connection"),
+                                         .value = aws_byte_cursor_from_c_str("Keep-Alive")};
     aws_http_request_add_header(request, keep_alive);
 
-    struct aws_http_header auth = { .name = aws_byte_cursor_from_c_str("Proxy-Authorization"), .value = aws_byte_cursor_from_c_str("Basic ZGVycDpkZXJw")};
+    struct aws_http_header auth = {.name = aws_byte_cursor_from_c_str("Proxy-Authorization"),
+                                   .value = aws_byte_cursor_from_c_str("Basic ZGVycDpkZXJw")};
     aws_http_request_add_header(request, auth);
 
-    struct aws_http_header accept = { .name = aws_byte_cursor_from_c_str("Accept"), .value = aws_byte_cursor_from_c_str("*/*")};
+    struct aws_http_header accept = {.name = aws_byte_cursor_from_c_str("Accept"),
+                                     .value = aws_byte_cursor_from_c_str("*/*")};
     aws_http_request_add_header(request, accept);
 
-    struct aws_http_header user_agent = { .name = aws_byte_cursor_from_c_str("User-Agent"), .value = aws_byte_cursor_from_c_str("derp")};
+    struct aws_http_header user_agent = {.name = aws_byte_cursor_from_c_str("User-Agent"),
+                                         .value = aws_byte_cursor_from_c_str("derp")};
     aws_http_request_add_header(request, user_agent);
 
     struct aws_http_request_options request_options;
@@ -177,7 +181,6 @@ static int s_test_proxy_connection_setup_shutdown(struct aws_allocator *allocato
 
     aws_http_request_destroy(request);
 
-
     aws_mutex_lock(&tester.wait_lock);
     tester.request_complete = false;
     tester.request_successful = false;
@@ -187,13 +190,16 @@ static int s_test_proxy_connection_setup_shutdown(struct aws_allocator *allocato
     aws_http_request_set_method(get_request, aws_byte_cursor_from_c_str("GET"));
     aws_http_request_set_path(get_request, aws_byte_cursor_from_c_str("/"));
 
-    struct aws_http_header get_host_header = { .name = aws_byte_cursor_from_c_str("Host"), .value = aws_byte_cursor_from_c_str("www.amazon.com")};
+    struct aws_http_header get_host_header = {.name = aws_byte_cursor_from_c_str("Host"),
+                                              .value = aws_byte_cursor_from_c_str("www.amazon.com")};
     aws_http_request_add_header(get_request, get_host_header);
 
-    struct aws_http_header get_accept_header = { .name = aws_byte_cursor_from_c_str("Accept"), .value = aws_byte_cursor_from_c_str("*/*")};
+    struct aws_http_header get_accept_header = {.name = aws_byte_cursor_from_c_str("Accept"),
+                                                .value = aws_byte_cursor_from_c_str("*/*")};
     aws_http_request_add_header(get_request, get_accept_header);
 
-    struct aws_http_header get_user_agent_header = { .name = aws_byte_cursor_from_c_str("User-Agent"), .value = aws_byte_cursor_from_c_str("derp")};
+    struct aws_http_header get_user_agent_header = {.name = aws_byte_cursor_from_c_str("User-Agent"),
+                                                    .value = aws_byte_cursor_from_c_str("derp")};
     aws_http_request_add_header(get_request, get_user_agent_header);
 
     struct aws_http_request_options get_request_options;
@@ -222,15 +228,10 @@ static int s_test_proxy_connection_setup_shutdown(struct aws_allocator *allocato
 }
 AWS_TEST_CASE(test_proxy_connection_setup_shutdown, s_test_proxy_connection_setup_shutdown);
 
-
 static int s_test_https(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     struct tester_options options = {
-            .alloc = allocator,
-            .host = aws_byte_cursor_from_c_str("www.amazon.com"),
-            .port = 443,
-            .use_tls = true
-    };
+        .alloc = allocator, .host = aws_byte_cursor_from_c_str("www.amazon.com"), .port = 443, .use_tls = true};
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, &options));
 
@@ -238,13 +239,16 @@ static int s_test_https(struct aws_allocator *allocator, void *ctx) {
     aws_http_request_set_method(request, aws_byte_cursor_from_c_str("GET"));
     aws_http_request_set_path(request, aws_byte_cursor_from_c_str("/"));
 
-    struct aws_http_header host = { .name = aws_byte_cursor_from_c_str("Host"), .value = aws_byte_cursor_from_c_str("www.amazon.com")};
+    struct aws_http_header host = {.name = aws_byte_cursor_from_c_str("Host"),
+                                   .value = aws_byte_cursor_from_c_str("www.amazon.com")};
     aws_http_request_add_header(request, host);
 
-    struct aws_http_header accept = { .name = aws_byte_cursor_from_c_str("Accept"), .value = aws_byte_cursor_from_c_str("*/*")};
+    struct aws_http_header accept = {.name = aws_byte_cursor_from_c_str("Accept"),
+                                     .value = aws_byte_cursor_from_c_str("*/*")};
     aws_http_request_add_header(request, accept);
 
-    struct aws_http_header user_agent = { .name = aws_byte_cursor_from_c_str("User-Agent"), .value = aws_byte_cursor_from_c_str("derp")};
+    struct aws_http_header user_agent = {.name = aws_byte_cursor_from_c_str("User-Agent"),
+                                         .value = aws_byte_cursor_from_c_str("derp")};
     aws_http_request_add_header(request, user_agent);
 
     struct aws_http_request_options request_options;
@@ -273,27 +277,28 @@ static int s_test_https(struct aws_allocator *allocator, void *ctx) {
 }
 AWS_TEST_CASE(test_https, s_test_https);
 
-
 static int s_aws_http_on_incoming_headers_proxy_test(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
     size_t num_headers,
-    void *user_data)
-{
+    void *user_data) {
     (void)stream;
     (void)user_data;
 
     for (size_t i = 0; i < num_headers; ++i) {
         const struct aws_byte_cursor *name = &header_array[i].name;
         const struct aws_byte_cursor *value = &header_array[i].value;
-        AWS_LOGF_INFO(AWS_LS_HTTP_GENERAL, "< " PRInSTR " : " PRInSTR, AWS_BYTE_CURSOR_PRI(*name), AWS_BYTE_CURSOR_PRI(*value));
+        AWS_LOGF_INFO(
+            AWS_LS_HTTP_GENERAL, "< " PRInSTR " : " PRInSTR, AWS_BYTE_CURSOR_PRI(*name), AWS_BYTE_CURSOR_PRI(*value));
     }
 
     return AWS_OP_SUCCESS;
 }
 
-static int s_aws_http_on_incoming_header_block_done_proxy_test(struct aws_http_stream *stream, bool has_body, void *user_data)
-{
+static int s_aws_http_on_incoming_header_block_done_proxy_test(
+    struct aws_http_stream *stream,
+    bool has_body,
+    void *user_data) {
     (void)has_body;
 
     struct proxy_tester *context = user_data;
@@ -307,8 +312,10 @@ static int s_aws_http_on_incoming_header_block_done_proxy_test(struct aws_http_s
     return AWS_OP_SUCCESS;
 }
 
-static int s_aws_http_on_incoming_body_proxy_test(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data)
-{
+static int s_aws_http_on_incoming_body_proxy_test(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    void *user_data) {
     (void)stream;
     (void)user_data;
 
@@ -317,8 +324,7 @@ static int s_aws_http_on_incoming_body_proxy_test(struct aws_http_stream *stream
     return AWS_OP_SUCCESS;
 }
 
-static void s_aws_http_on_stream_complete_proxy_test(struct aws_http_stream *stream, int error_code, void *user_data)
-{
+static void s_aws_http_on_stream_complete_proxy_test(struct aws_http_stream *stream, int error_code, void *user_data) {
     struct proxy_tester *context = user_data;
 
     aws_mutex_lock(&context->wait_lock);
@@ -334,17 +340,12 @@ static bool s_proxy_tester_request_complete_pred_fn(void *user_data) {
 
 static int s_test_http_proxy_connection_new_destroy(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
-    struct aws_http_proxy_options proxy_options = {
-        .host = aws_byte_cursor_from_c_str("127.0.0.1"),
-        .port = 8080
-    };
+    struct aws_http_proxy_options proxy_options = {.host = aws_byte_cursor_from_c_str("127.0.0.1"), .port = 8080};
 
-    struct proxy_tester_options options = {
-        .alloc = allocator,
-        .proxy_options = proxy_options,
-        .host = aws_byte_cursor_from_c_str("www.google.com"),
-        .port = 80
-    };
+    struct proxy_tester_options options = {.alloc = allocator,
+                                           .proxy_options = proxy_options,
+                                           .host = aws_byte_cursor_from_c_str("www.google.com"),
+                                           .port = 80};
     struct proxy_tester tester;
     ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
 
@@ -356,17 +357,12 @@ AWS_TEST_CASE(test_http_proxy_connection_new_destroy, s_test_http_proxy_connecti
 
 static int s_test_http_proxy_connection_get(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
-    struct aws_http_proxy_options proxy_options = {
-        .host = aws_byte_cursor_from_c_str("127.0.0.1"),
-        .port = 8080
-    };
+    struct aws_http_proxy_options proxy_options = {.host = aws_byte_cursor_from_c_str("127.0.0.1"), .port = 8080};
 
-    struct proxy_tester_options options = {
-        .alloc = allocator,
-        .proxy_options = proxy_options,
-        .host = aws_byte_cursor_from_c_str("www.amazon.com"),
-        .port = 80
-    };
+    struct proxy_tester_options options = {.alloc = allocator,
+                                           .proxy_options = proxy_options,
+                                           .host = aws_byte_cursor_from_c_str("www.amazon.com"),
+                                           .port = 80};
     struct proxy_tester tester;
     ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
 
@@ -374,13 +370,16 @@ static int s_test_http_proxy_connection_get(struct aws_allocator *allocator, voi
     aws_http_request_set_method(request, aws_byte_cursor_from_c_str("GET"));
     aws_http_request_set_path(request, aws_byte_cursor_from_c_str("/"));
 
-    struct aws_http_header host = { .name = aws_byte_cursor_from_c_str("Host"), .value = aws_byte_cursor_from_c_str("www.amazon.com")};
+    struct aws_http_header host = {.name = aws_byte_cursor_from_c_str("Host"),
+                                   .value = aws_byte_cursor_from_c_str("www.amazon.com")};
     aws_http_request_add_header(request, host);
 
-    struct aws_http_header accept = { .name = aws_byte_cursor_from_c_str("Accept"), .value = aws_byte_cursor_from_c_str("*/*")};
+    struct aws_http_header accept = {.name = aws_byte_cursor_from_c_str("Accept"),
+                                     .value = aws_byte_cursor_from_c_str("*/*")};
     aws_http_request_add_header(request, accept);
 
-    struct aws_http_header user_agent = { .name = aws_byte_cursor_from_c_str("User-Agent"), .value = aws_byte_cursor_from_c_str("derp")};
+    struct aws_http_header user_agent = {.name = aws_byte_cursor_from_c_str("User-Agent"),
+                                         .value = aws_byte_cursor_from_c_str("derp")};
     aws_http_request_add_header(request, user_agent);
 
     struct aws_http_request_options request_options;
@@ -412,14 +411,9 @@ AWS_TEST_CASE(test_http_proxy_connection_get, s_test_http_proxy_connection_get);
 
 #ifdef NEVER
 
-#include <aws/http/request_response.h>
+#    include <aws/http/request_response.h>
 
-enum connection_with_request_state {
-    CONNECTING,
-    SENDING_REQUEST,
-    SUCCESS,
-    SHUTTING_DOWN
-};
+enum connection_with_request_state { CONNECTING, SENDING_REQUEST, SUCCESS, SHUTTING_DOWN };
 
 struct aws_connection_with_request_context {
 
@@ -439,11 +433,13 @@ struct aws_connection_with_request_context {
     bool request_successful;
 };
 
-static struct aws_connection_with_request_context *s_aws_connection_with_request_context_new(struct aws_allocator *allocator, const struct aws_http_client_connection_options *options, struct aws_http_request *request)
-{
-    struct aws_connection_with_request_context *context = aws_mem_acquire(allocator, sizeof(struct aws_connection_with_request_context));
-    if (context == NULL)
-    {
+static struct aws_connection_with_request_context *s_aws_connection_with_request_context_new(
+    struct aws_allocator *allocator,
+    const struct aws_http_client_connection_options *options,
+    struct aws_http_request *request) {
+    struct aws_connection_with_request_context *context =
+        aws_mem_acquire(allocator, sizeof(struct aws_connection_with_request_context));
+    if (context == NULL) {
         return NULL;
     }
 
@@ -460,10 +456,8 @@ static struct aws_connection_with_request_context *s_aws_connection_with_request
     return context;
 }
 
-static void s_aws_connection_with_request_context_destroy(struct aws_connection_with_request_context *context)
-{
-    if (context == NULL)
-    {
+static void s_aws_connection_with_request_context_destroy(struct aws_connection_with_request_context *context) {
+    if (context == NULL) {
         return;
     }
 
@@ -473,19 +467,20 @@ static void s_aws_connection_with_request_context_destroy(struct aws_connection_
 }
 
 static void s_aws_http_on_incoming_headers_connect_with_request(
-        struct aws_http_stream *stream,
-        const struct aws_http_header *header_array,
-        size_t num_headers,
-        void *user_data)
-{
+    struct aws_http_stream *stream,
+    const struct aws_http_header *header_array,
+    size_t num_headers,
+    void *user_data) {
     (void)stream;
     (void)header_array;
     (void)num_headers;
     (void)user_data;
 }
 
-static void s_aws_http_on_incoming_header_block_done_connect_with_request(struct aws_http_stream *stream, bool has_body, void *user_data)
-{
+static void s_aws_http_on_incoming_header_block_done_connect_with_request(
+    struct aws_http_stream *stream,
+    bool has_body,
+    void *user_data) {
     (void)has_body;
 
     struct aws_connection_with_request_context *context = user_data;
@@ -495,19 +490,22 @@ static void s_aws_http_on_incoming_header_block_done_connect_with_request(struct
     }
 }
 
-static void s_aws_http_on_incoming_body_connect_with_request(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data)
-{
+static void s_aws_http_on_incoming_body_connect_with_request(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    void *user_data) {
     (void)stream;
     (void)data;
     (void)user_data;
 }
 
-static void s_aws_http_on_stream_complete_connect_with_request(struct aws_http_stream *stream, int error_code, void *user_data)
-{
-    struct aws_http_connection *connection =  aws_http_stream_get_connection(stream);
+static void s_aws_http_on_stream_complete_connect_with_request(
+    struct aws_http_stream *stream,
+    int error_code,
+    void *user_data) {
+    struct aws_http_connection *connection = aws_http_stream_get_connection(stream);
     struct aws_connection_with_request_context *context = user_data;
-    if (context->request_successful && error_code == AWS_ERROR_SUCCESS)
-    {
+    if (context->request_successful && error_code == AWS_ERROR_SUCCESS) {
         context->state = SUCCESS;
         context->on_setup(connection, AWS_ERROR_SUCCESS, context->user_data);
         return;
@@ -519,14 +517,15 @@ static void s_aws_http_on_stream_complete_connect_with_request(struct aws_http_s
     aws_http_connection_close(connection);
 }
 
-static void s_aws_http_on_client_connection_setup_chained_request(struct aws_http_connection *connection, int error_code, void *user_data)
-{
+static void s_aws_http_on_client_connection_setup_chained_request(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
     struct aws_connection_with_request_context *context = user_data;
 
     AWS_FATAL_ASSERT((error_code == AWS_ERROR_SUCCESS) ^ (connection == NULL));
 
-    if (error_code != AWS_ERROR_SUCCESS)
-    {
+    if (error_code != AWS_ERROR_SUCCESS) {
         context->on_setup(NULL, error_code, context->user_data);
         s_aws_connection_with_request_context_destroy(context);
         return;
@@ -546,22 +545,23 @@ static void s_aws_http_on_client_connection_setup_chained_request(struct aws_htt
     request.on_complete = s_aws_http_on_stream_complete_connect_with_request;
 
     struct aws_http_stream *stream = aws_http_stream_new_client_request(&request);
-    if (stream == NULL)
-    {
+    if (stream == NULL) {
         goto on_error;
     }
 
     return;
 
-    on_error:
+on_error:
 
     context->on_setup(NULL, aws_last_error(), context->user_data);
     context->state = SHUTTING_DOWN;
     aws_http_connection_close(connection);
 }
 
-static void s_aws_http_on_client_connection_shutdown_chained_request(struct aws_http_connection *connection, int error_code, void *user_data)
-{
+static void s_aws_http_on_client_connection_shutdown_chained_request(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
     struct aws_connection_with_request_context *context = user_data;
 
     context->shutdown_received = true;
@@ -574,15 +574,15 @@ static void s_aws_http_on_client_connection_shutdown_chained_request(struct aws_
     s_aws_connection_with_request_context_destroy(context);
 }
 
-int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_options *options,
-                                      struct aws_http_request *request)
-{
+int aws_http_client_connect_via_proxy(
+    const struct aws_http_client_connection_options *options,
+    struct aws_http_request *request) {
     struct aws_http_client_connection_options options_copy = *options;
-    struct aws_connection_with_request_context *context = s_aws_connection_with_request_context_new(options->allocator, options, request);
+    struct aws_connection_with_request_context *context =
+        s_aws_connection_with_request_context_new(options->allocator, options, request);
 
     context = aws_mem_acquire(options->allocator, sizeof(struct aws_connection_with_request_context));
-    if (context == NULL)
-    {
+    if (context == NULL) {
         goto on_error;
     }
     AWS_ZERO_STRUCT(*context);
@@ -596,8 +596,7 @@ int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_op
     options_copy.on_setup = s_aws_http_on_client_connection_setup_chained_request;
     options_copy.on_shutdown = s_aws_http_on_client_connection_shutdown_chained_request;
 
-    if (aws_http_client_connect(&options_copy))
-    {
+    if (aws_http_client_connect(&options_copy)) {
         goto on_error;
     }
 
