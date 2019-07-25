@@ -18,11 +18,11 @@
 
 #include <aws/common/hash_table.h>
 #include <aws/common/string.h>
+#include <aws/http/request_response.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
-#include <aws/http/request_response.h>
 
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
@@ -30,10 +30,10 @@
 
 static struct aws_http_connection_system_vtable g_default_connection_system_vtable = {
     .new_socket_channel = aws_client_bootstrap_new_socket_channel,
-    .new_tls_socket_channel = aws_client_bootstrap_new_tls_socket_channel
-};
+    .new_tls_socket_channel = aws_client_bootstrap_new_tls_socket_channel};
 
-static const struct aws_http_connection_system_vtable *g_aws_http_connection_default_system_vtable_ptr = &g_default_connection_system_vtable;
+static const struct aws_http_connection_system_vtable *g_aws_http_connection_default_system_vtable_ptr =
+    &g_default_connection_system_vtable;
 
 void aws_http_connection_set_system_vtable(const struct aws_http_connection_system_vtable *system_vtable) {
 
@@ -657,8 +657,7 @@ error:
     return AWS_OP_ERR;
 }
 
-int aws_http_client_connect(const struct aws_http_client_connection_options *options)
-{
+int aws_http_client_connect(const struct aws_http_client_connection_options *options) {
     if (options->proxy_options != NULL) {
         return aws_http_client_connect_via_proxy(options);
     } else {
@@ -698,5 +697,3 @@ int aws_http_connection_configure_server(
 
     return AWS_OP_SUCCESS;
 }
-
-

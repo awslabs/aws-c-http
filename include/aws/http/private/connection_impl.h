@@ -30,24 +30,24 @@ struct aws_http_request_handler_options;
 struct aws_http_stream;
 struct aws_http_response_options;
 
-typedef int (aws_client_bootstrap_new_socket_channel_fn)(
-        struct aws_client_bootstrap *bootstrap,
-        const char *host_name,
-        uint16_t port,
-        const struct aws_socket_options *options,
-        aws_client_bootstrap_on_channel_setup_fn *setup_callback,
-        aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
-        void *user_data);
+typedef int(aws_client_bootstrap_new_socket_channel_fn)(
+    struct aws_client_bootstrap *bootstrap,
+    const char *host_name,
+    uint16_t port,
+    const struct aws_socket_options *options,
+    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
+    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
+    void *user_data);
 
-typedef int (aws_client_bootstrap_new_tls_socket_channel_fn)(
-        struct aws_client_bootstrap *bootstrap,
-        const char *host_name,
-        uint16_t port,
-        const struct aws_socket_options *options,
-        const struct aws_tls_connection_options *connection_options,
-        aws_client_bootstrap_on_channel_setup_fn *setup_callback,
-        aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
-        void *user_data);
+typedef int(aws_client_bootstrap_new_tls_socket_channel_fn)(
+    struct aws_client_bootstrap *bootstrap,
+    const char *host_name,
+    uint16_t port,
+    const struct aws_socket_options *options,
+    const struct aws_tls_connection_options *connection_options,
+    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
+    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
+    void *user_data);
 
 struct aws_http_connection_system_vtable {
     aws_client_bootstrap_new_socket_channel_fn *new_socket_channel;
@@ -126,8 +126,7 @@ struct aws_http_connection *aws_http_connection_new_http1_1_client(
     size_t initial_window_size);
 
 AWS_HTTP_API
-void aws_http_connection_set_system_vtable(
-    const struct aws_http_connection_system_vtable *system_vtable);
+void aws_http_connection_set_system_vtable(const struct aws_http_connection_system_vtable *system_vtable);
 
 AWS_HTTP_API
 int aws_http_client_connect_internal(const struct aws_http_client_connection_options *options);

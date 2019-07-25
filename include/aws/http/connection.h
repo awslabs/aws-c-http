@@ -38,10 +38,7 @@ typedef void(
 typedef void(
     aws_http_on_client_connection_shutdown_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
-enum aws_http_proxy_authentication_type {
-    AWS_HPAT_NONE,
-    AWS_HPAT_BASIC
-};
+enum aws_http_proxy_authentication_type { AWS_HPAT_NONE = 0, AWS_HPAT_BASIC };
 
 struct aws_http_proxy_authentication_basic_options {
     struct aws_byte_cursor user;
@@ -63,7 +60,6 @@ struct aws_http_proxy_options {
     uint16_t port;
 
     struct aws_http_proxy_authentication_options auth;
-
 };
 
 /**

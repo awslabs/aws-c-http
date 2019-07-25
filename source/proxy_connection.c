@@ -19,8 +19,7 @@
 #include <aws/common/string.h>
 #include <aws/io/uri.h>
 
-void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data)
-{
+void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data) {
     if (user_data == NULL) {
         return;
     }
@@ -32,9 +31,9 @@ void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data
     aws_mem_release(user_data->allocator, user_data);
 }
 
-static struct aws_http_proxy_user_data *s_aws_http_proxy_user_data_new(struct aws_allocator *allocator,
-                                                                       const struct aws_http_client_connection_options *options)
-{
+static struct aws_http_proxy_user_data *s_aws_http_proxy_user_data_new(
+    struct aws_allocator *allocator,
+    const struct aws_http_client_connection_options *options) {
     struct aws_http_proxy_user_data *user_data = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_user_data));
     if (user_data == NULL) {
         return NULL;
@@ -75,9 +74,10 @@ on_error:
     return NULL;
 }
 
-
-static void s_aws_http_on_client_connection_http_proxy_setup_fn(struct aws_http_connection *connection, int error_code, void *user_data)
-{
+static void s_aws_http_on_client_connection_http_proxy_setup_fn(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
     struct aws_http_proxy_user_data *proxy_ud = user_data;
 
     proxy_ud->original_on_setup(connection, error_code, proxy_ud->original_user_data);
@@ -87,8 +87,10 @@ static void s_aws_http_on_client_connection_http_proxy_setup_fn(struct aws_http_
     }
 }
 
-static void s_aws_http_on_client_connection_http_proxy_shutdown_fn(struct aws_http_connection *connection, int error_code, void *user_data)
-{
+static void s_aws_http_on_client_connection_http_proxy_shutdown_fn(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
     struct aws_http_proxy_user_data *proxy_ud = user_data;
 
     proxy_ud->original_on_shutdown(connection, error_code, proxy_ud->original_user_data);
@@ -101,7 +103,9 @@ static void s_aws_http_on_client_connection_http_proxy_shutdown_fn(struct aws_ht
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_authorization_header_name, "Proxy-Authorization");
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_authorization_header_basic_prefix, "Basic ");
 
-static int s_add_basic_proxy_authentication_header(struct aws_http_request *request, struct aws_http_proxy_user_data *proxy_user_data) {
+static int s_add_basic_proxy_authentication_header(
+    struct aws_http_request *request,
+    struct aws_http_proxy_user_data *proxy_user_data) {
     struct aws_byte_buf base64_input_value;
     AWS_ZERO_STRUCT(base64_input_value);
 
@@ -110,7 +114,10 @@ static int s_add_basic_proxy_authentication_header(struct aws_http_request *requ
 
     int result = AWS_OP_ERR;
 
-    if (aws_byte_buf_init(&base64_input_value, proxy_user_data->allocator, proxy_user_data->username->len + proxy_user_data->password->len + 1)) {
+    if (aws_byte_buf_init(
+            &base64_input_value,
+            proxy_user_data->allocator,
+            proxy_user_data->username->len + proxy_user_data->password->len + 1)) {
         goto done;
     }
 
@@ -129,7 +136,8 @@ static int s_add_basic_proxy_authentication_header(struct aws_http_request *requ
         goto done;
     }
 
-    struct aws_byte_cursor base64_source_cursor = aws_byte_cursor_from_array(base64_input_value.buffer, base64_input_value.len);
+    struct aws_byte_cursor base64_source_cursor =
+        aws_byte_cursor_from_array(base64_input_value.buffer, base64_input_value.len);
     if (aws_base64_encode(&base64_source_cursor, &header_value)) {
         goto done;
     }
@@ -149,10 +157,8 @@ static int s_add_basic_proxy_authentication_header(struct aws_http_request *requ
         goto done;
     }
 
-    struct aws_http_header header = {
-        .name = aws_byte_cursor_from_string(s_proxy_authorization_header_name),
-        .value = aws_byte_cursor_from_array(header_value.buffer, header_value.len)
-    };
+    struct aws_http_header header = {.name = aws_byte_cursor_from_string(s_proxy_authorization_header_name),
+                                     .value = aws_byte_cursor_from_array(header_value.buffer, header_value.len)};
 
     if (aws_http_request_add_header(request, header)) {
         goto done;
@@ -170,9 +176,9 @@ done:
 
 AWS_STATIC_STRING_FROM_LITERAL(s_http_scheme, "http");
 
-static int s_rewrite_uri_for_proxy_request(struct aws_http_request *request,
-                                            struct aws_http_proxy_user_data *proxy_user_data)
-{
+static int s_rewrite_uri_for_proxy_request(
+    struct aws_http_request *request,
+    struct aws_http_proxy_user_data *proxy_user_data) {
     int result = AWS_OP_ERR;
 
     struct aws_uri target_uri;
@@ -205,7 +211,8 @@ static int s_rewrite_uri_for_proxy_request(struct aws_http_request *request,
         goto done;
     }
 
-    struct aws_byte_cursor full_target_uri = aws_byte_cursor_from_array(target_uri.uri_str.buffer, target_uri.uri_str.len);
+    struct aws_byte_cursor full_target_uri =
+        aws_byte_cursor_from_array(target_uri.uri_str.buffer, target_uri.uri_str.len);
 
     if (aws_http_request_set_path(request, full_target_uri)) {
         goto done;
@@ -221,9 +228,7 @@ done:
     return result;
 }
 
-static int s_proxy_http_request_transform(struct aws_http_request *request,
-                                          void *user_data)
-{
+static int s_proxy_http_request_transform(struct aws_http_request *request, void *user_data) {
     struct aws_http_proxy_user_data *proxy_ud = user_data;
 
     struct aws_byte_buf auth_header_value;
@@ -248,8 +253,7 @@ done:
     return result;
 }
 
-static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client_connection_options *options)
-{
+static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client_connection_options *options) {
     AWS_FATAL_ASSERT(options->tls_options == NULL);
 
     struct aws_http_proxy_user_data *proxy_user_data = s_aws_http_proxy_user_data_new(options->allocator, options);
@@ -277,17 +281,17 @@ static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client
     return result;
 }
 
-static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_client_connection_options *options)
-{
+static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_client_connection_options *options) {
     (void)options;
 
     AWS_FATAL_ASSERT(options->tls_options != NULL);
 
+    /* NYI */
+
     return AWS_OP_ERR;
 }
 
-int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_options *options)
-{
+int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_options *options) {
     AWS_FATAL_ASSERT(options->proxy_options != NULL);
 
     if (options->tls_options != NULL) {
