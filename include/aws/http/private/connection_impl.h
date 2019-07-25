@@ -54,6 +54,30 @@ struct aws_http_connection_system_vtable {
     aws_client_bootstrap_new_tls_socket_channel_fn *new_tls_socket_channel;
 };
 
+typedef int(aws_client_bootstrap_new_socket_channel_fn)(
+    struct aws_client_bootstrap *bootstrap,
+    const char *host_name,
+    uint16_t port,
+    const struct aws_socket_options *options,
+    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
+    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
+    void *user_data);
+
+typedef int(aws_client_bootstrap_new_tls_socket_channel_fn)(
+    struct aws_client_bootstrap *bootstrap,
+    const char *host_name,
+    uint16_t port,
+    const struct aws_socket_options *options,
+    const struct aws_tls_connection_options *connection_options,
+    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
+    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
+    void *user_data);
+
+struct aws_http_connection_system_vtable {
+    aws_client_bootstrap_new_socket_channel_fn *new_socket_channel;
+    aws_client_bootstrap_new_tls_socket_channel_fn *new_tls_socket_channel;
+};
+
 struct aws_http_connection_vtable {
     struct aws_channel_handler_vtable channel_handler_vtable;
 
