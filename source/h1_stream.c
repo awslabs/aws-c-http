@@ -62,7 +62,8 @@ struct aws_h1_stream *aws_h1_stream_new_request(const struct aws_http_request_op
     }
 
     if (options->client_connection->request_transform) {
-        if (options->client_connection->request_transform(options->request, options->client_connection->user_data)) {
+        if (options->client_connection->request_transform(
+                options->request, options->client_connection->alloc, options->client_connection->user_data)) {
             goto error;
         }
     }

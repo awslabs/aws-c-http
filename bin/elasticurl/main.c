@@ -64,7 +64,7 @@ struct elasticurl_ctx {
     struct aws_shared_library signing_library;
     const char *signing_function_name;
     struct aws_hash_table signing_context;
-    aws_transform_http_request_fn *signing_function;
+    aws_http_request_transform_fn *signing_function;
     bool include_headers;
     bool insecure;
     FILE *output;

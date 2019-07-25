@@ -17,6 +17,7 @@
 
 #include <aws/common/encoding.h>
 #include <aws/common/string.h>
+#include <aws/http/request_response.h>
 #include <aws/io/uri.h>
 
 void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data) {
@@ -104,7 +105,7 @@ AWS_STATIC_STRING_FROM_LITERAL(s_proxy_authorization_header_name, "Proxy-Authori
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_authorization_header_basic_prefix, "Basic ");
 
 static int s_add_basic_proxy_authentication_header(
-    struct aws_http_request *request,
+    struct aws_http_message *request,
     struct aws_http_proxy_user_data *proxy_user_data) {
     struct aws_byte_buf base64_input_value;
     AWS_ZERO_STRUCT(base64_input_value);
@@ -138,9 +139,6 @@ static int s_add_basic_proxy_authentication_header(
 
     struct aws_byte_cursor base64_source_cursor =
         aws_byte_cursor_from_array(base64_input_value.buffer, base64_input_value.len);
-    if (aws_base64_encode(&base64_source_cursor, &header_value)) {
-        goto done;
-    }
 
     size_t required_size = 0;
     if (aws_base64_compute_encoded_len(base64_source_cursor.len, &required_size)) {
@@ -157,10 +155,14 @@ static int s_add_basic_proxy_authentication_header(
         goto done;
     }
 
+    if (aws_base64_encode(&base64_source_cursor, &header_value)) {
+        goto done;
+    }
+
     struct aws_http_header header = {.name = aws_byte_cursor_from_string(s_proxy_authorization_header_name),
                                      .value = aws_byte_cursor_from_array(header_value.buffer, header_value.len)};
 
-    if (aws_http_request_add_header(request, header)) {
+    if (aws_http_message_add_header(request, header)) {
         goto done;
     }
 
@@ -177,7 +179,7 @@ done:
 AWS_STATIC_STRING_FROM_LITERAL(s_http_scheme, "http");
 
 static int s_rewrite_uri_for_proxy_request(
-    struct aws_http_request *request,
+    struct aws_http_message *request,
     struct aws_http_proxy_user_data *proxy_user_data) {
     int result = AWS_OP_ERR;
 
@@ -187,7 +189,7 @@ static int s_rewrite_uri_for_proxy_request(
     struct aws_byte_cursor path_cursor;
     AWS_ZERO_STRUCT(path_cursor);
 
-    if (aws_http_request_get_path(request, &path_cursor)) {
+    if (aws_http_message_get_request_path(request, &path_cursor)) {
         goto done;
     }
 
@@ -214,7 +216,7 @@ static int s_rewrite_uri_for_proxy_request(
     struct aws_byte_cursor full_target_uri =
         aws_byte_cursor_from_array(target_uri.uri_str.buffer, target_uri.uri_str.len);
 
-    if (aws_http_request_set_path(request, full_target_uri)) {
+    if (aws_http_message_set_request_path(request, full_target_uri)) {
         goto done;
     }
 
@@ -228,7 +230,11 @@ done:
     return result;
 }
 
-static int s_proxy_http_request_transform(struct aws_http_request *request, void *user_data) {
+static int s_proxy_http_request_transform(
+    struct aws_http_message *request,
+    struct aws_allocator *allocator,
+    void *user_data) {
+    (void)allocator;
     struct aws_http_proxy_user_data *proxy_ud = user_data;
 
     struct aws_byte_buf auth_header_value;

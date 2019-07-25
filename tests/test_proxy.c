@@ -304,31 +304,31 @@ AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_host, "www.amazon.com");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_username, "SomeUser");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_password, "SuperSecret");
 
-struct aws_http_request *s_build_http_request(struct aws_allocator *allocator) {
-    struct aws_http_request *request = aws_http_request_new(allocator);
-    aws_http_request_set_method(request, aws_byte_cursor_from_string(s_mock_request_method));
-    aws_http_request_set_path(request, aws_byte_cursor_from_string(s_mock_request_path));
+struct aws_http_message *s_build_http_request(struct aws_allocator *allocator) {
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    aws_http_message_set_request_method(request, aws_byte_cursor_from_string(s_mock_request_method));
+    aws_http_message_set_request_path(request, aws_byte_cursor_from_string(s_mock_request_path));
 
     struct aws_http_header host = {.name = aws_byte_cursor_from_c_str("Host"),
                                    .value = aws_byte_cursor_from_string(s_mock_request_host)};
-    aws_http_request_add_header(request, host);
+    aws_http_message_add_header(request, host);
 
     struct aws_http_header accept = {.name = aws_byte_cursor_from_c_str("Accept"),
                                      .value = aws_byte_cursor_from_c_str("*/*")};
-    aws_http_request_add_header(request, accept);
+    aws_http_message_add_header(request, accept);
 
     struct aws_http_header user_agent = {.name = aws_byte_cursor_from_c_str("User-Agent"),
                                          .value = aws_byte_cursor_from_c_str("derp")};
-    aws_http_request_add_header(request, user_agent);
+    aws_http_message_add_header(request, user_agent);
 
     return request;
 }
 
-static bool s_is_header_in_request(struct aws_http_request *request, struct aws_http_header *header) {
-    size_t header_count = aws_http_request_get_header_count(request);
+static bool s_is_header_in_request(struct aws_http_message *request, struct aws_http_header *header) {
+    size_t header_count = aws_http_message_get_header_count(request);
     for (size_t i = 0; i < header_count; ++i) {
         struct aws_http_header current_header;
-        ASSERT_SUCCESS(aws_http_request_get_header(request, &current_header, i));
+        ASSERT_SUCCESS(aws_http_message_get_header(request, &current_header, i));
 
         if (aws_byte_cursor_eq_ignore_case(&current_header.name, &header->name) &&
             aws_byte_cursor_eq(&current_header.value, &header->value)) {
@@ -343,23 +343,23 @@ AWS_STATIC_STRING_FROM_LITERAL(s_expected_auth_header_name, "Proxy-Authorization
 AWS_STATIC_STRING_FROM_LITERAL(s_expected_auth_header_value, "Basic U29tZVVzZXI6U3VwZXJTZWNyZXQ=");
 
 static int s_verify_transformed_request(
-    struct aws_http_request *untransformed_request,
-    struct aws_http_request *transformed_request,
+    struct aws_http_message *untransformed_request,
+    struct aws_http_message *transformed_request,
     bool used_basic_auth,
     struct aws_allocator *allocator) {
 
     /* method shouldn't change */
     struct aws_byte_cursor method_cursor;
-    ASSERT_SUCCESS(aws_http_request_get_method(transformed_request, &method_cursor));
+    ASSERT_SUCCESS(aws_http_message_get_request_method(transformed_request, &method_cursor));
 
     struct aws_byte_cursor starting_method_cursor;
-    ASSERT_SUCCESS(aws_http_request_get_method(untransformed_request, &starting_method_cursor));
+    ASSERT_SUCCESS(aws_http_message_get_request_method(untransformed_request, &starting_method_cursor));
 
     ASSERT_TRUE(aws_byte_cursor_eq(&method_cursor, &starting_method_cursor));
 
     /* path should be the full uri */
     struct aws_byte_cursor path;
-    ASSERT_SUCCESS(aws_http_request_get_path(transformed_request, &path));
+    ASSERT_SUCCESS(aws_http_message_get_request_path(transformed_request, &path));
 
     struct aws_uri uri;
     ASSERT_SUCCESS(aws_uri_init_parse(&uri, allocator, &path));
@@ -377,13 +377,13 @@ static int s_verify_transformed_request(
     ASSERT_TRUE(aws_byte_cursor_eq(aws_uri_path(&uri), &expected_path));
 
     /* all old headers should still be present */
-    size_t untransformed_header_count = aws_http_request_get_header_count(untransformed_request);
+    size_t untransformed_header_count = aws_http_message_get_header_count(untransformed_request);
     ASSERT_TRUE(
         untransformed_header_count + (used_basic_auth ? 1 : 0) ==
-        aws_http_request_get_header_count(transformed_request));
+        aws_http_message_get_header_count(transformed_request));
     for (size_t i = 0; i < untransformed_header_count; ++i) {
         struct aws_http_header header;
-        ASSERT_SUCCESS(aws_http_request_get_header(untransformed_request, &header, i));
+        ASSERT_SUCCESS(aws_http_message_get_header(untransformed_request, &header, i));
         ASSERT_TRUE(s_is_header_in_request(transformed_request, &header));
     }
 
@@ -421,8 +421,8 @@ static int s_test_http_proxy_connection_request_transform(struct aws_allocator *
 
     proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
 
-    struct aws_http_request *untransformed_request = s_build_http_request(allocator);
-    struct aws_http_request *request = s_build_http_request(allocator);
+    struct aws_http_message *untransformed_request = s_build_http_request(allocator);
+    struct aws_http_message *request = s_build_http_request(allocator);
 
     struct aws_http_request_options request_options;
     AWS_ZERO_STRUCT(request_options);
@@ -439,8 +439,8 @@ static int s_test_http_proxy_connection_request_transform(struct aws_allocator *
     aws_http_stream_release(stream);
     aws_http_stream_release(stream);
 
-    aws_http_request_destroy(request);
-    aws_http_request_destroy(untransformed_request);
+    aws_http_message_destroy(request);
+    aws_http_message_destroy(untransformed_request);
 
     ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
 
@@ -474,8 +474,8 @@ static int s_test_http_proxy_connection_request_transform_basic_auth(struct aws_
 
     proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
 
-    struct aws_http_request *untransformed_request = s_build_http_request(allocator);
-    struct aws_http_request *request = s_build_http_request(allocator);
+    struct aws_http_message *untransformed_request = s_build_http_request(allocator);
+    struct aws_http_message *request = s_build_http_request(allocator);
 
     struct aws_http_request_options request_options;
     AWS_ZERO_STRUCT(request_options);
@@ -492,8 +492,8 @@ static int s_test_http_proxy_connection_request_transform_basic_auth(struct aws_
     aws_http_stream_release(stream);
     aws_http_stream_release(stream);
 
-    aws_http_request_destroy(request);
-    aws_http_request_destroy(untransformed_request);
+    aws_http_message_destroy(request);
+    aws_http_message_destroy(untransformed_request);
 
     ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
 
