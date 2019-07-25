@@ -76,29 +76,6 @@ static int s_test_aws_client_bootstrap_new_socket_channel(
     return AWS_OP_SUCCESS;
 }
 
-#ifdef NEVER
-static int s_test_aws_client_bootstrap_new_tls_socket_channel(
-    struct aws_client_bootstrap *bootstrap,
-    const char *host_name,
-    uint16_t port,
-    const struct aws_socket_options *options,
-    const struct aws_tls_connection_options *connection_options,
-    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
-    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
-    void *user_data) {
-    (void)bootstrap;
-    (void)host_name;
-    (void)port;
-    (void)options;
-    (void)connection_options;
-    (void)setup_callback;
-    (void)shutdown_callback;
-    (void)user_data;
-
-    return AWS_OP_SUCCESS;
-}
-#endif
-
 struct aws_http_connection_system_vtable s_connection_target_vtable = {
     .new_socket_channel = s_test_aws_client_bootstrap_new_socket_channel};
 
