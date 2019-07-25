@@ -38,13 +38,27 @@ typedef void(
 typedef void(
     aws_http_on_client_connection_shutdown_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
+/*
+ * Supported proxy authentication modes
+ */
 enum aws_http_proxy_authentication_type { AWS_HPAT_NONE = 0, AWS_HPAT_BASIC };
 
+/*
+ * For each non-none proxy authentication mode, a set of options
+ */
+
+/*
+ * Options for basic proxy authentication.  In basic mode, the user name and password are base64 encoded and appended
+ * to a Proxy-Authorization header.
+ */
 struct aws_http_proxy_authentication_basic_options {
     struct aws_byte_cursor user;
     struct aws_byte_cursor password;
 };
 
+/*
+ * Tagged union for proxy authentication options
+ */
 struct aws_http_proxy_authentication_options {
     enum aws_http_proxy_authentication_type type;
 
@@ -53,12 +67,24 @@ struct aws_http_proxy_authentication_options {
     } type_options;
 };
 
+/*
+ * Options for http proxy server usage
+ */
 struct aws_http_proxy_options {
 
+    /*
+     * Proxy host to connect to, in lieu of actual target
+     */
     struct aws_byte_cursor host;
 
+    /*
+     * Port to make the proxy connection to
+     */
     uint16_t port;
 
+    /*
+     * Authentication options that will be applied per-request made
+     */
     struct aws_http_proxy_authentication_options auth;
 };
 

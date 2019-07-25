@@ -32,12 +32,11 @@ static struct aws_http_connection_system_vtable g_default_connection_system_vtab
     .new_socket_channel = aws_client_bootstrap_new_socket_channel,
     .new_tls_socket_channel = aws_client_bootstrap_new_tls_socket_channel};
 
-static const struct aws_http_connection_system_vtable *g_aws_http_connection_default_system_vtable_ptr =
+static const struct aws_http_connection_system_vtable *g_aws_http_connection_system_vtable_ptr =
     &g_default_connection_system_vtable;
 
 void aws_http_connection_set_system_vtable(const struct aws_http_connection_system_vtable *system_vtable) {
-
-    g_aws_http_connection_default_system_vtable_ptr = system_vtable;
+    g_aws_http_connection_system_vtable_ptr = system_vtable;
 }
 
 AWS_STATIC_STRING_FROM_LITERAL(s_alpn_protocol_http_1_1, "http/1.1");
@@ -612,7 +611,7 @@ int aws_http_client_connect_internal(const struct aws_http_client_connection_opt
     http_bootstrap->request_transform = options->request_transform;
 
     if (options->tls_options) {
-        err = g_aws_http_connection_default_system_vtable_ptr->new_tls_socket_channel(
+        err = g_aws_http_connection_system_vtable_ptr->new_tls_socket_channel(
             options->bootstrap,
             (const char *)aws_string_bytes(host_name),
             options->port,
@@ -622,7 +621,7 @@ int aws_http_client_connect_internal(const struct aws_http_client_connection_opt
             s_client_bootstrap_on_channel_shutdown,
             http_bootstrap);
     } else {
-        err = g_aws_http_connection_default_system_vtable_ptr->new_socket_channel(
+        err = g_aws_http_connection_system_vtable_ptr->new_socket_channel(
             options->bootstrap,
             (const char *)aws_string_bytes(host_name),
             options->port,
