@@ -70,6 +70,9 @@ static int s_aws_http_on_incoming_body_proxy_test(
 }
 
 static void s_aws_http_on_stream_complete_proxy_test(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)stream;
+    (void)error_code;
+
     struct proxy_tester *context = user_data;
 
     aws_mutex_lock(&context->wait_lock);
