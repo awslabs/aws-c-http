@@ -80,13 +80,11 @@ struct tester {
     int wait_result;
 };
 
-static void s_tester_on_incoming_request(
-    struct aws_http_connection *connection,
-    struct aws_http_stream *stream,
-    void *user_data) {
+static struct aws_http_stream *s_tester_on_incoming_request(struct aws_http_connection *connection, void *user_data) {
     (void)connection;
     (void)user_data;
-    (void)stream;
+    aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+    return NULL;
 }
 
 static void s_tester_http_server_on_destroy(void *user_data) {

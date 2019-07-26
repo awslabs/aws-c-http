@@ -182,6 +182,11 @@ struct aws_http_request_handler_options {
     size_t self_size;
 
     /**
+     * Required.
+     */
+    struct aws_http_connection *server_connection;
+
+    /**
      * user_data passed to callbacks.
      * Optional.
      */
@@ -389,14 +394,13 @@ AWS_HTTP_API
 struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http_request_options *options);
 
 /**
- * Configure a server connection's new "request handler" stream.
- * This MUST be called from a server's on_incoming_request callback.
+ * Create a stream, with a server connection receiving and responding to a request.
+ * This function can only be called from the `aws_http_on_incoming_request_fn` callback.
+ * aws_http_stream_send_response() should be used to send a response.
  */
 AWS_HTTP_API
-int aws_http_stream_configure_server_request_handler(
-    struct aws_http_stream *stream,
+struct aws_http_stream *aws_http_stream_new_server_request_handler(
     const struct aws_http_request_handler_options *options);
-
 /**
  * Users must release the stream when they are done with it, or its memory will never be cleaned up.
  * This will not cancel the stream, its callbacks will still fire if the stream is still in progress.

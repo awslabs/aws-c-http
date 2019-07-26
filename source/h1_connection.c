@@ -61,6 +61,8 @@ static size_t s_handler_initial_window_size(struct aws_channel_handler *handler)
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
 static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
+static struct aws_http_stream *s_new_server_request_handler_stream(
+    const struct aws_http_request_handler_options *options);
 static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response);
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
@@ -88,6 +90,7 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
         },
 
     .new_client_request_stream = s_new_client_request_stream,
+    .new_server_request_handler_stream = s_new_server_request_handler_stream,
     .stream_send_response = s_stream_send_response,
     .close = s_connection_close,
     .is_open = s_connection_is_open,
@@ -151,6 +154,9 @@ struct h1_connection {
          * It will pass data to adjacent channel handlers without altering it.
          * The connection can no longer service request/response streams. */
         bool has_switched_protocols;
+
+        /* Server-only. Request-handler streams can only be created while this is true. */
+        bool can_create_request_handler_stream;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
@@ -1294,50 +1300,76 @@ error:
     s_shutdown_connection(connection, aws_last_error());
 }
 
-static struct aws_h1_stream *new_server_request_handler_stream(struct h1_connection *connection) {
-    AWS_PRECONDITION(connection->base.server_data);
-    AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+static struct aws_http_stream *s_new_server_request_handler_stream(
+    const struct aws_http_request_handler_options *options) {
 
-    /* Connection owns stream, and must outlive stream */
-    aws_atomic_fetch_add(&connection->base.refcount, 1);
+    struct h1_connection *connection = AWS_CONTAINER_OF(options->server_connection, struct h1_connection, base);
 
-    struct aws_h1_stream *stream = aws_h1_stream_new_request_handler(&connection->base);
-    if (!stream) {
-        goto error_new_stream;
+    if (!aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel) ||
+        !connection->thread_data.can_create_request_handler_stream) {
+
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: aws_http_stream_new_server_request_handler() can only be called during incoming request callback.",
+            (void *)&connection->base);
+
+        aws_raise_error(AWS_ERROR_INVALID_STATE);
+        return NULL;
     }
+
+    struct aws_h1_stream *stream = aws_h1_stream_new_request_handler(options);
+    if (!stream) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Failed to create request handler stream, error %d (%s).",
+            (void *)&connection->base,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
+        return NULL;
+    }
+
+    /*
+     * Success!
+     * Everything beyond this point cannot fail
+     */
+
+    /* Prevent further streams from being created until it's ok to do so. */
+    connection->thread_data.can_create_request_handler_stream = false;
 
     /* Stream is waiting for response. */
     aws_linked_list_push_back(&connection->thread_data.waiting_stream_list, &stream->node);
 
-    /* Connection must have an on_incoming_request callback. */
-    connection->base.server_data->on_incoming_request(
-        &connection->base, &stream->base, connection->base.server_data->connection_user_data);
-
-    /* The request handler must be configured in on_incoming_request
-     * If not, raise an error */
-    if (!stream->base.server_data->configured) {
-        AWS_LOGF_FATAL(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: The request handler stream is not request_handler_configured,"
-            "please make sure call aws_http_stream_configure_server_request_handler",
-            (void *)&connection->base);
-
-        aws_raise_error(AWS_ERROR_HTTP_REACTION_REQUIRED);
-
-        /* Memory ownership is too unclear at this point, so just explode */
-        AWS_FATAL_ASSERT(0);
-    }
+    /* Connection owns stream, and must outlive stream */
+    aws_atomic_fetch_add(&connection->base.refcount, 1);
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
         "id=%p: Created request handler stream on server connection=%p",
         (void *)&stream->base,
-        (void *)stream->base.owning_connection);
-    return stream;
+        (void *)&connection->base);
 
-error_new_stream:
-    aws_http_connection_release(&connection->base);
-    return NULL;
+    return &stream->base;
+}
+
+/* Invokes the on_incoming_request callback and returns new stream. */
+static struct aws_h1_stream *s_server_invoke_on_incoming_request(struct h1_connection *connection) {
+    AWS_PRECONDITION(connection->base.server_data);
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+    AWS_PRECONDITION(!connection->thread_data.can_create_request_handler_stream);
+    AWS_PRECONDITION(!connection->thread_data.incoming_stream);
+
+    /**
+     * The user MUST create the new request-handler stream during the on-incoming-request callback.
+     */
+    connection->thread_data.can_create_request_handler_stream = true;
+
+    struct aws_http_stream *new_stream = connection->base.server_data->on_incoming_request(
+        &connection->base, connection->base.server_data->connection_user_data);
+
+    connection->thread_data.can_create_request_handler_stream = false;
+
+    return new_stream ? AWS_CONTAINER_OF(new_stream, struct aws_h1_stream, base) : NULL;
 }
 
 static int s_handler_process_read_message(
@@ -1400,9 +1432,8 @@ static int s_handler_process_read_message(
         } else {
             /* Else processing message as normal HTTP data. */
             if (!connection->thread_data.incoming_stream) {
-                if (connection->base.client_data)
-                /* Client side*/
-                {
+                if (aws_http_connection_is_client(&connection->base)) {
+                    /* Client side */
                     AWS_LOGF_ERROR(
                         AWS_LS_HTTP_CONNECTION,
                         "id=%p: Cannot process message because no requests are currently awaiting response, closing "
@@ -1411,24 +1442,21 @@ static int s_handler_process_read_message(
 
                     aws_raise_error(AWS_ERROR_INVALID_STATE);
                     goto shutdown;
-                } else {
-                    /* Server side
-                     * Make a new stream for this request and push it into the waiting stream list wait for response */
-                    struct aws_h1_stream *stream = new_server_request_handler_stream(connection);
-                    if (!stream) {
-                        /* Error already logged */
-                        goto shutdown;
-                    }
-                    connection->thread_data.incoming_stream = stream;
 
-                    /* Stop decoding if user callback shut down the connection. */
-                    if (connection->thread_data.is_shutting_down) {
+                } else {
+                    /* Server side.
+                     * Invoke on-incoming-request callback. The user MUST create a new stream from this callback.
+                     * The new stream becomes the current incoming stream */
+                    connection->thread_data.incoming_stream = s_server_invoke_on_incoming_request(connection);
+                    if (!connection->thread_data.incoming_stream) {
                         AWS_LOGF_ERROR(
                             AWS_LS_HTTP_CONNECTION,
-                            "id=%p: Cannot process message because connection is shutting down.",
-                            (void *)&connection->base);
+                            "id=%p: Incoming request callback failed to provide a new stream, last error %d (%s). "
+                            "Closing connection.",
+                            (void *)&connection->base,
+                            aws_last_error(),
+                            aws_error_name(aws_last_error()));
 
-                        aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
                         goto shutdown;
                     }
                 }

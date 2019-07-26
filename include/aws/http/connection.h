@@ -160,6 +160,12 @@ AWS_HTTP_API
 bool aws_http_connection_is_open(const struct aws_http_connection *connection);
 
 /**
+ * Returns true if this is a client connection.
+ */
+AWS_HTTP_API
+bool aws_http_connection_is_client(const struct aws_http_connection *connection);
+
+/**
  * Increments the connection-wide read window by the value specified.
  */
 AWS_HTTP_API
