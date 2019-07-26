@@ -436,10 +436,9 @@ static int s_test_http_proxy_connection_request_transform_basic_auth(struct aws_
     struct aws_http_proxy_options proxy_options = {
         .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
         .port = s_proxy_port,
-        .auth = {
-            .type = AWS_HPAT_BASIC,
-            .type_options = {.basic_options = {.user = aws_byte_cursor_from_string(s_mock_request_username),
-                                               .password = aws_byte_cursor_from_string(s_mock_request_password)}}}};
+        .auth_type = AWS_HPAT_BASIC,
+        .auth_username = aws_byte_cursor_from_string(s_mock_request_username),
+        .auth_password = aws_byte_cursor_from_string(s_mock_request_password)};
 
     struct proxy_tester_options options = {.alloc = allocator,
                                            .proxy_options = &proxy_options,

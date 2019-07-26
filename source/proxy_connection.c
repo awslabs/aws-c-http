@@ -20,6 +20,10 @@
 #include <aws/http/request_response.h>
 #include <aws/io/uri.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#endif
+
 void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data) {
     if (user_data == NULL) {
         return;
@@ -47,15 +51,15 @@ static struct aws_http_proxy_user_data *s_aws_http_proxy_user_data_new(
     }
 
     user_data->original_port = options->port;
-    user_data->auth_type = options->proxy_options->auth.type;
+    user_data->auth_type = options->proxy_options->auth_type;
     if (user_data->auth_type == AWS_HPAT_BASIC) {
-        const struct aws_byte_cursor *user_name = &options->proxy_options->auth.type_options.basic_options.user;
+        const struct aws_byte_cursor *user_name = &options->proxy_options->auth_username;
         user_data->username = aws_string_new_from_array(allocator, user_name->ptr, user_name->len);
         if (user_data->username == NULL) {
             goto on_error;
         }
 
-        const struct aws_byte_cursor *password = &options->proxy_options->auth.type_options.basic_options.password;
+        const struct aws_byte_cursor *password = &options->proxy_options->auth_password;
         user_data->password = aws_string_new_from_array(allocator, password->ptr, password->len);
         if (user_data->password == NULL) {
             goto on_error;
