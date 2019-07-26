@@ -270,7 +270,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
             AWS_LS_HTTP_SERVER, "id=%p: Incoming connection failed. The server is shutting down.", (void *)server);
         error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
     }
-    /* no matter the server is shutting down or not, the channel is already set up, we need a ref_count to keep server alive */
+    /* no matter the server is shutting down or not, the channel is already set up, we need a ref_count to keep server
+     * alive */
     server->synced_data.ref_count++;
     err = aws_mutex_unlock(&server->synced_data.lock);
     AWS_FATAL_ASSERT(!err);
@@ -398,7 +399,7 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
     /* BEGIN CRITICAL SECTION */
     int err = aws_mutex_lock(&server->synced_data.lock);
     AWS_FATAL_ASSERT(!err);
-    if(--server->synced_data.ref_count == 0){
+    if (--server->synced_data.ref_count == 0) {
         clean_up_server = true;
     }
     int remove_err = aws_hash_table_remove(&server->channel_to_connection_map, channel, &map_elem, &was_present);
@@ -530,7 +531,7 @@ void aws_http_server_release(struct aws_http_server *server) {
             server->synced_data.is_shutting_down = true;
         }
         /* release the ref_count */
-        if(--server->synced_data.ref_count == 0){
+        if (--server->synced_data.ref_count == 0) {
             clean_up = true;
         };
 
@@ -546,8 +547,8 @@ void aws_http_server_release(struct aws_http_server *server) {
             /* nothing to do */
             return;
         }
-        
-        if(clean_up){
+
+        if (clean_up) {
             return;
         }
 
