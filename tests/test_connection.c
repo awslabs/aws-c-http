@@ -472,8 +472,7 @@ static int s_test_connection_server_shutting_down_new_connection_fail(struct aws
     ASSERT_SUCCESS(aws_event_loop_group_default_init(&event_loop_group, allocator, 1));
     struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
     client_options.allocator = tester.alloc;
-    client_options.bootstrap =
-        aws_client_bootstrap_new(tester.alloc, &event_loop_group, &tester.host_resolver, NULL);
+    client_options.bootstrap = aws_client_bootstrap_new(tester.alloc, &event_loop_group, &tester.host_resolver, NULL);
     client_options.host_name = aws_byte_cursor_from_c_str(tester.endpoint.address);
     client_options.port = tester.endpoint.port;
     client_options.socket_options = &socket_options;
