@@ -149,11 +149,8 @@ static void s_tester_on_stream_complete(struct aws_http_stream *stream, int erro
 }
 
 /* Create a new request handler */
-static void s_tester_on_incoming_request(
-    struct aws_http_connection *connection,
-    struct aws_http_stream *stream,
-    void *user_data) {
-    (void)connection;
+static struct aws_http_stream *s_tester_on_incoming_request(struct aws_http_connection *connection, void *user_data) {
+
     struct aws_http_request_handler_options options = AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT;
     struct tester *tester = user_data;
 
@@ -165,14 +162,15 @@ static void s_tester_on_incoming_request(
 
     aws_byte_buf_init(&tester->requests[index].storage, tester->alloc, 1024 * 1024 * 1);
     options.user_data = &tester->requests[index];
-    tester->requests[index].request_handler = stream;
+    options.server_connection = connection;
     options.on_request_headers = s_tester_on_request_header;
     options.on_request_header_block_done = s_tester_on_request_header_block_done;
     options.on_request_body = s_tester_on_request_body;
     options.on_complete = s_tester_on_stream_complete;
+    tester->requests[index].request_handler = aws_http_stream_new_server_request_handler(&options);
 
     tester->request_num++;
-    aws_http_stream_configure_server_request_handler(stream, &options);
+    return tester->requests[index].request_handler;
 }
 
 static int s_tester_init(struct aws_allocator *alloc) {
@@ -1053,6 +1051,7 @@ TEST_CASE(h1_server_send_response_large_head) {
 /* The connection is closed before the message is sent */
 
 enum request_handler_callback {
+    REQUEST_HANDLER_CALLBACK_INCOMING_REQUEST,
     REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS,
     REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS_DONE,
     REQUEST_HANDLER_CALLBACK_INCOMING_BODY,
@@ -1174,11 +1173,10 @@ static void s_error_tester_on_stream_complete(struct aws_http_stream *stream, in
     error_tester->on_complete_error_code = error_code;
 }
 
-static void s_tester_close_on_incoming_request(
+static struct aws_http_stream *s_tester_close_on_incoming_request(
     struct aws_http_connection *connection,
-    struct aws_http_stream *stream,
     void *user_data) {
-    (void)connection;
+
     struct aws_http_request_handler_options options = AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT;
     struct error_from_callback_tester *tester = user_data;
 
@@ -1189,16 +1187,26 @@ static void s_tester_close_on_incoming_request(
     tester->requests[index].header_done = false;
 
     aws_byte_buf_init(&tester->requests[index].storage, tester->alloc, 1024 * 1024 * 1);
+    options.server_connection = connection;
     options.user_data = tester;
-    tester->requests[index].request_handler = stream;
     options.on_request_headers = s_error_from_incoming_headers;
     options.on_request_header_block_done = s_error_from_incoming_headers_done;
     options.on_request_body = s_error_from_incoming_body;
     options.on_request_done = s_error_from_incoming_request_done;
     options.on_complete = s_error_tester_on_stream_complete;
 
+    struct aws_http_stream *stream = aws_http_stream_new_server_request_handler(&options);
+    AWS_FATAL_ASSERT(stream);
+    tester->requests[index].request_handler = stream;
+
     tester->request_num++;
-    aws_http_stream_configure_server_request_handler(stream, &options);
+
+    int err = s_error_from_callback_common(tester, REQUEST_HANDLER_CALLBACK_INCOMING_REQUEST);
+    if (err) {
+        return NULL;
+    }
+
+    return stream;
 }
 
 static int s_error_tester_init(struct aws_allocator *alloc, struct error_from_callback_tester *tester) {
@@ -1371,6 +1379,12 @@ TEST_CASE(h1_server_close_before_message_is_sent) {
     }
 
     ASSERT_SUCCESS(s_server_error_tester_clean_up(&error_tester));
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_error_from_incoming_request_callback_stops_decoder) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_error_from_callback(allocator, REQUEST_HANDLER_CALLBACK_INCOMING_REQUEST));
     return AWS_OP_SUCCESS;
 }
 
