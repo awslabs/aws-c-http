@@ -227,7 +227,7 @@ add_test_case(test_http_proxy_uri_rewrite_options_star)
 # integration  tests that require a locally-installed proxy server
 #add_test_case(test_http_proxy_connection_new_destroy)
 #add_test_case(test_http_proxy_connection_get)
-add_test_case(test_http_proxy_connection_options_star)
+#add_test_case(test_http_proxy_connection_options_star)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})

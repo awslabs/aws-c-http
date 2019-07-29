@@ -87,7 +87,7 @@ static int s_test_http_proxy_connection_new_destroy(struct aws_allocator *alloca
 
     struct proxy_tester_options options = {.alloc = allocator,
                                            .proxy_options = &proxy_options,
-                                           .host = aws_byte_cursor_from_c_str("www.amazon.com"),
+                                           .host = aws_byte_cursor_from_c_str("aws.amazon.com"),
                                            .port = 80};
     struct proxy_tester tester;
     ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
@@ -104,7 +104,7 @@ static int s_test_http_proxy_connection_get(struct aws_allocator *allocator, voi
 
     struct proxy_tester_options options = {.alloc = allocator,
                                            .proxy_options = &proxy_options,
-                                           .host = aws_byte_cursor_from_c_str("www.amazon.com"),
+                                           .host = aws_byte_cursor_from_c_str("aws.amazon.com"),
                                            .port = 80};
     struct proxy_tester tester;
     ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
@@ -114,7 +114,7 @@ static int s_test_http_proxy_connection_get(struct aws_allocator *allocator, voi
     aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/"));
 
     struct aws_http_header host = {.name = aws_byte_cursor_from_c_str("Host"),
-                                   .value = aws_byte_cursor_from_c_str("www.amazon.com")};
+                                   .value = aws_byte_cursor_from_c_str("aws.amazon.com")};
     aws_http_message_add_header(request, host);
 
     struct aws_http_header accept = {.name = aws_byte_cursor_from_c_str("Accept"),
