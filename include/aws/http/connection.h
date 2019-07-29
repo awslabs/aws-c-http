@@ -18,6 +18,8 @@
 
 #include <aws/http/http.h>
 
+#include <aws/http/request_response.h>
+
 struct aws_client_bootstrap;
 struct aws_socket_options;
 struct aws_tls_connection_options;
@@ -34,6 +36,45 @@ typedef void(
 
 typedef void(
     aws_http_on_client_connection_shutdown_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
+
+/**
+ * Supported proxy authentication modes
+ */
+enum aws_http_proxy_authentication_type {
+    AWS_HPAT_NONE = 0,
+    AWS_HPAT_BASIC,
+};
+
+/**
+ * Options for http proxy server usage
+ */
+struct aws_http_proxy_options {
+
+    /**
+     * Proxy host to connect to, in lieu of actual target
+     */
+    struct aws_byte_cursor host;
+
+    /**
+     * Port to make the proxy connection to
+     */
+    uint16_t port;
+
+    /**
+     * What type of proxy authentication to use, if any
+     */
+    enum aws_http_proxy_authentication_type auth_type;
+
+    /**
+     * User name to use for authentication, basic only
+     */
+    struct aws_byte_cursor auth_username;
+
+    /**
+     * Password to use for authentication, basic only
+     */
+    struct aws_byte_cursor auth_password;
+};
 
 /**
  * Options for creating an HTTP client connection.
@@ -83,6 +124,13 @@ struct aws_http_client_connection_options {
     struct aws_tls_connection_options *tls_options;
 
     /**
+     * Optional
+     * Configuration options related to http proxy usage.
+     * Relevant fields are copied internally.
+     */
+    struct aws_http_proxy_options *proxy_options;
+
+    /**
      * Optional.
      * A default size is set by AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT.
      */
@@ -112,6 +160,13 @@ struct aws_http_client_connection_options {
      * AND aws_http_connection_release() has been called.
      */
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
+
+    /*
+     * Request transformation function invoked with every request made on the connection.
+     * The user_data parameter is the connection's user_data
+     * Optional
+     */
+    aws_http_request_transform_fn *request_transform;
 };
 
 /**
