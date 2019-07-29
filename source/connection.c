@@ -375,17 +375,19 @@ static void s_http_server_clean_up(struct aws_http_server *server) {
             "%s:%d: Destroying server.",
             server->socket->local_endpoint.address,
             server->socket->local_endpoint.port);
-
+        /* is this case the clean up thing should be in the listener destroy callback */
         aws_server_bootstrap_destroy_socket_listener(server->bootstrap, server->socket);
-    }
-    /* invoke the user callback */
-    if (server->on_destroy_complete) {
-        server->on_destroy_complete(server->user_data);
-    }
+    } else {
+        /* clean it up */
+        /* invoke the user callback */
+        if (server->on_destroy_complete) {
+            server->on_destroy_complete(server->user_data);
+        }
 
-    aws_hash_table_clean_up(&server->channel_to_connection_map);
+        aws_hash_table_clean_up(&server->channel_to_connection_map);
 
-    aws_mem_release(server->alloc, server);
+        aws_mem_release(server->alloc, server);
+    }
 }
 
 /* At this point, the channel for a server connection has completed shutdown, but hasn't been destroyed yet. */
@@ -425,6 +427,22 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
     if (clean_up_server) {
         s_http_server_clean_up(server);
     }
+}
+
+static void s_server_bootstrap_on_server_listener_destroy(struct aws_server_bootstrap *bootstrap, void *user_data) {
+    (void)bootstrap;
+    AWS_ASSERT(user_data);
+    struct aws_http_server *server = user_data;
+    /* the server listener has finished the destroy process, no existing connections
+     * finally safe to clean the server up
+     * invoke the user callback */
+    if (server->on_destroy_complete) {
+        server->on_destroy_complete(server->user_data);
+    }
+
+    aws_hash_table_clean_up(&server->channel_to_connection_map);
+
+    aws_mem_release(server->alloc, server);
 }
 
 struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options) {
@@ -488,6 +506,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             options->tls_options,
             s_server_bootstrap_on_accept_channel_setup,
             s_server_bootstrap_on_accept_channel_shutdown,
+            s_server_bootstrap_on_server_listener_destroy,
             server);
     } else {
         server->socket = aws_server_bootstrap_new_socket_listener(
@@ -496,6 +515,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             options->socket_options,
             s_server_bootstrap_on_accept_channel_setup,
             s_server_bootstrap_on_accept_channel_shutdown,
+            s_server_bootstrap_on_server_listener_destroy,
             server);
     }
 
