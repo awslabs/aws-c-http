@@ -136,7 +136,6 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
         aws_client_bootstrap_new(tester->alloc, &tester->event_loop_group, &tester->host_resolver, NULL);
     ASSERT_NOT_NULL(tester->client_bootstrap);
 
-#ifdef NEVER
     if (options->use_tls) {
         aws_tls_init_static_state(tester->alloc);
 
@@ -148,7 +147,6 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
         aws_tls_connection_options_init_from_ctx(&tester->tls_connection_options, tester->tls_ctx);
         aws_tls_connection_options_set_server_name(&tester->tls_connection_options, tester->alloc, &tester->host);
     }
-#endif // NEVER
 
     /* Connect */
     struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;

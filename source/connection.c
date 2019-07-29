@@ -518,7 +518,7 @@ static void s_client_bootstrap_on_channel_setup(
         goto error;
     }
 
-    http_bootstrap->connection->request_transform = http_bootstrap->request_transform;
+    http_bootstrap->connection->message_transform = http_bootstrap->message_transform;
     http_bootstrap->connection->user_data = http_bootstrap->user_data;
 
     AWS_LOGF_INFO(
@@ -618,7 +618,7 @@ int aws_http_client_connect_internal(const struct aws_http_client_connection_opt
     http_bootstrap->user_data = options->user_data;
     http_bootstrap->on_setup = options->on_setup;
     http_bootstrap->on_shutdown = options->on_shutdown;
-    http_bootstrap->request_transform = options->request_transform;
+    http_bootstrap->message_transform = options->message_transform;
 
     if (options->tls_options) {
         err = s_system_vtable_ptr->new_tls_socket_channel(

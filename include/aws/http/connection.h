@@ -166,7 +166,7 @@ struct aws_http_client_connection_options {
      * The user_data parameter is the connection's user_data
      * Optional
      */
-    aws_http_request_transform_fn *request_transform;
+    aws_http_message_transform_fn *message_transform;
 };
 
 /**
