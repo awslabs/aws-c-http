@@ -27,6 +27,30 @@
 
 static struct proxy_tester tester;
 
+struct aws_http_message *s_build_http_request_aux(
+    struct aws_allocator *allocator,
+    struct aws_byte_cursor method,
+    struct aws_byte_cursor path,
+    struct aws_byte_cursor host) {
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    aws_http_message_set_request_method(request, method);
+    aws_http_message_set_request_path(request, path);
+
+    struct aws_http_header host_header = {
+        .name = aws_byte_cursor_from_c_str("Host"),
+        .value = host,
+    };
+    aws_http_message_add_header(request, host_header);
+
+    struct aws_http_header accept_header = {
+        .name = aws_byte_cursor_from_c_str("Accept"),
+        .value = aws_byte_cursor_from_c_str("*/*"),
+    };
+    aws_http_message_add_header(request, accept_header);
+
+    return request;
+}
+
 struct aws_http_stream *s_proxy_new_client_request_stream(const struct aws_http_request_options *options) {
     struct aws_h1_stream *h1_stream = aws_h1_stream_new_request(options);
 
@@ -281,24 +305,12 @@ AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_host, "www.amazon.com");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_username, "SomeUser");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_password, "SuperSecret");
 
-struct aws_http_message *s_build_http_request(struct aws_allocator *allocator) {
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
-    aws_http_message_set_request_method(request, aws_byte_cursor_from_string(s_mock_request_method));
-    aws_http_message_set_request_path(request, aws_byte_cursor_from_string(s_mock_request_path));
-
-    struct aws_http_header host = {.name = aws_byte_cursor_from_c_str("Host"),
-                                   .value = aws_byte_cursor_from_string(s_mock_request_host)};
-    aws_http_message_add_header(request, host);
-
-    struct aws_http_header accept = {.name = aws_byte_cursor_from_c_str("Accept"),
-                                     .value = aws_byte_cursor_from_c_str("*/*")};
-    aws_http_message_add_header(request, accept);
-
-    struct aws_http_header user_agent = {.name = aws_byte_cursor_from_c_str("User-Agent"),
-                                         .value = aws_byte_cursor_from_c_str("derp")};
-    aws_http_message_add_header(request, user_agent);
-
-    return request;
+static struct aws_http_message *s_build_http_request(struct aws_allocator *allocator) {
+    return s_build_http_request_aux(
+        allocator,
+        aws_byte_cursor_from_string(s_mock_request_method),
+        aws_byte_cursor_from_string(s_mock_request_path),
+        aws_byte_cursor_from_string(s_mock_request_host));
 }
 
 static bool s_is_header_in_request(struct aws_http_message *request, struct aws_http_header *header) {
@@ -478,3 +490,85 @@ static int s_test_http_proxy_connection_request_transform_basic_auth(struct aws_
 AWS_TEST_CASE(
     test_http_proxy_connection_request_transform_basic_auth,
     s_test_http_proxy_connection_request_transform_basic_auth);
+
+AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_host, "www.uri.com");
+AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_path, "/main/index.html?foo=bar");
+AWS_STATIC_STRING_FROM_LITERAL(s_expected_rewritten_path, "http://www.uri.com:80/main/index.html?foo=bar");
+
+static int s_test_http_proxy_uri_rewrite(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct aws_http_proxy_options proxy_options = {
+        .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
+        .port = s_proxy_port,
+    };
+
+    struct aws_http_client_connection_options connection_options = {
+        .allocator = allocator,
+        .host_name = aws_byte_cursor_from_string(s_rewrite_host),
+        .port = 80,
+        .proxy_options = &proxy_options,
+    };
+
+    struct aws_http_proxy_user_data *user_data = aws_http_proxy_user_data_new(allocator, &connection_options);
+    struct aws_http_message *request = s_build_http_request_aux(
+        allocator,
+        aws_byte_cursor_from_string(s_mock_request_method),
+        aws_byte_cursor_from_string(s_rewrite_path),
+        aws_byte_cursor_from_string(s_rewrite_host));
+
+    ASSERT_SUCCESS(aws_http_rewrite_uri_for_proxy_request(request, user_data));
+
+    struct aws_byte_cursor expected_rewritten_path = aws_byte_cursor_from_string(s_expected_rewritten_path);
+    struct aws_byte_cursor rewritten_path;
+    ASSERT_SUCCESS(aws_http_message_get_request_path(request, &rewritten_path));
+
+    ASSERT_TRUE(aws_byte_cursor_eq(&rewritten_path, &expected_rewritten_path));
+
+    aws_http_message_destroy(request);
+    aws_http_proxy_user_data_destroy(user_data);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_proxy_uri_rewrite, s_test_http_proxy_uri_rewrite);
+
+AWS_STATIC_STRING_FROM_LITERAL(s_options_request_method, "OPTIONS");
+AWS_STATIC_STRING_FROM_LITERAL(s_options_star_path, "*");
+AWS_STATIC_STRING_FROM_LITERAL(s_expected_rewritten_options_path, "http://www.uri.com:80");
+
+static int s_test_http_proxy_uri_rewrite_options_star(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct aws_http_proxy_options proxy_options = {
+        .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
+        .port = s_proxy_port,
+    };
+
+    struct aws_http_client_connection_options connection_options = {
+        .allocator = allocator,
+        .host_name = aws_byte_cursor_from_string(s_rewrite_host),
+        .port = 80,
+        .proxy_options = &proxy_options,
+    };
+
+    struct aws_http_proxy_user_data *user_data = aws_http_proxy_user_data_new(allocator, &connection_options);
+    struct aws_http_message *request = s_build_http_request_aux(
+        allocator,
+        aws_byte_cursor_from_string(s_options_request_method),
+        aws_byte_cursor_from_string(s_options_star_path),
+        aws_byte_cursor_from_string(s_rewrite_host));
+
+    ASSERT_SUCCESS(aws_http_rewrite_uri_for_proxy_request(request, user_data));
+
+    struct aws_byte_cursor expected_rewritten_path = aws_byte_cursor_from_string(s_expected_rewritten_options_path);
+    struct aws_byte_cursor rewritten_path;
+    ASSERT_SUCCESS(aws_http_message_get_request_path(request, &rewritten_path));
+
+    ASSERT_TRUE(aws_byte_cursor_eq(&rewritten_path, &expected_rewritten_path));
+
+    aws_http_message_destroy(request);
+    aws_http_proxy_user_data_destroy(user_data);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_proxy_uri_rewrite_options_star, s_test_http_proxy_uri_rewrite_options_star);

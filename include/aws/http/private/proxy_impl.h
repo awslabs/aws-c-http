@@ -47,10 +47,20 @@ struct aws_http_proxy_user_data {
 AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API
+struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
+    struct aws_allocator *allocator,
+    const struct aws_http_client_connection_options *options);
+
+AWS_HTTP_API
 void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data);
 
 AWS_HTTP_API
 int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_options *options);
+
+AWS_HTTP_API
+int aws_http_rewrite_uri_for_proxy_request(
+    struct aws_http_message *request,
+    struct aws_http_proxy_user_data *proxy_user_data);
 
 AWS_EXTERN_C_END
 

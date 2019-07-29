@@ -36,9 +36,10 @@ void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data
     aws_mem_release(user_data->allocator, user_data);
 }
 
-static struct aws_http_proxy_user_data *s_aws_http_proxy_user_data_new(
+struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     struct aws_allocator *allocator,
     const struct aws_http_client_connection_options *options) {
+
     struct aws_http_proxy_user_data *user_data = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_user_data));
     if (user_data == NULL) {
         return NULL;
@@ -183,9 +184,36 @@ done:
     return result;
 }
 
+AWS_STATIC_STRING_FROM_LITERAL(s_options_method, "OPTIONS");
+AWS_STATIC_STRING_FROM_LITERAL(s_star_path, "*");
+
+static bool s_is_star_path_options_method(const struct aws_http_message *request) {
+    struct aws_byte_cursor method_cursor;
+    if (aws_http_message_get_request_method(request, &method_cursor)) {
+        return false;
+    }
+
+    struct aws_byte_cursor options_cursor = aws_byte_cursor_from_string(s_options_method);
+    if (!aws_byte_cursor_eq_ignore_case(&method_cursor, &options_cursor)) {
+        return false;
+    }
+
+    struct aws_byte_cursor path_cursor;
+    if (aws_http_message_get_request_path(request, &path_cursor)) {
+        return false;
+    }
+
+    struct aws_byte_cursor star_cursor = aws_byte_cursor_from_string(s_star_path);
+    if (!aws_byte_cursor_eq_ignore_case(&path_cursor, &star_cursor)) {
+        return false;
+    }
+
+    return true;
+}
+
 AWS_STATIC_STRING_FROM_LITERAL(s_http_scheme, "http");
 
-static int s_rewrite_uri_for_proxy_request(
+int aws_http_rewrite_uri_for_proxy_request(
     struct aws_http_message *request,
     struct aws_http_proxy_user_data *proxy_user_data) {
     int result = AWS_OP_ERR;
@@ -225,6 +253,22 @@ static int s_rewrite_uri_for_proxy_request(
     struct aws_byte_cursor full_target_uri =
         aws_byte_cursor_from_array(target_uri.uri_str.buffer, target_uri.uri_str.len);
 
+    /*
+     * By rfc 7230, Section 5.3.4, a star-pathed options request made through a proxy MUST be transformed (at the last
+     * proxy) back into a star-pathed request if the proxy request has an empty path and no query string.  This
+     * is behavior we want to support.  So from our side, we need to make sure that star-pathed options requests
+     * get translated into options requests with the authority as the uri and an empty path-query.
+     *
+     * Our URI transform always ends with a '/' which is technically not an empty path. To address this,
+     * the easiest thing to do is just detect if this was originally a star-pathed options request
+     * and drop the final '/' from the path.
+     */
+    if (s_is_star_path_options_method(request)) {
+        if (full_target_uri.len > 0 && *(full_target_uri.ptr + full_target_uri.len - 1) == '/') {
+            full_target_uri.len -= 1;
+        }
+    }
+
     /* mutate the request with the new path value */
     if (aws_http_message_set_request_path(request, full_target_uri)) {
         goto done;
@@ -256,7 +300,7 @@ static int s_proxy_http_request_transform(
         goto done;
     }
 
-    if (s_rewrite_uri_for_proxy_request(request, proxy_ud)) {
+    if (aws_http_rewrite_uri_for_proxy_request(request, proxy_ud)) {
         goto done;
     }
 
@@ -273,7 +317,7 @@ static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client
     AWS_FATAL_ASSERT(options->tls_options == NULL);
 
     /* Create a wrapper user data that contains the connection options we'll need to rewrite requests */
-    struct aws_http_proxy_user_data *proxy_user_data = s_aws_http_proxy_user_data_new(options->allocator, options);
+    struct aws_http_proxy_user_data *proxy_user_data = aws_http_proxy_user_data_new(options->allocator, options);
     if (proxy_user_data == NULL) {
         return AWS_OP_ERR;
     }

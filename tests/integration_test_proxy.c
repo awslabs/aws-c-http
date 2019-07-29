@@ -150,3 +150,52 @@ static int s_test_http_proxy_connection_get(struct aws_allocator *allocator, voi
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_http_proxy_connection_get, s_test_http_proxy_connection_get);
+
+static int s_test_http_proxy_connection_options_star(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    struct aws_http_proxy_options proxy_options = {.host = aws_byte_cursor_from_c_str("127.0.0.1"), .port = 8080};
+
+    struct proxy_tester_options options = {.alloc = allocator,
+                                           .proxy_options = &proxy_options,
+                                           .host = aws_byte_cursor_from_c_str("example.org"),
+                                           .port = 80};
+    struct proxy_tester tester;
+    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("OPTIONS"));
+    aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("*"));
+
+    struct aws_http_header host = {.name = aws_byte_cursor_from_c_str("Host"),
+                                   .value = aws_byte_cursor_from_c_str("example.org")};
+    aws_http_message_add_header(request, host);
+
+    struct aws_http_header accept = {.name = aws_byte_cursor_from_c_str("Accept"),
+                                     .value = aws_byte_cursor_from_c_str("*/*")};
+    aws_http_message_add_header(request, accept);
+
+    struct aws_http_request_options request_options;
+    AWS_ZERO_STRUCT(request_options);
+    request_options.client_connection = tester.client_connection;
+    request_options.request = request;
+    request_options.self_size = sizeof(struct aws_http_request_options);
+    request_options.user_data = &tester;
+    request_options.on_response_headers = s_aws_http_on_incoming_headers_proxy_test;
+    request_options.on_response_header_block_done = s_aws_http_on_incoming_header_block_done_proxy_test;
+    request_options.on_response_body = s_aws_http_on_incoming_body_proxy_test;
+    request_options.on_complete = s_aws_http_on_stream_complete_proxy_test;
+
+    struct aws_http_stream *stream = aws_http_stream_new_client_request(&request_options);
+    (void)stream;
+
+    ASSERT_SUCCESS(proxy_tester_wait(&tester, proxy_tester_request_complete_pred_fn));
+
+    aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    aws_http_message_destroy(request);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_proxy_connection_options_star, s_test_http_proxy_connection_options_star);
