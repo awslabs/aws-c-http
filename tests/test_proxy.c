@@ -94,6 +94,7 @@ static int s_test_aws_client_bootstrap_new_socket_channel(
     connection->alloc = tester.alloc;
     connection->request_transform = tester.http_bootstrap->request_transform;
     connection->user_data = tester.http_bootstrap->user_data;
+    connection->client_data = &connection->client_or_server_data.client;
 
     proxy_tester_on_client_connection_setup(connection, AWS_ERROR_SUCCESS, &tester);
 
@@ -164,7 +165,7 @@ static int s_test_aws_client_bootstrap_new_socket_connect_failure(
 struct aws_http_connection_system_vtable s_connection_connect_failure_vtable = {
     .new_socket_channel = s_test_aws_client_bootstrap_new_socket_connect_failure};
 
-static char *s_host_name = "www.amazon.com";
+static char *s_host_name = "aws.amazon.com";
 static uint16_t s_port = 80;
 
 /*
@@ -301,7 +302,7 @@ AWS_TEST_CASE(test_http_proxy_connection_connect_failure, s_test_http_proxy_conn
 
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_method, "GET");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_path, "/");
-AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_host, "www.amazon.com");
+AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_host, "aws.amazon.com");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_username, "SomeUser");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_password, "SuperSecret");
 
