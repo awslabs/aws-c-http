@@ -277,9 +277,11 @@ struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator,
     aws_huffman_decoder_init(&context->decoder, hpack_coder);
 
     /* Initialize dynamic table */
-    const size_t buffer_size = max_dynamic_elements * sizeof(struct aws_http_header);
-    context->dynamic_table.buffer = aws_mem_acquire(allocator, buffer_size);
-    memset(context->dynamic_table.buffer, 0, buffer_size);
+    if (max_dynamic_elements) {
+        const size_t buffer_size = max_dynamic_elements * sizeof(struct aws_http_header);
+        context->dynamic_table.buffer = aws_mem_acquire(allocator, buffer_size);
+        memset(context->dynamic_table.buffer, 0, buffer_size);
+    }
     context->dynamic_table.max_elements = max_dynamic_elements;
     context->dynamic_table.num_elements = 0;
     context->dynamic_table.index_0 = 0;
