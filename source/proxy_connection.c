@@ -702,7 +702,7 @@ static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_clien
         AWS_BYTE_CURSOR_PRI(options->host_name),
         AWS_BYTE_CURSOR_PRI(options->proxy_options->host));
 
-    /* Create a wrapper user data that contains the connection options we'll need to rewrite requests */
+    /* Create a wrapper user data that contains all proxy-related information, state, and user-facing callbacks */
     struct aws_http_proxy_user_data *user_data = aws_http_proxy_user_data_new(options->allocator, options);
     if (user_data == NULL) {
         return AWS_OP_ERR;
