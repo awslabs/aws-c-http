@@ -77,7 +77,9 @@ struct tester {
     /* If we need to wait for some async process*/
     struct aws_mutex wait_lock;
     struct aws_condition_variable wait_cvar;
-    int wait_result;
+    /* we need wait result for both server side and client side */
+    int server_wait_result;
+    int client_wait_result;
 };
 
 static struct aws_http_stream *s_tester_on_incoming_request(struct aws_http_connection *connection, void *user_data) {
@@ -120,7 +122,7 @@ static void s_tester_on_server_connection_setup(
     AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
 
     if (error_code) {
-        tester->wait_result = error_code;
+        tester->server_wait_result = error_code;
         goto done;
     }
 
@@ -131,7 +133,7 @@ static void s_tester_on_server_connection_setup(
 
     int err = aws_http_connection_configure_server(connection, &options);
     if (err) {
-        tester->wait_result = aws_last_error();
+        tester->server_wait_result = aws_last_error();
         goto done;
     }
 
@@ -150,7 +152,7 @@ static void s_tester_on_client_connection_setup(
     AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
 
     if (error_code) {
-        tester->wait_result = error_code;
+        tester->client_wait_result = error_code;
         goto done;
     }
 
@@ -185,8 +187,12 @@ static int s_tester_wait(struct tester *tester, bool (*pred)(void *user_data)) {
         aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL),
         pred,
         tester));
-    local_wait_result = tester->wait_result;
-    tester->wait_result = 0;
+    if(tester->server_wait_result)
+        local_wait_result = tester->server_wait_result;
+    else
+        local_wait_result = tester->client_wait_result;
+    tester->server_wait_result = 0;
+    tester->client_wait_result = 0;
     ASSERT_SUCCESS(aws_mutex_unlock(&tester->wait_lock));
 
     if (local_wait_result) {
@@ -197,20 +203,15 @@ static int s_tester_wait(struct tester *tester, bool (*pred)(void *user_data)) {
 
 static bool s_tester_connection_setup_pred(void *user_data) {
     struct tester *tester = user_data;
-    return tester->wait_result || (tester->client_connection_num == tester->wait_client_connection_num &&
+    return (tester->server_wait_result && tester->client_wait_result) || (tester->client_connection_num == tester->wait_client_connection_num &&
                                    tester->server_connection_num == tester->wait_server_connection_num);
 }
 
 static bool s_tester_connection_shutdown_pred(void *user_data) {
     struct tester *tester = user_data;
-    return tester->wait_result ||
+    return (tester->server_wait_result && tester->client_wait_result) ||
            (tester->client_connection_is_shutdown == tester->wait_client_connection_is_shutdown &&
             tester->server_connection_is_shutdown == tester->wait_server_connection_is_shutdown);
-}
-
-static bool s_tester_server_shutdown_pre(void *user_data) {
-    struct tester *tester = user_data;
-    return tester->wait_result || tester->server_is_shutdown;
 }
 
 static int s_tester_init(struct tester *tester, const struct tester_options *options) {
@@ -471,8 +472,7 @@ static int s_test_connection_server_shutting_down_new_connection_fail(struct aws
     /* it should be fine in the same event_loop_group */
     struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
     client_options.allocator = tester.alloc;
-    client_options.bootstrap =
-        aws_client_bootstrap_new(tester.alloc, &tester.event_loop_group, &tester.host_resolver, NULL);
+    client_options.bootstrap = tester.client_bootstrap;
     client_options.host_name = aws_byte_cursor_from_c_str(tester.endpoint.address);
     client_options.port = tester.endpoint.port;
     client_options.socket_options = &socket_options;
@@ -480,25 +480,25 @@ static int s_test_connection_server_shutting_down_new_connection_fail(struct aws
     client_options.on_setup = s_tester_on_client_connection_setup;
     client_options.on_shutdown = s_tester_on_client_connection_shutdown;
 
-    /* shutting down the server */
-    aws_http_server_release(tester.server);
     /* new connection should fail */
     tester.wait_client_connection_num++;
     tester.wait_server_connection_num++;
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
+    /* shutting down the server */
+    aws_http_server_release(tester.server);
     /* the connection failed with error code, closed */
     ASSERT_FAILS(s_tester_wait(&tester, s_tester_connection_setup_pred));
 
     /* wait for all connections to be shut down */
     tester.wait_client_connection_is_shutdown = tester.client_connection_num;
     tester.wait_server_connection_is_shutdown = tester.server_connection_num;
-    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_server_shutdown_pre));
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
 
     /* release memory */
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
     aws_client_bootstrap_release(tester.client_bootstrap);
-    aws_client_bootstrap_release(client_options.bootstrap);
+    //aws_client_bootstrap_release(client_options.bootstrap);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
