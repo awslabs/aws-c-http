@@ -235,6 +235,7 @@ static int s_test_https_proxy_connection_new_destroy(struct aws_allocator *alloc
 
     struct proxy_tester tester;
     ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
+    ASSERT_TRUE(tester.wait_result == AWS_ERROR_SUCCESS);
 
     ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
 
