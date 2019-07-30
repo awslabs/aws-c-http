@@ -210,8 +210,15 @@ static void s_aws_http_on_client_connection_http_proxy_shutdown_fn(
     if (proxy_ud->state == AWS_PBS_SUCCESS) {
         proxy_ud->original_on_shutdown(connection, error_code, proxy_ud->original_user_data);
     } else {
-        proxy_ud->original_on_setup(
-            NULL, error_code == AWS_ERROR_SUCCESS ? AWS_ERROR_UNKNOWN : error_code, proxy_ud->original_user_data);
+        int ec = error_code;
+        if (ec == AWS_ERROR_SUCCESS) {
+            ec = proxy_ud->error_code;
+        }
+        if (ec == AWS_ERROR_SUCCESS) {
+            ec = AWS_ERROR_UNKNOWN;
+        }
+
+        proxy_ud->original_on_setup(NULL, ec, proxy_ud->original_user_data);
     }
 
     aws_http_proxy_user_data_destroy(user_data);
