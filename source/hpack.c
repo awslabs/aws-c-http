@@ -277,9 +277,9 @@ struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator,
     aws_huffman_decoder_init(&context->decoder, hpack_coder);
 
     /* Initialize dynamic table */
-    const size_t buffer_size = max_dynamic_elements * sizeof(struct aws_http_header);
-    context->dynamic_table.buffer = aws_mem_acquire(allocator, buffer_size);
-    memset(context->dynamic_table.buffer, 0, buffer_size);
+    if (max_dynamic_elements) {
+        context->dynamic_table.buffer = aws_mem_calloc(allocator, max_dynamic_elements, sizeof(struct aws_http_header));
+    }
     context->dynamic_table.max_elements = max_dynamic_elements;
     context->dynamic_table.num_elements = 0;
     context->dynamic_table.index_0 = 0;
@@ -312,7 +312,9 @@ name_only_failed:
     aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup);
 
 reverse_lookup_failed:
-    aws_mem_release(allocator, context->dynamic_table.buffer);
+    if (context->dynamic_table.buffer) {
+        aws_mem_release(allocator, context->dynamic_table.buffer);
+    }
     aws_mem_release(allocator, context);
 
     return NULL;
@@ -322,7 +324,9 @@ void aws_hpack_context_destroy(struct aws_hpack_context *context) {
     if (!context) {
         return;
     }
-    aws_mem_release(context->allocator, context->dynamic_table.buffer);
+    if (context->dynamic_table.buffer) {
+        aws_mem_release(context->allocator, context->dynamic_table.buffer);
+    }
     aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup);
     aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup_name_only);
     aws_mem_release(context->allocator, context);
@@ -476,8 +480,14 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
     aws_hash_table_clear(&context->dynamic_table.reverse_lookup);
     aws_hash_table_clear(&context->dynamic_table.reverse_lookup_name_only);
 
-    struct aws_http_header *new_buffer =
-        aws_mem_acquire(context->allocator, new_max_elements * sizeof(struct aws_http_header));
+    struct aws_http_header *new_buffer = NULL;
+
+    if (AWS_UNLIKELY(!new_max_elements)) {
+        /* If new buffer is of size 0, don't both initializing, just clean up the old one. */
+        goto cleanup_old_buffer;
+    }
+
+    new_buffer = aws_mem_calloc(context->allocator, new_max_elements, sizeof(struct aws_http_header));
     if (!new_buffer) {
         return AWS_OP_ERR;
     }
@@ -505,6 +515,7 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
     }
 
     /* Free the old memory */
+cleanup_old_buffer:
     aws_mem_release(context->allocator, context->dynamic_table.buffer);
 
     /* Reset state */
