@@ -480,12 +480,13 @@ static int s_test_connection_server_shutting_down_new_connection_fail(struct aws
     client_options.on_setup = s_tester_on_client_connection_setup;
     client_options.on_shutdown = s_tester_on_client_connection_shutdown;
 
-    /* shutting down the server */
-    aws_http_server_release(tester.server);
+    
     /* new connection should fail */
     tester.wait_client_connection_num++;
     tester.wait_server_connection_num++;
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
+    /* shutting down the server */
+    aws_http_server_release(tester.server);
     /* the connection failed with error code, closed */
     ASSERT_FAILS(s_tester_wait(&tester, s_tester_connection_setup_pred));
 
