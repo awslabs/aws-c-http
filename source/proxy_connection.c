@@ -31,10 +31,9 @@ AWS_STATIC_STRING_FROM_LITERAL(s_proxy_authorization_header_name, "Proxy-Authori
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_authorization_header_basic_prefix, "Basic ");
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_connection_header_name, "Proxy-Connection");
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_connection_header_value, "Keep-Alive");
-AWS_STATIC_STRING_FROM_LITERAL(s_user_agent_header_name, "User-Agent");
-AWS_STATIC_STRING_FROM_LITERAL(s_user_agent_header_value, "aws-c-http");
 AWS_STATIC_STRING_FROM_LITERAL(s_options_method, "OPTIONS");
 AWS_STATIC_STRING_FROM_LITERAL(s_star_path, "*");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_scheme, "http");
 
 void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data) {
     if (user_data == NULL) {
@@ -88,6 +87,7 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     }
 
     if (options->tls_options) {
+        /* clone tls options, but redirect user data to what we're creating */
         user_data->tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
         if (aws_tls_connection_options_copy(user_data->tls_options, options->tls_options)) {
             goto on_error;
@@ -109,6 +109,9 @@ on_error:
     return NULL;
 }
 
+/*
+ * Adds a proxy authentication header based on the basic authentication mode, rfc7617
+ */
 static int s_add_basic_proxy_authentication_header(
     struct aws_http_message *request,
     struct aws_http_proxy_user_data *proxy_user_data) {
@@ -185,6 +188,10 @@ done:
     return result;
 }
 
+/*
+ * Connection callback used ONLY by http proxy connections.  After this,
+ * the connection is live and the user is notified
+ */
 static void s_aws_http_on_client_connection_http_proxy_setup_fn(
     struct aws_http_connection *connection,
     int error_code,
@@ -196,10 +203,16 @@ static void s_aws_http_on_client_connection_http_proxy_setup_fn(
     if (error_code != AWS_ERROR_SUCCESS) {
         aws_http_proxy_user_data_destroy(user_data);
     } else {
+        AWS_FATAL_ASSERT(proxy_ud->state == AWS_PBS_SOCKET_CONNECT);
         proxy_ud->state = AWS_PBS_SUCCESS;
     }
 }
 
+/*
+ * Connection shutdown callback used by both http and https proxy connections.  Only invokes
+ * user shutdown if the connection was successfully established.  Otherwise, it invokes
+ * the user setup function with an error.
+ */
 static void s_aws_http_on_client_connection_http_proxy_shutdown_fn(
     struct aws_http_connection *connection,
     int error_code,
@@ -224,7 +237,13 @@ static void s_aws_http_on_client_connection_http_proxy_shutdown_fn(
     aws_http_proxy_user_data_destroy(user_data);
 }
 
+/*
+ * Entry point that releases all resources involved in the proxy connection, no matter what
+ * the execution point is: connection, stream, (CONNECT) request
+ */
 static void s_aws_http_proxy_user_data_shutdown(struct aws_http_proxy_user_data *user_data) {
+
+    user_data->state = AWS_PBS_FAILURE;
 
     if (user_data->connection == NULL) {
         user_data->original_on_setup(NULL, user_data->error_code, user_data->original_user_data);
@@ -246,6 +265,10 @@ static void s_aws_http_proxy_user_data_shutdown(struct aws_http_proxy_user_data 
     user_data->connection = NULL;
 }
 
+/*
+ * Builds the CONNECT request issued after proxy connection establishment, during the creation of
+ * tls-enabled proxy connections.
+ */
 static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
     struct aws_http_message *request = aws_http_message_new_request(user_data->allocator);
     if (request == NULL) {
@@ -297,12 +320,6 @@ static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_pr
         goto on_error;
     }
 
-    struct aws_http_header user_agent = {.name = aws_byte_cursor_from_string(s_user_agent_header_name),
-                                         .value = aws_byte_cursor_from_string(s_user_agent_header_value)};
-    if (aws_http_message_add_header(request, user_agent)) {
-        goto on_error;
-    }
-
     if (user_data->auth_type == AWS_HPAT_BASIC && s_add_basic_proxy_authentication_header(request, user_data)) {
         goto on_error;
     }
@@ -319,6 +336,9 @@ on_error:
     return NULL;
 }
 
+/*
+ * Header done callback for the CONNECT request made during tls proxy connections
+ */
 static int s_aws_http_on_incoming_header_block_done_tls_proxy(
     struct aws_http_stream *stream,
     bool has_body,
@@ -335,6 +355,9 @@ static int s_aws_http_on_incoming_header_block_done_tls_proxy(
     return AWS_OP_SUCCESS;
 }
 
+/*
+ * Tls negotiation callback for tls proxy connections
+ */
 static void s_on_tls_negotation_result(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
@@ -355,6 +378,9 @@ static void s_on_tls_negotation_result(
     context->original_on_setup(context->connection, AWS_ERROR_SUCCESS, context->original_user_data);
 }
 
+/*
+ * Stream done callback for the CONNECT request made during tls proxy connections
+ */
 static void s_aws_http_on_stream_complete_tls_proxy(struct aws_http_stream *stream, int error_code, void *user_data) {
     struct aws_http_proxy_user_data *context = user_data;
     AWS_FATAL_ASSERT(stream == context->connect_stream);
@@ -368,11 +394,17 @@ static void s_aws_http_on_stream_complete_tls_proxy(struct aws_http_stream *stre
         return;
     }
 
+    /*
+     * We're finished with these, let's release
+     */
     aws_http_stream_release(stream);
     context->connect_stream = NULL;
     aws_http_message_destroy(context->connect_request);
     context->connect_request = NULL;
 
+    /*
+     * Perform TLS negotiation to the origin server through proxy
+     */
     context->tls_options->on_negotiation_result = s_on_tls_negotation_result;
 
     struct aws_channel *channel = aws_http_connection_get_channel(context->connection);
@@ -384,6 +416,10 @@ static void s_aws_http_on_stream_complete_tls_proxy(struct aws_http_stream *stre
     context->state = AWS_PBS_TLS_NEGOTIATION;
 }
 
+/*
+ * Issues a CONNECT request on a newly-established proxy connection with the intent
+ * of upgrading with TLS on success
+ */
 static int s_make_proxy_connect_request(
     struct aws_http_connection *connection,
     struct aws_http_proxy_user_data *user_data) {
@@ -419,12 +455,17 @@ on_error:
     return AWS_OP_ERR;
 }
 
+/*
+ * Connection setup callback for tls-based proxy connections.
+ * Could be unified with non-tls version by checking tls options and branching post-success
+ */
 static void s_aws_http_on_client_connection_http_tls_proxy_setup_fn(
     struct aws_http_connection *connection,
     int error_code,
     void *user_data) {
 
     struct aws_http_proxy_user_data *proxy_ud = user_data;
+    AWS_FATAL_ASSERT(proxy_ud->state == AWS_PBS_SOCKET_CONNECT);
 
     proxy_ud->error_code = error_code;
     if (error_code != AWS_ERROR_SUCCESS) {
@@ -444,6 +485,10 @@ on_error:
     s_aws_http_proxy_user_data_shutdown(proxy_ud);
 }
 
+/*
+ * Checks for the special case when a request is an OPTIONS request with *
+ * path and no query params
+ */
 static bool s_is_star_path_options_method(const struct aws_http_message *request) {
     struct aws_byte_cursor method_cursor;
     if (aws_http_message_get_request_method(request, &method_cursor)) {
@@ -468,8 +513,13 @@ static bool s_is_star_path_options_method(const struct aws_http_message *request
     return true;
 }
 
-AWS_STATIC_STRING_FROM_LITERAL(s_http_scheme, "http");
-
+/*
+ * Modifies a requests uri by transforming it to absolute form according to
+ * section 5.3.2 of rfc 7230
+ *
+ * We do this by parsing the existing uri and then rebuilding it as an
+ * absolute resource path (using the original connection options)
+ */
 int aws_http_rewrite_uri_for_proxy_request(
     struct aws_http_message *request,
     struct aws_http_proxy_user_data *proxy_user_data) {
@@ -541,6 +591,11 @@ done:
     return result;
 }
 
+/*
+ * Plaintext proxy request transformation function
+ *
+ * Rewrites the target uri to absolute form and injects any desired headers
+ */
 static int s_proxy_http_request_transform(struct aws_http_message *request, void *user_data) {
     struct aws_http_proxy_user_data *proxy_ud = user_data;
 
@@ -566,10 +621,13 @@ done:
     return result;
 }
 
+/*
+ * Top-level function to route a connection request through a proxy server, with no channel security
+ */
 static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client_connection_options *options) {
     AWS_FATAL_ASSERT(options->tls_options == NULL);
 
-    /* Create a wrapper user data that contains the connection options we'll need to rewrite requests */
+    /* Create a wrapper user data that contains all proxy-related information, state, and user-facing callbacks */
     struct aws_http_proxy_user_data *proxy_user_data = aws_http_proxy_user_data_new(options->allocator, options);
     if (proxy_user_data == NULL) {
         return AWS_OP_ERR;
@@ -596,6 +654,9 @@ static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client
     return result;
 }
 
+/*
+ * Top-level function to route a connection request through a proxy server, using TLS
+ */
 static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_client_connection_options *options) {
 
     AWS_FATAL_ASSERT(options->tls_options != NULL);
@@ -626,6 +687,9 @@ static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_clien
     return result;
 }
 
+/*
+ * Dispatches a proxy-enabled connection request to the appropriate top-level connection function
+ */
 int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_options *options) {
     AWS_FATAL_ASSERT(options->proxy_options != NULL);
 
