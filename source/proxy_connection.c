@@ -689,7 +689,7 @@ static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client
 }
 
 /*
- * Top-level function to route a connection request through a proxy server, using TLS
+ * Top-level function to route a TLS connection through a proxy server
  */
 static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_client_connection_options *options) {
 
