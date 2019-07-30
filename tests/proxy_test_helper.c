@@ -141,6 +141,7 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
 
         aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, tester->alloc);
         aws_tls_ctx_options_set_alpn_list(&tester->tls_ctx_options, "http/1.1");
+        tester->tls_ctx_options.verify_peer = false;
 
         tester->tls_ctx = aws_tls_client_ctx_new(tester->alloc, &tester->tls_ctx_options);
 

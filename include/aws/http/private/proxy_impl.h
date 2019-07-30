@@ -23,6 +23,8 @@
 struct aws_string;
 
 /*
+ * (Successful) State transitions for proxy connections
+ *
  * Http : None -> Socket Connect -> Success
  * Https: None -> Socket Connect -> Http Connect -> Tls Negotiation -> Success
  */
@@ -32,6 +34,7 @@ enum aws_proxy_bootstrap_state {
     AWS_PBS_HTTP_CONNECT,
     AWS_PBS_TLS_NEGOTIATION,
     AWS_PBS_SUCCESS,
+    AWS_PBS_FAILURE,
 };
 
 /*
