@@ -1098,10 +1098,7 @@ static int s_error_from_callback_common(
     return AWS_OP_SUCCESS;
 }
 
-static int s_error_from_outgoing_body_read(
-    struct aws_input_stream *body,
-    struct aws_byte_buf *dest,
-    size_t *amount_read) {
+static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct aws_byte_buf *dest) {
 
     (void)dest;
 
@@ -1110,7 +1107,6 @@ static int s_error_from_outgoing_body_read(
 
     /* If the common fn was successful, write out some data and end the stream */
     ASSERT_TRUE(aws_byte_buf_write(dest, (const uint8_t *)"abcd", 4));
-    *amount_read = 4;
     error_tester->outgoing_body_status.is_end_of_stream = true;
     return AWS_OP_SUCCESS;
 }
