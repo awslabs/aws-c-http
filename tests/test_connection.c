@@ -187,7 +187,7 @@ static int s_tester_wait(struct tester *tester, bool (*pred)(void *user_data)) {
         aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL),
         pred,
         tester));
-    if(tester->server_wait_result)
+    if (tester->server_wait_result)
         local_wait_result = tester->server_wait_result;
     else
         local_wait_result = tester->client_wait_result;
@@ -203,8 +203,9 @@ static int s_tester_wait(struct tester *tester, bool (*pred)(void *user_data)) {
 
 static bool s_tester_connection_setup_pred(void *user_data) {
     struct tester *tester = user_data;
-    return (tester->server_wait_result && tester->client_wait_result) || (tester->client_connection_num == tester->wait_client_connection_num &&
-                                   tester->server_connection_num == tester->wait_server_connection_num);
+    return (tester->server_wait_result && tester->client_wait_result) ||
+           (tester->client_connection_num == tester->wait_client_connection_num &&
+            tester->server_connection_num == tester->wait_server_connection_num);
 }
 
 static bool s_tester_connection_shutdown_pred(void *user_data) {
@@ -498,7 +499,7 @@ static int s_test_connection_server_shutting_down_new_connection_fail(struct aws
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
     aws_client_bootstrap_release(tester.client_bootstrap);
-    //aws_client_bootstrap_release(client_options.bootstrap);
+    // aws_client_bootstrap_release(client_options.bootstrap);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
