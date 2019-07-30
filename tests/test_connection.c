@@ -20,6 +20,7 @@
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
 #include <aws/common/log_writer.h>
+#include <aws/common/thread.h>
 #include <aws/common/uuid.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
@@ -57,6 +58,7 @@ struct tester {
     struct aws_server_bootstrap *server_bootstrap;
     struct aws_http_server *server;
     struct aws_client_bootstrap *client_bootstrap;
+    struct aws_http_client_connection_options client_options;
 
     int server_connection_num;
     int client_connection_num;
@@ -73,6 +75,8 @@ struct tester {
     int wait_server_connection_is_shutdown;
 
     bool server_is_shutdown;
+    struct aws_http_connection *new_client_connection;
+    bool new_client_shut_down;
 
     /* If we need to wait for some async process*/
     struct aws_mutex wait_lock;
@@ -203,14 +207,14 @@ static int s_tester_wait(struct tester *tester, bool (*pred)(void *user_data)) {
 
 static bool s_tester_connection_setup_pred(void *user_data) {
     struct tester *tester = user_data;
-    return (tester->server_wait_result && tester->client_wait_result) ||
+    return (tester->server_wait_result || tester->client_wait_result) ||
            (tester->client_connection_num == tester->wait_client_connection_num &&
             tester->server_connection_num == tester->wait_server_connection_num);
 }
 
 static bool s_tester_connection_shutdown_pred(void *user_data) {
     struct tester *tester = user_data;
-    return (tester->server_wait_result && tester->client_wait_result) ||
+    return (tester->server_wait_result || tester->client_wait_result) ||
            (tester->client_connection_is_shutdown == tester->wait_client_connection_is_shutdown &&
             tester->server_connection_is_shutdown == tester->wait_server_connection_is_shutdown);
 }
@@ -293,6 +297,7 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     client_options.user_data = tester;
     client_options.on_setup = s_tester_on_client_connection_setup;
     client_options.on_shutdown = s_tester_on_client_connection_shutdown;
+    tester->client_options = client_options;
 
     tester->server_connection_num = 0;
     tester->client_connection_num = 0;
@@ -407,29 +412,13 @@ static int s_test_connection_destroy_server_with_multiple_connections_existing(
     ASSERT_SUCCESS(s_tester_init(&tester, &options));
 
     /* more connections! */
-    struct aws_socket_options socket_options = {
-        .type = AWS_SOCKET_STREAM,
-        .domain = AWS_SOCKET_LOCAL,
-        .connect_timeout_ms =
-            (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
-    };
-    struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
-    client_options.allocator = tester.alloc;
-    client_options.bootstrap =
-        aws_client_bootstrap_new(tester.alloc, &tester.event_loop_group, &tester.host_resolver, NULL);
-    client_options.host_name = aws_byte_cursor_from_c_str(tester.endpoint.address);
-    client_options.port = tester.endpoint.port;
-    client_options.socket_options = &socket_options;
-    client_options.user_data = &tester;
-    client_options.on_setup = s_tester_on_client_connection_setup;
-    client_options.on_shutdown = s_tester_on_client_connection_shutdown;
     int more_connection_num = 1;
     /* set waiting condition */
     tester.wait_client_connection_num += more_connection_num;
     tester.wait_server_connection_num += more_connection_num;
     /* connect */
     for (int i = 0; i < more_connection_num; i++) {
-        aws_http_client_connect(&client_options);
+        aws_http_client_connect(&tester.client_options);
     }
     /* wait for connections */
     ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_setup_pred));
@@ -446,13 +435,64 @@ static int s_test_connection_destroy_server_with_multiple_connections_existing(
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
     aws_client_bootstrap_release(tester.client_bootstrap);
-    aws_client_bootstrap_release(client_options.bootstrap);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
     connection_destroy_server_with_multiple_connections_existing,
     s_test_connection_destroy_server_with_multiple_connections_existing);
+
+static void s_block_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+    (void)status;
+    struct tester *tester = arg;
+    /* sleep for 1 sec, and release the memory */
+    aws_thread_current_sleep(1000);
+    aws_mem_release(tester->alloc, task);
+}
+
+static void s_tester_on_new_client_connection_setup(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
+
+    struct tester *tester = user_data;
+    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
+
+    if (error_code) {
+        tester->client_wait_result = error_code;
+        goto done;
+    }
+    tester->new_client_connection = connection;
+done:
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
+    aws_condition_variable_notify_one(&tester->wait_cvar);
+}
+
+static void s_tester_on_new_client_connection_shutdown(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
+
+    (void)connection;
+    (void)error_code;
+    struct tester *tester = user_data;
+    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
+
+    tester->new_client_shut_down = true;
+
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
+    aws_condition_variable_notify_one(&tester->wait_cvar);
+}
+
+static bool s_tester_new_client_setup_pred(void *user_data) {
+    struct tester *tester = user_data;
+    return tester->client_wait_result || tester->new_client_connection;
+}
+
+static bool s_tester_new_client_shutdown_pred(void *user_data) {
+    struct tester *tester = user_data;
+    return tester->new_client_shut_down;
+}
 
 /* when we shutdown the server, no more new connection will be accept */
 static int s_test_connection_server_shutting_down_new_connection_fail(struct aws_allocator *allocator, void *ctx) {
@@ -470,27 +510,44 @@ static int s_test_connection_server_shutting_down_new_connection_fail(struct aws
         .connect_timeout_ms =
             (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
     };
-    /* it should be fine in the same event_loop_group */
+    /* create a new eventloop for the new connection and block the new connection. Waiting server to begin shutting
+     * down. */
+    struct aws_event_loop_group event_loop_group;
+    ASSERT_SUCCESS(aws_event_loop_group_default_init(&event_loop_group, allocator, 1));
+    /* get the first eventloop, which will be the eventloop for client to connect */
+    struct aws_event_loop *current_eventloop = aws_event_loop_group_get_loop_at(&event_loop_group, 0);
+    struct aws_task *block_task = aws_mem_acquire(allocator, sizeof(struct aws_task));
+    aws_task_init(block_task, s_block_task, &tester, "wait_a_bit");
+    aws_event_loop_schedule_task_now(current_eventloop, block_task);
+
+    struct aws_client_bootstrap *bootstrap =
+        aws_client_bootstrap_new(allocator, &event_loop_group, &tester.host_resolver, NULL);
     struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
     client_options.allocator = tester.alloc;
-    client_options.bootstrap = tester.client_bootstrap;
+    client_options.bootstrap = bootstrap;
     client_options.host_name = aws_byte_cursor_from_c_str(tester.endpoint.address);
     client_options.port = tester.endpoint.port;
     client_options.socket_options = &socket_options;
     client_options.user_data = &tester;
-    client_options.on_setup = s_tester_on_client_connection_setup;
-    client_options.on_shutdown = s_tester_on_client_connection_shutdown;
+    client_options.on_setup = s_tester_on_new_client_connection_setup;
+    client_options.on_shutdown = s_tester_on_new_client_connection_shutdown;
 
-    /* new connection should fail */
+    /* new connection will be blocked for 1 sec */
     tester.wait_client_connection_num++;
     tester.wait_server_connection_num++;
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
     /* shutting down the server */
     aws_http_server_release(tester.server);
-    /* the connection failed with error code, closed */
+    /* the server side connection failed with error code, closed */
     ASSERT_FAILS(s_tester_wait(&tester, s_tester_connection_setup_pred));
-
-    /* wait for all connections to be shut down */
+    /* wait for the client side connection */
+    s_tester_wait(&tester, s_tester_new_client_setup_pred);
+    if (tester.new_client_connection) {
+        /* wait for it to shut down, we do not need to call shut down, the socket will know */
+        ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_new_client_shutdown_pred));
+    }
+    aws_http_connection_release(tester.new_client_connection);
+    /* wait for the old connections to be shut down */
     tester.wait_client_connection_is_shutdown = tester.client_connection_num;
     tester.wait_server_connection_is_shutdown = tester.server_connection_num;
     ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
@@ -499,7 +556,8 @@ static int s_test_connection_server_shutting_down_new_connection_fail(struct aws
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
     aws_client_bootstrap_release(tester.client_bootstrap);
-    // aws_client_bootstrap_release(client_options.bootstrap);
+    aws_client_bootstrap_release(bootstrap);
+    aws_event_loop_group_clean_up(&event_loop_group);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }

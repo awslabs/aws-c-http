@@ -47,7 +47,6 @@ struct aws_http_server {
         struct aws_mutex lock;
         /* For checking status from outside the event-loop thread. Duplicates thread_data.is_shutting_down */
         bool is_shutting_down;
-        uint32_t ref_count;
     } synced_data;
 };
 
@@ -278,9 +277,6 @@ static void s_server_bootstrap_on_accept_channel_setup(
             AWS_LS_HTTP_SERVER, "id=%p: Incoming connection failed. The server is shutting down.", (void *)server);
         error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
     }
-    /* no matter the server is shutting down or not, the channel is already set up, we need a ref_count to keep server
-     * alive */
-    server->synced_data.ref_count++;
     err = aws_mutex_unlock(&server->synced_data.lock);
     AWS_FATAL_ASSERT(!err);
     /* END CRITICAL SECTION */
@@ -366,28 +362,13 @@ static void s_http_server_clean_up(struct aws_http_server *server) {
     if (!server) {
         return;
     }
-    if (server->socket) {
-        /* make sure no existing connections */
-        AWS_FATAL_ASSERT(aws_hash_table_get_entry_count(&server->channel_to_connection_map) == 0);
-
-        AWS_LOGF_INFO(
-            AWS_LS_HTTP_SERVER,
-            "%s:%d: Destroying server.",
-            server->socket->local_endpoint.address,
-            server->socket->local_endpoint.port);
-        /* is this case the clean up thing should be in the listener destroy callback */
-        aws_server_bootstrap_destroy_socket_listener(server->bootstrap, server->socket);
-    } else {
-        /* clean it up */
-        /* invoke the user callback */
-        if (server->on_destroy_complete) {
-            server->on_destroy_complete(server->user_data);
-        }
-
-        aws_hash_table_clean_up(&server->channel_to_connection_map);
-
-        aws_mem_release(server->alloc, server);
+    /* clean it up */
+    /* invoke the user callback */
+    if (server->on_destroy_complete) {
+        server->on_destroy_complete(server->user_data);
     }
+    aws_hash_table_clean_up(&server->channel_to_connection_map);
+    aws_mem_release(server->alloc, server);
 }
 
 /* At this point, the channel for a server connection has completed shutdown, but hasn't been destroyed yet. */
@@ -405,13 +386,9 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
      * It won't be in the map if something went wrong while setting up the connection. */
     struct aws_hash_element map_elem;
     int was_present;
-    bool clean_up_server = false;
     /* BEGIN CRITICAL SECTION */
     int err = aws_mutex_lock(&server->synced_data.lock);
     AWS_FATAL_ASSERT(!err);
-    if (--server->synced_data.ref_count == 0) {
-        clean_up_server = true;
-    }
     int remove_err = aws_hash_table_remove(&server->channel_to_connection_map, channel, &map_elem, &was_present);
     err = aws_mutex_unlock(&server->synced_data.lock);
     AWS_FATAL_ASSERT(!err);
@@ -424,9 +401,6 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
             connection->server_data->on_shutdown(connection, error_code, connection->server_data->connection_user_data);
         }
     }
-    if (clean_up_server) {
-        s_http_server_clean_up(server);
-    }
 }
 
 static void s_server_bootstrap_on_server_listener_destroy(struct aws_server_bootstrap *bootstrap, void *user_data) {
@@ -434,15 +408,8 @@ static void s_server_bootstrap_on_server_listener_destroy(struct aws_server_boot
     AWS_ASSERT(user_data);
     struct aws_http_server *server = user_data;
     /* the server listener has finished the destroy process, no existing connections
-     * finally safe to clean the server up
-     * invoke the user callback */
-    if (server->on_destroy_complete) {
-        server->on_destroy_complete(server->user_data);
-    }
-
-    aws_hash_table_clean_up(&server->channel_to_connection_map);
-
-    aws_mem_release(server->alloc, server);
+     * finally safe to clean the server up */
+    s_http_server_clean_up(server);
 }
 
 struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options) {
@@ -477,14 +444,6 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             AWS_LS_HTTP_SERVER, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
         goto error;
     }
-    /* increment the ref_count */
-    /* BEGIN CRITICAL SECTION */
-    err = aws_mutex_lock(&server->synced_data.lock);
-    AWS_FATAL_ASSERT(!err);
-    server->synced_data.ref_count++;
-    err = aws_mutex_unlock(&server->synced_data.lock);
-    AWS_FATAL_ASSERT(!err);
-    /* END CRITICAL SECTION */
     err = aws_hash_table_init(
         &server->channel_to_connection_map, server->alloc, 16, aws_hash_ptr, aws_ptr_eq, NULL, NULL);
     if (err) {
@@ -548,7 +507,6 @@ void aws_http_server_release(struct aws_http_server *server) {
     }
     if (server->socket) {
         bool already_shutting_down = false;
-        bool clean_up = false;
         /* BEGIN CRITICAL SECTION */
         int err = aws_mutex_lock(&server->synced_data.lock);
         AWS_FATAL_ASSERT(!err);
@@ -558,15 +516,6 @@ void aws_http_server_release(struct aws_http_server *server) {
         } else {
             server->synced_data.is_shutting_down = true;
         }
-        /* release the ref_count */
-        if (--server->synced_data.ref_count == 0) {
-            clean_up = true;
-        };
-
-        if (clean_up) {
-            /* no existing connection, safe to clean up */
-            s_http_server_clean_up(server);
-        }
         err = aws_mutex_unlock(&server->synced_data.lock);
         AWS_FATAL_ASSERT(!err);
         /* END CRITICAL SECTION */
@@ -575,11 +524,6 @@ void aws_http_server_release(struct aws_http_server *server) {
             /* nothing to do */
             return;
         }
-
-        if (clean_up) {
-            return;
-        }
-
         /* shutdown all existing connetions */
         for (struct aws_hash_iter iter = aws_hash_iter_begin(&server->channel_to_connection_map);
              !aws_hash_iter_done(&iter);
@@ -587,6 +531,15 @@ void aws_http_server_release(struct aws_http_server *server) {
             struct aws_http_connection *connection = iter.element.value;
             aws_http_connection_close(connection);
         }
+        /* stop listening, clean up the socket, after all existing connections finish shutting down, the
+         * s_server_bootstrap_on_server_listener_destroy will be invoked, clean up of the server will be there */
+        AWS_LOGF_INFO(
+            AWS_LS_HTTP_SERVER,
+            "%s:%d: Shutting down the server.",
+            server->socket->local_endpoint.address,
+            server->socket->local_endpoint.port);
+        aws_server_bootstrap_destroy_socket_listener(server->bootstrap, server->socket);
+
         /* wait for connections to finish shutting down
          * clean up will be called from eventloop */
     } else {
