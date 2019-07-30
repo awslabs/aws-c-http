@@ -232,7 +232,12 @@ static void s_aws_http_on_client_connection_http_proxy_shutdown_fn(
             ec = AWS_ERROR_UNKNOWN;
         }
 
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "(%p) Error %d while connecting to \"%s\" via proxy.", (void *)connection, ec, (char *)proxy_ud->original_host->bytes);
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "(%p) Error %d while connecting to \"%s\" via proxy.",
+            (void *)connection,
+            ec,
+            (char *)proxy_ud->original_host->bytes);
 
         proxy_ud->original_on_setup(NULL, ec, proxy_ud->original_user_data);
     }
@@ -352,7 +357,11 @@ static int s_aws_http_on_incoming_header_block_done_tls_proxy(
     struct aws_http_proxy_user_data *context = user_data;
     int status = 0;
     if (aws_http_stream_get_incoming_response_status(stream, &status) || status != 200) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "(%p) Proxy CONNECT request failed with status code %d", (void *)context->connection, status);
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "(%p) Proxy CONNECT request failed with status code %d",
+            (void *)context->connection,
+            status);
         context->error_code = AWS_ERROR_HTTP_PROXY_TLS_CONNECT_FAILED;
     }
 
@@ -373,7 +382,11 @@ static void s_on_origin_server_tls_negotation_result(
 
     struct aws_http_proxy_user_data *context = user_data;
     if (error_code != AWS_ERROR_SUCCESS) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "(%p) Proxy connection failed origin server TLS negotiation with error %d", (void *)context->connection, error_code);
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "(%p) Proxy connection failed origin server TLS negotiation with error %d",
+            (void *)context->connection,
+            error_code);
         context->error_code = error_code;
         s_aws_http_proxy_user_data_shutdown(context);
         return;
@@ -399,7 +412,11 @@ static void s_aws_http_on_stream_complete_tls_proxy(struct aws_http_stream *stre
         return;
     }
 
-    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "(%p) Successful CONNECT request to \"%s\" via proxy", (void *)context->connection, context->original_host->bytes);
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_CONNECTION,
+        "(%p) Successful CONNECT request to \"%s\" via proxy",
+        (void *)context->connection,
+        context->original_host->bytes);
 
     /*
      * We're finished with these, let's release
@@ -637,7 +654,11 @@ done:
 static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client_connection_options *options) {
     AWS_FATAL_ASSERT(options->tls_options == NULL);
 
-    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "Connecting to \"" PRInSTR "\" via proxy \"" PRInSTR "\"", AWS_BYTE_CURSOR_PRI(options->host_name), AWS_BYTE_CURSOR_PRI(options->proxy_options->host));
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_CONNECTION,
+        "Connecting to \"" PRInSTR "\" via proxy \"" PRInSTR "\"",
+        AWS_BYTE_CURSOR_PRI(options->host_name),
+        AWS_BYTE_CURSOR_PRI(options->proxy_options->host));
 
     /* Create a wrapper user data that contains all proxy-related information, state, and user-facing callbacks */
     struct aws_http_proxy_user_data *proxy_user_data = aws_http_proxy_user_data_new(options->allocator, options);
@@ -674,7 +695,11 @@ static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_clien
     AWS_FATAL_ASSERT(options->tls_options != NULL);
     AWS_FATAL_ASSERT(options->proxy_options != NULL);
 
-    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "Connecting to \"" PRInSTR "\" through TLS via proxy \"" PRInSTR "\"", AWS_BYTE_CURSOR_PRI(options->host_name), AWS_BYTE_CURSOR_PRI(options->proxy_options->host));
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_CONNECTION,
+        "Connecting to \"" PRInSTR "\" through TLS via proxy \"" PRInSTR "\"",
+        AWS_BYTE_CURSOR_PRI(options->host_name),
+        AWS_BYTE_CURSOR_PRI(options->proxy_options->host));
 
     /* Create a wrapper user data that contains the connection options we'll need to rewrite requests */
     struct aws_http_proxy_user_data *user_data = aws_http_proxy_user_data_new(options->allocator, options);
