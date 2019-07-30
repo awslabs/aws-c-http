@@ -678,6 +678,7 @@ static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client
     options_copy.user_data = proxy_user_data;
     options_copy.on_setup = s_aws_http_on_client_connection_http_proxy_setup_fn;
     options_copy.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
+    options_copy.tls_options = options->proxy_options->tls_options;
 
     int result = aws_http_client_connect(&options_copy);
     if (result == AWS_OP_ERR) {
@@ -717,6 +718,7 @@ static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_clien
     options_copy.user_data = user_data;
     options_copy.on_setup = s_aws_http_on_client_connection_http_tls_proxy_setup_fn;
     options_copy.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
+    options_copy.tls_options = options->proxy_options->tls_options;
 
     int result = aws_http_client_connect(&options_copy);
     if (result == AWS_OP_ERR) {
