@@ -84,6 +84,7 @@ static void s_aws_http_on_stream_complete_proxy_test(struct aws_http_stream *str
 static int s_do_proxy_get_test(struct aws_allocator *allocator, struct proxy_tester_options *options) {
     struct proxy_tester tester;
     ASSERT_SUCCESS(proxy_tester_init(&tester, options));
+    ASSERT_TRUE(tester.wait_result == AWS_ERROR_SUCCESS);
 
     struct aws_http_message *request = aws_http_message_new_request(allocator);
     aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET"));
@@ -110,6 +111,7 @@ static int s_do_proxy_get_test(struct aws_allocator *allocator, struct proxy_tes
     (void)stream;
 
     ASSERT_SUCCESS(proxy_tester_wait(&tester, proxy_tester_request_complete_pred_fn));
+    ASSERT_TRUE(tester.wait_result == AWS_ERROR_SUCCESS);
 
     aws_http_stream_release(stream);
 
@@ -130,7 +132,7 @@ static int s_test_http_proxy_connection_new_destroy(struct aws_allocator *alloca
     struct proxy_tester_options options = {
         .alloc = allocator,
         .proxy_options = &proxy_options,
-        .host = aws_byte_cursor_from_c_str("www.amazon.com"),
+        .host = aws_byte_cursor_from_c_str("aws.amazon.com"),
         .port = 80,
     };
     struct proxy_tester tester;
@@ -152,7 +154,7 @@ static int s_test_http_proxy_connection_get(struct aws_allocator *allocator, voi
     struct proxy_tester_options options = {
         .alloc = allocator,
         .proxy_options = &proxy_options,
-        .host = aws_byte_cursor_from_c_str("www.amazon.com"),
+        .host = aws_byte_cursor_from_c_str("aws.amazon.com"),
         .port = 80,
     };
 
@@ -228,7 +230,7 @@ static int s_test_https_proxy_connection_new_destroy(struct aws_allocator *alloc
     struct proxy_tester_options options = {
         .alloc = allocator,
         .proxy_options = &proxy_options,
-        .host = aws_byte_cursor_from_c_str("www.amazon.com"),
+        .host = aws_byte_cursor_from_c_str("aws.amazon.com"),
         .port = 443,
         .use_tls = true,
     };
@@ -253,7 +255,7 @@ static int s_test_https_proxy_connection_get(struct aws_allocator *allocator, vo
     struct proxy_tester_options options = {
         .alloc = allocator,
         .proxy_options = &proxy_options,
-        .host = aws_byte_cursor_from_c_str("www.amazon.com"),
+        .host = aws_byte_cursor_from_c_str("aws.amazon.com"),
         .port = 443,
         .use_tls = true,
     };
