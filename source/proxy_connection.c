@@ -19,6 +19,7 @@
 #include <aws/common/string.h>
 #include <aws/http/request_response.h>
 #include <aws/io/channel.h>
+#include <aws/io/logging.h>
 #include <aws/io/tls_channel_handler.h>
 #include <aws/io/uri.h>
 
@@ -203,7 +204,6 @@ static void s_aws_http_on_client_connection_http_proxy_setup_fn(
     if (error_code != AWS_ERROR_SUCCESS) {
         aws_http_proxy_user_data_destroy(user_data);
     } else {
-        AWS_FATAL_ASSERT(proxy_ud->state == AWS_PBS_SOCKET_CONNECT);
         proxy_ud->state = AWS_PBS_SUCCESS;
     }
 }
@@ -221,6 +221,7 @@ static void s_aws_http_on_client_connection_http_proxy_shutdown_fn(
     struct aws_http_proxy_user_data *proxy_ud = user_data;
 
     if (proxy_ud->state == AWS_PBS_SUCCESS) {
+        AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "(%p) Proxy connection shutting down.", (void *)connection);
         proxy_ud->original_on_shutdown(connection, error_code, proxy_ud->original_user_data);
     } else {
         int ec = error_code;
@@ -230,6 +231,8 @@ static void s_aws_http_on_client_connection_http_proxy_shutdown_fn(
         if (ec == AWS_ERROR_SUCCESS) {
             ec = AWS_ERROR_UNKNOWN;
         }
+
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "(%p) Error %d while connecting to \"%s\" via proxy.", (void *)connection, ec, (char *)proxy_ud->original_host->bytes);
 
         proxy_ud->original_on_setup(NULL, ec, proxy_ud->original_user_data);
     }
@@ -349,6 +352,7 @@ static int s_aws_http_on_incoming_header_block_done_tls_proxy(
     struct aws_http_proxy_user_data *context = user_data;
     int status = 0;
     if (aws_http_stream_get_incoming_response_status(stream, &status) || status != 200) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "(%p) Proxy CONNECT request failed with status code %d", (void *)context->connection, status);
         context->error_code = AWS_ERROR_HTTP_PROXY_TLS_CONNECT_FAILED;
     }
 
@@ -358,7 +362,7 @@ static int s_aws_http_on_incoming_header_block_done_tls_proxy(
 /*
  * Tls negotiation callback for tls proxy connections
  */
-static void s_on_tls_negotation_result(
+static void s_on_origin_server_tls_negotation_result(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
     int error_code,
@@ -369,6 +373,7 @@ static void s_on_tls_negotation_result(
 
     struct aws_http_proxy_user_data *context = user_data;
     if (error_code != AWS_ERROR_SUCCESS) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "(%p) Proxy connection failed origin server TLS negotiation with error %d", (void *)context->connection, error_code);
         context->error_code = error_code;
         s_aws_http_proxy_user_data_shutdown(context);
         return;
@@ -394,6 +399,8 @@ static void s_aws_http_on_stream_complete_tls_proxy(struct aws_http_stream *stre
         return;
     }
 
+    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "(%p) Successful CONNECT request to \"%s\" via proxy", (void *)context->connection, context->original_host->bytes);
+
     /*
      * We're finished with these, let's release
      */
@@ -402,10 +409,12 @@ static void s_aws_http_on_stream_complete_tls_proxy(struct aws_http_stream *stre
     aws_http_message_destroy(context->connect_request);
     context->connect_request = NULL;
 
+    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "(%p) Beginning TLS negotiation", (void *)context->connection);
+
     /*
      * Perform TLS negotiation to the origin server through proxy
      */
-    context->tls_options->on_negotiation_result = s_on_tls_negotation_result;
+    context->tls_options->on_negotiation_result = s_on_origin_server_tls_negotation_result;
 
     struct aws_channel *channel = aws_http_connection_get_channel(context->connection);
     if (channel == NULL || aws_channel_setup_client_tls(aws_channel_get_first_slot(channel), context->tls_options)) {
@@ -465,12 +474,13 @@ static void s_aws_http_on_client_connection_http_tls_proxy_setup_fn(
     void *user_data) {
 
     struct aws_http_proxy_user_data *proxy_ud = user_data;
-    AWS_FATAL_ASSERT(proxy_ud->state == AWS_PBS_SOCKET_CONNECT);
 
     proxy_ud->error_code = error_code;
     if (error_code != AWS_ERROR_SUCCESS) {
         goto on_error;
     }
+
+    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "(%p) Making CONNECT request to proxy", (void *)proxy_ud->connection);
 
     proxy_ud->connection = connection;
     if (s_make_proxy_connect_request(connection, proxy_ud)) {
@@ -627,6 +637,8 @@ done:
 static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client_connection_options *options) {
     AWS_FATAL_ASSERT(options->tls_options == NULL);
 
+    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "Connecting to \"" PRInSTR "\" via proxy \"" PRInSTR "\"", AWS_BYTE_CURSOR_PRI(options->host_name), AWS_BYTE_CURSOR_PRI(options->proxy_options->host));
+
     /* Create a wrapper user data that contains all proxy-related information, state, and user-facing callbacks */
     struct aws_http_proxy_user_data *proxy_user_data = aws_http_proxy_user_data_new(options->allocator, options);
     if (proxy_user_data == NULL) {
@@ -661,6 +673,8 @@ static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_clien
 
     AWS_FATAL_ASSERT(options->tls_options != NULL);
     AWS_FATAL_ASSERT(options->proxy_options != NULL);
+
+    AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "Connecting to \"" PRInSTR "\" through TLS via proxy \"" PRInSTR "\"", AWS_BYTE_CURSOR_PRI(options->host_name), AWS_BYTE_CURSOR_PRI(options->proxy_options->host));
 
     /* Create a wrapper user data that contains the connection options we'll need to rewrite requests */
     struct aws_http_proxy_user_data *user_data = aws_http_proxy_user_data_new(options->allocator, options);
