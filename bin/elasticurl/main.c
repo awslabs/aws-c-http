@@ -354,8 +354,7 @@ enum aws_http_outgoing_body_state s_stream_outgoing_body_fn(
         return AWS_HTTP_OUTGOING_BODY_DONE;
     }
 
-    size_t amount_read = 0;
-    if (aws_input_stream_read(app_ctx->input_body, buf, &amount_read)) {
+    if (aws_input_stream_read(app_ctx->input_body, buf)) {
         return AWS_HTTP_OUTGOING_BODY_DONE;
     }
 
