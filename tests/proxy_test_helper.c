@@ -21,6 +21,7 @@
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
 #include <aws/common/log_writer.h>
+#include <aws/common/thread.h>
 #include <aws/common/uuid.h>
 #include <aws/http/request_response.h>
 #include <aws/io/channel_bootstrap.h>
@@ -29,6 +30,7 @@
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 #include <aws/testing/aws_test_harness.h>
+#include <aws/testing/io_testing_channel.h>
 
 #include "proxy_test_helper.h"
 
@@ -178,6 +180,16 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
             tester->release_connection(tester->client_connection);
         } else {
             aws_http_connection_release(tester->client_connection);
+        }
+
+        if (tester->testing_channel) {
+            ASSERT_SUCCESS(testing_channel_clean_up(tester->testing_channel));
+            while(!testing_channel_is_shutdown_completed(tester->testing_channel)) {
+                aws_thread_current_sleep(1000000000);
+            }
+
+            aws_mem_release(tester->alloc, tester->testing_channel);
+            tester->client_connection_is_shutdown = true;
         }
 
         ASSERT_SUCCESS(proxy_tester_wait(tester, proxy_tester_connection_shutdown_pred));
