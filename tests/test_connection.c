@@ -289,19 +289,19 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 
     /* Connect */
     struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
-    client_options.allocator = tester->alloc;
-    client_options.bootstrap = tester->client_bootstrap;
-    client_options.host_name = aws_byte_cursor_from_c_str(endpoint.address);
-    client_options.port = endpoint.port;
-    client_options.socket_options = &socket_options;
-    client_options.user_data = tester;
-    client_options.on_setup = s_tester_on_client_connection_setup;
-    client_options.on_shutdown = s_tester_on_client_connection_shutdown;
     tester->client_options = client_options;
+    tester->client_options.allocator = tester->alloc;
+    tester->client_options.bootstrap = tester->client_bootstrap;
+    tester->client_options.host_name = aws_byte_cursor_from_c_str(endpoint.address);
+    tester->client_options.port = endpoint.port;
+    tester->client_options.socket_options = &socket_options;
+    tester->client_options.user_data = tester;
+    tester->client_options.on_setup = s_tester_on_client_connection_setup;
+    tester->client_options.on_shutdown = s_tester_on_client_connection_shutdown;
 
     tester->server_connection_num = 0;
     tester->client_connection_num = 0;
-    ASSERT_SUCCESS(aws_http_client_connect(&client_options));
+    ASSERT_SUCCESS(aws_http_client_connect(&tester->client_options));
 
     /* Wait for server & client connections to finish setup */
     tester->wait_client_connection_num = 1;
