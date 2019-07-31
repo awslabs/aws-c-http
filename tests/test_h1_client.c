@@ -1877,6 +1877,9 @@ static void s_downstream_handler_write_on_shutdown(
     bool free_scarce_resources_immediately,
     void *user_data) {
 
+    (void)error_code;
+    (void)free_scarce_resources_immediately;
+
     struct tester *tester = user_data;
 
     if (dir == AWS_CHANNEL_DIR_WRITE) {

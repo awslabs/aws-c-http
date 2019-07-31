@@ -24,8 +24,6 @@
 #include <aws/http/private/request_response_impl.h>
 #include <aws/io/logging.h>
 
-/* TODO: try to continue processing channel messages during shutdown */
-
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
@@ -1640,14 +1638,13 @@ static int s_handler_shutdown(
     (void)free_scarce_resources_immediately;
     struct h1_connection *connection = handler->impl;
 
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Channel shutting down in %s direction with error code %d (%s).",
-            (void *)&connection->base,
-            (dir == AWS_CHANNEL_DIR_READ) ? "read" : "write",
-            error_code,
-            aws_error_name(error_code));
-
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Channel shutting down in %s direction with error code %d (%s).",
+        (void *)&connection->base,
+        (dir == AWS_CHANNEL_DIR_READ) ? "read" : "write",
+        error_code,
+        aws_error_name(error_code));
 
     if (dir == AWS_CHANNEL_DIR_READ) {
         /* This call ensures that no further streams will be created or worked on. */
