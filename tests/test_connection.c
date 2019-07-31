@@ -68,6 +68,7 @@ struct tester {
     struct aws_http_connection *client_connections[10];
 
     struct aws_socket_endpoint endpoint;
+    struct aws_socket_options socket_options;
 
     int client_connection_is_shutdown;
     int server_connection_is_shutdown;
@@ -253,7 +254,7 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
         .connect_timeout_ms =
             (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
     };
-
+    tester->socket_options = socket_options;
     /* Generate random address for endpoint */
     struct aws_uuid uuid;
     ASSERT_SUCCESS(aws_uuid_init(&uuid));
@@ -270,7 +271,7 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     server_options.allocator = tester->alloc;
     server_options.bootstrap = tester->server_bootstrap;
     server_options.endpoint = &endpoint;
-    server_options.socket_options = &socket_options;
+    server_options.socket_options = &tester->socket_options;
     server_options.server_user_data = tester;
     server_options.on_incoming_connection = s_tester_on_server_connection_setup;
     server_options.on_destroy_complete = s_tester_http_server_on_destroy;
@@ -294,7 +295,7 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     tester->client_options.bootstrap = tester->client_bootstrap;
     tester->client_options.host_name = aws_byte_cursor_from_c_str(endpoint.address);
     tester->client_options.port = endpoint.port;
-    tester->client_options.socket_options = &socket_options;
+    tester->client_options.socket_options = &tester->socket_options;
     tester->client_options.user_data = tester;
     tester->client_options.on_setup = s_tester_on_client_connection_setup;
     tester->client_options.on_shutdown = s_tester_on_client_connection_shutdown;
