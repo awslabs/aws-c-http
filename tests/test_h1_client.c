@@ -997,7 +997,7 @@ struct slow_body_sender {
     size_t bytes_per_tick; /* Don't send more than N bytes per tick */
 };
 
-int s_slow_stream_read(struct aws_input_stream *stream, struct aws_byte_buf *dest, size_t *amount_read) {
+int s_slow_stream_read(struct aws_input_stream *stream, struct aws_byte_buf *dest) {
     struct slow_body_sender *sender = stream->impl;
 
     size_t dst_available = dest->capacity - dest->len;
@@ -1016,7 +1016,6 @@ int s_slow_stream_read(struct aws_input_stream *stream, struct aws_byte_buf *des
         }
     }
 
-    *amount_read = writing;
     aws_byte_buf_write(dest, sender->cursor.ptr, writing);
     aws_byte_cursor_advance(&sender->cursor, writing);
 
@@ -1429,10 +1428,7 @@ static int s_error_from_callback_common(
     return AWS_OP_SUCCESS;
 }
 
-static int s_error_from_outgoing_body_read(
-    struct aws_input_stream *body,
-    struct aws_byte_buf *dest,
-    size_t *amount_read) {
+static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct aws_byte_buf *dest) {
 
     (void)dest;
 
@@ -1441,7 +1437,6 @@ static int s_error_from_outgoing_body_read(
 
     /* If the common fn was successful, write out some data and end the stream */
     ASSERT_TRUE(aws_byte_buf_write(dest, (const uint8_t *)"abcd", 4));
-    *amount_read = 4;
     error_tester->status.is_end_of_stream = true;
     return AWS_OP_SUCCESS;
 }

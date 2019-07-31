@@ -407,6 +407,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             options->tls_options,
             s_server_bootstrap_on_accept_channel_setup,
             s_server_bootstrap_on_accept_channel_shutdown,
+            NULL,
             server);
     } else {
         server->socket = aws_server_bootstrap_new_socket_listener(
@@ -415,6 +416,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             options->socket_options,
             s_server_bootstrap_on_accept_channel_setup,
             s_server_bootstrap_on_accept_channel_shutdown,
+            NULL,
             server);
     }
 
