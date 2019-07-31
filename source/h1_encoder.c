@@ -344,8 +344,10 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
                     return AWS_OP_SUCCESS;
                 }
 
-                size_t amount_read = 0;
-                int err = aws_input_stream_read(encoder->message->body, dst, &amount_read);
+                const size_t prev_len = dst->len;
+                int err = aws_input_stream_read(encoder->message->body, dst);
+                const size_t amount_read = dst->len - prev_len;
+
                 if (err) {
                     ENCODER_LOGF(
                         ERROR,

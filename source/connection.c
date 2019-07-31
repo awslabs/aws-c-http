@@ -14,10 +14,12 @@
  */
 
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/private/proxy_impl.h>
 
 #include <aws/common/hash_table.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
+#include <aws/http/request_response.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
@@ -26,6 +28,17 @@
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
+
+static struct aws_http_connection_system_vtable s_default_system_vtable = {
+    .new_socket_channel = aws_client_bootstrap_new_socket_channel,
+    .new_tls_socket_channel = aws_client_bootstrap_new_tls_socket_channel,
+};
+
+static const struct aws_http_connection_system_vtable *s_system_vtable_ptr = &s_default_system_vtable;
+
+void aws_http_connection_set_system_vtable(const struct aws_http_connection_system_vtable *system_vtable) {
+    s_system_vtable_ptr = system_vtable;
+}
 
 AWS_STATIC_STRING_FROM_LITERAL(s_alpn_protocol_http_1_1, "http/1.1");
 AWS_STATIC_STRING_FROM_LITERAL(s_alpn_protocol_http_2, "h2");
@@ -48,19 +61,6 @@ struct aws_http_server {
         /* For checking status from outside the event-loop thread. Duplicates thread_data.is_shutting_down */
         bool is_shutting_down;
     } synced_data;
-};
-
-/* Gets a client connection up and running.
- * Responsible for firing on_setup and on_shutdown callbacks. */
-struct aws_http_client_bootstrap {
-    struct aws_allocator *alloc;
-    bool is_using_tls;
-    size_t initial_window_size;
-    void *user_data;
-    aws_http_on_client_connection_setup_fn *on_setup;
-    aws_http_on_client_connection_shutdown_fn *on_shutdown;
-
-    struct aws_http_connection *connection;
 };
 
 /* Determine the http-version, create appropriate type of connection, and insert it into the channel. */
@@ -398,7 +398,7 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
         struct aws_http_connection *connection = map_elem.value;
         AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: Server connection shut down.", (void *)connection);
         if (connection->server_data->on_shutdown) {
-            connection->server_data->on_shutdown(connection, error_code, connection->server_data->connection_user_data);
+            connection->server_data->on_shutdown(connection, error_code, connection->user_data);
         }
     }
 }
@@ -465,7 +465,11 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             options->tls_options,
             s_server_bootstrap_on_accept_channel_setup,
             s_server_bootstrap_on_accept_channel_shutdown,
+<<<<<<< HEAD
             s_server_bootstrap_on_server_listener_destroy,
+=======
+            NULL,
+>>>>>>> origin/h1b
             server);
     } else {
         server->socket = aws_server_bootstrap_new_socket_listener(
@@ -474,7 +478,11 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             options->socket_options,
             s_server_bootstrap_on_accept_channel_setup,
             s_server_bootstrap_on_accept_channel_shutdown,
+<<<<<<< HEAD
             s_server_bootstrap_on_server_listener_destroy,
+=======
+            NULL,
+>>>>>>> origin/h1b
             server);
     }
 
@@ -593,6 +601,9 @@ static void s_client_bootstrap_on_channel_setup(
         goto error;
     }
 
+    http_bootstrap->connection->request_transform = http_bootstrap->request_transform;
+    http_bootstrap->connection->user_data = http_bootstrap->user_data;
+
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
         "id=%p: " PRInSTR " client connection established.",
@@ -656,8 +667,10 @@ static void s_client_bootstrap_on_channel_shutdown(
     aws_mem_release(http_bootstrap->alloc, http_bootstrap);
 }
 
-int aws_http_client_connect(const struct aws_http_client_connection_options *options) {
+int aws_http_client_connect_internal(const struct aws_http_client_connection_options *options) {
     aws_http_fatal_assert_library_initialized();
+
+    AWS_FATAL_ASSERT(options->proxy_options == NULL);
 
     struct aws_http_client_bootstrap *http_bootstrap = NULL;
     struct aws_string *host_name = NULL;
@@ -688,9 +701,10 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
     http_bootstrap->user_data = options->user_data;
     http_bootstrap->on_setup = options->on_setup;
     http_bootstrap->on_shutdown = options->on_shutdown;
+    http_bootstrap->request_transform = options->request_transform;
 
     if (options->tls_options) {
-        err = aws_client_bootstrap_new_tls_socket_channel(
+        err = s_system_vtable_ptr->new_tls_socket_channel(
             options->bootstrap,
             (const char *)aws_string_bytes(host_name),
             options->port,
@@ -700,7 +714,7 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
             s_client_bootstrap_on_channel_shutdown,
             http_bootstrap);
     } else {
-        err = aws_client_bootstrap_new_socket_channel(
+        err = s_system_vtable_ptr->new_socket_channel(
             options->bootstrap,
             (const char *)aws_string_bytes(host_name),
             options->port,
@@ -735,6 +749,14 @@ error:
     return AWS_OP_ERR;
 }
 
+int aws_http_client_connect(const struct aws_http_client_connection_options *options) {
+    if (options->proxy_options != NULL) {
+        return aws_http_client_connect_via_proxy(options);
+    } else {
+        return aws_http_client_connect_internal(options);
+    }
+}
+
 enum aws_http_version aws_http_connection_get_version(const struct aws_http_connection *connection) {
     return connection->http_version;
 }
@@ -761,7 +783,7 @@ int aws_http_connection_configure_server(
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
-    connection->server_data->connection_user_data = options->connection_user_data;
+    connection->user_data = options->connection_user_data;
     connection->server_data->on_incoming_request = options->on_incoming_request;
     connection->server_data->on_shutdown = options->on_shutdown;
 

@@ -1364,8 +1364,8 @@ static struct aws_h1_stream *s_server_invoke_on_incoming_request(struct h1_conne
      */
     connection->thread_data.can_create_request_handler_stream = true;
 
-    struct aws_http_stream *new_stream = connection->base.server_data->on_incoming_request(
-        &connection->base, connection->base.server_data->connection_user_data);
+    struct aws_http_stream *new_stream =
+        connection->base.server_data->on_incoming_request(&connection->base, connection->base.user_data);
 
     connection->thread_data.can_create_request_handler_stream = false;
 

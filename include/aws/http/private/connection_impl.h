@@ -23,11 +23,36 @@
 
 #include <aws/common/atomics.h>
 #include <aws/io/channel.h>
+#include <aws/io/channel_bootstrap.h>
 
 struct aws_http_message;
 struct aws_http_request_options;
 struct aws_http_request_handler_options;
 struct aws_http_stream;
+
+typedef int(aws_client_bootstrap_new_socket_channel_fn)(
+    struct aws_client_bootstrap *bootstrap,
+    const char *host_name,
+    uint16_t port,
+    const struct aws_socket_options *options,
+    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
+    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
+    void *user_data);
+
+typedef int(aws_client_bootstrap_new_tls_socket_channel_fn)(
+    struct aws_client_bootstrap *bootstrap,
+    const char *host_name,
+    uint16_t port,
+    const struct aws_socket_options *options,
+    const struct aws_tls_connection_options *connection_options,
+    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
+    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
+    void *user_data);
+
+struct aws_http_connection_system_vtable {
+    aws_client_bootstrap_new_socket_channel_fn *new_socket_channel;
+    aws_client_bootstrap_new_tls_socket_channel_fn *new_tls_socket_channel;
+};
 
 struct aws_http_connection_vtable {
     struct aws_channel_handler_vtable channel_handler_vtable;
@@ -52,6 +77,9 @@ struct aws_http_connection {
     enum aws_http_version http_version;
     size_t initial_window_size;
 
+    aws_http_request_transform_fn *request_transform;
+    void *user_data;
+
     /* Connection starts with 1 hold for the user.
      * aws_http_streams will also acquire holds on their connection for the duration of their lifetime */
     struct aws_atomic_var refcount;
@@ -62,7 +90,6 @@ struct aws_http_connection {
         } client;
 
         struct aws_http_connection_server_data {
-            void *connection_user_data;
             aws_http_on_incoming_request_fn *on_incoming_request;
             aws_http_on_server_connection_shutdown_fn *on_shutdown;
         } server;
@@ -72,6 +99,20 @@ struct aws_http_connection {
      * Opposite is true on server connections */
     struct aws_http_connection_client_data *client_data;
     struct aws_http_connection_server_data *server_data;
+};
+
+/* Gets a client connection up and running.
+ * Responsible for firing on_setup and on_shutdown callbacks. */
+struct aws_http_client_bootstrap {
+    struct aws_allocator *alloc;
+    bool is_using_tls;
+    size_t initial_window_size;
+    void *user_data;
+    aws_http_on_client_connection_setup_fn *on_setup;
+    aws_http_on_client_connection_shutdown_fn *on_shutdown;
+    aws_http_request_transform_fn *request_transform;
+
+    struct aws_http_connection *connection;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -85,6 +126,12 @@ AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http1_1_client(
     struct aws_allocator *allocator,
     size_t initial_window_size);
+
+AWS_HTTP_API
+void aws_http_connection_set_system_vtable(const struct aws_http_connection_system_vtable *system_vtable);
+
+AWS_HTTP_API
+int aws_http_client_connect_internal(const struct aws_http_client_connection_options *options);
 
 AWS_EXTERN_C_END
 

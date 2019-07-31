@@ -77,6 +77,13 @@ struct aws_h1_stream *aws_h1_stream_new_request(const struct aws_http_request_op
         return NULL;
     }
 
+    if (options->client_connection->request_transform) {
+        if (options->client_connection->request_transform(
+                options->request, options->client_connection->alloc, options->client_connection->user_data)) {
+            goto error;
+        }
+    }
+
     stream->base.client_data = &stream->base.client_or_server_data.client;
     stream->base.client_data->response_status = AWS_HTTP_STATUS_UNKNOWN;
 
