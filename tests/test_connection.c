@@ -418,6 +418,21 @@ static int s_test_connection_destroy_server_with_multiple_connections_existing(
     tester.wait_client_connection_num += more_connection_num;
     tester.wait_server_connection_num += more_connection_num;
     /* connect */
+    struct aws_socket_options socket_options = {
+        .type = AWS_SOCKET_STREAM,
+        .domain = AWS_SOCKET_LOCAL,
+        .connect_timeout_ms =
+            (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
+    };
+    struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
+    client_options.allocator = tester.alloc;
+    client_options.bootstrap = aws_client_bootstrap_new(allocator, &tester.event_loop_group, &tester.host_resolver, NULL);;
+    client_options.host_name = aws_byte_cursor_from_c_str(tester.endpoint.address);
+    client_options.port = tester.endpoint.port;
+    client_options.socket_options = &socket_options;
+    client_options.user_data = &tester;
+    client_options.on_setup = s_tester_on_client_connection_setup;
+    client_options.on_shutdown = s_tester_on_client_connection_shutdown;
     for (int i = 0; i < more_connection_num; i++) {
         aws_http_client_connect(&tester.client_options);
     }
