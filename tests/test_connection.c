@@ -547,8 +547,9 @@ static int s_test_connection_server_shutting_down_new_connection_fail(struct aws
     if (tester.new_client_connection) {
         /* wait for it to shut down, we do not need to call shut down, the socket will know */
         ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_new_client_shutdown_pred));
+        aws_http_connection_release(tester.new_client_connection);
     }
-    aws_http_connection_release(tester.new_client_connection);
+    
     /* wait for the old connections to be shut down */
     tester.wait_client_connection_is_shutdown = tester.client_connection_num;
     tester.wait_server_connection_is_shutdown = tester.server_connection_num;
