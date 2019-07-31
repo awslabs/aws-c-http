@@ -1353,6 +1353,8 @@ TEST_CASE(h1_server_close_before_message_is_sent) {
 
     /* close the connection */
     aws_http_connection_close(error_tester.server_connection);
+    testing_channel_drain_queued_tasks(&error_tester.testing_channel);
+
     /* send request */
     const char *incoming_request = "POST / HTTP/1.1\r\n"
                                    "Transfer-Encoding: chunked\r\n"

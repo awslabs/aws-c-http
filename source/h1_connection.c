@@ -24,8 +24,6 @@
 #include <aws/http/private/request_response_impl.h>
 #include <aws/io/logging.h>
 
-/* TODO: try to continue processing channel messages during shutdown */
-
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
@@ -116,6 +114,7 @@ struct h1_connection {
 
     /* Task used once during shutdown. */
     struct aws_channel_task shutdown_delay_task;
+    int shutdown_delay_task_error_code;
 
     /* Only the event-loop thread may touch this data */
     struct {
@@ -145,10 +144,9 @@ struct h1_connection {
          * These are passed downstream to the next handler. */
         struct aws_linked_list midchannel_read_messages;
 
-        /* For checking status from the event-loop thread. Duplicates synced_data.is_shutting_down */
-        bool is_shutting_down;
-
-        int shutdown_error_code;
+        /* True when read and/or writing has stopped, whether due to errors or normal channel shutdown. */
+        bool is_reading_stopped;
+        bool is_writing_stopped;
 
         /* If true, the connection has upgraded to another protocol.
          * It will pass data to adjacent channel handlers without altering it.
@@ -168,7 +166,7 @@ struct h1_connection {
 
         bool is_outgoing_stream_task_active;
 
-        /* For checking status from outside the event-loop thread. Duplicates thread_data.is_shutting_down */
+        /* For checking status from outside the event-loop thread. */
         bool is_shutting_down;
 
         /* If non-zero, reason to immediately reject new streams. (ex: closing, switched protocols) */
@@ -180,39 +178,51 @@ struct h1_connection {
 };
 
 /**
- * Internal function for shutting down the connection.
- * This function can be called multiple times, from on-thread or off.
- * This function is always run once on-thread during channel shutdown.
+ * Internal function for bringing connection to a stop.
+ * Invoked multiple times, including when:
+ * - Channel is shutting down in the read direction.
+ * - Channel is shutting down in the write direction.
+ * - An error occurs.
+ * - User wishes to close the connection (this is the only case where the function may run off-thread).
  */
-static void s_shutdown_connection(struct h1_connection *connection, int error_code) {
-    bool on_thread = aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel);
-    if (on_thread) {
-        /* If thread_data already knew about shutdown, then no more work to do here. */
-        if (connection->thread_data.is_shutting_down) {
-            return;
-        }
+static void s_stop(
+    struct h1_connection *connection,
+    bool stop_reading,
+    bool stop_writing,
+    bool schedule_shutdown,
+    int error_code) {
 
-        connection->thread_data.is_shutting_down = true;
-        connection->thread_data.shutdown_error_code = error_code;
+    if (stop_reading) {
+        AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+        connection->thread_data.is_reading_stopped = true;
     }
 
-    bool was_shutdown_known;
+    if (stop_writing) {
+        AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+        connection->thread_data.is_writing_stopped = true;
+    }
     { /* BEGIN CRITICAL SECTION */
         int err = aws_mutex_lock(&connection->synced_data.lock);
         AWS_FATAL_ASSERT(!err);
 
-        was_shutdown_known = connection->synced_data.is_shutting_down;
-        connection->synced_data.is_shutting_down = true;
-        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
+        if (connection->synced_data.is_shutting_down) {
+            schedule_shutdown = false;
+        } else {
+            connection->synced_data.is_shutting_down = true;
+            connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
+            if (schedule_shutdown) {
+                connection->shutdown_delay_task_error_code = error_code;
+            }
+        }
 
         err = aws_mutex_unlock(&connection->synced_data.lock);
         AWS_FATAL_ASSERT(!err);
     } /* END CRITICAL SECTION */
 
-    if (!was_shutdown_known) {
+    if (schedule_shutdown) {
         AWS_LOGF_INFO(
             AWS_LS_HTTP_CONNECTION,
-            "id=%p: Connection shutting down with error code %d (%s).",
+            "id=%p: Shutting down connection with error code %d (%s).",
             (void *)&connection->base,
             error_code,
             aws_error_name(error_code));
@@ -224,13 +234,30 @@ static void s_shutdown_connection(struct h1_connection *connection, int error_co
     }
 }
 
+static void s_shutdown_due_to_error(struct h1_connection *connection, int error_code) {
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
+    if (!error_code) {
+        error_code = AWS_ERROR_UNKNOWN;
+    }
+
+    /* Stop reading AND writing if an error occurs.
+     *
+     * It doesn't currently seem worth the complexity to distinguish between read errors and write errors.
+     * The only scenarios that would benefit from this are pipelining scenarios (ex: A server
+     * could continue sending a response to request A if there was an error reading request B).
+     * But pipelining in HTTP/1.1 is known to be fragile with regards to errors, so let's just keep it simple.
+     */
+    s_stop(connection, true /*stop_reading*/, true /*stop_writing*/, true /*schedule_shutdown*/, error_code);
+}
+
 static void s_shutdown_delay_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
     (void)task;
     struct h1_connection *connection = arg;
 
     if (status == AWS_TASK_STATUS_RUN_READY) {
         /* If channel is already shutting down, this call has no effect */
-        aws_channel_shutdown(connection->base.channel_slot->channel, connection->thread_data.shutdown_error_code);
+        aws_channel_shutdown(connection->base.channel_slot->channel, connection->shutdown_delay_task_error_code);
     }
 }
 
@@ -239,7 +266,9 @@ static void s_shutdown_delay_task(struct aws_channel_task *task, void *arg, enum
  */
 static void s_connection_close(struct aws_http_connection *connection_base) {
     struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
-    s_shutdown_connection(connection, AWS_ERROR_SUCCESS);
+
+    /* Don't stop reading/writing immediately, let that happen naturally during the channel shutdown process. */
+    s_stop(connection, false /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, AWS_ERROR_SUCCESS);
 }
 
 static bool s_connection_is_open(const struct aws_http_connection *connection_base) {
@@ -333,7 +362,7 @@ static void s_update_window_action(struct h1_connection *connection, size_t incr
             aws_last_error(),
             aws_error_name(aws_last_error()));
 
-        s_shutdown_connection(connection, aws_last_error());
+        s_shutdown_due_to_error(connection, aws_last_error());
     }
 }
 
@@ -585,7 +614,7 @@ finish_up:
 
     /* If this function started out ok, but ended badly, shut down the connection. */
     if (!original_error_code && error_code) {
-        s_shutdown_connection(connection, error_code);
+        s_shutdown_due_to_error(connection, error_code);
     }
 }
 
@@ -752,8 +781,8 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
     struct aws_io_message *msg = NULL;
     int err;
 
-    /* If connection is shutting down, stop sending data */
-    if (connection->thread_data.is_shutting_down || connection->thread_data.has_switched_protocols) {
+    /* Stop task if we're no longer writing stream data */
+    if (connection->thread_data.is_writing_stopped || connection->thread_data.has_switched_protocols) {
         return;
     }
 
@@ -856,7 +885,7 @@ error:
         aws_mem_release(msg->allocator, msg);
     }
 
-    s_shutdown_connection(connection, aws_last_error());
+    s_shutdown_due_to_error(connection, aws_last_error());
 }
 
 static int s_decoder_on_request(
@@ -908,9 +937,14 @@ static int s_decoder_on_request(
     return AWS_OP_SUCCESS;
 
 error:
-    err = aws_last_error();
-    s_shutdown_connection(connection, err);
-    return aws_raise_error(err);
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Failed to process new incoming request, error %d (%s).",
+        (void *)&connection->base,
+        aws_last_error(),
+        aws_error_name(aws_last_error()));
+
+    return AWS_OP_ERR;
 }
 
 static int s_decoder_on_response(int status_code, void *user_data) {
@@ -1207,7 +1241,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
 static void s_connection_try_send_read_messages(struct h1_connection *connection) {
     AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
     AWS_ASSERT(connection->thread_data.has_switched_protocols);
-    AWS_ASSERT(!connection->thread_data.is_shutting_down);
+    AWS_ASSERT(!connection->thread_data.is_reading_stopped);
 
     struct aws_io_message *sending_msg = NULL;
 
@@ -1297,7 +1331,7 @@ error:
     if (sending_msg) {
         aws_mem_release(sending_msg->allocator, sending_msg);
     }
-    s_shutdown_connection(connection, aws_last_error());
+    s_shutdown_due_to_error(connection, aws_last_error());
 }
 
 static struct aws_http_stream *s_new_server_request_handler_stream(
@@ -1394,7 +1428,7 @@ static int s_handler_process_read_message(
     /* Run decoder until all message data is processed */
     struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
     while (message_cursor.len > 0) {
-        if (connection->thread_data.is_shutting_down) {
+        if (connection->thread_data.is_reading_stopped) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
                 "id=%p: Cannot process message because connection is shutting down.",
@@ -1508,7 +1542,7 @@ shutdown:
     if (message) {
         aws_mem_release(message->allocator, message);
     }
-    s_shutdown_connection(connection, aws_last_error());
+    s_shutdown_due_to_error(connection, aws_last_error());
     return AWS_OP_SUCCESS;
 }
 
@@ -1519,7 +1553,7 @@ static int s_handler_process_write_message(
 
     struct h1_connection *connection = handler->impl;
 
-    if (connection->thread_data.is_shutting_down) {
+    if (connection->thread_data.is_writing_stopped) {
         aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
         goto error;
     }
@@ -1549,6 +1583,7 @@ error:
         message->on_completion(connection->base.channel_slot->channel, message, aws_last_error(), message->user_data);
     }
     aws_mem_release(message->allocator, message);
+    s_shutdown_due_to_error(connection, aws_last_error());
     return AWS_OP_SUCCESS;
 }
 
@@ -1559,7 +1594,7 @@ static int s_handler_increment_read_window(
 
     struct h1_connection *connection = handler->impl;
 
-    if (connection->thread_data.is_shutting_down) {
+    if (connection->thread_data.is_reading_stopped) {
         aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
         goto error;
     }
@@ -1589,7 +1624,7 @@ error:
         aws_last_error(),
         aws_error_name(aws_last_error()));
 
-    s_shutdown_connection(connection, aws_last_error());
+    s_shutdown_due_to_error(connection, aws_last_error());
     return AWS_OP_SUCCESS;
 }
 
@@ -1603,17 +1638,17 @@ static int s_handler_shutdown(
     (void)free_scarce_resources_immediately;
     struct h1_connection *connection = handler->impl;
 
-    /* Shut everything down the first time we get this callback (DIR_READ). */
-    if (dir == AWS_CHANNEL_DIR_READ) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Channel shutting down with error code %d (%s).",
-            (void *)&connection->base,
-            error_code,
-            aws_error_name(error_code));
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Channel shutting down in %s direction with error code %d (%s).",
+        (void *)&connection->base,
+        (dir == AWS_CHANNEL_DIR_READ) ? "read" : "write",
+        error_code,
+        aws_error_name(error_code));
 
+    if (dir == AWS_CHANNEL_DIR_READ) {
         /* This call ensures that no further streams will be created or worked on. */
-        s_shutdown_connection(connection, error_code);
+        s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, false /*schedule_shutdown*/, error_code);
 
         /* Clean up any queued midchannel read messages. */
         while (!aws_linked_list_empty(&connection->thread_data.midchannel_read_messages)) {
@@ -1622,6 +1657,9 @@ static int s_handler_shutdown(
             struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
             aws_mem_release(msg->allocator, msg);
         }
+    } else /* dir == AWS_CHANNEL_DIR_WRITE */ {
+
+        s_stop(connection, false /*stop_reading*/, true /*stop_writing*/, false /*schedule_shutdown*/, error_code);
 
         /* Mark all pending streams as complete. */
         int stream_error_code = error_code == AWS_ERROR_SUCCESS ? AWS_ERROR_HTTP_CONNECTION_CLOSED : error_code;

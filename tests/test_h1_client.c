@@ -1867,6 +1867,53 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_write) {
     return AWS_OP_SUCCESS;
 }
 
+/* Test that, when HTTP is a midchannel handler, it will continue processing aws_io_messages write messages
+ * in the time between shutdown-in-the-read-direction and shutdown-in-the-write-direction */
+static const char *s_write_after_shutdown_in_read_dir_str = "inmyprotocolfrowningisnotallowed";
+
+static void s_downstream_handler_write_on_shutdown(
+    enum aws_channel_direction dir,
+    int error_code,
+    bool free_scarce_resources_immediately,
+    void *user_data) {
+
+    (void)error_code;
+    (void)free_scarce_resources_immediately;
+
+    struct tester *tester = user_data;
+
+    if (dir == AWS_CHANNEL_DIR_WRITE) {
+        s_writepush(tester, s_write_after_shutdown_in_read_dir_str);
+    }
+}
+
+H1_CLIENT_TEST_CASE(h1_client_midchannel_write_continues_after_shutdown_in_read_dir) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .install_downstream_handler = true,
+        .downstream_handler_window_size = SIZE_MAX,
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
+
+    /* Downstream handler will write data while shutting down in write direction */
+    testing_channel_set_downstream_handler_shutdown_callback(
+        &tester.testing_channel, s_downstream_handler_write_on_shutdown, &tester);
+
+    /* Shutdown cannel */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Did the late message get through? */
+    ASSERT_SUCCESS(s_check_written_messages(&tester, s_write_after_shutdown_in_read_dir_str));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 static void s_on_message_write_complete_save_error_code(
     struct aws_channel *channel,
     struct aws_io_message *message,
