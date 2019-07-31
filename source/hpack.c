@@ -315,7 +315,9 @@ name_only_failed:
     aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup);
 
 reverse_lookup_failed:
-    aws_mem_release(allocator, context->dynamic_table.buffer);
+    if (context->dynamic_table.buffer) {
+        aws_mem_release(allocator, context->dynamic_table.buffer);
+    }
 
 dynamic_table_buffer_failed:
     aws_mem_release(allocator, context);
