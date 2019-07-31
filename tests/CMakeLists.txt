@@ -223,6 +223,7 @@ add_test_case(test_http_proxy_connection_request_transform)
 add_test_case(test_http_proxy_connection_request_transform_basic_auth)
 add_test_case(test_http_proxy_uri_rewrite)
 add_test_case(test_http_proxy_uri_rewrite_options_star)
+add_test_case(test_https_proxy_connection_connect_request)
 
 # integration  tests that require a locally-installed proxy server
 # add_test_case(test_http_proxy_connection_options_star)

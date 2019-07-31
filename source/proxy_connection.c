@@ -305,7 +305,7 @@ static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_pr
     }
 
     char port_str[6] = "XXXXXX";
-    snprintf(port_str, sizeof(port_str), "%05d", (int)user_data->original_port);
+    snprintf(port_str, sizeof(port_str), "%d", (int)user_data->original_port);
     struct aws_byte_cursor port_cursor = aws_byte_cursor_from_c_str(port_str);
     if (aws_byte_buf_append(&path_buffer, &port_cursor)) {
         goto on_error;

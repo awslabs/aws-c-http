@@ -24,6 +24,7 @@
 #include <aws/io/tls_channel_handler.h>
 
 struct aws_http_client_bootstrap;
+struct testing_channel;
 
 typedef void(aws_http_release_connection_fn)(struct aws_http_connection *connection);
 
@@ -54,6 +55,7 @@ struct proxy_tester {
     struct aws_http_connection *client_connection;
     aws_http_release_connection_fn *release_connection;
     struct aws_http_client_bootstrap *http_bootstrap;
+    struct testing_channel *testing_channel;
 
     bool client_connection_is_shutdown;
 
