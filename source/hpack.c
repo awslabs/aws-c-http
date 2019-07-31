@@ -279,6 +279,9 @@ struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator,
     /* Initialize dynamic table */
     if (max_dynamic_elements) {
         context->dynamic_table.buffer = aws_mem_calloc(allocator, max_dynamic_elements, sizeof(struct aws_http_header));
+        if (!context->dynamic_table.buffer) {
+            goto dynamic_table_buffer_failed;
+        }
     }
     context->dynamic_table.max_elements = max_dynamic_elements;
     context->dynamic_table.num_elements = 0;
@@ -315,6 +318,8 @@ reverse_lookup_failed:
     if (context->dynamic_table.buffer) {
         aws_mem_release(allocator, context->dynamic_table.buffer);
     }
+
+dynamic_table_buffer_failed:
     aws_mem_release(allocator, context);
 
     return NULL;
