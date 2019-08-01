@@ -186,12 +186,12 @@ static void s_tester_on_client_connection_shutdown(
 static int s_tester_wait(struct tester *tester, bool (*pred)(void *user_data)) {
     int local_wait_result;
     ASSERT_SUCCESS(aws_mutex_lock(&tester->wait_lock));
-    ASSERT_SUCCESS(aws_condition_variable_wait_for_pred(
+    int err = aws_condition_variable_wait_for_pred(
         &tester->wait_cvar,
         &tester->wait_lock,
         aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL),
         pred,
-        tester));
+        tester);
     if (tester->server_wait_result)
         local_wait_result = tester->server_wait_result;
     else
@@ -199,7 +199,7 @@ static int s_tester_wait(struct tester *tester, bool (*pred)(void *user_data)) {
     tester->server_wait_result = 0;
     tester->client_wait_result = 0;
     ASSERT_SUCCESS(aws_mutex_unlock(&tester->wait_lock));
-
+    ASSERT_SUCCESS(err);
     if (local_wait_result) {
         return aws_raise_error(local_wait_result);
     }
@@ -320,6 +320,7 @@ static int s_tester_clean_up(struct tester *tester) {
     aws_event_loop_group_clean_up(&tester->event_loop_group);
     aws_http_library_clean_up();
     aws_logger_clean_up(&tester->logger);
+    aws_mutex_clean_up(&tester->wait_lock);
 
     return AWS_OP_SUCCESS;
 }
@@ -447,7 +448,7 @@ static void s_block_task(struct aws_task *task, void *arg, enum aws_task_status 
     (void)status;
     struct tester *tester = arg;
     /* sleep for 1 sec, and release the memory */
-    aws_thread_current_sleep(1000);
+    aws_thread_current_sleep(10000);
     aws_mem_release(tester->alloc, task);
 }
 
@@ -534,7 +535,6 @@ static int s_test_connection_server_shutting_down_new_connection_fail(struct aws
     client_options.on_shutdown = s_tester_on_new_client_connection_shutdown;
 
     /* new connection will be blocked for 1 sec */
-    tester.wait_client_connection_num++;
     tester.wait_server_connection_num++;
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
     /* shutting down the server */
@@ -552,6 +552,9 @@ static int s_test_connection_server_shutting_down_new_connection_fail(struct aws
     /* wait for the old connections to be shut down */
     tester.wait_client_connection_is_shutdown = tester.client_connection_num;
     tester.wait_server_connection_is_shutdown = tester.server_connection_num;
+    /* assert the new connection fail to set up in user's perspective */
+    ASSERT_TRUE(tester.client_connection_num == 1);
+    ASSERT_TRUE(tester.server_connection_num == 1);
     ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
 
     /* release memory */

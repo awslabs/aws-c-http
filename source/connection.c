@@ -368,6 +368,7 @@ static void s_http_server_clean_up(struct aws_http_server *server) {
         server->on_destroy_complete(server->user_data);
     }
     aws_hash_table_clean_up(&server->channel_to_connection_map);
+    aws_mutex_clean_up(&server->synced_data.lock);
     aws_mem_release(server->alloc, server);
 }
 
