@@ -358,15 +358,16 @@ error:
     }
 }
 
+/* clean the server memory up */
 static void s_http_server_clean_up(struct aws_http_server *server) {
     if (!server) {
         return;
     }
-    /* clean it up */
     /* invoke the user callback */
     if (server->on_destroy_complete) {
         server->on_destroy_complete(server->user_data);
     }
+    aws_mutex_clean_up(&server->synced_data.lock);
     aws_hash_table_clean_up(&server->channel_to_connection_map);
     aws_mem_release(server->alloc, server);
 }
@@ -386,14 +387,7 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
      * It won't be in the map if something went wrong while setting up the connection. */
     struct aws_hash_element map_elem;
     int was_present;
-    /* BEGIN CRITICAL SECTION */
-    int err = aws_mutex_lock(&server->synced_data.lock);
-    AWS_FATAL_ASSERT(!err);
     int remove_err = aws_hash_table_remove(&server->channel_to_connection_map, channel, &map_elem, &was_present);
-    err = aws_mutex_unlock(&server->synced_data.lock);
-    AWS_FATAL_ASSERT(!err);
-    /* END CRITICAL SECTION */
-
     if (!remove_err && was_present) {
         struct aws_http_connection *connection = map_elem.value;
         AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: Server connection shut down.", (void *)connection);
@@ -404,12 +398,12 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
     }
 }
 
+/* the server listener has finished the destroy process, no existing connections
+ * finally safe to clean the server up */
 static void s_server_bootstrap_on_server_listener_destroy(struct aws_server_bootstrap *bootstrap, void *user_data) {
     (void)bootstrap;
     AWS_ASSERT(user_data);
     struct aws_http_server *server = user_data;
-    /* the server listener has finished the destroy process, no existing connections
-     * finally safe to clean the server up */
     s_http_server_clean_up(server);
 }
 
@@ -695,6 +689,12 @@ int aws_http_client_connect_internal(const struct aws_http_client_connection_opt
     http_bootstrap->on_setup = options->on_setup;
     http_bootstrap->on_shutdown = options->on_shutdown;
     http_bootstrap->request_transform = options->request_transform;
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "static: attempting to initialize a new client channel to %s:%d",
+        (const char *)aws_string_bytes(host_name),
+        (int)options->port);
 
     if (options->tls_options) {
         err = s_system_vtable_ptr->new_tls_socket_channel(
