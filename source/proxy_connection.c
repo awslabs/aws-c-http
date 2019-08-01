@@ -98,7 +98,7 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     if (options->tls_options) {
         /* clone tls options, but redirect user data to what we're creating */
         user_data->tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
-        if (aws_tls_connection_options_copy(user_data->tls_options, options->tls_options)) {
+        if (user_data->tls_options == NULL || aws_tls_connection_options_copy(user_data->tls_options, options->tls_options)) {
             goto on_error;
         }
 
