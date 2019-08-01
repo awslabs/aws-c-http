@@ -454,14 +454,6 @@ static void s_block_task(struct aws_task *task, void *arg, enum aws_task_status 
     aws_mem_release(tester->alloc, task);
 }
 
-static void s_server_block_task(struct aws_task *task, void *arg, enum aws_task_status status) {
-    (void)status;
-    /* sleep for 2 sec */
-    struct tester *tester = arg;
-    aws_thread_current_sleep(2000000000);
-    aws_mem_release(tester->alloc, task);
-}
-
 static void s_tester_on_new_client_connection_setup(
     struct aws_http_connection *connection,
     int error_code,
@@ -528,16 +520,18 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
      * down. */
     struct aws_event_loop_group event_loop_group;
     ASSERT_SUCCESS(aws_event_loop_group_default_init(&event_loop_group, allocator, 1));
+
     /* get the first eventloop, which will be the eventloop for client to connect */
     struct aws_event_loop *current_eventloop = aws_event_loop_group_get_loop_at(&event_loop_group, 0);
     struct aws_task *block_task = aws_mem_acquire(allocator, sizeof(struct aws_task));
     aws_task_init(block_task, s_block_task, &tester, "wait_a_bit");
     aws_event_loop_schedule_task_now(current_eventloop, block_task);
+
     /* get the first eventloop of tester, which will be the eventloop for server listener socket, block the listener
      * socket */
     struct aws_event_loop *server_eventloop = aws_event_loop_group_get_loop_at(&tester.event_loop_group, 0);
     struct aws_task *server_block_task = aws_mem_acquire(allocator, sizeof(struct aws_task));
-    aws_task_init(server_block_task, s_server_block_task, &tester, "wait_a_bit");
+    aws_task_init(server_block_task, s_block_task, &tester, "wait_a_bit");
     aws_event_loop_schedule_task_now(server_eventloop, server_block_task);
 
     struct aws_client_bootstrap *bootstrap =
@@ -555,6 +549,7 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
     /* new connection will be blocked for 2 sec */
     tester.wait_server_connection_num++;
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
+
     /* shutting down the server */
     aws_http_server_release(tester.server);
     /* the server side connection failed with error code, closed */
