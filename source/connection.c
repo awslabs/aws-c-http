@@ -211,6 +211,11 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
     return connection->channel_slot->channel;
 }
 
+void aws_http_connection_acquire(struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    aws_atomic_fetch_add(&connection->refcount, 1);
+}
+
 void aws_http_connection_release(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);

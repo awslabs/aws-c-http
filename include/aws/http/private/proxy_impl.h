@@ -20,7 +20,9 @@
 
 #include <aws/http/connection.h>
 
+struct aws_channel_slot;
 struct aws_string;
+struct aws_tls_connection_options;
 
 /*
  * (Successful) State transitions for proxy connections
@@ -67,6 +69,10 @@ struct aws_http_proxy_user_data {
     struct aws_string *password;
 };
 
+struct aws_http_proxy_system_vtable {
+    int (*setup_client_tls)(struct aws_channel_slot *right_of_slot, struct aws_tls_connection_options *tls_options);
+};
+
 AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API
@@ -84,6 +90,9 @@ AWS_HTTP_API
 int aws_http_rewrite_uri_for_proxy_request(
     struct aws_http_message *request,
     struct aws_http_proxy_user_data *proxy_user_data);
+
+AWS_HTTP_API
+void aws_http_proxy_system_set_vtable(struct aws_http_proxy_system_vtable *vtable);
 
 AWS_EXTERN_C_END
 
