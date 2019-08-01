@@ -92,7 +92,7 @@ static int s_test_aws_client_bootstrap_new_socket_channel(
     aws_atomic_store_int(&connection->refcount, 1);
     connection->vtable = &s_mock_proxy_connection_vtable;
     connection->alloc = tester.alloc;
-    connection->request_transform = tester.http_bootstrap->request_transform;
+    connection->proxy_request_transform = tester.http_bootstrap->proxy_request_transform;
     connection->user_data = tester.http_bootstrap->user_data;
     connection->client_data = &connection->client_or_server_data.client;
 

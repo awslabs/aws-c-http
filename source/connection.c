@@ -518,7 +518,7 @@ static void s_client_bootstrap_on_channel_setup(
         goto error;
     }
 
-    http_bootstrap->connection->request_transform = http_bootstrap->request_transform;
+    http_bootstrap->connection->proxy_request_transform = http_bootstrap->proxy_request_transform;
     http_bootstrap->connection->user_data = http_bootstrap->user_data;
 
     AWS_LOGF_INFO(
@@ -584,8 +584,9 @@ static void s_client_bootstrap_on_channel_shutdown(
     aws_mem_release(http_bootstrap->alloc, http_bootstrap);
 }
 
-int aws_http_client_connect_internal(const struct aws_http_client_connection_options *options) {
-    aws_http_fatal_assert_library_initialized();
+int aws_http_client_connect_internal(
+    const struct aws_http_client_connection_options *options,
+    aws_http_proxy_request_transform_fn *proxy_request_transform) {
 
     AWS_FATAL_ASSERT(options->proxy_options == NULL);
 
@@ -618,7 +619,7 @@ int aws_http_client_connect_internal(const struct aws_http_client_connection_opt
     http_bootstrap->user_data = options->user_data;
     http_bootstrap->on_setup = options->on_setup;
     http_bootstrap->on_shutdown = options->on_shutdown;
-    http_bootstrap->request_transform = options->request_transform;
+    http_bootstrap->proxy_request_transform = proxy_request_transform;
 
     if (options->tls_options) {
         err = s_system_vtable_ptr->new_tls_socket_channel(
@@ -667,10 +668,12 @@ error:
 }
 
 int aws_http_client_connect(const struct aws_http_client_connection_options *options) {
+    aws_http_fatal_assert_library_initialized();
+
     if (options->proxy_options != NULL) {
         return aws_http_client_connect_via_proxy(options);
     } else {
-        return aws_http_client_connect_internal(options);
+        return aws_http_client_connect_internal(options, NULL);
     }
 }
 

@@ -17,6 +17,7 @@
 
 #include <aws/common/encoding.h>
 #include <aws/common/string.h>
+#include <aws/http/private/connection_impl.h>
 #include <aws/http/request_response.h>
 #include <aws/io/uri.h>
 
@@ -284,11 +285,8 @@ done:
     return result;
 }
 
-static int s_proxy_http_request_transform(
-    struct aws_http_message *request,
-    struct aws_allocator *allocator,
-    void *user_data) {
-    (void)allocator;
+static int s_proxy_http_request_transform(struct aws_http_message *request, void *user_data) {
+
     struct aws_http_proxy_user_data *proxy_ud = user_data;
 
     struct aws_byte_buf auth_header_value;
@@ -330,12 +328,11 @@ static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client
     options_copy.proxy_options = NULL;
     options_copy.host_name = options->proxy_options->host;
     options_copy.port = options->proxy_options->port;
-    options_copy.request_transform = s_proxy_http_request_transform;
     options_copy.user_data = proxy_user_data;
     options_copy.on_setup = s_aws_http_on_client_connection_http_proxy_setup_fn;
     options_copy.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
 
-    int result = aws_http_client_connect(&options_copy);
+    int result = aws_http_client_connect_internal(&options_copy, s_proxy_http_request_transform);
     if (result == AWS_OP_ERR) {
         aws_http_proxy_user_data_destroy(proxy_user_data);
     }

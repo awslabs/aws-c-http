@@ -65,6 +65,9 @@ struct aws_http_connection_vtable {
     bool (*is_open)(const struct aws_http_connection *connection);
     void (*update_window)(struct aws_http_connection *connection, size_t increment_size);
 };
+
+typedef int(aws_http_proxy_request_transform_fn)(struct aws_http_message *request, void *user_data);
+
 /**
  * Base class for connections.
  * There are specific implementations for each HTTP version.
@@ -77,7 +80,7 @@ struct aws_http_connection {
     enum aws_http_version http_version;
     size_t initial_window_size;
 
-    aws_http_request_transform_fn *request_transform;
+    aws_http_proxy_request_transform_fn *proxy_request_transform;
     void *user_data;
 
     /* Connection starts with 1 hold for the user.
@@ -110,7 +113,7 @@ struct aws_http_client_bootstrap {
     void *user_data;
     aws_http_on_client_connection_setup_fn *on_setup;
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
-    aws_http_request_transform_fn *request_transform;
+    aws_http_proxy_request_transform_fn *proxy_request_transform;
 
     struct aws_http_connection *connection;
 };
@@ -131,7 +134,9 @@ AWS_HTTP_API
 void aws_http_connection_set_system_vtable(const struct aws_http_connection_system_vtable *system_vtable);
 
 AWS_HTTP_API
-int aws_http_client_connect_internal(const struct aws_http_client_connection_options *options);
+int aws_http_client_connect_internal(
+    const struct aws_http_client_connection_options *options,
+    aws_http_proxy_request_transform_fn *proxy_request_transform);
 
 AWS_EXTERN_C_END
 

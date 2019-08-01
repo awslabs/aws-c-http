@@ -20,6 +20,7 @@
 
 #include <aws/http/connection.h>
 
+struct aws_http_message;
 struct aws_string;
 
 /*

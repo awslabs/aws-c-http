@@ -60,11 +60,12 @@ struct elasticurl_ctx {
     FILE *input_file;
     struct aws_input_stream *input_body;
     struct aws_http_message *request;
+    struct aws_http_connection *connection;
     const char *signing_library_path;
     struct aws_shared_library signing_library;
     const char *signing_function_name;
     struct aws_hash_table signing_context;
-    aws_http_request_transform_fn *signing_function;
+    aws_http_message_transform_fn *signing_function;
     bool include_headers;
     bool insecure;
     FILE *output;
@@ -430,6 +431,8 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
     return request;
 }
 
+static void s_on_request_transform_complete(struct aws_http_message *request, int error_code, void *user_data);
+
 static void s_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct elasticurl_ctx *app_ctx = user_data;
 
@@ -442,13 +445,27 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
         return;
     }
 
+    app_ctx->connection = connection;
     app_ctx->request = s_build_http_request(app_ctx);
 
+    /* If async signing function is set, invoke it. It must invoke the transform complete callback when it's done. */
     if (app_ctx->signing_function) {
-        if (app_ctx->signing_function(app_ctx->request, app_ctx->allocator, &app_ctx->signing_context)) {
-            fprintf(stderr, "Signing failure\n");
-            exit(1);
-        }
+        app_ctx->signing_function(
+            app_ctx->request, &app_ctx->signing_context, s_on_request_transform_complete, app_ctx);
+    } else {
+        /* If no signing function, proceed immediately to next step. */
+        s_on_request_transform_complete(app_ctx->request, AWS_ERROR_SUCCESS, app_ctx);
+    }
+}
+
+static void s_on_request_transform_complete(struct aws_http_message *request, int error_code, void *user_data) {
+    struct elasticurl_ctx *app_ctx = user_data;
+
+    AWS_FATAL_ASSERT(request == app_ctx->request);
+
+    if (error_code) {
+        fprintf(stderr, "Signing failure\n");
+        exit(1);
     }
 
     size_t final_header_count = aws_http_message_get_header_count(app_ctx->request);
@@ -464,7 +481,7 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     AWS_ZERO_STRUCT(final_request);
     final_request.self_size = sizeof(struct aws_http_request_options);
     final_request.user_data = app_ctx;
-    final_request.client_connection = connection;
+    final_request.client_connection = app_ctx->connection;
     final_request.request = app_ctx->request;
     final_request.on_response_headers = s_on_incoming_headers_fn;
     final_request.on_response_header_block_done = s_on_incoming_header_block_done_fn;
@@ -479,7 +496,9 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
         exit(1);
     }
 
-    aws_http_connection_release(connection);
+    /* Connection will stay alive until stream completes */
+    aws_http_connection_release(app_ctx->connection);
+    app_ctx->connection = NULL;
 }
 
 static void s_on_client_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
