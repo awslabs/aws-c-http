@@ -21,6 +21,7 @@
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
 #include <aws/common/log_writer.h>
+#include <aws/common/thread.h>
 #include <aws/common/uuid.h>
 #include <aws/http/request_response.h>
 #include <aws/io/channel_bootstrap.h>
@@ -29,6 +30,7 @@
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 #include <aws/testing/aws_test_harness.h>
+#include <aws/testing/io_testing_channel.h>
 
 #include "proxy_test_helper.h"
 
@@ -42,6 +44,7 @@ void proxy_tester_on_client_connection_setup(struct aws_http_connection *connect
     AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
 
     if (error_code) {
+        tester->client_connection = NULL;
         tester->wait_result = error_code;
         goto done;
     }
@@ -108,6 +111,7 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
     tester->port = options->port;
     tester->release_connection = options->release_connection;
     tester->proxy_options = options->proxy_options;
+    tester->test_mode = options->test_mode;
 
     ASSERT_SUCCESS(aws_byte_buf_init(&tester->connection_host_name, tester->alloc, 128));
 
@@ -136,7 +140,8 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
         aws_client_bootstrap_new(tester->alloc, &tester->event_loop_group, &tester->host_resolver, NULL);
     ASSERT_NOT_NULL(tester->client_bootstrap);
 
-    if (options->use_tls) {
+    bool use_tls = options->test_mode != PTCR_HTTP_SUCCESS;
+    if (use_tls) {
         aws_tls_init_static_state(tester->alloc);
 
         aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, tester->alloc);
@@ -156,7 +161,7 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
     client_options.host_name = tester->host;
     client_options.port = tester->port;
     client_options.socket_options = &socket_options;
-    client_options.tls_options = options->use_tls ? &tester->tls_connection_options : NULL;
+    client_options.tls_options = use_tls ? &tester->tls_connection_options : NULL;
     client_options.user_data = tester;
     client_options.on_setup = proxy_tester_on_client_connection_setup;
     client_options.on_shutdown = proxy_tester_on_client_connection_shutdown;
@@ -176,18 +181,25 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
     if (tester->client_connection) {
         if (tester->release_connection) {
             tester->release_connection(tester->client_connection);
-        } else {
-            aws_http_connection_release(tester->client_connection);
+        }
+    }
+
+    if (tester->testing_channel) {
+        ASSERT_SUCCESS(testing_channel_clean_up(tester->testing_channel));
+        while (!testing_channel_is_shutdown_completed(tester->testing_channel)) {
+            aws_thread_current_sleep(1000000000);
         }
 
-        ASSERT_SUCCESS(proxy_tester_wait(tester, proxy_tester_connection_shutdown_pred));
+        aws_mem_release(tester->alloc, tester->testing_channel);
+    }
 
-        if (tester->http_bootstrap != NULL) {
-            if (tester->proxy_options != NULL) {
-                aws_http_proxy_user_data_destroy(tester->http_bootstrap->user_data);
-            }
-            aws_mem_release(tester->alloc, tester->http_bootstrap);
+    ASSERT_SUCCESS(proxy_tester_wait(tester, proxy_tester_connection_shutdown_pred));
+
+    if (tester->http_bootstrap != NULL) {
+        if (tester->testing_channel == NULL && tester->http_bootstrap->user_data) {
+            aws_http_proxy_user_data_destroy(tester->http_bootstrap->user_data);
         }
+        aws_mem_release(tester->alloc, tester->http_bootstrap);
     }
 
     aws_client_bootstrap_release(tester->client_bootstrap);
@@ -207,6 +219,89 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
     aws_logger_clean_up(&tester->logger);
 
     aws_byte_buf_clean_up(&tester->connection_host_name);
+
+    return AWS_OP_SUCCESS;
+}
+
+static void s_testing_channel_shutdown_callback(int error_code, void *user_data) {
+    struct proxy_tester *tester = user_data;
+
+    if (tester->wait_result == AWS_ERROR_SUCCESS) {
+        tester->wait_result = error_code;
+    }
+
+    tester->http_bootstrap->on_shutdown(
+        tester->client_connection, tester->wait_result, tester->http_bootstrap->user_data);
+}
+
+int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester) {
+    tester->testing_channel = aws_mem_calloc(tester->alloc, 1, sizeof(struct testing_channel));
+    ASSERT_SUCCESS(testing_channel_init(tester->testing_channel, tester->alloc));
+    tester->testing_channel->channel_shutdown = s_testing_channel_shutdown_callback;
+    tester->testing_channel->channel_shutdown_user_data = tester;
+
+    struct aws_http_connection *connection = aws_http_connection_new_http1_1_client(tester->alloc, SIZE_MAX);
+    ASSERT_NOT_NULL(connection);
+
+    connection->user_data = tester->http_bootstrap->user_data;
+    connection->client_data = &connection->client_or_server_data.client;
+
+    struct aws_channel_slot *slot = aws_channel_slot_new(tester->testing_channel->channel);
+    ASSERT_NOT_NULL(slot);
+    connection->channel_slot = slot;
+    ASSERT_SUCCESS(aws_channel_slot_insert_end(tester->testing_channel->channel, slot));
+    ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &connection->channel_handler));
+
+    aws_channel_acquire_hold(tester->testing_channel->channel);
+
+    tester->client_connection = connection;
+    testing_channel_drain_queued_tasks(tester->testing_channel);
+
+    return AWS_OP_SUCCESS;
+}
+
+int proxy_tester_verify_connect_request(struct proxy_tester *tester) {
+    struct aws_byte_buf output;
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, tester->alloc, 1024));
+    ASSERT_SUCCESS(testing_channel_drain_written_messages(tester->testing_channel, &output));
+
+    char connect_request_buffer[1024];
+    sprintf(
+        connect_request_buffer,
+        "CONNECT " PRInSTR ":%d HTTP/1.1",
+        AWS_BYTE_CURSOR_PRI(tester->host),
+        (int)tester->port);
+
+    struct aws_byte_cursor expected_connect_message_first_line_cursor =
+        aws_byte_cursor_from_c_str(connect_request_buffer);
+    ASSERT_TRUE(output.len >= expected_connect_message_first_line_cursor.len);
+
+    struct aws_byte_cursor request_prefix = aws_byte_cursor_from_array(output.buffer, output.len);
+    struct aws_byte_cursor first_line_cursor;
+    AWS_ZERO_STRUCT(first_line_cursor);
+    ASSERT_TRUE(aws_byte_cursor_next_split(&request_prefix, '\r', &first_line_cursor));
+
+    ASSERT_TRUE(aws_byte_cursor_eq(&first_line_cursor, &expected_connect_message_first_line_cursor));
+
+    aws_byte_buf_clean_up(&output);
+
+    return AWS_OP_SUCCESS;
+}
+
+int proxy_tester_send_connect_response(struct proxy_tester *tester) {
+    (void)tester;
+
+    const char *response_string = NULL;
+    if (tester->test_mode == PTCR_HTTPS_FAILURE_ON_CONNECT) {
+        response_string = "HTTP/1.0 401 Unauthorized\r\n\r\n";
+    } else {
+        response_string = "HTTP/1.0 200 Connection established\r\n\r\n";
+    }
+
+    /* send response */
+    ASSERT_SUCCESS(testing_channel_send_response_str(tester->testing_channel, response_string));
+
+    testing_channel_drain_queued_tasks(tester->testing_channel);
 
     return AWS_OP_SUCCESS;
 }

@@ -18,12 +18,11 @@
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/h1_stream.h>
 #include <aws/http/private/proxy_impl.h>
-
 #include <aws/io/uri.h>
+#include <aws/testing/aws_test_harness.h>
+#include <aws/testing/io_testing_channel.h>
 
 #include "proxy_test_helper.h"
-
-#include <aws/testing/aws_test_harness.h>
 
 static struct proxy_tester tester;
 
@@ -57,8 +56,9 @@ struct aws_http_stream *s_proxy_new_client_request_stream(const struct aws_http_
     return &h1_stream->base;
 }
 
-struct aws_http_connection_vtable s_mock_proxy_connection_vtable = {.new_client_request_stream =
-                                                                        s_proxy_new_client_request_stream};
+struct aws_http_connection_vtable s_mock_connection_vtable = {
+    .new_client_request_stream = s_proxy_new_client_request_stream,
+};
 
 static void s_aws_http_release_mock_connection(struct aws_http_connection *connection) {
     proxy_tester_on_client_connection_shutdown(connection, AWS_ERROR_SUCCESS, &tester);
@@ -66,7 +66,7 @@ static void s_aws_http_release_mock_connection(struct aws_http_connection *conne
     aws_mem_release(connection->alloc, connection);
 }
 
-static int s_test_aws_client_bootstrap_new_socket_channel(
+static int s_test_aws_client_bootstrap_new_http_socket_channel(
     struct aws_client_bootstrap *bootstrap,
     const char *host_name,
     uint16_t port,
@@ -74,6 +74,7 @@ static int s_test_aws_client_bootstrap_new_socket_channel(
     aws_client_bootstrap_on_channel_setup_fn *setup_callback,
     aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
     void *user_data) {
+
     (void)bootstrap;
     (void)options;
     (void)setup_callback;
@@ -86,11 +87,12 @@ static int s_test_aws_client_bootstrap_new_socket_channel(
 
     tester.connection_port = port;
     tester.http_bootstrap = user_data;
+
     aws_mutex_unlock(&tester.wait_lock);
 
     struct aws_http_connection *connection = aws_mem_calloc(tester.alloc, 1, sizeof(struct aws_http_connection));
     aws_atomic_store_int(&connection->refcount, 1);
-    connection->vtable = &s_mock_proxy_connection_vtable;
+    connection->vtable = &s_mock_connection_vtable;
     connection->alloc = tester.alloc;
     connection->message_transform = tester.http_bootstrap->message_transform;
     connection->user_data = tester.http_bootstrap->user_data;
@@ -101,8 +103,51 @@ static int s_test_aws_client_bootstrap_new_socket_channel(
     return AWS_OP_SUCCESS;
 }
 
-struct aws_http_connection_system_vtable s_connection_target_vtable = {
-    .new_socket_channel = s_test_aws_client_bootstrap_new_socket_channel};
+struct aws_http_connection_system_vtable s_proxy_connection_http_vtable = {
+    .new_socket_channel = s_test_aws_client_bootstrap_new_http_socket_channel,
+};
+
+static int s_test_aws_client_bootstrap_new_https_proxy_socket_channel(
+    struct aws_client_bootstrap *bootstrap,
+    const char *host_name,
+    uint16_t port,
+    const struct aws_socket_options *options,
+    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
+    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
+    void *user_data) {
+
+    (void)bootstrap;
+    (void)options;
+    (void)setup_callback;
+    (void)shutdown_callback;
+
+    aws_mutex_lock(&tester.wait_lock);
+
+    struct aws_byte_cursor host_cursor = aws_byte_cursor_from_c_str(host_name);
+    aws_byte_buf_append_dynamic(&tester.connection_host_name, &host_cursor);
+
+    tester.connection_port = port;
+    tester.http_bootstrap = user_data;
+
+    ASSERT_SUCCESS(proxy_tester_create_testing_channel_connection(&tester));
+
+    aws_mutex_unlock(&tester.wait_lock);
+
+    struct aws_http_client_bootstrap *http_bootstrap = user_data;
+    http_bootstrap->on_setup(tester.client_connection, AWS_ERROR_SUCCESS, http_bootstrap->user_data);
+
+    testing_channel_run_currently_queued_tasks(tester.testing_channel);
+
+    ASSERT_SUCCESS(proxy_tester_verify_connect_request(&tester));
+
+    ASSERT_SUCCESS(proxy_tester_send_connect_response(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+
+struct aws_http_connection_system_vtable s_proxy_connection_https_vtable = {
+    .new_socket_channel = s_test_aws_client_bootstrap_new_https_proxy_socket_channel,
+};
 
 static int s_test_aws_client_bootstrap_new_socket_channel_failure(
     struct aws_client_bootstrap *bootstrap,
@@ -123,7 +168,7 @@ static int s_test_aws_client_bootstrap_new_socket_channel_failure(
     aws_byte_buf_append_dynamic(&tester.connection_host_name, &host_cursor);
 
     tester.connection_port = port;
-    tester.http_bootstrap = user_data;
+    // tester.http_bootstrap = user_data;
 
     tester.wait_result = AWS_ERROR_UNKNOWN;
 
@@ -154,7 +199,7 @@ static int s_test_aws_client_bootstrap_new_socket_connect_failure(
     aws_byte_buf_append_dynamic(&tester.connection_host_name, &host_cursor);
 
     tester.connection_port = port;
-    tester.http_bootstrap = user_data;
+    // tester.http_bootstrap = user_data;
     aws_mutex_unlock(&tester.wait_lock);
 
     setup_callback(tester.client_bootstrap, AWS_ERROR_UNKNOWN, NULL, user_data);
@@ -165,43 +210,26 @@ static int s_test_aws_client_bootstrap_new_socket_connect_failure(
 struct aws_http_connection_system_vtable s_connection_connect_failure_vtable = {
     .new_socket_channel = s_test_aws_client_bootstrap_new_socket_connect_failure};
 
-static char *s_host_name = "aws.amazon.com";
-static uint16_t s_port = 80;
+static int s_aws_channel_setup_client_tls_for_proxy_test(
+    struct aws_channel_slot *right_of_slot,
+    struct aws_tls_connection_options *tls_options) {
 
-/*
- * If we don't pass in proxy options, verify we try and connect to the actual target
- */
-static int s_test_http_proxy_connection_real_target(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+    (void)right_of_slot;
 
-    aws_http_connection_set_system_vtable(&s_connection_target_vtable);
-
-    struct proxy_tester_options options = {.alloc = allocator,
-                                           .release_connection = s_aws_http_release_mock_connection,
-                                           .host = aws_byte_cursor_from_c_str(s_host_name),
-                                           .port = s_port};
-
-    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
-
-    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
-
-    ASSERT_BIN_ARRAYS_EQUALS(
-        tester.connection_host_name.buffer,
-        tester.connection_host_name.len,
-        s_host_name,
-        strlen(s_host_name),
-        "Connection host should have been {%s}, but was {" PRInSTR "}.",
-        s_host_name,
-        AWS_BYTE_BUF_PRI(tester.connection_host_name));
-
-    ASSERT_TRUE(tester.connection_port == s_port);
-
-    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+    if (tester.test_mode == PTCR_HTTPS_FAILURE_ON_TLS) {
+        tls_options->on_negotiation_result(NULL, NULL, AWS_ERROR_UNKNOWN, tls_options->user_data);
+    } else {
+        tls_options->on_negotiation_result(NULL, NULL, AWS_ERROR_SUCCESS, tls_options->user_data);
+    }
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_proxy_connection_real_target, s_test_http_proxy_connection_real_target);
 
+struct aws_http_proxy_system_vtable s_proxy_table_for_tls = {.setup_client_tls =
+                                                                 s_aws_channel_setup_client_tls_for_proxy_test};
+
+static char *s_host_name = "aws.amazon.com";
+static uint16_t s_port = 80;
 static char *s_proxy_host_name = "www.myproxy.hmm";
 static uint16_t s_proxy_port = 777;
 
@@ -211,7 +239,7 @@ static uint16_t s_proxy_port = 777;
 static int s_test_http_proxy_connection_proxy_target(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    aws_http_connection_set_system_vtable(&s_connection_target_vtable);
+    aws_http_connection_set_system_vtable(&s_proxy_connection_http_vtable);
 
     struct aws_http_proxy_options proxy_options = {.host = aws_byte_cursor_from_c_str(s_proxy_host_name),
                                                    .port = s_proxy_port};
@@ -396,7 +424,7 @@ static int s_verify_transformed_request(
 static int s_test_http_proxy_connection_request_transform(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    aws_http_connection_set_system_vtable(&s_connection_target_vtable);
+    aws_http_connection_set_system_vtable(&s_proxy_connection_http_vtable);
 
     struct aws_http_proxy_options proxy_options = {.host = aws_byte_cursor_from_c_str(s_proxy_host_name),
                                                    .port = s_proxy_port};
@@ -444,7 +472,7 @@ AWS_TEST_CASE(test_http_proxy_connection_request_transform, s_test_http_proxy_co
 static int s_test_http_proxy_connection_request_transform_basic_auth(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    aws_http_connection_set_system_vtable(&s_connection_target_vtable);
+    aws_http_connection_set_system_vtable(&s_proxy_connection_http_vtable);
 
     struct aws_http_proxy_options proxy_options = {
         .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
@@ -573,3 +601,97 @@ static int s_test_http_proxy_uri_rewrite_options_star(struct aws_allocator *allo
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_http_proxy_uri_rewrite_options_star, s_test_http_proxy_uri_rewrite_options_star);
+
+/*
+ * For tls-enabled proxy connections:
+ * Test the happy path by verifying CONNECT request, tls upgrade attempt
+ */
+static int s_test_https_proxy_connection_success(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    aws_http_connection_set_system_vtable(&s_proxy_connection_https_vtable);
+    aws_http_proxy_system_set_vtable(&s_proxy_table_for_tls);
+
+    struct aws_http_proxy_options proxy_options = {.host = aws_byte_cursor_from_c_str(s_proxy_host_name),
+                                                   .port = s_proxy_port};
+
+    struct proxy_tester_options options = {
+        .alloc = allocator,
+        .proxy_options = &proxy_options,
+        .host = aws_byte_cursor_from_c_str(s_host_name),
+        .port = s_port,
+        .test_mode = PTCR_HTTPS_SUCCESS,
+        .release_connection = aws_http_connection_release,
+    };
+
+    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
+
+    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_https_proxy_connection_success, s_test_https_proxy_connection_success);
+
+/*
+ * For tls-enabled proxy connections:
+ * If the CONNECT request fails, verify error propagation and cleanup
+ */
+static int s_test_https_proxy_connection_failure_connect(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    aws_http_connection_set_system_vtable(&s_proxy_connection_https_vtable);
+    aws_http_proxy_system_set_vtable(&s_proxy_table_for_tls);
+
+    struct aws_http_proxy_options proxy_options = {.host = aws_byte_cursor_from_c_str(s_proxy_host_name),
+                                                   .port = s_proxy_port};
+
+    struct proxy_tester_options options = {
+        .alloc = allocator,
+        .proxy_options = &proxy_options,
+        .host = aws_byte_cursor_from_c_str(s_host_name),
+        .port = s_port,
+        .test_mode = PTCR_HTTPS_FAILURE_ON_CONNECT,
+    };
+
+    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
+
+    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_https_proxy_connection_failure_connect, s_test_https_proxy_connection_failure_connect);
+
+/*
+ * For tls-enabled proxy connections:
+ * If the TLS upgrade fails, verify error propagation and cleanup
+ */
+static int s_test_https_proxy_connection_failure_tls(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    aws_http_connection_set_system_vtable(&s_proxy_connection_https_vtable);
+    aws_http_proxy_system_set_vtable(&s_proxy_table_for_tls);
+
+    struct aws_http_proxy_options proxy_options = {.host = aws_byte_cursor_from_c_str(s_proxy_host_name),
+                                                   .port = s_proxy_port};
+
+    struct proxy_tester_options options = {
+        .alloc = allocator,
+        .proxy_options = &proxy_options,
+        .host = aws_byte_cursor_from_c_str(s_host_name),
+        .port = s_port,
+        .test_mode = PTCR_HTTPS_FAILURE_ON_CONNECT,
+    };
+
+    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
+
+    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_https_proxy_connection_failure_tls, s_test_https_proxy_connection_failure_tls);

@@ -232,7 +232,7 @@ static int s_test_https_proxy_connection_new_destroy(struct aws_allocator *alloc
         .proxy_options = &proxy_options,
         .host = aws_byte_cursor_from_c_str("aws.amazon.com"),
         .port = 443,
-        .use_tls = true,
+        .test_mode = PTCR_HTTPS_SUCCESS,
     };
 
     struct proxy_tester tester;
@@ -257,7 +257,7 @@ static int s_test_https_proxy_connection_get(struct aws_allocator *allocator, vo
         .proxy_options = &proxy_options,
         .host = aws_byte_cursor_from_c_str("aws.amazon.com"),
         .port = 443,
-        .use_tls = true,
+        .test_mode = PTCR_HTTPS_SUCCESS,
     };
 
     return s_do_proxy_get_test(allocator, &options);

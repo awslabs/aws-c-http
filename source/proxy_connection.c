@@ -36,6 +36,14 @@ AWS_STATIC_STRING_FROM_LITERAL(s_options_method, "OPTIONS");
 AWS_STATIC_STRING_FROM_LITERAL(s_star_path, "*");
 AWS_STATIC_STRING_FROM_LITERAL(s_http_scheme, "http");
 
+static struct aws_http_proxy_system_vtable s_default_vtable = {.setup_client_tls = &aws_channel_setup_client_tls};
+
+static struct aws_http_proxy_system_vtable *s_vtable = &s_default_vtable;
+
+void aws_http_proxy_system_set_vtable(struct aws_http_proxy_system_vtable *vtable) {
+    s_vtable = vtable;
+}
+
 void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data) {
     if (user_data == NULL) {
         return;
@@ -90,7 +98,7 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     if (options->tls_options) {
         /* clone tls options, but redirect user data to what we're creating */
         user_data->tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
-        if (aws_tls_connection_options_copy(user_data->tls_options, options->tls_options)) {
+        if (user_data->tls_options == NULL || aws_tls_connection_options_copy(user_data->tls_options, options->tls_options)) {
             goto on_error;
         }
 
@@ -305,7 +313,7 @@ static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_pr
     }
 
     char port_str[6] = "XXXXXX";
-    snprintf(port_str, sizeof(port_str), "%05d", (int)user_data->original_port);
+    snprintf(port_str, sizeof(port_str), "%d", (int)user_data->original_port);
     struct aws_byte_cursor port_cursor = aws_byte_cursor_from_c_str(port_str);
     if (aws_byte_buf_append(&path_buffer, &port_cursor)) {
         goto on_error;
@@ -433,13 +441,12 @@ static void s_aws_http_on_stream_complete_tls_proxy(struct aws_http_stream *stre
      */
     context->tls_options->on_negotiation_result = s_on_origin_server_tls_negotation_result;
 
+    context->state = AWS_PBS_TLS_NEGOTIATION;
     struct aws_channel *channel = aws_http_connection_get_channel(context->connection);
-    if (channel == NULL || aws_channel_setup_client_tls(aws_channel_get_first_slot(channel), context->tls_options)) {
+    if (channel == NULL || s_vtable->setup_client_tls(aws_channel_get_first_slot(channel), context->tls_options)) {
         s_aws_http_proxy_user_data_shutdown(context);
         return;
     }
-
-    context->state = AWS_PBS_TLS_NEGOTIATION;
 }
 
 /*
@@ -500,11 +507,11 @@ static void s_aws_http_on_client_connection_http_tls_proxy_setup_fn(
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "(%p) Making CONNECT request to proxy", (void *)proxy_ud->connection);
 
     proxy_ud->connection = connection;
+    proxy_ud->state = AWS_PBS_HTTP_CONNECT;
     if (s_make_proxy_connect_request(connection, proxy_ud)) {
         goto on_error;
     }
 
-    proxy_ud->state = AWS_PBS_HTTP_CONNECT;
     return;
 
 on_error:

@@ -211,6 +211,11 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
     return connection->channel_slot->channel;
 }
 
+void aws_http_connection_acquire(struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    aws_atomic_fetch_add(&connection->refcount, 1);
+}
+
 void aws_http_connection_release(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
@@ -407,6 +412,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             options->tls_options,
             s_server_bootstrap_on_accept_channel_setup,
             s_server_bootstrap_on_accept_channel_shutdown,
+            NULL,
             server);
     } else {
         server->socket = aws_server_bootstrap_new_socket_listener(
@@ -415,6 +421,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             options->socket_options,
             s_server_bootstrap_on_accept_channel_setup,
             s_server_bootstrap_on_accept_channel_shutdown,
+            NULL,
             server);
     }
 
