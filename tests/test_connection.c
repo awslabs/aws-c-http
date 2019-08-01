@@ -448,10 +448,9 @@ AWS_TEST_CASE(
 
 static void s_block_task(struct aws_task *task, void *arg, enum aws_task_status status) {
     (void)status;
-    struct tester *tester = arg;
-    /* sleep for 2 sec, and release the memory */
+    (void)arg;
+    /* sleep for 2 sec */
     aws_thread_current_sleep(2000000000);
-    aws_mem_release(tester->alloc, task);
 }
 
 static void s_tester_on_new_client_connection_setup(
@@ -525,6 +524,10 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
     struct aws_task *block_task = aws_mem_acquire(allocator, sizeof(struct aws_task));
     aws_task_init(block_task, s_block_task, &tester, "wait_a_bit");
     aws_event_loop_schedule_task_now(current_eventloop, block_task);
+    /* get the first eventloop of tester, which will be the eventloop for server listener socket, block the listener
+     * socket */
+    struct aws_event_loop *server_eventloop = aws_event_loop_group_get_loop_at(&tester.event_loop_group, 0);
+    aws_event_loop_schedule_task_now(server_eventloop, block_task);
 
     struct aws_client_bootstrap *bootstrap =
         aws_client_bootstrap_new(allocator, &event_loop_group, &tester.host_resolver, NULL);
@@ -568,6 +571,7 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
     aws_client_bootstrap_release(bootstrap);
     aws_event_loop_group_clean_up(&event_loop_group);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    aws_mem_release(allocator, block_task);
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
