@@ -590,57 +590,6 @@ static int s_response_tester_clean_up(struct response_tester *response) {
     return AWS_OP_SUCCESS;
 }
 
-/* For sending an aws_io_message into the channel, in the write or read direction */
-static int s_send_message_ex(
-    struct tester *tester,
-    struct aws_byte_cursor data,
-    enum aws_channel_direction dir,
-    bool ignore_send_message_errors) {
-
-    struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
-        tester->testing_channel.channel, AWS_IO_MESSAGE_APPLICATION_DATA, data.len);
-    ASSERT_NOT_NULL(msg);
-
-    ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&msg->message_data, data));
-
-    int err;
-    if (dir == AWS_CHANNEL_DIR_READ) {
-        err = testing_channel_push_read_message(&tester->testing_channel, msg);
-    } else {
-        err = testing_channel_push_write_message(&tester->testing_channel, msg);
-    }
-
-    if (!ignore_send_message_errors) {
-        ASSERT_SUCCESS(err);
-    }
-
-    return AWS_OP_SUCCESS;
-}
-
-static int s_send_response(struct tester *tester, struct aws_byte_cursor data) {
-    return s_send_message_ex(tester, data, AWS_CHANNEL_DIR_READ, false);
-}
-
-static int s_send_response_str(struct tester *tester, const char *str) {
-    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_READ, false);
-}
-
-static int s_send_response_str_ignore_errors(struct tester *tester, const char *str) {
-    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_READ, true);
-}
-
-static int s_readpush(struct tester *tester, const char *str) {
-    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_READ, false);
-}
-
-static int s_readpush_ignore_errors(struct tester *tester, const char *str) {
-    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_READ, true);
-}
-
-static int s_writepush(struct tester *tester, const char *str) {
-    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_WRITE, false);
-}
-
 H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
     (void)ctx;
     struct tester tester;
@@ -660,7 +609,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
     aws_http_message_destroy(opt.request);
 
     /* send response */
-    ASSERT_SUCCESS(s_send_response_str(&tester, "HTTP/1.1 204 No Content\r\n\r\n"));
+    ASSERT_SUCCESS(testing_channel_send_response_str(&tester.testing_channel, "HTTP/1.1 204 No Content\r\n\r\n"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -707,8 +656,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_headers) {
     aws_http_message_destroy(opt.request);
 
     /* send response */
-    ASSERT_SUCCESS(s_send_response_str(
-        &tester,
+    ASSERT_SUCCESS(testing_channel_send_response_str(
+        &tester.testing_channel,
         "HTTP/1.1 308 Permanent Redirect\r\n"
         "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
         "Location: /index.html\r\n"
@@ -751,8 +700,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_body) {
     aws_http_message_destroy(opt.request);
 
     /* send response */
-    ASSERT_SUCCESS(s_send_response_str(
-        &tester,
+    ASSERT_SUCCESS(testing_channel_send_response_str(
+        &tester.testing_channel,
         "HTTP/1.1 200 OK\r\n"
         "Content-Length: 9\r\n"
         "\r\n"
@@ -801,7 +750,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1_from_multiple_io_messages) {
                                "Call Momo";
     size_t response_str_len = strlen(response_str);
     for (size_t i = 0; i < response_str_len; ++i) {
-        s_send_response(&tester, aws_byte_cursor_from_array(response_str + i, 1));
+        testing_channel_send_response(&tester.testing_channel, aws_byte_cursor_from_array(response_str + i, 1));
     }
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -842,8 +791,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
     aws_http_message_destroy(opt.request);
 
     /* send all responses in a single aws_io_message  */
-    ASSERT_SUCCESS(s_send_response_str(
-        &tester,
+    ASSERT_SUCCESS(testing_channel_send_response_str(
+        &tester.testing_channel,
         "HTTP/1.1 204 No Content\r\n\r\n"
         "HTTP/1.1 204 No Content\r\n\r\n"
         "HTTP/1.1 204 No Content\r\n\r\n"));
@@ -885,7 +834,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_with_bad_data_shuts_down_connection) {
     aws_http_message_destroy(opt.request);
 
     /* send response */
-    ASSERT_SUCCESS(s_send_response_str_ignore_errors(&tester, "Mmmm garbage data\r\n\r\n"));
+    ASSERT_SUCCESS(testing_channel_send_response_str_ignore_errors(&tester.testing_channel, "Mmmm garbage data\r\n\r\n"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -919,8 +868,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_with_too_much_data_shuts_down_connection)
     aws_http_message_destroy(opt.request);
 
     /* send 2 responses in a single aws_io_message. */
-    ASSERT_SUCCESS(s_send_response_str_ignore_errors(
-        &tester,
+    ASSERT_SUCCESS(testing_channel_send_response_str_ignore_errors(
+        &tester.testing_channel,
         "HTTP/1.1 204 No Content\r\n\r\n"
         "HTTP/1.1 204 No Content\r\n\r\n"));
 
@@ -1052,7 +1001,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
     aws_http_message_destroy(opt.request);
 
     /* send response */
-    ASSERT_SUCCESS(s_send_response_str(&tester, "HTTP/1.1 200 OK\r\n\r\n"));
+    ASSERT_SUCCESS(testing_channel_send_response_str(&tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
 
     /* tick loop until body finishes sending.*/
     while (body_sender.cursor.len > 0) {
@@ -1088,7 +1037,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_without_request_shuts_down_connection) {
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
-    ASSERT_SUCCESS(s_send_response_str_ignore_errors(&tester, "HTTP/1.1 200 OK\r\n\r\n"));
+    ASSERT_SUCCESS(testing_channel_send_response_str_ignore_errors(&tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
@@ -1123,7 +1072,7 @@ H1_CLIENT_TEST_CASE(h1_client_window_reopens_by_default) {
                                "Content-Length: 9\r\n"
                                "\r\n"
                                "Call Momo";
-    ASSERT_SUCCESS(s_send_response_str(&tester, response_str));
+    ASSERT_SUCCESS(testing_channel_send_response_str(&tester.testing_channel, response_str));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -1163,7 +1112,7 @@ H1_CLIENT_TEST_CASE(h1_client_window_shrinks_if_user_says_so) {
                                "Content-Length: 9\r\n"
                                "\r\n"
                                "Call Momo";
-    ASSERT_SUCCESS(s_send_response_str(&tester, response_str));
+    ASSERT_SUCCESS(testing_channel_send_response_str(&tester.testing_channel, response_str));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -1202,7 +1151,7 @@ static int s_window_update(struct aws_allocator *allocator, bool on_thread) {
                                "Content-Length: 9\r\n"
                                "\r\n"
                                "Call Momo";
-    ASSERT_SUCCESS(s_send_response_str(&tester, response_str));
+    ASSERT_SUCCESS(testing_channel_send_response_str(&tester.testing_channel, response_str));
 
     /* drain the task queue, in case there's an update window task in there from the headers */
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -1499,8 +1448,8 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
     aws_http_message_destroy(opt.request);
 
     /* send response */
-    ASSERT_SUCCESS(s_send_response_str_ignore_errors(
-        &tester,
+    ASSERT_SUCCESS(testing_channel_send_response_str_ignore_errors(
+        &tester.testing_channel,
         "HTTP/1.1 200 OK\r\n"
         "Transfer-Encoding: chunked\r\n"
         "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
@@ -1681,7 +1630,7 @@ static int s_switch_protocols(struct protocol_switcher *switcher) {
         ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&sending_buf, extra_data));
     }
 
-    s_send_response(switcher->tester, aws_byte_cursor_from_buf(&sending_buf));
+    testing_channel_send_response(&switcher->tester->testing_channel, aws_byte_cursor_from_buf(&sending_buf));
 
     /* wait for response to complete, and check results */
     testing_channel_drain_queued_tasks(&switcher->tester->testing_channel);
@@ -1729,7 +1678,7 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_read) {
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     const char *test_str = "inmyprotocolspacesarestrictlyforbidden";
-    ASSERT_SUCCESS(s_readpush(&tester, test_str));
+    ASSERT_SUCCESS(testing_channel_readpush(&tester.testing_channel, test_str));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     ASSERT_SUCCESS(testing_channel_check_midchannel_read_messages(&tester.testing_channel, allocator, test_str));
 
@@ -1774,7 +1723,7 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_read_with_small_downstream_window) {
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     const char *test_str = "inmyprotocolcapitallettersarethedevil";
-    ASSERT_SUCCESS(s_readpush(&tester, test_str));
+    ASSERT_SUCCESS(testing_channel_readpush(&tester.testing_channel, test_str));
 
     /* open window in tiny increments */
     for (size_t i = 0; i < strlen(test_str); ++i) {
@@ -1813,7 +1762,7 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_write) {
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     const char *test_str = "inmyprotocolthereisnomoney";
-    s_writepush(&tester, test_str);
+    testing_channel_writepush(&tester.testing_channel, test_str);
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     ASSERT_SUCCESS(testing_channel_check_written_messages(&tester.testing_channel, allocator, test_str));
 
@@ -1969,8 +1918,8 @@ H1_CLIENT_TEST_CASE(h1_client_switching_protocols_fails_pending_requests) {
     aws_http_message_destroy(upgrade_request);
     aws_http_message_destroy(next_req.request);
 
-    ASSERT_SUCCESS(s_send_response_str(
-        &tester,
+    ASSERT_SUCCESS(testing_channel_send_response_str(
+        &tester.testing_channel,
         "HTTP/1.1 101 Switching Protocols\r\n"
         "Upgrade: MyProtocol\r\n"
         "\r\n"));
@@ -2039,7 +1988,7 @@ H1_CLIENT_TEST_CASE(h1_client_switching_protocols_requires_downstream_handler) {
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     /* If new data arrives and no downstream handler is installed to deal with it, the connection should shut down. */
-    ASSERT_SUCCESS(s_readpush_ignore_errors(&tester, "herecomesnewprotocoldatachoochoo"));
+    ASSERT_SUCCESS(testing_channel_readpush_ignore_errors(&tester.testing_channel, "herecomesnewprotocoldatachoochoo"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
