@@ -431,7 +431,7 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
     return request;
 }
 
-static void s_on_request_transform_complete(struct aws_http_message *request, int error_code, void *user_data);
+static void s_on_signing_complete(struct aws_http_message *request, int error_code, void *user_data);
 
 static void s_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct elasticurl_ctx *app_ctx = user_data;
@@ -448,17 +448,16 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     app_ctx->connection = connection;
     app_ctx->request = s_build_http_request(app_ctx);
 
-    /* If async signing function is set, invoke it. It must invoke the transform complete callback when it's done. */
+    /* If async signing function is set, invoke it. It must invoke the signing complete callback when it's done. */
     if (app_ctx->signing_function) {
-        app_ctx->signing_function(
-            app_ctx->request, &app_ctx->signing_context, s_on_request_transform_complete, app_ctx);
+        app_ctx->signing_function(app_ctx->request, &app_ctx->signing_context, s_on_signing_complete, app_ctx);
     } else {
         /* If no signing function, proceed immediately to next step. */
-        s_on_request_transform_complete(app_ctx->request, AWS_ERROR_SUCCESS, app_ctx);
+        s_on_signing_complete(app_ctx->request, AWS_ERROR_SUCCESS, app_ctx);
     }
 }
 
-static void s_on_request_transform_complete(struct aws_http_message *request, int error_code, void *user_data) {
+static void s_on_signing_complete(struct aws_http_message *request, int error_code, void *user_data) {
     struct elasticurl_ctx *app_ctx = user_data;
 
     AWS_FATAL_ASSERT(request == app_ctx->request);
