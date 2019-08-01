@@ -499,7 +499,7 @@ static bool s_tester_new_client_shutdown_pred(void *user_data) {
 }
 
 /* when we shutdown the server, no more new connection will be accept */
-static int s_test_connection_server_shutting_down_new_connection_fail(struct aws_allocator *allocator, void *ctx) {
+static int s_test_connection_server_shutting_down_new_connection_setup_fail(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     struct tester_options options = {
         .alloc = allocator,
@@ -569,5 +569,5 @@ static int s_test_connection_server_shutting_down_new_connection_fail(struct aws
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
-    connection_server_shutting_down_new_connection_fail,
-    s_test_connection_server_shutting_down_new_connection_fail);
+    connection_server_shutting_down_new_connection_setup_fail,
+    s_test_connection_server_shutting_down_new_connection_setup_fail);
