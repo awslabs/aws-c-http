@@ -51,8 +51,6 @@ struct aws_http_server {
     void *user_data;
     aws_http_server_on_incoming_connection_fn *on_incoming_connection;
     aws_http_server_on_destroy_fn *on_destroy_complete;
-
-    struct aws_hash_table channel_to_connection_map;
     struct aws_socket *socket;
 
     /* Any thread may touch this data, but the lock must be held */
@@ -60,8 +58,21 @@ struct aws_http_server {
         struct aws_mutex lock;
         /* For checking status from outside the event-loop thread. Duplicates thread_data.is_shutting_down */
         bool is_shutting_down;
+        struct aws_hash_table channel_to_connection_map;
     } synced_data;
 };
+
+void s_server_lock_synced_data(struct aws_http_server *server) {
+    int err = aws_mutex_lock(&server->synced_data.lock);
+    AWS_ASSERT(!err);
+    (void)err;
+}
+
+void s_server_unlock_synced_data(struct aws_http_server *server) {
+    int err = aws_mutex_unlock(&server->synced_data.lock);
+    AWS_ASSERT(!err);
+    (void)err;
+}
 
 /* Determine the http-version, create appropriate type of connection, and insert it into the channel. */
 static struct aws_http_connection *s_connection_new(
@@ -256,7 +267,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
     AWS_ASSERT(user_data);
     struct aws_http_server *server = user_data;
     bool user_cb_invoked = false;
-
+    struct aws_http_connection *connection = NULL;
     if (error_code) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
@@ -268,31 +279,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
 
         goto error;
     }
-
-    /* BEGIN CRITICAL SECTION */
-    int err = aws_mutex_lock(&server->synced_data.lock);
-    AWS_FATAL_ASSERT(!err);
-    if (server->synced_data.is_shutting_down) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_SERVER, "id=%p: Incoming connection failed. The server is shutting down.", (void *)server);
-        error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
-    }
-    err = aws_mutex_unlock(&server->synced_data.lock);
-    AWS_FATAL_ASSERT(!err);
-    /* END CRITICAL SECTION */
-    if (error_code) {
-        goto error;
-    }
-
-    AWS_LOGF_DEBUG(
-        AWS_LS_HTTP_SERVER,
-        "%s:%d: Incoming connection accepted, creating connection object.",
-        server->socket->local_endpoint.address,
-        server->socket->local_endpoint.port);
-
     /* Create connection */
-    struct aws_http_connection *connection =
-        s_connection_new(server->alloc, channel, true, server->is_using_tls, server->initial_window_size);
+    connection = s_connection_new(server->alloc, channel, true, server->is_using_tls, server->initial_window_size);
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
@@ -305,9 +293,26 @@ static void s_server_bootstrap_on_accept_channel_setup(
         goto error;
     }
 
-    /* Remember which connection is on this channel */
-    err = aws_hash_table_put(&server->channel_to_connection_map, channel, connection, NULL);
-    if (err) {
+    int put_err = 0;
+    /* BEGIN CRITICAL SECTION */
+    s_server_lock_synced_data(server);
+    if (server->synced_data.is_shutting_down) {
+        error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
+    }
+    if (!error_code) {
+        put_err = aws_hash_table_put(&server->synced_data.channel_to_connection_map, channel, connection, NULL);
+    }
+    s_server_unlock_synced_data(server);
+    /* END CRITICAL SECTION */
+    if (error_code) {
+        AWS_LOGF_ERROR(
+            AWS_ERROR_HTTP_SERVER_CLOSED,
+            "id=%p: Incoming connection failed. The server is shutting down.",
+            (void *)server);
+        goto error;
+    }
+
+    if (put_err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
             "%s:%d: Failed to store connection object, error %d (%s).",
@@ -318,6 +323,11 @@ static void s_server_bootstrap_on_accept_channel_setup(
 
         goto error;
     }
+    AWS_LOGF_DEBUG(
+        AWS_LS_HTTP_SERVER,
+        "%s:%d: Incoming connection accepted.",
+        server->socket->local_endpoint.address,
+        server->socket->local_endpoint.port);
 
     /* Tell user of successful connection. */
     AWS_LOGF_INFO(
@@ -345,6 +355,11 @@ static void s_server_bootstrap_on_accept_channel_setup(
     return;
 
 error:
+    if (connection) {
+        /* release the ref for the user side */
+        aws_http_connection_release(connection);
+    }
+
     if (!error_code) {
         error_code = aws_last_error();
     }
@@ -367,8 +382,7 @@ static void s_http_server_clean_up(struct aws_http_server *server) {
     if (server->on_destroy_complete) {
         server->on_destroy_complete(server->user_data);
     }
-    aws_mutex_clean_up(&server->synced_data.lock);
-    aws_hash_table_clean_up(&server->channel_to_connection_map);
+    aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
     aws_mutex_clean_up(&server->synced_data.lock);
     aws_mem_release(server->alloc, server);
 }
@@ -388,7 +402,14 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
      * It won't be in the map if something went wrong while setting up the connection. */
     struct aws_hash_element map_elem;
     int was_present;
-    int remove_err = aws_hash_table_remove(&server->channel_to_connection_map, channel, &map_elem, &was_present);
+
+    /* BEGIN CRITICAL SECTION */
+    s_server_lock_synced_data(server);
+    int remove_err =
+        aws_hash_table_remove(&server->synced_data.channel_to_connection_map, channel, &map_elem, &was_present);
+    s_server_unlock_synced_data(server);
+    /* END CRITICAL SECTION */
+
     if (!remove_err && was_present) {
         struct aws_http_connection *connection = map_elem.value;
         AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: Server connection shut down.", (void *)connection);
@@ -433,7 +454,6 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     server->user_data = options->server_user_data;
     server->on_incoming_connection = options->on_incoming_connection;
     server->on_destroy_complete = options->on_destroy_complete;
-    server->synced_data.is_shutting_down = false;
     int err = aws_mutex_init(&server->synced_data.lock);
     if (err) {
         AWS_LOGF_ERROR(
@@ -441,7 +461,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
         goto error;
     }
     err = aws_hash_table_init(
-        &server->channel_to_connection_map, server->alloc, 16, aws_hash_ptr, aws_ptr_eq, NULL, NULL);
+        &server->synced_data.channel_to_connection_map, server->alloc, 16, aws_hash_ptr, aws_ptr_eq, NULL, NULL);
     if (err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
@@ -493,7 +513,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     return server;
 
 error:
-    aws_http_server_release(server);
+    s_http_server_clean_up(server);
     return NULL;
 }
 
@@ -504,24 +524,24 @@ void aws_http_server_release(struct aws_http_server *server) {
     if (server->socket) {
         bool already_shutting_down = false;
         /* BEGIN CRITICAL SECTION */
-        int err = aws_mutex_lock(&server->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
+        s_server_lock_synced_data(server);
         if (server->synced_data.is_shutting_down) {
             already_shutting_down = true;
-            AWS_LOGF_TRACE(AWS_LS_HTTP_SERVER, "id=%p: The server is already shutting down", (void *)server);
         } else {
             server->synced_data.is_shutting_down = true;
         }
-        err = aws_mutex_unlock(&server->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
+        s_server_unlock_synced_data(server);
         /* END CRITICAL SECTION */
 
         if (already_shutting_down) {
             /* nothing to do */
+            AWS_LOGF_TRACE(AWS_LS_HTTP_SERVER, "id=%p: The server is already shutting down", (void *)server);
             return;
         }
         /* shutdown all existing connetions */
-        for (struct aws_hash_iter iter = aws_hash_iter_begin(&server->channel_to_connection_map);
+        /* we do need a lock here, because no more new connection will be accepted and it will be fine to double close
+         * the connection */
+        for (struct aws_hash_iter iter = aws_hash_iter_begin(&server->synced_data.channel_to_connection_map);
              !aws_hash_iter_done(&iter);
              aws_hash_iter_next(&iter)) {
             struct aws_http_connection *connection = iter.element.value;
