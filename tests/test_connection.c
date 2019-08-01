@@ -582,7 +582,7 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
     aws_client_bootstrap_release(bootstrap);
     aws_event_loop_group_clean_up(&event_loop_group);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
-    
+
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
