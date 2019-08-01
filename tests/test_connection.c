@@ -192,20 +192,19 @@ static int s_tester_wait(struct tester *tester, bool (*pred)(void *user_data)) {
         aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL),
         pred,
         tester);
-    if (tester->server_wait_result)
+    if (tester->server_wait_result) {
         local_wait_result = tester->server_wait_result;
-}
-else {
-    local_wait_result = tester->client_wait_result;
-}
-tester->server_wait_result = 0;
-tester->client_wait_result = 0;
-ASSERT_SUCCESS(aws_mutex_unlock(&tester->wait_lock));
-ASSERT_SUCCESS(err);
-if (local_wait_result) {
-    return aws_raise_error(local_wait_result);
-}
-return AWS_OP_SUCCESS;
+    } else {
+        local_wait_result = tester->client_wait_result;
+    }
+    tester->server_wait_result = 0;
+    tester->client_wait_result = 0;
+    ASSERT_SUCCESS(aws_mutex_unlock(&tester->wait_lock));
+    ASSERT_SUCCESS(err);
+    if (local_wait_result) {
+        return aws_raise_error(local_wait_result);
+    }
+    return AWS_OP_SUCCESS;
 }
 
 static bool s_tester_connection_setup_pred(void *user_data) {
