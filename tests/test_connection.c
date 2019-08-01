@@ -449,8 +449,8 @@ AWS_TEST_CASE(
 static void s_block_task(struct aws_task *task, void *arg, enum aws_task_status status) {
     (void)status;
     struct tester *tester = arg;
-    /* sleep for 1 sec, and release the memory */
-    aws_thread_current_sleep(1000000000);
+    /* sleep for 2 sec, and release the memory */
+    aws_thread_current_sleep(2000000000);
     aws_mem_release(tester->alloc, task);
 }
 
@@ -538,7 +538,7 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
     client_options.on_setup = s_tester_on_new_client_connection_setup;
     client_options.on_shutdown = s_tester_on_new_client_connection_shutdown;
 
-    /* new connection will be blocked for 1 sec */
+    /* new connection will be blocked for 2 sec */
     tester.wait_server_connection_num++;
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
     /* shutting down the server */
