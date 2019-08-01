@@ -78,6 +78,7 @@ struct tester {
     bool server_is_shutdown;
     struct aws_http_connection *new_client_connection;
     bool new_client_shut_down;
+    bool new_client_setup_finished;
 
     /* If we need to wait for some async process*/
     struct aws_mutex wait_lock;
@@ -460,7 +461,7 @@ static void s_tester_on_new_client_connection_setup(
 
     struct tester *tester = user_data;
     AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
-
+    tester->new_client_setup_finished = true;
     if (error_code) {
         tester->client_wait_result = error_code;
         goto done;
@@ -489,7 +490,7 @@ static void s_tester_on_new_client_connection_shutdown(
 
 static bool s_tester_new_client_setup_pred(void *user_data) {
     struct tester *tester = user_data;
-    return tester->client_wait_result || tester->new_client_connection;
+    return tester->new_client_setup_finished;
 }
 
 static bool s_tester_new_client_shutdown_pred(void *user_data) {
