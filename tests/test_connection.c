@@ -450,7 +450,7 @@ static void s_block_task(struct aws_task *task, void *arg, enum aws_task_status 
     (void)status;
     struct tester *tester = arg;
     /* sleep for 1 sec, and release the memory */
-    aws_thread_current_sleep(10000);
+    aws_thread_current_sleep(1000000000);
     aws_mem_release(tester->alloc, task);
 }
 
