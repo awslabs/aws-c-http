@@ -56,7 +56,6 @@ struct aws_http_server {
     /* Any thread may touch this data, but the lock must be held */
     struct {
         struct aws_mutex lock;
-        /* For checking status from outside the event-loop thread. Duplicates thread_data.is_shutting_down */
         bool is_shutting_down;
         struct aws_hash_table channel_to_connection_map;
     } synced_data;
