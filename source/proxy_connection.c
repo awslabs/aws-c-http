@@ -36,7 +36,9 @@ AWS_STATIC_STRING_FROM_LITERAL(s_options_method, "OPTIONS");
 AWS_STATIC_STRING_FROM_LITERAL(s_star_path, "*");
 AWS_STATIC_STRING_FROM_LITERAL(s_http_scheme, "http");
 
-static struct aws_http_proxy_system_vtable s_default_vtable = {.setup_client_tls = &aws_channel_setup_client_tls};
+static struct aws_http_proxy_system_vtable s_default_vtable = {
+    .setup_client_tls = &aws_channel_setup_client_tls,
+};
 
 static struct aws_http_proxy_system_vtable *s_vtable = &s_default_vtable;
 
@@ -113,6 +115,12 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     return user_data;
 
 on_error:
+
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_CONNECTION,
+        "(STATIC) Proxy connection failed to create user data with error %d(%s)",
+        aws_last_error(),
+        aws_error_str(aws_last_error()));
 
     aws_http_proxy_user_data_destroy(user_data);
 
@@ -255,8 +263,7 @@ static void s_aws_http_on_client_connection_http_proxy_shutdown_fn(
 }
 
 /*
- * Entry point that releases all resources involved in the proxy connection, no matter what
- * the execution point is: connection, stream, (CONNECT) request
+ * On-any-error entry point that releases all resources involved in establishing the proxy connection.
  */
 static void s_aws_http_proxy_user_data_shutdown(struct aws_http_proxy_user_data *user_data) {
 
@@ -347,6 +354,13 @@ static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_pr
 
 on_error:
 
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_CONNECTION,
+        "(%p) TLS proxy connection failed to build CONNECT request with error %d(%s)",
+        (void *)user_data->connection,
+        aws_last_error(),
+        aws_error_str(aws_last_error()));
+
     aws_byte_buf_clean_up(&path_buffer);
     aws_http_message_destroy(request);
 
@@ -354,7 +368,7 @@ on_error:
 }
 
 /*
- * Header done callback for the CONNECT request made during tls proxy connections
+ * Headers done callback for the CONNECT request made during tls proxy connections
  */
 static int s_aws_http_on_incoming_header_block_done_tls_proxy(
     struct aws_http_stream *stream,
@@ -393,9 +407,10 @@ static void s_on_origin_server_tls_negotation_result(
     if (error_code != AWS_ERROR_SUCCESS) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "(%p) Proxy connection failed origin server TLS negotiation with error %d",
+            "(%p) Proxy connection failed origin server TLS negotiation with error %d(%s)",
             (void *)context->connection,
-            error_code);
+            error_code,
+            aws_error_str(error_code));
         context->error_code = error_code;
         s_aws_http_proxy_user_data_shutdown(context);
         return;
@@ -423,7 +438,7 @@ static void s_aws_http_on_stream_complete_tls_proxy(struct aws_http_stream *stre
 
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
-        "(%p) Successful CONNECT request to \"%s\" via proxy",
+        "(%p) Proxy connection made successful CONNECT request to \"%s\" via proxy",
         (void *)context->connection,
         context->original_host->bytes);
 
@@ -444,7 +459,19 @@ static void s_aws_http_on_stream_complete_tls_proxy(struct aws_http_stream *stre
 
     context->state = AWS_PBS_TLS_NEGOTIATION;
     struct aws_channel *channel = aws_http_connection_get_channel(context->connection);
+
+    /*
+     * TODO: if making secure (double TLS) proxy connection, we need to go after the second slot:
+     *
+     * Socket -> TLS(proxy) -> TLS(origin server) -> Http
+     */
     if (channel == NULL || s_vtable->setup_client_tls(aws_channel_get_first_slot(channel), context->tls_options)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "(%p) Proxy connection failed to start TLS negotiation with error %d(%s)",
+            (void *)context->connection,
+            aws_last_error(),
+            aws_error_str(aws_last_error()));
         s_aws_http_proxy_user_data_shutdown(context);
         return;
     }
@@ -483,6 +510,13 @@ static int s_make_proxy_connect_request(
     return AWS_OP_SUCCESS;
 
 on_error:
+
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_CONNECTION,
+        "(%p) Proxy connection failed to create request stream for CONNECT request with error %d(%s)",
+        (void *)connection,
+        aws_last_error(),
+        aws_error_str(aws_last_error()));
 
     aws_http_message_destroy(request);
 
@@ -664,7 +698,7 @@ static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client
 
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
-        "Connecting to \"" PRInSTR "\" via proxy \"" PRInSTR "\"",
+        "(STATIC) Connecting to \"" PRInSTR "\" via proxy \"" PRInSTR "\"",
         AWS_BYTE_CURSOR_PRI(options->host_name),
         AWS_BYTE_CURSOR_PRI(options->proxy_options->host));
 
@@ -690,6 +724,12 @@ static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client
 
     int result = aws_http_client_connect(&options_copy);
     if (result == AWS_OP_ERR) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "(STATIC) Proxy http connection failed client connect with error %d(%s)",
+            aws_last_error(),
+            aws_error_str(aws_last_error()));
+
         aws_http_proxy_user_data_destroy(proxy_user_data);
     }
 
@@ -706,7 +746,7 @@ static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_clien
 
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
-        "Connecting to \"" PRInSTR "\" through TLS via proxy \"" PRInSTR "\"",
+        "(STATIC) Connecting to \"" PRInSTR "\" through TLS via proxy \"" PRInSTR "\"",
         AWS_BYTE_CURSOR_PRI(options->host_name),
         AWS_BYTE_CURSOR_PRI(options->proxy_options->host));
 
@@ -730,6 +770,11 @@ static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_clien
 
     int result = aws_http_client_connect(&options_copy);
     if (result == AWS_OP_ERR) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "(STATIC) Proxy https connection failed client connect with error %d(%s)",
+            aws_last_error(),
+            aws_error_str(aws_last_error()));
         aws_http_proxy_user_data_destroy(user_data);
     }
 
