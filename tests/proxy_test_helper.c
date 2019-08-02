@@ -268,8 +268,9 @@ int proxy_tester_verify_connect_request(struct proxy_tester *tester) {
     ASSERT_SUCCESS(testing_channel_drain_written_messages(tester->testing_channel, &output));
 
     char connect_request_buffer[1024];
-    sprintf(
+    snprintf(
         connect_request_buffer,
+        AWS_ARRAY_SIZE(connect_request_buffer),
         "CONNECT " PRInSTR ":%d HTTP/1.1",
         AWS_BYTE_CURSOR_PRI(tester->host),
         (int)tester->port);
