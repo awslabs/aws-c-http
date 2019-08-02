@@ -48,8 +48,6 @@ struct proxy_tester_options {
     uint16_t port;
     enum proxy_tester_test_mode test_mode;
     enum proxy_tester_failure_type failure_type;
-
-    aws_http_release_connection_fn *release_connection;
 };
 
 struct proxy_tester {
@@ -71,7 +69,6 @@ struct proxy_tester {
     enum proxy_tester_failure_type failure_type;
 
     struct aws_http_connection *client_connection;
-    aws_http_release_connection_fn *release_connection;
     struct aws_http_client_bootstrap *http_bootstrap;
     struct testing_channel *testing_channel;
 

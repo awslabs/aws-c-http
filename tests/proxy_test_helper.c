@@ -109,7 +109,6 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
 
     tester->host = options->host;
     tester->port = options->port;
-    tester->release_connection = options->release_connection;
     tester->proxy_options = options->proxy_options;
     tester->test_mode = options->test_mode;
     tester->failure_type = options->failure_type;
@@ -180,8 +179,8 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
 
 int proxy_tester_clean_up(struct proxy_tester *tester) {
     if (tester->client_connection) {
-        if (tester->release_connection) {
-            tester->release_connection(tester->client_connection);
+        if (tester->client_connection) {
+            aws_http_connection_release(tester->client_connection);
         }
     }
 

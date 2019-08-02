@@ -216,7 +216,6 @@ static int s_setup_proxy_test(
         .port = s_port,
         .test_mode = test_mode,
         .failure_type = failure_type,
-        .release_connection = aws_http_connection_release,
     };
 
     ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
