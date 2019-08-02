@@ -21,7 +21,6 @@
 #include <aws/common/string.h>
 #include <aws/http/request_response.h>
 #include <aws/io/channel_bootstrap.h>
-#include <aws/io/event_loop.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
@@ -53,7 +52,6 @@ struct aws_http_server {
     aws_http_server_on_incoming_connection_fn *on_incoming_connection;
     aws_http_server_on_destroy_fn *on_destroy_complete;
     struct aws_socket *socket;
-    struct aws_task listener_destroy_task;
 
     /* Any thread may touch this data, but the lock must be held */
     struct {
@@ -430,15 +428,6 @@ static void s_server_bootstrap_on_server_listener_destroy(struct aws_server_boot
     s_http_server_clean_up(server);
 }
 
-static void s_listener_destroy_task(struct aws_task *task, void *arg, enum aws_task_status status) {
-    (void)status;
-    (void)task;
-    struct aws_http_server *server = arg;
-    AWS_PRECONDITION(server->socket);
-    AWS_PRECONDITION(server->bootstrap);
-    aws_server_bootstrap_destroy_socket_listener(server->bootstrap, server->socket);
-}
-
 struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options) {
     aws_http_fatal_assert_library_initialized();
 
@@ -466,7 +455,6 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     server->user_data = options->server_user_data;
     server->on_incoming_connection = options->on_incoming_connection;
     server->on_destroy_complete = options->on_destroy_complete;
-    aws_task_init(&server->listener_destroy_task, s_listener_destroy_task, server, "listener socket destroy");
 
     int err = aws_mutex_init(&server->synced_data.lock);
     if (err) {
@@ -557,16 +545,6 @@ void aws_http_server_release(struct aws_http_server *server) {
             return;
         }
 
-        /* stop listening, clean up the socket, after all existing connections finish shutting down, the
-         * s_server_bootstrap_on_server_listener_destroy will be invoked, clean up of the server will be there */
-        AWS_LOGF_INFO(
-            AWS_LS_HTTP_SERVER,
-            "%s:%d: Shutting down the server.",
-            server->socket->local_endpoint.address,
-            server->socket->local_endpoint.port);
-
-        aws_event_loop_schedule_task_now(server->socket->event_loop, &server->listener_destroy_task);
-
         /* shutdown all existing connetions */
         /* we do not need a lock here, because no more new connection will be accepted and it will be fine to close
          * the connection twice */
@@ -576,6 +554,16 @@ void aws_http_server_release(struct aws_http_server *server) {
             struct aws_http_connection *connection = iter.element.value;
             aws_http_connection_close(connection);
         }
+
+        /* stop listening, clean up the socket, after all existing connections finish shutting down, the
+         * s_server_bootstrap_on_server_listener_destroy will be invoked, clean up of the server will be there */
+        AWS_LOGF_INFO(
+            AWS_LS_HTTP_SERVER,
+            "%s:%d: Shutting down the server.",
+            server->socket->local_endpoint.address,
+            server->socket->local_endpoint.port);
+
+        aws_server_bootstrap_destroy_socket_listener(server->bootstrap, server->socket);
 
         /* wait for connections to finish shutting down
          * clean up will be called from eventloop */
