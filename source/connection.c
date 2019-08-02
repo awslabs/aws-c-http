@@ -439,12 +439,14 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
 
         AWS_LOGF_ERROR(AWS_LS_HTTP_SERVER, "static: Invalid options, cannot create server.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        goto error;
+        /* nothing to clean up */
+        return NULL;
     }
 
     server = aws_mem_calloc(options->allocator, 1, sizeof(struct aws_http_server));
     if (!server) {
-        goto error;
+        /* nothing to clean up */
+        return NULL;
     }
 
     server->alloc = options->allocator;
@@ -458,7 +460,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     if (err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
-        goto error;
+        goto mutex_error;
     }
     err = aws_hash_table_init(
         &server->synced_data.channel_to_connection_map, server->alloc, 16, aws_hash_ptr, aws_ptr_eq, NULL, NULL);
@@ -468,7 +470,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             "static: Cannot create server, error %d (%s).",
             aws_last_error(),
             aws_error_name(aws_last_error()));
-        goto error;
+        goto hash_table_error;
     }
 
     if (options->tls_options) {
@@ -501,7 +503,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             aws_last_error(),
             aws_error_name(aws_last_error()));
 
-        goto error;
+        goto socket_error;
     }
 
     AWS_LOGF_INFO(
@@ -512,8 +514,12 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
 
     return server;
 
-error:
-    s_http_server_clean_up(server);
+socket_error:
+    aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
+hash_table_error:
+    aws_mutex_clean_up(&server->synced_data.lock);
+mutex_error:
+    aws_mem_release(server->alloc, server);
     return NULL;
 }
 
