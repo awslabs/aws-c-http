@@ -326,7 +326,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
                 should_schedule_task = true;
             }
         }
-       s_h1_connection_unlock_synced_data(connection);
+        s_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
     if (send_err) {
