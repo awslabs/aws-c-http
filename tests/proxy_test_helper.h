@@ -28,11 +28,17 @@ struct testing_channel;
 
 typedef void(aws_http_release_connection_fn)(struct aws_http_connection *connection);
 
-enum proxy_tester_connection_test_mode {
-    PTCR_HTTP_SUCCESS = 0,
-    PTCR_HTTPS_SUCCESS,
-    PTCR_HTTPS_FAILURE_ON_CONNECT,
-    PTCR_HTTPS_FAILURE_ON_TLS,
+enum proxy_tester_test_mode {
+    PTTM_HTTP = 0,
+    PTTM_HTTPS,
+};
+
+enum proxy_tester_failure_type {
+    PTFT_NONE = 0,
+    PTFT_CONNECT_REQUEST,
+    PTFT_TLS_NEGOTIATION,
+    PTFT_CHANNEL,
+    PTFT_CONNECTION,
 };
 
 struct proxy_tester_options {
@@ -40,7 +46,8 @@ struct proxy_tester_options {
     struct aws_http_proxy_options *proxy_options;
     struct aws_byte_cursor host;
     uint16_t port;
-    enum proxy_tester_connection_test_mode test_mode;
+    enum proxy_tester_test_mode test_mode;
+    enum proxy_tester_failure_type failure_type;
 
     aws_http_release_connection_fn *release_connection;
 };
@@ -59,7 +66,9 @@ struct proxy_tester {
     struct aws_http_proxy_options *proxy_options;
     struct aws_byte_cursor host;
     uint16_t port;
-    enum proxy_tester_connection_test_mode test_mode;
+
+    enum proxy_tester_test_mode test_mode;
+    enum proxy_tester_failure_type failure_type;
 
     struct aws_http_connection *client_connection;
     aws_http_release_connection_fn *release_connection;
@@ -104,5 +113,10 @@ int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester);
 int proxy_tester_verify_connect_request(struct proxy_tester *tester);
 
 int proxy_tester_send_connect_response(struct proxy_tester *tester);
+
+int proxy_tester_verify_connection_attempt_was_to_proxy(
+    struct proxy_tester *tester,
+    struct aws_byte_cursor expected_host,
+    uint16_t expected_port);
 
 #endif /* AWS_HTTP_PROXY_TEST_HELPER_H */

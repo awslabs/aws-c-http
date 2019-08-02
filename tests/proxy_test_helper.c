@@ -112,6 +112,7 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
     tester->release_connection = options->release_connection;
     tester->proxy_options = options->proxy_options;
     tester->test_mode = options->test_mode;
+    tester->failure_type = options->failure_type;
 
     ASSERT_SUCCESS(aws_byte_buf_init(&tester->connection_host_name, tester->alloc, 128));
 
@@ -140,7 +141,7 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
         aws_client_bootstrap_new(tester->alloc, &tester->event_loop_group, &tester->host_resolver, NULL);
     ASSERT_NOT_NULL(tester->client_bootstrap);
 
-    bool use_tls = options->test_mode != PTCR_HTTP_SUCCESS;
+    bool use_tls = options->test_mode == PTTM_HTTPS;
     if (use_tls) {
         aws_tls_init_static_state(tester->alloc);
 
@@ -245,6 +246,7 @@ int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester) 
 
     connection->user_data = tester->http_bootstrap->user_data;
     connection->client_data = &connection->client_or_server_data.client;
+    connection->message_transform = tester->http_bootstrap->message_transform;
 
     struct aws_channel_slot *slot = aws_channel_slot_new(tester->testing_channel->channel);
     ASSERT_NOT_NULL(slot);
@@ -292,7 +294,7 @@ int proxy_tester_send_connect_response(struct proxy_tester *tester) {
     (void)tester;
 
     const char *response_string = NULL;
-    if (tester->test_mode == PTCR_HTTPS_FAILURE_ON_CONNECT) {
+    if (tester->failure_type == PTFT_CONNECT_REQUEST) {
         response_string = "HTTP/1.0 401 Unauthorized\r\n\r\n";
     } else {
         response_string = "HTTP/1.0 200 Connection established\r\n\r\n";
@@ -302,6 +304,24 @@ int proxy_tester_send_connect_response(struct proxy_tester *tester) {
     ASSERT_SUCCESS(testing_channel_send_response_str(tester->testing_channel, response_string));
 
     testing_channel_drain_queued_tasks(tester->testing_channel);
+
+    return AWS_OP_SUCCESS;
+}
+
+int proxy_tester_verify_connection_attempt_was_to_proxy(
+    struct proxy_tester *tester,
+    struct aws_byte_cursor expected_host,
+    uint16_t expected_port) {
+    ASSERT_BIN_ARRAYS_EQUALS(
+        tester->connection_host_name.buffer,
+        tester->connection_host_name.len,
+        expected_host.ptr,
+        expected_host.len,
+        "Connection host should have been \"" PRInSTR "\", but was \"" PRInSTR "\".",
+        AWS_BYTE_CURSOR_PRI(expected_host),
+        AWS_BYTE_BUF_PRI(tester->connection_host_name));
+
+    ASSERT_TRUE(tester->connection_port == expected_port);
 
     return AWS_OP_SUCCESS;
 }

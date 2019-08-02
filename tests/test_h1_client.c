@@ -834,7 +834,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_with_bad_data_shuts_down_connection) {
     aws_http_message_destroy(opt.request);
 
     /* send response */
-    ASSERT_SUCCESS(testing_channel_send_response_str_ignore_errors(&tester.testing_channel, "Mmmm garbage data\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_send_response_str_ignore_errors(&tester.testing_channel, "Mmmm garbage data\r\n\r\n"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -1811,7 +1812,8 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_write_continues_after_shutdown_in_read_
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     /* Did the late message get through? */
-    ASSERT_SUCCESS(testing_channel_check_written_messages(&tester.testing_channel, tester.alloc, s_write_after_shutdown_in_read_dir_str));
+    ASSERT_SUCCESS(testing_channel_check_written_messages(
+        &tester.testing_channel, tester.alloc, s_write_after_shutdown_in_read_dir_str));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
