@@ -356,7 +356,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
 
 error:
     if (connection) {
-        /* release the ref for the user side */
+        /* release the ref count for the user side */
         aws_http_connection_release(connection);
     }
 
