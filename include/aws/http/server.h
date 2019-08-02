@@ -173,10 +173,6 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
 /**
  * Release the server. It will close the listening socket and all the connections existing in the server.
  * The on_destroy_complete will be invoked when the destroy operation completes
- *
- * Note: this function should be called by either a user thread (like the main entry point, or from the event-loop the
- * server is assigned to. Otherwise a deadlock is possible. If you call this function from outside the assigned
- * event-loop, this function will block waiting on the assigned event-loop runs the close sequence in its thread.
  */
 AWS_HTTP_API
 void aws_http_server_release(struct aws_http_server *server);
