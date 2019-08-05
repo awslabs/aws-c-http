@@ -5,11 +5,6 @@ set -x
 
 echo "Using CC=$CC CXX=$CXX"
 
-sudo apt-get -y install squid
-squid3 -v
-netstat -plant
-service squid restart
-
 BUILD_PATH=/tmp/builds
 mkdir -p $BUILD_PATH
 INSTALL_PATH=$BUILD_PATH/install
