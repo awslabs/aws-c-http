@@ -7,6 +7,7 @@ echo "Using CC=$CC CXX=$CXX"
 
 sudo apt-get -y install squid
 squid3 -v
+cat /etc/squid/squid.conf
 
 BUILD_PATH=/tmp/builds
 mkdir -p $BUILD_PATH
