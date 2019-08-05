@@ -89,7 +89,7 @@ static int s_setup_proxy_test(
     enum proxy_tester_test_mode test_mode) {
     struct aws_http_proxy_options proxy_options = {
         .host = aws_byte_cursor_from_c_str("127.0.0.1"),
-        .port = 8080,
+        .port = 3128,
     };
 
     struct proxy_tester_options options = {

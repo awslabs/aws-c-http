@@ -5,6 +5,10 @@ set -x
 
 echo "Using CC=$CC CXX=$CXX"
 
+sudo apt-get -y install squid3
+sudo systemctl start squid
+sudo systemctl enable squid
+
 BUILD_PATH=/tmp/builds
 mkdir -p $BUILD_PATH
 INSTALL_PATH=$BUILD_PATH/install
