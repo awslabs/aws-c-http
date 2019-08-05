@@ -5,14 +5,6 @@ set -x
 
 echo "Using CC=$CC CXX=$CXX"
 
-sudo apt-get -y install squid
-squid3 -v
-find / -name 'squid*'
-squid3 -YC -f /etc/squid3/squid.conf
-#update-rc.d squid3 defaults
-#netstat -plant
-#service squid restart
-
 BUILD_PATH=/tmp/builds
 mkdir -p $BUILD_PATH
 INSTALL_PATH=$BUILD_PATH/install
@@ -48,6 +40,15 @@ function install_library {
 if [ "$TRAVIS_OS_NAME" != "osx" ]; then
     sudo apt-get install libssl-dev -y
     install_library s2n 7c9069618e68214802ac7fbf45705d5f8b53135f
+
+    # Enable squid-based integration tests
+    # These steps are very specific to ubuntu 14.
+    sudo apt-get -y install squid
+    squid3 -v
+    find / -name 'squid*'
+    squid3 -YC -f /etc/squid3/squid.conf
+
+    CMAKE_ARGS="$CMAKE_ARGS -DENABLE_PROXY_INTEGRATION_TESTS=ON"
 fi
 install_library aws-c-common
 install_library aws-c-io
