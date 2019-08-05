@@ -17,6 +17,7 @@
 
 #include <aws/common/array_list.h>
 #include <aws/common/string.h>
+#include <aws/http/private/byte_vault.h>
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/server.h>
 #include <aws/io/logging.h>
@@ -30,9 +31,15 @@ enum {
     AWS_HTTP_REQUEST_NUM_RESERVED_HEADERS = 16,
 };
 
+struct aws_http_headers {
+    struct aws_array_list headers;      /* Contains aws_http_header */
+    struct aws_byte_vault string_vault; /* Storage for string values */
+};
+
 struct aws_http_message {
     struct aws_allocator *allocator;
-    struct aws_array_list headers; /* Contains aws_http_header_impl */
+    struct aws_http_headers headers;
+    struct aws_http_headers trailing_headers;
     struct aws_input_stream *body_stream;
 
     /* Data specific to the request or response subclasses */
@@ -49,76 +56,6 @@ struct aws_http_message {
     struct aws_http_message_request_data *request_data;
     struct aws_http_message_response_data *response_data;
 };
-
-/* Type stored within the aws_http_message.headers array_list.
- * Different from aws_http_header in that it owns its string memory. */
-struct aws_http_header_impl {
-    struct aws_string *name;
-    struct aws_string *value;
-};
-
-static int s_set_string_from_cursor(
-    struct aws_string **dst,
-    struct aws_byte_cursor cursor,
-    struct aws_allocator *alloc) {
-
-    AWS_PRECONDITION(dst);
-
-    /* If the cursor is empty, set dst to NULL */
-    struct aws_string *new_str;
-    if (cursor.len) {
-        new_str = aws_string_new_from_array(alloc, cursor.ptr, cursor.len);
-        if (!new_str) {
-            return AWS_OP_ERR;
-        }
-    } else {
-        new_str = NULL;
-    }
-
-    /* Replace existing value */
-    aws_string_destroy(*dst);
-
-    *dst = new_str;
-    return AWS_OP_SUCCESS;
-}
-
-static void s_header_impl_clean_up(struct aws_http_header_impl *header_impl) {
-    AWS_PRECONDITION(header_impl);
-
-    aws_string_destroy(header_impl->name);
-    aws_string_destroy(header_impl->value);
-    AWS_ZERO_STRUCT(*header_impl);
-}
-
-static int s_header_impl_init(
-    struct aws_http_header_impl *header_impl,
-    const struct aws_http_header *header_view,
-    struct aws_allocator *alloc) {
-
-    AWS_PRECONDITION(header_impl);
-
-    AWS_ZERO_STRUCT(*header_impl);
-
-    if (!header_view->name.len) {
-        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_NAME);
-    }
-
-    int err = s_set_string_from_cursor(&header_impl->name, header_view->name, alloc);
-    if (err) {
-        goto error;
-    }
-
-    err = s_set_string_from_cursor(&header_impl->value, header_view->value, alloc);
-    if (err) {
-        goto error;
-    }
-
-    return AWS_OP_SUCCESS;
-
-error:
-    s_header_impl_clean_up(header_impl);
-    return AWS_OP_ERR;
-}
 
 static struct aws_http_message *s_message_new_common(struct aws_allocator *allocator) {
     struct aws_http_message *message = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_message));
@@ -297,26 +234,28 @@ struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_
     return message->body_stream;
 }
 
-int aws_http_message_add_header(struct aws_http_message *message, struct aws_http_header header) {
-    AWS_PRECONDITION(message);
+int aws_http_headers_add(struct aws_http_headers *headers, struct aws_http_header header) {
+    AWS_PRECONDITION(headers);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&header.name) && aws_byte_cursor_is_valid(&header.value));
 
-    struct aws_http_header_impl header_impl;
-    int err = s_header_impl_init(&header_impl, &header, message->allocator);
+
+    /* Note that there's no way to remove strings from the vault, so we  */YOU ARE HERE
+    int err = aws_byte_vault_add(&headers->string_vault, header.name, &header.name);
     if (err) {
         return AWS_OP_ERR;
     }
 
-    err = aws_array_list_push_back(&message->headers, &header_impl);
+    err = aws_byte_vault_add(&headers->string_vault, header.value, &header.value);
     if (err) {
-        goto error;
+        return AWS_OP_ERR;
+    }
+
+    err = aws_array_list_push_back(&headers->headers, &header);
+    if (err) {
+        return AWS_OP_ERR;
     }
 
     return AWS_OP_SUCCESS;
-
-error:
-    s_header_impl_clean_up(&header_impl);
-    return AWS_OP_ERR;
 }
 
 int aws_http_message_add_header_array(

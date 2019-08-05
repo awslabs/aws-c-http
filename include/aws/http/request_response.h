@@ -39,6 +39,11 @@ struct aws_http_header {
 };
 
 /**
+ * A transformable block of HTTP headers.
+ */
+struct aws_http_headers;
+
+/**
  * The definition for an outgoing HTTP request or response.
  * The message may be transformed (ex: signing the request) before its data is eventually sent.
  *
@@ -325,11 +330,15 @@ struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_
 AWS_HTTP_API
 void aws_http_message_set_body_stream(struct aws_http_message *message, struct aws_input_stream *body_stream);
 
+struct aws_http_headers *aws_http_message_headers(const struct aws_http_message *message);
+
+struct aws_http_headers *aws_http_message_trailing_headers(const struct aws_http_message *message);
+
 /**
  * Get the number of headers.
  */
 AWS_HTTP_API
-size_t aws_http_message_get_header_count(const struct aws_http_message *message);
+size_t aws_http_headers_count(const struct aws_http_headers *headers);
 
 /**
  * Get the header at the specified index.
@@ -339,17 +348,19 @@ size_t aws_http_message_get_header_count(const struct aws_http_message *message)
  * The underlying strings are stored within the message.
  */
 AWS_HTTP_API
-int aws_http_message_get_header(
-    const struct aws_http_message *message,
+int aws_http_headers_get(
+    const struct aws_http_headers *headers,
     struct aws_http_header *out_header,
     size_t index);
+
+const struct aws_http_header *aws_http_headers_array(const struct aws_http_headers *headers);
 
 /**
  * Add a header to the end of the array.
  * The message makes its own copy of the underlying strings.
  */
 AWS_HTTP_API
-int aws_http_message_add_header(struct aws_http_message *message, struct aws_http_header header);
+int aws_http_headers_add(struct aws_http_headers *headers, struct aws_http_header header);
 
 /**
  * Add an array of headers to the end of the header array.
@@ -359,10 +370,10 @@ int aws_http_message_add_header(struct aws_http_message *message, struct aws_htt
  * repeatedly.
  */
 AWS_HTTP_API
-int aws_http_message_add_header_array(
-    struct aws_http_message *message,
-    const struct aws_http_header *headers,
-    size_t num_headers);
+int aws_http_headers_add_array(
+    struct aws_http_headers *headers,
+    const struct aws_http_header *array,
+    size_t count);
 
 /**
  * Modify the header at the specified index.
@@ -370,7 +381,7 @@ int aws_http_message_add_header_array(
  * The previous strings may be destroyed.
  */
 AWS_HTTP_API
-int aws_http_message_set_header(struct aws_http_message *message, struct aws_http_header header, size_t index);
+int aws_http_headers_set(struct aws_http_headers *headers, struct aws_http_header header, size_t index);
 
 /**
  * Remove the header at the specified index.
@@ -380,7 +391,7 @@ int aws_http_message_set_header(struct aws_http_message *message, struct aws_htt
  * Otherwise, AWS_ERROR_INVALID_INDEX will be raised.
  */
 AWS_HTTP_API
-int aws_http_message_erase_header(struct aws_http_message *message, size_t index);
+int aws_http_headers_erase(struct aws_http_headers *headers, size_t index);
 
 /**
  * Create a stream, with a client connection sending a request.
