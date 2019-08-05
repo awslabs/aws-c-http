@@ -8,7 +8,7 @@ echo "Using CC=$CC CXX=$CXX"
 sudo apt-get -y install squid
 squid3 -v
 find / -name 'squid*'
-squid -YC -f /etc/squid3/squid.conf
+squid3 -YC -f /etc/squid3/squid.conf
 #update-rc.d squid3 defaults
 #netstat -plant
 #service squid restart
