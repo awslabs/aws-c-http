@@ -1346,7 +1346,7 @@ static struct aws_http_stream *s_new_server_request_handler_stream(
     aws_linked_list_push_back(&connection->thread_data.waiting_stream_list, &stream->node);
 
     /* Connection owns stream, and must outlive stream */
-    aws_atomic_fetch_add(&connection->base.refcount, 1);
+    aws_http_connection_acquire(&connection->base);
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,

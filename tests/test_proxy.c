@@ -18,20 +18,36 @@
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/h1_stream.h>
 #include <aws/http/private/proxy_impl.h>
-
 #include <aws/io/uri.h>
+#include <aws/testing/aws_test_harness.h>
+#include <aws/testing/io_testing_channel.h>
 
 #include "proxy_test_helper.h"
 
-#include <aws/testing/aws_test_harness.h>
-
 static struct proxy_tester tester;
 
-struct aws_http_message *s_build_http_request_aux(
+static char *s_host_name = "aws.amazon.com";
+static uint16_t s_port = 80;
+static char *s_proxy_host_name = "www.myproxy.hmm";
+static uint16_t s_proxy_port = 777;
+
+AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_method, "GET");
+AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_path, "/");
+AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_host, "aws.amazon.com");
+AWS_STATIC_STRING_FROM_LITERAL(s_expected_auth_header_name, "Proxy-Authorization");
+AWS_STATIC_STRING_FROM_LITERAL(s_expected_auth_header_value, "Basic U29tZVVzZXI6U3VwZXJTZWNyZXQ=");
+AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_username, "SomeUser");
+AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_password, "SuperSecret");
+
+/*
+ * Request utility functions
+ */
+struct aws_http_message *s_build_dummy_http_request(
     struct aws_allocator *allocator,
     struct aws_byte_cursor method,
     struct aws_byte_cursor path,
     struct aws_byte_cursor host) {
+
     struct aws_http_message *request = aws_http_message_new_request(allocator);
     aws_http_message_set_request_method(request, method);
     aws_http_message_set_request_path(request, path);
@@ -51,263 +67,8 @@ struct aws_http_message *s_build_http_request_aux(
     return request;
 }
 
-struct aws_http_stream *s_proxy_new_client_request_stream(const struct aws_http_request_options *options) {
-    struct aws_h1_stream *h1_stream = aws_h1_stream_new_request(options);
-
-    return &h1_stream->base;
-}
-
-struct aws_http_connection_vtable s_mock_proxy_connection_vtable = {.new_client_request_stream =
-                                                                        s_proxy_new_client_request_stream};
-
-static void s_aws_http_release_mock_connection(struct aws_http_connection *connection) {
-    proxy_tester_on_client_connection_shutdown(connection, AWS_ERROR_SUCCESS, &tester);
-
-    aws_mem_release(connection->alloc, connection);
-}
-
-static int s_test_aws_client_bootstrap_new_socket_channel(
-    struct aws_client_bootstrap *bootstrap,
-    const char *host_name,
-    uint16_t port,
-    const struct aws_socket_options *options,
-    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
-    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
-    void *user_data) {
-    (void)bootstrap;
-    (void)options;
-    (void)setup_callback;
-    (void)shutdown_callback;
-
-    aws_mutex_lock(&tester.wait_lock);
-
-    struct aws_byte_cursor host_cursor = aws_byte_cursor_from_c_str(host_name);
-    aws_byte_buf_append_dynamic(&tester.connection_host_name, &host_cursor);
-
-    tester.connection_port = port;
-    tester.http_bootstrap = user_data;
-    aws_mutex_unlock(&tester.wait_lock);
-
-    struct aws_http_connection *connection = aws_mem_calloc(tester.alloc, 1, sizeof(struct aws_http_connection));
-    aws_atomic_store_int(&connection->refcount, 1);
-    connection->vtable = &s_mock_proxy_connection_vtable;
-    connection->alloc = tester.alloc;
-    connection->request_transform = tester.http_bootstrap->request_transform;
-    connection->user_data = tester.http_bootstrap->user_data;
-    connection->client_data = &connection->client_or_server_data.client;
-
-    proxy_tester_on_client_connection_setup(connection, AWS_ERROR_SUCCESS, &tester);
-
-    return AWS_OP_SUCCESS;
-}
-
-struct aws_http_connection_system_vtable s_connection_target_vtable = {
-    .new_socket_channel = s_test_aws_client_bootstrap_new_socket_channel};
-
-static int s_test_aws_client_bootstrap_new_socket_channel_failure(
-    struct aws_client_bootstrap *bootstrap,
-    const char *host_name,
-    uint16_t port,
-    const struct aws_socket_options *options,
-    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
-    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
-    void *user_data) {
-    (void)bootstrap;
-    (void)options;
-    (void)setup_callback;
-    (void)shutdown_callback;
-
-    aws_mutex_lock(&tester.wait_lock);
-
-    struct aws_byte_cursor host_cursor = aws_byte_cursor_from_c_str(host_name);
-    aws_byte_buf_append_dynamic(&tester.connection_host_name, &host_cursor);
-
-    tester.connection_port = port;
-    tester.http_bootstrap = user_data;
-
-    tester.wait_result = AWS_ERROR_UNKNOWN;
-
-    aws_mutex_unlock(&tester.wait_lock);
-
-    return AWS_OP_ERR;
-}
-
-struct aws_http_connection_system_vtable s_connection_channel_failure_vtable = {
-    .new_socket_channel = s_test_aws_client_bootstrap_new_socket_channel_failure};
-
-static int s_test_aws_client_bootstrap_new_socket_connect_failure(
-    struct aws_client_bootstrap *bootstrap,
-    const char *host_name,
-    uint16_t port,
-    const struct aws_socket_options *options,
-    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
-    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
-    void *user_data) {
-    (void)bootstrap;
-    (void)options;
-    (void)setup_callback;
-    (void)shutdown_callback;
-
-    aws_mutex_lock(&tester.wait_lock);
-
-    struct aws_byte_cursor host_cursor = aws_byte_cursor_from_c_str(host_name);
-    aws_byte_buf_append_dynamic(&tester.connection_host_name, &host_cursor);
-
-    tester.connection_port = port;
-    tester.http_bootstrap = user_data;
-    aws_mutex_unlock(&tester.wait_lock);
-
-    setup_callback(tester.client_bootstrap, AWS_ERROR_UNKNOWN, NULL, user_data);
-
-    return AWS_OP_SUCCESS;
-}
-
-struct aws_http_connection_system_vtable s_connection_connect_failure_vtable = {
-    .new_socket_channel = s_test_aws_client_bootstrap_new_socket_connect_failure};
-
-static char *s_host_name = "aws.amazon.com";
-static uint16_t s_port = 80;
-
-/*
- * If we don't pass in proxy options, verify we try and connect to the actual target
- */
-static int s_test_http_proxy_connection_real_target(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
-
-    aws_http_connection_set_system_vtable(&s_connection_target_vtable);
-
-    struct proxy_tester_options options = {.alloc = allocator,
-                                           .release_connection = s_aws_http_release_mock_connection,
-                                           .host = aws_byte_cursor_from_c_str(s_host_name),
-                                           .port = s_port};
-
-    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
-
-    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
-
-    ASSERT_BIN_ARRAYS_EQUALS(
-        tester.connection_host_name.buffer,
-        tester.connection_host_name.len,
-        s_host_name,
-        strlen(s_host_name),
-        "Connection host should have been {%s}, but was {" PRInSTR "}.",
-        s_host_name,
-        AWS_BYTE_BUF_PRI(tester.connection_host_name));
-
-    ASSERT_TRUE(tester.connection_port == s_port);
-
-    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
-
-    return AWS_OP_SUCCESS;
-}
-AWS_TEST_CASE(test_http_proxy_connection_real_target, s_test_http_proxy_connection_real_target);
-
-static char *s_proxy_host_name = "www.myproxy.hmm";
-static uint16_t s_proxy_port = 777;
-
-/*
- * If we do pass in proxy options, verify we try and connect to the proxy
- */
-static int s_test_http_proxy_connection_proxy_target(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
-
-    aws_http_connection_set_system_vtable(&s_connection_target_vtable);
-
-    struct aws_http_proxy_options proxy_options = {.host = aws_byte_cursor_from_c_str(s_proxy_host_name),
-                                                   .port = s_proxy_port};
-
-    struct proxy_tester_options options = {.alloc = allocator,
-                                           .proxy_options = &proxy_options,
-                                           .host = aws_byte_cursor_from_c_str(s_host_name),
-                                           .port = s_port,
-                                           .release_connection = s_aws_http_release_mock_connection};
-
-    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
-
-    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
-
-    ASSERT_BIN_ARRAYS_EQUALS(
-        tester.connection_host_name.buffer,
-        tester.connection_host_name.len,
-        s_proxy_host_name,
-        strlen(s_proxy_host_name),
-        "Connection host should have been {%s}, but was {" PRInSTR "}.",
-        s_proxy_host_name,
-        AWS_BYTE_BUF_PRI(tester.connection_host_name));
-
-    ASSERT_TRUE(tester.connection_port == s_proxy_port);
-
-    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
-
-    return AWS_OP_SUCCESS;
-}
-AWS_TEST_CASE(test_http_proxy_connection_proxy_target, s_test_http_proxy_connection_proxy_target);
-
-/*
- * If we do pass in proxy options, verify a channel creation failure cleans up properly
- */
-static int s_test_http_proxy_connection_channel_failure(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
-
-    aws_http_connection_set_system_vtable(&s_connection_channel_failure_vtable);
-
-    struct aws_http_proxy_options proxy_options = {.host = aws_byte_cursor_from_c_str(s_proxy_host_name),
-                                                   .port = s_proxy_port};
-
-    struct proxy_tester_options options = {.alloc = allocator,
-                                           .proxy_options = &proxy_options,
-                                           .host = aws_byte_cursor_from_c_str(s_host_name),
-                                           .port = s_port,
-                                           .release_connection = s_aws_http_release_mock_connection};
-
-    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
-
-    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
-
-    ASSERT_TRUE(tester.wait_result != AWS_ERROR_SUCCESS);
-    ASSERT_TRUE(tester.client_connection == NULL);
-
-    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
-
-    return AWS_OP_SUCCESS;
-}
-AWS_TEST_CASE(test_http_proxy_connection_channel_failure, s_test_http_proxy_connection_channel_failure);
-
-/*
- * If we do pass in proxy options, verify a connect failure cleans up properly
- */
-static int s_test_http_proxy_connection_connect_failure(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
-
-    aws_http_connection_set_system_vtable(&s_connection_connect_failure_vtable);
-
-    struct aws_http_proxy_options proxy_options = {.host = aws_byte_cursor_from_c_str(s_proxy_host_name),
-                                                   .port = s_proxy_port};
-
-    struct proxy_tester_options options = {.alloc = allocator,
-                                           .proxy_options = &proxy_options,
-                                           .host = aws_byte_cursor_from_c_str(s_host_name),
-                                           .port = s_port,
-                                           .release_connection = s_aws_http_release_mock_connection};
-
-    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
-
-    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
-
-    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
-
-    return AWS_OP_SUCCESS;
-}
-AWS_TEST_CASE(test_http_proxy_connection_connect_failure, s_test_http_proxy_connection_connect_failure);
-
-AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_method, "GET");
-AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_path, "/");
-AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_host, "aws.amazon.com");
-AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_username, "SomeUser");
-AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_password, "SuperSecret");
-
 static struct aws_http_message *s_build_http_request(struct aws_allocator *allocator) {
-    return s_build_http_request_aux(
+    return s_build_dummy_http_request(
         allocator,
         aws_byte_cursor_from_string(s_mock_request_method),
         aws_byte_cursor_from_string(s_mock_request_path),
@@ -329,8 +90,258 @@ static bool s_is_header_in_request(struct aws_http_message *request, struct aws_
     return false;
 }
 
-AWS_STATIC_STRING_FROM_LITERAL(s_expected_auth_header_name, "Proxy-Authorization");
-AWS_STATIC_STRING_FROM_LITERAL(s_expected_auth_header_value, "Basic U29tZVVzZXI6U3VwZXJTZWNyZXQ=");
+/*
+ * TLS mock and vtable
+ */
+static int s_test_proxy_setup_client_tls(
+    struct aws_channel_slot *right_of_slot,
+    struct aws_tls_connection_options *tls_options) {
+
+    (void)right_of_slot;
+
+    if (tester.failure_type == PTFT_TLS_NEGOTIATION) {
+        tls_options->on_negotiation_result(NULL, NULL, AWS_ERROR_UNKNOWN, tls_options->user_data);
+    } else {
+        tls_options->on_negotiation_result(NULL, NULL, AWS_ERROR_SUCCESS, tls_options->user_data);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+struct aws_http_proxy_system_vtable s_proxy_table_for_tls = {
+    .setup_client_tls = s_test_proxy_setup_client_tls,
+};
+
+/*
+ * Channel setup mock and vtable
+ */
+static int s_test_aws_proxy_new_socket_channel(
+    struct aws_client_bootstrap *bootstrap,
+    const char *host_name,
+    uint16_t port,
+    const struct aws_socket_options *options,
+    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
+    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
+    void *user_data) {
+
+    (void)bootstrap;
+    (void)options;
+    (void)setup_callback;
+    (void)shutdown_callback;
+
+    aws_mutex_lock(&tester.wait_lock);
+
+    /*
+     * Record where we were trying to connect to
+     */
+    struct aws_byte_cursor host_cursor = aws_byte_cursor_from_c_str(host_name);
+    aws_byte_buf_append_dynamic(&tester.connection_host_name, &host_cursor);
+
+    tester.connection_port = port;
+
+    /*
+     * Conditional failure logic based on how the test was configured to fail
+     */
+    if (tester.failure_type == PTFT_CHANNEL) {
+        tester.wait_result = AWS_ERROR_UNKNOWN;
+    } else if (tester.failure_type != PTFT_CONNECTION) {
+        tester.http_bootstrap = user_data;
+        ASSERT_SUCCESS(proxy_tester_create_testing_channel_connection(&tester));
+    }
+
+    aws_mutex_unlock(&tester.wait_lock);
+
+    /*
+     * More conditional failure logic based on how the test was configured to fail
+     */
+    if (tester.failure_type == PTFT_CHANNEL) {
+        return AWS_OP_ERR;
+    }
+
+    if (tester.failure_type == PTFT_CONNECTION) {
+        setup_callback(tester.client_bootstrap, AWS_ERROR_UNKNOWN, NULL, user_data);
+        return AWS_OP_SUCCESS;
+    }
+
+    /*
+     * We're not supposed to fail yet, so let's keep going
+     */
+    struct aws_http_client_bootstrap *http_bootstrap = user_data;
+    http_bootstrap->on_setup(tester.client_connection, AWS_ERROR_SUCCESS, http_bootstrap->user_data);
+
+    testing_channel_run_currently_queued_tasks(tester.testing_channel);
+
+    if (tester.test_mode == PTTM_HTTPS) {
+        /* For TLS proxies, send the CONNECT request and response */
+        ASSERT_SUCCESS(proxy_tester_verify_connect_request(&tester));
+        ASSERT_SUCCESS(proxy_tester_send_connect_response(&tester));
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+struct aws_http_connection_system_vtable s_proxy_connection_system_vtable = {
+    .new_socket_channel = s_test_aws_proxy_new_socket_channel,
+};
+
+/*
+ * Basic setup common to all mocked proxy tests - set vtables, options, call init, wait for setup completion
+ */
+static int s_setup_proxy_test(
+    struct aws_allocator *allocator,
+    enum proxy_tester_test_mode test_mode,
+    enum proxy_tester_failure_type failure_type,
+    enum aws_http_proxy_authentication_type auth_type) {
+
+    (void)auth_type;
+
+    aws_http_connection_set_system_vtable(&s_proxy_connection_system_vtable);
+    aws_http_proxy_system_set_vtable(&s_proxy_table_for_tls);
+
+    struct aws_http_proxy_options proxy_options = {
+        .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
+        .port = s_proxy_port,
+    };
+
+    if (auth_type == AWS_HPAT_BASIC) {
+        proxy_options.auth_type = AWS_HPAT_BASIC;
+        proxy_options.auth_username = aws_byte_cursor_from_string(s_mock_request_username);
+        proxy_options.auth_password = aws_byte_cursor_from_string(s_mock_request_password);
+    }
+
+    struct proxy_tester_options options = {
+        .alloc = allocator,
+        .proxy_options = &proxy_options,
+        .host = aws_byte_cursor_from_c_str(s_host_name),
+        .port = s_port,
+        .test_mode = test_mode,
+        .failure_type = failure_type,
+    };
+
+    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
+
+    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
+
+    return AWS_OP_SUCCESS;
+}
+
+/*
+ * For plaintext proxy connections:
+ * If we do pass in proxy options, verify we try and connect to the proxy
+ */
+static int s_test_http_proxy_connection_proxy_target(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP, PTFT_NONE, AWS_HPAT_NONE));
+
+    ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
+        &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_proxy_connection_proxy_target, s_test_http_proxy_connection_proxy_target);
+
+/*
+ * For plaintext proxy connections:
+ * Verify a channel creation failure cleans up properly
+ */
+static int s_test_http_proxy_connection_channel_failure(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP, PTFT_CHANNEL, AWS_HPAT_NONE));
+
+    ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
+        &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
+    ASSERT_TRUE(tester.wait_result != AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(tester.client_connection == NULL);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_proxy_connection_channel_failure, s_test_http_proxy_connection_channel_failure);
+
+/*
+ * For plaintext proxy connections:
+ * Verify a connection establishment failure cleans up properly
+ */
+static int s_test_http_proxy_connection_connect_failure(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP, PTFT_CONNECTION, AWS_HPAT_NONE));
+
+    ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
+        &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
+    ASSERT_TRUE(tester.wait_result != AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(tester.client_connection == NULL);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_proxy_connection_connect_failure, s_test_http_proxy_connection_connect_failure);
+
+/*
+ * For tls-enabled proxy connections:
+ * Test the happy path by verifying CONNECT request, tls upgrade attempt
+ */
+static int s_test_https_proxy_connection_success(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS, PTFT_NONE, AWS_HPAT_NONE));
+
+    ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
+        &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
+    ASSERT_TRUE(tester.client_connection != NULL);
+    ASSERT_TRUE(tester.wait_result == AWS_ERROR_SUCCESS);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_https_proxy_connection_success, s_test_https_proxy_connection_success);
+
+/*
+ * For tls-enabled proxy connections:
+ * If the CONNECT request fails, verify error propagation and cleanup
+ */
+static int s_test_https_proxy_connection_failure_connect(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS, PTFT_CONNECT_REQUEST, AWS_HPAT_NONE));
+
+    ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
+        &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
+    ASSERT_TRUE(tester.client_connection == NULL);
+    ASSERT_TRUE(tester.wait_result != AWS_ERROR_SUCCESS);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_https_proxy_connection_failure_connect, s_test_https_proxy_connection_failure_connect);
+
+/*
+ * For tls-enabled proxy connections:
+ * If the TLS upgrade fails, verify error propagation and cleanup
+ */
+static int s_test_https_proxy_connection_failure_tls(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS, PTFT_TLS_NEGOTIATION, AWS_HPAT_NONE));
+
+    ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
+        &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
+    ASSERT_TRUE(tester.client_connection == NULL);
+    ASSERT_TRUE(tester.wait_result != AWS_ERROR_SUCCESS);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_https_proxy_connection_failure_tls, s_test_https_proxy_connection_failure_tls);
 
 static int s_verify_transformed_request(
     struct aws_http_message *untransformed_request,
@@ -390,26 +401,10 @@ static int s_verify_transformed_request(
     return AWS_OP_SUCCESS;
 }
 
-/*
- * If we do pass in proxy options, verify requests get properly transformed
- */
-static int s_test_http_proxy_connection_request_transform(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+static int s_do_http_proxy_request_transform_test(struct aws_allocator *allocator, bool use_basic_auth) {
 
-    aws_http_connection_set_system_vtable(&s_connection_target_vtable);
-
-    struct aws_http_proxy_options proxy_options = {.host = aws_byte_cursor_from_c_str(s_proxy_host_name),
-                                                   .port = s_proxy_port};
-
-    struct proxy_tester_options options = {.alloc = allocator,
-                                           .proxy_options = &proxy_options,
-                                           .host = aws_byte_cursor_from_c_str(s_host_name),
-                                           .port = s_port,
-                                           .release_connection = s_aws_http_release_mock_connection};
-
-    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
-
-    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
+    ASSERT_SUCCESS(
+        s_setup_proxy_test(allocator, PTTM_HTTP, PTFT_NONE, use_basic_auth ? AWS_HPAT_BASIC : AWS_HPAT_NONE));
 
     struct aws_http_message *untransformed_request = s_build_http_request(allocator);
     struct aws_http_message *request = s_build_http_request(allocator);
@@ -422,11 +417,11 @@ static int s_test_http_proxy_connection_request_transform(struct aws_allocator *
     request_options.user_data = &tester;
 
     struct aws_http_stream *stream = aws_http_stream_new_client_request(&request_options);
+    testing_channel_run_currently_queued_tasks(tester.testing_channel);
 
-    s_verify_transformed_request(untransformed_request, request, false, allocator);
+    s_verify_transformed_request(untransformed_request, request, use_basic_auth, allocator);
 
     /* double release the stream because the dummy connection doesn't actually process (and release) it */
-    aws_http_stream_release(stream);
     aws_http_stream_release(stream);
 
     aws_http_message_destroy(request);
@@ -436,68 +431,47 @@ static int s_test_http_proxy_connection_request_transform(struct aws_allocator *
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_proxy_connection_request_transform, s_test_http_proxy_connection_request_transform);
+
+/*
+ * If we do pass in proxy options, verify requests get properly transformed
+ */
+static int s_test_http_proxy_request_transform(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    ASSERT_SUCCESS(s_do_http_proxy_request_transform_test(allocator, false));
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_proxy_request_transform, s_test_http_proxy_request_transform);
 
 /*
  * If we do pass in proxy options, verify requests get properly transformed with basic authentication
  */
-static int s_test_http_proxy_connection_request_transform_basic_auth(struct aws_allocator *allocator, void *ctx) {
+static int s_test_http_proxy_request_transform_basic_auth(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    aws_http_connection_set_system_vtable(&s_connection_target_vtable);
-
-    struct aws_http_proxy_options proxy_options = {
-        .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
-        .port = s_proxy_port,
-        .auth_type = AWS_HPAT_BASIC,
-        .auth_username = aws_byte_cursor_from_string(s_mock_request_username),
-        .auth_password = aws_byte_cursor_from_string(s_mock_request_password)};
-
-    struct proxy_tester_options options = {.alloc = allocator,
-                                           .proxy_options = &proxy_options,
-                                           .host = aws_byte_cursor_from_c_str(s_host_name),
-                                           .port = s_port,
-                                           .release_connection = s_aws_http_release_mock_connection};
-
-    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
-
-    proxy_tester_wait(&tester, proxy_tester_connection_setup_pred);
-
-    struct aws_http_message *untransformed_request = s_build_http_request(allocator);
-    struct aws_http_message *request = s_build_http_request(allocator);
-
-    struct aws_http_request_options request_options;
-    AWS_ZERO_STRUCT(request_options);
-    request_options.client_connection = tester.client_connection;
-    request_options.request = request;
-    request_options.self_size = sizeof(struct aws_http_request_options);
-    request_options.user_data = &tester;
-
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&request_options);
-
-    s_verify_transformed_request(untransformed_request, request, true, allocator);
-
-    /* double release the stream because the dummy connection doesn't actually process (and release) it */
-    aws_http_stream_release(stream);
-    aws_http_stream_release(stream);
-
-    aws_http_message_destroy(request);
-    aws_http_message_destroy(untransformed_request);
-
-    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+    ASSERT_SUCCESS(s_do_http_proxy_request_transform_test(allocator, true));
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(
-    test_http_proxy_connection_request_transform_basic_auth,
-    s_test_http_proxy_connection_request_transform_basic_auth);
+AWS_TEST_CASE(test_http_proxy_request_transform_basic_auth, s_test_http_proxy_request_transform_basic_auth);
 
 AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_host, "www.uri.com");
 AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_path, "/main/index.html?foo=bar");
 AWS_STATIC_STRING_FROM_LITERAL(s_expected_rewritten_path, "http://www.uri.com:80/main/index.html?foo=bar");
 
-static int s_test_http_proxy_uri_rewrite(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
+/*
+ * Given some basic request parameters, (method, path, host), builds a simple http request and then applies the proxy
+ * transform to it
+ *
+ * Verifies that the transform's final path matches what was expected
+ */
+static int s_do_request_rewrite_test(
+    struct aws_allocator *allocator,
+    const struct aws_string *method,
+    const struct aws_string *path,
+    const struct aws_string *host,
+    const struct aws_string *expected_path) {
 
     struct aws_http_proxy_options proxy_options = {
         .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
@@ -512,15 +486,15 @@ static int s_test_http_proxy_uri_rewrite(struct aws_allocator *allocator, void *
     };
 
     struct aws_http_proxy_user_data *user_data = aws_http_proxy_user_data_new(allocator, &connection_options);
-    struct aws_http_message *request = s_build_http_request_aux(
+    struct aws_http_message *request = s_build_dummy_http_request(
         allocator,
-        aws_byte_cursor_from_string(s_mock_request_method),
-        aws_byte_cursor_from_string(s_rewrite_path),
-        aws_byte_cursor_from_string(s_rewrite_host));
+        aws_byte_cursor_from_string(method),
+        aws_byte_cursor_from_string(path),
+        aws_byte_cursor_from_string(host));
 
     ASSERT_SUCCESS(aws_http_rewrite_uri_for_proxy_request(request, user_data));
 
-    struct aws_byte_cursor expected_rewritten_path = aws_byte_cursor_from_string(s_expected_rewritten_path);
+    struct aws_byte_cursor expected_rewritten_path = aws_byte_cursor_from_string(expected_path);
     struct aws_byte_cursor rewritten_path;
     ASSERT_SUCCESS(aws_http_message_get_request_path(request, &rewritten_path));
 
@@ -528,6 +502,15 @@ static int s_test_http_proxy_uri_rewrite(struct aws_allocator *allocator, void *
 
     aws_http_message_destroy(request);
     aws_http_proxy_user_data_destroy(user_data);
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_test_http_proxy_uri_rewrite(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    ASSERT_SUCCESS(s_do_request_rewrite_test(
+        allocator, s_mock_request_method, s_rewrite_path, s_rewrite_host, s_expected_rewritten_path));
 
     return AWS_OP_SUCCESS;
 }
@@ -540,35 +523,8 @@ AWS_STATIC_STRING_FROM_LITERAL(s_expected_rewritten_options_path, "http://www.ur
 static int s_test_http_proxy_uri_rewrite_options_star(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    struct aws_http_proxy_options proxy_options = {
-        .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
-        .port = s_proxy_port,
-    };
-
-    struct aws_http_client_connection_options connection_options = {
-        .allocator = allocator,
-        .host_name = aws_byte_cursor_from_string(s_rewrite_host),
-        .port = 80,
-        .proxy_options = &proxy_options,
-    };
-
-    struct aws_http_proxy_user_data *user_data = aws_http_proxy_user_data_new(allocator, &connection_options);
-    struct aws_http_message *request = s_build_http_request_aux(
-        allocator,
-        aws_byte_cursor_from_string(s_options_request_method),
-        aws_byte_cursor_from_string(s_options_star_path),
-        aws_byte_cursor_from_string(s_rewrite_host));
-
-    ASSERT_SUCCESS(aws_http_rewrite_uri_for_proxy_request(request, user_data));
-
-    struct aws_byte_cursor expected_rewritten_path = aws_byte_cursor_from_string(s_expected_rewritten_options_path);
-    struct aws_byte_cursor rewritten_path;
-    ASSERT_SUCCESS(aws_http_message_get_request_path(request, &rewritten_path));
-
-    ASSERT_TRUE(aws_byte_cursor_eq(&rewritten_path, &expected_rewritten_path));
-
-    aws_http_message_destroy(request);
-    aws_http_proxy_user_data_destroy(user_data);
+    ASSERT_SUCCESS(s_do_request_rewrite_test(
+        allocator, s_options_request_method, s_options_star_path, s_rewrite_host, s_expected_rewritten_options_path));
 
     return AWS_OP_SUCCESS;
 }

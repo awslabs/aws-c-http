@@ -165,9 +165,6 @@ struct aws_http_request_options {
     bool manual_window_management;
 };
 
-typedef int(
-    aws_http_request_transform_fn)(struct aws_http_message *request, struct aws_allocator *allocator, void *context);
-
 /**
  * Initializes aws_http_request_options with default values.
  */

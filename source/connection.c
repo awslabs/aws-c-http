@@ -230,6 +230,11 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
     return connection->channel_slot->channel;
 }
 
+void aws_http_connection_acquire(struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    aws_atomic_fetch_add(&connection->refcount, 1);
+}
+
 void aws_http_connection_release(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
@@ -610,7 +615,7 @@ static void s_client_bootstrap_on_channel_setup(
         goto error;
     }
 
-    http_bootstrap->connection->request_transform = http_bootstrap->request_transform;
+    http_bootstrap->connection->message_transform = http_bootstrap->message_transform;
     http_bootstrap->connection->user_data = http_bootstrap->user_data;
 
     AWS_LOGF_INFO(
@@ -710,7 +715,7 @@ int aws_http_client_connect_internal(const struct aws_http_client_connection_opt
     http_bootstrap->user_data = options->user_data;
     http_bootstrap->on_setup = options->on_setup;
     http_bootstrap->on_shutdown = options->on_shutdown;
-    http_bootstrap->request_transform = options->request_transform;
+    http_bootstrap->message_transform = options->message_transform;
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,

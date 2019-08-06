@@ -77,7 +77,7 @@ struct aws_http_connection {
     enum aws_http_version http_version;
     size_t initial_window_size;
 
-    aws_http_request_transform_fn *request_transform;
+    aws_http_message_transform_fn *message_transform;
     void *user_data;
 
     /* Connection starts with 1 hold for the user.
@@ -110,7 +110,7 @@ struct aws_http_client_bootstrap {
     void *user_data;
     aws_http_on_client_connection_setup_fn *on_setup;
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
-    aws_http_request_transform_fn *request_transform;
+    aws_http_message_transform_fn *message_transform;
 
     struct aws_http_connection *connection;
 };
@@ -132,6 +132,12 @@ void aws_http_connection_set_system_vtable(const struct aws_http_connection_syst
 
 AWS_HTTP_API
 int aws_http_client_connect_internal(const struct aws_http_client_connection_options *options);
+
+/**
+ * Internal API for adding a reference to a connection
+ */
+AWS_HTTP_API
+void aws_http_connection_acquire(struct aws_http_connection *connection);
 
 AWS_EXTERN_C_END
 
