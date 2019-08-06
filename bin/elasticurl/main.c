@@ -64,7 +64,7 @@ struct elasticurl_ctx {
     struct aws_shared_library signing_library;
     const char *signing_function_name;
     struct aws_hash_table signing_context;
-    aws_http_request_transform_fn *signing_function;
+    aws_http_message_transform_fn *signing_function;
     bool include_headers;
     bool insecure;
     FILE *output;
@@ -445,7 +445,7 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     app_ctx->request = s_build_http_request(app_ctx);
 
     if (app_ctx->signing_function) {
-        if (app_ctx->signing_function(app_ctx->request, app_ctx->allocator, &app_ctx->signing_context)) {
+        if (app_ctx->signing_function(app_ctx->request, &app_ctx->signing_context)) {
             fprintf(stderr, "Signing failure\n");
             exit(1);
         }

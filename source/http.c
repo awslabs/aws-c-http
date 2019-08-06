@@ -94,6 +94,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_MANAGER_VENDED_CONNECTION_UNDERFLOW,
         "Release called when the connection manager's vended connection count was zero"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_PROXY_TLS_CONNECT_FAILED,
+        "Proxy tls connection establishment failed because the CONNECT call failed"),
 };
 /* clang-format on */
 
