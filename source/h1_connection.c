@@ -112,10 +112,6 @@ struct h1_connection {
     /* Single task used for issuing window updates from off-thread */
     struct aws_channel_task window_update_task;
 
-    /* Task used once during shutdown. */
-    struct aws_channel_task shutdown_delay_task;
-    int shutdown_delay_task_error_code;
-
     /* Only the event-loop thread may touch this data */
     struct {
         /* List of streams being worked on. */
@@ -221,9 +217,6 @@ static void s_stop(
         } else {
             connection->synced_data.is_shutting_down = true;
             connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
-            if (schedule_shutdown) {
-                connection->shutdown_delay_task_error_code = error_code;
-            }
         }
 
         s_h1_connection_unlock_synced_data(connection);
@@ -237,10 +230,7 @@ static void s_stop(
             error_code,
             aws_error_name(error_code));
 
-        /* Delay the call to aws_channel_shutdown().
-         * This ensures that a user calling aws_http_connection_close() won't have completion callbacks
-         * firing before aws_http_connection_close() has even returned. */
-        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->shutdown_delay_task);
+        aws_channel_shutdown(connection->base.channel_slot->channel, error_code);
     }
 }
 
@@ -259,16 +249,6 @@ static void s_shutdown_due_to_error(struct h1_connection *connection, int error_
      * But pipelining in HTTP/1.1 is known to be fragile with regards to errors, so let's just keep it simple.
      */
     s_stop(connection, true /*stop_reading*/, true /*stop_writing*/, true /*schedule_shutdown*/, error_code);
-}
-
-static void s_shutdown_delay_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
-    (void)task;
-    struct h1_connection *connection = arg;
-
-    if (status == AWS_TASK_STATUS_RUN_READY) {
-        /* If channel is already shutting down, this call has no effect */
-        aws_channel_shutdown(connection->base.channel_slot->channel, connection->shutdown_delay_task_error_code);
-    }
 }
 
 /**
@@ -1143,7 +1123,6 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     aws_channel_task_init(
         &connection->outgoing_stream_task, s_outgoing_stream_task, connection, "http1_outgoing_stream");
     aws_channel_task_init(&connection->window_update_task, s_update_window_task, connection, "http1_update_window");
-    aws_channel_task_init(&connection->shutdown_delay_task, s_shutdown_delay_task, connection, "http1_delay_shutdown");
     aws_linked_list_init(&connection->thread_data.stream_list);
     aws_linked_list_init(&connection->thread_data.waiting_stream_list);
     aws_linked_list_init(&connection->thread_data.midchannel_read_messages);

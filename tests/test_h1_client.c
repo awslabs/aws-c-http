@@ -1386,7 +1386,7 @@ H1_CLIENT_TEST_CASE(h1_client_new_request_fails_if_channel_shut_down) {
     struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
     ASSERT_NULL(stream);
     ASSERT_INT_EQUALS(aws_last_error(), AWS_ERROR_HTTP_CONNECTION_CLOSED);
-
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
     aws_http_message_destroy(opt.request);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;

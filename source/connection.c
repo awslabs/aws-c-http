@@ -322,11 +322,6 @@ static void s_server_bootstrap_on_accept_channel_setup(
 
         goto error;
     }
-    AWS_LOGF_DEBUG(
-        AWS_LS_HTTP_SERVER,
-        "%s:%d: Incoming connection accepted.",
-        server->socket->local_endpoint.address,
-        server->socket->local_endpoint.port);
 
     /* Tell user of successful connection. */
     AWS_LOGF_INFO(
@@ -337,7 +332,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
         server->socket->local_endpoint.address,
         server->socket->local_endpoint.port);
 
-    server->on_incoming_connection(server, connection, error_code, server->user_data);
+    server->on_incoming_connection(server, connection, AWS_ERROR_SUCCESS, server->user_data);
     user_cb_invoked = true;
 
     /* If user failed to configure the server during callback, shut down the channel. */
@@ -354,10 +349,6 @@ static void s_server_bootstrap_on_accept_channel_setup(
     return;
 
 error:
-    if (connection) {
-        /* release the ref count for the user side */
-        aws_http_connection_release(connection);
-    }
 
     if (!error_code) {
         error_code = aws_last_error();
@@ -369,6 +360,11 @@ error:
 
     if (channel) {
         aws_channel_shutdown(channel, error_code);
+    }
+
+    if (connection) {
+        /* release the ref count for the user side */
+        aws_http_connection_release(connection);
     }
 }
 
@@ -473,6 +469,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
         goto hash_table_error;
     }
 
+    s_server_lock_synced_data(server);
     if (options->tls_options) {
         server->is_using_tls = true;
 
@@ -495,6 +492,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             s_server_bootstrap_on_server_listener_destroy,
             server);
     }
+    s_server_unlock_synced_data(server);
 
     if (!server->socket) {
         AWS_LOGF_ERROR(
@@ -527,50 +525,44 @@ void aws_http_server_release(struct aws_http_server *server) {
     if (!server) {
         return;
     }
-    if (server->socket) {
-        bool already_shutting_down = false;
-        /* BEGIN CRITICAL SECTION */
-        s_server_lock_synced_data(server);
-        if (server->synced_data.is_shutting_down) {
-            already_shutting_down = true;
-        } else {
-            server->synced_data.is_shutting_down = true;
-        }
-        s_server_unlock_synced_data(server);
-        /* END CRITICAL SECTION */
-
-        if (already_shutting_down) {
-            /* The service is already shutting down, not shutting it down again */
-            AWS_LOGF_TRACE(AWS_LS_HTTP_SERVER, "id=%p: The server is already shutting down", (void *)server);
-            return;
-        }
-
-        /* shutdown all existing connetions */
-        /* we do not need a lock here, because no more new connection will be accepted and it will be fine to close
-         * the connection twice */
+    bool already_shutting_down = false;
+    /* BEGIN CRITICAL SECTION */
+    s_server_lock_synced_data(server);
+    if (server->synced_data.is_shutting_down) {
+        already_shutting_down = true;
+    } else {
+        server->synced_data.is_shutting_down = true;
+    }
+    if (!already_shutting_down) {
+        /* shutdown all existing channels */
         for (struct aws_hash_iter iter = aws_hash_iter_begin(&server->synced_data.channel_to_connection_map);
              !aws_hash_iter_done(&iter);
              aws_hash_iter_next(&iter)) {
-            struct aws_http_connection *connection = iter.element.value;
-            aws_http_connection_close(connection);
+            struct aws_channel *channel = (struct aws_channel *)iter.element.key;
+            aws_channel_shutdown(channel, AWS_ERROR_HTTP_CONNECTION_CLOSED);
         }
+    }
+    s_server_unlock_synced_data(server);
+    /* END CRITICAL SECTION */
 
-        /* stop listening, clean up the socket, after all existing connections finish shutting down, the
-         * s_server_bootstrap_on_server_listener_destroy will be invoked, clean up of the server will be there */
-        AWS_LOGF_INFO(
-            AWS_LS_HTTP_SERVER,
-            "%s:%d: Shutting down the server.",
-            server->socket->local_endpoint.address,
-            server->socket->local_endpoint.port);
-
-        aws_server_bootstrap_destroy_socket_listener(server->bootstrap, server->socket);
-
-        /* wait for connections to finish shutting down
-         * clean up will be called from eventloop */
-    } else {
-        s_http_server_clean_up(server);
+    if (already_shutting_down) {
+        /* The service is already shutting down, not shutting it down again */
+        AWS_LOGF_TRACE(AWS_LS_HTTP_SERVER, "id=%p: The server is already shutting down", (void *)server);
         return;
     }
+
+    /* stop listening, clean up the socket, after all existing connections finish shutting down, the
+     * s_server_bootstrap_on_server_listener_destroy will be invoked, clean up of the server will be there */
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_SERVER,
+        "%s:%d: Shutting down the server.",
+        server->socket->local_endpoint.address,
+        server->socket->local_endpoint.port);
+
+    aws_server_bootstrap_destroy_socket_listener(server->bootstrap, server->socket);
+
+    /* wait for connections to finish shutting down
+     * clean up will be called from eventloop */
 }
 
 /* At this point, the channel bootstrapper has established a connection to the server and set up a channel.
