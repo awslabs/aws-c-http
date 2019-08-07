@@ -35,6 +35,8 @@ typedef void(aws_http_server_on_incoming_connection_fn)(
     int error_code,
     void *user_data);
 
+typedef void(aws_http_server_on_destroy_fn)(void *user_data);
+
 /**
  * Options for creating an HTTP server.
  * Initialize with AWS_HTTP_SERVER_OPTIONS_INIT to set default values.
@@ -95,6 +97,12 @@ struct aws_http_server_options {
      * If setup succeeds, the user must call aws_http_connection_configure_server().
      */
     aws_http_server_on_incoming_connection_fn *on_incoming_connection;
+
+    /**
+     * Invoked when the server finishes the destroy operation.
+     * Optional.
+     */
+    aws_http_server_on_destroy_fn *on_destroy_complete;
 };
 
 /**
@@ -163,14 +171,11 @@ AWS_HTTP_API
 struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options);
 
 /**
- * Destroy server.
- *
- * Note: this function should be called by either a user thread (like the main entry point, or from the event-loop the
- * server is assigned to. Otherwise a deadlock is possible. If you call this function from outside the assigned
- * event-loop, this function will block waiting on the assigned event-loop runs the close sequence in its thread.
+ * Release the server. It will close the listening socket and all the connections existing in the server.
+ * The on_destroy_complete will be invoked when the destroy operation completes
  */
 AWS_HTTP_API
-void aws_http_server_destroy(struct aws_http_server *server);
+void aws_http_server_release(struct aws_http_server *server);
 
 /**
  * Configure a server connection.

@@ -33,7 +33,6 @@ add_test_case(h1_decode_bad_responses_and_assert_failure)
 add_test_case(h1_test_extraneous_buffer_data_ensure_not_processed)
 add_test_case(h1_test_ignore_chunk_extensions)
 
-# add_test_case(connection_setup_shutdown) TODO: diagnose occasional failures
 add_test_case(h1_client_sanity_check)
 add_test_case(h1_client_request_send_1liner)
 add_test_case(h1_client_request_send_headers)
@@ -177,6 +176,11 @@ add_test_case(h2_frame_window_update)
 add_test_case(h2_frame_continuation)
 
 add_test_case(server_new_destroy)
+add_test_case(connection_setup_shutdown)
+add_test_case(connection_destroy_server_with_connection_existing)
+add_test_case(connection_destroy_server_with_multiple_connections_existing)
+add_test_case(connection_server_shutting_down_new_connection_setup_fail)
+
 add_test_case(test_connection_manager_setup_shutdown)
 add_net_test_case(test_connection_manager_single_connection)
 add_net_test_case(test_connection_manager_many_connections)

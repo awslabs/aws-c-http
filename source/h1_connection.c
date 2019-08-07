@@ -112,10 +112,6 @@ struct h1_connection {
     /* Single task used for issuing window updates from off-thread */
     struct aws_channel_task window_update_task;
 
-    /* Task used once during shutdown. */
-    struct aws_channel_task shutdown_delay_task;
-    int shutdown_delay_task_error_code;
-
     /* Only the event-loop thread may touch this data */
     struct {
         /* List of streams being worked on. */
@@ -177,6 +173,18 @@ struct h1_connection {
     } synced_data;
 };
 
+void s_h1_connection_lock_synced_data(struct h1_connection *connection) {
+    int err = aws_mutex_lock(&connection->synced_data.lock);
+    AWS_ASSERT(!err);
+    (void)err;
+}
+
+void s_h1_connection_unlock_synced_data(struct h1_connection *connection) {
+    int err = aws_mutex_unlock(&connection->synced_data.lock);
+    AWS_ASSERT(!err);
+    (void)err;
+}
+
 /**
  * Internal function for bringing connection to a stop.
  * Invoked multiple times, including when:
@@ -202,21 +210,16 @@ static void s_stop(
         connection->thread_data.is_writing_stopped = true;
     }
     { /* BEGIN CRITICAL SECTION */
-        int err = aws_mutex_lock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
+        s_h1_connection_lock_synced_data(connection);
 
         if (connection->synced_data.is_shutting_down) {
             schedule_shutdown = false;
         } else {
             connection->synced_data.is_shutting_down = true;
             connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
-            if (schedule_shutdown) {
-                connection->shutdown_delay_task_error_code = error_code;
-            }
         }
 
-        err = aws_mutex_unlock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
+        s_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
     if (schedule_shutdown) {
@@ -227,10 +230,7 @@ static void s_stop(
             error_code,
             aws_error_name(error_code));
 
-        /* Delay the call to aws_channel_shutdown().
-         * This ensures that a user calling aws_http_connection_close() won't have completion callbacks
-         * firing before aws_http_connection_close() has even returned. */
-        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->shutdown_delay_task);
+        aws_channel_shutdown(connection->base.channel_slot->channel, error_code);
     }
 }
 
@@ -251,16 +251,6 @@ static void s_shutdown_due_to_error(struct h1_connection *connection, int error_
     s_stop(connection, true /*stop_reading*/, true /*stop_writing*/, true /*schedule_shutdown*/, error_code);
 }
 
-static void s_shutdown_delay_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
-    (void)task;
-    struct h1_connection *connection = arg;
-
-    if (status == AWS_TASK_STATUS_RUN_READY) {
-        /* If channel is already shutting down, this call has no effect */
-        aws_channel_shutdown(connection->base.channel_slot->channel, connection->shutdown_delay_task_error_code);
-    }
-}
-
 /**
  * Public function for closing connection.
  */
@@ -276,13 +266,9 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
     bool is_shutting_down;
 
     { /* BEGIN CRITICAL SECTION */
-        int err = aws_mutex_lock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
-
+        s_h1_connection_lock_synced_data(connection);
         is_shutting_down = connection->synced_data.is_shutting_down;
-
-        err = aws_mutex_unlock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
+        s_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
     return !is_shutting_down;
@@ -308,8 +294,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
 
     bool should_schedule_task = false;
     { /* BEGIN CRITICAL SECTION */
-        err = aws_mutex_lock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
+        s_h1_connection_lock_synced_data(connection);
         if (h1_stream->synced_data.has_outgoing_response) {
             AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "id=%p: Response already created on the stream", (void *)stream);
             send_err = AWS_ERROR_INVALID_STATE;
@@ -321,8 +306,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
                 should_schedule_task = true;
             }
         }
-        err = aws_mutex_unlock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
+        s_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
     if (send_err) {
@@ -389,8 +373,7 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
      * If task is already scheduled, just increase size to be updated */
 
     /* BEGIN CRITICAL SECTION */
-    int err = aws_mutex_lock(&connection->synced_data.lock);
-    AWS_FATAL_ASSERT(!err);
+    s_h1_connection_lock_synced_data(connection);
 
     /* if this is not volatile, gcc-4x will load window_update_size's address into a register
      * and then read it as should_schedule_task down below, which will invert its meaning */
@@ -398,8 +381,7 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
     connection->synced_data.window_update_size =
         aws_add_size_saturating(connection->synced_data.window_update_size, increment_size);
 
-    err = aws_mutex_unlock(&connection->synced_data.lock);
-    AWS_FATAL_ASSERT(!err);
+    s_h1_connection_unlock_synced_data(connection);
     /* END CRITICAL SECTION */
 
     if (should_schedule_task) {
@@ -439,8 +421,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
     bool should_schedule_task = false;
 
     { /* BEGIN CRITICAL SECTION */
-        int err = aws_mutex_lock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
+        s_h1_connection_lock_synced_data(connection);
 
         if (connection->synced_data.new_stream_error_code) {
             new_stream_error_code = connection->synced_data.new_stream_error_code;
@@ -452,8 +433,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
             }
         }
 
-        err = aws_mutex_unlock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(!err);
+        s_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
     if (new_stream_error_code) {
@@ -504,8 +484,7 @@ static void s_update_window_task(struct aws_channel_task *channel_task, void *ar
     }
 
     /* BEGIN CRITICAL SECTION */
-    int err = aws_mutex_lock(&connection->synced_data.lock);
-    AWS_FATAL_ASSERT(!err);
+    s_h1_connection_lock_synced_data(connection);
 
     size_t window_update_size = connection->synced_data.window_update_size;
     AWS_LOGF_TRACE(
@@ -515,8 +494,7 @@ static void s_update_window_task(struct aws_channel_task *channel_task, void *ar
         window_update_size);
     connection->synced_data.window_update_size = 0;
 
-    err = aws_mutex_unlock(&connection->synced_data.lock);
-    AWS_FATAL_ASSERT(!err);
+    s_h1_connection_unlock_synced_data(connection);
     /* END CRITICAL SECTION */
 
     s_update_window_action(connection, window_update_size);
@@ -544,8 +522,7 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
                 has_pending_streams = true;
             } else {
                 { /* BEGIN CRITICAL SECTION */
-                    int err = aws_mutex_lock(&connection->synced_data.lock);
-                    AWS_FATAL_ASSERT(!err);
+                    s_h1_connection_lock_synced_data(connection);
 
                     if (aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
                         connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_SWITCHED_PROTOCOLS;
@@ -553,8 +530,7 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
                         has_pending_streams = true;
                     }
 
-                    err = aws_mutex_unlock(&connection->synced_data.lock);
-                    AWS_FATAL_ASSERT(!err);
+                    s_h1_connection_unlock_synced_data(connection);
                 } /* END CRITICAL SECTION */
             }
 
@@ -684,8 +660,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
             /* server side should check the stream already has response or not
              * Require a lock to prevent the user makes any change to the stream state */
             /* BEGIN CRITICAL SECTION */
-            err = aws_mutex_lock(&connection->synced_data.lock);
-            AWS_FATAL_ASSERT(!err);
+            s_h1_connection_lock_synced_data(connection);
             while (!aws_linked_list_empty(&connection->thread_data.waiting_stream_list)) {
                 /* The front of pending_stream list is not ready to be sent */
                 if (!AWS_CONTAINER_OF(
@@ -714,13 +689,11 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
                     connection->synced_data.is_outgoing_stream_task_active = false;
                 }
             }
-            err = aws_mutex_unlock(&connection->synced_data.lock);
-            AWS_FATAL_ASSERT(!err);
+            s_h1_connection_unlock_synced_data(connection);
             /* END CRITICAL SECTION */
         } else {
             /* BEGIN CRITICAL SECTION */
-            err = aws_mutex_lock(&connection->synced_data.lock);
-            AWS_FATAL_ASSERT(!err);
+            s_h1_connection_lock_synced_data(connection);
 
             if (aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
                 /* No more work to do. Set this false while we're holding the lock. */
@@ -739,8 +712,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
                 } while (!aws_linked_list_empty(&connection->synced_data.pending_stream_list));
             }
 
-            err = aws_mutex_unlock(&connection->synced_data.lock);
-            AWS_FATAL_ASSERT(!err);
+            s_h1_connection_unlock_synced_data(connection);
             /* END CRITICAL SECTION */
         }
     }
@@ -1151,7 +1123,6 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     aws_channel_task_init(
         &connection->outgoing_stream_task, s_outgoing_stream_task, connection, "http1_outgoing_stream");
     aws_channel_task_init(&connection->window_update_task, s_update_window_task, connection, "http1_update_window");
-    aws_channel_task_init(&connection->shutdown_delay_task, s_shutdown_delay_task, connection, "http1_delay_shutdown");
     aws_linked_list_init(&connection->thread_data.stream_list);
     aws_linked_list_init(&connection->thread_data.waiting_stream_list);
     aws_linked_list_init(&connection->thread_data.midchannel_read_messages);
