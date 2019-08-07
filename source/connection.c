@@ -260,7 +260,8 @@ void aws_http_connection_release(struct aws_http_connection *connection) {
 }
 
 /* At this point, the server bootstrapper has accepted an incoming connection from a client and set up a channel.
- * Now we need to create an aws_http_connection and insert it into the channel as a channel-handler. */
+ * Now we need to create an aws_http_connection and insert it into the channel as a channel-handler.
+ * Note: Be careful not to access server->socket until lock is acquired to avoid race conditions */
 static void s_server_bootstrap_on_accept_channel_setup(
     struct aws_server_bootstrap *bootstrap,
     int error_code,
@@ -275,9 +276,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
     if (error_code) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
-            "%s:%d: Incoming connection failed with error code %d (%s)",
-            server->socket->local_endpoint.address,
-            server->socket->local_endpoint.port,
+            "%p: Incoming connection failed with error code %d (%s)",
+            (void *)server,
             error_code,
             aws_error_name(error_code));
 
@@ -288,9 +288,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
-            "%s:%d: Failed to create connection object, error %d (%s).",
-            server->socket->local_endpoint.address,
-            server->socket->local_endpoint.port,
+            "%p: Failed to create connection object, error %d (%s).",
+            (void *)server,
             aws_last_error(),
             aws_error_name(aws_last_error()));
 
@@ -319,7 +318,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
     if (put_err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
-            "%s:%d: Failed to store connection object, error %d (%s).",
+            "%p: %s:%d: Failed to store connection object, error %d (%s).",
+            (void *)server,
             server->socket->local_endpoint.address,
             server->socket->local_endpoint.port,
             aws_last_error(),
@@ -331,9 +331,10 @@ static void s_server_bootstrap_on_accept_channel_setup(
     /* Tell user of successful connection. */
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
-        "id=%p: " PRInSTR " server connection established at %s:%d.",
+        "id=%p: " PRInSTR " server connection established at %p %s:%d.",
         (void *)connection,
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->http_version)),
+        (void *)server,
         server->socket->local_endpoint.address,
         server->socket->local_endpoint.port);
 
@@ -473,7 +474,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             aws_error_name(aws_last_error()));
         goto hash_table_error;
     }
-
+    /* Protect against callbacks firing before server->socket is set */
     s_server_lock_synced_data(server);
     if (options->tls_options) {
         server->is_using_tls = true;
@@ -511,7 +512,8 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
 
     AWS_LOGF_INFO(
         AWS_LS_HTTP_SERVER,
-        "%s:%d: Server setup complete, listening for incoming connections.",
+        "%p %s:%d: Server setup complete, listening for incoming connections.",
+        (void *)server,
         server->socket->local_endpoint.address,
         server->socket->local_endpoint.port);
 
