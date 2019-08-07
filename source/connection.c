@@ -562,7 +562,8 @@ void aws_http_server_release(struct aws_http_server *server) {
      * s_server_bootstrap_on_server_listener_destroy will be invoked, clean up of the server will be there */
     AWS_LOGF_INFO(
         AWS_LS_HTTP_SERVER,
-        "%s:%d: Shutting down the server.",
+        "%p %s:%d: Shutting down the server.",
+        (void *)server,
         server->socket->local_endpoint.address,
         server->socket->local_endpoint.port);
 
