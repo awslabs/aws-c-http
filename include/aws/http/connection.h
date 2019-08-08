@@ -59,16 +59,25 @@ struct aws_http_proxy_options {
     uint16_t port;
 
     /**
+     * Optional.
+     * TLS configuration for the Local <-> Proxy connection
+     * Must be distinct from the the TLS options in the parent aws_http_connection_options struct
+     */
+    struct aws_tls_connection_options *tls_options;
+
+    /**
      * What type of proxy authentication to use, if any
      */
     enum aws_http_proxy_authentication_type auth_type;
 
     /**
+     * Optional
      * User name to use for authentication, basic only
      */
     struct aws_byte_cursor auth_username;
 
     /**
+     * Optional
      * Password to use for authentication, basic only
      */
     struct aws_byte_cursor auth_password;

@@ -431,7 +431,7 @@ struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http
     }
 
     /* Connection owns stream, and must outlive stream */
-    aws_atomic_fetch_add(&options->client_connection->refcount, 1);
+    aws_http_connection_acquire(options->client_connection);
 
     struct aws_http_stream *stream = options->client_connection->vtable->new_client_request_stream(options);
     if (!stream) {

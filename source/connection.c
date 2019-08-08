@@ -17,6 +17,7 @@
 #include <aws/http/private/proxy_impl.h>
 
 #include <aws/common/hash_table.h>
+#include <aws/common/mutex.h>
 #include <aws/common/string.h>
 #include <aws/http/request_response.h>
 #include <aws/io/channel_bootstrap.h>
@@ -49,10 +50,28 @@ struct aws_http_server {
     size_t initial_window_size;
     void *user_data;
     aws_http_server_on_incoming_connection_fn *on_incoming_connection;
-
-    struct aws_hash_table channel_to_connection_map;
+    aws_http_server_on_destroy_fn *on_destroy_complete;
     struct aws_socket *socket;
+
+    /* Any thread may touch this data, but the lock must be held */
+    struct {
+        struct aws_mutex lock;
+        bool is_shutting_down;
+        struct aws_hash_table channel_to_connection_map;
+    } synced_data;
 };
+
+void s_server_lock_synced_data(struct aws_http_server *server) {
+    int err = aws_mutex_lock(&server->synced_data.lock);
+    AWS_ASSERT(!err);
+    (void)err;
+}
+
+void s_server_unlock_synced_data(struct aws_http_server *server) {
+    int err = aws_mutex_unlock(&server->synced_data.lock);
+    AWS_ASSERT(!err);
+    (void)err;
+}
 
 /* Determine the http-version, create appropriate type of connection, and insert it into the channel. */
 static struct aws_http_connection *s_connection_new(
@@ -211,6 +230,11 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
     return connection->channel_slot->channel;
 }
 
+void aws_http_connection_acquire(struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    aws_atomic_fetch_add(&connection->refcount, 1);
+}
+
 void aws_http_connection_release(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
@@ -236,7 +260,8 @@ void aws_http_connection_release(struct aws_http_connection *connection) {
 }
 
 /* At this point, the server bootstrapper has accepted an incoming connection from a client and set up a channel.
- * Now we need to create an aws_http_connection and insert it into the channel as a channel-handler. */
+ * Now we need to create an aws_http_connection and insert it into the channel as a channel-handler.
+ * Note: Be careful not to access server->socket until lock is acquired to avoid race conditions */
 static void s_server_bootstrap_on_accept_channel_setup(
     struct aws_server_bootstrap *bootstrap,
     int error_code,
@@ -247,46 +272,54 @@ static void s_server_bootstrap_on_accept_channel_setup(
     AWS_ASSERT(user_data);
     struct aws_http_server *server = user_data;
     bool user_cb_invoked = false;
-
+    struct aws_http_connection *connection = NULL;
     if (error_code) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
-            "%s:%d: Incoming connection failed with error code %d (%s)",
-            server->socket->local_endpoint.address,
-            server->socket->local_endpoint.port,
+            "%p: Incoming connection failed with error code %d (%s)",
+            (void *)server,
             error_code,
             aws_error_name(error_code));
 
         goto error;
     }
-
-    AWS_LOGF_DEBUG(
-        AWS_LS_HTTP_SERVER,
-        "%s:%d: Incoming connection accepted, creating connection object.",
-        server->socket->local_endpoint.address,
-        server->socket->local_endpoint.port);
-
     /* Create connection */
-    struct aws_http_connection *connection =
-        s_connection_new(server->alloc, channel, true, server->is_using_tls, server->initial_window_size);
+    connection = s_connection_new(server->alloc, channel, true, server->is_using_tls, server->initial_window_size);
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
-            "%s:%d: Failed to create connection object, error %d (%s).",
-            server->socket->local_endpoint.address,
-            server->socket->local_endpoint.port,
+            "%p: Failed to create connection object, error %d (%s).",
+            (void *)server,
             aws_last_error(),
             aws_error_name(aws_last_error()));
 
         goto error;
     }
 
-    /* Remember which connection is on this channel */
-    int err = aws_hash_table_put(&server->channel_to_connection_map, channel, connection, NULL);
-    if (err) {
+    int put_err = 0;
+    /* BEGIN CRITICAL SECTION */
+    s_server_lock_synced_data(server);
+    if (server->synced_data.is_shutting_down) {
+        error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
+    }
+    if (!error_code) {
+        put_err = aws_hash_table_put(&server->synced_data.channel_to_connection_map, channel, connection, NULL);
+    }
+    s_server_unlock_synced_data(server);
+    /* END CRITICAL SECTION */
+    if (error_code) {
+        AWS_LOGF_ERROR(
+            AWS_ERROR_HTTP_SERVER_CLOSED,
+            "id=%p: Incoming connection failed. The server is shutting down.",
+            (void *)server);
+        goto error;
+    }
+
+    if (put_err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
-            "%s:%d: Failed to store connection object, error %d (%s).",
+            "%p: %s:%d: Failed to store connection object, error %d (%s).",
+            (void *)server,
             server->socket->local_endpoint.address,
             server->socket->local_endpoint.port,
             aws_last_error(),
@@ -298,13 +331,14 @@ static void s_server_bootstrap_on_accept_channel_setup(
     /* Tell user of successful connection. */
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
-        "id=%p: " PRInSTR " server connection established at %s:%d.",
+        "id=%p: " PRInSTR " server connection established at %p %s:%d.",
         (void *)connection,
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->http_version)),
+        (void *)server,
         server->socket->local_endpoint.address,
         server->socket->local_endpoint.port);
 
-    server->on_incoming_connection(server, connection, error_code, server->user_data);
+    server->on_incoming_connection(server, connection, AWS_ERROR_SUCCESS, server->user_data);
     user_cb_invoked = true;
 
     /* If user failed to configure the server during callback, shut down the channel. */
@@ -321,6 +355,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
     return;
 
 error:
+
     if (!error_code) {
         error_code = aws_last_error();
     }
@@ -332,6 +367,25 @@ error:
     if (channel) {
         aws_channel_shutdown(channel, error_code);
     }
+
+    if (connection) {
+        /* release the ref count for the user side */
+        aws_http_connection_release(connection);
+    }
+}
+
+/* clean the server memory up */
+static void s_http_server_clean_up(struct aws_http_server *server) {
+    if (!server) {
+        return;
+    }
+    /* invoke the user callback */
+    if (server->on_destroy_complete) {
+        server->on_destroy_complete(server->user_data);
+    }
+    aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
+    aws_mutex_clean_up(&server->synced_data.lock);
+    aws_mem_release(server->alloc, server);
 }
 
 /* At this point, the channel for a server connection has completed shutdown, but hasn't been destroyed yet. */
@@ -349,16 +403,31 @@ static void s_server_bootstrap_on_accept_channel_shutdown(
      * It won't be in the map if something went wrong while setting up the connection. */
     struct aws_hash_element map_elem;
     int was_present;
-    int err = aws_hash_table_remove(&server->channel_to_connection_map, channel, &map_elem, &was_present);
-    if (!err && was_present) {
+
+    /* BEGIN CRITICAL SECTION */
+    s_server_lock_synced_data(server);
+    int remove_err =
+        aws_hash_table_remove(&server->synced_data.channel_to_connection_map, channel, &map_elem, &was_present);
+    s_server_unlock_synced_data(server);
+    /* END CRITICAL SECTION */
+
+    if (!remove_err && was_present) {
         struct aws_http_connection *connection = map_elem.value;
         AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: Server connection shut down.", (void *)connection);
-
         /* Tell user about shutdown */
         if (connection->server_data->on_shutdown) {
             connection->server_data->on_shutdown(connection, error_code, connection->user_data);
         }
     }
+}
+
+/* the server listener has finished the destroy process, no existing connections
+ * finally safe to clean the server up */
+static void s_server_bootstrap_on_server_listener_destroy(struct aws_server_bootstrap *bootstrap, void *user_data) {
+    (void)bootstrap;
+    AWS_ASSERT(user_data);
+    struct aws_http_server *server = user_data;
+    s_http_server_clean_up(server);
 }
 
 struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options) {
@@ -371,12 +440,14 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
 
         AWS_LOGF_ERROR(AWS_LS_HTTP_SERVER, "static: Invalid options, cannot create server.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        goto error;
+        /* nothing to clean up */
+        return NULL;
     }
 
     server = aws_mem_calloc(options->allocator, 1, sizeof(struct aws_http_server));
     if (!server) {
-        goto error;
+        /* nothing to clean up */
+        return NULL;
     }
 
     server->alloc = options->allocator;
@@ -385,18 +456,26 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     server->initial_window_size = options->initial_window_size;
     server->user_data = options->server_user_data;
     server->on_incoming_connection = options->on_incoming_connection;
+    server->on_destroy_complete = options->on_destroy_complete;
 
-    int err = aws_hash_table_init(
-        &server->channel_to_connection_map, server->alloc, 16, aws_hash_ptr, aws_ptr_eq, NULL, NULL);
+    int err = aws_mutex_init(&server->synced_data.lock);
+    if (err) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_SERVER, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
+        goto mutex_error;
+    }
+    err = aws_hash_table_init(
+        &server->synced_data.channel_to_connection_map, server->alloc, 16, aws_hash_ptr, aws_ptr_eq, NULL, NULL);
     if (err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
             "static: Cannot create server, error %d (%s).",
             aws_last_error(),
             aws_error_name(aws_last_error()));
-        goto error;
+        goto hash_table_error;
     }
-
+    /* Protect against callbacks firing before server->socket is set */
+    s_server_lock_synced_data(server);
     if (options->tls_options) {
         server->is_using_tls = true;
 
@@ -407,7 +486,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             options->tls_options,
             s_server_bootstrap_on_accept_channel_setup,
             s_server_bootstrap_on_accept_channel_shutdown,
-            NULL,
+            s_server_bootstrap_on_server_listener_destroy,
             server);
     } else {
         server->socket = aws_server_bootstrap_new_socket_listener(
@@ -416,9 +495,10 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             options->socket_options,
             s_server_bootstrap_on_accept_channel_setup,
             s_server_bootstrap_on_accept_channel_shutdown,
-            NULL,
+            s_server_bootstrap_on_server_listener_destroy,
             server);
     }
+    s_server_unlock_synced_data(server);
 
     if (!server->socket) {
         AWS_LOGF_ERROR(
@@ -427,50 +507,70 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
             aws_last_error(),
             aws_error_name(aws_last_error()));
 
-        goto error;
+        goto socket_error;
     }
 
     AWS_LOGF_INFO(
         AWS_LS_HTTP_SERVER,
-        "%s:%d: Server setup complete, listening for incoming connections.",
+        "%p %s:%d: Server setup complete, listening for incoming connections.",
+        (void *)server,
         server->socket->local_endpoint.address,
         server->socket->local_endpoint.port);
 
     return server;
 
-error:
-    aws_http_server_destroy(server);
+socket_error:
+    aws_hash_table_clean_up(&server->synced_data.channel_to_connection_map);
+hash_table_error:
+    aws_mutex_clean_up(&server->synced_data.lock);
+mutex_error:
+    aws_mem_release(server->alloc, server);
     return NULL;
 }
 
-void aws_http_server_destroy(struct aws_http_server *server) {
+void aws_http_server_release(struct aws_http_server *server) {
     if (!server) {
         return;
     }
+    bool already_shutting_down = false;
+    /* BEGIN CRITICAL SECTION */
+    s_server_lock_synced_data(server);
+    if (server->synced_data.is_shutting_down) {
+        already_shutting_down = true;
+    } else {
+        server->synced_data.is_shutting_down = true;
+    }
+    if (!already_shutting_down) {
+        /* shutdown all existing channels */
+        for (struct aws_hash_iter iter = aws_hash_iter_begin(&server->synced_data.channel_to_connection_map);
+             !aws_hash_iter_done(&iter);
+             aws_hash_iter_next(&iter)) {
+            struct aws_channel *channel = (struct aws_channel *)iter.element.key;
+            aws_channel_shutdown(channel, AWS_ERROR_HTTP_CONNECTION_CLOSED);
+        }
+    }
+    s_server_unlock_synced_data(server);
+    /* END CRITICAL SECTION */
 
-    if (server->socket) {
-        /* TODO: Server shutdown probably needs multiple steps, and to be async, like:
-         * 1) stop accepting new connections.
-         * 2) issue shutdown to all existing connections.
-         * 3) wait for connections to finish shutting down.
-         * 4) issue a destroy_complete callback.
-         * 5) finally actually delete server.
-         *
-         * But for now, just assert that there are no outstanding connections */
-        AWS_FATAL_ASSERT(aws_hash_table_get_entry_count(&server->channel_to_connection_map) == 0);
-
-        AWS_LOGF_INFO(
-            AWS_LS_HTTP_SERVER,
-            "%s:%d: Destroying server.",
-            server->socket->local_endpoint.address,
-            server->socket->local_endpoint.port);
-
-        aws_server_bootstrap_destroy_socket_listener(server->bootstrap, server->socket);
+    if (already_shutting_down) {
+        /* The service is already shutting down, not shutting it down again */
+        AWS_LOGF_TRACE(AWS_LS_HTTP_SERVER, "id=%p: The server is already shutting down", (void *)server);
+        return;
     }
 
-    aws_hash_table_clean_up(&server->channel_to_connection_map);
+    /* stop listening, clean up the socket, after all existing connections finish shutting down, the
+     * s_server_bootstrap_on_server_listener_destroy will be invoked, clean up of the server will be there */
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_SERVER,
+        "%p %s:%d: Shutting down the server.",
+        (void *)server,
+        server->socket->local_endpoint.address,
+        server->socket->local_endpoint.port);
 
-    aws_mem_release(server->alloc, server);
+    aws_server_bootstrap_destroy_socket_listener(server->bootstrap, server->socket);
+
+    /* wait for connections to finish shutting down
+     * clean up will be called from eventloop */
 }
 
 /* At this point, the channel bootstrapper has established a connection to the server and set up a channel.
@@ -620,6 +720,12 @@ int aws_http_client_connect_internal(
     http_bootstrap->on_setup = options->on_setup;
     http_bootstrap->on_shutdown = options->on_shutdown;
     http_bootstrap->proxy_request_transform = proxy_request_transform;
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "static: attempting to initialize a new client channel to %s:%d",
+        (const char *)aws_string_bytes(host_name),
+        (int)options->port);
 
     if (options->tls_options) {
         err = s_system_vtable_ptr->new_tls_socket_channel(
