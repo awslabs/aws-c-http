@@ -245,7 +245,7 @@ int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester) 
 
     connection->user_data = tester->http_bootstrap->user_data;
     connection->client_data = &connection->client_or_server_data.client;
-    connection->message_transform = tester->http_bootstrap->message_transform;
+    connection->proxy_request_transform = tester->http_bootstrap->proxy_request_transform;
 
     struct aws_channel_slot *slot = aws_channel_slot_new(tester->testing_channel->channel);
     ASSERT_NOT_NULL(slot);

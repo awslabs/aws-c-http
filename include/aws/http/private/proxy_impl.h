@@ -20,6 +20,7 @@
 
 #include <aws/http/connection.h>
 
+struct aws_http_message;
 struct aws_channel_slot;
 struct aws_string;
 struct aws_tls_connection_options;

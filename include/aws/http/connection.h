@@ -18,8 +18,6 @@
 
 #include <aws/http/http.h>
 
-#include <aws/http/request_response.h>
-
 struct aws_client_bootstrap;
 struct aws_socket_options;
 struct aws_tls_connection_options;
@@ -169,13 +167,6 @@ struct aws_http_client_connection_options {
      * AND aws_http_connection_release() has been called.
      */
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
-
-    /*
-     * Request transformation function invoked with every request made on the connection.
-     * The user_data parameter is the connection's user_data
-     * Optional
-     */
-    aws_http_message_transform_fn *message_transform;
 };
 
 /**

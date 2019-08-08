@@ -51,11 +51,28 @@ struct aws_http_header {
 struct aws_http_message;
 
 /**
- * A function that may modify the request before it is sent.
- * Return AWS_OP_SUCCESS to indicate that transformation was successful,
- * or AWS_OP_ERR to indicate failure and cancel the operation.
+ * Function to invoke when a message transformation completes.
+ * This function MUST be invoked or the application will soft-lock.
+ * `message` and `complete_ctx` must be the same pointers provided to the `aws_http_message_transform_fn`.
+ * `error_code` should should be AWS_ERROR_SUCCESS if transformation was successful,
+ * otherwise pass a different AWS_ERROR_X value.
  */
-typedef int aws_http_message_transform_fn(struct aws_http_message *message, void *user_data);
+typedef void(
+    aws_http_message_transform_complete_fn)(struct aws_http_message *message, int error_code, void *complete_ctx);
+
+/**
+ * A function that may modify a request or response before it is sent.
+ * The transformation may be asynchronous or immediate.
+ * The user MUST invoke the `complete_fn` when transformation is complete or the application will soft-lock.
+ * When invoking the `complete_fn`, pass along the `message` and `complete_ctx` provided here and an error code.
+ * The error code should be AWS_ERROR_SUCCESS if transformation was successful,
+ * otherwise pass a different AWS_ERROR_X value.
+ */
+typedef void(aws_http_message_transform_fn)(
+    struct aws_http_message *message,
+    void *user_data,
+    aws_http_message_transform_complete_fn *complete_fn,
+    void *complete_ctx);
 
 /**
  * Invoked repeatedly times as headers are received.

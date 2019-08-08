@@ -14,6 +14,7 @@
  */
 
 #include <aws/http/connection.h>
+#include <aws/http/request_response.h>
 #include <aws/http/server.h>
 
 #include <aws/io/logging.h>
