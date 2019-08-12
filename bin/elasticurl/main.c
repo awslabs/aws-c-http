@@ -476,20 +476,19 @@ static void s_on_signing_complete(struct aws_http_message *request, int error_co
         aws_http_message_get_header(app_ctx->request, &headers[i], i);
     }
 
-    struct aws_http_request_options final_request;
-    AWS_ZERO_STRUCT(final_request);
-    final_request.self_size = sizeof(struct aws_http_request_options);
-    final_request.user_data = app_ctx;
-    final_request.client_connection = app_ctx->connection;
-    final_request.request = app_ctx->request;
-    final_request.on_response_headers = s_on_incoming_headers_fn;
-    final_request.on_response_header_block_done = s_on_incoming_header_block_done_fn;
-    final_request.on_response_body = s_on_incoming_body_fn;
-    final_request.on_complete = s_on_stream_complete_fn;
+    struct aws_http_make_request_options final_request = {
+        .self_size = sizeof(final_request),
+        .user_data = app_ctx,
+        .request = app_ctx->request,
+        .on_response_headers = s_on_incoming_headers_fn,
+        .on_response_header_block_done = s_on_incoming_header_block_done_fn,
+        .on_response_body = s_on_incoming_body_fn,
+        .on_complete = s_on_stream_complete_fn,
+    };
 
     app_ctx->response_code_written = false;
 
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&final_request);
+    struct aws_http_stream *stream = aws_http_connection_make_request(app_ctx->connection, &final_request);
     if (!stream) {
         fprintf(stderr, "failed to create request.");
         exit(1);

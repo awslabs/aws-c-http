@@ -133,18 +133,17 @@ static int s_do_proxy_request_test(
     };
     aws_http_message_add_header(request, accept_header);
 
-    struct aws_http_request_options request_options;
-    AWS_ZERO_STRUCT(request_options);
-    request_options.client_connection = tester.client_connection;
-    request_options.request = request;
-    request_options.self_size = sizeof(struct aws_http_request_options);
-    request_options.user_data = &tester;
-    request_options.on_response_headers = s_aws_http_on_incoming_headers_proxy_test;
-    request_options.on_response_header_block_done = s_aws_http_on_incoming_header_block_done_proxy_test;
-    request_options.on_response_body = s_aws_http_on_incoming_body_proxy_test;
-    request_options.on_complete = s_aws_http_on_stream_complete_proxy_test;
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .user_data = &tester,
+        .on_response_headers = s_aws_http_on_incoming_headers_proxy_test,
+        .on_response_header_block_done = s_aws_http_on_incoming_header_block_done_proxy_test,
+        .on_response_body = s_aws_http_on_incoming_body_proxy_test,
+        .on_complete = s_aws_http_on_stream_complete_proxy_test,
+    };
 
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&request_options);
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.client_connection, &request_options);
     (void)stream;
 
     ASSERT_SUCCESS(proxy_tester_wait(&tester, proxy_tester_request_complete_pred_fn));

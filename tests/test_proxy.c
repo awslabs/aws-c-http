@@ -409,14 +409,13 @@ static int s_do_http_proxy_request_transform_test(struct aws_allocator *allocato
     struct aws_http_message *untransformed_request = s_build_http_request(allocator);
     struct aws_http_message *request = s_build_http_request(allocator);
 
-    struct aws_http_request_options request_options;
-    AWS_ZERO_STRUCT(request_options);
-    request_options.client_connection = tester.client_connection;
-    request_options.request = request;
-    request_options.self_size = sizeof(struct aws_http_request_options);
-    request_options.user_data = &tester;
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .user_data = &tester,
+    };
 
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&request_options);
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.client_connection, &request_options);
     testing_channel_run_currently_queued_tasks(tester.testing_channel);
 
     s_verify_transformed_request(untransformed_request, request, use_basic_auth, allocator);

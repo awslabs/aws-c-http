@@ -35,7 +35,7 @@ static const struct aws_websocket_client_bootstrap_system_vtable s_default_syste
     .aws_http_connection_release = aws_http_connection_release,
     .aws_http_connection_close = aws_http_connection_close,
     .aws_http_connection_get_channel = aws_http_connection_get_channel,
-    .aws_http_stream_new_client_request = aws_http_stream_new_client_request,
+    .aws_http_connection_make_request = aws_http_connection_make_request,
     .aws_http_stream_release = aws_http_stream_release,
     .aws_http_stream_get_connection = aws_http_stream_get_connection,
     .aws_http_stream_get_incoming_response_status = aws_http_stream_get_incoming_response_status,
@@ -300,14 +300,16 @@ static void s_ws_bootstrap_on_http_setup(struct aws_http_connection *http_connec
      * first and wait for shutdown to complete before informing the user of setup failure. */
 
     /* Send the handshake request */
-    struct aws_http_request_options options = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    options.client_connection = http_connection;
-    options.request = ws_bootstrap->handshake_request;
-    options.user_data = ws_bootstrap;
-    options.on_response_headers = s_ws_bootstrap_on_handshake_response_headers;
-    options.on_complete = s_ws_bootstrap_on_handshake_complete;
+    struct aws_http_make_request_options options = {
+        .self_size = sizeof(options),
+        .request = ws_bootstrap->handshake_request,
+        .user_data = ws_bootstrap,
+        .on_response_headers = s_ws_bootstrap_on_handshake_response_headers,
+        .on_complete = s_ws_bootstrap_on_handshake_complete,
+    };
 
-    struct aws_http_stream *handshake_stream = s_system_vtable->aws_http_stream_new_client_request(&options);
+    struct aws_http_stream *handshake_stream =
+        s_system_vtable->aws_http_connection_make_request(http_connection, &options);
     if (!handshake_stream) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,

@@ -34,7 +34,9 @@ static int s_mock_http_client_connect(const struct aws_http_client_connection_op
 static void s_mock_http_connection_release(struct aws_http_connection *connection);
 static void s_mock_http_connection_close(struct aws_http_connection *connection);
 static struct aws_channel *s_mock_http_connection_get_channel(struct aws_http_connection *connection);
-static struct aws_http_stream *s_mock_http_stream_new_client_request(const struct aws_http_request_options *options);
+static struct aws_http_stream *s_mock_http_connection_make_request(
+    struct aws_http_connection *connection,
+    const struct aws_http_make_request_options *options);
 static void s_mock_http_stream_release(struct aws_http_stream *stream);
 static struct aws_http_connection *s_mock_http_stream_get_connection(const struct aws_http_stream *stream);
 static int s_mock_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status);
@@ -45,7 +47,7 @@ static const struct aws_websocket_client_bootstrap_system_vtable s_mock_system_v
     .aws_http_connection_release = s_mock_http_connection_release,
     .aws_http_connection_close = s_mock_http_connection_close,
     .aws_http_connection_get_channel = s_mock_http_connection_get_channel,
-    .aws_http_stream_new_client_request = s_mock_http_stream_new_client_request,
+    .aws_http_connection_make_request = s_mock_http_connection_make_request,
     .aws_http_stream_release = s_mock_http_stream_release,
     .aws_http_stream_get_connection = s_mock_http_stream_get_connection,
     .aws_http_stream_get_incoming_response_status = s_mock_http_stream_get_incoming_response_status,
@@ -268,7 +270,11 @@ static struct aws_channel *s_mock_http_connection_get_channel(struct aws_http_co
     return s_mock_channel;
 }
 
-static struct aws_http_stream *s_mock_http_stream_new_client_request(const struct aws_http_request_options *options) {
+static struct aws_http_stream *s_mock_http_connection_make_request(
+    struct aws_http_connection *client_connection,
+    const struct aws_http_make_request_options *options) {
+
+    AWS_FATAL_ASSERT(client_connection);
     AWS_FATAL_ASSERT(options);
     AWS_FATAL_ASSERT(!s_tester.http_connection_release_called);
     AWS_FATAL_ASSERT(!s_tester.http_stream_new_called_successfully); /* ensure we're only called once */

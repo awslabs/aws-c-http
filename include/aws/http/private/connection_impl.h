@@ -26,7 +26,7 @@
 #include <aws/io/channel_bootstrap.h>
 
 struct aws_http_message;
-struct aws_http_request_options;
+struct aws_http_make_request_options;
 struct aws_http_request_handler_options;
 struct aws_http_stream;
 
@@ -57,7 +57,10 @@ struct aws_http_connection_system_vtable {
 struct aws_http_connection_vtable {
     struct aws_channel_handler_vtable channel_handler_vtable;
 
-    struct aws_http_stream *(*new_client_request_stream)(const struct aws_http_request_options *options);
+    struct aws_http_stream *(*make_request)(
+        struct aws_http_connection *client_connection,
+        const struct aws_http_make_request_options *options);
+
     struct aws_http_stream *(*new_server_request_handler_stream)(
         const struct aws_http_request_handler_options *options);
     int (*stream_send_response)(struct aws_http_stream *stream, struct aws_http_message *response);
