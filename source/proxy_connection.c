@@ -490,17 +490,15 @@ static int s_make_proxy_connect_request(
         return AWS_OP_ERR;
     }
 
-    struct aws_http_request_options request_options;
-    AWS_ZERO_STRUCT(request_options);
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .user_data = user_data,
+        .on_response_header_block_done = s_aws_http_on_incoming_header_block_done_tls_proxy,
+        .on_complete = s_aws_http_on_stream_complete_tls_proxy,
+    };
 
-    request_options.self_size = sizeof(struct aws_http_request_options);
-    request_options.client_connection = connection;
-    request_options.request = request;
-    request_options.user_data = user_data;
-    request_options.on_response_header_block_done = s_aws_http_on_incoming_header_block_done_tls_proxy;
-    request_options.on_complete = s_aws_http_on_stream_complete_tls_proxy;
-
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&request_options);
+    struct aws_http_stream *stream = aws_http_connection_make_request(connection, &request_options);
     if (stream == NULL) {
         goto on_error;
     }

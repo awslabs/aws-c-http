@@ -416,26 +416,29 @@ int aws_http_message_get_header(
     return AWS_OP_SUCCESS;
 }
 
-struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http_request_options *options) {
+struct aws_http_stream *aws_http_connection_make_request(
+    struct aws_http_connection *client_connection,
+    const struct aws_http_make_request_options *options) {
+
+    AWS_PRECONDITION(client_connection);
+    AWS_PRECONDITION(aws_http_connection_is_client(client_connection));
     AWS_PRECONDITION(options);
-    if (options->self_size == 0 || !options->client_connection ||
-        !aws_http_connection_is_client(options->client_connection) || !options->request ||
-        !aws_http_message_is_request(options->request)) {
+    if (options->self_size == 0 || !options->request || !aws_http_message_is_request(options->request)) {
 
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Cannot create client request, options are invalid.",
-            (void *)(options ? options->client_connection : NULL));
+            (void *)client_connection);
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }
 
     /* Connection owns stream, and must outlive stream */
-    aws_http_connection_acquire(options->client_connection);
+    aws_http_connection_acquire(client_connection);
 
-    struct aws_http_stream *stream = options->client_connection->vtable->new_client_request_stream(options);
+    struct aws_http_stream *stream = client_connection->vtable->make_request(client_connection, options);
     if (!stream) {
-        aws_http_connection_release(options->client_connection);
+        aws_http_connection_release(client_connection);
         return NULL;
     }
 
@@ -444,7 +447,6 @@ struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http
 
 struct aws_http_stream *aws_http_stream_new_server_request_handler(
     const struct aws_http_request_handler_options *options) {
-
     AWS_PRECONDITION(options);
     if (options->self_size == 0 || !options->server_connection ||
         !aws_http_connection_is_server(options->server_connection)) {
@@ -508,7 +510,6 @@ int aws_http_stream_get_incoming_response_status(const struct aws_http_stream *s
 int aws_http_stream_get_incoming_request_method(
     const struct aws_http_stream *stream,
     struct aws_byte_cursor *out_method) {
-
     AWS_ASSERT(stream && stream->server_data);
 
     if (!stream->server_data->request_method_str.ptr) {

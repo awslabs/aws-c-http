@@ -64,9 +64,12 @@ static struct aws_h1_stream *s_stream_new_common(
     return stream;
 }
 
-struct aws_h1_stream *aws_h1_stream_new_request(const struct aws_http_request_options *options) {
+struct aws_h1_stream *aws_h1_stream_new_request(
+    struct aws_http_connection *client_connection,
+    const struct aws_http_make_request_options *options) {
+
     struct aws_h1_stream *stream = s_stream_new_common(
-        options->client_connection,
+        client_connection,
         options->manual_window_management,
         options->user_data,
         options->on_response_headers,
@@ -78,9 +81,8 @@ struct aws_h1_stream *aws_h1_stream_new_request(const struct aws_http_request_op
     }
 
     /* Transform request if necessary */
-    if (options->client_connection->proxy_request_transform) {
-        if (options->client_connection->proxy_request_transform(
-                options->request, options->client_connection->user_data)) {
+    if (client_connection->proxy_request_transform) {
+        if (client_connection->proxy_request_transform(options->request, client_connection->user_data)) {
             goto error;
         }
     }
@@ -89,8 +91,8 @@ struct aws_h1_stream *aws_h1_stream_new_request(const struct aws_http_request_op
     stream->base.client_data->response_status = AWS_HTTP_STATUS_UNKNOWN;
 
     /* Validate request and cache info that the encoder will eventually need */
-    int err = aws_h1_encoder_message_init_from_request(
-        &stream->encoder_message, options->client_connection->alloc, options->request);
+    int err =
+        aws_h1_encoder_message_init_from_request(&stream->encoder_message, client_connection->alloc, options->request);
     if (err) {
         goto error;
     }

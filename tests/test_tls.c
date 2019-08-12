@@ -178,14 +178,15 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
     };
     ASSERT_SUCCESS(aws_http_message_add_header(request, header_host));
 
-    struct aws_http_request_options req_options = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    req_options.client_connection = test.client_connection;
-    req_options.request = request;
-    req_options.on_response_body = s_on_stream_body;
-    req_options.on_complete = s_on_stream_complete;
-    req_options.user_data = &test;
+    struct aws_http_make_request_options req_options = {
+        .self_size = sizeof(req_options),
+        .request = request,
+        .on_response_body = s_on_stream_body,
+        .on_complete = s_on_stream_complete,
+        .user_data = &test,
+    };
 
-    ASSERT_NOT_NULL(test.stream = aws_http_stream_new_client_request(&req_options));
+    ASSERT_NOT_NULL(test.stream = aws_http_connection_make_request(test.client_connection, &req_options));
 
     /* wait for the request to complete */
     s_test_wait(&test, s_stream_wait_pred);

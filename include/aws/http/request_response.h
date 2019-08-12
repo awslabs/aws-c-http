@@ -120,21 +120,16 @@ typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int
 
 /**
  * Options for creating a stream which sends a request from the client and receives a response from the server.
- * Initialize with AWS_HTTP_REQUEST_OPTIONS_INIT to set default values.
  */
-struct aws_http_request_options {
+struct aws_http_make_request_options {
     /**
      * The sizeof() this struct, used for versioning.
-     * Set by AWS_HTTP_REQUEST_OPTIONS_INIT.
+     * Required.
      */
     size_t self_size;
 
     /**
-     * Required.
-     */
-    struct aws_http_connection *client_connection;
-
-    /**
+     * Definition for outgoing request.
      * Required.
      * This object must stay alive at least until on_complete is called.
      */
@@ -181,12 +176,6 @@ struct aws_http_request_options {
      */
     bool manual_window_management;
 };
-
-/**
- * Initializes aws_http_request_options with default values.
- */
-#define AWS_HTTP_REQUEST_OPTIONS_INIT                                                                                  \
-    { .self_size = sizeof(struct aws_http_request_options), }
 
 struct aws_http_request_handler_options {
     /* Set to sizeof() this struct, used for versioning. */
@@ -399,10 +388,15 @@ int aws_http_message_erase_header(struct aws_http_message *message, size_t index
 /**
  * Create a stream, with a client connection sending a request.
  * The request starts sending automatically once the stream is created.
- * The `def`, and all memory it references, is copied during this call.
+ * The `options` are copied during this call.
+ *
+ * Tip for language bindings: Do not bind the `options` struct. Use something more natural for your language,
+ * such as Builder Pattern in Java, or Python's ability to take many optional arguments by name.
  */
 AWS_HTTP_API
-struct aws_http_stream *aws_http_stream_new_client_request(const struct aws_http_request_options *options);
+struct aws_http_stream *aws_http_connection_make_request(
+    struct aws_http_connection *client_connection,
+    const struct aws_http_make_request_options *options);
 
 /**
  * Create a stream, with a server connection receiving and responding to a request.
@@ -449,7 +443,7 @@ int aws_http_stream_send_response(struct aws_http_stream *stream, struct aws_htt
 /**
  * Manually issue a window update.
  * Note that the stream's default behavior is to issue updates which keep the window at its original size.
- * See aws_http_request_options.manual_window_management for details on letting the window shrink.
+ * See aws_http_make_request_options.manual_window_management for details on letting the window shrink.
  */
 AWS_HTTP_API
 void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);

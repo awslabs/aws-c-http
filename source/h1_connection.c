@@ -58,7 +58,9 @@ static int s_handler_shutdown(
 static size_t s_handler_initial_window_size(struct aws_channel_handler *handler);
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
-static struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options);
+static struct aws_http_stream *s_make_request(
+    struct aws_http_connection *client_connection,
+    const struct aws_http_make_request_options *options);
 static struct aws_http_stream *s_new_server_request_handler_stream(
     const struct aws_http_request_handler_options *options);
 static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response);
@@ -87,7 +89,7 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
             .destroy = s_handler_destroy,
         },
 
-    .new_client_request_stream = s_new_client_request_stream,
+    .make_request = s_make_request,
     .new_server_request_handler_stream = s_new_server_request_handler_stream,
     .stream_send_response = s_stream_send_response,
     .close = s_connection_close,
@@ -401,20 +403,22 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
     }
 }
 
-struct aws_http_stream *s_new_client_request_stream(const struct aws_http_request_options *options) {
-    struct aws_h1_stream *stream = aws_h1_stream_new_request(options);
+struct aws_http_stream *s_make_request(
+    struct aws_http_connection *client_connection,
+    const struct aws_http_make_request_options *options) {
+    struct aws_h1_stream *stream = aws_h1_stream_new_request(client_connection, options);
     if (!stream) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Cannot create request stream, error %d (%s)",
-            (void *)options->client_connection,
+            (void *)client_connection,
             aws_last_error(),
             aws_error_name(aws_last_error()));
 
         return NULL;
     }
 
-    struct h1_connection *connection = AWS_CONTAINER_OF(options->client_connection, struct h1_connection, base);
+    struct h1_connection *connection = AWS_CONTAINER_OF(client_connection, struct h1_connection, base);
 
     /* Insert new stream into pending list, and schedule outgoing_stream_task if it's not already running. */
     int new_stream_error_code = AWS_ERROR_SUCCESS;
@@ -440,7 +444,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Cannot create request stream, error %d (%s)",
-            (void *)options->client_connection,
+            (void *)client_connection,
             new_stream_error_code,
             aws_error_name(new_stream_error_code));
 
@@ -457,7 +461,7 @@ struct aws_http_stream *s_new_client_request_stream(const struct aws_http_reques
         AWS_LS_HTTP_STREAM,
         "id=%p: Created client request on connection=%p: " PRInSTR " " PRInSTR " " PRInSTR,
         (void *)&stream->base,
-        (void *)options->client_connection,
+        (void *)client_connection,
         AWS_BYTE_CURSOR_PRI(method),
         AWS_BYTE_CURSOR_PRI(path),
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->base.http_version)));
