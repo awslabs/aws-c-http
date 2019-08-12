@@ -479,6 +479,8 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
 
     aws_mutex_lock(&manager->lock);
 
+    struct aws_allocator *allocator = manager->allocator;
+
     if (manager->external_ref_count > 0) {
         manager->external_ref_count -= 1;
 
@@ -537,7 +539,7 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
     }
 
     aws_array_list_clean_up(&connections_to_release);
-    s_aws_http_connection_manager_complete_acquisitions(&pending_acquisitions_to_fail, manager->allocator);
+    s_aws_http_connection_manager_complete_acquisitions(&pending_acquisitions_to_fail, allocator);
 
     if (should_destroy) {
         s_aws_http_connection_manager_destroy(manager);
