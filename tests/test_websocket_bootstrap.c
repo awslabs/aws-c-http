@@ -35,7 +35,7 @@ static void s_mock_http_connection_release(struct aws_http_connection *connectio
 static void s_mock_http_connection_close(struct aws_http_connection *connection);
 static struct aws_channel *s_mock_http_connection_get_channel(struct aws_http_connection *connection);
 static struct aws_http_stream *s_mock_http_connection_make_request(
-    struct aws_http_connection *connection,
+    struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options);
 static void s_mock_http_stream_release(struct aws_http_stream *stream);
 static struct aws_http_connection *s_mock_http_stream_get_connection(const struct aws_http_stream *stream);
