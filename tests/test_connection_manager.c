@@ -18,6 +18,7 @@
 #include <aws/common/array_list.h>
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
+#include <aws/common/logging.h>
 #include <aws/common/mutex.h>
 #include <aws/common/thread.h>
 #include <aws/common/uuid.h>
@@ -45,6 +46,7 @@ struct cm_tester_options {
 
 struct cm_tester {
     struct aws_allocator *allocator;
+    struct aws_logger logger;
     struct aws_event_loop_group event_loop_group;
     struct aws_host_resolver host_resolver;
 
@@ -85,6 +87,14 @@ int s_cm_tester_init(struct cm_tester_options *options) {
     aws_io_load_error_strings();
 
     tester->allocator = options->allocator;
+
+    struct aws_logger_standard_options logger_options = {
+        .level = AWS_LOG_LEVEL_TRACE,
+        .file = stderr,
+    };
+
+    ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->allocator, &logger_options));
+    aws_logger_set(&tester->logger);
 
     ASSERT_SUCCESS(
         aws_array_list_init_dynamic(&tester->connections, tester->allocator, 10, sizeof(struct aws_http_connection *)));
@@ -304,6 +314,9 @@ int s_cm_tester_clean_up(void) {
 
     aws_http_library_clean_up();
     aws_tls_clean_up_static_state();
+
+    aws_logger_clean_up(&tester->logger);
+
     return AWS_OP_SUCCESS;
 }
 
