@@ -58,6 +58,7 @@ struct aws_websocket {
     struct aws_channel_handler channel_handler;
     struct aws_channel_slot *channel_slot;
     size_t initial_window_size;
+    bool manual_window_update;
 
     void *user_data;
     aws_websocket_on_incoming_frame_begin_fn *on_incoming_frame_begin;
@@ -278,6 +279,7 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
     websocket->channel_slot = slot;
 
     websocket->initial_window_size = options->initial_window_size;
+    websocket->manual_window_update = options->manual_window_update;
 
     websocket->user_data = options->user_data;
     websocket->on_incoming_frame_begin = options->on_incoming_frame_begin;
@@ -1345,14 +1347,8 @@ static int s_decoder_on_user_payload(struct aws_websocket *websocket, struct aws
         return AWS_OP_SUCCESS;
     }
 
-    size_t window_update_size = data.len;
-
     if (!websocket->on_incoming_frame_payload(
-            websocket,
-            websocket->thread_data.current_incoming_frame,
-            data,
-            &window_update_size,
-            websocket->user_data)) {
+            websocket, websocket->thread_data.current_incoming_frame, data, websocket->user_data)) {
 
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET, "id=%p: Incoming payload callback has reported a failure.", (void *)websocket);
@@ -1360,10 +1356,9 @@ static int s_decoder_on_user_payload(struct aws_websocket *websocket, struct aws
     }
 
     /* If user reduced window_update_size, reduce how much the websocket will update its window */
-    if (data.len > window_update_size) {
-        size_t reduce = data.len - window_update_size;
-        AWS_ASSERT(websocket->thread_data.incoming_message_window_update >= reduce);
-        websocket->thread_data.incoming_message_window_update -= reduce;
+    if (websocket->manual_window_update) {
+        size_t reduce = data.len;
+        websocket->thread_data.incoming_message_window_update -= data.len;
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_WEBSOCKET,
             "id=%p: Incoming payload callback changed window update size, window will shrink by %zu.",
@@ -1643,7 +1638,7 @@ int aws_websocket_random_handshake_key(struct aws_byte_buf *dst) {
     return AWS_OP_SUCCESS;
 }
 
-struct aws_http_request *aws_http_request_new_websocket_handshake(
+struct aws_http_message *aws_http_message_new_websocket_handshake_request(
     struct aws_allocator *allocator,
     struct aws_byte_cursor path,
     struct aws_byte_cursor host) {
@@ -1652,18 +1647,17 @@ struct aws_http_request *aws_http_request_new_websocket_handshake(
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&path))
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&host))
 
-    struct aws_http_request *request = aws_http_request_new(allocator);
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
     if (!request) {
         goto error;
     }
 
-    struct aws_byte_cursor method = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET");
-    int err = aws_http_request_set_method(request, method);
+    int err = aws_http_message_set_request_method(request, aws_http_method_get);
     if (err) {
         goto error;
     }
 
-    err = aws_http_request_set_path(request, path);
+    err = aws_http_message_set_request_path(request, path);
     if (err) {
         goto error;
     }
@@ -1699,7 +1693,7 @@ struct aws_http_request *aws_http_request_new_websocket_handshake(
     };
 
     for (size_t i = 0; i < AWS_ARRAY_SIZE(required_headers); ++i) {
-        err = aws_http_request_add_header(request, required_headers[i]);
+        err = aws_http_message_add_header(request, required_headers[i]);
         if (err) {
             goto error;
         }
@@ -1708,6 +1702,6 @@ struct aws_http_request *aws_http_request_new_websocket_handshake(
     return request;
 
 error:
-    aws_http_request_destroy(request);
+    aws_http_message_destroy(request);
     return NULL;
 }

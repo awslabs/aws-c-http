@@ -18,7 +18,7 @@
 #include <aws/http/http.h>
 
 struct aws_http_header;
-struct aws_http_request;
+struct aws_http_message;
 
 /* TODO: Document lifetime stuff */
 /* TODO: Document CLOSE frame behavior (when auto-sent during close, when auto-closed) */
@@ -106,13 +106,6 @@ typedef bool(aws_websocket_on_incoming_frame_begin_fn)(
  * Payload data will not be valid after this call, so copy if necessary.
  * The payload data is always unmasked at this point.
  *
- * `out_increment_window` is how much to increment the read window after this data is processed.
- * The read window shrinks as payload data is received, and reading stops when its size reaches 0.
- * The initial value of `out_increment_window` will match the size of the data which has just come in,
- * so leaving `out_increment_window` untouched results in the window incrementing back to its original size.
- * Setting `out_increment_window` to 0 will let the window shrink, and aws_websocket_increment_read_window()
- * will need to be called when the user is ready to receive more data.
- *
  * Return true to proceed normally. If false is returned, the websocket will read no further data,
  * the frame will complete with an error-code, and the connection will close.
  */
@@ -120,7 +113,6 @@ typedef bool(aws_websocket_on_incoming_frame_payload_fn)(
     struct aws_websocket *websocket,
     const struct aws_websocket_incoming_frame *frame,
     struct aws_byte_cursor data,
-    size_t *out_increment_window,
     void *user_data);
 
 /**
@@ -170,29 +162,31 @@ struct aws_websocket_client_connection_options {
      * Required.
      * aws_websocket_client_connect() makes a copy.
      */
-    struct aws_uri *uri;
+    struct aws_byte_cursor host;
 
     /**
-     * Array of headers for the HTTP Upgrade request.
+     * Optional.
+     * Defaults to 443 if tls_options is present, 80 if it is not.
+     */
+    uint16_t port;
+
+    /**
      * Required.
-     * aws_websocket_client_connect() deep-copies all contents.
-     * The following headers are required:
+     * The request must outlive the handshake process (it will be safe to release in on_connection_setup())
+     * Suggestion: create via aws_http_message_new_websocket_handshake_request()
      *
-     * Host: server.example.com
+     * The method MUST be set to GET.
+     * The following headers are required (replace values in []):
+     *
+     * Host: [server.example.com]
      * Upgrade: websocket
      * Connection: Upgrade
-     * Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+     * Sec-WebSocket-Key: [dGhlIHNhbXBsZSBub25jZQ==]
      * Sec-WebSocket-Version: 13
      *
      * Sec-Websocket-Key should be a random 16 bytes value, Base64 encoded.
      */
-    const struct aws_http_header *handshake_header_array;
-
-    /**
-     * Number of entries in handshake_header_array.
-     * Required.
-     */
-    size_t num_handshake_headers;
+    struct aws_http_message *handshake_request;
 
     /**
      * Initial window size for websocket.
@@ -246,6 +240,17 @@ struct aws_websocket_client_connection_options {
      * See `aws_websocket_on_incoming_frame_complete_fn`.
      */
     aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
+
+    /**
+     * Set to true to manually manage the read window size.
+     *
+     * If this is false, the connection will maintain a constant window size.
+     *
+     * If this is true, the caller must manually increment the window size using aws_websocket_increment_read_window().
+     * If the window is not incremented, it will shrink by the amount of payload data received. If the window size
+     * reaches 0, no further data will be received.
+     */
+    bool manual_window_management;
 };
 
 /**
@@ -430,7 +435,8 @@ int aws_websocket_random_handshake_key(struct aws_byte_buf *dst);
  * Sec-WebSocket-Key: <base64 encoding of 16 random bytes>
  * Sec-WebSocket-Version: 13
  */
-struct aws_http_request *aws_http_request_new_websocket_handshake(
+AWS_HTTP_API
+struct aws_http_message *aws_http_message_new_websocket_handshake_request(
     struct aws_allocator *allocator,
     struct aws_byte_cursor path,
     struct aws_byte_cursor host);

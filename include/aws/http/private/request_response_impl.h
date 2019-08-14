@@ -36,21 +36,32 @@ struct aws_http_stream {
     struct aws_allocator *alloc;
     struct aws_http_connection *owning_connection;
 
+    bool manual_window_management;
+
     void *user_data;
-    aws_http_stream_outgoing_body_fn *stream_outgoing_body;
     aws_http_on_incoming_headers_fn *on_incoming_headers;
     aws_http_on_incoming_header_block_done_fn *on_incoming_header_block_done;
     aws_http_on_incoming_body_fn *on_incoming_body;
-    aws_http_on_request_end_fn *on_request_end;
     aws_http_on_stream_complete_fn *on_complete;
 
     struct aws_atomic_var refcount;
-    bool request_handler_configured;
 
-    int incoming_response_status;
-    enum aws_http_method incoming_request_method;
-    struct aws_byte_cursor incoming_request_method_str;
-    struct aws_byte_cursor incoming_request_uri;
+    union {
+        struct aws_http_stream_client_data {
+            int response_status;
+        } client;
+        struct aws_http_stream_server_data {
+            enum aws_http_method request_method;
+            struct aws_byte_cursor request_method_str;
+            struct aws_byte_cursor request_path;
+            aws_http_on_incoming_request_done_fn *on_request_done;
+        } server;
+    } client_or_server_data;
+
+    /* On client connections, `client_data` points to client_or_server_data.client and `server_data` is null.
+     * Opposite is true on server connections */
+    struct aws_http_stream_client_data *client_data;
+    struct aws_http_stream_server_data *server_data;
 };
 
 #endif /* AWS_HTTP_REQUEST_RESPONSE_IMPL_H */

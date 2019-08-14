@@ -21,21 +21,11 @@
 #include <aws/http/request_response.h>
 #include <aws/io/uri.h>
 
+#include <inttypes.h>
+
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
-
-struct scheme_port {
-    struct aws_byte_cursor scheme;
-    uint16_t port;
-};
-
-static const struct scheme_port s_scheme_ports[] = {
-    {.scheme = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("http"), .port = 80},
-    {.scheme = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https"), .port = 443},
-    {.scheme = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("ws"), .port = 80},
-    {.scheme = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("wss"), .port = 443},
-};
 
 /**
  * Allow unit-tests to mock interactions with external systems.
@@ -45,7 +35,7 @@ static const struct aws_websocket_client_bootstrap_system_vtable s_default_syste
     .aws_http_connection_release = aws_http_connection_release,
     .aws_http_connection_close = aws_http_connection_close,
     .aws_http_connection_get_channel = aws_http_connection_get_channel,
-    .aws_http_stream_new_client_request = aws_http_stream_new_client_request,
+    .aws_http_connection_make_request = aws_http_connection_make_request,
     .aws_http_stream_release = aws_http_stream_release,
     .aws_http_stream_get_connection = aws_http_stream_get_connection,
     .aws_http_stream_get_incoming_response_status = aws_http_stream_get_incoming_response_status,
@@ -70,6 +60,7 @@ struct aws_websocket_client_bootstrap {
     /* Settings copied in from aws_websocket_client_connection_options */
     struct aws_allocator *alloc;
     size_t initial_window_size;
+    bool manual_window_update;
     void *user_data;
     /* Setup callback will be set NULL once it's invoked.
      * This is used to determine whether setup or shutdown should be invoked
@@ -81,10 +72,7 @@ struct aws_websocket_client_bootstrap {
     aws_websocket_on_incoming_frame_complete_fn *websocket_frame_complete_callback;
 
     /* Handshake request data */
-    struct aws_byte_cursor request_path;
-    struct aws_http_header *request_header_array;
-    size_t num_request_headers;
-    struct aws_byte_buf request_storage;
+    struct aws_http_message *handshake_request;
 
     /* Handshake response data */
     int response_status;
@@ -105,7 +93,7 @@ static void s_ws_bootstrap_on_http_shutdown(
     struct aws_http_connection *http_connection,
     int error_code,
     void *user_data);
-static void s_ws_bootstrap_on_handshake_response_headers(
+static int s_ws_bootstrap_on_handshake_response_headers(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
     size_t num_headers,
@@ -117,10 +105,20 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     AWS_ASSERT(options);
 
     /* Validate options */
-    if (!options->allocator || !options->bootstrap || !options->socket_options || !options->uri ||
+    struct aws_byte_cursor path;
+    aws_http_message_get_request_path(options->handshake_request, &path);
+    if (!options->allocator || !options->bootstrap || !options->socket_options || !options->host.len || !path.len ||
         !options->on_connection_setup) {
 
         AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET_SETUP, "id=static: Missing required websocket connection options.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    struct aws_byte_cursor method;
+    aws_http_message_get_request_method(options->handshake_request, &method);
+    if (aws_http_str_to_method(method) != AWS_HTTP_METHOD_GET) {
+
+        AWS_LOGF_ERROR(AWS_LS_HTTP_WEBSOCKET_SETUP, "id=static: Websocket request must have method be 'GET'.");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
@@ -138,10 +136,10 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    if (!options->handshake_header_array || !options->num_handshake_headers) {
+    if (!options->handshake_request) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
-            "id=static: Invalid connection options, missing required headers for websocket client handshake.");
+            "id=static: Invalid connection options, missing required request for websocket client handshake.");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
@@ -154,58 +152,22 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
 
     ws_bootstrap->alloc = options->allocator;
     ws_bootstrap->initial_window_size = options->initial_window_size;
+    ws_bootstrap->manual_window_update = options->manual_window_management;
     ws_bootstrap->user_data = options->user_data;
     ws_bootstrap->websocket_setup_callback = options->on_connection_setup;
     ws_bootstrap->websocket_shutdown_callback = options->on_connection_shutdown;
     ws_bootstrap->websocket_frame_begin_callback = options->on_incoming_frame_begin;
     ws_bootstrap->websocket_frame_payload_callback = options->on_incoming_frame_payload;
     ws_bootstrap->websocket_frame_complete_callback = options->on_incoming_frame_complete;
+    ws_bootstrap->handshake_request = options->handshake_request;
     ws_bootstrap->response_status = AWS_HTTP_STATUS_UNKNOWN;
 
-    /* Deep-copy all request headers, plus the request path. */
-    size_t request_storage_size = aws_uri_path_and_query(options->uri)->len;
-    for (size_t i = 0; i < options->num_handshake_headers; ++i) {
-        request_storage_size += options->handshake_header_array[i].name.len;
-        request_storage_size += options->handshake_header_array[i].value.len;
-    }
-
-    int err = aws_byte_buf_init(&ws_bootstrap->request_storage, ws_bootstrap->alloc, request_storage_size);
-    if (err) {
-        goto error;
-    }
-
-    ws_bootstrap->request_path.len = aws_uri_path_and_query(options->uri)->len;
-    ws_bootstrap->request_path.ptr = ws_bootstrap->request_storage.buffer + ws_bootstrap->request_storage.len;
-    bool write_success =
-        aws_byte_buf_write_from_whole_cursor(&ws_bootstrap->request_storage, *aws_uri_path_and_query(options->uri));
-
-    ws_bootstrap->num_request_headers = options->num_handshake_headers;
-    ws_bootstrap->request_header_array =
-        aws_mem_calloc(ws_bootstrap->alloc, ws_bootstrap->num_request_headers, sizeof(struct aws_http_header));
-    if (!ws_bootstrap->request_header_array) {
-        goto error;
-    }
-
-    for (size_t i = 0; i < options->num_handshake_headers; ++i) {
-        const struct aws_http_header *src = &options->handshake_header_array[i];
-        struct aws_http_header *dst = &ws_bootstrap->request_header_array[i];
-
-        dst->name.len = src->name.len;
-        dst->name.ptr = ws_bootstrap->request_storage.buffer + ws_bootstrap->request_storage.len;
-        write_success &= aws_byte_buf_write_from_whole_cursor(&ws_bootstrap->request_storage, src->name);
-
-        dst->value.len = src->value.len;
-        dst->value.ptr = ws_bootstrap->request_storage.buffer + ws_bootstrap->request_storage.len;
-        write_success &= aws_byte_buf_write_from_whole_cursor(&ws_bootstrap->request_storage, src->value);
-    }
-
-    AWS_ASSERT(write_success); /* Should only fail if we allocated the wrong amount. */
-
     /* Pre-allocate space for response headers */
-    size_t estimated_response_headers = ws_bootstrap->num_request_headers + 10; /* just guesses */
-    size_t estimated_response_header_length = 64;                               /* just guesses */
+    /* Values are just guesses */
+    size_t estimated_response_headers = aws_http_message_get_header_count(ws_bootstrap->handshake_request) + 10;
+    size_t estimated_response_header_length = 64;
 
-    err = aws_array_list_init_dynamic(
+    int err = aws_array_list_init_dynamic(
         &ws_bootstrap->response_headers,
         ws_bootstrap->alloc,
         estimated_response_headers,
@@ -226,7 +188,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     struct aws_http_client_connection_options http_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
     http_options.allocator = ws_bootstrap->alloc;
     http_options.bootstrap = options->bootstrap;
-    http_options.host_name = *aws_uri_host_name(options->uri);
+    http_options.host_name = options->host;
     http_options.socket_options = options->socket_options;
     http_options.tls_options = options->tls_options;
     http_options.initial_window_size = 1024; /* Adequate space for response data to trickle in */
@@ -235,19 +197,9 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     http_options.on_shutdown = s_ws_bootstrap_on_http_shutdown;
 
     /* Infer port, if not explicitly specified in URI */
-    http_options.port = aws_uri_port(options->uri);
+    http_options.port = options->port;
     if (!http_options.port) {
-        struct aws_byte_cursor scheme = *aws_uri_scheme(options->uri);
-        for (size_t i = 0; i < AWS_ARRAY_SIZE(s_scheme_ports); ++i) {
-            if (aws_byte_cursor_eq_ignore_case(&scheme, &s_scheme_ports[i].scheme)) {
-                http_options.port = s_scheme_ports[i].port;
-                break;
-            }
-        }
-
-        if (!http_options.port) {
-            http_options.port = options->tls_options ? 443 : 80;
-        }
+        http_options.port = options->tls_options ? 443 : 80;
     }
 
     err = s_system_vtable->aws_http_client_connect(&http_options);
@@ -263,9 +215,11 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     /* Success! (so far) */
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_WEBSOCKET_SETUP,
-        "id=%p: Websocket setup begun, connecting to " PRInSTR,
+        "id=%p: Websocket setup begun, connecting to " PRInSTR ":%" PRIu16 PRInSTR,
         (void *)ws_bootstrap,
-        AWS_BYTE_BUF_PRI(options->uri->uri_str));
+        AWS_BYTE_CURSOR_PRI(options->host),
+        options->port,
+        AWS_BYTE_CURSOR_PRI(path));
 
     return AWS_OP_SUCCESS;
 
@@ -286,10 +240,6 @@ static void s_ws_bootstrap_destroy(struct aws_websocket_client_bootstrap *ws_boo
         return;
     }
 
-    if (ws_bootstrap->request_header_array) {
-        aws_mem_release(ws_bootstrap->alloc, ws_bootstrap->request_header_array);
-    }
-    aws_byte_buf_clean_up(&ws_bootstrap->request_storage);
     aws_array_list_clean_up(&ws_bootstrap->response_headers);
     aws_byte_buf_clean_up(&ws_bootstrap->response_storage);
 
@@ -350,17 +300,16 @@ static void s_ws_bootstrap_on_http_setup(struct aws_http_connection *http_connec
      * first and wait for shutdown to complete before informing the user of setup failure. */
 
     /* Send the handshake request */
-    struct aws_http_request_options options = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    options.client_connection = http_connection;
-    options.method = aws_byte_cursor_from_c_str("GET");
-    options.uri = ws_bootstrap->request_path;
-    options.header_array = ws_bootstrap->request_header_array;
-    options.num_headers = ws_bootstrap->num_request_headers;
-    options.user_data = ws_bootstrap;
-    options.on_response_headers = s_ws_bootstrap_on_handshake_response_headers;
-    options.on_complete = s_ws_bootstrap_on_handshake_complete;
+    struct aws_http_make_request_options options = {
+        .self_size = sizeof(options),
+        .request = ws_bootstrap->handshake_request,
+        .user_data = ws_bootstrap,
+        .on_response_headers = s_ws_bootstrap_on_handshake_response_headers,
+        .on_complete = s_ws_bootstrap_on_handshake_complete,
+    };
 
-    struct aws_http_stream *handshake_stream = s_system_vtable->aws_http_stream_new_client_request(&options);
+    struct aws_http_stream *handshake_stream =
+        s_system_vtable->aws_http_connection_make_request(http_connection, &options);
     if (!handshake_stream) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
@@ -442,7 +391,7 @@ static void s_ws_bootstrap_on_http_shutdown(
     s_ws_bootstrap_destroy(ws_bootstrap);
 }
 
-static void s_ws_bootstrap_on_handshake_response_headers(
+static int s_ws_bootstrap_on_handshake_response_headers(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
     size_t num_headers,
@@ -476,7 +425,7 @@ static void s_ws_bootstrap_on_handshake_response_headers(
         }
     }
 
-    return;
+    return AWS_OP_SUCCESS;
 error:
     AWS_LOGF_ERROR(
         AWS_LS_HTTP_WEBSOCKET_SETUP,
@@ -487,6 +436,8 @@ error:
 
     s_ws_bootstrap_cancel_setup_due_to_err(
         ws_bootstrap, s_system_vtable->aws_http_stream_get_connection(stream), aws_last_error());
+
+    return AWS_OP_ERR;
 }
 
 static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
@@ -527,7 +478,9 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
         .on_incoming_frame_begin = ws_bootstrap->websocket_frame_begin_callback,
         .on_incoming_frame_payload = ws_bootstrap->websocket_frame_payload_callback,
         .on_incoming_frame_complete = ws_bootstrap->websocket_frame_complete_callback,
-        .is_server = false};
+        .is_server = false,
+        .manual_window_update = ws_bootstrap->manual_window_update,
+    };
 
     ws_bootstrap->websocket = s_system_vtable->aws_websocket_handler_new(&ws_options);
     if (!ws_bootstrap->websocket) {

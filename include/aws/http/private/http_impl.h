@@ -24,6 +24,7 @@
  */
 enum aws_http_method {
     AWS_HTTP_METHOD_UNKNOWN, /* Unrecognized value. */
+    AWS_HTTP_METHOD_GET,
     AWS_HTTP_METHOD_HEAD,
     AWS_HTTP_METHOD_COUNT, /* Number of enums */
 };

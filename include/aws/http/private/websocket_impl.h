@@ -20,7 +20,7 @@
 
 struct aws_http_client_connection_options;
 struct aws_http_connection;
-struct aws_http_request_options;
+struct aws_http_make_request_options;
 
 /* RFC-6455 Section 5.2 Base Framing Protocol
  * Payload length:  7 bits, 7+16 bits, or 7+64 bits
@@ -74,6 +74,7 @@ struct aws_websocket_handler_options {
     aws_websocket_on_incoming_frame_complete_fn *on_incoming_frame_complete;
 
     bool is_server;
+    bool manual_window_update;
 };
 
 struct aws_websocket_client_bootstrap_system_vtable {
@@ -81,7 +82,9 @@ struct aws_websocket_client_bootstrap_system_vtable {
     void (*aws_http_connection_release)(struct aws_http_connection *connection);
     void (*aws_http_connection_close)(struct aws_http_connection *connection);
     struct aws_channel *(*aws_http_connection_get_channel)(struct aws_http_connection *connection);
-    struct aws_http_stream *(*aws_http_stream_new_client_request)(const struct aws_http_request_options *options);
+    struct aws_http_stream *(*aws_http_connection_make_request)(
+        struct aws_http_connection *client_connection,
+        const struct aws_http_make_request_options *options);
     void (*aws_http_stream_release)(struct aws_http_stream *stream);
     struct aws_http_connection *(*aws_http_stream_get_connection)(const struct aws_http_stream *stream);
     int (*aws_http_stream_get_incoming_response_status)(const struct aws_http_stream *stream, int *out_status);

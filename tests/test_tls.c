@@ -91,26 +91,11 @@ static bool s_test_connection_shutdown_pred(void *user_data) {
     return test->wait_result || test->client_connection_is_shutdown;
 }
 
-static void s_on_stream_headers(
-    struct aws_http_stream *stream,
-    const struct aws_http_header *headers,
-    size_t num_headers,
-    void *user_data) {
+static int s_on_stream_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
     (void)stream;
-    (void)headers;
-    (void)num_headers;
-    (void)user_data;
-}
-
-static void s_on_stream_body(
-    struct aws_http_stream *stream,
-    const struct aws_byte_cursor *data,
-    size_t *out_window_update_size, /* NOLINT(readability-non-const-parameter) */
-    void *user_data) {
-    (void)stream;
-    (void)out_window_update_size;
     struct test_ctx *test = user_data;
     test->body_size += data->len;
+    return AWS_OP_SUCCESS;
 }
 
 static void s_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
@@ -182,27 +167,33 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
     ASSERT_INT_EQUALS(0, test.wait_result);
     ASSERT_NOT_NULL(test.client_connection);
 
-    struct aws_http_header headers[] = {
-        {.name = aws_byte_cursor_from_c_str("Host"), .value = *aws_uri_host_name(&uri)}};
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_http_method_get));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, *aws_uri_path_and_query(&uri)));
 
-    struct aws_http_request_options req_options = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    req_options.client_connection = test.client_connection;
-    req_options.method = aws_byte_cursor_from_c_str("GET");
-    req_options.uri = *aws_uri_path_and_query(&uri);
-    req_options.header_array = headers;
-    req_options.num_headers = AWS_ARRAY_SIZE(headers);
-    req_options.on_response_headers = s_on_stream_headers;
-    req_options.on_response_body = s_on_stream_body;
-    req_options.on_complete = s_on_stream_complete;
-    req_options.user_data = &test;
+    struct aws_http_header header_host = {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
+        .value = *aws_uri_host_name(&uri),
+    };
+    ASSERT_SUCCESS(aws_http_message_add_header(request, header_host));
 
-    ASSERT_NOT_NULL(test.stream = aws_http_stream_new_client_request(&req_options));
+    struct aws_http_make_request_options req_options = {
+        .self_size = sizeof(req_options),
+        .request = request,
+        .on_response_body = s_on_stream_body,
+        .on_complete = s_on_stream_complete,
+        .user_data = &test,
+    };
+
+    ASSERT_NOT_NULL(test.stream = aws_http_connection_make_request(test.client_connection, &req_options));
 
     /* wait for the request to complete */
     s_test_wait(&test, s_stream_wait_pred);
 
     ASSERT_INT_EQUALS(14428801, test.body_size);
 
+    aws_http_message_destroy(request);
     aws_http_stream_release(test.stream);
     test.stream = NULL;
 
