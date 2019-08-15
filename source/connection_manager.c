@@ -366,7 +366,16 @@ static void s_aws_http_connection_manager_move_front_acquisition(
 }
 
 /*
+ * Encompasses all of the non-state-update work that needs to be done for various
+ * events:
+ *   manager release
+ *   connection release
+ *   connection acquire
+ *   connection_setup
+ *   connection_shutdown
  *
+ * The work unit is built under the manager's lock, but then executed
+ * outside of it.
  */
 struct aws_connection_management_work_unit {
     struct aws_http_connection_manager *manager;
@@ -413,7 +422,7 @@ static void s_aws_http_connection_manager_build_work_unit(struct aws_connection_
             aws_array_list_pop_back(&manager->connections);
 
             s_aws_http_connection_manager_move_front_acquisition(
-                    manager, connection, AWS_ERROR_SUCCESS, &work->completions);
+                manager, connection, AWS_ERROR_SUCCESS, &work->completions);
             ++manager->vended_connection_count;
         }
 
@@ -422,11 +431,11 @@ static void s_aws_http_connection_manager_build_work_unit(struct aws_connection_
          */
         if (manager->pending_acquisition_count > manager->pending_connects_count) {
             AWS_FATAL_ASSERT(
-                    manager->max_connections >= manager->vended_connection_count + manager->pending_connects_count);
+                manager->max_connections >= manager->vended_connection_count + manager->pending_connects_count);
 
             work->new_connections = manager->pending_acquisition_count - manager->pending_connects_count;
             size_t max_new_connections =
-                    manager->max_connections - (manager->vended_connection_count + manager->pending_connects_count);
+                manager->max_connections - (manager->vended_connection_count + manager->pending_connects_count);
 
             if (work->new_connections > max_new_connections) {
                 work->new_connections = max_new_connections;
@@ -446,10 +455,10 @@ static void s_aws_http_connection_manager_build_work_unit(struct aws_connection_
         aws_linked_list_swap_contents(&manager->pending_acquisitions, &work->completions);
 
         AWS_LOGF_INFO(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: manager release, failing %zu pending acquisitions",
-                (void *)manager,
-                manager->pending_acquisition_count);
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "id=%p: manager release, failing %zu pending acquisitions",
+            (void *)manager,
+            manager->pending_acquisition_count);
         manager->pending_acquisition_count = 0;
 
         work->should_destroy_manager = s_aws_http_connection_manager_should_destroy(manager);
@@ -771,9 +780,9 @@ void aws_http_connection_manager_acquire_connection(
 
     if (manager->state != AWS_HCMST_READY) {
         AWS_LOGF_ERROR(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: Acquire connection called when manager in shut down state",
-                (void *)manager);
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "id=%p: Acquire connection called when manager in shut down state",
+            (void *)manager);
 
         request->error_code = AWS_ERROR_HTTP_CONNECTION_MANAGER_INVALID_STATE_FOR_ACQUIRE;
     }
