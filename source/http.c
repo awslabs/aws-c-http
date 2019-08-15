@@ -38,6 +38,27 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_PARSE,
         "Encountered an unexpected form when parsing an http message."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_INVALID_HEADER_NAME,
+        "Invalid header name."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_INVALID_HEADER_VALUE,
+        "Invalid header value."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_INVALID_METHOD,
+        "Method is invalid."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_INVALID_PATH,
+        "Path is invalid."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_INVALID_STATUS_CODE,
+        "Status code is invalid."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_MISSING_BODY_STREAM,
+        "Given the provided headers (ex: Content-Length), a body is expected."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_MISSING_BODY_HEADERS,
+        "Missing headers (ex: Content-Length) required to send a body."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_CLOSED,
         "The connection has closed or is closing."),
     AWS_DEFINE_ERROR_INFO_HTTP(
@@ -73,6 +94,12 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_MANAGER_VENDED_CONNECTION_UNDERFLOW,
         "Release called when the connection manager's vended connection count was zero"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_SERVER_CLOSED,
+        "The http server is closed, no more connections will be accepted"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_PROXY_TLS_CONNECT_FAILED,
+        "Proxy tls connection establishment failed because the CONNECT call failed"),
 };
 /* clang-format on */
 
@@ -144,7 +171,8 @@ static struct aws_hash_table s_method_str_to_enum;                         /* fo
 static struct aws_byte_cursor s_method_enum_to_str[AWS_HTTP_METHOD_COUNT]; /* for enum -> string lookup */
 
 static void s_methods_init(struct aws_allocator *alloc) {
-    s_method_enum_to_str[AWS_HTTP_METHOD_HEAD] = aws_byte_cursor_from_c_str("HEAD");
+    s_method_enum_to_str[AWS_HTTP_METHOD_GET] = aws_http_method_get;
+    s_method_enum_to_str[AWS_HTTP_METHOD_HEAD] = aws_http_method_head;
 
     s_init_str_to_enum_hash_table(
         &s_method_str_to_enum,
@@ -383,3 +411,11 @@ void aws_http_fatal_assert_library_initialized() {
         AWS_FATAL_ASSERT(s_library_initialized);
     }
 }
+
+const struct aws_byte_cursor aws_http_method_get = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET");
+const struct aws_byte_cursor aws_http_method_head = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HEAD");
+const struct aws_byte_cursor aws_http_method_post = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST");
+const struct aws_byte_cursor aws_http_method_put = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PUT");
+const struct aws_byte_cursor aws_http_method_delete = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("DELETE");
+const struct aws_byte_cursor aws_http_method_connect = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("CONNECT");
+const struct aws_byte_cursor aws_http_method_options = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("OPTIONS");

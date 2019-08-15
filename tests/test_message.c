@@ -22,28 +22,32 @@
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
-TEST_CASE(request_sanity_check) {
+TEST_CASE(message_sanity_check) {
     (void)ctx;
-    struct aws_http_request *request = aws_http_request_new(allocator);
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
+    aws_http_message_destroy(request);
 
-    aws_http_request_destroy(request);
+    struct aws_http_message *response = aws_http_message_new_response(allocator);
+    ASSERT_NOT_NULL(response);
+    aws_http_message_destroy(response);
+
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(request_path) {
+TEST_CASE(message_request_path) {
     (void)ctx;
-    struct aws_http_request *request = aws_http_request_new(allocator);
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     /* Assert that query fails when there's no data */
     struct aws_byte_cursor get;
-    ASSERT_ERROR(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE, aws_http_request_get_path(request, &get));
+    ASSERT_ERROR(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE, aws_http_message_get_request_path(request, &get));
 
     /* Test simple set/get */
     char path1[] = "/";
-    ASSERT_SUCCESS(aws_http_request_set_path(request, aws_byte_cursor_from_c_str(path1)));
-    ASSERT_SUCCESS(aws_http_request_get_path(request, &get));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str(path1)));
+    ASSERT_SUCCESS(aws_http_message_get_request_path(request, &get));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, path1));
 
     /* Mutilate the original string to be sure request wasn't referencing its memory */
@@ -52,39 +56,61 @@ TEST_CASE(request_path) {
     ASSERT_TRUE(aws_byte_cursor_eq(&path1_repro, &get));
 
     /* Set a new path */
-    ASSERT_SUCCESS(aws_http_request_set_path(request, aws_byte_cursor_from_c_str("/index.html")));
-    ASSERT_SUCCESS(aws_http_request_get_path(request, &get));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/index.html")));
+    ASSERT_SUCCESS(aws_http_message_get_request_path(request, &get));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, "/index.html"));
 
-    aws_http_request_destroy(request);
+    aws_http_message_destroy(request);
     return AWS_OP_SUCCESS;
 }
-TEST_CASE(request_method) {
+TEST_CASE(message_request_method) {
     (void)ctx;
-    struct aws_http_request *request = aws_http_request_new(allocator);
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     /* Assert that query fails when there's no data */
     struct aws_byte_cursor get;
-    ASSERT_ERROR(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE, aws_http_request_get_method(request, &get));
+    ASSERT_ERROR(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE, aws_http_message_get_request_method(request, &get));
 
     /* Test simple set/get */
     char method1[] = "GET";
-    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_byte_cursor_from_c_str(method1)));
-    ASSERT_SUCCESS(aws_http_request_get_method(request, &get));
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str(method1)));
+    ASSERT_SUCCESS(aws_http_message_get_request_method(request, &get));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, method1));
 
     /* Mutilate the original string to be sure request wasn't referencing its memory */
     method1[0] = 'B';
-    struct aws_byte_cursor method1_repro = aws_byte_cursor_from_c_str("GET");
-    ASSERT_TRUE(aws_byte_cursor_eq(&method1_repro, &get));
+    ASSERT_TRUE(aws_byte_cursor_eq(&aws_http_method_get, &get));
 
     /* Set a new method */
-    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_byte_cursor_from_c_str("POST")));
-    ASSERT_SUCCESS(aws_http_request_get_method(request, &get));
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_http_method_post));
+    ASSERT_SUCCESS(aws_http_message_get_request_method(request, &get));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, "POST"));
 
-    aws_http_request_destroy(request);
+    aws_http_message_destroy(request);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(message_response_status) {
+    (void)ctx;
+    struct aws_http_message *response = aws_http_message_new_response(allocator);
+    ASSERT_NOT_NULL(response);
+
+    /* Assert that query fails when there's no data */
+    int get;
+    ASSERT_ERROR(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE, aws_http_message_get_response_status(response, &get));
+
+    /* Test simple set/get */
+    ASSERT_SUCCESS(aws_http_message_set_response_status(response, 200));
+    ASSERT_SUCCESS(aws_http_message_get_response_status(response, &get));
+    ASSERT_INT_EQUALS(200, get);
+
+    /* Set a new status */
+    ASSERT_SUCCESS(aws_http_message_set_response_status(response, 404));
+    ASSERT_SUCCESS(aws_http_message_get_response_status(response, &get));
+    ASSERT_INT_EQUALS(404, get);
+
+    aws_http_message_destroy(response);
     return AWS_OP_SUCCESS;
 }
 
@@ -107,47 +133,47 @@ static int s_check_header_eq(struct aws_http_header header, const char *name, co
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(request_add_headers) {
+TEST_CASE(message_add_headers) {
     (void)ctx;
-    struct aws_http_request *request = aws_http_request_new(allocator);
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     /* Test queries on 0 headers */
     struct aws_http_header get;
-    ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_request_get_header(request, &get, 0));
-    ASSERT_UINT_EQUALS(0, aws_http_request_get_header_count(request));
+    ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_message_get_header(request, &get, 0));
+    ASSERT_UINT_EQUALS(0, aws_http_message_get_header_count(request));
 
     /* Add a header */
     char name_src[] = "Host";
     char value_src[] = "example.com";
 
-    ASSERT_SUCCESS(aws_http_request_add_header(request, s_make_header(name_src, value_src)));
-    ASSERT_UINT_EQUALS(1, aws_http_request_get_header_count(request));
+    ASSERT_SUCCESS(aws_http_message_add_header(request, s_make_header(name_src, value_src)));
+    ASSERT_UINT_EQUALS(1, aws_http_message_get_header_count(request));
 
     /* Mutilate source strings to be sure the request isn't referencing their memory */
     name_src[0] = 0;
     value_src[0] = 0;
 
     /* Check values */
-    ASSERT_SUCCESS(aws_http_request_get_header(request, &get, 0));
+    ASSERT_SUCCESS(aws_http_message_get_header(request, &get, 0));
     ASSERT_SUCCESS(s_check_header_eq(get, "Host", "example.com"));
 
     /* Overwrite header and check values */
-    ASSERT_SUCCESS(aws_http_request_set_header(request, s_make_header("Connection", "Upgrade"), 0));
-    ASSERT_SUCCESS(aws_http_request_get_header(request, &get, 0));
+    ASSERT_SUCCESS(aws_http_message_set_header(request, s_make_header("Connection", "Upgrade"), 0));
+    ASSERT_SUCCESS(aws_http_message_get_header(request, &get, 0));
     ASSERT_SUCCESS(s_check_header_eq(get, "Connection", "Upgrade"));
 
-    aws_http_request_destroy(request);
+    aws_http_message_destroy(request);
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(request_erase_headers) {
+TEST_CASE(message_erase_headers) {
     (void)ctx;
-    struct aws_http_request *request = aws_http_request_new(allocator);
-    ASSERT_NOT_NULL(request);
+    struct aws_http_message *message = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(message);
 
     /* Should have no effect to try and erase non-existent headers */
-    ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_request_erase_header(request, 0));
+    ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_message_erase_header(message, 0));
 
     /* Add a bunch of headers */
     struct aws_http_header src_headers[] = {
@@ -158,57 +184,57 @@ TEST_CASE(request_erase_headers) {
     };
 
     for (size_t i = 0; i < AWS_ARRAY_SIZE(src_headers); ++i) {
-        ASSERT_SUCCESS(aws_http_request_add_header(request, src_headers[i]));
+        ASSERT_SUCCESS(aws_http_message_add_header(message, src_headers[i]));
     }
 
     struct aws_http_header get;
     for (size_t i = 0; i < AWS_ARRAY_SIZE(src_headers); ++i) {
-        ASSERT_SUCCESS(aws_http_request_get_header(request, &get, i));
+        ASSERT_SUCCESS(aws_http_message_get_header(message, &get, i));
         ASSERT_SUCCESS(s_check_headers_eq(src_headers[i], get));
     }
 
     /* Remove a middle one and check */
     const size_t kill_i = 1;
-    ASSERT_SUCCESS(aws_http_request_erase_header(request, kill_i));
-    ASSERT_UINT_EQUALS(AWS_ARRAY_SIZE(src_headers) - 1, aws_http_request_get_header_count(request));
+    ASSERT_SUCCESS(aws_http_message_erase_header(message, kill_i));
+    ASSERT_UINT_EQUALS(AWS_ARRAY_SIZE(src_headers) - 1, aws_http_message_get_header_count(message));
 
-    for (size_t i = 0; i < aws_http_request_get_header_count(request); ++i) {
+    for (size_t i = 0; i < aws_http_message_get_header_count(message); ++i) {
         /* Headers to the right should have shifted over */
         size_t compare_i = (i < kill_i) ? i : (i + 1);
 
-        ASSERT_SUCCESS(aws_http_request_get_header(request, &get, i));
+        ASSERT_SUCCESS(aws_http_message_get_header(message, &get, i));
         ASSERT_SUCCESS(s_check_headers_eq(src_headers[compare_i], get));
     }
 
     /* Removing an invalid index should have no effect */
-    ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_request_erase_header(request, 99));
+    ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_message_erase_header(message, 99));
 
     /* Remove a front and a back header, only "NameC: ValueC" should remain */
-    ASSERT_SUCCESS(aws_http_request_erase_header(request, 0));
-    ASSERT_SUCCESS(aws_http_request_erase_header(request, aws_http_request_get_header_count(request) - 1));
+    ASSERT_SUCCESS(aws_http_message_erase_header(message, 0));
+    ASSERT_SUCCESS(aws_http_message_erase_header(message, aws_http_message_get_header_count(message) - 1));
 
-    ASSERT_UINT_EQUALS(1, aws_http_request_get_header_count(request));
-    ASSERT_SUCCESS(aws_http_request_get_header(request, &get, 0));
+    ASSERT_UINT_EQUALS(1, aws_http_message_get_header_count(message));
+    ASSERT_SUCCESS(aws_http_message_get_header(message, &get, 0));
     ASSERT_SUCCESS(s_check_header_eq(get, "NameC", "ValueC"));
 
     /* Ensure that add() still works after remove() */
-    ASSERT_SUCCESS(aws_http_request_add_header(request, s_make_header("Big", "Guy")));
-    ASSERT_SUCCESS(aws_http_request_get_header(request, &get, aws_http_request_get_header_count(request) - 1));
+    ASSERT_SUCCESS(aws_http_message_add_header(message, s_make_header("Big", "Guy")));
+    ASSERT_SUCCESS(aws_http_message_get_header(message, &get, aws_http_message_get_header_count(message) - 1));
     ASSERT_SUCCESS(s_check_header_eq(get, "Big", "Guy"));
 
-    aws_http_request_destroy(request);
+    aws_http_message_destroy(message);
     return AWS_OP_SUCCESS;
 }
 
 /* Do every operation that involves allocating some memory */
-int s_request_handles_oom_attempt(struct aws_http_request *request) {
+int s_message_handles_oom_attempt(struct aws_http_message *request) {
     ASSERT_NOT_NULL(request);
 
     /* Set, and then overwrite, method and path */
-    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_byte_cursor_from_c_str("POST")));
-    ASSERT_SUCCESS(aws_http_request_set_path(request, aws_byte_cursor_from_c_str("/")));
-    ASSERT_SUCCESS(aws_http_request_set_method(request, aws_byte_cursor_from_c_str("GET")));
-    ASSERT_SUCCESS(aws_http_request_set_path(request, aws_byte_cursor_from_c_str("/chat")));
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("POST")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/chat")));
 
     /* Add a lot of headers, enough to force the underlying array-list to expand.
      * (just loop through the list above again and again) */
@@ -219,7 +245,7 @@ int s_request_handles_oom_attempt(struct aws_http_request *request) {
         snprintf(name_buf, sizeof(name_buf), "Value-%zu", i);
         struct aws_http_header header = {.name = aws_byte_cursor_from_c_str(name_buf),
                                          .value = aws_byte_cursor_from_c_str(value_buf)};
-        ASSERT_SUCCESS(aws_http_request_add_header(request, header));
+        ASSERT_SUCCESS(aws_http_message_add_header(request, header));
     }
 
     /* Overwrite all the headers */
@@ -228,13 +254,13 @@ int s_request_handles_oom_attempt(struct aws_http_request *request) {
         snprintf(name_buf, sizeof(name_buf), "New-Value-%zu", i);
         struct aws_http_header header = {.name = aws_byte_cursor_from_c_str(name_buf),
                                          .value = aws_byte_cursor_from_c_str(value_buf)};
-        ASSERT_SUCCESS(aws_http_request_set_header(request, header, i));
+        ASSERT_SUCCESS(aws_http_message_set_header(request, header, i));
     }
 
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(request_handles_oom) {
+TEST_CASE(message_handles_oom) {
     (void)ctx;
     struct aws_allocator timebomb_alloc;
     ASSERT_SUCCESS(aws_timebomb_allocator_init(&timebomb_alloc, allocator, SIZE_MAX));
@@ -246,10 +272,10 @@ TEST_CASE(request_handles_oom) {
         aws_timebomb_allocator_reset_countdown(&timebomb_alloc, allocations_until_failure);
 
         /* Create a request, then do a bunch of stuff with it. */
-        struct aws_http_request *request = aws_http_request_new(&timebomb_alloc);
+        struct aws_http_message *request = aws_http_message_new_request(&timebomb_alloc);
         int err = 0;
         if (request) {
-            err = s_request_handles_oom_attempt(request);
+            err = s_message_handles_oom_attempt(request);
             if (err) {
                 /* Ensure failure was due to OOM */
                 ASSERT_INT_EQUALS(AWS_ERROR_OOM, aws_last_error());
@@ -257,7 +283,7 @@ TEST_CASE(request_handles_oom) {
                 test_succeeded = true;
             }
 
-            aws_http_request_destroy(request);
+            aws_http_message_destroy(request);
         } else {
             /* Ensure failure was due to OOM */
             ASSERT_INT_EQUALS(AWS_ERROR_OOM, aws_last_error());

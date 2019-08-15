@@ -59,11 +59,13 @@ struct elasticurl_ctx {
     size_t header_line_count;
     FILE *input_file;
     struct aws_input_stream *input_body;
+    struct aws_http_message *request;
+    struct aws_http_connection *connection;
     const char *signing_library_path;
     struct aws_shared_library signing_library;
     const char *signing_function_name;
     struct aws_hash_table signing_context;
-    aws_transform_http_request_fn *signing_function;
+    aws_http_message_transform_fn *signing_function;
     bool include_headers;
     bool insecure;
     FILE *output;
@@ -320,48 +322,17 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
     }
 }
 
-static void s_on_incoming_body_fn(
-    struct aws_http_stream *stream,
-    const struct aws_byte_cursor *data,
-    /* NOLINTNEXTLINE(readability-non-const-parameter) */
-    size_t *out_window_update_size,
-    void *user_data) {
+static int s_on_incoming_body_fn(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
 
     (void)stream;
-    (void)out_window_update_size;
     struct elasticurl_ctx *app_ctx = user_data;
 
     fwrite(data->ptr, 1, data->len, app_ctx->output);
+
+    return AWS_OP_SUCCESS;
 }
 
-enum aws_http_outgoing_body_state s_stream_outgoing_body_fn(
-    struct aws_http_stream *stream,
-    struct aws_byte_buf *buf,
-    void *user_data) {
-    (void)stream;
-    struct elasticurl_ctx *app_ctx = user_data;
-
-    if (!app_ctx->input_body) {
-        return AWS_HTTP_OUTGOING_BODY_DONE;
-    }
-
-    struct aws_stream_status status;
-    if (aws_input_stream_get_status(app_ctx->input_body, &status)) {
-        return AWS_HTTP_OUTGOING_BODY_DONE;
-    }
-
-    if (status.is_end_of_stream || !status.is_valid) {
-        return AWS_HTTP_OUTGOING_BODY_DONE;
-    }
-
-    if (aws_input_stream_read(app_ctx->input_body, buf)) {
-        return AWS_HTTP_OUTGOING_BODY_DONE;
-    }
-
-    return AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
-}
-
-static void s_on_incoming_headers_fn(
+static int s_on_incoming_headers_fn(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
     size_t num_headers,
@@ -385,12 +356,16 @@ static void s_on_incoming_headers_fn(
             fprintf(stdout, "\n");
         }
     }
+
+    return AWS_OP_SUCCESS;
 }
 
-static void s_on_incoming_header_block_done_fn(struct aws_http_stream *stream, bool has_body, void *user_data) {
+static int s_on_incoming_header_block_done_fn(struct aws_http_stream *stream, bool has_body, void *user_data) {
     (void)stream;
     (void)has_body;
     (void)user_data;
+
+    return AWS_OP_SUCCESS;
 }
 
 static void s_on_stream_complete_fn(struct aws_http_stream *stream, int error_code, void *user_data) {
@@ -399,28 +374,26 @@ static void s_on_stream_complete_fn(struct aws_http_stream *stream, int error_co
     aws_http_stream_release(stream);
 }
 
-static struct aws_http_request *s_build_http_request(struct elasticurl_ctx *app_ctx) {
-    struct aws_http_request *request = aws_http_request_new(app_ctx->allocator);
+static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_ctx) {
+    struct aws_http_message *request = aws_http_message_new_request(app_ctx->allocator);
     if (request == NULL) {
         fprintf(stderr, "failed to allocate request\n");
         exit(1);
     }
 
-    aws_http_request_set_method(request, aws_byte_cursor_from_c_str(app_ctx->verb));
-    aws_http_request_set_path(request, app_ctx->uri.path_and_query);
-    aws_http_request_set_body_stream(request, app_ctx->input_body);
-
+    aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str(app_ctx->verb));
+    aws_http_message_set_request_path(request, app_ctx->uri.path_and_query);
     struct aws_http_header accept_header = {.name = aws_byte_cursor_from_c_str("accept"),
                                             .value = aws_byte_cursor_from_c_str("*/*")};
-    aws_http_request_add_header(request, accept_header);
+    aws_http_message_add_header(request, accept_header);
 
     struct aws_http_header host_header = {.name = aws_byte_cursor_from_c_str("host"), .value = app_ctx->uri.host_name};
-    aws_http_request_add_header(request, host_header);
+    aws_http_message_add_header(request, host_header);
 
     struct aws_http_header user_agent_header = {
         .name = aws_byte_cursor_from_c_str("user-agent"),
         .value = aws_byte_cursor_from_c_str("elasticurl 1.0, Powered by the AWS Common Runtime.")};
-    aws_http_request_add_header(request, user_agent_header);
+    aws_http_message_add_header(request, user_agent_header);
 
     if (app_ctx->input_body) {
         int64_t data_len = 0;
@@ -435,7 +408,8 @@ static struct aws_http_request *s_build_http_request(struct elasticurl_ctx *app_
             sprintf(content_length, "%" PRIi64, data_len);
             struct aws_http_header content_length_header = {.name = aws_byte_cursor_from_c_str("content-length"),
                                                             .value = aws_byte_cursor_from_c_str(content_length)};
-            aws_http_request_add_header(request, content_length_header);
+            aws_http_message_add_header(request, content_length_header);
+            aws_http_message_set_body_stream(request, app_ctx->input_body);
         }
     }
 
@@ -451,11 +425,13 @@ static struct aws_http_request *s_build_http_request(struct elasticurl_ctx *app_
         struct aws_http_header custom_header = {
             .name = aws_byte_cursor_from_array(app_ctx->header_lines[i], delimiter - app_ctx->header_lines[i]),
             .value = aws_byte_cursor_from_c_str(delimiter + 1)};
-        aws_http_request_add_header(request, custom_header);
+        aws_http_message_add_header(request, custom_header);
     }
 
     return request;
 }
+
+static void s_on_signing_complete(struct aws_http_message *request, int error_code, void *user_data);
 
 static void s_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct elasticurl_ctx *app_ctx = user_data;
@@ -469,52 +445,58 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
         return;
     }
 
-    struct aws_http_request *request = s_build_http_request(app_ctx);
+    app_ctx->connection = connection;
+    app_ctx->request = s_build_http_request(app_ctx);
 
+    /* If async signing function is set, invoke it. It must invoke the signing complete callback when it's done. */
     if (app_ctx->signing_function) {
-        if (app_ctx->signing_function(request, app_ctx->allocator, &app_ctx->signing_context)) {
-            fprintf(stderr, "Signing failure\n");
-            exit(1);
-        }
+        app_ctx->signing_function(app_ctx->request, &app_ctx->signing_context, s_on_signing_complete, app_ctx);
+    } else {
+        /* If no signing function, proceed immediately to next step. */
+        s_on_signing_complete(app_ctx->request, AWS_ERROR_SUCCESS, app_ctx);
+    }
+}
+
+static void s_on_signing_complete(struct aws_http_message *request, int error_code, void *user_data) {
+    struct elasticurl_ctx *app_ctx = user_data;
+
+    AWS_FATAL_ASSERT(request == app_ctx->request);
+
+    if (error_code) {
+        fprintf(stderr, "Signing failure\n");
+        exit(1);
     }
 
-    size_t final_header_count = aws_http_request_get_header_count(request);
+    size_t final_header_count = aws_http_message_get_header_count(app_ctx->request);
 
     struct aws_http_header headers[20];
     AWS_ASSERT(final_header_count <= AWS_ARRAY_SIZE(headers));
     AWS_ZERO_ARRAY(headers);
     for (size_t i = 0; i < final_header_count; ++i) {
-        aws_http_request_get_header(request, &headers[i], i);
+        aws_http_message_get_header(app_ctx->request, &headers[i], i);
     }
 
-    struct aws_http_request_options final_request;
-    AWS_ZERO_STRUCT(final_request);
-    final_request.self_size = sizeof(struct aws_http_request_options);
-    final_request.uri = app_ctx->uri.path_and_query;
-    final_request.user_data = app_ctx;
-    final_request.client_connection = connection;
-    final_request.method = aws_byte_cursor_from_c_str(app_ctx->verb);
-    final_request.header_array = headers;
-    final_request.num_headers = aws_http_request_get_header_count(request);
-    final_request.on_response_headers = s_on_incoming_headers_fn;
-    final_request.on_response_header_block_done = s_on_incoming_header_block_done_fn;
-    final_request.on_response_body = s_on_incoming_body_fn;
-    final_request.on_complete = s_on_stream_complete_fn;
-    if (app_ctx->input_body) {
-        final_request.stream_outgoing_body = s_stream_outgoing_body_fn;
-    }
+    struct aws_http_make_request_options final_request = {
+        .self_size = sizeof(final_request),
+        .user_data = app_ctx,
+        .request = app_ctx->request,
+        .on_response_headers = s_on_incoming_headers_fn,
+        .on_response_header_block_done = s_on_incoming_header_block_done_fn,
+        .on_response_body = s_on_incoming_body_fn,
+        .on_complete = s_on_stream_complete_fn,
+    };
 
     app_ctx->response_code_written = false;
 
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&final_request);
+    struct aws_http_stream *stream = aws_http_connection_make_request(app_ctx->connection, &final_request);
     if (!stream) {
         fprintf(stderr, "failed to create request.");
         exit(1);
     }
 
-    aws_http_connection_release(connection);
-
-    aws_http_request_destroy(request);
+    /* Connection will stay alive until stream completes */
+    aws_http_connection_release(app_ctx->connection);
+    app_ctx->connection = NULL;
 }
 
 static void s_on_client_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
@@ -727,6 +709,8 @@ int main(int argc, char **argv) {
     }
 
     aws_uri_clean_up(&app_ctx.uri);
+
+    aws_http_message_destroy(app_ctx.request);
 
     aws_shared_library_clean_up(&app_ctx.signing_library);
 

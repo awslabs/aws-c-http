@@ -35,6 +35,8 @@ typedef void(aws_http_server_on_incoming_connection_fn)(
     int error_code,
     void *user_data);
 
+typedef void(aws_http_server_on_destroy_fn)(void *user_data);
+
 /**
  * Options for creating an HTTP server.
  * Initialize with AWS_HTTP_SERVER_OPTIONS_INIT to set default values.
@@ -95,6 +97,12 @@ struct aws_http_server_options {
      * If setup succeeds, the user must call aws_http_connection_configure_server().
      */
     aws_http_server_on_incoming_connection_fn *on_incoming_connection;
+
+    /**
+     * Invoked when the server finishes the destroy operation.
+     * Optional.
+     */
+    aws_http_server_on_destroy_fn *on_destroy_complete;
 };
 
 /**
@@ -103,10 +111,13 @@ struct aws_http_server_options {
 #define AWS_HTTP_SERVER_OPTIONS_INIT                                                                                   \
     { .self_size = sizeof(struct aws_http_server_options), .initial_window_size = SIZE_MAX, }
 
-typedef void(aws_http_on_incoming_request_fn)(
-    struct aws_http_connection *connection,
-    struct aws_http_stream *stream,
-    void *user_data);
+/**
+ * Invoked at the start of an incoming request.
+ * To process the request, the user must create a request handler stream and return it to the connection.
+ * If NULL is returned, the request will not be processed and the last error will be reported as the reason for failure.
+ */
+typedef struct aws_http_stream *(
+    aws_http_on_incoming_request_fn)(struct aws_http_connection *connection, void *user_data);
 
 typedef void(aws_http_on_server_connection_shutdown_fn)(
     struct aws_http_connection *connection,
@@ -131,11 +142,10 @@ struct aws_http_server_connection_options {
     void *connection_user_data;
 
     /**
-     * Invoked when a new "request handler" stream is created to handle an incoming request.
+     * Invoked at the start of an incoming request.
      * Required.
-     * From this callback, the user must call aws_http_stream_configure_server_request_handler().
-     * The user must call aws_stream_release() on the stream when they are done with it or its memory will never be
-     * cleaned up.
+     * The user must create a request handler stream and return it to the connection.
+     * See `aws_http_on_incoming_request_fn`.
      */
     aws_http_on_incoming_request_fn *on_incoming_request;
 
@@ -161,14 +171,11 @@ AWS_HTTP_API
 struct aws_http_server *aws_http_server_new(const struct aws_http_server_options *options);
 
 /**
- * Destroy server.
- *
- * Note: this function should be called by either a user thread (like the main entry point, or from the event-loop the
- * server is assigned to. Otherwise a deadlock is possible. If you call this function from outside the assigned
- * event-loop, this function will block waiting on the assigned event-loop runs the close sequence in its thread.
+ * Release the server. It will close the listening socket and all the connections existing in the server.
+ * The on_destroy_complete will be invoked when the destroy operation completes
  */
 AWS_HTTP_API
-void aws_http_server_destroy(struct aws_http_server *server);
+void aws_http_server_release(struct aws_http_server *server);
 
 /**
  * Configure a server connection.
@@ -178,6 +185,12 @@ AWS_HTTP_API
 int aws_http_connection_configure_server(
     struct aws_http_connection *connection,
     const struct aws_http_server_connection_options *options);
+
+/**
+ * Returns true if this is a server connection.
+ */
+AWS_HTTP_API
+bool aws_http_connection_is_server(const struct aws_http_connection *connection);
 
 AWS_EXTERN_C_END
 

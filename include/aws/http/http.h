@@ -23,6 +23,13 @@
 enum aws_http_errors {
     AWS_ERROR_HTTP_UNKNOWN = 0x0800,
     AWS_ERROR_HTTP_PARSE,
+    AWS_ERROR_HTTP_INVALID_HEADER_NAME,
+    AWS_ERROR_HTTP_INVALID_HEADER_VALUE,
+    AWS_ERROR_HTTP_INVALID_METHOD,
+    AWS_ERROR_HTTP_INVALID_PATH,
+    AWS_ERROR_HTTP_INVALID_STATUS_CODE,
+    AWS_ERROR_HTTP_MISSING_BODY_STREAM,
+    AWS_ERROR_HTTP_MISSING_BODY_HEADERS,
     AWS_ERROR_HTTP_CONNECTION_CLOSED,
     AWS_ERROR_HTTP_SWITCHED_PROTOCOLS,
     AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL,
@@ -35,6 +42,8 @@ enum aws_http_errors {
     AWS_ERROR_HTTP_WEBSOCKET_IS_MIDCHANNEL_HANDLER,
     AWS_ERROR_HTTP_CONNECTION_MANAGER_INVALID_STATE_FOR_ACQUIRE,
     AWS_ERROR_HTTP_CONNECTION_MANAGER_VENDED_CONNECTION_UNDERFLOW,
+    AWS_ERROR_HTTP_SERVER_CLOSED,
+    AWS_ERROR_HTTP_PROXY_TLS_CONNECT_FAILED,
 
     AWS_ERROR_HTTP_END_RANGE = 0x0C00,
 };
@@ -80,6 +89,24 @@ void aws_http_library_clean_up(void);
  */
 AWS_HTTP_API
 const char *aws_http_status_text(int status_code);
+
+/**
+ * Shortcuts for common HTTP request methods
+ */
+AWS_HTTP_API
+extern const struct aws_byte_cursor aws_http_method_get;
+AWS_HTTP_API
+extern const struct aws_byte_cursor aws_http_method_head;
+AWS_HTTP_API
+extern const struct aws_byte_cursor aws_http_method_post;
+AWS_HTTP_API
+extern const struct aws_byte_cursor aws_http_method_put;
+AWS_HTTP_API
+extern const struct aws_byte_cursor aws_http_method_delete;
+AWS_HTTP_API
+extern const struct aws_byte_cursor aws_http_method_connect;
+AWS_HTTP_API
+extern const struct aws_byte_cursor aws_http_method_options;
 
 AWS_EXTERN_C_END
 

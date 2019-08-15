@@ -18,6 +18,7 @@
 
 #include <aws/common/uuid.h>
 #include <aws/io/logging.h>
+#include <aws/io/stream.h>
 #include <aws/testing/io_testing_channel.h>
 
 #if _MSC_VER
@@ -27,6 +28,15 @@
 #define H1_CLIENT_TEST_CASE(NAME)                                                                                      \
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
+
+static struct aws_http_message *s_new_default_get_request(struct aws_allocator *allocator) {
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    AWS_FATAL_ASSERT(request);
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_message_set_request_method(request, aws_http_method_get));
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
+
+    return request;
+}
 
 struct tester {
     struct aws_allocator *alloc;
@@ -89,52 +99,6 @@ H1_CLIENT_TEST_CASE(h1_client_sanity_check) {
     return AWS_OP_SUCCESS;
 }
 
-/* Pop first message from queue and compare its contents to expected string. */
-static int s_check_written_message(struct tester *tester, const char *expected) {
-    struct aws_linked_list *msgs = testing_channel_get_written_message_queue(&tester->testing_channel);
-    ASSERT_TRUE(!aws_linked_list_empty(msgs));
-    struct aws_linked_list_node *node = aws_linked_list_pop_front(msgs);
-    struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
-
-    ASSERT_TRUE(aws_byte_buf_eq_c_str(&msg->message_data, expected));
-
-    aws_mem_release(msg->allocator, msg);
-
-    return AWS_OP_SUCCESS;
-}
-
-/* Pop all messages from queue and compare their contents to expected string */
-static int s_check_messages_ex(struct tester *tester, const char *expected, struct aws_linked_list *msgs) {
-    struct aws_byte_buf all_msgs;
-    ASSERT_SUCCESS(aws_byte_buf_init(&all_msgs, tester->alloc, 1024));
-
-    while (!aws_linked_list_empty(msgs)) {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(msgs);
-        struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
-
-        struct aws_byte_cursor msg_cursor = aws_byte_cursor_from_buf(&msg->message_data);
-        aws_byte_buf_append_dynamic(&all_msgs, &msg_cursor);
-
-        aws_mem_release(msg->allocator, msg);
-    }
-
-    ASSERT_TRUE(aws_byte_buf_eq_c_str(&all_msgs, expected));
-    aws_byte_buf_clean_up(&all_msgs);
-    return AWS_OP_SUCCESS;
-}
-
-/* Check contents of all messages sent in the write direction. */
-static int s_check_written_messages(struct tester *tester, const char *expected) {
-    struct aws_linked_list *msgs = testing_channel_get_written_message_queue(&tester->testing_channel);
-    return s_check_messages_ex(tester, expected, msgs);
-}
-
-/* Check contents of all read-messages sent in the read direction by a midchannel http-handler */
-static int s_check_midchannel_read_messages(struct tester *tester, const char *expected) {
-    struct aws_linked_list *msgs = testing_channel_get_read_message_queue(&tester->testing_channel);
-    return s_check_messages_ex(tester, expected, msgs);
-}
-
 /* Send 1 line request, doesn't care about response */
 H1_CLIENT_TEST_CASE(h1_client_request_send_1liner) {
     (void)ctx;
@@ -142,11 +106,11 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_1liner) {
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* send request */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = s_new_default_get_request(allocator),
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -154,9 +118,10 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_1liner) {
     /* check result */
     const char *expected = "GET / HTTP/1.1\r\n"
                            "\r\n";
-    ASSERT_SUCCESS(s_check_written_message(&tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected));
 
     /* clean up */
+    aws_http_message_destroy(opt.request);
     aws_http_stream_release(stream);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
@@ -171,22 +136,24 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_headers) {
     /* send request */
     struct aws_http_header headers[] = {
         {
-            .name = aws_byte_cursor_from_c_str("Host"),
-            .value = aws_byte_cursor_from_c_str("example.com"),
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("example.com"),
         },
         {
-            .name = aws_byte_cursor_from_c_str("Accept"),
-            .value = aws_byte_cursor_from_c_str("*/*"),
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Accept"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("*/*"),
         },
     };
 
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
-    opt.header_array = headers;
-    opt.num_headers = AWS_ARRAY_SIZE(headers);
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
+
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -196,34 +163,14 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_headers) {
                            "Host: example.com\r\n"
                            "Accept: */*\r\n"
                            "\r\n";
-    ASSERT_SUCCESS(s_check_written_message(&tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected));
 
     /* clean up */
+    aws_http_message_destroy(request);
     aws_http_stream_release(stream);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
-}
-
-struct simple_body_sender {
-    struct aws_byte_cursor src;
-    size_t progress;
-};
-
-static enum aws_http_outgoing_body_state s_simple_send_body(
-    struct aws_http_stream *stream,
-    struct aws_byte_buf *buf,
-    void *user_data) {
-
-    (void)stream;
-    struct simple_body_sender *data = user_data;
-    size_t remaining = data->src.len - data->progress;
-    size_t available = buf->capacity - buf->len;
-    size_t writing = remaining < available ? remaining : available;
-    aws_byte_buf_write(buf, data->src.ptr + data->progress, writing);
-    data->progress += writing;
-
-    return (writing == remaining) ? AWS_HTTP_OUTGOING_BODY_DONE : AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
 }
 
 H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
@@ -232,26 +179,28 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* send request */
-    struct simple_body_sender body_sender = {
-        .src = aws_byte_cursor_from_c_str("write more tests"),
-    };
+    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
 
     struct aws_http_header headers[] = {
         {
-            .name = aws_byte_cursor_from_c_str("Content-Length"),
-            .value = aws_byte_cursor_from_c_str("16"),
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("16"),
         },
     };
 
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("PUT");
-    opt.uri = aws_byte_cursor_from_c_str("/plan.txt");
-    opt.header_array = headers;
-    opt.num_headers = AWS_ARRAY_SIZE(headers);
-    opt.user_data = &body_sender;
-    opt.stream_outgoing_body = s_simple_send_body;
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+    aws_http_message_set_body_stream(request, body_stream);
+
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -261,9 +210,11 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
                            "Content-Length: 16\r\n"
                            "\r\n"
                            "write more tests";
-    ASSERT_SUCCESS(s_check_written_message(&tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected));
 
     /* clean up */
+    aws_input_stream_destroy(body_stream);
+    aws_http_message_destroy(request);
     aws_http_stream_release(stream);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
@@ -338,9 +289,8 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body) {
         aws_byte_buf_write_be32(&body_buf, (uint32_t)r);
     }
 
-    struct simple_body_sender body_sender = {
-        .src = aws_byte_cursor_from_buf(&body_buf),
-    };
+    const struct aws_byte_cursor body = aws_byte_cursor_from_buf(&body_buf);
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
 
     char content_length_value[100];
     snprintf(content_length_value, sizeof(content_length_value), "%zu", body_len);
@@ -351,15 +301,18 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body) {
         },
     };
 
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("PUT");
-    opt.uri = aws_byte_cursor_from_c_str("/large.txt");
-    opt.header_array = headers;
-    opt.num_headers = AWS_ARRAY_SIZE(headers);
-    opt.user_data = &body_sender;
-    opt.stream_outgoing_body = s_simple_send_body;
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/large.txt")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+    aws_http_message_set_body_stream(request, body_stream);
+
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
 
     /* check result */
@@ -380,6 +333,8 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body) {
     ASSERT_TRUE(num_io_messages > 1);
 
     /* clean up */
+    aws_input_stream_destroy(body_stream);
+    aws_http_message_destroy(request);
     aws_http_stream_release(stream);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
@@ -425,14 +380,15 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_head) {
 
     ASSERT_TRUE(aws_byte_buf_write(&expected, (uint8_t *)"\r\n", 2));
 
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
+
     /* send request */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
-    opt.header_array = headers;
-    opt.num_headers = num_headers;
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
 
     /* check result */
@@ -442,6 +398,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_head) {
     ASSERT_TRUE(num_io_messages > 1);
 
     /* clean up */
+    aws_http_message_destroy(request);
     aws_http_stream_release(stream);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
@@ -457,19 +414,22 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_multiple_in_1_io_message) {
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* send requests */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = s_new_default_get_request(allocator),
+    };
 
     struct aws_http_stream *streams[3];
     size_t num_streams = AWS_ARRAY_SIZE(streams);
     for (size_t i = 0; i < num_streams; ++i) {
-        streams[i] = aws_http_stream_new_client_request(&opt);
+        streams[i] = aws_http_connection_make_request(tester.connection, &opt);
         ASSERT_NOT_NULL(streams[i]);
     }
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(opt.request);
 
     /* check result */
     const char *expected = "GET / HTTP/1.1\r\n"
@@ -478,7 +438,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_multiple_in_1_io_message) {
                            "\r\n"
                            "GET / HTTP/1.1\r\n"
                            "\r\n";
-    ASSERT_SUCCESS(s_check_written_message(&tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected));
 
     /* clean up */
     for (size_t i = 0; i < num_streams; ++i) {
@@ -490,6 +450,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_multiple_in_1_io_message) {
 }
 
 struct response_tester {
+    struct tester *master_tester;
     struct aws_http_stream *stream;
 
     int status;
@@ -514,7 +475,7 @@ struct response_tester {
     void *specific_test_data;
 };
 
-static void s_response_tester_on_headers(
+static int s_response_tester_on_headers(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
     size_t num_headers,
@@ -541,9 +502,11 @@ static void s_response_tester_on_headers(
         my_header++;
         response->num_headers++;
     }
+
+    return AWS_OP_SUCCESS;
 }
 
-static void s_response_tester_on_header_block_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
+static int s_response_tester_on_header_block_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
     (void)stream;
     struct response_tester *response = user_data;
 
@@ -553,12 +516,13 @@ static void s_response_tester_on_header_block_done(struct aws_http_stream *strea
     response->has_incoming_body = has_body;
 
     AWS_FATAL_ASSERT(!aws_http_stream_get_incoming_response_status(response->stream, &response->status));
+
+    return AWS_OP_SUCCESS;
 }
 
-static void s_response_tester_on_body(
+static int s_response_tester_on_body(
     struct aws_http_stream *stream,
     const struct aws_byte_cursor *data,
-    size_t *out_window_update_size,
     void *user_data) {
 
     (void)stream;
@@ -578,10 +542,7 @@ static void s_response_tester_on_body(
 
     AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(&response->storage, *data));
 
-    /* Stop the window size from auto updating */
-    if (response->stop_auto_window_update) {
-        *out_window_update_size = 0;
-    }
+    return AWS_OP_SUCCESS;
 }
 
 static void s_response_tester_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
@@ -600,21 +561,32 @@ static void s_response_tester_on_complete(struct aws_http_stream *stream, int er
 /* Create request stream and hook it up so callbacks feed data to the response_tester */
 static int s_response_tester_init_ex(
     struct response_tester *response,
-    struct aws_allocator *alloc,
-    struct aws_http_request_options *opt,
+    struct tester *master_tester,
+    struct aws_http_message *request,
+    struct aws_http_make_request_options *custom_opt,
     void *specific_test_data) {
 
     AWS_ZERO_STRUCT(*response);
-    ASSERT_SUCCESS(aws_byte_buf_init(&response->storage, alloc, 1024 * 1024 * 1)); /* big enough */
+    response->master_tester = master_tester;
+    ASSERT_SUCCESS(aws_byte_buf_init(&response->storage, master_tester->alloc, 1024 * 1024 * 1)); /* big enough */
 
-    opt->user_data = response;
-    opt->on_response_headers = s_response_tester_on_headers;
-    opt->on_response_header_block_done = s_response_tester_on_header_block_done;
-    opt->on_response_body = s_response_tester_on_body;
-    opt->on_complete = s_response_tester_on_complete;
+    struct aws_http_make_request_options opt;
+    if (custom_opt) {
+        opt = *custom_opt;
+    } else {
+        AWS_ZERO_STRUCT(opt);
+    }
+
+    opt.self_size = sizeof(struct aws_http_make_request_options);
+    opt.request = request;
+    opt.user_data = response;
+    opt.on_response_headers = s_response_tester_on_headers;
+    opt.on_response_header_block_done = s_response_tester_on_header_block_done;
+    opt.on_response_body = s_response_tester_on_body;
+    opt.on_complete = s_response_tester_on_complete;
 
     response->specific_test_data = specific_test_data;
-    response->stream = aws_http_stream_new_client_request(opt);
+    response->stream = aws_http_connection_make_request(master_tester->connection, &opt);
     if (!response->stream) {
         return AWS_OP_ERR;
     }
@@ -624,10 +596,10 @@ static int s_response_tester_init_ex(
 
 static int s_response_tester_init(
     struct response_tester *response,
-    struct aws_allocator *alloc,
-    struct aws_http_request_options *opt) {
+    struct tester *master_tester,
+    struct aws_http_message *request) {
 
-    return s_response_tester_init_ex(response, alloc, opt, NULL);
+    return s_response_tester_init_ex(response, master_tester, request, NULL, NULL);
 }
 
 static int s_response_tester_clean_up(struct response_tester *response) {
@@ -636,75 +608,24 @@ static int s_response_tester_clean_up(struct response_tester *response) {
     return AWS_OP_SUCCESS;
 }
 
-/* For sending an aws_io_message into the channel, in the write or read direction */
-static int s_send_message_ex(
-    struct tester *tester,
-    struct aws_byte_cursor data,
-    enum aws_channel_direction dir,
-    bool ignore_send_message_errors) {
-
-    struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
-        tester->testing_channel.channel, AWS_IO_MESSAGE_APPLICATION_DATA, data.len);
-    ASSERT_NOT_NULL(msg);
-
-    ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&msg->message_data, data));
-
-    int err;
-    if (dir == AWS_CHANNEL_DIR_READ) {
-        err = testing_channel_push_read_message(&tester->testing_channel, msg);
-    } else {
-        err = testing_channel_push_write_message(&tester->testing_channel, msg);
-    }
-
-    if (!ignore_send_message_errors) {
-        ASSERT_SUCCESS(err);
-    }
-
-    return AWS_OP_SUCCESS;
-}
-
-static int s_send_response(struct tester *tester, struct aws_byte_cursor data) {
-    return s_send_message_ex(tester, data, AWS_CHANNEL_DIR_READ, false);
-}
-
-static int s_send_response_str(struct tester *tester, const char *str) {
-    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_READ, false);
-}
-
-static int s_send_response_str_ignore_errors(struct tester *tester, const char *str) {
-    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_READ, true);
-}
-
-static int s_readpush(struct tester *tester, const char *str) {
-    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_READ, false);
-}
-
-static int s_readpush_ignore_errors(struct tester *tester, const char *str) {
-    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_READ, true);
-}
-
-static int s_writepush(struct tester *tester, const char *str) {
-    return s_send_message_ex(tester, aws_byte_cursor_from_c_str(str), AWS_CHANNEL_DIR_WRITE, false);
-}
-
 H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* send request */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_message *request = s_new_default_get_request(allocator);
 
     struct response_tester response;
-    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+    ASSERT_SUCCESS(s_response_tester_init(&response, &tester, request));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
     /* send response */
-    ASSERT_SUCCESS(s_send_response_str(&tester, "HTTP/1.1 204 No Content\r\n\r\n"));
+    ASSERT_SUCCESS(testing_channel_send_response_str(&tester.testing_channel, "HTTP/1.1 204 No Content\r\n\r\n"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -738,19 +659,19 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_headers) {
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* send request */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_message *request = s_new_default_get_request(allocator);
 
     struct response_tester response;
-    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+    ASSERT_SUCCESS(s_response_tester_init(&response, &tester, request));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
     /* send response */
-    ASSERT_SUCCESS(s_send_response_str(
-        &tester,
+    ASSERT_SUCCESS(testing_channel_send_response_str(
+        &tester.testing_channel,
         "HTTP/1.1 308 Permanent Redirect\r\n"
         "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
         "Location: /index.html\r\n"
@@ -780,19 +701,19 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_body) {
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* send request */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_message *request = s_new_default_get_request(allocator);
 
     struct response_tester response;
-    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+    ASSERT_SUCCESS(s_response_tester_init(&response, &tester, request));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
     /* send response */
-    ASSERT_SUCCESS(s_send_response_str(
-        &tester,
+    ASSERT_SUCCESS(testing_channel_send_response_str(
+        &tester.testing_channel,
         "HTTP/1.1 200 OK\r\n"
         "Content-Length: 9\r\n"
         "\r\n"
@@ -822,15 +743,15 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1_from_multiple_io_messages) {
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* send request */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_message *request = s_new_default_get_request(allocator);
 
     struct response_tester response;
-    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+    ASSERT_SUCCESS(s_response_tester_init(&response, &tester, request));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
 
     /* send response with each byte in its own aws_io_message */
     const char *response_str = "HTTP/1.1 200 OK\r\n"
@@ -839,7 +760,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1_from_multiple_io_messages) {
                                "Call Momo";
     size_t response_str_len = strlen(response_str);
     for (size_t i = 0; i < response_str_len; ++i) {
-        s_send_response(&tester, aws_byte_cursor_from_array(response_str + i, 1));
+        testing_channel_send_response(&tester.testing_channel, aws_byte_cursor_from_array(response_str + i, 1));
     }
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -866,20 +787,20 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* send requests */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_message *request = s_new_default_get_request(allocator);
 
     struct response_tester responses[3];
     for (size_t i = 0; i < AWS_ARRAY_SIZE(responses); ++i) {
-        ASSERT_SUCCESS(s_response_tester_init(&responses[i], allocator, &opt));
+        ASSERT_SUCCESS(s_response_tester_init(&responses[i], &tester, request));
     }
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
     /* send all responses in a single aws_io_message  */
-    ASSERT_SUCCESS(s_send_response_str(
-        &tester,
+    ASSERT_SUCCESS(testing_channel_send_response_str(
+        &tester.testing_channel,
         "HTTP/1.1 204 No Content\r\n\r\n"
         "HTTP/1.1 204 No Content\r\n\r\n"
         "HTTP/1.1 204 No Content\r\n\r\n"));
@@ -908,18 +829,19 @@ H1_CLIENT_TEST_CASE(h1_client_response_with_bad_data_shuts_down_connection) {
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* send request */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_message *request = s_new_default_get_request(allocator);
 
     struct response_tester response;
-    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+    ASSERT_SUCCESS(s_response_tester_init(&response, &tester, request));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
     /* send response */
-    ASSERT_SUCCESS(s_send_response_str_ignore_errors(&tester, "Mmmm garbage data\r\n\r\n"));
+    ASSERT_SUCCESS(
+        testing_channel_send_response_str_ignore_errors(&tester.testing_channel, "Mmmm garbage data\r\n\r\n"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -941,18 +863,18 @@ H1_CLIENT_TEST_CASE(h1_client_response_with_too_much_data_shuts_down_connection)
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* send 1 request */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_message *request = s_new_default_get_request(allocator);
 
     struct response_tester response;
-    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+    ASSERT_SUCCESS(s_response_tester_init(&response, &tester, request));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
     /* send 2 responses in a single aws_io_message. */
-    ASSERT_SUCCESS(s_send_response_str_ignore_errors(
-        &tester,
+    ASSERT_SUCCESS(testing_channel_send_response_str_ignore_errors(
+        &tester.testing_channel,
         "HTTP/1.1 204 No Content\r\n\r\n"
         "HTTP/1.1 204 No Content\r\n\r\n"));
 
@@ -977,20 +899,16 @@ H1_CLIENT_TEST_CASE(h1_client_response_with_too_much_data_shuts_down_connection)
 }
 
 struct slow_body_sender {
+    struct aws_stream_status status;
     struct aws_byte_cursor cursor;
     size_t delay_ticks;    /* Don't send anything the first N ticks */
     size_t bytes_per_tick; /* Don't send more than N bytes per tick */
 };
 
-static enum aws_http_outgoing_body_state s_slow_send_body(
-    struct aws_http_stream *stream,
-    struct aws_byte_buf *buf,
-    void *user_data) {
+int s_slow_stream_read(struct aws_input_stream *stream, struct aws_byte_buf *dest) {
+    struct slow_body_sender *sender = stream->impl;
 
-    (void)stream;
-    struct response_tester *response = user_data;
-    struct slow_body_sender *sender = response->specific_test_data;
-    size_t dst_available = buf->capacity - buf->len;
+    size_t dst_available = dest->capacity - dest->len;
     size_t writing = 0;
     if (sender->delay_ticks > 0) {
         sender->delay_ticks--;
@@ -1006,11 +924,36 @@ static enum aws_http_outgoing_body_state s_slow_send_body(
         }
     }
 
-    aws_byte_buf_write(buf, sender->cursor.ptr, writing);
+    aws_byte_buf_write(dest, sender->cursor.ptr, writing);
     aws_byte_cursor_advance(&sender->cursor, writing);
 
-    return (sender->cursor.len == 0) ? AWS_HTTP_OUTGOING_BODY_DONE : AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
+    if (sender->cursor.len == 0) {
+        sender->status.is_end_of_stream = true;
+    }
+
+    return AWS_OP_SUCCESS;
 }
+int s_slow_stream_get_status(struct aws_input_stream *stream, struct aws_stream_status *status) {
+    struct slow_body_sender *sender = stream->impl;
+    *status = sender->status;
+    return AWS_OP_SUCCESS;
+}
+int s_slow_stream_get_length(struct aws_input_stream *stream, int64_t *out_length) {
+    struct slow_body_sender *sender = stream->impl;
+    *out_length = sender->cursor.len;
+    return AWS_OP_SUCCESS;
+}
+void s_slow_stream_clean_up(struct aws_input_stream *stream) {
+    (void)stream;
+}
+
+static struct aws_input_stream_vtable s_slow_stream_vtable = {
+    .seek = NULL,
+    .read = s_slow_stream_read,
+    .get_status = s_slow_stream_get_status,
+    .get_length = s_slow_stream_get_length,
+    .clean_up = s_slow_stream_clean_up,
+};
 
 /* It should be fine to receive a response before the request has finished sending */
 H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok) {
@@ -1020,9 +963,19 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
 
     /* set up request whose body won't send immediately */
     struct slow_body_sender body_sender = {
-        .cursor = aws_byte_cursor_from_c_str("write more tests"),
+        .status =
+            {
+                .is_end_of_stream = false,
+                .is_valid = true,
+            },
+        .cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests"),
         .delay_ticks = 5,
         .bytes_per_tick = 1,
+    };
+    struct aws_input_stream body_stream = {
+        .allocator = allocator,
+        .impl = &body_sender,
+        .vtable = &s_slow_stream_vtable,
     };
 
     struct aws_http_header headers[] = {
@@ -1032,22 +985,24 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
         },
     };
 
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("PUT");
-    opt.uri = aws_byte_cursor_from_c_str("/plan.txt");
-    opt.header_array = headers;
-    opt.num_headers = AWS_ARRAY_SIZE(headers);
-    opt.stream_outgoing_body = s_slow_send_body;
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
+    aws_http_message_set_body_stream(request, &body_stream);
 
     struct response_tester response;
-    ASSERT_SUCCESS(s_response_tester_init_ex(&response, allocator, &opt, &body_sender));
+    ASSERT_SUCCESS(s_response_tester_init_ex(&response, &tester, request, NULL, &body_sender));
 
     /* send head of request */
     testing_channel_run_currently_queued_tasks(&tester.testing_channel);
 
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
     /* send response */
-    ASSERT_SUCCESS(s_send_response_str(&tester, "HTTP/1.1 200 OK\r\n\r\n"));
+    ASSERT_SUCCESS(testing_channel_send_response_str(&tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
 
     /* tick loop until body finishes sending.*/
     while (body_sender.cursor.len > 0) {
@@ -1062,7 +1017,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
                            "Content-Length: 16\r\n"
                            "\r\n"
                            "write more tests";
-    ASSERT_SUCCESS(s_check_written_messages(&tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages(&tester.testing_channel, allocator, expected));
 
     ASSERT_TRUE(response.on_complete_cb_count == 1);
     ASSERT_TRUE(response.on_complete_error_code == AWS_ERROR_SUCCESS);
@@ -1083,7 +1038,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_without_request_shuts_down_connection) {
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
-    ASSERT_SUCCESS(s_send_response_str_ignore_errors(&tester, "HTTP/1.1 200 OK\r\n\r\n"));
+    ASSERT_SUCCESS(testing_channel_send_response_str_ignore_errors(&tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
@@ -1101,22 +1056,22 @@ H1_CLIENT_TEST_CASE(h1_client_window_reopens_by_default) {
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* send request */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_message *request = s_new_default_get_request(allocator);
 
     struct response_tester response;
-    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+    ASSERT_SUCCESS(s_response_tester_init(&response, &tester, request));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
 
     /* send response */
     const char *response_str = "HTTP/1.1 200 OK\r\n"
                                "Content-Length: 9\r\n"
                                "\r\n"
                                "Call Momo";
-    ASSERT_SUCCESS(s_send_response_str(&tester, response_str));
+    ASSERT_SUCCESS(testing_channel_send_response_str(&tester.testing_channel, response_str));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -1137,23 +1092,24 @@ H1_CLIENT_TEST_CASE(h1_client_window_shrinks_if_user_says_so) {
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* send request */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+    struct aws_http_make_request_options opt_override = {.manual_window_management = true};
 
     struct response_tester response;
-    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+    ASSERT_SUCCESS(s_response_tester_init_ex(&response, &tester, request, &opt_override, NULL));
     response.stop_auto_window_update = true;
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
 
     /* send response */
     const char *response_str = "HTTP/1.1 200 OK\r\n"
                                "Content-Length: 9\r\n"
                                "\r\n"
                                "Call Momo";
-    ASSERT_SUCCESS(s_send_response_str(&tester, response_str));
+    ASSERT_SUCCESS(testing_channel_send_response_str(&tester.testing_channel, response_str));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -1174,23 +1130,23 @@ static int s_window_update(struct aws_allocator *allocator, bool on_thread) {
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* send request */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_message *request = s_new_default_get_request(allocator);
 
     struct response_tester response;
-    ASSERT_SUCCESS(s_response_tester_init(&response, allocator, &opt));
+    ASSERT_SUCCESS(s_response_tester_init(&response, &tester, request));
     response.stop_auto_window_update = true;
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
 
     /* send response */
     const char *response_str = "HTTP/1.1 200 OK\r\n"
                                "Content-Length: 9\r\n"
                                "\r\n"
                                "Call Momo";
-    ASSERT_SUCCESS(s_send_response_str(&tester, response_str));
+    ASSERT_SUCCESS(testing_channel_send_response_str(&tester.testing_channel, response_str));
 
     /* drain the task queue, in case there's an update window task in there from the headers */
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -1241,16 +1197,19 @@ H1_CLIENT_TEST_CASE(h1_client_request_cancelled_by_channel_shutdown) {
     int completion_error_code = 0;
 
     /* send request */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
-    opt.user_data = &completion_error_code;
-    opt.on_complete = s_on_complete;
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = s_new_default_get_request(allocator),
+        .user_data = &completion_error_code,
+        .on_complete = s_on_complete,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(opt.request);
 
     /* shutdown channel before request completes */
     aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
@@ -1276,15 +1235,15 @@ H1_CLIENT_TEST_CASE(h1_client_multiple_requests_cancelled_by_channel_shutdown) {
     int completion_error_codes[3];
     memset(completion_error_codes, 0, sizeof(completion_error_codes));
 
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
-    opt.on_complete = s_on_complete;
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = s_new_default_get_request(allocator),
+        .on_complete = s_on_complete,
+    };
 
     for (int i = 0; i < 2; ++i) {
         opt.user_data = &completion_error_codes[i];
-        streams[i] = aws_http_stream_new_client_request(&opt);
+        streams[i] = aws_http_connection_make_request(tester.connection, &opt);
         ASSERT_NOT_NULL(streams[i]);
     }
 
@@ -1293,12 +1252,15 @@ H1_CLIENT_TEST_CASE(h1_client_multiple_requests_cancelled_by_channel_shutdown) {
 
     /* Make 1 more stream that's still locked away in the pending queue */
     opt.user_data = &completion_error_codes[2];
-    streams[2] = aws_http_stream_new_client_request(&opt);
+    streams[2] = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(streams[2]);
 
     /* shutdown channel */
     aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
     testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(opt.request);
 
     /* check results */
     for (int i = 0; i < 3; ++i) {
@@ -1316,19 +1278,20 @@ H1_CLIENT_TEST_CASE(h1_client_new_request_fails_if_channel_shut_down) {
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
-
     /* wait for shutdown complete */
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     /* send request */
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("GET");
-    opt.uri = aws_byte_cursor_from_c_str("/");
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = s_new_default_get_request(allocator),
+    };
+
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NULL(stream);
     ASSERT_INT_EQUALS(aws_last_error(), AWS_ERROR_HTTP_CONNECTION_CLOSED);
 
+    aws_http_message_destroy(opt.request);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
@@ -1342,122 +1305,153 @@ enum request_callback {
     REQUEST_CALLBACK_COUNT,
 };
 
-struct close_from_callback_tester {
-    enum request_callback close_at;
+static const int ERROR_FROM_CALLBACK_ERROR_CODE = 0xBEEFCAFE;
+
+struct error_from_callback_tester {
+    enum request_callback error_at;
     int callback_counts[REQUEST_CALLBACK_COUNT];
-    bool is_closed;
+    bool has_errored;
+    struct aws_stream_status status;
+    int on_complete_error_code;
 };
 
-static void s_close_from_callback_common(
-    struct aws_http_stream *stream,
-    struct close_from_callback_tester *close_tester,
+static int s_error_from_callback_common(
+    struct error_from_callback_tester *error_tester,
     enum request_callback current_callback) {
 
-    close_tester->callback_counts[current_callback]++;
+    error_tester->callback_counts[current_callback]++;
 
-    /* After connection closed, no more callbacks should fire (except for on_complete) */
-    if (current_callback == REQUEST_CALLBACK_COMPLETE) {
-        if (close_tester->close_at < REQUEST_CALLBACK_COMPLETE) {
-            AWS_FATAL_ASSERT(close_tester->is_closed);
-        }
-    } else {
-        AWS_FATAL_ASSERT(!close_tester->is_closed);
-        AWS_FATAL_ASSERT(current_callback <= close_tester->close_at);
+    /* After error code returned, no more callbacks should fire (except for on_complete) */
+    AWS_FATAL_ASSERT(!error_tester->has_errored);
+    AWS_FATAL_ASSERT(current_callback <= error_tester->error_at);
+    if (current_callback == error_tester->error_at) {
+        error_tester->has_errored = true;
+        return aws_raise_error(ERROR_FROM_CALLBACK_ERROR_CODE);
     }
 
-    if (current_callback == close_tester->close_at) {
-        aws_http_connection_close(aws_http_stream_get_connection(stream));
-        close_tester->is_closed = true;
-    }
+    return AWS_OP_SUCCESS;
 }
 
-static enum aws_http_outgoing_body_state s_close_from_outgoing_body(
-    struct aws_http_stream *stream,
-    struct aws_byte_buf *buf,
-    void *user_data) {
+static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct aws_byte_buf *dest) {
 
-    (void)buf;
-    s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_OUTGOING_BODY);
+    (void)dest;
 
-    /* If we're closing from this function, try and keep going. It's a failure if we're invoked again. */
-    struct close_from_callback_tester *close_tester = user_data;
-    if (close_tester->close_at == REQUEST_CALLBACK_OUTGOING_BODY) {
-        return AWS_HTTP_OUTGOING_BODY_IN_PROGRESS;
-    } else {
-        return AWS_HTTP_OUTGOING_BODY_DONE;
-    }
+    struct error_from_callback_tester *error_tester = body->impl;
+    ASSERT_SUCCESS(s_error_from_callback_common(error_tester, REQUEST_CALLBACK_OUTGOING_BODY));
+
+    /* If the common fn was successful, write out some data and end the stream */
+    ASSERT_TRUE(aws_byte_buf_write(dest, (const uint8_t *)"abcd", 4));
+    error_tester->status.is_end_of_stream = true;
+    return AWS_OP_SUCCESS;
 }
 
-static void s_close_from_incoming_headers(
+static int s_error_from_outgoing_body_get_status(struct aws_input_stream *body, struct aws_stream_status *status) {
+    struct error_from_callback_tester *error_tester = body->impl;
+    *status = error_tester->status;
+    return AWS_OP_SUCCESS;
+}
+
+static void s_error_from_outgoing_body_clean_up(struct aws_input_stream *stream) {
+    (void)stream;
+}
+
+static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
+    .seek = NULL,
+    .read = s_error_from_outgoing_body_read,
+    .get_status = s_error_from_outgoing_body_get_status,
+    .get_length = NULL,
+    .clean_up = s_error_from_outgoing_body_clean_up,
+};
+
+static int s_error_from_incoming_headers(
     struct aws_http_stream *stream,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
 
+    (void)stream;
     (void)header_array;
     (void)num_headers;
-    s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_INCOMING_HEADERS);
+    return s_error_from_callback_common(user_data, REQUEST_CALLBACK_INCOMING_HEADERS);
 }
 
-static void s_close_from_incoming_headers_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
+static int s_error_from_incoming_headers_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
+    (void)stream;
     (void)has_body;
-    s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_INCOMING_HEADERS_DONE);
+    return s_error_from_callback_common(user_data, REQUEST_CALLBACK_INCOMING_HEADERS_DONE);
 }
 
-static void s_close_from_incoming_body(
+static int s_error_from_incoming_body(
     struct aws_http_stream *stream,
     const struct aws_byte_cursor *data,
-    /* NOLINTNEXTLINE(readability-non-const-parameter) */
-    size_t *out_window_update_size,
     void *user_data) {
 
+    (void)stream;
     (void)data;
-    (void)out_window_update_size;
-    s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_INCOMING_BODY);
+    return s_error_from_callback_common(user_data, REQUEST_CALLBACK_INCOMING_BODY);
 }
 
-static void s_close_from_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
-    (void)error_code;
-    s_close_from_callback_common(stream, user_data, REQUEST_CALLBACK_COMPLETE);
+static void s_error_tester_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)stream;
+    struct error_from_callback_tester *error_tester = user_data;
+    error_tester->callback_counts[REQUEST_CALLBACK_COMPLETE]++;
+    error_tester->on_complete_error_code = error_code;
 }
 
-static int s_test_close_from_callback(struct aws_allocator *allocator, enum request_callback close_at) {
+static int s_test_error_from_callback(struct aws_allocator *allocator, enum request_callback error_at) {
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
-    struct close_from_callback_tester close_tester = {
-        .close_at = close_at,
+    struct error_from_callback_tester error_tester = {
+        .error_at = error_at,
+        .status =
+            {
+                .is_valid = true,
+                .is_end_of_stream = false,
+            },
+    };
+    struct aws_input_stream error_from_outgoing_body_stream = {
+        .allocator = allocator,
+        .impl = &error_tester,
+        .vtable = &s_error_from_outgoing_body_vtable,
     };
 
     /* send request */
     struct aws_http_header headers[] = {
         {
             .name = aws_byte_cursor_from_c_str("Content-Length"),
-            .value = aws_byte_cursor_from_c_str("999"),
+            .value = aws_byte_cursor_from_c_str("4"),
         },
     };
 
-    struct aws_http_request_options opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    opt.client_connection = tester.connection;
-    opt.method = aws_byte_cursor_from_c_str("POST");
-    opt.uri = aws_byte_cursor_from_c_str("/");
-    opt.header_array = headers;
-    opt.num_headers = AWS_ARRAY_SIZE(headers);
-    opt.stream_outgoing_body = s_close_from_outgoing_body;
-    opt.on_response_headers = s_close_from_incoming_headers;
-    opt.on_response_header_block_done = s_close_from_incoming_headers_done;
-    opt.on_response_body = s_close_from_incoming_body;
-    opt.on_complete = s_close_from_stream_complete;
-    opt.user_data = &close_tester;
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_http_method_post));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
+    aws_http_message_set_body_stream(request, &error_from_outgoing_body_stream);
 
-    struct aws_http_stream *stream = aws_http_stream_new_client_request(&opt);
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+        .on_response_headers = s_error_from_incoming_headers,
+        .on_response_header_block_done = s_error_from_incoming_headers_done,
+        .on_response_body = s_error_from_incoming_body,
+        .on_complete = s_error_tester_on_stream_complete,
+        .user_data = &error_tester,
+    };
+
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(opt.request);
+
     /* send response */
-    ASSERT_SUCCESS(s_send_response_str_ignore_errors(
-        &tester,
+    ASSERT_SUCCESS(testing_channel_send_response_str_ignore_errors(
+        &tester.testing_channel,
         "HTTP/1.1 200 OK\r\n"
         "Transfer-Encoding: chunked\r\n"
         "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
@@ -1471,50 +1465,45 @@ static int s_test_close_from_callback(struct aws_allocator *allocator, enum requ
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
-    /* check that callbacks were invoked before close_at, but not after */
+    /* check that callbacks were invoked before error_at, but not after */
     for (int i = 0; i < REQUEST_CALLBACK_COMPLETE; ++i) {
-        if (i <= close_at) {
-            ASSERT_TRUE(close_tester.callback_counts[i] > 0);
+        if (i <= error_at) {
+            ASSERT_TRUE(error_tester.callback_counts[i] > 0);
         } else {
-            ASSERT_INT_EQUALS(0, close_tester.callback_counts[i]);
+            ASSERT_INT_EQUALS(0, error_tester.callback_counts[i]);
         }
     }
 
-    /* the on_complete callback should always fire though */
-    ASSERT_INT_EQUALS(1, close_tester.callback_counts[REQUEST_CALLBACK_COMPLETE]);
+    /* the on_complete callback should always fire though, and should receive the proper error_code */
+    ASSERT_INT_EQUALS(1, error_tester.callback_counts[REQUEST_CALLBACK_COMPLETE]);
+    ASSERT_INT_EQUALS(ERROR_FROM_CALLBACK_ERROR_CODE, error_tester.on_complete_error_code);
 
     aws_http_stream_release(stream);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_close_from_outgoing_body_callback_stops_decoder) {
+H1_CLIENT_TEST_CASE(h1_client_error_from_outgoing_body_callback_stops_decoder) {
     (void)ctx;
-    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_OUTGOING_BODY));
+    ASSERT_SUCCESS(s_test_error_from_callback(allocator, REQUEST_CALLBACK_OUTGOING_BODY));
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_close_from_incoming_headers_callback_stops_decoder) {
+H1_CLIENT_TEST_CASE(h1_client_error_from_incoming_headers_callback_stops_decoder) {
     (void)ctx;
-    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_INCOMING_HEADERS));
+    ASSERT_SUCCESS(s_test_error_from_callback(allocator, REQUEST_CALLBACK_INCOMING_HEADERS));
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_close_from_incoming_headers_done_callback_stops_decoder) {
+H1_CLIENT_TEST_CASE(h1_client_error_from_incoming_headers_done_callback_stops_decoder) {
     (void)ctx;
-    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_INCOMING_HEADERS_DONE));
+    ASSERT_SUCCESS(s_test_error_from_callback(allocator, REQUEST_CALLBACK_INCOMING_HEADERS_DONE));
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_close_from_incoming_body_callback_stops_decoder) {
+H1_CLIENT_TEST_CASE(h1_client_error_from_incoming_body_callback_stops_decoder) {
     (void)ctx;
-    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_INCOMING_BODY));
-    return AWS_OP_SUCCESS;
-}
-
-H1_CLIENT_TEST_CASE(h1_client_close_from_stream_complete_callback_stops_decoder) {
-    (void)ctx;
-    ASSERT_SUCCESS(s_test_close_from_callback(allocator, REQUEST_CALLBACK_COMPLETE));
+    ASSERT_SUCCESS(s_test_error_from_callback(allocator, REQUEST_CALLBACK_INCOMING_BODY));
     return AWS_OP_SUCCESS;
 }
 
@@ -1604,18 +1593,26 @@ static int s_switch_protocols(struct protocol_switcher *switcher) {
         },
     };
 
-    struct aws_http_request_options upgrade_request = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    upgrade_request.client_connection = switcher->tester->connection;
-    upgrade_request.method = aws_byte_cursor_from_c_str("GET");
-    upgrade_request.uri = aws_byte_cursor_from_c_str("/");
-    upgrade_request.header_array = request_headers;
-    upgrade_request.num_headers = AWS_ARRAY_SIZE(request_headers);
-    upgrade_request.user_data = switcher;
-    upgrade_request.on_complete = s_switch_protocols_on_stream_complete;
+    struct aws_http_message *request = aws_http_message_new_request(switcher->tester->alloc);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_http_method_get));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, request_headers, AWS_ARRAY_SIZE(request_headers)));
 
-    struct aws_http_stream *upgrade_stream = aws_http_stream_new_client_request(&upgrade_request);
+    struct aws_http_make_request_options upgrade_request = {
+        .self_size = sizeof(upgrade_request),
+        .request = request,
+        .user_data = switcher,
+        .on_complete = s_switch_protocols_on_stream_complete,
+    };
+
+    struct aws_http_stream *upgrade_stream =
+        aws_http_connection_make_request(switcher->tester->connection, &upgrade_request);
     ASSERT_NOT_NULL(upgrade_stream);
     testing_channel_drain_queued_tasks(&switcher->tester->testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(upgrade_request.request);
 
     /* clear all messages written thus far to the testing-channel */
     while (!aws_linked_list_empty(testing_channel_get_written_message_queue(&switcher->tester->testing_channel))) {
@@ -1637,7 +1634,7 @@ static int s_switch_protocols(struct protocol_switcher *switcher) {
         ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&sending_buf, extra_data));
     }
 
-    s_send_response(switcher->tester, aws_byte_cursor_from_buf(&sending_buf));
+    testing_channel_send_response(&switcher->tester->testing_channel, aws_byte_cursor_from_buf(&sending_buf));
 
     /* wait for response to complete, and check results */
     testing_channel_drain_queued_tasks(&switcher->tester->testing_channel);
@@ -1685,9 +1682,9 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_read) {
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     const char *test_str = "inmyprotocolspacesarestrictlyforbidden";
-    ASSERT_SUCCESS(s_readpush(&tester, test_str));
+    ASSERT_SUCCESS(testing_channel_readpush(&tester.testing_channel, test_str));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
-    ASSERT_SUCCESS(s_check_midchannel_read_messages(&tester, test_str));
+    ASSERT_SUCCESS(testing_channel_check_midchannel_read_messages(&tester.testing_channel, allocator, test_str));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -1710,7 +1707,7 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_read_immediately) {
     };
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
-    ASSERT_SUCCESS(s_check_midchannel_read_messages(&tester, test_str));
+    ASSERT_SUCCESS(testing_channel_check_midchannel_read_messages(&tester.testing_channel, allocator, test_str));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -1730,7 +1727,7 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_read_with_small_downstream_window) {
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     const char *test_str = "inmyprotocolcapitallettersarethedevil";
-    ASSERT_SUCCESS(s_readpush(&tester, test_str));
+    ASSERT_SUCCESS(testing_channel_readpush(&tester.testing_channel, test_str));
 
     /* open window in tiny increments */
     for (size_t i = 0; i < strlen(test_str); ++i) {
@@ -1748,7 +1745,7 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_read_with_small_downstream_window) {
     }
     ASSERT_TRUE(num_read_messages > 1);
 
-    ASSERT_SUCCESS(s_check_midchannel_read_messages(&tester, test_str));
+    ASSERT_SUCCESS(testing_channel_check_midchannel_read_messages(&tester.testing_channel, allocator, test_str));
 
     /* cleanup */
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
@@ -1769,9 +1766,57 @@ H1_CLIENT_TEST_CASE(h1_client_midchannel_write) {
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     const char *test_str = "inmyprotocolthereisnomoney";
-    s_writepush(&tester, test_str);
+    testing_channel_writepush(&tester.testing_channel, test_str);
     testing_channel_drain_queued_tasks(&tester.testing_channel);
-    ASSERT_SUCCESS(s_check_written_messages(&tester, test_str));
+    ASSERT_SUCCESS(testing_channel_check_written_messages(&tester.testing_channel, allocator, test_str));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that, when HTTP is a midchannel handler, it will continue processing aws_io_messages write messages
+ * in the time between shutdown-in-the-read-direction and shutdown-in-the-write-direction */
+static const char *s_write_after_shutdown_in_read_dir_str = "inmyprotocolfrowningisnotallowed";
+
+static void s_downstream_handler_write_on_shutdown(
+    enum aws_channel_direction dir,
+    int error_code,
+    bool free_scarce_resources_immediately,
+    void *user_data) {
+
+    (void)error_code;
+    (void)free_scarce_resources_immediately;
+
+    struct tester *tester = user_data;
+
+    if (dir == AWS_CHANNEL_DIR_WRITE) {
+        testing_channel_writepush(&tester->testing_channel, s_write_after_shutdown_in_read_dir_str);
+    }
+}
+
+H1_CLIENT_TEST_CASE(h1_client_midchannel_write_continues_after_shutdown_in_read_dir) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .install_downstream_handler = true,
+        .downstream_handler_window_size = SIZE_MAX,
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
+
+    /* Downstream handler will write data while shutting down in write direction */
+    testing_channel_set_downstream_handler_shutdown_callback(
+        &tester.testing_channel, s_downstream_handler_write_on_shutdown, &tester);
+
+    /* Shutdown cannel */
+    aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Did the late message get through? */
+    ASSERT_SUCCESS(testing_channel_check_written_messages(
+        &tester.testing_channel, tester.alloc, s_write_after_shutdown_in_read_dir_str));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -1850,30 +1895,30 @@ H1_CLIENT_TEST_CASE(h1_client_switching_protocols_fails_pending_requests) {
         },
     };
 
-    struct aws_http_request_options upgrade_req = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    upgrade_req.client_connection = tester.connection;
-    upgrade_req.method = aws_byte_cursor_from_c_str("GET");
-    upgrade_req.uri = aws_byte_cursor_from_c_str("/chat");
-    upgrade_req.header_array = headers;
-    upgrade_req.num_headers = AWS_ARRAY_SIZE(headers);
+    struct aws_http_message *upgrade_request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(upgrade_request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(upgrade_request, aws_http_method_get));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(upgrade_request, aws_byte_cursor_from_c_str("/")));
+    ASSERT_SUCCESS(aws_http_message_add_header_array(upgrade_request, headers, AWS_ARRAY_SIZE(headers)));
 
     struct response_tester upgrade_response;
-    ASSERT_SUCCESS(s_response_tester_init(&upgrade_response, allocator, &upgrade_req));
+    ASSERT_SUCCESS(s_response_tester_init(&upgrade_response, &tester, upgrade_request));
 
     /* queue another request behind it */
-    struct aws_http_request_options next_req = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    next_req.client_connection = tester.connection;
-    next_req.method = aws_byte_cursor_from_c_str("GET");
-    next_req.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_message *next_request = s_new_default_get_request(allocator);
 
     struct response_tester next_response;
-    ASSERT_SUCCESS(s_response_tester_init(&next_response, allocator, &next_req));
+    ASSERT_SUCCESS(s_response_tester_init(&next_response, &tester, next_request));
 
     /* send upgrade response */
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
-    ASSERT_SUCCESS(s_send_response_str(
-        &tester,
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(upgrade_request);
+    aws_http_message_destroy(next_request);
+
+    ASSERT_SUCCESS(testing_channel_send_response_str(
+        &tester.testing_channel,
         "HTTP/1.1 101 Switching Protocols\r\n"
         "Upgrade: MyProtocol\r\n"
         "\r\n"));
@@ -1907,13 +1952,10 @@ H1_CLIENT_TEST_CASE(h1_client_switching_protocols_fails_subsequent_requests) {
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     /* Attempting to send a request after this should fail. */
-    struct aws_http_request_options request_opt = AWS_HTTP_REQUEST_OPTIONS_INIT;
-    request_opt.client_connection = tester.connection;
-    request_opt.method = aws_byte_cursor_from_c_str("GET");
-    request_opt.uri = aws_byte_cursor_from_c_str("/");
+    struct aws_http_message *request = s_new_default_get_request(allocator);
 
     struct response_tester response;
-    int err = s_response_tester_init(&response, allocator, &request_opt);
+    int err = s_response_tester_init(&response, &tester, request);
     if (err) {
         ASSERT_INT_EQUALS(AWS_ERROR_HTTP_SWITCHED_PROTOCOLS, aws_last_error());
     } else {
@@ -1923,6 +1965,7 @@ H1_CLIENT_TEST_CASE(h1_client_switching_protocols_fails_subsequent_requests) {
     }
 
     /* clean up */
+    aws_http_message_destroy(request);
     ASSERT_SUCCESS(s_response_tester_clean_up(&response));
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -1942,7 +1985,7 @@ H1_CLIENT_TEST_CASE(h1_client_switching_protocols_requires_downstream_handler) {
     ASSERT_SUCCESS(s_switch_protocols(&switcher));
 
     /* If new data arrives and no downstream handler is installed to deal with it, the connection should shut down. */
-    ASSERT_SUCCESS(s_readpush_ignore_errors(&tester, "herecomesnewprotocoldatachoochoo"));
+    ASSERT_SUCCESS(testing_channel_readpush_ignore_errors(&tester.testing_channel, "herecomesnewprotocoldatachoochoo"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));

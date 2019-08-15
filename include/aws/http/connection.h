@@ -36,6 +36,54 @@ typedef void(
     aws_http_on_client_connection_shutdown_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
 /**
+ * Supported proxy authentication modes
+ */
+enum aws_http_proxy_authentication_type {
+    AWS_HPAT_NONE = 0,
+    AWS_HPAT_BASIC,
+};
+
+/**
+ * Options for http proxy server usage
+ */
+struct aws_http_proxy_options {
+
+    /**
+     * Proxy host to connect to, in lieu of actual target
+     */
+    struct aws_byte_cursor host;
+
+    /**
+     * Port to make the proxy connection to
+     */
+    uint16_t port;
+
+    /**
+     * Optional.
+     * TLS configuration for the Local <-> Proxy connection
+     * Must be distinct from the the TLS options in the parent aws_http_connection_options struct
+     */
+    struct aws_tls_connection_options *tls_options;
+
+    /**
+     * What type of proxy authentication to use, if any
+     */
+    enum aws_http_proxy_authentication_type auth_type;
+
+    /**
+     * Optional
+     * User name to use for authentication, basic only
+     */
+    struct aws_byte_cursor auth_username;
+
+    /**
+     * Optional
+     * Password to use for authentication, basic only
+     */
+    struct aws_byte_cursor auth_password;
+};
+
+/**
  * Options for creating an HTTP client connection.
  * Initialize with AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT to set default values.
  */
@@ -81,6 +129,13 @@ struct aws_http_client_connection_options {
      * which must outlive the the connection.
      */
     struct aws_tls_connection_options *tls_options;
+
+    /**
+     * Optional
+     * Configuration options related to http proxy usage.
+     * Relevant fields are copied internally.
+     */
+    struct aws_http_proxy_options *proxy_options;
 
     /**
      * Optional.
@@ -158,6 +213,18 @@ void aws_http_connection_close(struct aws_http_connection *connection);
  */
 AWS_HTTP_API
 bool aws_http_connection_is_open(const struct aws_http_connection *connection);
+
+/**
+ * Returns true if this is a client connection.
+ */
+AWS_HTTP_API
+bool aws_http_connection_is_client(const struct aws_http_connection *connection);
+
+/**
+ * Increments the connection-wide read window by the value specified.
+ */
+AWS_HTTP_API
+void aws_http_connection_update_window(struct aws_http_connection *connection, size_t increment_size);
 
 AWS_HTTP_API
 enum aws_http_version aws_http_connection_get_version(const struct aws_http_connection *connection);
