@@ -40,9 +40,14 @@ enum aws_proxy_bootstrap_state {
     AWS_PBS_FAILURE,
 };
 
-struct aws_http_proxy_options_clonable {
+/**
+ * A persistent copy of the aws_http_proxy_options struct.  Clones everything appropriate.
+ */
+struct aws_http_proxy_config {
 
-    struct aws_string *host;
+    struct aws_allocator *allocator;
+
+    struct aws_byte_buf host;
 
     uint16_t port;
 
@@ -50,13 +55,10 @@ struct aws_http_proxy_options_clonable {
 
     enum aws_http_proxy_authentication_type auth_type;
 
-    struct aws_string *auth_username;
+    struct aws_byte_buf auth_username;
 
-    struct aws_string *auth_password;
+    struct aws_byte_buf auth_password;
 };
-
-struct aws_http_proxy_options_clonable *aws_http_proxy_options_clone(struct aws_http_proxy_options *options);
-void aws_http_proxy_options_clonable_destroy(struct aws_http_proxy_options_clonable *options);
 
 /*
  * When a proxy connection is made, we wrap the user-supplied user data with this
@@ -83,9 +85,7 @@ struct aws_http_proxy_user_data {
 
     struct aws_tls_connection_options *tls_options;
 
-    enum aws_http_proxy_authentication_type auth_type;
-    struct aws_string *username;
-    struct aws_string *password;
+    struct aws_http_proxy_config *proxy_config;
 };
 
 struct aws_http_proxy_system_vtable {
@@ -112,6 +112,19 @@ int aws_http_rewrite_uri_for_proxy_request(
 
 AWS_HTTP_API
 void aws_http_proxy_system_set_vtable(struct aws_http_proxy_system_vtable *vtable);
+
+AWS_HTTP_API
+struct aws_http_proxy_config *aws_http_proxy_config_new(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_options *options);
+
+AWS_HTTP_API
+void aws_http_proxy_config_destroy(struct aws_http_proxy_config *config);
+
+AWS_HTTP_API
+void aws_http_proxy_options_init_from_config(
+    struct aws_http_proxy_options *options,
+    const struct aws_http_proxy_config *config);
 
 AWS_EXTERN_C_END
 
