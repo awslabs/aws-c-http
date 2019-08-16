@@ -450,9 +450,12 @@ static void s_aws_http_connection_manager_build_work_unit(struct aws_connection_
         aws_array_list_swap_contents(&manager->connections, &work->connections_to_release);
 
         /*
-         * Swap our pending acquisitions with the work completion list
+         * Move all manager pending acquisitions to the work completion list
          */
-        aws_linked_list_swap_contents(&manager->pending_acquisitions, &work->completions);
+        while (!aws_linked_list_empty(&manager->pending_acquisitions)) {
+            s_aws_http_connection_manager_move_front_acquisition(
+                manager, NULL, AWS_ERROR_HTTP_CONNECTION_MANAGER_SHUTTING_DOWN, &work->completions);
+        }
 
         AWS_LOGF_INFO(
             AWS_LS_HTTP_CONNECTION_MANAGER,
@@ -893,11 +896,7 @@ static void s_aws_http_connection_manager_on_connection_setup(
             work.connection_to_release = connection;
         }
         ++manager->open_connection_count;
-    }
-
-    s_aws_http_connection_manager_build_work_unit(&work);
-
-    if (connection == NULL) {
+    } else {
         /*
          * To be safe, if we have an excess of pending acquisitions (beyond the number of pending
          * connects), we need to fail all of the excess.  Technically, we might be able to try and
@@ -909,6 +908,8 @@ static void s_aws_http_connection_manager_on_connection_setup(
             s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &work.completions);
         }
     }
+
+    s_aws_http_connection_manager_build_work_unit(&work);
 
     aws_mutex_unlock(&manager->lock);
 
