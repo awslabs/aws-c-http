@@ -67,7 +67,7 @@ enum aws_http_connection_manager_state_type { AWS_HCMST_UNINITIALIZED, AWS_HCMST
  *    (4) Don't crash or do awful things (leaking resources is ok though) if the interface contract
  *        (ref counting + balanced acquire/release of connections) is violated by the user
  *
- *  In order to fulfill (1) and (2), all side-affecting operations within the connection manager follow a pattern:
+ *  In order to fulfill (1) and (2), all side-effecting operations within the connection manager follow a pattern:
  *
  *    (1) Lock
  *    (2) Make state changes based on the operation
@@ -285,7 +285,7 @@ static bool s_aws_http_connection_manager_should_destroy(struct aws_http_connect
  * we build a list of one or more acquisitions to complete.  Once the lock is released
  * we complete all the acquisitions in the list using the data within the struct (hence why we have
  * "result-oriented" members like connection and error_code).  This means we can fail an acquisition
- * simply by setting the error_code and moving it to the current task set.
+ * simply by setting the error_code and moving it to the current work unit's completion list.
  */
 struct aws_http_connection_acquisition {
     struct aws_linked_list_node node;
