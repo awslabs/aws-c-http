@@ -40,6 +40,24 @@ enum aws_proxy_bootstrap_state {
     AWS_PBS_FAILURE,
 };
 
+struct aws_http_proxy_options_clonable {
+
+    struct aws_string *host;
+
+    uint16_t port;
+
+    struct aws_tls_connection_options *tls_options;
+
+    enum aws_http_proxy_authentication_type auth_type;
+
+    struct aws_string *auth_username;
+
+    struct aws_string *auth_password;
+};
+
+struct aws_http_proxy_options_clonable *aws_http_proxy_options_clone(struct aws_http_proxy_options *options);
+void aws_http_proxy_options_clonable_destroy(struct aws_http_proxy_options_clonable *options);
+
 /*
  * When a proxy connection is made, we wrap the user-supplied user data with this
  * proxy user data.  Callbacks are passed properly to the user.  By having this data

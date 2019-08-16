@@ -23,7 +23,6 @@
 struct aws_client_bootstrap;
 struct aws_http_connection;
 struct aws_http_connection_manager;
-struct aws_http_connection_manager_mocks;
 struct aws_socket_options;
 struct aws_tls_connection_options;
 
@@ -46,6 +45,7 @@ struct aws_http_connection_manager_options {
     size_t initial_window_size;
     struct aws_socket_options *socket_options;
     struct aws_tls_connection_options *tls_connection_options;
+    struct aws_http_proxy_options *proxy_options;
     struct aws_byte_cursor host;
     uint16_t port;
 
