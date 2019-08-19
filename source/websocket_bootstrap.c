@@ -191,6 +191,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     http_options.host_name = options->host;
     http_options.socket_options = options->socket_options;
     http_options.tls_options = options->tls_options;
+    http_options.proxy_options = options->proxy_options;
     http_options.initial_window_size = 1024; /* Adequate space for response data to trickle in */
     http_options.user_data = ws_bootstrap;
     http_options.on_setup = s_ws_bootstrap_on_http_setup;
