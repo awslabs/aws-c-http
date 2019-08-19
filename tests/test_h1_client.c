@@ -1280,6 +1280,7 @@ H1_CLIENT_TEST_CASE(h1_client_new_request_fails_if_channel_shut_down) {
     aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
     /* wait for shutdown complete */
     testing_channel_drain_queued_tasks(&tester.testing_channel);
+
     /* send request */
     struct aws_http_make_request_options opt = {
         .self_size = sizeof(opt),
