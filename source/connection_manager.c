@@ -285,7 +285,7 @@ static bool s_aws_http_connection_manager_should_destroy(struct aws_http_connect
  * we build a list of one or more acquisitions to complete.  Once the lock is released
  * we complete all the acquisitions in the list using the data within the struct (hence why we have
  * "result-oriented" members like connection and error_code).  This means we can fail an acquisition
- * simply by setting the error_code and moving it to the current work unit's completion list.
+ * simply by setting the error_code and moving it to the current transaction's completion list.
  */
 struct aws_http_connection_acquisition {
     struct aws_linked_list_node node;
@@ -366,7 +366,7 @@ static void s_aws_http_connection_manager_move_front_acquisition(
 }
 
 /*
- * Encompasses all of the non-state-update work that needs to be done for various
+ * Encompasses all of the external operations that need to be done for various
  * events:
  *   manager release
  *   connection release
@@ -374,10 +374,10 @@ static void s_aws_http_connection_manager_move_front_acquisition(
  *   connection_setup
  *   connection_shutdown
  *
- * The work unit is built under the manager's lock, but then executed
- * outside of it.
+ * The transaction is built under the manager's lock (and the internal state is updated optimistically),
+ * but then executed outside of it.
  */
-struct aws_connection_management_work_unit {
+struct aws_connection_management_transaction {
     struct aws_http_connection_manager *manager;
     struct aws_allocator *allocator;
     struct aws_linked_list completions;
@@ -388,8 +388,8 @@ struct aws_connection_management_work_unit {
     bool should_destroy_manager;
 };
 
-static void s_aws_connection_management_work_unit_init(
-    struct aws_connection_management_work_unit *work,
+static void s_aws_connection_management_transaction_init(
+    struct aws_connection_management_transaction *work,
     struct aws_http_connection_manager *manager) {
     AWS_ZERO_STRUCT(*work);
 
@@ -404,11 +404,11 @@ static void s_aws_connection_management_work_unit_init(
     work->allocator = manager->allocator;
 }
 
-static void s_aws_connection_management_work_unit_clean_up(struct aws_connection_management_work_unit *work) {
+static void s_aws_connection_management_transaction_clean_up(struct aws_connection_management_transaction *work) {
     aws_array_list_clean_up(&work->connections_to_release);
 }
 
-static void s_aws_http_connection_manager_build_work_unit(struct aws_connection_management_work_unit *work) {
+static void s_aws_http_connection_manager_build_transaction(struct aws_connection_management_transaction *work) {
     struct aws_http_connection_manager *manager = work->manager;
 
     if (manager->state == AWS_HCMST_READY) {
@@ -470,7 +470,7 @@ static void s_aws_http_connection_manager_build_work_unit(struct aws_connection_
     s_aws_http_connection_manager_get_snapshot(manager, &work->snapshot);
 }
 
-static void s_aws_http_connection_manager_execute_work_unit(struct aws_connection_management_work_unit *work);
+static void s_aws_http_connection_manager_execute_transaction(struct aws_connection_management_transaction *work);
 
 static void s_aws_http_connection_manager_destroy(struct aws_http_connection_manager *manager) {
     if (manager == NULL) {
@@ -571,8 +571,8 @@ void aws_http_connection_manager_acquire(struct aws_http_connection_manager *man
 }
 
 void aws_http_connection_manager_release(struct aws_http_connection_manager *manager) {
-    struct aws_connection_management_work_unit work;
-    s_aws_connection_management_work_unit_init(&work, manager);
+    struct aws_connection_management_transaction work;
+    s_aws_connection_management_transaction_init(&work, manager);
 
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: release", (void *)manager);
 
@@ -587,7 +587,7 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
                 "id=%p: ref count now zero, starting shut down process",
                 (void *)manager);
             manager->state = AWS_HCMST_SHUTTING_DOWN;
-            s_aws_http_connection_manager_build_work_unit(&work);
+            s_aws_http_connection_manager_build_transaction(&work);
         }
     } else {
         AWS_LOGF_ERROR(
@@ -598,7 +598,7 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
 
     aws_mutex_unlock(&manager->lock);
 
-    s_aws_http_connection_manager_execute_work_unit(&work);
+    s_aws_http_connection_manager_execute_transaction(&work);
 }
 
 static void s_aws_http_connection_manager_on_connection_setup(
@@ -639,7 +639,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     return AWS_OP_SUCCESS;
 }
 
-static void s_aws_http_connection_manager_execute_work_unit(struct aws_connection_management_work_unit *work) {
+static void s_aws_http_connection_manager_execute_transaction(struct aws_connection_management_transaction *work) {
 
     struct aws_http_connection_manager *manager = work->manager;
 
@@ -755,7 +755,7 @@ static void s_aws_http_connection_manager_execute_work_unit(struct aws_connectio
     /*
      * Step 6 - Clean up work.  Do this here rather than at the end of every caller.
      */
-    s_aws_connection_management_work_unit_clean_up(work);
+    s_aws_connection_management_transaction_clean_up(work);
 }
 
 void aws_http_connection_manager_acquire_connection(
@@ -776,8 +776,8 @@ void aws_http_connection_manager_acquire_connection(
     request->callback = callback;
     request->user_data = user_data;
 
-    struct aws_connection_management_work_unit work;
-    s_aws_connection_management_work_unit_init(&work, manager);
+    struct aws_connection_management_transaction work;
+    s_aws_connection_management_transaction_init(&work, manager);
 
     aws_mutex_lock(&manager->lock);
 
@@ -793,19 +793,19 @@ void aws_http_connection_manager_acquire_connection(
     aws_linked_list_push_back(&manager->pending_acquisitions, &request->node);
     ++manager->pending_acquisition_count;
 
-    s_aws_http_connection_manager_build_work_unit(&work);
+    s_aws_http_connection_manager_build_transaction(&work);
 
     aws_mutex_unlock(&manager->lock);
 
-    s_aws_http_connection_manager_execute_work_unit(&work);
+    s_aws_http_connection_manager_execute_transaction(&work);
 }
 
 int aws_http_connection_manager_release_connection(
     struct aws_http_connection_manager *manager,
     struct aws_http_connection *connection) {
 
-    struct aws_connection_management_work_unit work;
-    s_aws_connection_management_work_unit_init(&work, manager);
+    struct aws_connection_management_transaction work;
+    s_aws_connection_management_transaction_init(&work, manager);
 
     int result = AWS_OP_ERR;
     bool should_release_connection = !manager->system_vtable->is_connection_open(connection);
@@ -835,7 +835,7 @@ int aws_http_connection_manager_release_connection(
         }
     }
 
-    s_aws_http_connection_manager_build_work_unit(&work);
+    s_aws_http_connection_manager_build_transaction(&work);
     if (should_release_connection) {
         work.connection_to_release = connection;
     }
@@ -844,7 +844,7 @@ release:
 
     aws_mutex_unlock(&manager->lock);
 
-    s_aws_http_connection_manager_execute_work_unit(&work);
+    s_aws_http_connection_manager_execute_transaction(&work);
 
     return result;
 }
@@ -855,8 +855,8 @@ static void s_aws_http_connection_manager_on_connection_setup(
     void *user_data) {
     struct aws_http_connection_manager *manager = user_data;
 
-    struct aws_connection_management_work_unit work;
-    s_aws_connection_management_work_unit_init(&work, manager);
+    struct aws_connection_management_transaction work;
+    s_aws_connection_management_transaction_init(&work, manager);
 
     if (connection != NULL) {
         AWS_LOGF_DEBUG(
@@ -909,11 +909,11 @@ static void s_aws_http_connection_manager_on_connection_setup(
         }
     }
 
-    s_aws_http_connection_manager_build_work_unit(&work);
+    s_aws_http_connection_manager_build_transaction(&work);
 
     aws_mutex_unlock(&manager->lock);
 
-    s_aws_http_connection_manager_execute_work_unit(&work);
+    s_aws_http_connection_manager_execute_transaction(&work);
 }
 
 static void s_aws_http_connection_manager_on_connection_shutdown(
@@ -932,8 +932,8 @@ static void s_aws_http_connection_manager_on_connection_shutdown(
         (void *)manager,
         (void *)connection);
 
-    struct aws_connection_management_work_unit work;
-    s_aws_connection_management_work_unit_init(&work, manager);
+    struct aws_connection_management_transaction work;
+    s_aws_connection_management_transaction_init(&work, manager);
 
     aws_mutex_lock(&manager->lock);
 
@@ -969,9 +969,9 @@ static void s_aws_http_connection_manager_on_connection_shutdown(
         }
     }
 
-    s_aws_http_connection_manager_build_work_unit(&work);
+    s_aws_http_connection_manager_build_transaction(&work);
 
     aws_mutex_unlock(&manager->lock);
 
-    s_aws_http_connection_manager_execute_work_unit(&work);
+    s_aws_http_connection_manager_execute_transaction(&work);
 }
