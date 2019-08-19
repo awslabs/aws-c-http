@@ -53,8 +53,9 @@ void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data
     }
 
     aws_string_destroy(user_data->original_host);
-    aws_string_destroy(user_data->username);
-    aws_string_destroy(user_data->password);
+    if (user_data->proxy_config) {
+        aws_http_proxy_config_destroy(user_data->proxy_config);
+    }
 
     if (user_data->tls_options) {
         aws_tls_connection_options_clean_up(user_data->tls_options);
@@ -67,6 +68,8 @@ void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data
 struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     struct aws_allocator *allocator,
     const struct aws_http_client_connection_options *options) {
+
+    AWS_FATAL_ASSERT(options->proxy_options != NULL);
 
     struct aws_http_proxy_user_data *user_data = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_user_data));
     if (user_data == NULL) {
@@ -83,19 +86,10 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     }
 
     user_data->original_port = options->port;
-    user_data->auth_type = options->proxy_options->auth_type;
-    if (user_data->auth_type == AWS_HPAT_BASIC) {
-        const struct aws_byte_cursor *user_name = &options->proxy_options->auth_username;
-        user_data->username = aws_string_new_from_array(allocator, user_name->ptr, user_name->len);
-        if (user_data->username == NULL) {
-            goto on_error;
-        }
 
-        const struct aws_byte_cursor *password = &options->proxy_options->auth_password;
-        user_data->password = aws_string_new_from_array(allocator, password->ptr, password->len);
-        if (user_data->password == NULL) {
-            goto on_error;
-        }
+    user_data->proxy_config = aws_http_proxy_config_new(allocator, options->proxy_options);
+    if (user_data->proxy_config == NULL) {
+        goto on_error;
     }
 
     if (options->tls_options) {
@@ -146,12 +140,12 @@ static int s_add_basic_proxy_authentication_header(
     if (aws_byte_buf_init(
             &base64_input_value,
             proxy_user_data->allocator,
-            proxy_user_data->username->len + proxy_user_data->password->len + 1)) {
+            proxy_user_data->proxy_config->auth_username.len + proxy_user_data->proxy_config->auth_password.len + 1)) {
         goto done;
     }
 
     /* First build a buffer with "username:password" in it */
-    struct aws_byte_cursor username_cursor = aws_byte_cursor_from_string(proxy_user_data->username);
+    struct aws_byte_cursor username_cursor = aws_byte_cursor_from_buf(&proxy_user_data->proxy_config->auth_username);
     if (aws_byte_buf_append(&base64_input_value, &username_cursor)) {
         goto done;
     }
@@ -161,7 +155,7 @@ static int s_add_basic_proxy_authentication_header(
         goto done;
     }
 
-    struct aws_byte_cursor password_cursor = aws_byte_cursor_from_string(proxy_user_data->password);
+    struct aws_byte_cursor password_cursor = aws_byte_cursor_from_buf(&proxy_user_data->proxy_config->auth_password);
     if (aws_byte_buf_append(&base64_input_value, &password_cursor)) {
         goto done;
     }
@@ -345,7 +339,8 @@ static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_pr
         goto on_error;
     }
 
-    if (user_data->auth_type == AWS_HPAT_BASIC && s_add_basic_proxy_authentication_header(request, user_data)) {
+    if (user_data->proxy_config->auth_type == AWS_HPAT_BASIC &&
+        s_add_basic_proxy_authentication_header(request, user_data)) {
         goto on_error;
     }
 
@@ -672,7 +667,8 @@ static int s_proxy_http_request_transform(struct aws_http_message *request, void
 
     int result = AWS_OP_ERR;
 
-    if (proxy_ud->auth_type == AWS_HPAT_BASIC && s_add_basic_proxy_authentication_header(request, proxy_ud)) {
+    if (proxy_ud->proxy_config->auth_type == AWS_HPAT_BASIC &&
+        s_add_basic_proxy_authentication_header(request, proxy_ud)) {
         goto done;
     }
 
@@ -790,4 +786,75 @@ int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_op
     } else {
         return s_aws_http_client_connect_via_proxy_http(options);
     }
+}
+
+struct aws_http_proxy_config *aws_http_proxy_config_new(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_options *options) {
+    AWS_FATAL_ASSERT(options != NULL);
+    struct aws_http_proxy_config *config = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_config));
+    if (config == NULL) {
+        return NULL;
+    }
+
+    if (aws_byte_buf_init_copy_from_cursor(&config->host, allocator, options->host)) {
+        goto on_error;
+    }
+
+    if (aws_byte_buf_init_copy_from_cursor(&config->auth_username, allocator, options->auth_username)) {
+        goto on_error;
+    }
+
+    if (aws_byte_buf_init_copy_from_cursor(&config->auth_password, allocator, options->auth_password)) {
+        goto on_error;
+    }
+
+    if (options->tls_options) {
+        config->tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
+        if (aws_tls_connection_options_copy(config->tls_options, options->tls_options)) {
+            goto on_error;
+        }
+    }
+
+    config->allocator = allocator;
+    config->auth_type = options->auth_type;
+    config->port = options->port;
+
+    return config;
+
+on_error:
+
+    aws_http_proxy_config_destroy(config);
+
+    return NULL;
+}
+
+void aws_http_proxy_config_destroy(struct aws_http_proxy_config *config) {
+    if (config == NULL) {
+        return;
+    }
+
+    aws_byte_buf_clean_up(&config->host);
+    aws_byte_buf_clean_up(&config->auth_username);
+    aws_byte_buf_clean_up(&config->auth_password);
+
+    if (config->tls_options) {
+        aws_tls_connection_options_clean_up(config->tls_options);
+        aws_mem_release(config->allocator, config->tls_options);
+    }
+
+    aws_mem_release(config->allocator, config);
+}
+
+void aws_http_proxy_options_init_from_config(
+    struct aws_http_proxy_options *options,
+    const struct aws_http_proxy_config *config) {
+    AWS_FATAL_ASSERT(options && config);
+
+    options->host = aws_byte_cursor_from_buf(&config->host);
+    options->auth_username = aws_byte_cursor_from_buf(&config->auth_username);
+    options->auth_password = aws_byte_cursor_from_buf(&config->auth_password);
+    options->auth_type = config->auth_type;
+    options->port = config->port;
+    options->tls_options = config->tls_options;
 }

@@ -33,7 +33,7 @@
 
 enum new_connection_result_type { AWS_NCRT_SUCCESS, AWS_NCRT_ERROR_VIA_CALLBACK, AWS_NCRT_ERROR_FROM_CREATE };
 
-struct mock_connection_proxy {
+struct mock_connection {
     enum new_connection_result_type result;
     bool is_closed_on_release;
 };
@@ -41,6 +41,7 @@ struct mock_connection_proxy {
 struct cm_tester_options {
     struct aws_allocator *allocator;
     struct aws_http_connection_manager_system_vtable *mock_table;
+    struct aws_http_proxy_options *proxy_options;
     size_t max_connections;
 };
 
@@ -57,6 +58,7 @@ struct cm_tester {
     struct aws_tls_ctx *tls_ctx;
     struct aws_tls_ctx_options tls_ctx_options;
     struct aws_tls_connection_options tls_connection_options;
+    struct aws_http_proxy_options *proxy_options;
 
     struct aws_mutex lock;
     struct aws_condition_variable signal;
@@ -87,6 +89,9 @@ int s_cm_tester_init(struct cm_tester_options *options) {
     aws_io_load_error_strings();
 
     tester->allocator = options->allocator;
+
+    ASSERT_SUCCESS(aws_mutex_init(&tester->lock));
+    ASSERT_SUCCESS(aws_condition_variable_init(&tester->signal));
 
     struct aws_logger_standard_options logger_options = {
         .level = AWS_LOG_LEVEL_TRACE,
@@ -119,14 +124,13 @@ int s_cm_tester_init(struct cm_tester_options *options) {
 
     aws_tls_connection_options_init_from_ctx(&tester->tls_connection_options, tester->tls_ctx);
 
-    ASSERT_SUCCESS(aws_mutex_init(&tester->lock));
-    ASSERT_SUCCESS(aws_condition_variable_init(&tester->signal));
+    tester->proxy_options = options->proxy_options;
 
     struct aws_http_connection_manager_options cm_options = {.bootstrap = tester->client_bootstrap,
                                                              .initial_window_size = SIZE_MAX,
                                                              .socket_options = &socket_options,
-                                                             .tls_connection_options =
-                                                                 NULL, //&tester->tls_connection_options,
+                                                             .tls_connection_options = NULL,
+                                                             .proxy_options = tester->proxy_options,
                                                              .host = aws_byte_cursor_from_c_str("www.google.com"),
                                                              .port = 80,
                                                              .max_connections = options->max_connections};
@@ -143,7 +147,7 @@ int s_cm_tester_init(struct cm_tester_options *options) {
     aws_atomic_store_int(&tester->next_connection_id, 0);
 
     ASSERT_SUCCESS(aws_array_list_init_dynamic(
-        &tester->mock_connections, tester->allocator, 10, sizeof(struct mock_connection_proxy *)));
+        &tester->mock_connections, tester->allocator, 10, sizeof(struct mock_connection *)));
 
     return AWS_OP_SUCCESS;
 }
@@ -152,7 +156,7 @@ void s_add_mock_connections(size_t count, enum new_connection_result_type result
     struct cm_tester *tester = &s_tester;
 
     for (size_t i = 0; i < count; ++i) {
-        struct mock_connection_proxy *mock = aws_mem_acquire(tester->allocator, sizeof(struct mock_connection_proxy));
+        struct mock_connection *mock = aws_mem_acquire(tester->allocator, sizeof(struct mock_connection));
         AWS_ZERO_STRUCT(*mock);
 
         mock->result = result;
@@ -288,7 +292,7 @@ int s_cm_tester_clean_up(void) {
     aws_array_list_clean_up(&tester->connections);
 
     for (size_t i = 0; i < aws_array_list_length(&tester->mock_connections); ++i) {
-        struct mock_connection_proxy *mock = NULL;
+        struct mock_connection *mock = NULL;
 
         if (aws_array_list_get_at(&tester->mock_connections, &mock, i)) {
             continue;
@@ -456,7 +460,17 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
     tester->release_connection_fn = options->on_shutdown;
     ASSERT_SUCCESS(aws_mutex_unlock(&tester->lock));
 
-    struct mock_connection_proxy *connection = NULL;
+    /* Verify that any proxy options have been propagated to the connection attempt */
+    if (tester->proxy_options) {
+        ASSERT_BIN_ARRAYS_EQUALS(
+            tester->proxy_options->host.ptr,
+            tester->proxy_options->host.len,
+            options->proxy_options->host.ptr,
+            options->proxy_options->host.len);
+        ASSERT_TRUE(options->proxy_options->port == tester->proxy_options->port);
+    }
+
+    struct mock_connection *connection = NULL;
 
     if (next_connection_id < aws_array_list_length(&tester->mock_connections)) {
         aws_array_list_get_at(&tester->mock_connections, &connection, next_connection_id);
@@ -492,7 +506,7 @@ static void s_aws_http_connection_manager_close_connection_sync_mock(struct aws_
 static bool s_aws_http_connection_manager_is_connection_open_sync_mock(const struct aws_http_connection *connection) {
     (void)connection;
 
-    struct mock_connection_proxy *proxy = (struct mock_connection_proxy *)(void *)connection;
+    struct mock_connection *proxy = (struct mock_connection *)(void *)connection;
 
     return !proxy->is_closed_on_release;
 }
@@ -617,3 +631,57 @@ static int s_test_connection_manager_success_then_cancel_pending_from_failure(
 AWS_TEST_CASE(
     test_connection_manager_success_then_cancel_pending_from_failure,
     s_test_connection_manager_success_then_cancel_pending_from_failure);
+
+static int s_test_connection_manager_proxy_setup_shutdown(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct aws_http_proxy_options proxy_options = {
+        .host = aws_byte_cursor_from_c_str("127.0.0.1"),
+        .port = 8080,
+    };
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 1,
+        .mock_table = &s_synchronous_mocks,
+        .proxy_options = &proxy_options,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_proxy_setup_shutdown, s_test_connection_manager_proxy_setup_shutdown);
+
+static int s_test_connection_manager_proxy_acquire_single(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct aws_http_proxy_options proxy_options = {
+        .host = aws_byte_cursor_from_c_str("127.0.0.1"),
+        .port = 8080,
+    };
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 1,
+        .mock_table = &s_synchronous_mocks,
+        .proxy_options = &proxy_options,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_add_mock_connections(1, AWS_NCRT_SUCCESS, true);
+    s_acquire_connections(1);
+    s_wait_on_connection_reply_count(1);
+
+    ASSERT_TRUE(s_tester.connection_errors == 0);
+
+    ASSERT_SUCCESS(s_release_connections(1, true));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_proxy_acquire_single, s_test_connection_manager_proxy_acquire_single);

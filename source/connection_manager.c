@@ -22,6 +22,7 @@
 #include <aws/http/connection.h>
 #include <aws/http/private/connection_manager_system_vtable.h>
 #include <aws/http/private/http_impl.h>
+#include <aws/http/private/proxy_impl.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
@@ -169,6 +170,7 @@ struct aws_http_connection_manager {
     size_t initial_window_size;
     struct aws_socket_options socket_options;
     struct aws_tls_connection_options *tls_connection_options;
+    struct aws_http_proxy_config *proxy_config;
     struct aws_string *host;
     uint16_t port;
 
@@ -494,6 +496,10 @@ static void s_aws_http_connection_manager_destroy(struct aws_http_connection_man
         aws_mem_release(manager->allocator, manager->tls_connection_options);
     }
 
+    if (manager->proxy_config) {
+        aws_http_proxy_config_destroy(manager->proxy_config);
+    }
+
     aws_mutex_clean_up(&manager->lock);
 
     aws_mem_release(manager->allocator, manager);
@@ -536,9 +542,15 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     }
 
     if (options->tls_connection_options) {
-        manager->tls_connection_options = aws_mem_acquire(allocator, sizeof(struct aws_tls_connection_options));
-        AWS_ZERO_STRUCT(*manager->tls_connection_options);
+        manager->tls_connection_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
         if (aws_tls_connection_options_copy(manager->tls_connection_options, options->tls_connection_options)) {
+            goto on_error;
+        }
+    }
+
+    if (options->proxy_options) {
+        manager->proxy_config = aws_http_proxy_config_new(allocator, options->proxy_options);
+        if (manager->proxy_config == NULL) {
             goto on_error;
         }
     }
@@ -625,6 +637,14 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.socket_options = &manager->socket_options;
     options.on_setup = s_aws_http_connection_manager_on_connection_setup;
     options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
+
+    struct aws_http_proxy_options proxy_options;
+    AWS_ZERO_STRUCT(proxy_options);
+
+    if (manager->proxy_config) {
+        aws_http_proxy_options_init_from_config(&proxy_options, manager->proxy_config);
+        options.proxy_options = &proxy_options;
+    }
 
     if (manager->system_vtable->create_connection(&options)) {
         AWS_LOGF_ERROR(

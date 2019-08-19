@@ -159,6 +159,12 @@ struct aws_websocket_client_connection_options {
     struct aws_tls_connection_options *tls_options;
 
     /**
+     * Optional
+     * Configuration options related to http proxy usage.
+     */
+    struct aws_http_proxy_options *proxy_options;
+
+    /**
      * Required.
      * aws_websocket_client_connect() makes a copy.
      */
