@@ -18,6 +18,7 @@
 #include <aws/common/array_list.h>
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
+#include <aws/common/logging.h>
 #include <aws/common/mutex.h>
 #include <aws/common/thread.h>
 #include <aws/common/uuid.h>
@@ -46,6 +47,7 @@ struct cm_tester_options {
 
 struct cm_tester {
     struct aws_allocator *allocator;
+    struct aws_logger logger;
     struct aws_event_loop_group event_loop_group;
     struct aws_host_resolver host_resolver;
 
@@ -87,6 +89,17 @@ int s_cm_tester_init(struct cm_tester_options *options) {
     aws_io_load_error_strings();
 
     tester->allocator = options->allocator;
+
+    ASSERT_SUCCESS(aws_mutex_init(&tester->lock));
+    ASSERT_SUCCESS(aws_condition_variable_init(&tester->signal));
+  
+    struct aws_logger_standard_options logger_options = {
+        .level = AWS_LOG_LEVEL_TRACE,
+        .file = stderr,
+    };
+
+    ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->allocator, &logger_options));
+    aws_logger_set(&tester->logger);
 
     ASSERT_SUCCESS(
         aws_array_list_init_dynamic(&tester->connections, tester->allocator, 10, sizeof(struct aws_http_connection *)));
@@ -160,7 +173,7 @@ int s_release_connections(size_t count, bool close_first) {
     struct aws_array_list to_release;
     AWS_ZERO_STRUCT(to_release);
 
-    aws_mutex_lock(&tester->lock);
+    ASSERT_SUCCESS(aws_mutex_lock(&tester->lock));
 
     size_t release_count = aws_array_list_length(&tester->connections);
     if (release_count > count) {
@@ -189,7 +202,7 @@ int s_release_connections(size_t count, bool close_first) {
 
 release:
 
-    aws_mutex_unlock(&tester->lock);
+    ASSERT_SUCCESS(aws_mutex_unlock(&tester->lock));
 
     if (aws_array_list_is_valid(&to_release)) {
         for (size_t i = 0; i < aws_array_list_length(&to_release); ++i) {
@@ -208,10 +221,10 @@ release:
 
             aws_http_connection_manager_release_connection(tester->connection_manager, connection);
 
-            aws_mutex_lock(&tester->lock);
+            ASSERT_SUCCESS(aws_mutex_lock(&tester->lock));
             ++tester->connection_releases;
             aws_condition_variable_notify_one(&tester->signal);
-            aws_mutex_unlock(&tester->lock);
+            ASSERT_SUCCESS(aws_mutex_unlock(&tester->lock));
         }
 
         aws_array_list_clean_up(&to_release);
@@ -228,7 +241,7 @@ void s_on_acquire_connection(struct aws_http_connection *connection, int error_c
 
     struct cm_tester *tester = &s_tester;
 
-    aws_mutex_lock(&tester->lock);
+    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->lock) == AWS_OP_SUCCESS);
 
     if (connection == NULL) {
         ++tester->connection_errors;
@@ -238,7 +251,7 @@ void s_on_acquire_connection(struct aws_http_connection *connection, int error_c
 
     aws_condition_variable_notify_one(&tester->signal);
 
-    aws_mutex_unlock(&tester->lock);
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->lock) == AWS_OP_SUCCESS);
 }
 
 static void s_acquire_connections(size_t count) {
@@ -258,15 +271,17 @@ static bool s_is_connection_reply_count_at_least(void *context) {
            aws_array_list_length(&tester->connections) + tester->connection_errors + tester->connection_releases;
 }
 
-static void s_wait_on_connection_reply_count(size_t count) {
+static int s_wait_on_connection_reply_count(size_t count) {
     struct cm_tester *tester = &s_tester;
 
-    aws_mutex_lock(&tester->lock);
+    ASSERT_SUCCESS(aws_mutex_lock(&tester->lock));
 
     tester->wait_for_connection_count = count;
-    aws_condition_variable_wait_pred(&tester->signal, &tester->lock, s_is_connection_reply_count_at_least, tester);
+    int signal_error =
+        aws_condition_variable_wait_pred(&tester->signal, &tester->lock, s_is_connection_reply_count_at_least, tester);
 
-    aws_mutex_unlock(&tester->lock);
+    ASSERT_SUCCESS(aws_mutex_unlock(&tester->lock));
+    return signal_error;
 }
 
 int s_cm_tester_clean_up(void) {
@@ -298,8 +313,14 @@ int s_cm_tester_clean_up(void) {
     aws_tls_connection_options_clean_up(&tester->tls_connection_options);
     aws_tls_ctx_destroy(tester->tls_ctx);
 
+    aws_mutex_clean_up(&tester->lock);
+    aws_condition_variable_clean_up(&tester->signal);
+
     aws_http_library_clean_up();
     aws_tls_clean_up_static_state();
+
+    aws_logger_clean_up(&tester->logger);
+
     return AWS_OP_SUCCESS;
 }
 
@@ -325,7 +346,7 @@ static int s_test_connection_manager_single_connection(struct aws_allocator *all
 
     s_acquire_connections(1);
 
-    s_wait_on_connection_reply_count(1);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
 
     ASSERT_SUCCESS(s_release_connections(1, false));
 
@@ -344,7 +365,7 @@ static int s_test_connection_manager_many_connections(struct aws_allocator *allo
 
     s_acquire_connections(20);
 
-    s_wait_on_connection_reply_count(20);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(20));
 
     ASSERT_SUCCESS(s_release_connections(20, false));
 
@@ -363,12 +384,12 @@ static int s_test_connection_manager_acquire_release(struct aws_allocator *alloc
 
     s_acquire_connections(20);
 
-    s_wait_on_connection_reply_count(4);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(4));
 
     for (size_t i = 4; i < 20; ++i) {
         ASSERT_SUCCESS(s_release_connections(1, false));
 
-        s_wait_on_connection_reply_count(i + 1);
+        ASSERT_SUCCESS(s_wait_on_connection_reply_count(i + 1));
     }
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
@@ -386,12 +407,12 @@ static int s_test_connection_manager_close_and_release(struct aws_allocator *all
 
     s_acquire_connections(20);
 
-    s_wait_on_connection_reply_count(4);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(4));
 
     for (size_t i = 4; i < 20; ++i) {
         ASSERT_SUCCESS(s_release_connections(1, i % 1 == 0));
 
-        s_wait_on_connection_reply_count(i + 1);
+        ASSERT_SUCCESS(s_wait_on_connection_reply_count(i + 1));
     }
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
@@ -410,17 +431,17 @@ static int s_test_connection_manager_acquire_release_mix(struct aws_allocator *a
     for (size_t i = 0; i < 10; ++i) {
         s_acquire_connections(2);
 
-        s_wait_on_connection_reply_count(i + 1);
+        ASSERT_SUCCESS(s_wait_on_connection_reply_count(i + 1));
 
         ASSERT_SUCCESS(s_release_connections(1, i % 1 == 0));
     }
 
-    s_wait_on_connection_reply_count(15);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(15));
 
     for (size_t i = 15; i < 20; ++i) {
         ASSERT_SUCCESS(s_release_connections(1, i % 1 == 0));
 
-        s_wait_on_connection_reply_count(i + 1);
+        ASSERT_SUCCESS(s_wait_on_connection_reply_count(i + 1));
     }
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
@@ -435,9 +456,9 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
 
     size_t next_connection_id = aws_atomic_fetch_add(&tester->next_connection_id, 1);
 
-    aws_mutex_lock(&tester->lock);
+    ASSERT_SUCCESS(aws_mutex_lock(&tester->lock));
     tester->release_connection_fn = options->on_shutdown;
-    aws_mutex_unlock(&tester->lock);
+    ASSERT_SUCCESS(aws_mutex_unlock(&tester->lock));
 
     /* Verify that any proxy options have been propagated to the connection attempt */
     if (tester->proxy_options) {
@@ -511,17 +532,17 @@ static int s_test_connection_manager_acquire_release_mix_synchronous(struct aws_
     for (size_t i = 0; i < 10; ++i) {
         s_acquire_connections(2);
 
-        s_wait_on_connection_reply_count(i + 1);
+        ASSERT_SUCCESS(s_wait_on_connection_reply_count(i + 1));
 
         ASSERT_SUCCESS(s_release_connections(1, false));
     }
 
-    s_wait_on_connection_reply_count(15);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(15));
 
     for (size_t i = 15; i < 20; ++i) {
         ASSERT_SUCCESS(s_release_connections(1, false));
 
-        s_wait_on_connection_reply_count(i + 1);
+        ASSERT_SUCCESS(s_wait_on_connection_reply_count(i + 1));
     }
 
     ASSERT_TRUE(s_tester.connection_errors == 0);
@@ -546,7 +567,7 @@ static int s_test_connection_manager_connect_callback_failure(struct aws_allocat
 
     s_acquire_connections(5);
 
-    s_wait_on_connection_reply_count(5);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(5));
 
     ASSERT_TRUE(s_tester.connection_errors == 5);
 
@@ -568,7 +589,7 @@ static int s_test_connection_manager_connect_immediate_failure(struct aws_alloca
 
     s_acquire_connections(5);
 
-    s_wait_on_connection_reply_count(5);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(5));
 
     ASSERT_TRUE(s_tester.connection_errors == 5);
 
@@ -593,13 +614,13 @@ static int s_test_connection_manager_success_then_cancel_pending_from_failure(
 
     s_acquire_connections(5);
 
-    s_wait_on_connection_reply_count(1);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
 
     ASSERT_TRUE(s_tester.connection_errors == 0);
 
     ASSERT_SUCCESS(s_release_connections(1, true));
 
-    s_wait_on_connection_reply_count(5);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(5));
 
     ASSERT_TRUE(s_tester.connection_errors == 4);
 
