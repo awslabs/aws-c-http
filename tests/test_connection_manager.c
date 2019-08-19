@@ -92,7 +92,7 @@ int s_cm_tester_init(struct cm_tester_options *options) {
 
     ASSERT_SUCCESS(aws_mutex_init(&tester->lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->signal));
-  
+
     struct aws_logger_standard_options logger_options = {
         .level = AWS_LOG_LEVEL_TRACE,
         .file = stderr,
