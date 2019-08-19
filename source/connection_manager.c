@@ -359,6 +359,14 @@ static void s_aws_http_connection_manager_move_front_acquisition(
     AWS_FATAL_ASSERT(manager->pending_acquisition_count > 0);
     --manager->pending_acquisition_count;
 
+    if (error_code == AWS_ERROR_SUCCESS && connection == NULL) {
+        AWS_LOGF_FATAL(
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "id=%p: Connection acquisition completed with NULL connection and no error code.  Investigate.",
+            (void *)manager);
+        error_code = AWS_ERROR_UNKNOWN;
+    }
+
     struct aws_http_connection_acquisition *pending_acquisition =
         AWS_CONTAINER_OF(node, struct aws_http_connection_acquisition, node);
     pending_acquisition->connection = connection;
@@ -423,6 +431,11 @@ static void s_aws_http_connection_manager_build_transaction(struct aws_connectio
 
             aws_array_list_pop_back(&manager->connections);
 
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_CONNECTION_MANAGER,
+                "id=%p: Grabbing pooled connection (%p)",
+                (void *)manager,
+                (void *)connection);
             s_aws_http_connection_manager_move_front_acquisition(
                 manager, connection, AWS_ERROR_SUCCESS, &work->completions);
             ++manager->vended_connection_count;
@@ -455,6 +468,10 @@ static void s_aws_http_connection_manager_build_transaction(struct aws_connectio
          * Move all manager pending acquisitions to the work completion list
          */
         while (!aws_linked_list_empty(&manager->pending_acquisitions)) {
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_CONNECTION_MANAGER,
+                "id=%p: Failing pending connection acquisition due to manager shut down",
+                (void *)manager);
             s_aws_http_connection_manager_move_front_acquisition(
                 manager, NULL, AWS_ERROR_HTTP_CONNECTION_MANAGER_SHUTTING_DOWN, &work->completions);
         }
@@ -749,6 +766,11 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
                 aws_array_list_get_at(&errors, &error, i);
             }
 
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_CONNECTION_MANAGER,
+                "id=%p: Failing excess connection acquisition with error code %d",
+                (void *)manager,
+                (int)error);
             s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error, &work->completions);
             ++i;
         }
@@ -925,6 +947,11 @@ static void s_aws_http_connection_manager_on_connection_setup(
          * This won't happen during shutdown since there are no pending acquisitions at that point.
          */
         while (manager->pending_acquisition_count > manager->pending_connects_count) {
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_CONNECTION_MANAGER,
+                "id=%p: Failing excess connection acquisition with error code %d",
+                (void *)manager,
+                (int)error_code);
             s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &work.completions);
         }
     }
