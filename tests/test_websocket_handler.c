@@ -469,8 +469,6 @@ static int s_writepush_check(struct tester *tester, size_t ignore_n_written_fram
 }
 
 static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
-    aws_common_library_init();
-    aws_io_library_init();
     aws_http_library_init(alloc);
 
     AWS_ZERO_STRUCT(*tester);

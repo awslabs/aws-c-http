@@ -113,9 +113,6 @@ static int s_on_done(void *user_data) {
 }
 
 static void s_test_init(struct aws_allocator *allocator) {
-
-    aws_common_library_init();
-    aws_io_library_init();
     aws_http_library_init(allocator);
 
     struct aws_logger_standard_options logger_options = {

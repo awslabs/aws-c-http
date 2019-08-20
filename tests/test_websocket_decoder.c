@@ -78,8 +78,6 @@ static void s_decoder_tester_reset(struct decoder_tester *tester) {
 }
 
 static int s_decoder_tester_init(struct decoder_tester *tester, struct aws_allocator *alloc) {
-    aws_common_library_init();
-    aws_io_library_init();
     aws_http_library_init(alloc);
 
     AWS_ZERO_STRUCT(*tester);

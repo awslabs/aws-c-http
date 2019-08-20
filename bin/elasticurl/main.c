@@ -518,8 +518,6 @@ static bool s_completion_predicate(void *arg) {
 int main(int argc, char **argv) {
     struct aws_allocator *allocator = aws_default_allocator();
 
-    aws_common_library_init();
-    aws_io_library_init();
     aws_http_library_init(allocator);
 
     struct elasticurl_ctx app_ctx;
@@ -545,9 +543,6 @@ int main(int argc, char **argv) {
     AWS_ZERO_STRUCT(logger);
 
     if (app_ctx.log_level) {
-        aws_common_library_init();
-        aws_io_library_init();
-
         struct aws_logger_standard_options options = {
             .level = app_ctx.log_level,
         };
@@ -585,8 +580,6 @@ int main(int argc, char **argv) {
     struct aws_tls_connection_options *tls_options = NULL;
 
     if (use_tls) {
-        aws_tls_init_static_state(allocator);
-
         if (app_ctx.cert && app_ctx.key) {
             if (aws_tls_ctx_options_init_client_mtls_from_path(
                     &tls_ctx_options, allocator, app_ctx.cert, app_ctx.key)) {
@@ -699,7 +692,6 @@ int main(int argc, char **argv) {
         aws_tls_ctx_options_clean_up(&tls_ctx_options);
     }
 
-    aws_tls_clean_up_static_state();
     aws_http_library_clean_up();
 
     if (app_ctx.log_level) {

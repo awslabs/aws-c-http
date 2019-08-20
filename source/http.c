@@ -390,6 +390,7 @@ void aws_http_library_init(struct aws_allocator *alloc) {
     }
     s_library_initialized = true;
 
+    aws_io_library_init(alloc);
     aws_register_error_info(&s_error_list);
     aws_register_log_subject_info_list(&s_log_subject_list);
     s_methods_init(alloc);
@@ -409,6 +410,7 @@ void aws_http_library_clean_up(void) {
     s_headers_clean_up();
     s_versions_clean_up();
     aws_hpack_static_table_clean_up();
+    aws_io_library_clean_up();
 }
 
 void aws_http_fatal_assert_library_initialized() {

@@ -113,7 +113,6 @@ static bool s_stream_wait_pred(void *user_data) {
 static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    aws_tls_init_static_state(allocator);
     aws_http_library_init(allocator);
 
     struct aws_byte_cursor url =
@@ -216,7 +215,6 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
     aws_uri_clean_up(&uri);
 
     aws_http_library_clean_up();
-    aws_tls_clean_up_static_state();
 
     return 0;
 }
