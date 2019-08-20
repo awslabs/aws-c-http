@@ -399,6 +399,12 @@ void aws_http_library_init(struct aws_allocator *alloc) {
 }
 
 void aws_http_library_clean_up(void) {
+    if (!s_library_initialized) {
+        return;
+    }
+
+    aws_unregister_error_info(&s_error_list);
+    aws_unregister_log_subject_info_list(&s_log_subject_list);
     s_methods_clean_up();
     s_headers_clean_up();
     s_versions_clean_up();

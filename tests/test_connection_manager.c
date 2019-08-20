@@ -85,8 +85,8 @@ int s_cm_tester_init(struct cm_tester_options *options) {
 
     aws_tls_init_static_state(options->allocator);
     aws_http_library_init(options->allocator);
-    aws_load_error_strings();
-    aws_io_load_error_strings();
+    aws_common_library_init();
+    aws_io_library_init();
 
     tester->allocator = options->allocator;
 
@@ -378,21 +378,23 @@ AWS_TEST_CASE(test_connection_manager_many_connections, s_test_connection_manage
 static int s_test_connection_manager_acquire_release(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    struct cm_tester_options options = {.allocator = allocator, .max_connections = 4};
+    while (true) {
+        struct cm_tester_options options = {.allocator = allocator, .max_connections = 4};
 
-    ASSERT_SUCCESS(s_cm_tester_init(&options));
+        ASSERT_SUCCESS(s_cm_tester_init(&options));
 
-    s_acquire_connections(20);
+        s_acquire_connections(20);
 
-    ASSERT_SUCCESS(s_wait_on_connection_reply_count(4));
+        ASSERT_SUCCESS(s_wait_on_connection_reply_count(4));
 
-    for (size_t i = 4; i < 20; ++i) {
-        ASSERT_SUCCESS(s_release_connections(1, false));
+        for (size_t i = 4; i < 20; ++i) {
+            ASSERT_SUCCESS(s_release_connections(1, false));
 
-        ASSERT_SUCCESS(s_wait_on_connection_reply_count(i + 1));
+            ASSERT_SUCCESS(s_wait_on_connection_reply_count(i + 1));
+        }
+
+        ASSERT_SUCCESS(s_cm_tester_clean_up());
     }
-
-    ASSERT_SUCCESS(s_cm_tester_clean_up());
 
     return AWS_OP_SUCCESS;
 }

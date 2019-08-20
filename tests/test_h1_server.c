@@ -174,10 +174,8 @@ static struct aws_http_stream *s_tester_on_incoming_request(struct aws_http_conn
 
 static int s_tester_init(struct aws_allocator *alloc) {
 
-    aws_load_error_strings();
-    aws_common_load_log_subject_strings();
-    aws_io_load_error_strings();
-    aws_io_load_log_subject_strings();
+    aws_common_library_init();
+    aws_io_library_init();
     aws_http_library_init(alloc);
 
     AWS_ZERO_STRUCT(s_tester);
@@ -1206,10 +1204,8 @@ static struct aws_http_stream *s_tester_close_on_incoming_request(
 
 static int s_error_tester_init(struct aws_allocator *alloc, struct error_from_callback_tester *tester) {
 
-    aws_load_error_strings();
-    aws_common_load_log_subject_strings();
-    aws_io_load_error_strings();
-    aws_io_load_log_subject_strings();
+    aws_common_library_init();
+    aws_io_library_init();
     aws_http_library_init(alloc);
 
     tester->alloc = alloc;

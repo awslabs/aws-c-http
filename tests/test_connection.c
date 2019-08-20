@@ -227,10 +227,8 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 
     tester->alloc = options->alloc;
 
-    aws_load_error_strings();
-    aws_common_load_log_subject_strings();
-    aws_io_load_error_strings();
-    aws_io_load_log_subject_strings();
+    aws_common_library_init();
+    aws_io_library_init();
 
     aws_http_library_init(options->alloc);
 
