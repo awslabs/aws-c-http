@@ -77,6 +77,7 @@ typedef void(aws_http_message_transform_fn)(
 /**
  * Invoked repeatedly times as headers are received.
  * At this point, aws_http_stream_get_incoming_response_status() can be called.
+ * This is always invoked on the HTTP connection's event-loop thread.
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.
  * Return AWS_OP_ERR to indicate failure and cancel the stream.
@@ -89,6 +90,7 @@ typedef int(aws_http_on_incoming_headers_fn)(
 
 /**
  * Invoked when response header block has been completely read.
+ * This is always invoked on the HTTP connection's event-loop thread.
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.
  * Return AWS_OP_ERR to indicate failure and cancel the stream.
@@ -98,6 +100,12 @@ typedef int(aws_http_on_incoming_header_block_done_fn)(struct aws_http_stream *s
 /**
  * Called repeatedly as body data is received.
  * The data must be copied immediately if you wish to preserve it.
+ * This is always invoked on the HTTP connection's event-loop thread.
+ *
+ * Note that, if the stream is using manual_window_management then the window
+ * size has shrunk by the amount of body data received. If the window size
+ * reaches 0 no further data will be received. Increment the window size with
+ * aws_http_stream_update_window().
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.
  * Return AWS_OP_ERR to indicate failure and cancel the stream.
@@ -107,6 +115,7 @@ typedef int(
 
 /**
  * Invoked when request has been completely read.
+ * This is always invoked on the HTTP connection's event-loop thread.
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.
  * Return AWS_OP_ERR to indicate failure and cancel the stream.
@@ -115,6 +124,7 @@ typedef int(aws_http_on_incoming_request_done_fn)(struct aws_http_stream *stream
 
 /**
  * Invoked when request/response stream is complete, whether successful or unsuccessful
+ * This is always invoked on the HTTP connection's event-loop thread.
  */
 typedef void(aws_http_on_stream_complete_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
 
@@ -196,7 +206,6 @@ struct aws_http_request_handler_options {
      * Invoked repeatedly times as headers are received.
      * Optional.
      * See `aws_http_on_incoming_headers_fn`.
-     * Optional.
      */
     aws_http_on_incoming_headers_fn *on_request_headers;
 
