@@ -29,9 +29,30 @@ struct aws_tls_connection_options;
  */
 struct aws_http_connection;
 
+/**
+ * Invoked when connect completes.
+ *
+ * If unsuccessful, error_code will be set, connection will be NULL,
+ * and the on_shutdown callback will never be invoked.
+ *
+ * If successful, error_code will be 0 and connection will be valid.
+ * The user is now responsible for the connection and must
+ * call aws_http_connection_release() when they are done with it.
+ *
+ * The connection uses one event-loop thread to do all its work.
+ * The thread invoking this callback will be the same thread that invokes all
+ * future callbacks for this connection and its streams.
+ */
 typedef void(
     aws_http_on_client_connection_setup_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
+/**
+ * Invoked when the connection has finished shutting down.
+ * Never invoked if on_setup failed.
+ * This is always invoked on connection's event-loop thread.
+ * Note that the connection is not completely done until on_shutdown has been invoked
+ * AND aws_http_connection_release() has been called.
+ */
 typedef void(
     aws_http_on_client_connection_shutdown_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
@@ -152,19 +173,15 @@ struct aws_http_client_connection_options {
     /**
      * Invoked when connect completes.
      * Required.
-     * If unsuccessful, error_code will be set, connection will be NULL,
-     * and the on_shutdown callback will never be invoked.
-     * If successful, the user is now responsible for the connection and must
-     * call aws_http_connection_release() when they are done with it.
+     * See `aws_http_on_client_connection_setup_fn`.
      */
     aws_http_on_client_connection_setup_fn *on_setup;
 
     /**
      * Invoked when the connection has finished shutting down.
+     * Never invoked if setup failed.
      * Optional.
-     * Never invoked if on_setup failed.
-     * Note that the connection is not completely done until on_shutdown has been invoked
-     * AND aws_http_connection_release() has been called.
+     * See `aws_http_on_client_connection_shutdown_fn`.
      */
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
 };
@@ -174,8 +191,6 @@ struct aws_http_client_connection_options {
  */
 #define AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT                                                                        \
     { .self_size = sizeof(struct aws_http_client_connection_options), .initial_window_size = SIZE_MAX, }
-
-typedef void(aws_http_connection_result_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
 AWS_EXTERN_C_BEGIN
 
