@@ -142,21 +142,21 @@ struct aws_http_client_connection_options {
      * Required.
      * aws_http_client_connect() makes a copy.
      */
-    struct aws_socket_options *socket_options;
+    const struct aws_socket_options *socket_options;
 
     /**
      * Optional.
      * aws_http_client_connect() deep-copies all contents except the `aws_tls_ctx`,
      * which must outlive the the connection.
      */
-    struct aws_tls_connection_options *tls_options;
+    const struct aws_tls_connection_options *tls_options;
 
     /**
      * Optional
      * Configuration options related to http proxy usage.
      * Relevant fields are copied internally.
      */
-    struct aws_http_proxy_options *proxy_options;
+    const struct aws_http_proxy_options *proxy_options;
 
     /**
      * Optional.
