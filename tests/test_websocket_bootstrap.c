@@ -121,10 +121,6 @@ static struct tester {
 } s_tester;
 
 static int s_tester_init(struct aws_allocator *alloc) {
-    aws_load_error_strings();
-    aws_common_load_log_subject_strings();
-    aws_io_load_error_strings();
-    aws_io_load_log_subject_strings();
     aws_http_library_init(alloc);
 
     struct aws_logger_standard_options logger_options = {

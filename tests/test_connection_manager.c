@@ -83,10 +83,7 @@ int s_cm_tester_init(struct cm_tester_options *options) {
 
     AWS_ZERO_STRUCT(*tester);
 
-    aws_tls_init_static_state(options->allocator);
     aws_http_library_init(options->allocator);
-    aws_load_error_strings();
-    aws_io_load_error_strings();
 
     tester->allocator = options->allocator;
 
@@ -317,7 +314,6 @@ int s_cm_tester_clean_up(void) {
     aws_condition_variable_clean_up(&tester->signal);
 
     aws_http_library_clean_up();
-    aws_tls_clean_up_static_state();
 
     aws_logger_clean_up(&tester->logger);
 
