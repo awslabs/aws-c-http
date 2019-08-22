@@ -100,11 +100,6 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
 
     tester->alloc = options->alloc;
 
-    aws_load_error_strings();
-    aws_common_load_log_subject_strings();
-    aws_io_load_error_strings();
-    aws_io_load_log_subject_strings();
-
     aws_http_library_init(options->alloc);
 
     tester->host = options->host;
@@ -142,8 +137,6 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
 
     bool use_tls = options->test_mode == PTTM_HTTPS;
     if (use_tls) {
-        aws_tls_init_static_state(tester->alloc);
-
         aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, tester->alloc);
         aws_tls_ctx_options_set_alpn_list(&tester->tls_ctx_options, "http/1.1");
         tester->tls_ctx_options.verify_peer = false;
@@ -212,8 +205,6 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
         aws_tls_ctx_destroy(tester->tls_ctx);
         aws_tls_ctx_options_clean_up(&tester->tls_ctx_options);
     }
-
-    aws_tls_clean_up_static_state();
 
     aws_http_library_clean_up();
     aws_logger_clean_up(&tester->logger);
