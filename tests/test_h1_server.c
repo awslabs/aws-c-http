@@ -158,8 +158,8 @@ static struct aws_http_stream *s_tester_on_incoming_request(struct aws_http_conn
     tester->requests[index].num_headers = 0;
     tester->requests[index].has_incoming_body = false;
     tester->requests[index].header_done = false;
-
     aws_byte_buf_init(&tester->requests[index].storage, tester->alloc, 1024 * 1024 * 1);
+    
     options.user_data = &tester->requests[index];
     options.server_connection = connection;
     options.on_request_headers = s_tester_on_request_header;
