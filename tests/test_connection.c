@@ -321,7 +321,7 @@ static int s_tester_clean_up(struct tester *tester) {
     if (tester->server) {
         /* server is not shut down by test, let's shut down the server here */
         aws_http_server_release(tester->server);
-        /* wait for the server finishes shutdown process */
+        /* wait for the server to finish shutdown process */
         ASSERT_SUCCESS(s_tester_wait(tester, s_tester_server_shutdown_pred));
     }
     aws_server_bootstrap_release(tester->server_bootstrap);
