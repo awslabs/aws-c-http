@@ -56,6 +56,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_MISSING_BODY_STREAM,
         "Given the provided headers (ex: Content-Length), a body is expected."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_INVALID_BODY_STREAM,
+        "A body stream provided, but the message do not allow body (ex: response for HEAD Request and 304 response)"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_MISSING_BODY_HEADERS,
         "Missing headers (ex: Content-Length) required to send a body."),
     AWS_DEFINE_ERROR_INFO_HTTP(

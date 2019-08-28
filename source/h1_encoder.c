@@ -24,7 +24,10 @@
 /**
  * Scan headers to detect errors and determine anything we'll need to know later (ex: total length).
  */
-static int s_scan_outgoing_headers(const struct aws_http_message *message, size_t *out_header_lines_len) {
+static int s_scan_outgoing_headers(
+    const struct aws_http_message *message,
+    size_t *out_header_lines_len,
+    bool body_less) {
 
     size_t total = 0;
 
@@ -54,6 +57,13 @@ static int s_scan_outgoing_headers(const struct aws_http_message *message, size_
         if (err) {
             return AWS_OP_ERR;
         }
+    }
+    if (body_less) {
+        /* no body should follow, no matter what the headers are */
+        if (has_body_stream) {
+            return aws_raise_error(AWS_ERROR_HTTP_INVALID_BODY_STREAM);
+        }
+        has_body_headers = false;
     }
 
     if (has_body_headers && !has_body_stream) {
@@ -118,7 +128,7 @@ int aws_h1_encoder_message_init_from_request(
      */
 
     size_t header_lines_len;
-    err = s_scan_outgoing_headers(request, &header_lines_len);
+    err = s_scan_outgoing_headers(request, &header_lines_len, false);
     if (err) {
         goto error;
     }
@@ -170,7 +180,8 @@ error:
 int aws_h1_encoder_message_init_from_response(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
-    const struct aws_http_message *response) {
+    const struct aws_http_message *response,
+    const struct aws_http_stream *stream) {
 
     AWS_ZERO_STRUCT(*message);
 
@@ -197,7 +208,14 @@ int aws_h1_encoder_message_init_from_response(
      */
 
     size_t header_lines_len;
-    err = s_scan_outgoing_headers(response, &header_lines_len);
+    bool body_less = false;
+    /**
+     * no body needed in the response
+     * https://httpwg.org/specs/rfc7230.html#message.body
+     */
+    body_less = status_int == 304 || status_int == 204 || status_int / 100 == 1 ||
+                stream->server_data->request_method == AWS_HTTP_METHOD_HEAD;
+    err = s_scan_outgoing_headers(response, &header_lines_len, body_less);
     if (err) {
         goto error;
     }

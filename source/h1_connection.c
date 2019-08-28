@@ -288,7 +288,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
     /* Validate the response and cache info that encoder will eventually need.
      * The encoder_message object will be moved into the stream later while holding the lock */
     struct aws_h1_encoder_message encoder_message;
-    err = aws_h1_encoder_message_init_from_response(&encoder_message, stream->alloc, response);
+    err = aws_h1_encoder_message_init_from_response(&encoder_message, stream->alloc, response, stream);
     if (err) {
         send_err = aws_last_error();
         goto response_error;
