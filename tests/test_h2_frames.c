@@ -276,7 +276,7 @@ static int s_test_priority_init(struct frame_test_fixture *fixture) {
     /* clang-format on */
 
     aws_byte_buf_write(&fixture->buffer, frame_header, sizeof(frame_header));
-    aws_byte_buf_write_be32(&fixture->buffer, (1ull << 31) | stream_dependency);
+    aws_byte_buf_write_be32(&fixture->buffer, (1ULL << 31) | stream_dependency);
     aws_byte_buf_write_u8(&fixture->buffer, dependency_weight);
 
     /* Init packet */

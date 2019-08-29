@@ -733,6 +733,10 @@ int aws_h2_frame_headers_decode(struct aws_h2_frame_headers *frame, struct aws_h
             goto read_error;
         }
 
+        if (frame->pad_length > decoder->payload.len) {
+            goto protocol_error;
+        }
+
         /* Remove padding from payload */
         decoder->payload.len -= frame->pad_length;
     }
@@ -1181,6 +1185,10 @@ int aws_h2_frame_push_promise_decode(struct aws_h2_frame_push_promise *frame, st
     if (decoder->flags & AWS_H2_FRAME_F_PADDED) {
         if (!aws_byte_cursor_read_u8(&decoder->payload, &frame->pad_length)) {
             goto read_error;
+        }
+
+        if (frame->pad_length > decoder->payload.len) {
+            goto protocol_error;
         }
 
         /* Remove padding from payload */

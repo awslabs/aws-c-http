@@ -1129,7 +1129,7 @@ enum request_handler_callback {
     REQUEST_HANDLER_CALLBACK_COUNT,
 };
 
-static const int ERROR_FROM_CALLBACK_ERROR_CODE = 0xBEEFCAFE;
+static const int ERROR_FROM_CALLBACK_ERROR_CODE = (int)0xBEEFCAFE;
 
 struct error_from_callback_tester {
     enum request_handler_callback error_at;

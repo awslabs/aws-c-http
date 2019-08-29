@@ -4,11 +4,11 @@ project(aws-c-http C)
 option(ENABLE_PROXY_INTEGRATION_TESTS "Whether to run the proxy integration tests that rely on a proxy server installed and running locally" OFF)
 
 if (DEFINED CMAKE_PREFIX_PATH)
-    file(TO_CMAKE_PATH ${CMAKE_PREFIX_PATH} CMAKE_PREFIX_PATH)
+    file(TO_CMAKE_PATH "${CMAKE_PREFIX_PATH}" CMAKE_PREFIX_PATH)
 endif()
 
 if (DEFINED CMAKE_INSTALL_PREFIX)
-    file(TO_CMAKE_PATH ${CMAKE_INSTALL_PREFIX} CMAKE_INSTALL_PREFIX)
+    file(TO_CMAKE_PATH "${CMAKE_INSTALL_PREFIX}" CMAKE_INSTALL_PREFIX)
 endif()
 
 if (UNIX AND NOT APPLE)

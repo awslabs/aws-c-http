@@ -1,0 +1,10 @@
+{
+    "name": "aws-c-http",
+    "upstream": [
+        { "name": "aws-c-io" },
+        { "name": "aws-c-compression" }
+    ],
+    "downstream": [
+        { "name": "aws-c-auth" }
+    ]
+}
