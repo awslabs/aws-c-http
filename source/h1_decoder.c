@@ -46,7 +46,7 @@ struct aws_h1_decoder {
     size_t chunk_size;
     bool doing_trailers;
     bool is_done;
-    bool expects_body;
+    bool expects_no_body;
     void *logging_id;
 
     /* User callbacks and settings. */
@@ -323,7 +323,7 @@ static void s_reset_state(struct aws_h1_decoder *decoder) {
     decoder->chunk_size = 0;
     decoder->doing_trailers = false;
     decoder->is_done = false;
-    decoder->expects_body = false;
+    decoder->expects_no_body = false;
 }
 
 static int s_state_unchunked_body(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input) {
@@ -457,7 +457,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
     /* RFC-7230 section 3 Message Format */
     if (input.len == 0) {
         if (AWS_LIKELY(!decoder->doing_trailers)) {
-            if (decoder->expects_body) {
+            if (decoder->expects_no_body) {
                 err = s_mark_done(decoder);
                 if (err) {
                     return AWS_OP_ERR;
@@ -722,7 +722,7 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
     }
 
     /* RFC-7230 section 3.3 Message Body */
-    decoder->expects_body |= code_val == 304 || code_val == 204 || code_val / 100 == 1;
+    decoder->expects_no_body |= code_val == 304 || code_val == 204 || code_val / 100 == 1;
 
     err = decoder->vtable.on_response((int)code_val, decoder->user_data);
     if (err) {
@@ -789,14 +789,14 @@ size_t aws_h1_decoder_get_content_length(const struct aws_h1_decoder *decoder) {
     return decoder->content_length;
 }
 
-bool aws_h1_decoder_get_expects_body(const struct aws_h1_decoder *decoder) {
-    return decoder->expects_body;
+bool aws_h1_decoder_get_expects_no_body(const struct aws_h1_decoder *decoder) {
+    return decoder->expects_no_body;
 }
 
 void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, void *id) {
     decoder->logging_id = id;
 }
 
-void aws_h1_decoder_set_expects_body(struct aws_h1_decoder *decoder, bool expects_body) {
-    decoder->expects_body = expects_body;
+void aws_h1_decoder_set_expects_no_body(struct aws_h1_decoder *decoder, bool expects_no_body) {
+    decoder->expects_no_body = expects_no_body;
 }
