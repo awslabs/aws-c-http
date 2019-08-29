@@ -27,7 +27,7 @@
 static int s_scan_outgoing_headers(
     const struct aws_http_message *message,
     size_t *out_header_lines_len,
-    bool body_less) {
+    bool expects_body) {
 
     size_t total = 0;
 
@@ -58,7 +58,7 @@ static int s_scan_outgoing_headers(
             return AWS_OP_ERR;
         }
     }
-    if (body_less) {
+    if (expects_body) {
         /* no body should follow, no matter what the headers are */
         if (has_body_stream) {
             return aws_raise_error(AWS_ERROR_HTTP_INVALID_BODY_STREAM);
@@ -181,7 +181,7 @@ int aws_h1_encoder_message_init_from_response(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *response,
-    bool body_less) {
+    bool expects_body) {
 
     AWS_ZERO_STRUCT(*message);
 
@@ -212,8 +212,8 @@ int aws_h1_encoder_message_init_from_response(
      * no body needed in the response
      * RFC-7230 section 3.3 Message Body
      */
-    body_less |= status_int == 304 || status_int == 204 || status_int / 100 == 1;
-    err = s_scan_outgoing_headers(response, &header_lines_len, body_less);
+    expects_body |= status_int == 304 || status_int == 204 || status_int / 100 == 1;
+    err = s_scan_outgoing_headers(response, &header_lines_len, expects_body);
     if (err) {
         goto error;
     }
