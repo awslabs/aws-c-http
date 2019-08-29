@@ -46,6 +46,7 @@ struct aws_h1_decoder {
     size_t chunk_size;
     bool doing_trailers;
     bool is_done;
+    bool body_less;
     void *logging_id;
 
     /* User callbacks and settings. */
@@ -322,6 +323,7 @@ static void s_reset_state(struct aws_h1_decoder *decoder) {
     decoder->chunk_size = 0;
     decoder->doing_trailers = false;
     decoder->is_done = false;
+    decoder->body_less = false;
 }
 
 static int s_state_unchunked_body(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input) {
@@ -455,7 +457,12 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
     /* RFC-7230 section 3 Message Format */
     if (input.len == 0) {
         if (AWS_LIKELY(!decoder->doing_trailers)) {
-            if (decoder->transfer_encoding & AWS_HTTP_TRANSFER_ENCODING_CHUNKED) {
+            if (decoder->body_less) {
+                err = s_mark_done(decoder);
+                if (err) {
+                    return AWS_OP_ERR;
+                }
+            } else if (decoder->transfer_encoding & AWS_HTTP_TRANSFER_ENCODING_CHUNKED) {
                 s_set_line_state(decoder, s_linestate_chunk_size);
             } else if (decoder->content_length > 0) {
                 s_set_state(decoder, s_state_unchunked_body);
@@ -714,6 +721,9 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
         return AWS_OP_ERR;
     }
 
+    /* RFC-7230 section 3.3 Message Body */
+    decoder->body_less |= code_val == 304 || code_val == 204 || code_val / 100 == 1;
+
     err = decoder->vtable.on_response((int)code_val, decoder->user_data);
     if (err) {
         return AWS_OP_ERR;
@@ -779,6 +789,14 @@ size_t aws_h1_decoder_get_content_length(const struct aws_h1_decoder *decoder) {
     return decoder->content_length;
 }
 
+bool aws_h1_decoder_get_body_less(const struct aws_h1_decoder *decoder) {
+    return decoder->body_less;
+}
+
 void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, void *id) {
     decoder->logging_id = id;
+}
+
+void aws_h1_decoder_set_body_less(struct aws_h1_decoder *decoder, bool body_less) {
+    decoder->body_less = body_less;
 }
