@@ -403,6 +403,11 @@ size_t aws_hpack_find_index(
 
 int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_http_header *header) {
 
+    /* Don't move forward if no elements allowed in the dynamic table */
+    if (AWS_UNLIKELY(context->dynamic_table.max_elements == 0)) {
+        return AWS_OP_SUCCESS;
+    }
+
     /* Cache state */
     const size_t old_index_0 = context->dynamic_table.index_0;
     bool removed_from_name_table = false;
