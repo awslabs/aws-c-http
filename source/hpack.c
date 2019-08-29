@@ -503,28 +503,30 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
     }
 
     /* Don't bother copying data if old buffer was of size 0 */
-    if (AWS_UNLIKELY(context->dynamic_table.max_elements > 0)) {
-        /* Copy as much the above block as possible */
-        size_t above_block_size = context->dynamic_table.max_elements - context->dynamic_table.index_0;
-        if (above_block_size > new_max_elements) {
-            above_block_size = new_max_elements;
-        }
-        memcpy(
-            new_buffer,
-            context->dynamic_table.buffer + context->dynamic_table.index_0,
-            above_block_size * sizeof(struct aws_http_header));
+    if (AWS_UNLIKELY(context->dynamic_table.max_elements == 0)) {
+        goto reset_dyn_table_state;
+    }
 
-        /* Copy as much of below block as possible */
-        const size_t free_blocks_available = new_max_elements - above_block_size;
-        const size_t old_blocks_to_copy = context->dynamic_table.max_elements - above_block_size;
-        const size_t below_block_size =
-            free_blocks_available > old_blocks_to_copy ? old_blocks_to_copy : free_blocks_available;
-        if (below_block_size) {
-            memcpy(
-                new_buffer + above_block_size,
-                context->dynamic_table.buffer,
-                below_block_size * sizeof(struct aws_http_header));
-        }
+    /* Copy as much the above block as possible */
+    size_t above_block_size = context->dynamic_table.max_elements - context->dynamic_table.index_0;
+    if (above_block_size > new_max_elements) {
+        above_block_size = new_max_elements;
+    }
+    memcpy(
+        new_buffer,
+        context->dynamic_table.buffer + context->dynamic_table.index_0,
+        above_block_size * sizeof(struct aws_http_header));
+
+    /* Copy as much of below block as possible */
+    const size_t free_blocks_available = new_max_elements - above_block_size;
+    const size_t old_blocks_to_copy = context->dynamic_table.max_elements - above_block_size;
+    const size_t below_block_size =
+        free_blocks_available > old_blocks_to_copy ? old_blocks_to_copy : free_blocks_available;
+    if (below_block_size) {
+        memcpy(
+            new_buffer + above_block_size,
+            context->dynamic_table.buffer,
+            below_block_size * sizeof(struct aws_http_header));
     }
 
     /* Free the old memory */
@@ -532,6 +534,7 @@ cleanup_old_buffer:
     aws_mem_release(context->allocator, context->dynamic_table.buffer);
 
     /* Reset state */
+reset_dyn_table_state:
     if (context->dynamic_table.num_elements > new_max_elements) {
         context->dynamic_table.num_elements = new_max_elements;
     }
