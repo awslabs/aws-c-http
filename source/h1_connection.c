@@ -288,8 +288,8 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
     /* Validate the response and cache info that encoder will eventually need.
      * The encoder_message object will be moved into the stream later while holding the lock */
     struct aws_h1_encoder_message encoder_message;
-    err = aws_h1_encoder_message_init_from_response(
-        &encoder_message, stream->alloc, response, stream->server_data->request_method);
+    bool body_less = h1_stream->request_method == AWS_HTTP_METHOD_HEAD ? true : false;
+    err = aws_h1_encoder_message_init_from_response(&encoder_message, stream->alloc, response, body_less);
     if (err) {
         send_err = aws_last_error();
         goto response_error;
@@ -908,7 +908,7 @@ static int s_decoder_on_request(
     aws_byte_buf_write_from_whole_cursor(storage_buf, *uri);
     incoming_stream->base.server_data->request_path = aws_byte_cursor_from_buf(storage_buf);
     aws_byte_cursor_advance(&incoming_stream->base.server_data->request_path, storage_buf->len - uri->len);
-
+    incoming_stream->request_method = method_enum;
     incoming_stream->base.server_data->request_method = method_enum;
 
     /* No user callbacks, so we're not checking for shutdown */
