@@ -35,7 +35,6 @@ struct aws_h1_stream {
     /* Buffer for incoming data that needs to stick around. */
     struct aws_byte_buf incoming_storage_buf;
 
-    enum aws_http_method request_method;
     /* Any thread may touch this data, but the lock must be held */
     struct {
         /* Whether a "request handler" stream has a response to send. */

@@ -45,13 +45,13 @@ struct aws_http_stream {
     aws_http_on_stream_complete_fn *on_complete;
 
     struct aws_atomic_var refcount;
+    enum aws_http_method request_method;
 
     union {
         struct aws_http_stream_client_data {
             int response_status;
         } client;
         struct aws_http_stream_server_data {
-            enum aws_http_method request_method;
             struct aws_byte_cursor request_method_str;
             struct aws_byte_cursor request_path;
             aws_http_on_incoming_request_done_fn *on_request_done;

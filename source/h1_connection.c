@@ -288,7 +288,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
     /* Validate the response and cache info that encoder will eventually need.
      * The encoder_message object will be moved into the stream later while holding the lock */
     struct aws_h1_encoder_message encoder_message;
-    bool expects_body = h1_stream->request_method == AWS_HTTP_METHOD_HEAD;
+    bool expects_body = h1_stream->base.request_method == AWS_HTTP_METHOD_HEAD;
     err = aws_h1_encoder_message_init_from_response(&encoder_message, stream->alloc, response, expects_body);
     if (err) {
         send_err = aws_last_error();
@@ -456,7 +456,7 @@ struct aws_http_stream *s_make_request(
     /* Success! */
     struct aws_byte_cursor method;
     aws_http_message_get_request_method(options->request, &method);
-    stream->request_method = aws_http_str_to_method(method);
+    stream->base.request_method = aws_http_str_to_method(method);
     struct aws_byte_cursor path;
     aws_http_message_get_request_path(options->request, &path);
     AWS_LOGF_DEBUG(
@@ -908,8 +908,7 @@ static int s_decoder_on_request(
     aws_byte_buf_write_from_whole_cursor(storage_buf, *uri);
     incoming_stream->base.server_data->request_path = aws_byte_cursor_from_buf(storage_buf);
     aws_byte_cursor_advance(&incoming_stream->base.server_data->request_path, storage_buf->len - uri->len);
-    incoming_stream->request_method = method_enum;
-    incoming_stream->base.server_data->request_method = method_enum;
+    incoming_stream->base.request_method = method_enum;
 
     /* No user callbacks, so we're not checking for shutdown */
     return AWS_OP_SUCCESS;
@@ -1480,7 +1479,7 @@ static int s_handler_process_read_message(
                 connection->thread_data.incoming_stream_decoder, connection->thread_data.incoming_stream);
 
             /* Tell the decoder about the request method, and let it know whether no body is needed or not */
-            bool expects_body = connection->thread_data.incoming_stream->request_method == AWS_HTTP_METHOD_HEAD;
+            bool expects_body = connection->thread_data.incoming_stream->base.request_method == AWS_HTTP_METHOD_HEAD;
             aws_h1_decoder_set_expects_body(connection->thread_data.incoming_stream_decoder, expects_body);
 
             /* Decoder will stop once it hits the end of the request/response OR the end of the message data. */
