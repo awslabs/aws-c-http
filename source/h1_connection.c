@@ -666,7 +666,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
             /* BEGIN CRITICAL SECTION */
             s_h1_connection_lock_synced_data(connection);
             while (!aws_linked_list_empty(&connection->thread_data.waiting_stream_list)) {
-                /* The front of pending_stream list is not ready to be sent */
+                /* The front of waiting_stream_list is not ready to be sent */
                 if (!AWS_CONTAINER_OF(
                          aws_linked_list_front(&connection->thread_data.waiting_stream_list),
                          struct aws_h1_stream,
