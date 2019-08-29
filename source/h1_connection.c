@@ -288,7 +288,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
     /* Validate the response and cache info that encoder will eventually need.
      * The encoder_message object will be moved into the stream later while holding the lock */
     struct aws_h1_encoder_message encoder_message;
-    err = aws_h1_encoder_message_init_from_response(&encoder_message, stream->alloc, response, stream);
+    err = aws_h1_encoder_message_init_from_response(&encoder_message, stream->alloc, response, stream->server_data->request_method);
     if (err) {
         send_err = aws_last_error();
         goto response_error;
@@ -1474,6 +1474,10 @@ static int s_handler_process_read_message(
             /* Decoder will invoke the internal s_decoder_X callbacks, which in turn invoke user callbacks */
             aws_h1_decoder_set_logging_id(
                 connection->thread_data.incoming_stream_decoder, connection->thread_data.incoming_stream);
+
+            /* Tell the decoder about the request method, and let it know whether no body is needed or not */
+            aws_h1_decoder_set_request_method(
+                connection->thread_data.incoming_stream_decoder, connection->thread_data.incoming_stream->);
 
             /* Decoder will stop once it hits the end of the request/response OR the end of the message data. */
             err = aws_h1_decode(connection->thread_data.incoming_stream_decoder, &message_cursor);

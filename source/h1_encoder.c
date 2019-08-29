@@ -181,7 +181,7 @@ int aws_h1_encoder_message_init_from_response(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *response,
-    const struct aws_http_stream *stream) {
+    const enum aws_http_method request_method) {
 
     AWS_ZERO_STRUCT(*message);
 
@@ -211,10 +211,10 @@ int aws_h1_encoder_message_init_from_response(
     bool body_less = false;
     /**
      * no body needed in the response
-     * https://httpwg.org/specs/rfc7230.html#message.body
+     * RFC-7230 section 3.3 Message Body
      */
     body_less = status_int == 304 || status_int == 204 || status_int / 100 == 1 ||
-                stream->server_data->request_method == AWS_HTTP_METHOD_HEAD;
+                request_method == AWS_HTTP_METHOD_HEAD;
     err = s_scan_outgoing_headers(response, &header_lines_len, body_less);
     if (err) {
         goto error;
