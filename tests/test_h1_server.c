@@ -619,7 +619,7 @@ static int s_test_send_no_body_response(int status_int, bool head_request) {
     char c_status_text[100];
     memcpy(c_status_text, status_text.ptr, status_text.len);
     c_status_text[status_text.len] = '\0';
-    sprintf(expected, "HTTP/1.1 %d %s\r\n%s", status_int, c_status_text, expected_headers);
+    snprintf(expected, sizeof(expected), "HTTP/1.1 %d %s\r\n%s", status_int, c_status_text, expected_headers);
 
     ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
 

@@ -766,7 +766,7 @@ static int s_test_no_body_response(struct aws_allocator *allocator, int status_i
     char response_text[500];
     char *response_headers = "Content-Length: 9\r\n"
                              "\r\n";
-    sprintf(response_text, "HTTP/1.1 %d %s\r\n%s", status_int, c_status_text, response_headers);
+    snprintf(response_text, sizeof(response_text), "HTTP/1.1 %d %s\r\n%s", status_int, c_status_text, response_headers);
     /* send response */
     ASSERT_SUCCESS(testing_channel_send_response_str(&tester.testing_channel, response_text));
 
