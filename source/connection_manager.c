@@ -118,6 +118,16 @@ struct aws_http_connection_manager {
     const struct aws_http_connection_manager_system_vtable *system_vtable;
 
     /*
+     * Callback to invoke when shutdown has completed and all resources have been cleaned up.
+     */
+    aws_http_connection_manager_shutdown_complete_fn *shutdown_complete_callback;
+
+    /*
+     * User data to pass to the shutdown completion callback.
+     */
+    void *shutdown_complete_user_data;
+
+    /*
      * Controls access to all mutable state on the connection manager
      */
     struct aws_mutex lock;
@@ -519,6 +529,10 @@ static void s_aws_http_connection_manager_destroy(struct aws_http_connection_man
 
     aws_mutex_clean_up(&manager->lock);
 
+    if (manager->shutdown_complete_callback) {
+        manager->shutdown_complete_callback(manager->shutdown_complete_user_data);
+    }
+
     aws_mem_release(manager->allocator, manager);
 }
 
@@ -580,6 +594,8 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->bootstrap = options->bootstrap;
     manager->system_vtable = g_aws_http_connection_manager_default_system_vtable_ptr;
     manager->external_ref_count = 1;
+    manager->shutdown_complete_callback = options->shutdown_complete_callback;
+    manager->shutdown_complete_user_data = options->shutdown_complete_user_data;
 
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Successfully created", (void *)manager);
 
