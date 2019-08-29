@@ -1,5 +1,5 @@
 ---
-Checks:          'clang-diagnostic-*,clang-analyzer-*,readability-*,modernize-*,bugprone-*,misc-*,google-runtime-int,fuchsia-restrict-system-includes,-clang-analyzer-valist.Uninitialized,-clang-analyzer-security.insecureAPI.rand,-clang-analyzer-alpha.*,-readability-else-after-return,-misc-unused-parameters'
+Checks:          'clang-diagnostic-*,clang-analyzer-*,readability-*,modernize-*,bugprone-*,misc-*,google-runtime-int,fuchsia-restrict-system-includes,-clang-analyzer-valist.Uninitialized,-clang-analyzer-security.insecureAPI.rand,-clang-analyzer-alpha.*,-readability-else-after-return,-readability-magic-numbers,-misc-unused-parameters'
 WarningsAsErrors: '*'
 HeaderFilterRegex: '\./*'
 FormatStyle: 'file'

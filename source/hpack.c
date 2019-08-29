@@ -502,6 +502,11 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
         return AWS_OP_ERR;
     }
 
+    /* Don't bother copying data if old buffer was of size 0 */
+    if (AWS_UNLIKELY(context->dynamic_table.max_elements == 0)) {
+        goto reset_dyn_table_state;
+    }
+
     /* Copy as much the above block as possible */
     size_t above_block_size = context->dynamic_table.max_elements - context->dynamic_table.index_0;
     if (above_block_size > new_max_elements) {
@@ -529,6 +534,7 @@ cleanup_old_buffer:
     aws_mem_release(context->allocator, context->dynamic_table.buffer);
 
     /* Reset state */
+reset_dyn_table_state:
     if (context->dynamic_table.num_elements > new_max_elements) {
         context->dynamic_table.num_elements = new_max_elements;
     }
