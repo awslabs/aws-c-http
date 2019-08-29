@@ -741,7 +741,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_body) {
     return AWS_OP_SUCCESS;
 }
 
-static int s_test_no_body_response(struct aws_allocator *allocator, int status_int, bool head_request) {
+static int s_test_expected_no_body_response(struct aws_allocator *allocator, int status_int, bool head_request) {
 
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
@@ -789,13 +789,13 @@ static int s_test_no_body_response(struct aws_allocator *allocator, int status_i
 
 H1_CLIENT_TEST_CASE(h1_client_response_get_no_body_for_head_request) {
     (void)ctx;
-    ASSERT_SUCCESS(s_test_no_body_response(allocator, 200, true));
+    ASSERT_SUCCESS(s_test_expected_no_body_response(allocator, 200, true));
     return AWS_OP_SUCCESS;
 }
 
 H1_CLIENT_TEST_CASE(h1_client_response_get_no_body_from_304) {
     (void)ctx;
-    ASSERT_SUCCESS(s_test_no_body_response(allocator, 304, false));
+    ASSERT_SUCCESS(s_test_expected_no_body_response(allocator, 304, false));
     return AWS_OP_SUCCESS;
 }
 

@@ -570,7 +570,7 @@ TEST_CASE(h1_server_send_response_body) {
     return AWS_OP_SUCCESS;
 }
 
-static int s_test_send_no_body_response(int status_int, bool head_request) {
+static int s_test_send_expected_no_body_response(int status_int, bool head_request) {
     const char *incoming_request;
     if (head_request) {
         incoming_request = "HEAD / HTTP/1.1\r\n"
@@ -630,7 +630,7 @@ static int s_test_send_no_body_response(int status_int, bool head_request) {
 TEST_CASE(h1_server_send_response_to_HEAD_request) {
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
-    ASSERT_SUCCESS(s_test_send_no_body_response(308, true));
+    ASSERT_SUCCESS(s_test_send_expected_no_body_response(308, true));
     ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
@@ -638,7 +638,7 @@ TEST_CASE(h1_server_send_response_to_HEAD_request) {
 TEST_CASE(h1_server_send_304_response) {
     (void)ctx;
     ASSERT_SUCCESS(s_tester_init(allocator));
-    ASSERT_SUCCESS(s_test_send_no_body_response(304, false));
+    ASSERT_SUCCESS(s_test_send_expected_no_body_response(304, false));
     ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
