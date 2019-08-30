@@ -526,8 +526,8 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
             if (decoder->body_headers_forbidden) {
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,
-                    "id=%p: Incoming headers for content-length received, but incoming status forbids it. This is "
-                    "illegal.",
+                    "id=%p: Incoming headers for content-length received, but it is illegal for this message to have a "
+                    "body",
                     decoder->logging_id);
                 return aws_raise_error(AWS_ERROR_HTTP_PARSE);
             }
@@ -558,8 +558,8 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
             if (decoder->body_headers_forbidden) {
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,
-                    "id=%p: Incoming headers for transfer-encoding received, but incoming status forbids it. This is "
-                    "illegal.",
+                    "id=%p: Incoming headers for transfer-encoding received, but it is illegal for this message to "
+                    "have a body",
                     decoder->logging_id);
                 return aws_raise_error(AWS_ERROR_HTTP_PARSE);
             }
