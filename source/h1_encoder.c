@@ -27,7 +27,8 @@
 static int s_scan_outgoing_headers(
     const struct aws_http_message *message,
     size_t *out_header_lines_len,
-    bool expects_no_body) {
+    bool body_headers_ignored,
+    bool body_headers_forbidden) {
 
     size_t total = 0;
 
@@ -58,7 +59,11 @@ static int s_scan_outgoing_headers(
             return AWS_OP_ERR;
         }
     }
-    if (expects_no_body) {
+    if (body_headers_forbidden && has_body_headers) {
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
+    }
+
+    if (body_headers_ignored) {
         /* no body should follow, no matter what the headers are */
         if (has_body_stream) {
             return aws_raise_error(AWS_ERROR_HTTP_INVALID_BODY_STREAM);
@@ -128,7 +133,7 @@ int aws_h1_encoder_message_init_from_request(
      */
 
     size_t header_lines_len;
-    err = s_scan_outgoing_headers(request, &header_lines_len, false);
+    err = s_scan_outgoing_headers(request, &header_lines_len, false, false);
     if (err) {
         goto error;
     }
@@ -181,7 +186,7 @@ int aws_h1_encoder_message_init_from_response(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *response,
-    bool expects_no_body) {
+    bool body_headers_ignored) {
 
     AWS_ZERO_STRUCT(*message);
 
@@ -212,8 +217,9 @@ int aws_h1_encoder_message_init_from_response(
      * no body needed in the response
      * RFC-7230 section 3.3 Message Body
      */
-    expects_no_body |= status_int == 304 || status_int == 204 || status_int / 100 == 1;
-    err = s_scan_outgoing_headers(response, &header_lines_len, expects_no_body);
+    body_headers_ignored |= status_int == AWS_HTTP_STATUS_304_NOT_MODIFIED;
+    bool body_headers_forbidden = status_int == AWS_HTTP_STATUS_204_NO_CONTENT || status_int / 100 == 1;
+    err = s_scan_outgoing_headers(response, &header_lines_len, body_headers_ignored, body_headers_forbidden);
     if (err) {
         goto error;
     }

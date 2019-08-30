@@ -39,7 +39,7 @@ AWS_HTTP_API void aws_h1_decoder_destroy(struct aws_h1_decoder *decoder);
 AWS_HTTP_API int aws_h1_decode(struct aws_h1_decoder *decoder, struct aws_byte_cursor *data);
 
 AWS_HTTP_API void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, void *id);
-AWS_HTTP_API void aws_h1_decoder_set_expects_no_body(struct aws_h1_decoder *decoder, bool expects_no_body);
+AWS_HTTP_API void aws_h1_decoder_set_body_headers_ignored(struct aws_h1_decoder *decoder, bool body_headers_ignored);
 
 /* RFC-7230 section 4.2 Message Format */
 #define AWS_HTTP_TRANSFER_ENCODING_CHUNKED (1 << 0)
@@ -49,7 +49,7 @@ AWS_HTTP_API void aws_h1_decoder_set_expects_no_body(struct aws_h1_decoder *deco
 AWS_HTTP_API int aws_h1_decoder_get_encoding_flags(const struct aws_h1_decoder *decoder);
 
 AWS_HTTP_API size_t aws_h1_decoder_get_content_length(const struct aws_h1_decoder *decoder);
-AWS_HTTP_API bool aws_h1_decoder_get_expects_no_body(const struct aws_h1_decoder *decoder);
+AWS_HTTP_API bool aws_h1_decoder_get_body_headers_ignored(const struct aws_h1_decoder *decoder);
 
 AWS_EXTERN_C_END
 

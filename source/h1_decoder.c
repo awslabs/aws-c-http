@@ -46,7 +46,8 @@ struct aws_h1_decoder {
     size_t chunk_size;
     bool doing_trailers;
     bool is_done;
-    bool expects_no_body;
+    bool body_headers_ignored;
+    bool body_headers_forbidden;
     void *logging_id;
 
     /* User callbacks and settings. */
@@ -323,7 +324,8 @@ static void s_reset_state(struct aws_h1_decoder *decoder) {
     decoder->chunk_size = 0;
     decoder->doing_trailers = false;
     decoder->is_done = false;
-    decoder->expects_no_body = false;
+    decoder->body_headers_ignored = false;
+    decoder->body_headers_forbidden = false;
 }
 
 static int s_state_unchunked_body(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input) {
@@ -457,7 +459,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
     /* RFC-7230 section 3 Message Format */
     if (input.len == 0) {
         if (AWS_LIKELY(!decoder->doing_trailers)) {
-            if (decoder->expects_no_body) {
+            if (decoder->body_headers_ignored) {
                 err = s_mark_done(decoder);
                 if (err) {
                     return AWS_OP_ERR;
@@ -521,6 +523,15 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                 return aws_raise_error(AWS_ERROR_HTTP_PARSE);
             }
 
+            if (decoder->body_headers_forbidden) {
+                AWS_LOGF_ERROR(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Incoming headers for content-length received, but incoming status forbids it. This is "
+                    "illegal.",
+                    decoder->logging_id);
+                return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            }
+
             if (s_read_size(header.value_data, &decoder->content_length) != AWS_OP_SUCCESS) {
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,
@@ -544,6 +555,14 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                 return aws_raise_error(AWS_ERROR_HTTP_PARSE);
             }
 
+            if (decoder->body_headers_forbidden) {
+                AWS_LOGF_ERROR(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Incoming headers for transfer-encoding received, but incoming status forbids it. This is "
+                    "illegal.",
+                    decoder->logging_id);
+                return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            }
             /* RFC-7230 section 3.3.1 Transfer-Encoding */
             /* RFC-7230 section 4.2 Compression Codings */
 
@@ -722,7 +741,8 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
     }
 
     /* RFC-7230 section 3.3 Message Body */
-    decoder->expects_no_body |= code_val == 304 || code_val == 204 || code_val / 100 == 1;
+    decoder->body_headers_ignored |= code_val == AWS_HTTP_STATUS_304_NOT_MODIFIED;
+    decoder->body_headers_forbidden = code_val == AWS_HTTP_STATUS_204_NO_CONTENT || code_val / 100 == 1;
 
     err = decoder->vtable.on_response((int)code_val, decoder->user_data);
     if (err) {
@@ -789,14 +809,14 @@ size_t aws_h1_decoder_get_content_length(const struct aws_h1_decoder *decoder) {
     return decoder->content_length;
 }
 
-bool aws_h1_decoder_get_expects_no_body(const struct aws_h1_decoder *decoder) {
-    return decoder->expects_no_body;
+bool aws_h1_decoder_get_body_headers_ignored(const struct aws_h1_decoder *decoder) {
+    return decoder->body_headers_ignored;
 }
 
 void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, void *id) {
     decoder->logging_id = id;
 }
 
-void aws_h1_decoder_set_expects_no_body(struct aws_h1_decoder *decoder, bool expects_no_body) {
-    decoder->expects_no_body = expects_no_body;
+void aws_h1_decoder_set_body_headers_ignored(struct aws_h1_decoder *decoder, bool body_headers_ignored) {
+    decoder->body_headers_ignored = body_headers_ignored;
 }
