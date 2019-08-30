@@ -38,6 +38,15 @@ static struct aws_http_message *s_new_default_get_request(struct aws_allocator *
     return request;
 }
 
+static struct aws_http_message *s_new_default_head_request(struct aws_allocator *allocator) {
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    AWS_FATAL_ASSERT(request);
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_message_set_request_method(request, aws_http_method_head));
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
+
+    return request;
+}
+
 struct tester {
     struct aws_allocator *alloc;
     struct testing_channel testing_channel;
@@ -729,6 +738,64 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_body) {
     /* clean up */
     ASSERT_SUCCESS(s_response_tester_clean_up(&response));
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+static int s_test_expected_no_body_response(struct aws_allocator *allocator, int status_int, bool head_request) {
+
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_message *request =
+        head_request ? s_new_default_head_request(allocator) : s_new_default_get_request(allocator);
+
+    struct response_tester response;
+    ASSERT_SUCCESS(s_response_tester_init(&response, &tester, request));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
+    /* form response */
+    struct aws_byte_cursor status_text = aws_byte_cursor_from_c_str(aws_http_status_text(status_int));
+    char c_status_text[100];
+    memcpy(c_status_text, status_text.ptr, status_text.len);
+    c_status_text[status_text.len] = '\0';
+    char response_text[500];
+    char *response_headers = "Content-Length: 9\r\n"
+                             "\r\n";
+    snprintf(response_text, sizeof(response_text), "HTTP/1.1 %d %s\r\n%s", status_int, c_status_text, response_headers);
+    /* send response */
+    ASSERT_SUCCESS(testing_channel_send_response_str(&tester.testing_channel, response_text));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    ASSERT_TRUE(response.on_complete_cb_count == 1);
+    ASSERT_TRUE(response.on_complete_error_code == AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(response.status == status_int);
+    ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
+    ASSERT_TRUE(response.num_headers == 1);
+    ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9"));
+
+    /* clean up */
+    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_response_get_no_body_for_head_request) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_expected_no_body_response(allocator, 200, true));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_response_get_no_body_from_304) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_expected_no_body_response(allocator, 304, false));
     return AWS_OP_SUCCESS;
 }
 
