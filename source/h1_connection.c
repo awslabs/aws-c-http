@@ -991,10 +991,17 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
 
     enum aws_http_header_type header_type =
         aws_h1_decoder_get_header_type(connection->thread_data.incoming_stream_decoder);
-    incoming_stream->is_incoming_head_done = header_type != AWS_HTTP_INFORMATIONAL_HEADER;
 
-    AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Incoming head is done.", (void *)&incoming_stream->base);
-
+    if (header_type == AWS_HTTP_NORMAL_HEADER) {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Incoming head is done.", (void *)&incoming_stream->base);
+        incoming_stream->is_incoming_head_done = true;
+    } else if (header_type == AWS_HTTP_INFORMATIONAL_HEADER) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Informational incoming head is done, keep waiting for a final response.",
+            (void *)&incoming_stream->base);
+        incoming_stream->is_incoming_head_done = false;
+    }
     /* Invoke user cb */
     if (incoming_stream->base.on_incoming_header_block_done) {
         int err = incoming_stream->base.on_incoming_header_block_done(
