@@ -86,7 +86,9 @@ typedef void(aws_http_message_transform_fn)(
 
 /**
  * Invoked repeatedly times as headers are received.
- * At this point, aws_http_stream_get_incoming_response_status() can be called.
+ * At this point, aws_http_stream_get_incoming_response_status() can be called for the client.
+ * And aws_http_stream_get_incoming_request_method() and aws_http_stream_get_incoming_request_uri() can be called for
+ * the server.
  * This is always invoked on the HTTP connection's event-loop thread.
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.
@@ -100,7 +102,7 @@ typedef int(aws_http_on_incoming_headers_fn)(
     void *user_data);
 
 /**
- * Invoked when response header block has been completely read.
+ * Invoked when the incoming header block of this header_type(informational/normal/trailing) has been completely read.
  * This is always invoked on the HTTP connection's event-loop thread.
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.
