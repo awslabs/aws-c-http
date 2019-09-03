@@ -17,6 +17,7 @@
  */
 
 #include <aws/http/private/http_impl.h>
+#include <aws/http/private/request_response_impl.h>
 
 /**
  * Structure used to initialize an `aws_h1_decoder`.

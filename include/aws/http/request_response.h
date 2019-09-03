@@ -17,7 +17,6 @@
  */
 
 #include <aws/http/http.h>
-#include <aws/http/private/http_impl.h>
 
 struct aws_http_connection;
 struct aws_input_stream;
@@ -37,6 +36,16 @@ struct aws_http_stream;
 struct aws_http_header {
     struct aws_byte_cursor name;
     struct aws_byte_cursor value;
+};
+
+/**
+ * Header types that affect internal processing.
+ * This is NOT a definitive list of Types.
+ */
+enum aws_http_header_type {
+    AWS_HTTP_INFORMATIONAL,
+    AWS_HTTP_NORMAL,
+    AWS_HTTP_TRAILING,
 };
 
 /**
