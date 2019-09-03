@@ -31,6 +31,8 @@ typedef void(aws_http_connection_manager_on_connection_setup_fn)(
     int error_code,
     void *user_data);
 
+typedef void(aws_http_connection_manager_shutdown_complete_fn)(void *user_data);
+
 /*
  * Connection manager configuration struct.
  *
@@ -53,6 +55,14 @@ struct aws_http_connection_manager_options {
      * Maximum number of connections this manager is allowed to contain
      */
     size_t max_connections;
+
+    /*
+     * Callback and associated user data to invoke when the connection manager has
+     * completely shutdown and has finished deleting itself.
+     * Technically optional, but correctness may be impossible without it.
+     */
+    void *shutdown_complete_user_data;
+    aws_http_connection_manager_shutdown_complete_fn *shutdown_complete_callback;
 };
 
 AWS_EXTERN_C_BEGIN

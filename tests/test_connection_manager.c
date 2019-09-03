@@ -68,6 +68,7 @@ struct cm_tester {
     size_t connection_releases;
 
     size_t wait_for_connection_count;
+    bool is_shutdown_complete;
 
     struct aws_http_connection_manager_system_vtable *mock_table;
 
@@ -77,6 +78,16 @@ struct cm_tester {
 };
 
 static struct cm_tester s_tester;
+
+static void s_cm_tester_on_cm_shutdown_complete(void *user_data) {
+    struct cm_tester *tester = user_data;
+    AWS_FATAL_ASSERT(tester == &s_tester);
+
+    aws_mutex_lock(&tester->lock);
+    tester->is_shutdown_complete = true;
+    aws_mutex_unlock(&tester->lock);
+    aws_condition_variable_notify_one(&tester->signal);
+}
 
 int s_cm_tester_init(struct cm_tester_options *options) {
     struct cm_tester *tester = &s_tester;
@@ -130,7 +141,10 @@ int s_cm_tester_init(struct cm_tester_options *options) {
                                                              .proxy_options = tester->proxy_options,
                                                              .host = aws_byte_cursor_from_c_str("www.google.com"),
                                                              .port = 80,
-                                                             .max_connections = options->max_connections};
+                                                             .max_connections = options->max_connections,
+                                                             .shutdown_complete_user_data = tester,
+                                                             .shutdown_complete_callback =
+                                                                 s_cm_tester_on_cm_shutdown_complete};
 
     tester->connection_manager = aws_http_connection_manager_new(tester->allocator, &cm_options);
     ASSERT_NOT_NULL(tester->connection_manager);
@@ -281,6 +295,25 @@ static int s_wait_on_connection_reply_count(size_t count) {
     return signal_error;
 }
 
+static bool s_is_shutdown_complete(void *context) {
+    (void)context;
+
+    struct cm_tester *tester = &s_tester;
+
+    return tester->is_shutdown_complete;
+}
+
+static int s_wait_on_shutdown_complete(void) {
+    struct cm_tester *tester = &s_tester;
+
+    ASSERT_SUCCESS(aws_mutex_lock(&tester->lock));
+
+    int signal_error = aws_condition_variable_wait_pred(&tester->signal, &tester->lock, s_is_shutdown_complete, tester);
+
+    ASSERT_SUCCESS(aws_mutex_unlock(&tester->lock));
+    return signal_error;
+}
+
 int s_cm_tester_clean_up(void) {
     struct cm_tester *tester = &s_tester;
 
@@ -300,6 +333,8 @@ int s_cm_tester_clean_up(void) {
     aws_array_list_clean_up(&tester->mock_connections);
 
     aws_http_connection_manager_release(tester->connection_manager);
+
+    s_wait_on_shutdown_complete();
 
     aws_client_bootstrap_release(tester->client_bootstrap);
 
