@@ -661,7 +661,7 @@ static int s_check_header(
     const char *value,
     bool info_header) {
 
-    int headers_num = info_header ? response->num_info_headers : response->num_headers;
+    size_t headers_num = info_header ? response->num_info_headers : response->num_headers;
     ASSERT_TRUE(i < headers_num);
     struct aws_http_header *header = info_header ? response->info_headers + i : response->headers + i;
     ASSERT_TRUE(aws_byte_cursor_eq_c_str_ignore_case(&header->name, name_str));
