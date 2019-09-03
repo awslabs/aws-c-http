@@ -569,7 +569,7 @@ static int s_h1_decode_messages_at_random_intervals(struct aws_allocator *alloca
     /* Just seed something for determinism. */
     srand(1);
 
-    for (int iter = 0; iter < AWS_ARRAY_SIZE(requests); ++iter) {
+    for (size_t iter = 0; iter < AWS_ARRAY_SIZE(requests); ++iter) {
         struct aws_byte_cursor request = requests[iter];
 
         struct aws_h1_decoder_params params;
@@ -711,7 +711,7 @@ static int s_h1_decode_bad_requests_and_assert_failure(struct aws_allocator *all
         /* Go ahead and add more cases here. */
     };
 
-    for (int iter = 0; iter < AWS_ARRAY_SIZE(requests); ++iter) {
+    for (size_t iter = 0; iter < AWS_ARRAY_SIZE(requests); ++iter) {
         struct aws_byte_cursor request = requests[iter];
 
         struct aws_h1_decoder_params params;
@@ -747,7 +747,7 @@ static int s_h1_decode_bad_responses_and_assert_failure(struct aws_allocator *al
         /* Go ahead and add more cases here. */
     };
 
-    for (int iter = 0; iter < AWS_ARRAY_SIZE(responses); ++iter) {
+    for (size_t iter = 0; iter < AWS_ARRAY_SIZE(responses); ++iter) {
         struct aws_byte_cursor response = responses[iter];
 
         struct aws_h1_decoder_params params;

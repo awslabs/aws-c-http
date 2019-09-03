@@ -97,8 +97,11 @@ static struct aws_http_stream *s_tester_on_incoming_request(struct aws_http_conn
 
 static void s_tester_http_server_on_destroy(void *user_data) {
     struct tester *tester = user_data;
+    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
     tester->server_is_shutdown = true;
     tester->server = NULL;
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
+    aws_condition_variable_notify_one(&tester->wait_cvar);
 }
 
 static void s_tester_on_server_connection_shutdown(
@@ -222,6 +225,11 @@ static bool s_tester_connection_shutdown_pred(void *user_data) {
             tester->server_connection_is_shutdown == tester->wait_server_connection_is_shutdown);
 }
 
+static bool s_tester_server_shutdown_pred(void *user_data) {
+    struct tester *tester = user_data;
+    return tester->server_is_shutdown;
+}
+
 static int s_tester_init(struct tester *tester, const struct tester_options *options) {
     AWS_ZERO_STRUCT(*tester);
 
@@ -310,8 +318,12 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 }
 
 static int s_tester_clean_up(struct tester *tester) {
-
-    aws_http_server_release(tester->server);
+    if (tester->server) {
+        /* server is not shut down by test, let's shut down the server here */
+        aws_http_server_release(tester->server);
+        /* wait for the server to finish shutdown process */
+        ASSERT_SUCCESS(s_tester_wait(tester, s_tester_server_shutdown_pred));
+    }
     aws_server_bootstrap_release(tester->server_bootstrap);
     aws_host_resolver_clean_up(&tester->host_resolver);
     aws_event_loop_group_clean_up(&tester->event_loop_group);

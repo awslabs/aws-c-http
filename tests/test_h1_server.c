@@ -158,8 +158,8 @@ static struct aws_http_stream *s_tester_on_incoming_request(struct aws_http_conn
     tester->requests[index].num_headers = 0;
     tester->requests[index].has_incoming_body = false;
     tester->requests[index].header_done = false;
-
     aws_byte_buf_init(&tester->requests[index].storage, tester->alloc, 1024 * 1024 * 1);
+
     options.user_data = &tester->requests[index];
     options.server_connection = connection;
     options.on_request_headers = s_tester_on_request_header;
@@ -566,6 +566,79 @@ TEST_CASE(h1_server_send_response_body) {
     ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
 
     aws_http_message_destroy(response);
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+static int s_test_send_expected_no_body_response(int status_int, bool head_request) {
+    const char *incoming_request;
+    if (head_request) {
+        incoming_request = "HEAD / HTTP/1.1\r\n"
+                           "\r\n";
+    } else {
+        incoming_request = "GET / HTTP/1.1\r\n"
+                           "\r\n";
+    }
+
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(s_tester.request_num == 1);
+
+    struct tester_request *request = s_tester.requests;
+
+    /* send response */
+
+    struct aws_http_header headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Date"),
+            .value = aws_byte_cursor_from_c_str("Fri, 01 Mar 2019 17:18:55 GMT"),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str("Location"),
+            .value = aws_byte_cursor_from_c_str("/index.html"),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str("Content-Length"),
+            .value = aws_byte_cursor_from_c_str("16"),
+        },
+    };
+    struct aws_http_message *response;
+    ASSERT_SUCCESS(s_create_response(&response, status_int, headers, AWS_ARRAY_SIZE(headers), NULL));
+
+    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, response));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    char expected[500];
+    const char *expected_headers = "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
+                                   "Location: /index.html\r\n"
+                                   "Content-Length: 16\r\n"
+                                   "\r\n";
+
+    struct aws_byte_cursor status_text = aws_byte_cursor_from_c_str(aws_http_status_text(status_int));
+    char c_status_text[100];
+    memcpy(c_status_text, status_text.ptr, status_text.len);
+    c_status_text[status_text.len] = '\0';
+    snprintf(expected, sizeof(expected), "HTTP/1.1 %d %s\r\n%s", status_int, c_status_text, expected_headers);
+
+    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+
+    aws_http_message_destroy(response);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_send_response_to_HEAD_request) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+    ASSERT_SUCCESS(s_test_send_expected_no_body_response(308, true));
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_send_304_response) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+    ASSERT_SUCCESS(s_test_send_expected_no_body_response(304, false));
     ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;
 }
@@ -1056,7 +1129,7 @@ enum request_handler_callback {
     REQUEST_HANDLER_CALLBACK_COUNT,
 };
 
-static const int ERROR_FROM_CALLBACK_ERROR_CODE = 0xBEEFCAFE;
+static const int ERROR_FROM_CALLBACK_ERROR_CODE = (int)0xBEEFCAFE;
 
 struct error_from_callback_tester {
     enum request_handler_callback error_at;

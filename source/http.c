@@ -38,6 +38,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_PARSE,
         "Encountered an unexpected form when parsing an http message."),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_INVALID_HEADER_FIELD,
+        "Invalid header field, including a forbidden header field."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_HEADER_NAME,
         "Invalid header name."),
     AWS_DEFINE_ERROR_INFO_HTTP(
@@ -55,6 +58,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_MISSING_BODY_STREAM,
         "Given the provided headers (ex: Content-Length), a body is expected."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_INVALID_BODY_STREAM,
+        "A body stream provided, but the message does not allow body (ex: response for HEAD Request and 304 response)"),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_MISSING_BODY_HEADERS,
         "Missing headers (ex: Content-Length) required to send a body."),
