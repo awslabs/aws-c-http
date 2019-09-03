@@ -50,6 +50,7 @@ AWS_HTTP_API int aws_h1_decoder_get_encoding_flags(const struct aws_h1_decoder *
 
 AWS_HTTP_API size_t aws_h1_decoder_get_content_length(const struct aws_h1_decoder *decoder);
 AWS_HTTP_API bool aws_h1_decoder_get_body_headers_ignored(const struct aws_h1_decoder *decoder);
+AWS_HTTP_API enum aws_http_header_type aws_h1_decoder_get_header_type(const struct aws_h1_decoder *decoder);
 
 AWS_EXTERN_C_END
 

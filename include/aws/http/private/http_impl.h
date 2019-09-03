@@ -53,6 +53,16 @@ enum aws_http_status {
     AWS_HTTP_STATUS_304_NOT_MODIFIED = 304,
 };
 
+/**
+ * Header types that affect internal processing.
+ * This is NOT a definitive list of Types.
+ */
+enum aws_http_header_type {
+    AWS_HTTP_INFORMATIONAL,
+    AWS_HTTP_NORMAL,
+    AWS_HTTP_TRAILING,
+};
+
 struct aws_http_decoded_header {
     /* Name of the header. If the type is `AWS_HTTP_HEADER_NAME_UNKNOWN` then `name_data` must be parsed manually. */
     enum aws_http_header_name name;

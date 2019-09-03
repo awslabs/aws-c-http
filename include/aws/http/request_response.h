@@ -17,6 +17,7 @@
  */
 
 #include <aws/http/http.h>
+#include <aws/http/private/http_impl.h>
 
 struct aws_http_connection;
 struct aws_input_stream;
@@ -84,6 +85,7 @@ typedef void(aws_http_message_transform_fn)(
  */
 typedef int(aws_http_on_incoming_headers_fn)(
     struct aws_http_stream *stream,
+    enum aws_http_header_type header_type,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data);
@@ -95,7 +97,10 @@ typedef int(aws_http_on_incoming_headers_fn)(
  * Return AWS_OP_SUCCESS to continue processing the stream.
  * Return AWS_OP_ERR to indicate failure and cancel the stream.
  */
-typedef int(aws_http_on_incoming_header_block_done_fn)(struct aws_http_stream *stream, bool has_body, void *user_data);
+typedef int(aws_http_on_incoming_header_block_done_fn)(
+    struct aws_http_stream *stream,
+    enum aws_http_header_type header_type,
+    void *user_data);
 
 /**
  * Called repeatedly as body data is received.

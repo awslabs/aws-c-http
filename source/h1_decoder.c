@@ -48,6 +48,7 @@ struct aws_h1_decoder {
     bool is_done;
     bool body_headers_ignored;
     bool body_headers_forbidden;
+    enum aws_http_header_type header_type;
     void *logging_id;
 
     /* User callbacks and settings. */
@@ -326,6 +327,8 @@ static void s_reset_state(struct aws_h1_decoder *decoder) {
     decoder->is_done = false;
     decoder->body_headers_ignored = false;
     decoder->body_headers_forbidden = false;
+    /* set to normal by default */
+    decoder->header_type = AWS_HTTP_NORMAL;
 }
 
 static int s_state_unchunked_body(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input) {
@@ -744,6 +747,11 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
     decoder->body_headers_ignored |= code_val == AWS_HTTP_STATUS_304_NOT_MODIFIED;
     decoder->body_headers_forbidden = code_val == AWS_HTTP_STATUS_204_NO_CONTENT || code_val / 100 == 1;
 
+    if (code_val == AWS_HTTP_STATUS_100_CONTINUE) {
+        /* TODO: what about 101? (102. 103 should be same as 100) */
+        decoder->header_type = AWS_HTTP_INFORMATIONAL;
+    }
+
     err = decoder->vtable.on_response((int)code_val, decoder->user_data);
     if (err) {
         return AWS_OP_ERR;
@@ -811,6 +819,10 @@ size_t aws_h1_decoder_get_content_length(const struct aws_h1_decoder *decoder) {
 
 bool aws_h1_decoder_get_body_headers_ignored(const struct aws_h1_decoder *decoder) {
     return decoder->body_headers_ignored;
+}
+
+enum aws_http_header_type aws_h1_decoder_get_header_type(const struct aws_h1_decoder *decoder) {
+    return decoder->header_type;
 }
 
 void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, void *id) {

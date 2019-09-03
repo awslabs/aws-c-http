@@ -79,11 +79,13 @@ struct tester {
 
 static int s_tester_on_request_header(
     struct aws_http_stream *stream,
+    enum aws_http_header_type header_type,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
 
     (void)stream;
+    (void)header_type;
     struct tester_request *request = user_data;
     struct aws_byte_buf *storage = &request->storage;
     const struct aws_http_header *in_header = header_array;
@@ -105,12 +107,14 @@ static int s_tester_on_request_header(
     return AWS_OP_SUCCESS;
 }
 
-static int s_tester_on_request_header_block_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
+static int s_tester_on_request_header_block_done(
+    struct aws_http_stream *stream,
+    enum aws_http_header_type header_type,
+    void *user_data) {
     (void)stream;
     struct tester_request *request = user_data;
     AWS_FATAL_ASSERT(request->header_done == false);
     request->header_done = true;
-    request->has_incoming_body = has_body;
 
     struct aws_http_stream *r_handler = request->request_handler;
     AWS_FATAL_ASSERT(!aws_http_stream_get_incoming_request_method(r_handler, &request->method));
@@ -127,8 +131,6 @@ static int s_tester_on_request_body(
     struct tester_request *request = user_data;
 
     AWS_FATAL_ASSERT(request->header_done == true);
-
-    AWS_FATAL_ASSERT(request->has_incoming_body);
 
     /* Copy data into storage, and point body cursor at that */
     AWS_FATAL_ASSERT(aws_byte_buf_write_from_whole_cursor(&request->storage, *data));
@@ -1199,19 +1201,24 @@ static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
 
 static int s_error_from_incoming_headers(
     struct aws_http_stream *stream,
+    enum aws_http_header_type header_type,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
 
     (void)stream;
+    (void)header_type;
     (void)header_array;
     (void)num_headers;
     return s_error_from_callback_common(user_data, REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS);
 }
 
-static int s_error_from_incoming_headers_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
+static int s_error_from_incoming_headers_done(
+    struct aws_http_stream *stream,
+    enum aws_http_header_type header_type,
+    void *user_data) {
     (void)stream;
-    (void)has_body;
+    (void)header_type;
     return s_error_from_callback_common(user_data, REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS_DONE);
 }
 
@@ -1249,8 +1256,8 @@ static struct aws_http_stream *s_tester_close_on_incoming_request(
     tester->requests[index].num_headers = 0;
     tester->requests[index].has_incoming_body = false;
     tester->requests[index].header_done = false;
-
     aws_byte_buf_init(&tester->requests[index].storage, tester->alloc, 1024 * 1024 * 1);
+
     options.server_connection = connection;
     options.user_data = tester;
     options.on_request_headers = s_error_from_incoming_headers;

@@ -368,10 +368,10 @@ on_error:
  */
 static int s_aws_http_on_incoming_header_block_done_tls_proxy(
     struct aws_http_stream *stream,
-    bool has_body,
+    enum aws_http_header_type header_type,
     void *user_data) {
 
-    (void)has_body;
+    (void)header_type;
 
     struct aws_http_proxy_user_data *context = user_data;
     int status = 0;

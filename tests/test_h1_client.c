@@ -461,6 +461,10 @@ struct response_tester {
     int status;
     struct aws_http_header headers[100];
     size_t num_headers;
+    /* informational headers */
+    struct aws_http_header info_headers[100];
+    size_t num_info_headers;
+
     struct aws_byte_cursor body;
 
     /* All cursors in response_tester point into here */
@@ -471,7 +475,6 @@ struct response_tester {
     size_t on_response_body_cb_count;
     size_t on_complete_cb_count;
 
-    bool has_incoming_body;
     int on_complete_error_code;
 
     bool stop_auto_window_update;
@@ -482,6 +485,7 @@ struct response_tester {
 
 static int s_response_tester_on_headers(
     struct aws_http_stream *stream,
+    enum aws_http_header_type header_type,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
@@ -492,7 +496,9 @@ static int s_response_tester_on_headers(
 
     struct aws_byte_buf *storage = &response->storage;
     const struct aws_http_header *in_header = header_array;
-    struct aws_http_header *my_header = response->headers + response->num_headers;
+    struct aws_http_header *my_header = header_type == AWS_HTTP_INFORMATIONAL
+                                            ? response->info_headers + response->num_info_headers
+                                            : response->headers + response->num_headers;
     for (size_t i = 0; i < num_headers; ++i) {
         /* copy-by-value, then update cursors to point into permanent storage */
         *my_header = *in_header;
@@ -505,23 +511,28 @@ static int s_response_tester_on_headers(
 
         in_header++;
         my_header++;
-        response->num_headers++;
+    }
+    if (header_type == AWS_HTTP_INFORMATIONAL) {
+        response->num_info_headers += num_headers;
+    } else if (header_type == AWS_HTTP_NORMAL) {
+        response->num_headers += num_headers;
     }
 
     return AWS_OP_SUCCESS;
 }
 
-static int s_response_tester_on_header_block_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
+static int s_response_tester_on_header_block_done(
+    struct aws_http_stream *stream,
+    enum aws_http_header_type header_type,
+    void *user_data) {
     (void)stream;
     struct response_tester *response = user_data;
 
-    AWS_FATAL_ASSERT(response->on_response_header_block_done_cb_count == 0);
     response->on_response_header_block_done_cb_count++;
 
-    response->has_incoming_body = has_body;
-
     AWS_FATAL_ASSERT(!aws_http_stream_get_incoming_response_status(response->stream, &response->status));
-
+    /* check the response type is consistent with status code */
+    // TODO
     return AWS_OP_SUCCESS;
 }
 
@@ -535,9 +546,7 @@ static int s_response_tester_on_body(
     response->on_response_body_cb_count++;
 
     /* Header block should finish before body */
-    AWS_FATAL_ASSERT(response->on_response_header_block_done_cb_count == 1);
-
-    AWS_FATAL_ASSERT(response->has_incoming_body);
+    AWS_FATAL_ASSERT(response->on_response_header_block_done_cb_count > 0);
 
     /* Copy data into storage, and point body cursor at that */
     if (!response->body.ptr) {
@@ -559,7 +568,6 @@ static void s_response_tester_on_complete(struct aws_http_stream *stream, int er
 
     if (error_code == AWS_ERROR_SUCCESS) {
         /* Body callback should fire if and only if the response was reported to have a body */
-        AWS_FATAL_ASSERT(response->has_incoming_body == (response->on_response_body_cb_count > 0));
     }
 }
 
@@ -648,10 +656,15 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
     return AWS_OP_SUCCESS;
 }
 
-static int s_check_header(struct response_tester *response, size_t i, const char *name_str, const char *value) {
+static int s_check_header(
+    struct response_tester *response,
+    size_t i,
+    const char *name_str,
+    const char *value,
+    bool info_header) {
 
-    ASSERT_TRUE(i < response->num_headers);
-    struct aws_http_header *header = response->headers + i;
+    ASSERT_TRUE(i < info_header ? response->num_info_headers : response->num_headers);
+    struct aws_http_header *header = info_header ? response->info_headers + i : response->headers + i;
     ASSERT_TRUE(aws_byte_cursor_eq_c_str_ignore_case(&header->name, name_str));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str_ignore_case(&header->value, value));
 
@@ -690,8 +703,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_headers) {
     ASSERT_TRUE(response.status == 308);
     ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
     ASSERT_TRUE(response.num_headers == 2);
-    ASSERT_SUCCESS(s_check_header(&response, 0, "Date", "Fri, 01 Mar 2019 17:18:55 GMT"));
-    ASSERT_SUCCESS(s_check_header(&response, 1, "Location", "/index.html"));
+    ASSERT_SUCCESS(s_check_header(&response, 0, "Date", "Fri, 01 Mar 2019 17:18:55 GMT", false));
+    ASSERT_SUCCESS(s_check_header(&response, 1, "Location", "/index.html", false));
     ASSERT_TRUE(response.body.len == 0);
 
     /* clean up */
@@ -732,7 +745,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_body) {
     ASSERT_TRUE(response.status == 200);
     ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
     ASSERT_TRUE(response.num_headers == 1);
-    ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9"));
+    ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9", false));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&response.body, "Call Momo"));
 
     /* clean up */
@@ -778,7 +791,7 @@ static int s_test_expected_no_body_response(struct aws_allocator *allocator, int
     ASSERT_TRUE(response.status == status_int);
     ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
     ASSERT_TRUE(response.num_headers == 1);
-    ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9"));
+    ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9", false));
 
     /* clean up */
     ASSERT_SUCCESS(s_response_tester_clean_up(&response));
@@ -796,6 +809,54 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_no_body_for_head_request) {
 H1_CLIENT_TEST_CASE(h1_client_response_get_no_body_from_304) {
     (void)ctx;
     ASSERT_SUCCESS(s_test_expected_no_body_response(allocator, 304, false));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_response_get_100) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+
+    struct response_tester response;
+    ASSERT_SUCCESS(s_response_tester_init(&response, &tester, request));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Ensure the request can be destroyed after request is sent */
+    aws_http_message_destroy(request);
+
+    /* send response */
+    ASSERT_SUCCESS(testing_channel_send_response_str(
+        &tester.testing_channel,
+        "HTTP/1.1 100 Continue\r\n"
+        "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
+        "\r\n"
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 9\r\n"
+        "\r\n"
+        "Call Momo"));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    ASSERT_TRUE(response.on_complete_cb_count == 1);
+    ASSERT_TRUE(response.on_complete_error_code == AWS_ERROR_SUCCESS);
+    ASSERT_TRUE(response.status == 200);
+    ASSERT_TRUE(response.on_response_header_block_done_cb_count == 2);
+
+    ASSERT_TRUE(response.num_info_headers == 1);
+    ASSERT_SUCCESS(s_check_header(&response, 0, "Date", "Fri, 01 Mar 2019 17:18:55 GMT", true));
+    ASSERT_TRUE(response.num_headers == 1);
+    ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9", false));
+
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&response.body, "Call Momo"));
+
+    /* clean up */
+    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
 
@@ -834,7 +895,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_1_from_multiple_io_messages) {
     ASSERT_TRUE(response.status == 200);
     ASSERT_TRUE(response.on_response_header_block_done_cb_count == 1);
     ASSERT_TRUE(response.num_headers == 1);
-    ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9"));
+    ASSERT_SUCCESS(s_check_header(&response, 0, "Content-Length", "9", false));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&response.body, "Call Momo"));
 
     /* clean up */
@@ -865,6 +926,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
     ASSERT_SUCCESS(testing_channel_send_response_str(
         &tester.testing_channel,
         "HTTP/1.1 204 No Content\r\n\r\n"
+        "HTTP/1.1 100 Continue\r\n\r\n"
         "HTTP/1.1 204 No Content\r\n\r\n"
         "HTTP/1.1 204 No Content\r\n\r\n"));
 
@@ -875,7 +937,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
         ASSERT_TRUE(responses[i].on_complete_cb_count == 1);
         ASSERT_TRUE(responses[i].on_complete_error_code == AWS_ERROR_SUCCESS);
         ASSERT_TRUE(responses[i].status == 204);
-        ASSERT_TRUE(responses[i].on_response_header_block_done_cb_count == 1);
+        ASSERT_TRUE(responses[i].on_response_header_block_done_cb_count == i == 1 ? 2 : 1);
         ASSERT_TRUE(responses[i].num_headers == 0);
         ASSERT_TRUE(responses[i].body.len == 0);
 
@@ -1428,19 +1490,24 @@ static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
 
 static int s_error_from_incoming_headers(
     struct aws_http_stream *stream,
+    enum aws_http_header_type header_type,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
 
     (void)stream;
+    (void)header_type;
     (void)header_array;
     (void)num_headers;
     return s_error_from_callback_common(user_data, REQUEST_CALLBACK_INCOMING_HEADERS);
 }
 
-static int s_error_from_incoming_headers_done(struct aws_http_stream *stream, bool has_body, void *user_data) {
+static int s_error_from_incoming_headers_done(
+    struct aws_http_stream *stream,
+    enum aws_http_header_type header_type,
+    void *user_data) {
     (void)stream;
-    (void)has_body;
+    (void)header_type;
     return s_error_from_callback_common(user_data, REQUEST_CALLBACK_INCOMING_HEADERS_DONE);
 }
 

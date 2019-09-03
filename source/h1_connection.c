@@ -953,6 +953,8 @@ static int s_decoder_on_header(const struct aws_http_decoded_header *header, voi
         AWS_BYTE_CURSOR_PRI(header->name_data),
         AWS_BYTE_CURSOR_PRI(header->value_data));
 
+    enum aws_http_header_type header_type =
+        aws_h1_decoder_get_header_type(connection->thread_data.incoming_stream_decoder);
     if (incoming_stream->base.on_incoming_headers) {
         struct aws_http_header deliver = {
             .name = header->name_data,
@@ -960,7 +962,7 @@ static int s_decoder_on_header(const struct aws_http_decoded_header *header, voi
         };
 
         int err = incoming_stream->base.on_incoming_headers(
-            &incoming_stream->base, &deliver, 1, incoming_stream->base.user_data);
+            &incoming_stream->base, header_type, &deliver, 1, incoming_stream->base.user_data);
 
         if (err) {
             AWS_LOGF_TRACE(
@@ -983,29 +985,20 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
         return AWS_OP_SUCCESS;
     }
 
-    incoming_stream->is_incoming_head_done = true;
-
     /* Determine if message will have a body */
     struct h1_connection *connection =
         AWS_CONTAINER_OF(incoming_stream->base.owning_connection, struct h1_connection, base);
 
-    bool has_incoming_body = false;
-    if (!aws_h1_decoder_get_body_headers_ignored(connection->thread_data.incoming_stream_decoder)) {
-        int transfer_encoding = aws_h1_decoder_get_encoding_flags(connection->thread_data.incoming_stream_decoder);
-        has_incoming_body |= (transfer_encoding & AWS_HTTP_TRANSFER_ENCODING_CHUNKED);
-        has_incoming_body |= aws_h1_decoder_get_content_length(connection->thread_data.incoming_stream_decoder);
-    }
+    enum aws_http_header_type header_type =
+        aws_h1_decoder_get_header_type(connection->thread_data.incoming_stream_decoder);
+    incoming_stream->is_incoming_head_done = header_type != AWS_HTTP_INFORMATIONAL;
 
-    AWS_LOGF_TRACE(
-        AWS_LS_HTTP_STREAM,
-        "id=%p: Incoming head is done, %s.",
-        (void *)&incoming_stream->base,
-        has_incoming_body ? "body is next" : "there will be no body");
+    AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Incoming head is done.", (void *)&incoming_stream->base);
 
     /* Invoke user cb */
     if (incoming_stream->base.on_incoming_header_block_done) {
         int err = incoming_stream->base.on_incoming_header_block_done(
-            &incoming_stream->base, has_incoming_body, incoming_stream->base.user_data);
+            &incoming_stream->base, header_type, incoming_stream->base.user_data);
         if (err) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_STREAM,
@@ -1068,7 +1061,12 @@ static int s_decoder_on_done(void *user_data) {
     if (err) {
         return AWS_OP_ERR;
     }
-
+    /* If it is a informational response, we stop here, keep waiting for new response */
+    enum aws_http_header_type header_type =
+        aws_h1_decoder_get_header_type(connection->thread_data.incoming_stream_decoder);
+    if (header_type == AWS_HTTP_INFORMATIONAL) {
+        return AWS_OP_SUCCESS;
+    }
     incoming_stream->is_incoming_message_done = true;
     if (connection->base.server_data) {
         /* Server side */
