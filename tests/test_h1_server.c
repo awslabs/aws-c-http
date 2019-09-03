@@ -110,10 +110,12 @@ static int s_tester_on_request_header_block_done(
     enum aws_http_header_type header_type,
     void *user_data) {
     (void)stream;
+    (void)header_type;
     struct tester_request *request = user_data;
-    AWS_FATAL_ASSERT(request->header_done == false);
-    request->header_done = true;
-
+    if (header_type == AWS_HTTP_NORMAL_HEADER) {
+        AWS_FATAL_ASSERT(request->header_done == false);
+        request->header_done = true;
+    }
     struct aws_http_stream *r_handler = request->request_handler;
     AWS_FATAL_ASSERT(!aws_http_stream_get_incoming_request_method(r_handler, &request->method));
     AWS_FATAL_ASSERT(!aws_http_stream_get_incoming_request_uri(r_handler, &request->uri));

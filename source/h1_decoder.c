@@ -328,7 +328,7 @@ static void s_reset_state(struct aws_h1_decoder *decoder) {
     decoder->body_headers_ignored = false;
     decoder->body_headers_forbidden = false;
     /* set to normal by default */
-    decoder->header_type = AWS_HTTP_NORMAL;
+    decoder->header_type = AWS_HTTP_NORMAL_HEADER;
 }
 
 static int s_state_unchunked_body(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input) {
@@ -753,7 +753,7 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
     decoder->body_headers_forbidden = code_val == AWS_HTTP_STATUS_204_NO_CONTENT || code_val / 100 == 1;
 
     if (s_check_info_response_status_code(code_val)) {
-        decoder->header_type = AWS_HTTP_INFORMATIONAL;
+        decoder->header_type = AWS_HTTP_INFORMATIONAL_HEADER;
     }
 
     err = decoder->vtable.on_response((int)code_val, decoder->user_data);
