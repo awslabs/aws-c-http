@@ -699,6 +699,11 @@ static int s_linestate_request(struct aws_h1_decoder *decoder, struct aws_byte_c
     return AWS_OP_SUCCESS;
 }
 
+static bool s_check_info_response_status_code(size_t code_val) {
+    return code_val == AWS_HTTP_STATUS_100_CONTINUE || code_val == AWS_HTTP_STATUS_102_PROCESSING ||
+           code_val == AWS_HTTP_STATUS_103_EARLY_HINTS;
+}
+
 static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_cursor input) {
     struct aws_byte_cursor cursors[3];
     int err = s_cursor_split_first_n_times(input, ' ', cursors, 3); /* phrase may contain spaces */
@@ -747,8 +752,7 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
     decoder->body_headers_ignored |= code_val == AWS_HTTP_STATUS_304_NOT_MODIFIED;
     decoder->body_headers_forbidden = code_val == AWS_HTTP_STATUS_204_NO_CONTENT || code_val / 100 == 1;
 
-    if (code_val == AWS_HTTP_STATUS_100_CONTINUE) {
-        /* TODO: what about 101? (102. 103 should be same as 100) */
+    if (s_check_info_response_status_code(code_val)) {
         decoder->header_type = AWS_HTTP_INFORMATIONAL;
     }
 

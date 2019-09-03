@@ -531,8 +531,6 @@ static int s_response_tester_on_header_block_done(
     response->on_response_header_block_done_cb_count++;
 
     AWS_FATAL_ASSERT(!aws_http_stream_get_incoming_response_status(response->stream, &response->status));
-    /* check the response type is consistent with status code */
-    // TODO
     return AWS_OP_SUCCESS;
 }
 

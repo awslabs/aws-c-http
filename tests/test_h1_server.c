@@ -52,8 +52,6 @@ struct tester_request {
     size_t num_headers;
 
     bool header_done;
-    bool has_incoming_body;
-
     size_t on_complete_cb_count;
     int on_complete_error_code;
 
@@ -158,7 +156,6 @@ static struct aws_http_stream *s_tester_on_incoming_request(struct aws_http_conn
     int index = tester->request_num;
     /* initialize the new request */
     tester->requests[index].num_headers = 0;
-    tester->requests[index].has_incoming_body = false;
     tester->requests[index].header_done = false;
     aws_byte_buf_init(&tester->requests[index].storage, tester->alloc, 1024 * 1024 * 1);
 
@@ -1254,7 +1251,6 @@ static struct aws_http_stream *s_tester_close_on_incoming_request(
     int index = tester->request_num;
     /* initialize the new request */
     tester->requests[index].num_headers = 0;
-    tester->requests[index].has_incoming_body = false;
     tester->requests[index].header_done = false;
     aws_byte_buf_init(&tester->requests[index].storage, tester->alloc, 1024 * 1024 * 1);
 
