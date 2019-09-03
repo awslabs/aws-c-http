@@ -925,7 +925,6 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
     ASSERT_SUCCESS(testing_channel_send_response_str(
         &tester.testing_channel,
         "HTTP/1.1 204 No Content\r\n\r\n"
-        "HTTP/1.1 100 Continue\r\n\r\n"
         "HTTP/1.1 204 No Content\r\n\r\n"
         "HTTP/1.1 204 No Content\r\n\r\n"));
 
@@ -936,7 +935,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_get_multiple_from_1_io_message) {
         ASSERT_TRUE(responses[i].on_complete_cb_count == 1);
         ASSERT_TRUE(responses[i].on_complete_error_code == AWS_ERROR_SUCCESS);
         ASSERT_TRUE(responses[i].status == 204);
-        ASSERT_TRUE(responses[i].on_response_header_block_done_cb_count == i == 1 ? 2 : 1);
+        ASSERT_TRUE(responses[i].on_response_header_block_done_cb_count == 1);
         ASSERT_TRUE(responses[i].num_headers == 0);
         ASSERT_TRUE(responses[i].body.len == 0);
 
