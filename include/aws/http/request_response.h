@@ -43,8 +43,8 @@ struct aws_http_header {
  * This is NOT a definitive list of Types.
  */
 enum aws_http_header_type {
-    AWS_HTTP_INFORMATIONAL_HEADER,
     AWS_HTTP_NORMAL_HEADER,
+    AWS_HTTP_INFORMATIONAL_HEADER,
     AWS_HTTP_TRAILING_HEADER,
 };
 
@@ -86,9 +86,9 @@ typedef void(aws_http_message_transform_fn)(
 
 /**
  * Invoked repeatedly times as headers are received.
- * At this point, aws_http_stream_get_incoming_response_status() can be called for the client.
+ * At this point, aws_http_stream_get_incoming_response_status() can be called for the client user.
  * And aws_http_stream_get_incoming_request_method() and aws_http_stream_get_incoming_request_uri() can be called for
- * the server.
+ * the server user.
  * This is always invoked on the HTTP connection's event-loop thread.
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.

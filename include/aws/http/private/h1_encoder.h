@@ -23,6 +23,7 @@
  * Contains data necessary for encoder to write an outgoing request or response.
  */
 struct aws_h1_encoder_message {
+    enum aws_http_header_type header_type;
     /* Upon creation, the "head" (everything preceding body) is buffered here. */
     struct aws_byte_buf outgoing_head_buf;
     struct aws_input_stream *body;
@@ -54,6 +55,12 @@ int aws_h1_encoder_message_init_from_request(
     const struct aws_http_message *request);
 
 int aws_h1_encoder_message_init_from_response(
+    struct aws_h1_encoder_message *message,
+    struct aws_allocator *allocator,
+    const struct aws_http_message *response,
+    bool body_headers_ignored);
+
+int aws_h1_encoder_message_append_from_response(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *response,

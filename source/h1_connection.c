@@ -285,11 +285,24 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
     struct aws_h1_stream *h1_stream = AWS_CONTAINER_OF(stream, struct aws_h1_stream, base);
     struct h1_connection *connection = AWS_CONTAINER_OF(stream->owning_connection, struct h1_connection, base);
 
+    bool followed_response = false;
     /* Validate the response and cache info that encoder will eventually need.
      * The encoder_message object will be moved into the stream later while holding the lock */
-    struct aws_h1_encoder_message encoder_message;
     bool body_headers_ignored = h1_stream->base.request_method == AWS_HTTP_METHOD_HEAD;
-    err = aws_h1_encoder_message_init_from_response(&encoder_message, stream->alloc, response, body_headers_ignored);
+
+    if (h1_stream->encoder_message.header_type == AWS_HTTP_INFORMATIONAL_HEADER) {
+        followed_response = true;
+    }
+
+    struct aws_h1_encoder_message encoder_message;
+    if (!followed_response) {
+        err =
+            aws_h1_encoder_message_init_from_response(&encoder_message, stream->alloc, response, body_headers_ignored);
+    } else {
+        /* append the message of new reponse to the old message */
+        err = aws_h1_encoder_message_append_from_response(
+            &h1_stream->encoder_message, stream->alloc, response, body_headers_ignored);
+    }
     if (err) {
         send_err = aws_last_error();
         goto response_error;
@@ -298,12 +311,14 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
     bool should_schedule_task = false;
     { /* BEGIN CRITICAL SECTION */
         s_h1_connection_lock_synced_data(connection);
-        if (h1_stream->synced_data.has_outgoing_response) {
-            AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "id=%p: Response already created on the stream", (void *)stream);
+        if (h1_stream->synced_data.has_outgoing_response && !followed_response) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Response already created on the stream.", (void *)stream);
             send_err = AWS_ERROR_INVALID_STATE;
         } else {
-            h1_stream->synced_data.has_outgoing_response = true;
-            h1_stream->encoder_message = encoder_message;
+            if (!followed_response) {
+                h1_stream->synced_data.has_outgoing_response = true;
+                h1_stream->encoder_message = encoder_message;
+            }
             if (!connection->synced_data.is_outgoing_stream_task_active) {
                 connection->synced_data.is_outgoing_stream_task_active = true;
                 should_schedule_task = true;
