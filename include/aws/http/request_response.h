@@ -43,8 +43,8 @@ struct aws_http_header {
  * This is NOT a definitive list of Types.
  */
 enum aws_http_header_type {
-    AWS_HTTP_INFORMATIONAL_HEADER,
     AWS_HTTP_NORMAL_HEADER,
+    AWS_HTTP_INFORMATIONAL_HEADER,
     AWS_HTTP_TRAILING_HEADER,
 };
 
