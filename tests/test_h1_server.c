@@ -680,7 +680,7 @@ TEST_CASE(h1_server_send_100_continue_response) {
     
     /* send real response */
     struct aws_http_message *response;
-    ASSERT_SUCCESS(s_create_response(&response, 200, headers, AWS_ARRAY_SIZE(info_headers), request->response_body));
+    ASSERT_SUCCESS(s_create_response(&response, 200, headers, AWS_ARRAY_SIZE(headers), request->response_body));
     ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, response));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
