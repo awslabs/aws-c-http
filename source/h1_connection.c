@@ -820,7 +820,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
                 struct aws_channel *channel = connection->base.channel_slot->channel;
                 aws_channel_task_init(
                     &connection->timeout_body_send_task, s_timeout_body_send_task, connection, "timeout_body_send");
-                uint64_t time_now;
+                uint64_t time_now = 0;
                 AWS_ASSERT(!aws_channel_current_clock_time(channel, &time_now));
                 
                 aws_channel_schedule_task_future(
