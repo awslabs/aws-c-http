@@ -316,13 +316,13 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
         /* check the informational response has been sent or not, if it has been sent, we need to schedule the outgoing
          * stream task again, or that task has not run, and it will send both informational response and the following
          * response, in this case, we can just return. */
-        if(connection->synced_data.informational_response_sent) {
+        if (connection->synced_data.informational_response_sent) {
             should_schedule_task = true;
             connection->synced_data.informational_response_sent = false;
         }
         s_h1_connection_unlock_synced_data(connection);
         /* END CRITICAL SECTION */
-        if (should_schedule_task){
+        if (should_schedule_task) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION,
                 "id=%p: The followed response is created, scheduling outgoing stream task.",
