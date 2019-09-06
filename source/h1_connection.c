@@ -698,8 +698,6 @@ static void s_timeout_body_send_task(struct aws_channel_task *task, void *arg, e
         "id=%p: Scheduling outgoing stream task for sending body due to timeout.",
         (void *)&connection->base);
     aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
-
-    return;
 }
 
 /**
