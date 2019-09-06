@@ -51,7 +51,7 @@ static int s_scan_outgoing_headers(
                 has_body_headers = true;
                 break;
             case AWS_HTTP_HEADER_EXPECT:
-                if (!aws_string_eq_byte_cursor_ignore_case(s_expectation_header_value, &header.value)){
+                if (!aws_string_eq_byte_cursor_ignore_case(s_expectation_header_value, &header.value)) {
                     return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
                 }
                 encoder_message->body_state = AWS_H1_ENCODER_BODY_STATE_WAIT;
@@ -461,7 +461,7 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
             ENCODER_LOG(TRACE, encoder, "No body to send.")
             encoder->state++;
         } else {
-            if (encoder->message->body_state == AWS_H1_ENCODER_BODY_STATE_WAIT){
+            if (encoder->message->body_state == AWS_H1_ENCODER_BODY_STATE_WAIT) {
                 /* wait, just return */
                 ENCODER_LOG(TRACE, encoder, "Wait to send body");
                 return AWS_OP_SUCCESS;
