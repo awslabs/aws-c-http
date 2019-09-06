@@ -340,7 +340,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
     { /* BEGIN CRITICAL SECTION */
         s_h1_connection_lock_synced_data(connection);
         if (h1_stream->synced_data.has_outgoing_response) {
-            AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "id=%p: Response already created on the stream", (void *)stream);
+            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Response already created on the stream", (void *)stream);
             send_err = AWS_ERROR_INVALID_STATE;
         } else {
             h1_stream->synced_data.has_outgoing_response = true;
