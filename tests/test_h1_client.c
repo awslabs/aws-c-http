@@ -13,10 +13,11 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/common/thread.h>
+#include <aws/common/uuid.h>
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/request_response.h>
-
-#include <aws/common/uuid.h>
+#include <aws/io/io.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
 #include <aws/testing/io_testing_channel.h>
@@ -217,6 +218,127 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
                            "write more tests";
     ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected));
 
+    /* clean up */
+    aws_input_stream_destroy(body_stream);
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_request_send_expect_100_timeout) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
+
+    struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("16"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Expect"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("100-continue"),
+        },
+    };
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+    aws_http_message_set_body_stream(request, body_stream);
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    const char *expected_part1 = "PUT /plan.txt HTTP/1.1\r\n"
+                                 "Content-Length: 16\r\n"
+                                 "Expect: 100-continue\r\n"
+                                 "\r\n";
+
+    ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected_part1));
+    /* wait for timeout happen */
+    aws_thread_current_sleep(CONTINUE_WAIT_TIME);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    const char *expected_part2 = "write more tests";
+
+    ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected_part2));
+    /* clean up */
+    aws_input_stream_destroy(body_stream);
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_request_send_expect_100_received_100) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
+
+    struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("16"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Expect"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("100-continue"),
+        },
+    };
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+    aws_http_message_set_body_stream(request, body_stream);
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    /* check first part */
+    const char *expected_part1 = "PUT /plan.txt HTTP/1.1\r\n"
+                                 "Content-Length: 16\r\n"
+                                 "Expect: 100-continue\r\n"
+                                 "\r\n";
+
+    ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected_part1));
+    /* send response */
+    ASSERT_SUCCESS(testing_channel_send_response_str(
+        &tester.testing_channel,
+        "HTTP/1.1 100 Continue\r\n"
+        "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
+        "\r\n"));
+    /* response received, the body will be sent */
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    /* check the body */
+    const char *expected_part2 = "write more tests";
+    ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected_part2));
+    /* wait for the timeout task to run with cancel state, or the channel needs to cancel the task, which is not
+     * supported in testing channel */
+    aws_thread_current_sleep(CONTINUE_WAIT_TIME);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
     /* clean up */
     aws_input_stream_destroy(body_stream);
     aws_http_message_destroy(request);

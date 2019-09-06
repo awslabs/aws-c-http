@@ -25,6 +25,9 @@
 #include <aws/io/channel.h>
 #include <aws/io/channel_bootstrap.h>
 
+/* wait time for continue sending the request body(nanos) */
+#define CONTINUE_WAIT_TIME 100000000
+
 struct aws_http_message;
 struct aws_http_make_request_options;
 struct aws_http_request_handler_options;

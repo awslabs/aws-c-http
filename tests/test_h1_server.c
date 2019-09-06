@@ -677,7 +677,7 @@ TEST_CASE(h1_server_send_100_continue_response) {
     struct aws_http_message *info_response;
     ASSERT_SUCCESS(s_create_response(&info_response, 100, info_headers, AWS_ARRAY_SIZE(info_headers), NULL));
     ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, info_response));
-    
+
     /* send real response */
     struct aws_http_message *response;
     ASSERT_SUCCESS(s_create_response(&response, 200, headers, AWS_ARRAY_SIZE(headers), request->response_body));

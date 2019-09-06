@@ -14,6 +14,7 @@
  */
 #include <aws/http/private/h1_encoder.h>
 
+#include <aws/common/string.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
 
@@ -21,12 +22,15 @@
     AWS_LOGF_##level(AWS_LS_HTTP_STREAM, "id=%p: " text, encoder->logging_id, __VA_ARGS__)
 #define ENCODER_LOG(level, encoder, text) ENCODER_LOGF(level, encoder, "%s", text)
 
+AWS_STATIC_STRING_FROM_LITERAL(s_expectation_header_value, "100-continue");
+
 /**
  * Scan headers to detect errors and determine anything we'll need to know later (ex: total length).
  */
 static int s_scan_outgoing_headers(
     const struct aws_http_message *message,
     size_t *out_header_lines_len,
+    struct aws_h1_encoder_message *encoder_message,
     bool body_headers_ignored,
     bool body_headers_forbidden) {
 
@@ -45,6 +49,12 @@ static int s_scan_outgoing_headers(
             case AWS_HTTP_HEADER_CONTENT_LENGTH:
             case AWS_HTTP_HEADER_TRANSFER_ENCODING:
                 has_body_headers = true;
+                break;
+            case AWS_HTTP_HEADER_EXPECT:
+                if (!aws_string_eq_byte_cursor_ignore_case(s_expectation_header_value, &header.value)){
+                    return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+                }
+                encoder_message->body_state = AWS_H1_ENCODER_BODY_STATE_WAIT;
                 break;
             default:
                 break;
@@ -138,7 +148,7 @@ int aws_h1_encoder_message_init_from_request(
      */
 
     size_t header_lines_len;
-    err = s_scan_outgoing_headers(request, &header_lines_len, false, false);
+    err = s_scan_outgoing_headers(request, &header_lines_len, message, false, false);
     if (err) {
         goto error;
     }
@@ -260,7 +270,7 @@ static int s_get_response_header_len(
         message->header_type = AWS_HTTP_NORMAL_HEADER;
     }
 
-    err = s_scan_outgoing_headers(response, &header_lines_len, body_headers_ignored, body_headers_forbidden);
+    err = s_scan_outgoing_headers(response, &header_lines_len, message, body_headers_ignored, body_headers_forbidden);
     if (err) {
         return AWS_OP_ERR;
     }
@@ -453,6 +463,14 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
             ENCODER_LOG(TRACE, encoder, "No body to send.")
             encoder->state++;
         } else {
+            if (encoder->message->body_state == AWS_H1_ENCODER_BODY_STATE_WAIT){
+                /* wait, just return */
+                ENCODER_LOG(TRACE, encoder, "Wait to send body");
+                return AWS_OP_SUCCESS;
+            } else if (encoder->message->body_state == AWS_H1_ENCODER_BODY_STATE_TIMEOUT) {
+                /* wait timeout met, log it and send the body now */
+                ENCODER_LOG(DEBUG, encoder, "Wait timeout met, send the body anyway.");
+            }
             while (true) {
                 if (dst->capacity == dst->len) {
                     /* Can't write anymore */
@@ -522,4 +540,10 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
 
 bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder) {
     return encoder->message;
+}
+
+void aws_h1_encoder_timeout_body_send(struct aws_h1_encoder *encoder) {
+    AWS_PRECONDITION(encoder);
+    AWS_PRECONDITION(encoder->message);
+    encoder->message->body_state = AWS_H1_ENCODER_BODY_STATE_TIMEOUT;
 }
