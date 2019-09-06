@@ -323,13 +323,13 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
         /* check the informational response has been sent or not, if it has been sent, we need to schedule the outgoing
          * stream task again, or that task has not run, and it will send both informational response and the following
          * response, in this case, we can just return. */
-        if(connection->synced_data.informational_response_sent) {
+        if (connection->synced_data.informational_response_sent) {
             should_schedule_task = true;
             connection->synced_data.informational_response_sent = false;
         }
         s_h1_connection_unlock_synced_data(connection);
         /* END CRITICAL SECTION */
-        if (should_schedule_task){
+        if (should_schedule_task) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION,
                 "id=%p: The followed response is created, scheduling outgoing stream task.",
@@ -674,13 +674,13 @@ static void s_client_update_incoming_stream_ptr(struct h1_connection *connection
 }
 
 static void s_timeout_body_send_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
-    (void) task;
+    (void)task;
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;
     }
     struct h1_connection *connection = arg;
-    
-    if(connection->thread_data.timeout_body_send_task_canceled){
+
+    if (connection->thread_data.timeout_body_send_task_canceled) {
         return;
     }
 
@@ -816,16 +816,15 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
             (void)err;
             AWS_ASSERT(!err);
             if (current->encoder_message.body_state == AWS_H1_ENCODER_BODY_STATE_WAIT) {
-                
+
                 struct aws_channel *channel = connection->base.channel_slot->channel;
                 aws_channel_task_init(
                     &connection->timeout_body_send_task, s_timeout_body_send_task, connection, "timeout_body_send");
                 uint64_t time_now = 0;
                 AWS_ASSERT(!aws_channel_current_clock_time(channel, &time_now));
-                
+
                 aws_channel_schedule_task_future(
                     channel, &connection->timeout_body_send_task, time_now + CONTINUE_WAIT_TIME);
-                
             }
         }
 
