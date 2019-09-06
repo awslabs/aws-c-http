@@ -94,6 +94,9 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
 AWS_HTTP_API
 bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder);
 
+AWS_HTTP_API
+bool aws_h1_encoder_waiting_for_next_response(const struct aws_h1_encoder *encoder);
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_H1_ENCODER_H */

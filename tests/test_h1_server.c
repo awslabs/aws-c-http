@@ -678,12 +678,70 @@ TEST_CASE(h1_server_send_100_continue_response) {
     ASSERT_SUCCESS(s_create_response(&info_response, 100, info_headers, AWS_ARRAY_SIZE(info_headers), NULL));
     ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, info_response));
 
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    const char *info_expected = "HTTP/1.1 100 Continue\r\n"
+                                "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
+                                "\r\n";
+    ASSERT_SUCCESS(s_check_written_message(&s_tester, info_expected));
+    /* send real response */
+    struct aws_http_message *response;
+    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, info_response));
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(s_check_written_message(&s_tester, info_expected));
+    ASSERT_SUCCESS(s_create_response(&response, 200, headers, AWS_ARRAY_SIZE(headers), request->response_body));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, response));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    const char *expected = "HTTP/1.1 200 OK\r\n"
+                           "Content-Length: 16\r\n"
+                           "\r\n"
+                           "write more tests";
+
+    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+    aws_http_message_destroy(info_response);
+    aws_http_message_destroy(response);
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_send_100_continue_response_in_one_message) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    const char *incoming_request = "GET / HTTP/1.1\r\n"
+                                   "\r\n";
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(s_tester.request_num == 1);
+
+    struct tester_request *request = s_tester.requests;
+
+    /* send response */
+    struct aws_http_header info_headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Date"),
+            .value = aws_byte_cursor_from_c_str("Fri, 01 Mar 2019 17:18:55 GMT"),
+        },
+    };
+    struct aws_byte_cursor body_src = aws_byte_cursor_from_c_str("write more tests");
+    request->response_body = aws_input_stream_new_from_cursor(allocator, &body_src);
+    ASSERT_NOT_NULL(request->response_body);
+    struct aws_http_header headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Content-Length"),
+            .value = aws_byte_cursor_from_c_str("16"),
+        },
+    };
+    /* send 100 continue response */
+    struct aws_http_message *info_response;
+    ASSERT_SUCCESS(s_create_response(&info_response, 100, info_headers, AWS_ARRAY_SIZE(info_headers), NULL));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, info_response));
     /* send real response */
     struct aws_http_message *response;
     ASSERT_SUCCESS(s_create_response(&response, 200, headers, AWS_ARRAY_SIZE(headers), request->response_body));
     ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, response));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-
     const char *expected = "HTTP/1.1 100 Continue\r\n"
                            "Date: Fri, 01 Mar 2019 17:18:55 GMT\r\n"
                            "\r\n"
