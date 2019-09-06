@@ -187,9 +187,7 @@ error:
     return AWS_OP_ERR;
 }
 
-static int s_write_response_headers_into_buffer(
-    struct aws_byte_buf *buffer,
-    const struct aws_http_message *response) {
+static int s_write_response_headers_into_buffer(struct aws_byte_buf *buffer, const struct aws_http_message *response) {
 
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
 
@@ -232,7 +230,7 @@ static int s_get_response_header_len(
     size_t *head_total_len,
     const struct aws_http_message *response,
     bool body_headers_ignored) {
-    
+
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
     size_t header_lines_len;
     int status_int;
@@ -522,4 +520,8 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
 
 bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder) {
     return encoder->message;
+}
+
+bool aws_h1_encoder_waiting_for_next_response(const struct aws_h1_encoder *encoder) {
+    return encoder->message ? encoder->message->header_type == AWS_HTTP_INFORMATIONAL_HEADER : false;
 }

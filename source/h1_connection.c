@@ -167,6 +167,9 @@ struct h1_connection {
         /* For checking status from outside the event-loop thread. */
         bool is_shutting_down;
 
+        /* For checking outgoing stream task for informational response has run or not */
+        bool informational_response_sent;
+
         /* If non-zero, reason to immediately reject new streams. (ex: closing, switched protocols) */
         int new_stream_error_code;
 
@@ -299,9 +302,34 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
         err =
             aws_h1_encoder_message_init_from_response(&encoder_message, stream->alloc, response, body_headers_ignored);
     } else {
+        /* This response is following an informational response, */
         /* append the message of new reponse to the old message */
         err = aws_h1_encoder_message_append_from_response(
             &h1_stream->encoder_message, stream->alloc, response, body_headers_ignored);
+        if (err) {
+            send_err = aws_last_error();
+            goto response_error;
+        }
+        bool should_schedule_task = false;
+        /* BEGIN CRITICAL SECTION */
+        s_h1_connection_lock_synced_data(connection);
+        /* check the informational response has been sent or not, if it has been sent, we need to schedule the outgoing
+         * stream task again, or that task has not run, and it will send both informational response and the following
+         * response, in this case, we can just return. */
+        if(connection->synced_data.informational_response_sent) {
+            should_schedule_task = true;
+            connection->synced_data.informational_response_sent = false;
+        }
+        s_h1_connection_unlock_synced_data(connection);
+        /* END CRITICAL SECTION */
+        if (should_schedule_task){
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: The followed response is created, scheduling outgoing stream task.",
+                (void *)&connection->base);
+            aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
+        }
+        return AWS_OP_SUCCESS;
     }
     if (err) {
         send_err = aws_last_error();
@@ -311,14 +339,12 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
     bool should_schedule_task = false;
     { /* BEGIN CRITICAL SECTION */
         s_h1_connection_lock_synced_data(connection);
-        if (h1_stream->synced_data.has_outgoing_response && !followed_response) {
-            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Response already created on the stream.", (void *)stream);
+        if (h1_stream->synced_data.has_outgoing_response) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "id=%p: Response already created on the stream", (void *)stream);
             send_err = AWS_ERROR_INVALID_STATE;
         } else {
-            if (!followed_response) {
-                h1_stream->synced_data.has_outgoing_response = true;
-                h1_stream->encoder_message = encoder_message;
-            }
+            h1_stream->synced_data.has_outgoing_response = true;
+            h1_stream->encoder_message = encoder_message;
             if (!connection->synced_data.is_outgoing_stream_task_active) {
                 connection->synced_data.is_outgoing_stream_task_active = true;
                 should_schedule_task = true;
@@ -866,8 +892,22 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
             "id=%p: Outgoing stream task has written all it can, but there's still more work to do, rescheduling "
             "task.",
             (void *)&connection->base);
-
-        aws_channel_schedule_task_now(channel, task);
+        if (!aws_h1_encoder_waiting_for_next_response(&connection->thread_data.encoder)) {
+            aws_channel_schedule_task_now(channel, task);
+        } else {
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Encoder is waiting for next response to write more, reschedule the task when next response is "
+                "sent.",
+                (void *)&connection->base);
+            /* BEGIN CRITICAL SECTION */
+            s_h1_connection_lock_synced_data(connection);
+            /* mark that the informational response has been sent, we need to reschedule the task when the following
+             * response comes */
+            connection->synced_data.informational_response_sent = true;
+            s_h1_connection_unlock_synced_data(connection);
+            /* END CRITICAL SECTION */
+        }
     } else {
         AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Outgoing stream task complete.", (void *)&connection->base);
     }
