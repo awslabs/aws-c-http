@@ -48,6 +48,7 @@ struct aws_h1_decoder {
     bool is_done;
     bool body_headers_ignored;
     bool body_headers_forbidden;
+    enum aws_http_header_type header_type;
     void *logging_id;
 
     /* User callbacks and settings. */
@@ -326,6 +327,8 @@ static void s_reset_state(struct aws_h1_decoder *decoder) {
     decoder->is_done = false;
     decoder->body_headers_ignored = false;
     decoder->body_headers_forbidden = false;
+    /* set to normal by default */
+    decoder->header_type = AWS_HTTP_HEADER_BLOCK_MAIN;
 }
 
 static int s_state_unchunked_body(struct aws_h1_decoder *decoder, struct aws_byte_cursor *input) {
@@ -696,6 +699,11 @@ static int s_linestate_request(struct aws_h1_decoder *decoder, struct aws_byte_c
     return AWS_OP_SUCCESS;
 }
 
+static bool s_check_info_response_status_code(size_t code_val) {
+    /* TODO: 101 is an info_response, we need to revise the 101 behaviour. */
+    return code_val >= 100 && code_val < 200 && code_val != 101;
+}
+
 static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_cursor input) {
     struct aws_byte_cursor cursors[3];
     int err = s_cursor_split_first_n_times(input, ' ', cursors, 3); /* phrase may contain spaces */
@@ -743,6 +751,10 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
     /* RFC-7230 section 3.3 Message Body */
     decoder->body_headers_ignored |= code_val == AWS_HTTP_STATUS_304_NOT_MODIFIED;
     decoder->body_headers_forbidden = code_val == AWS_HTTP_STATUS_204_NO_CONTENT || code_val / 100 == 1;
+
+    if (s_check_info_response_status_code(code_val)) {
+        decoder->header_type = AWS_HTTP_HEADER_BLOCK_INFORMATIONAL;
+    }
 
     err = decoder->vtable.on_response((int)code_val, decoder->user_data);
     if (err) {
@@ -811,6 +823,10 @@ size_t aws_h1_decoder_get_content_length(const struct aws_h1_decoder *decoder) {
 
 bool aws_h1_decoder_get_body_headers_ignored(const struct aws_h1_decoder *decoder) {
     return decoder->body_headers_ignored;
+}
+
+enum aws_http_header_type aws_h1_decoder_get_header_type(const struct aws_h1_decoder *decoder) {
+    return decoder->header_type;
 }
 
 void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, void *id) {

@@ -39,6 +39,18 @@ struct aws_http_header {
 };
 
 /**
+ * Header block type.
+ * INFORMATIONAL: Header block for 1xx informational (interim) responses.
+ * MAIN: Main header block sent with request or response.
+ * TRAILING: Headers sent after the body of a request or response.
+ */
+enum aws_http_header_type {
+    AWS_HTTP_HEADER_BLOCK_MAIN,
+    AWS_HTTP_HEADER_BLOCK_INFORMATIONAL,
+    AWS_HTTP_HEADER_BLOCK_TRAILING,
+};
+
+/**
  * The definition for an outgoing HTTP request or response.
  * The message may be transformed (ex: signing the request) before its data is eventually sent.
  *
@@ -76,7 +88,9 @@ typedef void(aws_http_message_transform_fn)(
 
 /**
  * Invoked repeatedly times as headers are received.
- * At this point, aws_http_stream_get_incoming_response_status() can be called.
+ * At this point, aws_http_stream_get_incoming_response_status() can be called for the client.
+ * And aws_http_stream_get_incoming_request_method() and aws_http_stream_get_incoming_request_uri() can be called for
+ * the server.
  * This is always invoked on the HTTP connection's event-loop thread.
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.
@@ -84,18 +98,22 @@ typedef void(aws_http_message_transform_fn)(
  */
 typedef int(aws_http_on_incoming_headers_fn)(
     struct aws_http_stream *stream,
+    enum aws_http_header_type header_type,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data);
 
 /**
- * Invoked when response header block has been completely read.
+ * Invoked when the incoming header block of this header_type(informational/normal/trailing) has been completely read.
  * This is always invoked on the HTTP connection's event-loop thread.
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.
  * Return AWS_OP_ERR to indicate failure and cancel the stream.
  */
-typedef int(aws_http_on_incoming_header_block_done_fn)(struct aws_http_stream *stream, bool has_body, void *user_data);
+typedef int(aws_http_on_incoming_header_block_done_fn)(
+    struct aws_http_stream *stream,
+    enum aws_http_header_type header_type,
+    void *user_data);
 
 /**
  * Called repeatedly as body data is received.
