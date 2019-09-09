@@ -293,7 +293,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
      * The encoder_message object will be moved into the stream later while holding the lock */
     bool body_headers_ignored = h1_stream->base.request_method == AWS_HTTP_METHOD_HEAD;
 
-    if (h1_stream->encoder_message.header_type == AWS_HTTP_INFORMATIONAL_HEADER) {
+    if (h1_stream->encoder_message.header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
         followed_response = true;
     }
 
