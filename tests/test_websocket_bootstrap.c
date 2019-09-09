@@ -438,7 +438,7 @@ static int s_drive_websocket_connect(int *out_error_code) {
      * stream-complete callbacks before the HTTP-connection-closed callback */
     s_tester.http_stream_on_response_headers(
         s_mock_stream,
-        AWS_HTTP_NORMAL_HEADER,
+        AWS_HTTP_HEADER_BLOCK_MAIN,
         s_tester.handshake_response_headers,
         s_tester.num_handshake_response_headers,
         s_tester.http_stream_user_data);

@@ -112,7 +112,7 @@ static int s_tester_on_request_header_block_done(
     (void)stream;
     (void)header_type;
     struct tester_request *request = user_data;
-    if (header_type == AWS_HTTP_NORMAL_HEADER) {
+    if (header_type == AWS_HTTP_HEADER_BLOCK_MAIN) {
         AWS_FATAL_ASSERT(request->header_done == false);
         request->header_done = true;
     }

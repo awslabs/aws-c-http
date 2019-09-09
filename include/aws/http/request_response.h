@@ -39,13 +39,15 @@ struct aws_http_header {
 };
 
 /**
- * Header types that affect internal processing.
- * This is NOT a definitive list of Types.
+ * Header block type.
+ * INFORMATIONAL: Header block for 1xx informational (interim) responses.
+ * MAIN: Main header block sent with request or response.
+ * TRAILING: Headers sent after the body of a request or response.
  */
 enum aws_http_header_type {
-    AWS_HTTP_NORMAL_HEADER,
-    AWS_HTTP_INFORMATIONAL_HEADER,
-    AWS_HTTP_TRAILING_HEADER,
+    AWS_HTTP_HEADER_BLOCK_MAIN,
+    AWS_HTTP_HEADER_BLOCK_INFORMATIONAL,
+    AWS_HTTP_HEADER_BLOCK_TRAILING,
 };
 
 /**

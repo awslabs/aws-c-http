@@ -516,7 +516,8 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
      * If anything goes wrong here, modify error_code, and the connection will get shut down as a result. */
     const int original_error_code = error_code;
     if (!error_code) {
-
+        /* TODO: the check of 101 response should not happen here. For informational response, the stream is not
+         * completed when the 101 response is received */
         /* Check whether connection is switching protocols. */
         if (stream->base.client_data &&
             stream->base.client_data->response_status == AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS) {
@@ -985,17 +986,16 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
         return AWS_OP_SUCCESS;
     }
 
-    /* Determine if message will have a body */
     struct h1_connection *connection =
         AWS_CONTAINER_OF(incoming_stream->base.owning_connection, struct h1_connection, base);
 
     enum aws_http_header_type header_type =
         aws_h1_decoder_get_header_type(connection->thread_data.incoming_stream_decoder);
 
-    if (header_type == AWS_HTTP_NORMAL_HEADER) {
+    if (header_type == AWS_HTTP_HEADER_BLOCK_MAIN) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Incoming head is done.", (void *)&incoming_stream->base);
         incoming_stream->is_incoming_head_done = true;
-    } else if (header_type == AWS_HTTP_INFORMATIONAL_HEADER) {
+    } else if (header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_STREAM,
             "id=%p: Informational incoming head is done, keep waiting for a final response.",
@@ -1071,9 +1071,11 @@ static int s_decoder_on_done(void *user_data) {
     /* If it is a informational response, we stop here, keep waiting for new response */
     enum aws_http_header_type header_type =
         aws_h1_decoder_get_header_type(connection->thread_data.incoming_stream_decoder);
-    if (header_type == AWS_HTTP_INFORMATIONAL_HEADER) {
+    if (header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
         return AWS_OP_SUCCESS;
     }
+
+    /* If it is a main header block, the incoming stream is finished decoding and we will update it if needed */
     incoming_stream->is_incoming_message_done = true;
     if (connection->base.server_data) {
         /* Server side */
