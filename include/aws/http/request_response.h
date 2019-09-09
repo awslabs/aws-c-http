@@ -39,13 +39,15 @@ struct aws_http_header {
 };
 
 /**
- * Header types that affect internal processing.
- * This is NOT a definitive list of Types.
+ * Header block type.
+ * INFORMATIONAL: Header block for 1xx informational (interim) responses.
+ * MAIN: Main header block sent with request or response.
+ * TRAILING: Headers sent after the body of a request or response.
  */
 enum aws_http_header_type {
-    AWS_HTTP_NORMAL_HEADER,
-    AWS_HTTP_INFORMATIONAL_HEADER,
-    AWS_HTTP_TRAILING_HEADER,
+    AWS_HTTP_HEADER_BLOCK_MAIN,
+    AWS_HTTP_HEADER_BLOCK_INFORMATIONAL,
+    AWS_HTTP_HEADER_BLOCK_TRAILING,
 };
 
 /**
@@ -86,9 +88,9 @@ typedef void(aws_http_message_transform_fn)(
 
 /**
  * Invoked repeatedly times as headers are received.
- * At this point, aws_http_stream_get_incoming_response_status() can be called for the client user.
+ * At this point, aws_http_stream_get_incoming_response_status() can be called for the client.
  * And aws_http_stream_get_incoming_request_method() and aws_http_stream_get_incoming_request_uri() can be called for
- * the server user.
+ * the server.
  * This is always invoked on the HTTP connection's event-loop thread.
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.

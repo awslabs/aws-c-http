@@ -618,7 +618,7 @@ static int s_response_tester_on_headers(
 
     struct aws_byte_buf *storage = &response->storage;
     const struct aws_http_header *in_header = header_array;
-    struct aws_http_header *my_header = header_type == AWS_HTTP_INFORMATIONAL_HEADER
+    struct aws_http_header *my_header = header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL
                                             ? response->info_headers + response->num_info_headers
                                             : response->headers + response->num_headers;
     for (size_t i = 0; i < num_headers; ++i) {
@@ -634,9 +634,9 @@ static int s_response_tester_on_headers(
         in_header++;
         my_header++;
     }
-    if (header_type == AWS_HTTP_INFORMATIONAL_HEADER) {
+    if (header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
         response->num_info_headers += num_headers;
-    } else if (header_type == AWS_HTTP_NORMAL_HEADER) {
+    } else if (header_type == AWS_HTTP_HEADER_BLOCK_MAIN) {
         response->num_headers += num_headers;
     }
 
