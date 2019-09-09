@@ -49,8 +49,6 @@ enum aws_http_status {
     AWS_HTTP_STATUS_UNKNOWN = -1, /* Invalid status code. Not using 0 because it's technically a legal value */
     AWS_HTTP_STATUS_100_CONTINUE = 100,
     AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS = 101,
-    AWS_HTTP_STATUS_102_PROCESSING = 102,
-    AWS_HTTP_STATUS_103_EARLY_HINTS = 103,
     AWS_HTTP_STATUS_204_NO_CONTENT = 204,
     AWS_HTTP_STATUS_304_NOT_MODIFIED = 304,
 };

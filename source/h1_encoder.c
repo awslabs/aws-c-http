@@ -104,8 +104,7 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_mess
 }
 
 static bool s_check_info_response_status_code(int code_val) {
-    return code_val == AWS_HTTP_STATUS_100_CONTINUE || code_val == AWS_HTTP_STATUS_102_PROCESSING ||
-           code_val == AWS_HTTP_STATUS_103_EARLY_HINTS;
+    return code_val >= 100 && code_val < 200 && code_val != 101;
 }
 
 int aws_h1_encoder_message_init_from_request(
