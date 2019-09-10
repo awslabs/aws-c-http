@@ -48,7 +48,7 @@ struct aws_h1_decoder {
     bool is_done;
     bool body_headers_ignored;
     bool body_headers_forbidden;
-    enum aws_http_header_type header_type;
+    enum aws_http_header_block header_type;
     void *logging_id;
 
     /* User callbacks and settings. */
@@ -701,7 +701,7 @@ static int s_linestate_request(struct aws_h1_decoder *decoder, struct aws_byte_c
 
 static bool s_check_info_response_status_code(size_t code_val) {
     /* TODO: 101 is an info_response, we need to revise the 101 behaviour. */
-    return code_val >= 100 && code_val < 200 && code_val != 101;
+    return code_val >= 100 && code_val < 200 && code_val != AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS;
 }
 
 static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_cursor input) {
@@ -825,7 +825,7 @@ bool aws_h1_decoder_get_body_headers_ignored(const struct aws_h1_decoder *decode
     return decoder->body_headers_ignored;
 }
 
-enum aws_http_header_type aws_h1_decoder_get_header_type(const struct aws_h1_decoder *decoder) {
+enum aws_http_header_block aws_h1_decoder_get_header_type(const struct aws_h1_decoder *decoder) {
     return decoder->header_type;
 }
 

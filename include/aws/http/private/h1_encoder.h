@@ -15,6 +15,7 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/common/mutex.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
 
@@ -23,7 +24,13 @@
  * Contains data necessary for encoder to write an outgoing request or response.
  */
 struct aws_h1_encoder_message {
-    enum aws_http_header_type header_type;
+    bool body_headers_ignored;
+    bool lock_initialed;
+    struct aws_allocator *alloc;
+    
+    /* lock only for message append from response and encoder process */
+    struct aws_mutex lock;
+    enum aws_http_header_block header_type;
     /* Upon creation, the "head" (everything preceding body) is buffered here. */
     struct aws_byte_buf outgoing_head_buf;
     struct aws_input_stream *body;
@@ -60,11 +67,10 @@ int aws_h1_encoder_message_init_from_response(
     const struct aws_http_message *response,
     bool body_headers_ignored);
 
+/* For sending additional responses, when the first response was 1xx informational */
 int aws_h1_encoder_message_append_from_response(
     struct aws_h1_encoder_message *message,
-    struct aws_allocator *allocator,
-    const struct aws_http_message *response,
-    bool body_headers_ignored);
+    const struct aws_http_message *response);
 
 AWS_HTTP_API
 void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message);

@@ -21,6 +21,18 @@
     AWS_LOGF_##level(AWS_LS_HTTP_STREAM, "id=%p: " text, encoder->logging_id, __VA_ARGS__)
 #define ENCODER_LOG(level, encoder, text) ENCODER_LOGF(level, encoder, "%s", text)
 
+void s_encoder_message_lock_synced_data(struct aws_h1_encoder_message *message) {
+    int err = aws_mutex_lock(&message->lock);
+    AWS_ASSERT(!err);
+    (void)err;
+}
+
+void s_encoder_message_unlock_synced_data(struct aws_h1_encoder_message *message) {
+    int err = aws_mutex_unlock(&message->lock);
+    AWS_ASSERT(!err);
+    (void)err;
+}
+
 /**
  * Scan headers to detect errors and determine anything we'll need to know later (ex: total length).
  */
@@ -104,7 +116,8 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_mess
 }
 
 static bool s_check_info_response_status_code(int code_val) {
-    return code_val >= 100 && code_val < 200 && code_val != 101;
+    /* TODO: 101 is an info_response, we need to revise the 101 behaviour. */
+    return code_val >= 100 && code_val < 200 && code_val != AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS;
 }
 
 int aws_h1_encoder_message_init_from_request(
@@ -115,6 +128,7 @@ int aws_h1_encoder_message_init_from_request(
     AWS_ZERO_STRUCT(*message);
 
     message->body = aws_http_message_get_body_stream(request);
+    message->alloc = allocator;
 
     struct aws_byte_cursor method;
     int err = aws_http_message_get_request_method(request, &method);
@@ -186,23 +200,64 @@ error:
     return AWS_OP_ERR;
 }
 
-static int s_write_response_headers_into_buffer(struct aws_byte_buf *buffer, const struct aws_http_message *response) {
-
+static int s_write_response_headers_into_buffer(
+    struct aws_h1_encoder_message *message,
+    struct aws_byte_buf *buffer,
+    int *status_int,
+    const struct aws_http_message *response) {
+    
+    AWS_ZERO_STRUCT(*buffer);
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
 
-    int status_int;
-    int err = aws_http_message_get_response_status(response, &status_int);
+    int err = aws_http_message_get_response_status(response, status_int);
     if (err) {
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_STATUS_CODE);
     }
 
     /* Status code must fit in 3 digits */
-    AWS_ASSERT(status_int >= 0 && status_int <= 999); /* aws_http_message should have already checked this */
+    AWS_ASSERT(*status_int >= 0 && *status_int <= 999); /* aws_http_message should have already checked this */
     char status_code_str[4] = "XXX";
-    snprintf(status_code_str, sizeof(status_code_str), "%03d", status_int);
+    snprintf(status_code_str, sizeof(status_code_str), "%03d", *status_int);
     struct aws_byte_cursor status_code = aws_byte_cursor_from_c_str(status_code_str);
 
-    struct aws_byte_cursor status_text = aws_byte_cursor_from_c_str(aws_http_status_text(status_int));
+    struct aws_byte_cursor status_text = aws_byte_cursor_from_c_str(aws_http_status_text(*status_int));
+
+    /**
+     * Calculate total size needed for outgoing_head_buffer, then write to buffer.
+     */
+
+    size_t header_lines_len;
+    /**
+     * no body needed in the response
+     * RFC-7230 section 3.3 Message Body
+     */
+    message->body_headers_ignored |= *status_int == AWS_HTTP_STATUS_304_NOT_MODIFIED;
+    bool body_headers_forbidden = *status_int == AWS_HTTP_STATUS_204_NO_CONTENT || *status_int / 100 == 1;
+    err = s_scan_outgoing_headers(response, &header_lines_len, message->body_headers_ignored, body_headers_forbidden);
+    if (err) {
+        return AWS_OP_ERR;
+    }
+
+    /* valid status must be three digital code, change it into byte_cursor */
+    /* response-line: "{version} {status} {status_text}\r\n" */
+    size_t response_line_len = 4; /* 2 spaces + "\r\n" */
+    err |= aws_add_size_checked(version.len, response_line_len, &response_line_len);
+    err |= aws_add_size_checked(status_code.len, response_line_len, &response_line_len);
+    err |= aws_add_size_checked(status_text.len, response_line_len, &response_line_len);
+
+    /* head-end: "\r\n" */
+    size_t head_end_len = 2;
+    size_t head_total_len = response_line_len;
+    err |= aws_add_size_checked(header_lines_len, head_total_len, &head_total_len);
+    err |= aws_add_size_checked(head_end_len, head_total_len, &head_total_len);
+    if (err) {
+        return AWS_OP_ERR;
+    }
+
+    err = aws_byte_buf_init(buffer, message->alloc, head_total_len);
+    if (err) {
+        return AWS_OP_ERR;
+    }
 
     bool wrote_all = true;
 
@@ -221,62 +276,7 @@ static int s_write_response_headers_into_buffer(struct aws_byte_buf *buffer, con
     (void)wrote_all;
     AWS_ASSERT(wrote_all);
 
-    return AWS_OP_SUCCESS;
-}
 
-static int s_get_response_header_len(
-    struct aws_h1_encoder_message *message,
-    size_t *head_total_len,
-    const struct aws_http_message *response,
-    bool body_headers_ignored) {
-
-    struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
-    size_t header_lines_len;
-    int status_int;
-    int err = aws_http_message_get_response_status(response, &status_int);
-    if (err) {
-        return aws_raise_error(AWS_ERROR_HTTP_INVALID_STATUS_CODE);
-    }
-    /* Status code must fit in 3 digits */
-    AWS_ASSERT(status_int >= 0 && status_int <= 999); /* aws_http_message should have already checked this */
-    char status_code_str[4] = "XXX";
-    snprintf(status_code_str, sizeof(status_code_str), "%03d", status_int);
-    struct aws_byte_cursor status_code = aws_byte_cursor_from_c_str(status_code_str);
-
-    struct aws_byte_cursor status_text = aws_byte_cursor_from_c_str(aws_http_status_text(status_int));
-    /**
-     * no body needed in the response
-     * RFC-7230 section 3.3 Message Body
-     */
-    body_headers_ignored |= status_int == AWS_HTTP_STATUS_304_NOT_MODIFIED;
-    bool body_headers_forbidden = status_int == AWS_HTTP_STATUS_204_NO_CONTENT || status_int / 100 == 1;
-
-    if (s_check_info_response_status_code(status_int)) {
-        message->header_type = AWS_HTTP_HEADER_BLOCK_INFORMATIONAL;
-    } else {
-        message->header_type = AWS_HTTP_HEADER_BLOCK_MAIN;
-    }
-
-    err = s_scan_outgoing_headers(response, &header_lines_len, body_headers_ignored, body_headers_forbidden);
-    if (err) {
-        return AWS_OP_ERR;
-    }
-
-    /* valid status must be three digital code, change it into byte_cursor */
-    /* response-line: "{version} {status} {status_text}\r\n" */
-    size_t response_line_len = 4; /* 2 spaces + "\r\n" */
-    err |= aws_add_size_checked(version.len, response_line_len, &response_line_len);
-    err |= aws_add_size_checked(status_code.len, response_line_len, &response_line_len);
-    err |= aws_add_size_checked(status_text.len, response_line_len, &response_line_len);
-
-    /* head-end: "\r\n" */
-    size_t head_end_len = 2;
-    *head_total_len = response_line_len;
-    err |= aws_add_size_checked(header_lines_len, *head_total_len, head_total_len);
-    err |= aws_add_size_checked(head_end_len, *head_total_len, head_total_len);
-    if (err) {
-        return AWS_OP_ERR;
-    }
     return AWS_OP_SUCCESS;
 }
 
@@ -289,21 +289,27 @@ int aws_h1_encoder_message_init_from_response(
     AWS_ZERO_STRUCT(*message);
 
     message->body = aws_http_message_get_body_stream(response);
+    message->body_headers_ignored = body_headers_ignored;
+    message->alloc = allocator;
+    int err = aws_mutex_init(&message->lock);
+    if (err) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
+        goto error;
+    }
+    message->lock_initialed = true;
     /**
      * Calculate total size needed for outgoing_head_buffer, then write to buffer.
      */
-    size_t head_total_len;
-    int err = s_get_response_header_len(message, &head_total_len, response, body_headers_ignored);
+    int status_int;
+    err = s_write_response_headers_into_buffer(message, &message->outgoing_head_buf, &status_int, response);
     if (err) {
         goto error;
     }
-    err = aws_byte_buf_init(&message->outgoing_head_buf, allocator, head_total_len);
-    if (err) {
-        return AWS_OP_ERR;
-    }
-    err = s_write_response_headers_into_buffer(&message->outgoing_head_buf, response);
-    if (err) {
-        goto error;
+    if (s_check_info_response_status_code(status_int)) {
+        message->header_type = AWS_HTTP_HEADER_BLOCK_INFORMATIONAL;
+    } else {
+        message->header_type = AWS_HTTP_HEADER_BLOCK_MAIN;
     }
     /* Success! */
     return AWS_OP_SUCCESS;
@@ -315,34 +321,36 @@ error:
 
 int aws_h1_encoder_message_append_from_response(
     struct aws_h1_encoder_message *message,
-    struct aws_allocator *allocator,
-    const struct aws_http_message *response,
-    bool body_headers_ignored) {
+    const struct aws_http_message *response) {
 
-    if (message->header_type != AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
+    if (message->header_type != AWS_HTTP_HEADER_BLOCK_INFORMATIONAL || message->body) {
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
     message->body = aws_http_message_get_body_stream(response);
     /**
      * Calculate total size needed for outgoing_head_buffer, then write to buffer.
      */
-    size_t head_total_len;
-    int err = s_get_response_header_len(message, &head_total_len, response, body_headers_ignored);
-    if (err) {
-        return AWS_OP_ERR;
-    }
+    int status_int;
     struct aws_byte_buf appending_buffer;
-    err = aws_byte_buf_init(&appending_buffer, allocator, head_total_len);
-    if (err) {
-        return AWS_OP_ERR;
-    }
-    err = s_write_response_headers_into_buffer(&appending_buffer, response);
+    int err = s_write_response_headers_into_buffer(message, &appending_buffer, &status_int, response);
     if (err) {
         goto error;
     }
     /* append the new buffer to the old one */
     struct aws_byte_cursor appending_cursor = aws_byte_cursor_from_buf(&appending_buffer);
+
+    /* BEGIN CRITICAL SECTION */
+    s_encoder_message_lock_synced_data(message);
+    if (s_check_info_response_status_code(status_int)) {
+        message->header_type = AWS_HTTP_HEADER_BLOCK_INFORMATIONAL;
+    } else {
+        message->header_type = AWS_HTTP_HEADER_BLOCK_MAIN;
+    }
+
     err = aws_byte_buf_append_dynamic(&message->outgoing_head_buf, &appending_cursor);
+    s_encoder_message_unlock_synced_data(message);
+    /* END CRITICAL SECTION */
+
     if (err) {
         goto error;
     }
@@ -354,6 +362,9 @@ error:
 }
 
 void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message) {
+    if (message->lock_initialed) {
+        aws_mutex_clean_up(&message->lock);
+    }
     aws_byte_buf_clean_up(&message->outgoing_head_buf);
     AWS_ZERO_STRUCT(*message);
 }
@@ -427,6 +438,8 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
             encoder->outgoing_head_progress,
             encoder->message->outgoing_head_buf.len);
 
+        /* BEGIN CRITICAL SECTION */
+        s_encoder_message_lock_synced_data(encoder->message);
         if (encoder->outgoing_head_progress == src->len) {
             if (encoder->message->header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
                 /* informational response should just stop here and wait for another response to increment the response
@@ -436,6 +449,8 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
                     encoder,
                     "Informational response finished. "
                     "Will try to write more data for another response in the next message.");
+                /* END CRITICAL SECTION */
+                s_encoder_message_unlock_synced_data(encoder->message);
                 return AWS_OP_SUCCESS;
             }
             /* Don't NEED to free this buffer now, but we don't need it anymore, so why not */
@@ -443,6 +458,8 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
 
             encoder->state++;
         }
+        /* END CRITICAL SECTION */
+        s_encoder_message_unlock_synced_data(encoder->message);
     }
 
     if (encoder->state == AWS_H1_ENCODER_STATE_BODY) {
@@ -522,5 +539,13 @@ bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder)
 }
 
 bool aws_h1_encoder_waiting_for_next_response(const struct aws_h1_encoder *encoder) {
-    return encoder->message ? encoder->message->header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL : false;
+    bool ret = false;
+    if (encoder->message) {
+        /* BEGIN CRITICAL SECTION */
+        s_encoder_message_lock_synced_data(encoder->message);
+        ret = encoder->message->header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL;
+        s_encoder_message_unlock_synced_data(encoder->message);
+        /* END CRITICAL SECTION */
+    }
+    return ret;
 }

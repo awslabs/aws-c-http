@@ -44,7 +44,7 @@ struct aws_http_header {
  * MAIN: Main header block sent with request or response.
  * TRAILING: Headers sent after the body of a request or response.
  */
-enum aws_http_header_type {
+enum aws_http_header_block {
     AWS_HTTP_HEADER_BLOCK_MAIN,
     AWS_HTTP_HEADER_BLOCK_INFORMATIONAL,
     AWS_HTTP_HEADER_BLOCK_TRAILING,
@@ -98,7 +98,7 @@ typedef void(aws_http_message_transform_fn)(
  */
 typedef int(aws_http_on_incoming_headers_fn)(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_type,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data);
@@ -112,7 +112,7 @@ typedef int(aws_http_on_incoming_headers_fn)(
  */
 typedef int(aws_http_on_incoming_header_block_done_fn)(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_type,
     void *user_data);
 
 /**

@@ -77,7 +77,7 @@ struct tester {
 
 static int s_tester_on_request_header(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_type,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
@@ -107,7 +107,7 @@ static int s_tester_on_request_header(
 
 static int s_tester_on_request_header_block_done(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_type,
     void *user_data) {
     (void)stream;
     (void)header_type;
@@ -1313,7 +1313,7 @@ static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
 
 static int s_error_from_incoming_headers(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_type,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
@@ -1327,7 +1327,7 @@ static int s_error_from_incoming_headers(
 
 static int s_error_from_incoming_headers_done(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_type,
     void *user_data) {
     (void)stream;
     (void)header_type;

@@ -167,8 +167,9 @@ struct h1_connection {
         /* For checking status from outside the event-loop thread. */
         bool is_shutting_down;
 
-        /* For checking outgoing stream task for informational response has run or not */
-        bool informational_response_sent;
+        /* For checking outgoing stream task is paused for following response of an informational response.
+         * In this case, it is still active, but paused */
+        bool is_outgoing_stream_task_paused;
 
         /* If non-zero, reason to immediately reject new streams. (ex: closing, switched protocols) */
         int new_stream_error_code;
@@ -301,11 +302,14 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
     if (!followed_response) {
         err =
             aws_h1_encoder_message_init_from_response(&encoder_message, stream->alloc, response, body_headers_ignored);
+        if (err) {
+            send_err = aws_last_error();
+            goto response_error;
+        }
     } else {
         /* This response is following an informational response, */
         /* append the message of new reponse to the old message */
-        err = aws_h1_encoder_message_append_from_response(
-            &h1_stream->encoder_message, stream->alloc, response, body_headers_ignored);
+        err = aws_h1_encoder_message_append_from_response(&h1_stream->encoder_message, response);
         if (err) {
             send_err = aws_last_error();
             goto response_error;
@@ -316,9 +320,9 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
         /* check the informational response has been sent or not, if it has been sent, we need to schedule the outgoing
          * stream task again, or that task has not run, and it will send both informational response and the following
          * response, in this case, we can just return. */
-        if (connection->synced_data.informational_response_sent) {
+        if (connection->synced_data.is_outgoing_stream_task_paused) {
             should_schedule_task = true;
-            connection->synced_data.informational_response_sent = false;
+            connection->synced_data.is_outgoing_stream_task_paused = false;
         }
         s_h1_connection_unlock_synced_data(connection);
         /* END CRITICAL SECTION */
@@ -331,10 +335,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
         }
         return AWS_OP_SUCCESS;
     }
-    if (err) {
-        send_err = aws_last_error();
-        goto response_error;
-    }
+    
 
     bool should_schedule_task = false;
     { /* BEGIN CRITICAL SECTION */
@@ -888,12 +889,13 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
 
     /* Reschedule task if there's still more work to do. */
     if (outgoing_stream) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Outgoing stream task has written all it can, but there's still more work to do, rescheduling "
-            "task.",
-            (void *)&connection->base);
+
         if (!aws_h1_encoder_waiting_for_next_response(&connection->thread_data.encoder)) {
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Outgoing stream task has written all it can, but there's still more work to do, rescheduling "
+                "task.",
+                (void *)&connection->base);
             aws_channel_schedule_task_now(channel, task);
         } else {
             AWS_LOGF_TRACE(
@@ -903,9 +905,9 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
                 (void *)&connection->base);
             /* BEGIN CRITICAL SECTION */
             s_h1_connection_lock_synced_data(connection);
-            /* mark that the informational response has been sent, we need to reschedule the task when the following
-             * response comes */
-            connection->synced_data.informational_response_sent = true;
+            /* mark that the informational response has been sent, and the outgoing stream task is paused we need to
+             * reschedule the task when the following response comes */
+            connection->synced_data.is_outgoing_stream_task_paused = true;
             s_h1_connection_unlock_synced_data(connection);
             /* END CRITICAL SECTION */
         }
@@ -1009,7 +1011,7 @@ static int s_decoder_on_header(const struct aws_http_decoded_header *header, voi
         AWS_BYTE_CURSOR_PRI(header->name_data),
         AWS_BYTE_CURSOR_PRI(header->value_data));
 
-    enum aws_http_header_type header_type =
+    enum aws_http_header_block header_type =
         aws_h1_decoder_get_header_type(connection->thread_data.incoming_stream_decoder);
     if (incoming_stream->base.on_incoming_headers) {
         struct aws_http_header deliver = {
@@ -1044,7 +1046,7 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
     struct h1_connection *connection =
         AWS_CONTAINER_OF(incoming_stream->base.owning_connection, struct h1_connection, base);
 
-    enum aws_http_header_type header_type =
+    enum aws_http_header_block header_type =
         aws_h1_decoder_get_header_type(connection->thread_data.incoming_stream_decoder);
 
     if (header_type == AWS_HTTP_HEADER_BLOCK_MAIN) {
@@ -1124,7 +1126,7 @@ static int s_decoder_on_done(void *user_data) {
         return AWS_OP_ERR;
     }
     /* If it is a informational response, we stop here, keep waiting for new response */
-    enum aws_http_header_type header_type =
+    enum aws_http_header_block header_type =
         aws_h1_decoder_get_header_type(connection->thread_data.incoming_stream_decoder);
     if (header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
         return AWS_OP_SUCCESS;

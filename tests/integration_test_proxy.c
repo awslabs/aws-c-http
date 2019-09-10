@@ -28,7 +28,7 @@ static int s_response_status_code = 0;
 
 static int s_aws_http_on_incoming_headers_proxy_test(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_type,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
@@ -48,7 +48,7 @@ static int s_aws_http_on_incoming_headers_proxy_test(
 
 static int s_aws_http_on_incoming_header_block_done_proxy_test(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_type,
     void *user_data) {
     (void)header_type;
 

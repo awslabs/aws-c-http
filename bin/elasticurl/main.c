@@ -334,7 +334,7 @@ static int s_on_incoming_body_fn(struct aws_http_stream *stream, const struct aw
 
 static int s_on_incoming_headers_fn(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_type,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
@@ -364,7 +364,7 @@ static int s_on_incoming_headers_fn(
 
 static int s_on_incoming_header_block_done_fn(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_type,
     void *user_data) {
     (void)stream;
     (void)header_type;
