@@ -27,7 +27,7 @@ struct aws_h1_encoder_message {
     bool body_headers_ignored;
     bool lock_initialed;
     struct aws_allocator *alloc;
-    
+
     /* lock only for message append from response and encoder process */
     struct aws_mutex lock;
     enum aws_http_header_block header_type;
