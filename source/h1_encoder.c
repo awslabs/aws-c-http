@@ -418,6 +418,8 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
             return AWS_OP_SUCCESS;
         }
 
+        /* BEGIN CRITICAL SECTION */
+        s_encoder_message_lock_synced_data(encoder->message);
         /* Copy data from outgoing_head_buf */
         struct aws_byte_buf *src = &encoder->message->outgoing_head_buf;
         size_t src_progress = encoder->outgoing_head_progress;
@@ -437,8 +439,6 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
             encoder->outgoing_head_progress,
             encoder->message->outgoing_head_buf.len);
 
-        /* BEGIN CRITICAL SECTION */
-        s_encoder_message_lock_synced_data(encoder->message);
         if (encoder->outgoing_head_progress == src->len) {
             if (encoder->message->header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
                 /* informational response should just stop here and wait for another response to increment the response
