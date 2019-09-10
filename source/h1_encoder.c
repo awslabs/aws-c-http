@@ -205,7 +205,7 @@ static int s_write_response_headers_into_buffer(
     struct aws_byte_buf *buffer,
     int *status_int,
     const struct aws_http_message *response) {
-    
+
     AWS_ZERO_STRUCT(*buffer);
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
 
@@ -275,7 +275,6 @@ static int s_write_response_headers_into_buffer(
     wrote_all &= aws_byte_buf_write_u8(buffer, '\n');
     (void)wrote_all;
     AWS_ASSERT(wrote_all);
-
 
     return AWS_OP_SUCCESS;
 }

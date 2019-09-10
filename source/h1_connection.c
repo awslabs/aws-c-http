@@ -335,7 +335,6 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
         }
         return AWS_OP_SUCCESS;
     }
-    
 
     bool should_schedule_task = false;
     { /* BEGIN CRITICAL SECTION */
@@ -889,7 +888,6 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
 
     /* Reschedule task if there's still more work to do. */
     if (outgoing_stream) {
-
         if (!aws_h1_encoder_waiting_for_next_response(&connection->thread_data.encoder)) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION,
