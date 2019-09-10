@@ -954,8 +954,8 @@ static int s_decoder_on_header(const struct aws_http_decoded_header *header, voi
         AWS_BYTE_CURSOR_PRI(header->name_data),
         AWS_BYTE_CURSOR_PRI(header->value_data));
 
-    enum aws_http_header_type header_type =
-        aws_h1_decoder_get_header_type(connection->thread_data.incoming_stream_decoder);
+    enum aws_http_header_block header_block =
+        aws_h1_decoder_get_header_block(connection->thread_data.incoming_stream_decoder);
     if (incoming_stream->base.on_incoming_headers) {
         struct aws_http_header deliver = {
             .name = header->name_data,
@@ -963,7 +963,7 @@ static int s_decoder_on_header(const struct aws_http_decoded_header *header, voi
         };
 
         int err = incoming_stream->base.on_incoming_headers(
-            &incoming_stream->base, header_type, &deliver, 1, incoming_stream->base.user_data);
+            &incoming_stream->base, header_block, &deliver, 1, incoming_stream->base.user_data);
 
         if (err) {
             AWS_LOGF_TRACE(
@@ -989,13 +989,13 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
     struct h1_connection *connection =
         AWS_CONTAINER_OF(incoming_stream->base.owning_connection, struct h1_connection, base);
 
-    enum aws_http_header_type header_type =
-        aws_h1_decoder_get_header_type(connection->thread_data.incoming_stream_decoder);
+    enum aws_http_header_block header_block =
+        aws_h1_decoder_get_header_block(connection->thread_data.incoming_stream_decoder);
 
-    if (header_type == AWS_HTTP_HEADER_BLOCK_MAIN) {
+    if (header_block == AWS_HTTP_HEADER_BLOCK_MAIN) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Incoming head is done.", (void *)&incoming_stream->base);
         incoming_stream->is_incoming_head_done = true;
-    } else if (header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
+    } else if (header_block == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_STREAM,
             "id=%p: Informational incoming head is done, keep waiting for a final response.",
@@ -1005,7 +1005,7 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
     /* Invoke user cb */
     if (incoming_stream->base.on_incoming_header_block_done) {
         int err = incoming_stream->base.on_incoming_header_block_done(
-            &incoming_stream->base, header_type, incoming_stream->base.user_data);
+            &incoming_stream->base, header_block, incoming_stream->base.user_data);
         if (err) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_STREAM,
@@ -1069,9 +1069,9 @@ static int s_decoder_on_done(void *user_data) {
         return AWS_OP_ERR;
     }
     /* If it is a informational response, we stop here, keep waiting for new response */
-    enum aws_http_header_type header_type =
-        aws_h1_decoder_get_header_type(connection->thread_data.incoming_stream_decoder);
-    if (header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
+    enum aws_http_header_block header_block =
+        aws_h1_decoder_get_header_block(connection->thread_data.incoming_stream_decoder);
+    if (header_block == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
         return AWS_OP_SUCCESS;
     }
 
