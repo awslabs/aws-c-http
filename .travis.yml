@@ -14,5 +14,10 @@ addons:
     packages:
       - python@3
 
+install:
+  - export PATH=$(brew --prefix llvm)/bin:$PATH
+
 script:
-  - ./codebuild/common-posix.sh -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+  - export CODEBUILD_SRC_DIR=$(pwd)
+  - python3 -c "from urllib.request import urlretrieve; urlretrieve('https://raw.githubusercontent.com/awslabs/aws-c-common/master/codebuild/builder.py', 'builder.py')"
+  - python3 builder.py build macos-default-default-macos-x64
