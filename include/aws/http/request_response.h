@@ -98,13 +98,13 @@ typedef void(aws_http_message_transform_fn)(
  */
 typedef int(aws_http_on_incoming_headers_fn)(
     struct aws_http_stream *stream,
-    enum aws_http_header_block header_type,
+    enum aws_http_header_block header_block,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data);
 
 /**
- * Invoked when the incoming header block of this header_type(informational/normal/trailing) has been completely read.
+ * Invoked when the incoming header block of this type(informational/main/trailing) has been completely read.
  * This is always invoked on the HTTP connection's event-loop thread.
  *
  * Return AWS_OP_SUCCESS to continue processing the stream.
@@ -112,7 +112,7 @@ typedef int(aws_http_on_incoming_headers_fn)(
  */
 typedef int(aws_http_on_incoming_header_block_done_fn)(
     struct aws_http_stream *stream,
-    enum aws_http_header_block header_type,
+    enum aws_http_header_block header_block,
     void *user_data);
 
 /**

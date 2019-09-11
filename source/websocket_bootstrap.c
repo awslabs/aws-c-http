@@ -95,7 +95,7 @@ static void s_ws_bootstrap_on_http_shutdown(
     void *user_data);
 static int s_ws_bootstrap_on_handshake_response_headers(
     struct aws_http_stream *stream,
-    enum aws_http_header_block header_type,
+    enum aws_http_header_block header_block,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data);
@@ -395,11 +395,11 @@ static void s_ws_bootstrap_on_http_shutdown(
 
 static int s_ws_bootstrap_on_handshake_response_headers(
     struct aws_http_stream *stream,
-    enum aws_http_header_block header_type,
+    enum aws_http_header_block header_block,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
-    (void)header_type;
+    (void)header_block;
 
     struct aws_websocket_client_bootstrap *ws_bootstrap = user_data;
     int err;

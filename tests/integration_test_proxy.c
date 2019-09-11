@@ -28,13 +28,13 @@ static int s_response_status_code = 0;
 
 static int s_aws_http_on_incoming_headers_proxy_test(
     struct aws_http_stream *stream,
-    enum aws_http_header_block header_type,
+    enum aws_http_header_block header_block,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
     (void)stream;
     (void)user_data;
-    (void)header_type;
+    (void)header_block;
 
     for (size_t i = 0; i < num_headers; ++i) {
         const struct aws_byte_cursor *name = &header_array[i].name;
@@ -48,9 +48,9 @@ static int s_aws_http_on_incoming_headers_proxy_test(
 
 static int s_aws_http_on_incoming_header_block_done_proxy_test(
     struct aws_http_stream *stream,
-    enum aws_http_header_block header_type,
+    enum aws_http_header_block header_block,
     void *user_data) {
-    (void)header_type;
+    (void)header_block;
 
     struct proxy_tester *context = user_data;
     if (aws_http_stream_get_incoming_response_status(stream, &s_response_status_code) == AWS_OP_SUCCESS) {

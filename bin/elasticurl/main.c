@@ -334,14 +334,19 @@ static int s_on_incoming_body_fn(struct aws_http_stream *stream, const struct aw
 
 static int s_on_incoming_headers_fn(
     struct aws_http_stream *stream,
-    enum aws_http_header_block header_type,
+    enum aws_http_header_block header_block,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
+
     struct elasticurl_ctx *app_ctx = user_data;
     (void)app_ctx;
     (void)stream;
-    (void)header_type;
+
+    /* Ignore informational headers */
+    if (header_block == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
+        return AWS_OP_SUCCESS;
+    }
 
     if (app_ctx->include_headers) {
         if (!app_ctx->response_code_written) {
@@ -364,10 +369,10 @@ static int s_on_incoming_headers_fn(
 
 static int s_on_incoming_header_block_done_fn(
     struct aws_http_stream *stream,
-    enum aws_http_header_block header_type,
+    enum aws_http_header_block header_block,
     void *user_data) {
     (void)stream;
-    (void)header_type;
+    (void)header_block;
     (void)user_data;
 
     return AWS_OP_SUCCESS;
