@@ -24,7 +24,6 @@
 
 AWS_STATIC_STRING_FROM_LITERAL(s_expectation_header_value, "100-continue");
 
-
 static bool s_check_info_response_status_code(size_t code_val) {
     /* TODO: 101 is an info_response, we need to revise the 101 behaviour. */
     return code_val >= 100 && code_val < 200 && code_val != AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS;

@@ -997,15 +997,15 @@ static int s_decoder_on_response(int status_code, void *user_data) {
             /* we don't need a lock here, because the decoder and the encoder are on the same thread */
             if (connection->thread_data.encoder.message->body_state == AWS_H1_ENCODER_BODY_STATE_WAIT) {
                 connection->thread_data.encoder.message->body_state = AWS_H1_ENCODER_BODY_STATE_SEND;
-                    AWS_LOGF_TRACE(
+                AWS_LOGF_TRACE(
                     AWS_LS_HTTP_CONNECTION,
                     "id=%p: Scheduling outgoing stream task for sending body due to 100-continue response received.",
                     (void *)&connection->base);
-                aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
+                aws_channel_schedule_task_now(
+                    connection->base.channel_slot->channel, &connection->outgoing_stream_task);
                 /* cancel the timeout_body_send_task */
                 connection->thread_data.timeout_body_send_task_canceled = true;
             }
-            
         }
     }
     /* No user callbacks, so we're not checking for shutdown */
