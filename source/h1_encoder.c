@@ -189,7 +189,7 @@ int aws_h1_encoder_message_init_from_request(
     wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\n');
     (void)wrote_all;
     AWS_ASSERT(wrote_all);
-    message->header_type = AWS_HTTP_HEADER_BLOCK_MAIN;
+    message->header_block = AWS_HTTP_HEADER_BLOCK_MAIN;
     return AWS_OP_SUCCESS;
 error:
     aws_h1_encoder_message_clean_up(message);
@@ -262,9 +262,9 @@ static int s_get_response_header_len(
     bool body_headers_forbidden = status_int == AWS_HTTP_STATUS_204_NO_CONTENT || status_int / 100 == 1;
 
     if (s_check_info_response_status_code(status_int)) {
-        message->header_type = AWS_HTTP_HEADER_BLOCK_INFORMATIONAL;
+        message->header_block = AWS_HTTP_HEADER_BLOCK_INFORMATIONAL;
     } else {
-        message->header_type = AWS_HTTP_HEADER_BLOCK_MAIN;
+        message->header_block = AWS_HTTP_HEADER_BLOCK_MAIN;
     }
 
     err = s_scan_outgoing_headers(response, &header_lines_len, message, body_headers_ignored, body_headers_forbidden);
@@ -329,7 +329,7 @@ int aws_h1_encoder_message_append_from_response(
     const struct aws_http_message *response,
     bool body_headers_ignored) {
 
-    if (message->header_type != AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
+    if (message->header_block != AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
     message->body = aws_http_message_get_body_stream(response);
@@ -438,7 +438,7 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
             encoder->message->outgoing_head_buf.len);
 
         if (encoder->outgoing_head_progress == src->len) {
-            if (encoder->message->header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
+            if (encoder->message->header_block == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL) {
                 /* informational response should just stop here and wait for another response to increment the response
                  * message */
                 ENCODER_LOG(
@@ -540,5 +540,5 @@ bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder)
 }
 
 bool aws_h1_encoder_waiting_for_next_response(const struct aws_h1_encoder *encoder) {
-    return encoder->message ? encoder->message->header_type == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL : false;
+    return encoder->message ? encoder->message->header_block == AWS_HTTP_HEADER_BLOCK_INFORMATIONAL : false;
 }
