@@ -77,13 +77,13 @@ struct tester {
 
 static int s_tester_on_request_header(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_block,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
 
     (void)stream;
-    (void)header_type;
+    (void)header_block;
     struct tester_request *request = user_data;
     struct aws_byte_buf *storage = &request->storage;
     const struct aws_http_header *in_header = header_array;
@@ -107,12 +107,12 @@ static int s_tester_on_request_header(
 
 static int s_tester_on_request_header_block_done(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_block,
     void *user_data) {
     (void)stream;
-    (void)header_type;
+    (void)header_block;
     struct tester_request *request = user_data;
-    if (header_type == AWS_HTTP_HEADER_BLOCK_MAIN) {
+    if (header_block == AWS_HTTP_HEADER_BLOCK_MAIN) {
         AWS_FATAL_ASSERT(request->header_done == false);
         request->header_done = true;
     }
@@ -1313,13 +1313,13 @@ static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
 
 static int s_error_from_incoming_headers(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_block,
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
 
     (void)stream;
-    (void)header_type;
+    (void)header_block;
     (void)header_array;
     (void)num_headers;
     return s_error_from_callback_common(user_data, REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS);
@@ -1327,10 +1327,10 @@ static int s_error_from_incoming_headers(
 
 static int s_error_from_incoming_headers_done(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_block,
     void *user_data) {
     (void)stream;
-    (void)header_type;
+    (void)header_block;
     return s_error_from_callback_common(user_data, REQUEST_HANDLER_CALLBACK_INCOMING_HEADERS_DONE);
 }
 

@@ -368,20 +368,21 @@ on_error:
  */
 static int s_aws_http_on_incoming_header_block_done_tls_proxy(
     struct aws_http_stream *stream,
-    enum aws_http_header_type header_type,
+    enum aws_http_header_block header_block,
     void *user_data) {
 
-    (void)header_type;
-
     struct aws_http_proxy_user_data *context = user_data;
-    int status = 0;
-    if (aws_http_stream_get_incoming_response_status(stream, &status) || status != 200) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "(%p) Proxy CONNECT request failed with status code %d",
-            (void *)context->connection,
-            status);
-        context->error_code = AWS_ERROR_HTTP_PROXY_TLS_CONNECT_FAILED;
+
+    if (header_block == AWS_HTTP_HEADER_BLOCK_MAIN) {
+        int status = 0;
+        if (aws_http_stream_get_incoming_response_status(stream, &status) || status != 200) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION,
+                "(%p) Proxy CONNECT request failed with status code %d",
+                (void *)context->connection,
+                status);
+            context->error_code = AWS_ERROR_HTTP_PROXY_TLS_CONNECT_FAILED;
+        }
     }
 
     return AWS_OP_SUCCESS;
