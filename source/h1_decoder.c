@@ -701,7 +701,7 @@ static int s_linestate_request(struct aws_h1_decoder *decoder, struct aws_byte_c
 
 static bool s_check_info_response_status_code(size_t code_val) {
     /* TODO: 101 is an info_response, we need to revise the 101 behaviour. */
-    return code_val >= 100 && code_val < 200 && code_val != 101;
+    return code_val >= 100 && code_val < 200 && code_val != AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS;
 }
 
 static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_cursor input) {

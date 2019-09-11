@@ -18,11 +18,19 @@
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
 
+enum aws_h1_encoder_body_state {
+    AWS_H1_ENCODER_BODY_STATE_SEND,
+    AWS_H1_ENCODER_BODY_STATE_WAIT,
+    AWS_H1_ENCODER_BODY_STATE_TIMEOUT,
+};
+
 /**
  * Message to be submitted to encoder.
  * Contains data necessary for encoder to write an outgoing request or response.
  */
 struct aws_h1_encoder_message {
+    enum aws_http_header_block header_block;
+    enum aws_h1_encoder_body_state body_state;
     /* Upon creation, the "head" (everything preceding body) is buffered here. */
     struct aws_byte_buf outgoing_head_buf;
     struct aws_input_stream *body;
