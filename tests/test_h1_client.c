@@ -291,7 +291,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_expect_100_timeout) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
     /* check result */
     const char *expected_part1 = "PUT /plan.txt HTTP/1.1\r\n"
                                  "Content-Length: 16\r\n"
@@ -348,7 +348,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_expect_100_received_100) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
     /* check first part */
     const char *expected_part1 = "PUT /plan.txt HTTP/1.1\r\n"
                                  "Content-Length: 16\r\n"
