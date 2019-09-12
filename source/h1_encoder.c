@@ -459,6 +459,6 @@ bool aws_h1_encoder_body_is_waiting(const struct aws_h1_encoder *encoder) {
     return encoder->message ? encoder->message->body_is_waiting : false;
 }
 
-void aws_h1_encoder_body_ready_to_send(struct aws_h1_encoder_message *message) {
+void aws_h1_encoder_message_body_ready_to_send(struct aws_h1_encoder_message *message) {
     message->body_is_waiting = false;
 }

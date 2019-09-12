@@ -641,7 +641,7 @@ static void s_timeout_body_send_task(struct aws_channel_task *task, void *arg, e
         AWS_LS_HTTP_STREAM,
         "id=%p: Time out for sending body in 100-continue requst happens, the request body will be sent.",
         (void *)&stream->base);
-    aws_h1_encoder_body_ready_to_send(&stream->encoder_message);
+    aws_h1_encoder_message_body_ready_to_send(&stream->encoder_message);
 }
 
 /**
@@ -972,7 +972,7 @@ static int s_decoder_on_response(int status_code, void *user_data) {
         if (aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
             /* we don't need a lock here, because the decoder and the encoder are on the same thread */
             if (aws_h1_encoder_body_is_waiting(&connection->thread_data.encoder)) {
-                aws_h1_encoder_body_ready_to_send(connection->thread_data.encoder.message);
+                aws_h1_encoder_message_body_ready_to_send(connection->thread_data.encoder.message);
                 AWS_LOGF_TRACE(
                     AWS_LS_HTTP_CONNECTION,
                     "id=%p: Scheduling outgoing stream task for sending body due to 100-continue response received.",
