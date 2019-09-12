@@ -114,10 +114,6 @@ struct h1_connection {
     /* Single task used for issuing window updates from off-thread */
     struct aws_channel_task window_update_task;
 
-    /* Single task used for sending body when wait timeout met, eg: expect: 100-continue, will not send the request body
-     * unless 100 response received or timeout met */
-    struct aws_channel_task timeout_body_send_task;
-
     /* Only the event-loop thread may touch this data */
     struct {
         /* List of streams being worked on. */
@@ -149,9 +145,6 @@ struct h1_connection {
         /* True when read and/or writing has stopped, whether due to errors or normal channel shutdown. */
         bool is_reading_stopped;
         bool is_writing_stopped;
-
-        /* True when the timeout_body_send_task is canceled */
-        bool timeout_body_send_task_canceled;
 
         /* If true, the connection has upgraded to another protocol.
          * It will pass data to adjacent channel handlers without altering it.
@@ -638,26 +631,17 @@ static void s_timeout_body_send_task(struct aws_channel_task *task, void *arg, e
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;
     }
-    struct h1_connection *connection = arg;
+    struct aws_h1_stream *stream = arg;
 
-    if (connection->thread_data.timeout_body_send_task_canceled) {
+    if (stream->timeout_body_send_task_canceled) {
         return;
     }
 
-    if (!connection->thread_data.encoder.message) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Continue request timeout met, but the encoder message is already freed!",
-            (void *)&connection->base);
-        s_shutdown_due_to_error(connection, aws_last_error());
-    }
-    connection->thread_data.encoder.message->body_state = AWS_H1_ENCODER_BODY_STATE_TIMEOUT;
-
-    AWS_LOGF_TRACE(
-        AWS_LS_HTTP_CONNECTION,
-        "id=%p: Scheduling outgoing stream task for sending body due to timeout.",
-        (void *)&connection->base);
-    aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
+    AWS_LOGF_DEBUG(
+        AWS_LS_HTTP_STREAM,
+        "id=%p: Time out for sending body in 100-continue requst happens, the request body will be sent.",
+        (void *)&stream->base);
+    aws_h1_encoder_body_ready_to_send(&stream->encoder_message);
 }
 
 /**
@@ -773,16 +757,16 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
                 &connection->thread_data.encoder, &current->encoder_message, &current->base);
             (void)err;
             AWS_ASSERT(!err);
-            if (current->encoder_message.body_state == AWS_H1_ENCODER_BODY_STATE_WAIT) {
-
+            if (aws_h1_encoder_body_is_waiting(&connection->thread_data.encoder)) {
+                /* encoder is waiting for 100-continue respone or timeout to send the body, we schedule the time out
+                 * task now */
                 struct aws_channel *channel = connection->base.channel_slot->channel;
                 aws_channel_task_init(
-                    &connection->timeout_body_send_task, s_timeout_body_send_task, connection, "timeout_body_send");
+                    &current->timeout_body_send_task, s_timeout_body_send_task, current, "timeout_body_send");
                 uint64_t time_now = 0;
-                AWS_ASSERT(!aws_channel_current_clock_time(channel, &time_now));
-
-                aws_channel_schedule_task_future(
-                    channel, &connection->timeout_body_send_task, time_now + CONTINUE_WAIT_TIME);
+                aws_channel_current_clock_time(channel, &time_now);
+                uint64_t time_to_run = time_now + AWS_HTTP_100_CONTINUE_TIMEOUT_NANOS;
+                aws_channel_schedule_task_future(channel, &current->timeout_body_send_task, time_to_run);
             }
         }
 
@@ -892,21 +876,13 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
 
     /* Reschedule task if there's still more work to do. */
     if (outgoing_stream) {
-        if (outgoing_stream->encoder_message.body_state == AWS_H1_ENCODER_BODY_STATE_WAIT) {
-            AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_STREAM,
-                "id=%p: Outgoing stream body is blocked, we will wait to reschedule the task until it is unblocked",
-                (void *)&outgoing_stream)
-        } else {
-            AWS_LOGF_TRACE(
-                AWS_LS_HTTP_CONNECTION,
-                "id=%p: Outgoing stream task has written all it can, but there's still more work to do, rescheduling "
-                "task.",
-                (void *)&connection->base);
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Outgoing stream task has written all it can, but there's still more work to do, rescheduling "
+            "task.",
+            (void *)&connection->base);
 
-            aws_channel_schedule_task_now(channel, task);
-        }
-
+        aws_channel_schedule_task_now(channel, task);
     } else {
         AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Outgoing stream task complete.", (void *)&connection->base);
     }
@@ -995,16 +971,14 @@ static int s_decoder_on_response(int status_code, void *user_data) {
     if (status_code == AWS_HTTP_STATUS_100_CONTINUE) {
         if (aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
             /* we don't need a lock here, because the decoder and the encoder are on the same thread */
-            if (connection->thread_data.encoder.message->body_state == AWS_H1_ENCODER_BODY_STATE_WAIT) {
-                connection->thread_data.encoder.message->body_state = AWS_H1_ENCODER_BODY_STATE_SEND;
+            if (aws_h1_encoder_body_is_waiting(&connection->thread_data.encoder)) {
+                aws_h1_encoder_body_ready_to_send(connection->thread_data.encoder.message);
                 AWS_LOGF_TRACE(
                     AWS_LS_HTTP_CONNECTION,
                     "id=%p: Scheduling outgoing stream task for sending body due to 100-continue response received.",
                     (void *)&connection->base);
-                aws_channel_schedule_task_now(
-                    connection->base.channel_slot->channel, &connection->outgoing_stream_task);
                 /* cancel the timeout_body_send_task */
-                connection->thread_data.timeout_body_send_task_canceled = true;
+                connection->thread_data.incoming_stream->timeout_body_send_task_canceled = true;
             }
         }
     }

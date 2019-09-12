@@ -25,8 +25,9 @@
 #include <aws/io/channel.h>
 #include <aws/io/channel_bootstrap.h>
 
-/* wait time for continue sending the request body(nanos) */
-#define CONTINUE_WAIT_TIME 100000000
+/* Time to wait for response to "Expect: 100-Continue".
+ * If no response arrives within this time, the request body is sent anyway */
+#define AWS_HTTP_100_CONTINUE_TIMEOUT_NANOS 1000000000 /* 1sec */
 
 struct aws_http_message;
 struct aws_http_make_request_options;

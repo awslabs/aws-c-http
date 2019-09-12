@@ -14,15 +14,19 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
 #include <aws/http/private/h1_encoder.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
+#include <aws/io/channel.h>
 
 struct aws_h1_stream {
     struct aws_http_stream base;
 
     struct aws_linked_list_node node;
+
+    /* Single task used for sending body when wait timeout met, eg: expect: 100-continue, will not send the request body
+     * unless 100 response received or timeout met */
+    struct aws_channel_task timeout_body_send_task;
 
     /* Message (derived from outgoing request or response) to be submitted to encoder */
     struct aws_h1_encoder_message encoder_message;
@@ -31,6 +35,9 @@ struct aws_h1_stream {
 
     bool is_incoming_message_done;
     bool is_incoming_head_done;
+
+    /* True when the timeout_body_send_task is canceled */
+    bool timeout_body_send_task_canceled;
 
     /* Buffer for incoming data that needs to stick around. */
     struct aws_byte_buf incoming_storage_buf;

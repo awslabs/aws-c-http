@@ -59,7 +59,7 @@ static int s_scan_outgoing_headers(
                 if (!aws_string_eq_byte_cursor_ignore_case(s_expectation_header_value, &header.value)) {
                     return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
                 }
-                encoder_message->body_state = AWS_H1_ENCODER_BODY_STATE_WAIT;
+                encoder_message->body_is_waiting = true;
                 break;
             default:
                 break;
@@ -379,13 +379,10 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
             ENCODER_LOG(TRACE, encoder, "No body to send.")
             encoder->state++;
         } else {
-            if (encoder->message->body_state == AWS_H1_ENCODER_BODY_STATE_WAIT) {
+            if (encoder->message->body_is_waiting) {
                 /* wait, just return */
                 ENCODER_LOG(TRACE, encoder, "Wait to send body");
                 return AWS_OP_SUCCESS;
-            } else if (encoder->message->body_state == AWS_H1_ENCODER_BODY_STATE_TIMEOUT) {
-                /* wait timeout met, log it and send the body now */
-                ENCODER_LOG(DEBUG, encoder, "Wait timeout met, send the body anyway.");
             }
             while (true) {
                 if (dst->capacity == dst->len) {
@@ -456,4 +453,12 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
 
 bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder) {
     return encoder->message;
+}
+
+bool aws_h1_encoder_body_is_waiting(const struct aws_h1_encoder *encoder) {
+    return encoder->message ? encoder->message->body_is_waiting : false;
+}
+
+void aws_h1_encoder_body_ready_to_send(struct aws_h1_encoder_message *message) {
+    message->body_is_waiting = false;
 }

@@ -227,6 +227,38 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
     return AWS_OP_SUCCESS;
 }
 
+/* this function should be moved into io_testing_channel.h */
+void testing_channel_drain_future_tasks(struct testing_channel *testing) {
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(testing->channel));
+
+    uint64_t now = 0;
+    uint64_t next_task_time = 0;
+    size_t count = 0;
+
+    while (true) {
+        aws_event_loop_current_clock_time(testing->loop, &now);
+        if (aws_task_scheduler_has_tasks(&testing->loop_impl->scheduler, &next_task_time)) {
+            if (next_task_time <= now) {
+                aws_task_scheduler_run_all(&testing->loop_impl->scheduler, now);
+            } else {
+                aws_thread_current_sleep(next_task_time - now);
+            }
+        } else {
+            break;
+        }
+
+        /* NOTE: This will loop infinitely if there's a task the perpetually re-schedules another task.
+         * Consider capping the number of loops if we want to support that behavior. */
+        if ((++count % 1000) == 0) {
+            AWS_LOGF_WARN(
+                AWS_LS_IO_CHANNEL,
+                "id=%p: testing_channel_drain_future_tasks() has looped %zu times.",
+                (void *)testing->channel,
+                count);
+        }
+    }
+}
+
 H1_CLIENT_TEST_CASE(h1_client_request_send_expect_100_timeout) {
     (void)ctx;
     struct tester tester;
@@ -259,9 +291,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_expect_100_timeout) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
     /* check result */
     const char *expected_part1 = "PUT /plan.txt HTTP/1.1\r\n"
                                  "Content-Length: 16\r\n"
@@ -269,9 +299,11 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_expect_100_timeout) {
                                  "\r\n";
 
     ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected_part1));
+
     /* wait for timeout happen */
-    aws_thread_current_sleep(CONTINUE_WAIT_TIME);
+    aws_thread_current_sleep(AWS_HTTP_100_CONTINUE_TIMEOUT_NANOS);
     testing_channel_drain_queued_tasks(&tester.testing_channel);
+
     const char *expected_part2 = "write more tests";
 
     ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected_part2));
@@ -316,7 +348,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_expect_100_received_100) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    testing_channel_run_currently_queued_tasks(&tester.testing_channel);
     /* check first part */
     const char *expected_part1 = "PUT /plan.txt HTTP/1.1\r\n"
                                  "Content-Length: 16\r\n"
@@ -335,10 +367,8 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_expect_100_received_100) {
     /* check the body */
     const char *expected_part2 = "write more tests";
     ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected_part2));
-    /* wait for the timeout task to run with cancel state, or the channel needs to cancel the task, which is not
-     * supported in testing channel */
-    aws_thread_current_sleep(CONTINUE_WAIT_TIME);
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    /* wait for all the future tasks to finish */
+    testing_channel_drain_future_tasks(&tester.testing_channel);
     /* clean up */
     aws_input_stream_destroy(body_stream);
     aws_http_message_destroy(request);
