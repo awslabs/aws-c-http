@@ -907,10 +907,10 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
                 "id=%p: Encoder is waiting for next response to write more, reschedule the task when next response is "
                 "sent.",
                 (void *)&connection->base);
-                /* BEGIN CRITICAL SECTION */
-                s_h1_connection_lock_synced_data(connection);
-                connection->synced_data.is_outgoing_stream_task_active = false;
-                s_h1_connection_unlock_synced_data(connection);
+            /* BEGIN CRITICAL SECTION */
+            s_h1_connection_lock_synced_data(connection);
+            connection->synced_data.is_outgoing_stream_task_active = false;
+            s_h1_connection_unlock_synced_data(connection);
         }
     } else {
         AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Outgoing stream task complete.", (void *)&connection->base);
