@@ -167,10 +167,6 @@ struct h1_connection {
         /* For checking status from outside the event-loop thread. */
         bool is_shutting_down;
 
-        /* For checking outgoing stream task is paused for following response of an informational response.
-         * In this case, it is still active, but paused */
-        bool is_outgoing_stream_task_paused;
-
         /* If non-zero, reason to immediately reject new streams. (ex: closing, switched protocols) */
         int new_stream_error_code;
 
@@ -280,6 +276,15 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
     return !is_shutting_down;
 }
 
+static bool s_outgoing_stream_task_waiting(const struct h1_connection *connection) {
+    if (connection->thread_data.outgoing_stream) {
+        if (!connection->thread_data.outgoing_stream->is_outgoing_message_done) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response) {
     AWS_PRECONDITION(stream);
     AWS_PRECONDITION(response);
@@ -317,12 +322,13 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
         bool should_schedule_task = false;
         /* BEGIN CRITICAL SECTION */
         s_h1_connection_lock_synced_data(connection);
-        /* check the informational response has been sent or not, if it has been sent, we need to schedule the outgoing
-         * stream task again, or that task has not run, and it will send both informational response and the following
-         * response, in this case, we can just return. */
-        if (connection->synced_data.is_outgoing_stream_task_paused) {
-            should_schedule_task = true;
-            connection->synced_data.is_outgoing_stream_task_paused = false;
+        /* check if the outgoing stream task is not active and the outgoing stream is waiting for more data, we need to
+         * reschedule the task */
+        if (!connection->synced_data.is_outgoing_stream_task_active) {
+            if (s_outgoing_stream_task_waiting(connection)) {
+                should_schedule_task = true;
+                connection->synced_data.is_outgoing_stream_task_active = true;
+            }
         }
         s_h1_connection_unlock_synced_data(connection);
         /* END CRITICAL SECTION */
@@ -901,13 +907,10 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
                 "id=%p: Encoder is waiting for next response to write more, reschedule the task when next response is "
                 "sent.",
                 (void *)&connection->base);
-            /* BEGIN CRITICAL SECTION */
-            s_h1_connection_lock_synced_data(connection);
-            /* mark that the informational response has been sent, and the outgoing stream task is paused we need to
-             * reschedule the task when the following response comes */
-            connection->synced_data.is_outgoing_stream_task_paused = true;
-            s_h1_connection_unlock_synced_data(connection);
-            /* END CRITICAL SECTION */
+                /* BEGIN CRITICAL SECTION */
+                s_h1_connection_lock_synced_data(connection);
+                connection->synced_data.is_outgoing_stream_task_active = false;
+                s_h1_connection_unlock_synced_data(connection);
         }
     } else {
         AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Outgoing stream task complete.", (void *)&connection->base);
