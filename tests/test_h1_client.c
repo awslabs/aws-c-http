@@ -1219,8 +1219,8 @@ int s_slow_stream_get_length(struct aws_input_stream *stream, int64_t *out_lengt
     *out_length = sender->cursor.len;
     return AWS_OP_SUCCESS;
 }
-void s_slow_stream_clean_up(struct aws_input_stream *stream) {
-    (void)stream;
+void s_slow_stream_destroy(struct aws_input_stream *stream) {
+    aws_mem_release(stream->allocator, stream);
 }
 
 static struct aws_input_stream_vtable s_slow_stream_vtable = {
@@ -1228,7 +1228,7 @@ static struct aws_input_stream_vtable s_slow_stream_vtable = {
     .read = s_slow_stream_read,
     .get_status = s_slow_stream_get_status,
     .get_length = s_slow_stream_get_length,
-    .clean_up = s_slow_stream_clean_up,
+    .destroy = s_slow_stream_destroy,
 };
 
 /* It should be fine to receive a response before the request has finished sending */
@@ -1627,8 +1627,8 @@ static int s_error_from_outgoing_body_get_status(struct aws_input_stream *body, 
     return AWS_OP_SUCCESS;
 }
 
-static void s_error_from_outgoing_body_clean_up(struct aws_input_stream *stream) {
-    (void)stream;
+static void s_error_from_outgoing_body_destroy(struct aws_input_stream *stream) {
+    aws_mem_release(stream->allocator, stream);
 }
 
 static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
@@ -1636,7 +1636,7 @@ static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
     .read = s_error_from_outgoing_body_read,
     .get_status = s_error_from_outgoing_body_get_status,
     .get_length = NULL,
-    .clean_up = s_error_from_outgoing_body_clean_up,
+    .destroy = s_error_from_outgoing_body_destroy,
 };
 
 static int s_error_from_incoming_headers(

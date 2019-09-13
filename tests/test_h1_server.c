@@ -1186,8 +1186,8 @@ static int s_error_from_outgoing_body_get_status(struct aws_input_stream *body, 
     return AWS_OP_SUCCESS;
 }
 
-static void s_error_from_outgoing_body_clean_up(struct aws_input_stream *stream) {
-    (void)stream;
+static void s_error_from_outgoing_body_destroy(struct aws_input_stream *stream) {
+    aws_mem_release(stream->allocator, stream);
 }
 
 static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
@@ -1195,7 +1195,7 @@ static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
     .read = s_error_from_outgoing_body_read,
     .get_status = s_error_from_outgoing_body_get_status,
     .get_length = NULL,
-    .clean_up = s_error_from_outgoing_body_clean_up,
+    .destroy = s_error_from_outgoing_body_destroy,
 };
 
 static int s_error_from_incoming_headers(
