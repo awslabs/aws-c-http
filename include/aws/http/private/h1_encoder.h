@@ -83,7 +83,7 @@ AWS_HTTP_API
 bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder);
 
 AWS_HTTP_API
-bool aws_h1_encoder_body_is_waiting(const struct aws_h1_encoder *encoder);
+bool aws_h1_encoder_is_waiting(const struct aws_h1_encoder *encoder);
 
 AWS_HTTP_API
 void aws_h1_encoder_message_body_ready_to_send(struct aws_h1_encoder_message *message);

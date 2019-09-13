@@ -56,10 +56,9 @@ static int s_scan_outgoing_headers(
                 has_body_headers = true;
                 break;
             case AWS_HTTP_HEADER_EXPECT:
-                if (!aws_string_eq_byte_cursor_ignore_case(s_expectation_header_value, &header.value)) {
-                    return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+                if (aws_string_eq_byte_cursor_ignore_case(s_expectation_header_value, &header.value)) {
+                    encoder_message->body_is_waiting = true;
                 }
-                encoder_message->body_is_waiting = true;
                 break;
             default:
                 break;
@@ -455,7 +454,7 @@ bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder)
     return encoder->message;
 }
 
-bool aws_h1_encoder_body_is_waiting(const struct aws_h1_encoder *encoder) {
+bool aws_h1_encoder_is_waiting(const struct aws_h1_encoder *encoder) {
     return encoder->message ? encoder->message->body_is_waiting : false;
 }
 

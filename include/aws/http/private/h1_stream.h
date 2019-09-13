@@ -24,10 +24,6 @@ struct aws_h1_stream {
 
     struct aws_linked_list_node node;
 
-    /* Single task used for sending body when wait timeout met, eg: expect: 100-continue, will not send the request body
-     * unless 100 response received or timeout met */
-    struct aws_channel_task timeout_body_send_task;
-
     /* Message (derived from outgoing request or response) to be submitted to encoder */
     struct aws_h1_encoder_message encoder_message;
 
@@ -35,9 +31,6 @@ struct aws_h1_stream {
 
     bool is_incoming_message_done;
     bool is_incoming_head_done;
-
-    /* True when the timeout_body_send_task is canceled */
-    bool timeout_body_send_task_canceled;
 
     /* Buffer for incoming data that needs to stick around. */
     struct aws_byte_buf incoming_storage_buf;

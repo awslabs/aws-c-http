@@ -276,18 +276,6 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
     return !is_shutting_down;
 }
 
-static bool s_outgoing_stream_task_waiting(const struct h1_connection *connection) {
-    if (connection->thread_data.outgoing_stream) {
-        if (!connection->thread_data.outgoing_stream->is_outgoing_message_done) {
-            /* in this case the out going stream task is not active, and waiting for more data from the
-             * outgoing stream, we cannot schedule the task, because the outgoing stream will reschedule the
-             * task, when more data comes */
-            return true;
-        }
-    }
-    return false;
-}
-
 static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response) {
     AWS_PRECONDITION(stream);
     AWS_PRECONDITION(response);
@@ -316,8 +304,7 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
         } else {
             h1_stream->synced_data.has_outgoing_response = true;
             h1_stream->encoder_message = encoder_message;
-            if (!connection->synced_data.is_outgoing_stream_task_active &&
-                !s_outgoing_stream_task_waiting(connection)) {
+            if (!connection->synced_data.is_outgoing_stream_task_active) {
                 connection->synced_data.is_outgoing_stream_task_active = true;
                 should_schedule_task = true;
             }
@@ -445,8 +432,7 @@ struct aws_http_stream *s_make_request(
             new_stream_error_code = connection->synced_data.new_stream_error_code;
         } else {
             aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &stream->node);
-            if (!connection->synced_data.is_outgoing_stream_task_active &&
-                !s_outgoing_stream_task_waiting(connection)) {
+            if (!connection->synced_data.is_outgoing_stream_task_active) {
                 connection->synced_data.is_outgoing_stream_task_active = true;
                 should_schedule_task = true;
             }
@@ -647,14 +633,17 @@ static void s_timeout_body_send_task(struct aws_channel_task *task, void *arg, e
     }
     struct aws_h1_stream *stream = arg;
     struct h1_connection *connection = AWS_CONTAINER_OF(stream->base.owning_connection, struct h1_connection, base);
-    if (stream->timeout_body_send_task_canceled) {
+    if (connection->thread_data.outgoing_stream != stream) {
+        /* outgoing stream is already updated, the timeout body task for that stream is not useful any more, we just
+         * release the memory and return. */
+        aws_mem_release(connection->base.alloc, task);
         return;
     }
 
     AWS_LOGF_DEBUG(
-        AWS_LS_HTTP_STREAM,
+        AWS_LS_HTTP_CONNECTION,
         "id=%p: Time out for sending body in 100-continue requst happens, the request body will be sent.",
-        (void *)&stream->base);
+        (void *)&connection->base);
     aws_h1_encoder_message_body_ready_to_send(&stream->encoder_message);
     /* reschedule the outgoing stream task */
     aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
@@ -663,6 +652,7 @@ static void s_timeout_body_send_task(struct aws_channel_task *task, void *arg, e
     connection->synced_data.is_outgoing_stream_task_active = true;
     s_h1_connection_unlock_synced_data(connection);
     /* END CRITICAL SECTION */
+    aws_mem_release(connection->base.alloc, task);
 }
 
 /**
@@ -778,16 +768,22 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
                 &connection->thread_data.encoder, &current->encoder_message, &current->base);
             (void)err;
             AWS_ASSERT(!err);
-            if (aws_h1_encoder_body_is_waiting(&connection->thread_data.encoder)) {
+            if (aws_h1_encoder_is_waiting(&connection->thread_data.encoder)) {
                 /* encoder is waiting for 100-continue respone or timeout to send the body, we schedule the time out
                  * task now */
+                /* BEGIN CRITICAL SECTION */
+                s_h1_connection_lock_synced_data(connection);
+                connection->synced_data.is_outgoing_stream_task_active = false;
+                s_h1_connection_unlock_synced_data(connection);
+                /* END CRITICAL SECTION */
                 struct aws_channel *channel = connection->base.channel_slot->channel;
-                aws_channel_task_init(
-                    &current->timeout_body_send_task, s_timeout_body_send_task, current, "timeout_body_send");
+                struct aws_channel_task *timeout_body_send_task =
+                    aws_mem_acquire(connection->base.alloc, sizeof(struct aws_channel_task));
+                aws_channel_task_init(timeout_body_send_task, s_timeout_body_send_task, current, "timeout_body_send");
                 uint64_t time_now = 0;
                 aws_channel_current_clock_time(channel, &time_now);
                 uint64_t time_to_run = time_now + AWS_HTTP_100_CONTINUE_TIMEOUT_NANOS;
-                aws_channel_schedule_task_future(channel, &current->timeout_body_send_task, time_to_run);
+                aws_channel_schedule_task_future(channel, timeout_body_send_task, time_to_run);
             }
         }
 
@@ -897,16 +893,12 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
 
     /* Reschedule task if there's still more work to do. */
     if (outgoing_stream) {
-        if (aws_h1_encoder_body_is_waiting(&connection->thread_data.encoder)) {
+        if (aws_h1_encoder_is_waiting(&connection->thread_data.encoder)) {
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Outgoing stream body is blocked, we will wait to reschedule the task until it is unblocked",
                 (void *)&outgoing_stream)
-            /* BEGIN CRITICAL SECTION */
-            s_h1_connection_lock_synced_data(connection);
-            connection->synced_data.is_outgoing_stream_task_active = false;
-            s_h1_connection_unlock_synced_data(connection);
-            /* END CRITICAL SECTION */
+            
         } else {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION,
@@ -1002,24 +994,26 @@ static int s_decoder_on_response(int status_code, void *user_data) {
     connection->thread_data.incoming_stream->base.client_data->response_status = status_code;
 
     if (status_code == AWS_HTTP_STATUS_100_CONTINUE) {
-        if (aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
-            /* we don't need a lock here, because the decoder and the encoder are on the same thread */
-            if (aws_h1_encoder_body_is_waiting(&connection->thread_data.encoder)) {
-                aws_h1_encoder_message_body_ready_to_send(connection->thread_data.encoder.message);
-                AWS_LOGF_TRACE(
-                    AWS_LS_HTTP_CONNECTION,
-                    "id=%p: Scheduling outgoing stream task for sending body due to 100-continue response received.",
-                    (void *)&connection->base);
-                /* cancel the timeout_body_send_task */
-                connection->thread_data.incoming_stream->timeout_body_send_task_canceled = true;
-                /* reschedule the outgoing stream task */
+        /* we don't need a lock here, because the decoder and the encoder are on the same thread */
+        if (aws_h1_encoder_is_waiting(&connection->thread_data.encoder)) {
+            aws_h1_encoder_message_body_ready_to_send(connection->thread_data.encoder.message);
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Scheduling outgoing stream task for sending body due to 100-continue response received.",
+                (void *)&connection->base);
+            bool should_schedule = false;
+            /* BEGIN CRITICAL SECTION */
+            s_h1_connection_lock_synced_data(connection);
+            if (!connection->synced_data.is_outgoing_stream_task_active) {
+                connection->synced_data.is_outgoing_stream_task_active = true;
+                should_schedule = true;
+            }
+            s_h1_connection_unlock_synced_data(connection);
+            /* END CRITICAL SECTION */
+            if (should_schedule) {
+                /* reschedule the outgoing stream task, the outgoing stream will be updated */
                 aws_channel_schedule_task_now(
                     connection->base.channel_slot->channel, &connection->outgoing_stream_task);
-                /* BEGIN CRITICAL SECTION */
-                s_h1_connection_lock_synced_data(connection);
-                connection->synced_data.is_outgoing_stream_task_active = true;
-                s_h1_connection_unlock_synced_data(connection);
-                /* END CRITICAL SECTION */
             }
         }
     }
