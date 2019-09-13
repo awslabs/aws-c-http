@@ -898,7 +898,7 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Outgoing stream body is blocked, we will wait to reschedule the task until it is unblocked",
                 (void *)&outgoing_stream)
-            
+
         } else {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION,
