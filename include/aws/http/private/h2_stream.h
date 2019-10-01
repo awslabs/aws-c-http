@@ -49,7 +49,9 @@ AWS_HTTP_API
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);
 
 AWS_HTTP_API
-struct aws_h2_stream *aws_h2_stream_new(const struct aws_http_request_options *options, uint32_t stream_id);
+struct aws_h2_stream *aws_h1_stream_new_request(
+    struct aws_http_connection *client_connection,
+    const struct aws_http_make_request_options *options);
 
 AWS_HTTP_API
 int aws_h2_stream_handle_frame(struct aws_h2_stream *stream, struct aws_h2_frame_decoder *decoder);

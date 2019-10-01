@@ -15,7 +15,7 @@
 
 #include <aws/http/private/h2_stream.h>
 
-#include <aws/http/private/connection_impl.h>
+#include <aws/http/private/h2_connection.h>
 
 #include <aws/io/logging.h>
 
@@ -100,8 +100,7 @@ static int s_h2_stream_handle_data(struct aws_h2_stream *stream, struct aws_h2_f
     }
 
     /* Call user callback */
-    size_t window_size_increment = 0;
-    stream->base.on_incoming_body(&stream->base, &frame.data, &window_size_increment, stream->base.user_data);
+    stream->base.on_incoming_body(&stream->base, &frame.data, stream->base.user_data);
 
     /* Send window increment packet */
     struct aws_h2_frame_window_update window_update;
@@ -110,12 +109,7 @@ static int s_h2_stream_handle_data(struct aws_h2_stream *stream, struct aws_h2_f
         return AWS_OP_ERR;
     }
 
-    STREAM_LOGF(
-        DEBUG,
-        stream,
-        "User requested window increment of %zu, updating locally and sending WINDOW_UPDATE frame",
-        window_size_increment);
-    window_update.window_size_increment = window_size_increment;
+    // window_update.window_size_increment = window_size_increment;
     aws_h2_frame_window_update_encode(&window_update, NULL, NULL); /* #TODO uh, this should do something */
 
     aws_channel_slot_increment_read_window(stream->base.owning_connection->channel_slot, window_size_increment);
@@ -133,6 +127,7 @@ static int s_h2_stream_handle_headers(struct aws_h2_stream *stream, struct aws_h
 
     stream->base.on_incoming_headers(
         &stream->base,
+        AWS_HTTP_HEADER_BLOCK_MAIN,
         frame.header_block.header_fields.data,
         frame.header_block.header_fields.length,
         stream->base.user_data);
@@ -216,7 +211,7 @@ static int s_h2_stream_handle_continuation(struct aws_h2_stream *stream, struct 
         STREAM_LOG(
             ERROR,
             stream,
-            "Recieved CONTINUATION frame following a frame with END_HEADERS set, raising PROTOCOL_ERROR");
+            "Received CONTINUATION frame following a frame with END_HEADERS set, raising PROTOCOL_ERROR");
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
@@ -388,19 +383,23 @@ static int (*s_state_handlers[])(struct aws_h2_stream *, struct aws_h2_frame_dec
  * Public API
  **********************************************************************************************************************/
 
-struct aws_h2_stream *aws_h2_stream_new(const struct aws_http_request_options *options, uint32_t stream_id) {
+struct aws_h2_stream *aws_h2_stream_new(
+    struct aws_http_connection *client_connection,
+    const struct aws_http_make_request_options *options) {
+    AWS_PRECONDITION(client_connection);
     AWS_PRECONDITION(options);
-    AWS_PRECONDITION(stream_id != 0);
 
-    struct aws_h2_stream *stream = aws_mem_calloc(options->client_connection->alloc, 1, sizeof(struct aws_h2_stream));
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(client_connection, struct aws_h2_connection, base);
+
+    struct aws_h2_stream *stream = aws_mem_calloc(client_connection->alloc, 1, sizeof(struct aws_h2_stream));
     if (!stream) {
         return NULL;
     }
 
     /* Initialize base stream */
     stream->base.vtable = &s_h2_stream_vtable;
-    stream->base.alloc = options->client_connection->alloc;
-    stream->base.owning_connection = options->client_connection;
+    stream->base.alloc = client_connection->alloc;
+    stream->base.owning_connection = client_connection;
     stream->base.user_data = options->user_data;
     stream->base.stream_outgoing_body = options->stream_outgoing_body;
     stream->base.on_incoming_headers = options->on_response_headers;
@@ -413,7 +412,7 @@ struct aws_h2_stream *aws_h2_stream_new(const struct aws_http_request_options *o
     aws_atomic_init_int(&stream->base.refcount, 2);
 
     /* Init H2 specific stuff */
-    stream->id = stream_id;
+    stream->id = aws_h2_connection_get_next_stream_id(connection);
     s_h2_stream_set_state(stream, AWS_H2_STREAM_STATE_IDLE);
 
     STREAM_LOG(DEBUG, stream, "Created stream");
