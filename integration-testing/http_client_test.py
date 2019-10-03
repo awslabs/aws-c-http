@@ -16,12 +16,17 @@ import sys
 import urllib.request
 import unittest
 
-elasticurl_path = sys.argv.pop()
+# Accepting multiple args so we can pass something like: python elasticurl.py
+elasticurl_cmd_prefix = sys.argv[1:]
+if not elasticurl_cmd_prefix:
+    print('You must pass the elasticurl cmd prefix')
+    sys.exit(-1)
+
+# Remove args from sys.argv so that unittest doesn't also try to parse them.
+sys.argv = sys.argv[:1]
+
 shell = sys.platform.startswith('win')
 
-if elasticurl_path == None:
-    print("You must pass the path to elasticurl as the first argument.")
-    sys.exit(-1)
 
 def run_command(args):
     subprocess.check_call(args, shell=shell)
@@ -53,17 +58,17 @@ def compare_files(filename_expected, filename_other):
 class SimpleTests(unittest.TestCase):
 #make a simple GET request and make sure it succeeds
     def test_simple_get(self):
-        simple_get_args = [elasticurl_path, '-v', 'TRACE', 'http://example.com']
+        simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', 'http://example.com']
         run_command(simple_get_args)
 
 #make a simple POST request to make sure sending data succeeds
     def test_simple_post(self):
-        simple_post_args = [elasticurl_path, '-v', 'TRACE', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'http://httpbin.org/post']
+        simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'http://httpbin.org/post']
         run_command(simple_post_args)
 
 #download a large file and compare the results with something we assume works (e.g. urllib)
     def test_simple_download(self):
-        elasticurl_download_args = [elasticurl_path, '-v', 'TRACE', '-o', 'elastigirl.png', 'https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png']
+        elasticurl_download_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '-o', 'elastigirl.png', 'https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png']
         run_command(elasticurl_download_args)
 
         urllib.request.urlretrieve('https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png', 'elastigirl_expected.png')
