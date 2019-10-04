@@ -135,5 +135,13 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
 }
 
 uint32_t aws_h2_connection_get_next_stream_id(struct aws_h2_connection *connection) {
-    return aws_atomic_fetch_add(&connection->stream_id, 2);
+    size_t next_id = aws_atomic_fetch_add(&connection->stream_id, 2);
+
+    /* Check for next_id going over UINT32_MAX or overflowing when size_t is 32 bits */
+    if (AWS_UNLIKELY(next_id > UINT32_MAX || (next_id - 2) > next_id)) {
+        aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+        return 0;
+    }
+
+    return (uint32_t)next_id;
 }
