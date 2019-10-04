@@ -110,7 +110,7 @@ static int s_h2_stream_handle_data(struct aws_h2_stream *stream, struct aws_h2_f
         return AWS_OP_ERR;
     }
 
-    size_t window_size_increment = 0; /* #TODO */
+    uint32_t window_size_increment = 0; /* #TODO */
     window_update.window_size_increment = window_size_increment;
     aws_h2_frame_window_update_encode(&window_update, NULL, NULL); /* #TODO uh, this should do something */
 
