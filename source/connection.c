@@ -15,6 +15,7 @@
 
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/proxy_impl.h>
+#include <aws/http/private/h2_connection.h>
 
 #include <aws/common/hash_table.h>
 #include <aws/common/mutex.h>
@@ -145,6 +146,13 @@ static struct aws_http_connection *s_connection_new(
                 connection = aws_http_connection_new_http1_1_server(alloc, initial_window_size);
             } else {
                 connection = aws_http_connection_new_http1_1_client(alloc, initial_window_size);
+            }
+            break;
+        case AWS_HTTP_VERSION_2:
+            if (is_server) {
+                connection = aws_http_connection_new_http2_server(alloc, initial_window_size);
+            } else {
+                connection = aws_http_connection_new_http2_client(alloc, initial_window_size);
             }
             break;
         default:

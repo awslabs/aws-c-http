@@ -15,6 +15,101 @@
 
 #include <aws/http/private/h2_connection.h>
 
+#include <aws/common/logging.h>
+
+#define CONNECTION_LOGF(level, connection, text, ...)                                                                  \
+    AWS_LOGF_##level(AWS_LS_HTTP_CONNECTION, "id=%p: " text, (void *)(connection), __VA_ARGS__)
+#define CONNECTION_LOG(level, connection, text) CONNECTION_LOGF(level, connection, "%s", text)
+
+static struct aws_http_connection_vtable s_h2_connection_vtable = {
+    .channel_handler_vtable =
+        {
+            .process_read_message = NULL,
+            .process_write_message = NULL,
+            .increment_read_window = NULL,
+            .shutdown = NULL,
+            .initial_window_size = NULL,
+            .message_overhead = NULL,
+            .destroy = NULL,
+        },
+
+    .make_request = NULL,
+    .new_server_request_handler_stream = NULL,
+    .stream_send_response = NULL,
+    .close = NULL,
+    .is_open = NULL,
+    .update_window = NULL,
+};
+
+/* Common new() logic for server & client */
+static struct aws_h2_connection *s_connection_new(
+    struct aws_allocator *alloc,
+    size_t initial_window_size,
+    bool server) {
+
+    (void)server;
+
+    struct aws_h2_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct aws_h2_connection));
+    if (!connection) {
+        goto error_connection_alloc;
+    }
+
+    connection->base.vtable = &s_h2_connection_vtable;
+    connection->base.alloc = alloc;
+    connection->base.channel_handler.vtable = &s_h2_connection_vtable.channel_handler_vtable;
+    connection->base.channel_handler.impl = connection;
+    connection->base.http_version = AWS_HTTP_VERSION_1_1;
+    connection->base.initial_window_size = initial_window_size;
+
+    /* 1 refcount for user */
+    aws_atomic_init_int(&connection->base.refcount, 1);
+
+    int err = aws_mutex_init(&connection->synced_data.lock);
+    if (err) {
+        CONNECTION_LOGF(
+            ERROR, connection, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
+
+        goto error_mutex;
+    }
+
+    return connection;
+
+// error_decoder:
+//     aws_mutex_clean_up(&connection->synced_data.lock);
+error_mutex:
+    aws_mem_release(alloc, connection);
+error_connection_alloc:
+    return NULL;
+}
+
+struct aws_http_connection *aws_http_connection_new_http2_server(
+    struct aws_allocator *allocator,
+    size_t initial_window_size) {
+
+    struct aws_h2_connection *connection = s_connection_new(allocator, initial_window_size, true);
+    if (!connection) {
+        return NULL;
+    }
+
+    connection->base.server_data = &connection->base.client_or_server_data.server;
+
+    return &connection->base;
+}
+
+struct aws_http_connection *aws_http_connection_new_http2_client(
+    struct aws_allocator *allocator,
+    size_t initial_window_size) {
+
+    struct aws_h2_connection *connection = s_connection_new(allocator, initial_window_size, false);
+    if (!connection) {
+        return NULL;
+    }
+
+    connection->base.client_data = &connection->base.client_or_server_data.client;
+
+    return &connection->base;
+}
+
 uint32_t aws_h2_connection_get_next_stream_id(struct aws_h2_connection *connection) {
     return aws_atomic_fetch_add(&connection->stream_id, 2);
 }
