@@ -31,11 +31,10 @@ struct aws_h2_decoder {
 struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) {
     AWS_ASSERT(params);
 
-    struct aws_h2_decoder *decoder = aws_mem_acquire(params->alloc, sizeof(struct aws_h2_decoder));
+    struct aws_h2_decoder *decoder = aws_mem_calloc(params->alloc, 1, sizeof(struct aws_h2_decoder));
     if (!decoder) {
         return NULL;
     }
-    AWS_ZERO_STRUCT(*decoder);
 
     decoder->alloc = params->alloc;
     decoder->user_data = params->user_data;
