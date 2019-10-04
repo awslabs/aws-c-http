@@ -17,6 +17,7 @@
 
 #include <aws/http/private/h2_connection.h>
 
+#include <aws/io/channel.h>
 #include <aws/io/logging.h>
 
 #include <inttypes.h>
@@ -109,7 +110,8 @@ static int s_h2_stream_handle_data(struct aws_h2_stream *stream, struct aws_h2_f
         return AWS_OP_ERR;
     }
 
-    // window_update.window_size_increment = window_size_increment;
+    size_t window_size_increment = 0; /* #TODO */
+    window_update.window_size_increment = window_size_increment;
     aws_h2_frame_window_update_encode(&window_update, NULL, NULL); /* #TODO uh, this should do something */
 
     aws_channel_slot_increment_read_window(stream->base.owning_connection->channel_slot, window_size_increment);
@@ -401,12 +403,10 @@ struct aws_h2_stream *aws_h2_stream_new(
     stream->base.alloc = client_connection->alloc;
     stream->base.owning_connection = client_connection;
     stream->base.user_data = options->user_data;
-    stream->base.stream_outgoing_body = options->stream_outgoing_body;
     stream->base.on_incoming_headers = options->on_response_headers;
     stream->base.on_incoming_header_block_done = options->on_response_header_block_done;
     stream->base.on_incoming_body = options->on_response_body;
     stream->base.on_complete = options->on_complete;
-    stream->base.incoming_response_status = AWS_HTTP_STATUS_UNKNOWN;
 
     /* Stream refcount starts at 2. 1 for user and 1 for connection to release it's done with the stream */
     aws_atomic_init_int(&stream->base.refcount, 2);
