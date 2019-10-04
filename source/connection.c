@@ -13,9 +13,9 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/private/connection_impl.h>
-#include <aws/http/private/proxy_impl.h>
+#include <aws/http/private/h1_connection.h>
 #include <aws/http/private/h2_connection.h>
+#include <aws/http/private/proxy_impl.h>
 
 #include <aws/common/hash_table.h>
 #include <aws/common/mutex.h>
