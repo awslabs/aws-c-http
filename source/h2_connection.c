@@ -15,4 +15,6 @@
 
 #include <aws/http/private/h2_connection.h>
 
-
+uint32_t aws_h2_connection_get_next_stream_id(struct aws_h2_connection *connection) {
+    return aws_atomic_fetch_add(&connection->stream_id, 2);
+}
