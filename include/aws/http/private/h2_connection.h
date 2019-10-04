@@ -28,11 +28,9 @@ struct aws_h2_connection {
     struct aws_atomic_var stream_id;
 
     /* Only the event-loop thread may touch this data */
-    /*
     struct {
-
+        struct aws_h2_decoder *decoder;
     } thread_data;
-    */
 
     /* Any thread may touch this data, but the lock must be held */
     struct {

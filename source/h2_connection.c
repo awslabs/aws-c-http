@@ -14,6 +14,7 @@
  */
 
 #include <aws/http/private/h2_connection.h>
+#include <aws/http/private/h2_decoder.h>
 
 #include <aws/common/logging.h>
 
@@ -41,6 +42,14 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .update_window = NULL,
 };
 
+static const struct aws_http_decoder_vtable s_h2_decoder_vtable = {
+    .on_request = NULL,
+    .on_response = NULL,
+    .on_header = NULL,
+    .on_body = NULL,
+    .on_done = NULL,
+};
+
 /* Common new() logic for server & client */
 static struct aws_h2_connection *s_connection_new(
     struct aws_allocator *alloc,
@@ -63,6 +72,17 @@ static struct aws_h2_connection *s_connection_new(
 
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
+
+    /* Init the next stream id (server must use odd ids, client even [RFC 7540 5.1.1])*/
+    aws_atomic_init_int(&connection->stream_id, server ? 2 : 1);
+
+    /* Create a new decoder */
+    struct aws_h2_decoder_params params = {
+        .alloc = alloc,
+        .user_data = connection,
+        .vtable = s_h2_decoder_vtable,
+    };
+    connection->thread_data.decoder = aws_h2_decoder_new(&params);
 
     int err = aws_mutex_init(&connection->synced_data.lock);
     if (err) {
