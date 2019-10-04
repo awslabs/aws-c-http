@@ -29,7 +29,8 @@ struct aws_h2_decoder {
 };
 
 struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) {
-    AWS_ASSERT(params);
+    AWS_PRECONDITION(params);
+    (void)params;
 
     struct aws_h2_decoder *decoder = aws_mem_calloc(params->alloc, 1, sizeof(struct aws_h2_decoder));
     if (!decoder) {
@@ -48,8 +49,10 @@ void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder) {
 }
 
 int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) {
-    AWS_ASSERT(decoder);
-    AWS_ASSERT(data);
+    AWS_PRECONDITION(decoder);
+    AWS_PRECONDITION(data);
+    (void)decoder;
+    (void)data;
 
     return AWS_OP_ERR;
 }
