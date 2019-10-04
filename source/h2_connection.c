@@ -18,6 +18,10 @@
 
 #include <aws/common/logging.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#endif
+
 #define CONNECTION_LOGF(level, connection, text, ...)                                                                  \
     AWS_LOGF_##level(AWS_LS_HTTP_CONNECTION, "id=%p: " text, (void *)(connection), __VA_ARGS__)
 #define CONNECTION_LOG(level, connection, text) CONNECTION_LOGF(level, connection, "%s", text)
