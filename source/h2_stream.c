@@ -78,15 +78,11 @@ const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state) {
             return "HALF_CLOSED_REMOTE";
         case AWS_H2_STREAM_STATE_CLOSED:
             return "CLOSED";
-        case AWS_H2_STREAM_STATE_COUNT:
+        default:
             /* unreachable */
-            AWS_FATAL_ASSERT(false);
+            AWS_FATAL_ASSERT(false && "Unknown value for aws_h2_stream_state");
             return NULL;
     }
-
-    /* unreachable */
-    AWS_FATAL_ASSERT(false);
-    return NULL;
 }
 
 /***********************************************************************************************************************

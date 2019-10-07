@@ -98,8 +98,6 @@ static struct aws_h2_connection *s_connection_new(
 
     return connection;
 
-// error_decoder:
-//     aws_mutex_clean_up(&connection->synced_data.lock);
 error_mutex:
     aws_mem_release(alloc, connection);
 error_connection_alloc:

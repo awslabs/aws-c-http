@@ -38,7 +38,7 @@ struct aws_h2_stream {
     enum aws_h2_stream_state state;
     bool expects_continuation;
 
-    uint64_t window_size; /* If anyone has any idea how the fuck this works I'm all ears */
+    uint64_t window_size; /* #TODO try to figure out how this actually works, and then implement it */
 };
 
 struct aws_h2_stream;

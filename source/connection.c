@@ -149,7 +149,7 @@ static struct aws_http_connection *s_connection_new(
             }
             break;
         case AWS_HTTP_VERSION_2:
-            AWS_FATAL_ASSERT(false); /* lol nice try */
+            AWS_FATAL_ASSERT(false && "H2 is not currently supported"); /* lol nice try */
             if (is_server) {
                 connection = aws_http_connection_new_http2_server(alloc, initial_window_size);
             } else {
