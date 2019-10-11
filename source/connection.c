@@ -31,7 +31,6 @@
 
 static struct aws_http_connection_system_vtable s_default_system_vtable = {
     .new_socket_channel = aws_client_bootstrap_new_socket_channel,
-    .new_tls_socket_channel = aws_client_bootstrap_new_tls_socket_channel,
 };
 
 static const struct aws_http_connection_system_vtable *s_system_vtable_ptr = &s_default_system_vtable;
@@ -727,26 +726,18 @@ int aws_http_client_connect_internal(
         (const char *)aws_string_bytes(host_name),
         (int)options->port);
 
-    if (options->tls_options) {
-        err = s_system_vtable_ptr->new_tls_socket_channel(
-            options->bootstrap,
-            (const char *)aws_string_bytes(host_name),
-            options->port,
-            options->socket_options,
-            options->tls_options,
-            s_client_bootstrap_on_channel_setup,
-            s_client_bootstrap_on_channel_shutdown,
-            http_bootstrap);
-    } else {
-        err = s_system_vtable_ptr->new_socket_channel(
-            options->bootstrap,
-            (const char *)aws_string_bytes(host_name),
-            options->port,
-            options->socket_options,
-            s_client_bootstrap_on_channel_setup,
-            s_client_bootstrap_on_channel_shutdown,
-            http_bootstrap);
-    }
+    struct aws_socket_channel_bootstrap_options channel_options;
+    AWS_ZERO_STRUCT(channel_options);
+    channel_options.bootstrap = options->bootstrap;
+    channel_options.host_name = (const char *)aws_string_bytes(host_name);
+    channel_options.port = options->port;
+    channel_options.socket_options = options->socket_options;
+    channel_options.tls_options = options->tls_options;
+    channel_options.setup_callback = s_client_bootstrap_on_channel_setup;
+    channel_options.shutdown_callback = s_client_bootstrap_on_channel_shutdown;
+    channel_options.user_data = http_bootstrap;
+
+    err = s_system_vtable_ptr->new_socket_channel(&channel_options);
 
     if (err) {
         AWS_LOGF_ERROR(

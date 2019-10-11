@@ -16,12 +16,14 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/common/logging.h>
 #include <aws/http/exports.h>
-
 #include <aws/io/io.h>
 
+#define AWS_C_HTTP_PACKAGE_ID 2
+
 enum aws_http_errors {
-    AWS_ERROR_HTTP_UNKNOWN = 0x0800,
+    AWS_ERROR_HTTP_UNKNOWN = AWS_C_HTTP_PACKAGE_ID * AWS_ERROR_ENUM_STRIDE,
     AWS_ERROR_HTTP_PARSE,
     AWS_ERROR_HTTP_INVALID_HEADER_FIELD,
     AWS_ERROR_HTTP_INVALID_HEADER_NAME,
@@ -48,11 +50,11 @@ enum aws_http_errors {
     AWS_ERROR_HTTP_PROXY_TLS_CONNECT_FAILED,
     AWS_ERROR_HTTP_CONNECTION_MANAGER_SHUTTING_DOWN,
 
-    AWS_ERROR_HTTP_END_RANGE = 0x0C00,
+    AWS_ERROR_HTTP_END_RANGE = (AWS_C_HTTP_PACKAGE_ID + 1) * AWS_ERROR_ENUM_STRIDE - 1
 };
 
 enum aws_http_log_subject {
-    AWS_LS_HTTP_GENERAL = 0x800,
+    AWS_LS_HTTP_GENERAL = AWS_C_HTTP_PACKAGE_ID * AWS_LOG_SUBJECT_STRIDE,
     AWS_LS_HTTP_CONNECTION,
     AWS_LS_HTTP_SERVER,
     AWS_LS_HTTP_STREAM,

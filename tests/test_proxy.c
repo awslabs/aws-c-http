@@ -115,29 +115,17 @@ struct aws_http_proxy_system_vtable s_proxy_table_for_tls = {
 /*
  * Channel setup mock and vtable
  */
-static int s_test_aws_proxy_new_socket_channel(
-    struct aws_client_bootstrap *bootstrap,
-    const char *host_name,
-    uint16_t port,
-    const struct aws_socket_options *options,
-    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
-    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
-    void *user_data) {
-
-    (void)bootstrap;
-    (void)options;
-    (void)setup_callback;
-    (void)shutdown_callback;
+static int s_test_aws_proxy_new_socket_channel(struct aws_socket_channel_bootstrap_options *channel_options) {
 
     aws_mutex_lock(&tester.wait_lock);
 
     /*
      * Record where we were trying to connect to
      */
-    struct aws_byte_cursor host_cursor = aws_byte_cursor_from_c_str(host_name);
+    struct aws_byte_cursor host_cursor = aws_byte_cursor_from_c_str(channel_options->host_name);
     aws_byte_buf_append_dynamic(&tester.connection_host_name, &host_cursor);
 
-    tester.connection_port = port;
+    tester.connection_port = channel_options->port;
 
     /*
      * Conditional failure logic based on how the test was configured to fail
@@ -145,7 +133,7 @@ static int s_test_aws_proxy_new_socket_channel(
     if (tester.failure_type == PTFT_CHANNEL) {
         tester.wait_result = AWS_ERROR_UNKNOWN;
     } else if (tester.failure_type != PTFT_CONNECTION) {
-        tester.http_bootstrap = user_data;
+        tester.http_bootstrap = channel_options->user_data;
         ASSERT_SUCCESS(proxy_tester_create_testing_channel_connection(&tester));
     }
 
@@ -159,14 +147,14 @@ static int s_test_aws_proxy_new_socket_channel(
     }
 
     if (tester.failure_type == PTFT_CONNECTION) {
-        setup_callback(tester.client_bootstrap, AWS_ERROR_UNKNOWN, NULL, user_data);
+        channel_options->setup_callback(tester.client_bootstrap, AWS_ERROR_UNKNOWN, NULL, channel_options->user_data);
         return AWS_OP_SUCCESS;
     }
 
     /*
      * We're not supposed to fail yet, so let's keep going
      */
-    struct aws_http_client_bootstrap *http_bootstrap = user_data;
+    struct aws_http_client_bootstrap *http_bootstrap = channel_options->user_data;
     http_bootstrap->on_setup(tester.client_connection, AWS_ERROR_SUCCESS, http_bootstrap->user_data);
 
     testing_channel_run_currently_queued_tasks(tester.testing_channel);
