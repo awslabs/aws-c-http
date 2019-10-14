@@ -74,7 +74,7 @@ static struct aws_h2_connection *s_connection_new(
     connection->base.alloc = alloc;
     connection->base.channel_handler.vtable = &s_h2_connection_vtable.channel_handler_vtable;
     connection->base.channel_handler.impl = connection;
-    connection->base.http_version = AWS_HTTP_VERSION_1_1;
+    connection->base.http_version = AWS_HTTP_VERSION_2;
     connection->base.initial_window_size = initial_window_size;
 
     /* 1 refcount for user */
