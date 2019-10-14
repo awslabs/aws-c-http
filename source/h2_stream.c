@@ -80,8 +80,8 @@ const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state) {
             return "CLOSED";
         default:
             /* unreachable */
-            AWS_FATAL_ASSERT(false && "Unknown value for aws_h2_stream_state");
-            return NULL;
+            AWS_ASSUME(false);
+            return "*** UNKNOWN ***";
     }
 }
 
