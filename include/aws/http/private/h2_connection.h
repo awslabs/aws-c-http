@@ -24,9 +24,6 @@
 struct aws_h2_connection {
     struct aws_http_connection base;
 
-    /* Refers to the next stream id to vend */
-    struct aws_atomic_var stream_id;
-
     /* Only the event-loop thread may touch this data */
     struct {
         struct aws_h2_decoder *decoder;
@@ -36,6 +33,8 @@ struct aws_h2_connection {
     struct {
         struct aws_mutex lock;
 
+        /* Refers to the next stream id to vend */
+        uint32_t next_stream_id;
     } synced_data;
 };
 
