@@ -35,9 +35,6 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_UNKNOWN,
         "Encountered an unknown error."),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_PARSE,
-        "Encountered an unexpected form when parsing an http message."),
-    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_HEADER_FIELD,
         "Invalid header field, including a forbidden header field."),
     AWS_DEFINE_ERROR_INFO_HTTP(

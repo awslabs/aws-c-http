@@ -409,7 +409,7 @@ TEST_CASE(h1_server_receive_bad_request_shut_down_connection) {
     ASSERT_TRUE(s_tester.request_num == 1);
     struct tester_request request = s_tester.requests[0];
     ASSERT_TRUE(request.on_complete_cb_count == 1);
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PARSE, request.on_complete_error_code);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, request.on_complete_error_code);
     /* clean up */
     ASSERT_SUCCESS(s_server_tester_clean_up());
     return AWS_OP_SUCCESS;

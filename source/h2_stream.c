@@ -99,18 +99,20 @@ static int s_h2_stream_handle_data(struct aws_h2_stream *stream, struct aws_h2_f
     /* Call user callback */
     stream->base.on_incoming_body(&stream->base, &frame.data, stream->base.user_data);
 
-    /* Send window increment packet */
-    struct aws_h2_frame_window_update window_update;
-    if (aws_h2_frame_window_update_init(&window_update, stream->base.alloc)) {
-        STREAM_LOG(ERROR, stream, "Failed to decode DATA frame");
-        return AWS_OP_ERR;
+    if (!stream->base.manual_window_management) {
+        /* Send window increment packet */
+        struct aws_h2_frame_window_update window_update;
+        if (aws_h2_frame_window_update_init(&window_update, stream->base.alloc)) {
+            STREAM_LOG(ERROR, stream, "Failed to decode DATA frame");
+            return AWS_OP_ERR;
+        }
+
+        uint32_t window_size_increment = frame.data.len + frame.pad_length;
+        window_update.window_size_increment = window_size_increment;
+        aws_h2_frame_window_update_encode(&window_update, NULL, NULL); /* #TODO uh, this should do something */
+
+        aws_channel_slot_increment_read_window(stream->base.owning_connection->channel_slot, window_size_increment);
     }
-
-    uint32_t window_size_increment = 0; /* #TODO */
-    window_update.window_size_increment = window_size_increment;
-    aws_h2_frame_window_update_encode(&window_update, NULL, NULL); /* #TODO uh, this should do something */
-
-    aws_channel_slot_increment_read_window(stream->base.owning_connection->channel_slot, window_size_increment);
 
     return AWS_OP_SUCCESS;
 }
