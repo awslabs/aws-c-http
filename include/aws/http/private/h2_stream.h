@@ -19,6 +19,8 @@
 #include <aws/http/private/h2_frames.h>
 #include <aws/http/private/request_response_impl.h>
 
+#include <aws/common/mutex.h>
+
 enum aws_h2_stream_state {
     AWS_H2_STREAM_STATE_IDLE,
     AWS_H2_STREAM_STATE_RESERVED_LOCAL,
@@ -34,11 +36,20 @@ enum aws_h2_stream_state {
 struct aws_h2_stream {
     struct aws_http_stream base;
 
-    uint32_t id;
-    enum aws_h2_stream_state state;
-    bool expects_continuation;
+    const uint32_t id;
 
-    uint64_t window_size; /* #TODO try to figure out how this actually works, and then implement it */
+    /* Only the event-loop thread may touch this data */
+    struct {
+        bool expects_continuation;
+        enum aws_h2_stream_state state;
+        uint64_t window_size; /* #TODO try to figure out how this actually works, and then implement it */
+    } thread_data;
+
+    /* Any thread may touch this data, but the lock must be held */
+    struct {
+        struct aws_mutex lock;
+
+    } synced_data;
 };
 
 struct aws_h2_stream;

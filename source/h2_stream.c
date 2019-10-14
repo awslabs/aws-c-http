@@ -28,7 +28,7 @@
         "id=%" PRIu32 "(%p) state=%s: " text,                                                                          \
         (stream)->id,                                                                                                  \
         (void *)(stream),                                                                                              \
-        aws_h2_stream_state_to_str((stream)->state),                                                                   \
+        aws_h2_stream_state_to_str((stream)->thread_data.state),                                                                   \
         __VA_ARGS__)
 #define STREAM_LOG(level, stream, text) STREAM_LOGF(level, stream, "%s", text)
 
@@ -46,7 +46,7 @@ static int s_h2_stream_raise_invalid_frame(struct aws_h2_stream *stream, enum aw
         stream,
         "Not allowed to receive frame of type %s when in %s state, raising %s",
         aws_h2_frame_type_to_str(type),
-        aws_h2_stream_state_to_str(stream->state),
+        aws_h2_stream_state_to_str(stream->thread_data.state),
         aws_error_name(error_code));
     return aws_raise_error(error_code);
 }
@@ -56,10 +56,10 @@ static void s_h2_stream_set_state(struct aws_h2_stream *stream, enum aws_h2_stre
         DEBUG,
         stream,
         "Stream moving from state %s to %s",
-        aws_h2_stream_state_to_str(stream->state),
+        aws_h2_stream_state_to_str(stream->thread_data.state),
         aws_h2_stream_state_to_str(new_state));
 
-    stream->state = new_state;
+    stream->thread_data.state = new_state;
 }
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state) {
@@ -137,7 +137,7 @@ static int s_h2_stream_handle_headers(struct aws_h2_stream *stream, struct aws_h
         stream->base.on_incoming_header_block_done(&stream->base, false, stream->base.user_data);
     } else {
         STREAM_LOG(DEBUG, stream, "HEADERS frame does not have END_HEADERS set, expecting following CONTINUATION");
-        stream->expects_continuation = true;
+        stream->thread_data.expects_continuation = true;
     }
 
     return AWS_OP_SUCCESS;
@@ -183,7 +183,7 @@ static int s_h2_stream_handle_push_promise(struct aws_h2_stream *stream, struct 
 
     if (!frame.end_headers) {
         STREAM_LOG(TRACE, stream, "PUSH_PROMISE END_HEADERS not set, expecting CONTINUATION frame next");
-        stream->expects_continuation = true;
+        stream->thread_data.expects_continuation = true;
     }
 
     /* #TODO Handle whatever this means */
@@ -200,14 +200,14 @@ static int s_h2_stream_handle_window_update(struct aws_h2_stream *stream, struct
     }
 
     /* Increment the window size, I suppose */
-    stream->window_size += frame.window_size_increment;
+    stream->thread_data.window_size += frame.window_size_increment;
 
     return AWS_OP_SUCCESS;
 }
 static int s_h2_stream_handle_continuation(struct aws_h2_stream *stream, struct aws_h2_frame_decoder *decoder) {
     AWS_PRECONDITION(decoder->header.type == AWS_H2_FRAME_T_CONTINUATION);
 
-    if (!stream->expects_continuation) {
+    if (!stream->thread_data.expects_continuation) {
         STREAM_LOG(
             ERROR,
             stream,
@@ -223,10 +223,11 @@ static int s_h2_stream_handle_continuation(struct aws_h2_stream *stream, struct 
 
     if (frame.end_headers) {
         STREAM_LOG(TRACE, stream, "CONTINUATION frames complete, calling header_block_done");
+        stream->thread_data.expects_continuation = false;
         stream->base.on_incoming_header_block_done(&stream->base, false, stream->base.user_data);
     } else {
         STREAM_LOG(TRACE, stream, "CONTINUATION END_HEADERS not set, expecting CONTINUATION frame next");
-        stream->expects_continuation = true;
+        stream->thread_data.expects_continuation = true;
     }
 
     return AWS_OP_SUCCESS;
@@ -410,7 +411,7 @@ struct aws_h2_stream *aws_h2_stream_new(
     aws_atomic_init_int(&stream->base.refcount, 2);
 
     /* Init H2 specific stuff */
-    stream->id = aws_h2_connection_get_next_stream_id(connection);
+    *((uint32_t *)&stream->id) = aws_h2_connection_get_next_stream_id(connection);
     s_h2_stream_set_state(stream, AWS_H2_STREAM_STATE_IDLE);
 
     STREAM_LOG(DEBUG, stream, "Created stream");
@@ -432,5 +433,5 @@ int aws_h2_stream_handle_frame(struct aws_h2_stream *stream, struct aws_h2_frame
 
     STREAM_LOGF(DEBUG, stream, "Received frame of type %s", aws_h2_frame_type_to_str(decoder->header.type));
 
-    return s_state_handlers[stream->state](stream, decoder);
+    return s_state_handlers[stream->thread_data.state](stream, decoder);
 }
