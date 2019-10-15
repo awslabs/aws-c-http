@@ -60,7 +60,6 @@ const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type) {
 
     /* unreachable */
     AWS_ASSUME(false);
-    return "*** UNKNOWN ***";
 }
 
 /***********************************************************************************************************************
