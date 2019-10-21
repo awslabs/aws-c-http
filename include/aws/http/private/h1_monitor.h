@@ -21,7 +21,7 @@
 struct aws_allocator;
 struct aws_crt_statistics_handler;
 
-struct aws_crt_statistics_handler_http_default_options {
+struct aws_crt_http_connection_monitor_options {
     uint32_t tls_timeout_ms;
     uint64_t minimum_throughput_bytes_per_second;
     uint32_t minimum_throughput_failure_threshold_in_seconds;
@@ -30,7 +30,7 @@ struct aws_crt_statistics_handler_http_default_options {
 AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API
-struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_default(struct aws_allocator *allocator, struct aws_crt_statistics_handler_http_default_options *options);
+struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connection_monitor(struct aws_allocator *allocator, struct aws_crt_http_connection_monitor_options *options);
 
 AWS_EXTERN_C_END
 

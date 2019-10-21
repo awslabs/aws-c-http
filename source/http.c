@@ -109,6 +109,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_MANAGER_SHUTTING_DOWN,
         "Connection acquisition failed because connection manager is shutting down"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_CHANNEL_MONITOR_SHUTDOWN,
+        "Http connection channel shut down by attached statistics monitor"),
 };
 /* clang-format on */
 
