@@ -35,7 +35,7 @@ static const size_t s_scratch_space_size = 512;
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 
 /* The size of each id: value pair in a settings frame */
-static const size_t s_setting_block_size = sizeof(uint16_t) + sizeof(uint32_t);
+static const uint8_t s_setting_block_size = sizeof(uint16_t) + sizeof(uint32_t);
 
 #define DECODER_LOGF(level, decoder, text, ...)                                                                        \
     AWS_LOGF_##level(AWS_LS_HTTP_CONNECTION, "id=%p " text, (decoder)->logging_id, __VA_ARGS__)
@@ -43,20 +43,20 @@ static const size_t s_setting_block_size = sizeof(uint16_t) + sizeof(uint32_t);
 
 #define DECODER_CALL_VTABLE(decoder, fn)                                                                               \
     do {                                                                                                               \
-        if (decoder->vtable.fn) {                                                                                      \
-            decoder->vtable.fn(decoder->userdata);                                                                     \
+        if ((decoder)->vtable.fn) {                                                                                    \
+            (decoder)->vtable.fn((decoder)->userdata);                                                                 \
         }                                                                                                              \
     } while (false)
 #define DECODER_CALL_VTABLE_ARGS(decoder, fn, ...)                                                                     \
     do {                                                                                                               \
-        if (decoder->vtable.fn) {                                                                                      \
-            decoder->vtable.fn(__VA_ARGS__, decoder->userdata);                                                        \
+        if ((decoder)->vtable.fn) {                                                                                    \
+            (decoder)->vtable.fn(__VA_ARGS__, (decoder)->userdata);                                                    \
         }                                                                                                              \
     } while (false)
 #define DECODER_CALL_VTABLE_STREAM(decoder, fn)                                                                        \
-    DECODER_CALL_VTABLE_ARGS(decoder, fn, decoder->frame_in_progress.stream_id)
+    DECODER_CALL_VTABLE_ARGS(decoder, fn, (decoder)->frame_in_progress.stream_id)
 #define DECODER_CALL_VTABLE_STREAM_ARGS(decoder, fn, ...)                                                              \
-    DECODER_CALL_VTABLE_ARGS(decoder, fn, decoder->frame_in_progress.stream_id, __VA_ARGS__)
+    DECODER_CALL_VTABLE_ARGS(decoder, fn, (decoder)->frame_in_progress.stream_id, __VA_ARGS__)
 
 /***********************************************************************************************************************
  * State Machine
@@ -72,11 +72,11 @@ struct decoder_state {
     static state_fn s_state_fn_##_name;                                                                                \
     static const struct decoder_state s_state_##_name = {                                                              \
         .fn = s_state_fn_##_name,                                                                                      \
-        .bytes_required = _bytes_required,                                                                             \
+        .bytes_required = (_bytes_required),                                                                           \
         .name = #_name,                                                                                                \
     }
 
-#define WAIT_FOR_FULL_PAYLOAD (uint64_t) - 1
+#define WAIT_FOR_FULL_PAYLOAD ((uint64_t)-1)
 
 /* Common states */
 DEFINE_STATE(length, 3);
