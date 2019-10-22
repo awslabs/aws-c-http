@@ -67,7 +67,7 @@ struct decoder_state {
 };
 #define DEFINE_STATE(_name, _bytes_required)                                                                           \
     static state_fn s_state_fn_##_name;                                                                                \
-    static struct decoder_state s_state_##_name = {                                                                    \
+    static const struct decoder_state s_state_##_name = {                                                              \
         .fn = s_state_fn_##_name,                                                                                      \
         .bytes_required = _bytes_required,                                                                             \
         .name = #_name,                                                                                                \
@@ -98,7 +98,7 @@ DEFINE_STATE(f_window_update, 4);
 DEFINE_STATE(f_continuation, 0);
 
 /* Helper for states that need to transition to frame-type states */
-static struct decoder_state *s_state_frames[] = {
+static const struct decoder_state *s_state_frames[] = {
     [AWS_H2_FRAME_T_DATA] = &s_state_f_data,
     [AWS_H2_FRAME_T_HEADERS] = &s_state_f_headers,
     [AWS_H2_FRAME_T_PRIORITY] = &s_state_f_priority,
@@ -275,7 +275,7 @@ void aws_h2_decoder_set_logging_id(struct aws_h2_decoder *decoder, void *id) {
  * State functions
  **********************************************************************************************************************/
 
-static void s_decoder_set_state(struct aws_h2_decoder *decoder, struct decoder_state *state) {
+static void s_decoder_set_state(struct aws_h2_decoder *decoder, const struct decoder_state *state) {
     DECODER_LOGF(TRACE, decoder, "Moving from state %s to %s", decoder->state.name, state->name);
 
     decoder->scratch.len = 0;
