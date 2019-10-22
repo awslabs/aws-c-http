@@ -86,29 +86,29 @@ DEFINE_STATE(padding, 0);
 DEFINE_STATE(priority_block, 5);
 
 /* Frame-specific states */
-DEFINE_STATE(f_data, 0);
-DEFINE_STATE(f_headers, 0);
-DEFINE_STATE(f_priority, 5);
-DEFINE_STATE(f_rst_stream, 4);
-DEFINE_STATE(f_settings, 0);
-DEFINE_STATE(f_push_promise, 0);
-DEFINE_STATE(f_ping, 8);
-DEFINE_STATE(f_goaway, WAIT_FOR_FULL_PAYLOAD);
-DEFINE_STATE(f_window_update, 4);
-DEFINE_STATE(f_continuation, 0);
+DEFINE_STATE(frame_data, 0);
+DEFINE_STATE(frame_headers, 0);
+DEFINE_STATE(frame_priority, 5);
+DEFINE_STATE(frame_rst_stream, 4);
+DEFINE_STATE(frame_settings, 0);
+DEFINE_STATE(frame_push_promise, 0);
+DEFINE_STATE(frame_ping, 8);
+DEFINE_STATE(frame_goaway, WAIT_FOR_FULL_PAYLOAD);
+DEFINE_STATE(frame_window_update, 4);
+DEFINE_STATE(frame_continuation, 0);
 
 /* Helper for states that need to transition to frame-type states */
 static const struct decoder_state *s_state_frames[] = {
-    [AWS_H2_FRAME_T_DATA] = &s_state_f_data,
-    [AWS_H2_FRAME_T_HEADERS] = &s_state_f_headers,
-    [AWS_H2_FRAME_T_PRIORITY] = &s_state_f_priority,
-    [AWS_H2_FRAME_T_RST_STREAM] = &s_state_f_rst_stream,
-    [AWS_H2_FRAME_T_SETTINGS] = &s_state_f_settings,
-    [AWS_H2_FRAME_T_PUSH_PROMISE] = &s_state_f_push_promise,
-    [AWS_H2_FRAME_T_PING] = &s_state_f_ping,
-    [AWS_H2_FRAME_T_GOAWAY] = &s_state_f_goaway,
-    [AWS_H2_FRAME_T_WINDOW_UPDATE] = &s_state_f_window_update,
-    [AWS_H2_FRAME_T_CONTINUATION] = &s_state_f_continuation,
+    [AWS_H2_FRAME_T_DATA] = &s_state_frame_data,
+    [AWS_H2_FRAME_T_HEADERS] = &s_state_frame_headers,
+    [AWS_H2_FRAME_T_PRIORITY] = &s_state_frame_priority,
+    [AWS_H2_FRAME_T_RST_STREAM] = &s_state_frame_rst_stream,
+    [AWS_H2_FRAME_T_SETTINGS] = &s_state_frame_settings,
+    [AWS_H2_FRAME_T_PUSH_PROMISE] = &s_state_frame_push_promise,
+    [AWS_H2_FRAME_T_PING] = &s_state_frame_ping,
+    [AWS_H2_FRAME_T_GOAWAY] = &s_state_frame_goaway,
+    [AWS_H2_FRAME_T_WINDOW_UPDATE] = &s_state_frame_window_update,
+    [AWS_H2_FRAME_T_CONTINUATION] = &s_state_frame_continuation,
 };
 
 /***********************************************************************************************************************
@@ -467,7 +467,7 @@ static int s_state_fn_priority_block(struct aws_h2_decoder *decoder, struct aws_
     return AWS_OP_SUCCESS;
 }
 
-static int s_state_fn_f_data(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     struct aws_byte_cursor body_to_pass;
 
@@ -491,7 +491,7 @@ static int s_state_fn_f_data(struct aws_h2_decoder *decoder, struct aws_byte_cur
 
     return AWS_OP_SUCCESS;
 }
-static int s_state_fn_f_headers(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_state_fn_frame_headers(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)decoder;
     (void)input;
 
@@ -511,7 +511,7 @@ static int s_state_fn_f_headers(struct aws_h2_decoder *decoder, struct aws_byte_
 
     return AWS_OP_ERR;
 }
-static int s_state_fn_f_priority(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_state_fn_frame_priority(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
     /* No data to process here, we're done! */
@@ -519,7 +519,7 @@ static int s_state_fn_f_priority(struct aws_h2_decoder *decoder, struct aws_byte
 
     return AWS_OP_SUCCESS;
 }
-static int s_state_fn_f_rst_stream(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_state_fn_frame_rst_stream(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)decoder;
     (void)input;
 
@@ -534,7 +534,7 @@ static int s_state_fn_f_rst_stream(struct aws_h2_decoder *decoder, struct aws_by
 
     return AWS_OP_SUCCESS;
 }
-static int s_state_fn_f_settings(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_state_fn_frame_settings(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)decoder;
     (void)input;
 
@@ -574,12 +574,12 @@ static int s_state_fn_f_settings(struct aws_h2_decoder *decoder, struct aws_byte
 
     return AWS_OP_SUCCESS;
 }
-static int s_state_fn_f_push_promise(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)decoder;
     (void)input;
     return AWS_OP_ERR;
 }
-static int s_state_fn_f_ping(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_state_fn_frame_ping(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     AWS_FATAL_ASSERT(input->len >= 8);
 
@@ -594,7 +594,7 @@ static int s_state_fn_f_ping(struct aws_h2_decoder *decoder, struct aws_byte_cur
 
     return AWS_OP_SUCCESS;
 }
-static int s_state_fn_f_goaway(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     const uint32_t payload_len = decoder->frame_in_progress.payload_len;
     AWS_FATAL_ASSERT(input->len >= payload_len);
@@ -618,7 +618,7 @@ static int s_state_fn_f_goaway(struct aws_h2_decoder *decoder, struct aws_byte_c
 
     return AWS_OP_SUCCESS;
 }
-static int s_state_fn_f_window_update(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_state_fn_frame_window_update(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)decoder;
     (void)input;
 
@@ -635,7 +635,7 @@ static int s_state_fn_f_window_update(struct aws_h2_decoder *decoder, struct aws
 
     return AWS_OP_SUCCESS;
 }
-static int s_state_fn_f_continuation(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_state_fn_frame_continuation(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)decoder;
     (void)input;
 
