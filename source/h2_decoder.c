@@ -34,6 +34,9 @@ static const size_t s_scratch_space_size = 512;
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 
+/* The size of each id: value pair in a settings frame */
+static const size_t s_setting_block_size = sizeof(uint16_t) + sizeof(uint32_t);
+
 #define DECODER_LOGF(level, decoder, text, ...)                                                                        \
     AWS_LOGF_##level(AWS_LS_HTTP_CONNECTION, "id=%p " text, (decoder)->logging_id, __VA_ARGS__)
 #define DECODER_LOG(level, decoder, text) DECODER_LOGF(level, decoder, "%s", text)
@@ -199,26 +202,21 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
         int err = AWS_OP_SUCCESS;
         if (!decoder->scratch.len && data->len >= bytes_required) {
             /* Easy case, there is no scratch and we have enough data, so just send it to the state */
-
-#if DEBUG_BUILD
             const char *current_state = decoder->state.name;
             const uint64_t pre_state_data_len = data->len;
-#endif
 
             err = decoder->state.fn(decoder, data);
 
-#if DEBUG_BUILD
             const uint64_t data_processed = pre_state_data_len - data->len;
             if (bytes_required > 0 && data_processed != bytes_required) {
                 DECODER_LOGF(
-                    WARN,
+                    DEBUG,
                     decoder,
                     "Decoder state %s requested %" PRIu64 " bytes of data, but only used %" PRIu64,
                     current_state,
                     bytes_required,
                     data_processed);
             }
-#endif
         } else {
             /* In every other case, we have to copy to scratch */
             uint64_t bytes_to_read = bytes_required - decoder->scratch.len;
@@ -237,25 +235,29 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
 
             /* If we have the correct number of bytes, call the state */
             if (will_finish_state) {
-#if DEBUG_BUILD
                 const char *current_state = decoder->state.name;
-#endif
 
                 struct aws_byte_cursor state_data = aws_byte_cursor_from_buf(&decoder->scratch);
                 err = decoder->state.fn(decoder, &state_data);
 
-#if DEBUG_BUILD
-                const uint64_t data_processed = decoder->scratch.len - data->len;
+                const size_t data_processed = decoder->scratch.len - state_data.len;
+                const size_t leftover_scratch = state_data.len;
+
+                if (leftover_scratch) {
+                    /* Move whatever unprocessed scratch we have back to the start of the buffer, and update the len */
+                    memmove(decoder->scratch.buffer, decoder->scratch.buffer + data_processed, leftover_scratch);
+                    decoder->scratch.len = leftover_scratch;
+                }
+
                 if (bytes_required > 0 && data_processed != bytes_required) {
                     DECODER_LOGF(
-                        WARN,
+                        DEBUG,
                         decoder,
                         "Decoder state %s requested %" PRIu64 " bytes of data, but only used %" PRIu64,
                         current_state,
                         bytes_required,
                         data_processed);
                 }
-#endif
             }
         }
 
@@ -548,10 +550,10 @@ static int s_state_fn_frame_settings(struct aws_h2_decoder *decoder, struct aws_
     }
 
     /* Otherwise, we need to process blocks of 6 octets at a time */
-    decoder->state.bytes_required = 6;
+    decoder->state.bytes_required = s_setting_block_size;
 
     /* Truck through the list until we run out of space */
-    while (input->len >= 6) {
+    while (input->len >= s_setting_block_size) {
         uint16_t id = 0;
         uint32_t value = 0;
 
@@ -566,7 +568,7 @@ static int s_state_fn_frame_settings(struct aws_h2_decoder *decoder, struct aws_
         DECODER_CALL_VTABLE_ARGS(decoder, on_setting, id, value);
 
         /* Update payload len */
-        decoder->frame_in_progress.payload_len -= 6;
+        decoder->frame_in_progress.payload_len -= s_setting_block_size;
     }
 
     if (decoder->frame_in_progress.payload_len == 0) {
