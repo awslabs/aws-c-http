@@ -429,7 +429,8 @@ static int s_state_fn_padding(struct aws_h2_decoder *decoder, struct aws_byte_cu
     if (input->len >= padding_len) {
         aws_byte_cursor_advance(input, padding_len);
     } else {
-        decoder->frame_in_progress.padding_len -= input->len;
+        AWS_FATAL_ASSERT(input->len <= UINT8_MAX);
+        decoder->frame_in_progress.padding_len -= (uint8_t)input->len;
         aws_byte_cursor_advance(input, input->len);
     }
 
@@ -476,9 +477,10 @@ static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte
     } else {
         body_to_pass = aws_byte_cursor_advance(input, decoder->frame_in_progress.payload_len);
     }
+    AWS_FATAL_ASSERT(body_to_pass.len <= UINT32_MAX);
 
     /* Update the payload len to just be what's left */
-    decoder->frame_in_progress.payload_len -= body_to_pass.len;
+    decoder->frame_in_progress.payload_len -= (uint32_t)body_to_pass.len;
 
     DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data, &body_to_pass);
 
