@@ -112,6 +112,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_STREAM_CLOSED,
         "Received frame on a closed stream"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE,
+        "Received frame with an illegal frame size"),
 };
 /* clang-format on */
 

@@ -27,9 +27,6 @@ struct aws_h2_decoder_vtable {
 
     int (*on_rst_stream)(uint32_t stream_id, uint32_t error_code, void *userdata);
 
-    int (*on_custom_frame_begin)(uint32_t stream_id, uint32_t payload_length, void *userdata);
-    int (*on_custom_frame_payload)(uint32_t stream_id, const struct aws_byte_cursor *data, void *userdata);
-
     int (*on_ping)(bool ack, uint8_t opaque_data[8], void *userdata);
     int (*on_setting)(uint16_t setting, uint32_t value, void *userdata);
     int (*on_settings_ack)(void *userdata);

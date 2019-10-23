@@ -33,7 +33,6 @@ static const size_t s_scratch_space_size = 512;
 
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
-static const uint32_t s_u32_top_bit_mask = UINT32_MAX << 31;
 
 /* The size of each id: value pair in a settings frame */
 static const uint8_t s_setting_block_size = sizeof(uint16_t) + sizeof(uint32_t);
@@ -101,7 +100,7 @@ DEFINE_STATE(frame_goaway_debug_data, 0);
 DEFINE_STATE(frame_window_update, 4);
 DEFINE_STATE(frame_continuation, 0);
 
-DEFINE_STATE(frame_custom, 0);
+DEFINE_STATE(frame_unknown, 0);
 
 /* Helper for states that need to transition to frame-type states */
 static const struct decoder_state *s_state_frames[] = {
@@ -209,32 +208,27 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
         const uint32_t bytes_required = decoder->state.bytes_required;
         if (!decoder->scratch.len && data->len >= bytes_required) {
             /* Easy case, there is no scratch and we have enough data, so just send it to the state */
-            const char *current_state = decoder->state.name;
+
+            /* Root state to run, not used for anything, but can be useful for debugging */
+            const char *current_state_name = decoder->state.name;
+            (void)current_state_name;
             const size_t pre_state_data_len = data->len;
+            (void)pre_state_data_len;
 
             err = decoder->state.fn(decoder, data);
             if (err) {
                 goto handle_error;
             }
 
-            const size_t data_processed = pre_state_data_len - data->len;
-            if (bytes_required > 0 && data_processed != bytes_required) {
-                DECODER_LOGF(
-                    DEBUG,
-                    decoder,
-                    "Decoder state %s requested %" PRIu32 " bytes of data, but only used %zu",
-                    current_state,
-                    bytes_required,
-                    data_processed);
-            }
+            AWS_ASSERT(
+                (bytes_required == 0 || pre_state_data_len - data->len >= bytes_required) &&
+                "Decoder state requested more data than it used");
         } else {
             /* In every other case, we have to copy to scratch */
             size_t bytes_to_read = bytes_required - decoder->scratch.len;
             bool will_finish_state = true;
-            if (AWS_UNLIKELY(bytes_required == 0 && decoder->scratch.len)) {
-                /* If this is a streaming state, and there's data in scratch, just send it all in now w/o reading */
-                bytes_to_read = 0;
-            } else if (bytes_to_read > data->len) {
+
+            if (bytes_to_read > data->len) {
                 /* Not enough in this cursor, need to read as much as possible and then come back */
                 bytes_to_read = data->len;
                 will_finish_state = false;
@@ -250,7 +244,9 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
 
             /* If we have the correct number of bytes, call the state */
             if (will_finish_state) {
-                const char *current_state = decoder->state.name;
+                /* Root state to run, not used for anything, but can be useful for debugging */
+                const char *current_state_name = decoder->state.name;
+                (void)current_state_name;
 
                 struct aws_byte_cursor state_data = aws_byte_cursor_from_buf(&decoder->scratch);
                 err = decoder->state.fn(decoder, &state_data);
@@ -258,24 +254,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                     goto handle_error;
                 }
 
-                const uint32_t data_processed = (uint32_t)(decoder->scratch.len - state_data.len);
-                const size_t leftover_scratch = state_data.len;
-
-                if (leftover_scratch) {
-                    /* Move whatever unprocessed scratch we have back to the start of the buffer, and update the len */
-                    memmove(decoder->scratch.buffer, decoder->scratch.buffer + data_processed, leftover_scratch);
-                    decoder->scratch.len = leftover_scratch;
-                }
-
-                if (bytes_required > 0 && data_processed != bytes_required) {
-                    DECODER_LOGF(
-                        DEBUG,
-                        decoder,
-                        "Decoder state %s requested %" PRIu32 " bytes of data, but only used %" PRIu32,
-                        current_state,
-                        bytes_required,
-                        data_processed);
-                }
+                AWS_ASSERT(state_data.len == 0 && "Decoder state requested more data than it used");
             }
         }
     }
@@ -335,7 +314,7 @@ static int s_state_fn_length(struct aws_h2_decoder *decoder, struct aws_byte_cur
             "Decoder's max frame size is %" PRIu32 ", but frame of size %" PRIu32 " was received.",
             MAX_FRAME_SIZE,
             payload_len);
-        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_FRAME_SIZE);
     }
 
     /* Commit */
@@ -357,8 +336,7 @@ static int s_state_fn_type(struct aws_h2_decoder *decoder, struct aws_byte_curso
     if (decoder->frame_in_progress.type <= 0x09) {
         s_decoder_set_state(decoder, &s_state_flags);
     } else {
-        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_custom_frame_begin, decoder->frame_in_progress.payload_len);
-        s_decoder_set_state(decoder, &s_state_frame_custom);
+        s_decoder_set_state(decoder, &s_state_frame_unknown);
     }
 
     return AWS_OP_SUCCESS;
@@ -403,10 +381,12 @@ static int s_state_fn_stream_id(struct aws_h2_decoder *decoder, struct aws_byte_
 
     if (decoder->frame_in_progress.flags & AWS_H2_FRAME_F_PADDED) {
 
+        /* #TODO: Validate that this frame type may have a padding block */
         /* Read padding length if necessary */
         s_decoder_set_state(decoder, &s_state_padding_len);
     } else if (decoder->frame_in_progress.flags & AWS_H2_FRAME_T_PRIORITY) {
 
+        /* #TODO: Validate that this frame type may have a priority block */
         /* Read the stream dependency and weight if PRIORITY is set */
         s_decoder_set_state(decoder, &s_state_priority_block);
     } else {
@@ -451,6 +431,7 @@ static int s_state_fn_padding_len(struct aws_h2_decoder *decoder, struct aws_byt
         decoder->frame_in_progress.padding_len);
 
     if (decoder->frame_in_progress.flags & AWS_H2_FRAME_T_PRIORITY) {
+        /* #TODO: Validate that this frame type may have a priority block */
         /* Read the stream dependency and weight if PRIORITY is set */
         s_decoder_set_state(decoder, &s_state_priority_block);
     } else {
@@ -498,7 +479,9 @@ static int s_state_fn_priority_block(struct aws_h2_decoder *decoder, struct aws_
     AWS_ASSERT(succ);
     (void)succ;
 
-    /* #NOTE: throw priority data on the GROUND. They make us hecka vulnerable to DDoS and stuff. */
+    /* #NOTE: throw priority data on the GROUND. They make us hecka vulnerable to DDoS and stuff.
+     * https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-9513
+     */
 
     const enum aws_h2_frame_type frame_type = decoder->frame_in_progress.type;
     s_decoder_set_state(decoder, s_state_frames[frame_type]);
@@ -646,6 +629,7 @@ static int s_state_fn_frame_settings(struct aws_h2_decoder *decoder, struct aws_
 static int s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)decoder;
     (void)input;
+    /* #TODO: make go */
     return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
 }
 static int s_state_fn_frame_ping(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
@@ -674,11 +658,7 @@ static int s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, struct aws_by
     AWS_ASSERT(succ);
     (void)succ;
 
-    if (last_stream & s_u32_top_bit_mask) {
-        /* Top bit of stream ids is reserved */
-        DECODER_LOG(ERROR, decoder, "Received GOAWAY frame with last_stream_id with top bit set");
-        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-    }
+    last_stream &= s_31_bit_mask;
 
     succ = aws_byte_cursor_read_be32(input, &error_code);
     AWS_ASSERT(succ);
@@ -729,11 +709,7 @@ static int s_state_fn_frame_window_update(struct aws_h2_decoder *decoder, struct
     AWS_ASSERT(succ);
     (void)succ;
 
-    if (window_increment & s_u32_top_bit_mask) {
-        /* Top bit of stream ids is reserved */
-        DECODER_LOG(ERROR, decoder, "Received WINDOW_UPDATE frame with window size increment with top bit set");
-        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-    }
+    window_increment &= s_31_bit_mask;
 
     /* #TODO I still have NO CLUE with this thing is for */
 
@@ -756,24 +732,14 @@ static int s_state_fn_frame_continuation(struct aws_h2_decoder *decoder, struct 
     return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
 }
 
-static int s_state_fn_frame_custom(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_state_fn_frame_unknown(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     const uint32_t remaining_length = decoder->frame_in_progress.payload_len;
 
-    struct aws_byte_cursor data_to_pass;
-    bool will_finish_state;
     if (input->len < remaining_length) {
-        data_to_pass = aws_byte_cursor_advance(input, input->len);
-        will_finish_state = false;
+        aws_byte_cursor_advance(input, input->len);
     } else {
-        data_to_pass = aws_byte_cursor_advance(input, remaining_length);
-        will_finish_state = true;
-    }
-    AWS_FATAL_ASSERT(data_to_pass.len <= UINT32_MAX);
-
-    DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_custom_frame_payload, &data_to_pass);
-
-    if (will_finish_state) {
+        aws_byte_cursor_advance(input, remaining_length);
         s_decoder_reset_state(decoder);
     }
 
