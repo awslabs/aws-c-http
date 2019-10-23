@@ -143,6 +143,9 @@ struct aws_h2_decoder {
     /* User callbacks and settings. */
     struct aws_h2_decoder_vtable vtable;
     void *userdata;
+
+    /* If this is set to true, decode may no longer be called */
+    bool has_errored;
 };
 
 /***********************************************************************************************************************
@@ -198,18 +201,24 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
     AWS_PRECONDITION(decoder);
     AWS_PRECONDITION(data);
 
+    AWS_FATAL_ASSERT(!decoder->has_errored);
+
+    int err = AWS_OP_SUCCESS;
+
     while (data->len) {
         const uint32_t bytes_required = decoder->state.bytes_required;
-        int err = AWS_OP_SUCCESS;
         if (!decoder->scratch.len && data->len >= bytes_required) {
             /* Easy case, there is no scratch and we have enough data, so just send it to the state */
             const char *current_state = decoder->state.name;
             const size_t pre_state_data_len = data->len;
 
             err = decoder->state.fn(decoder, data);
+            if (err) {
+                goto handle_error;
+            }
 
             const size_t data_processed = pre_state_data_len - data->len;
-            if (err == AWS_OP_SUCCESS && bytes_required > 0 && data_processed != bytes_required) {
+            if (bytes_required > 0 && data_processed != bytes_required) {
                 DECODER_LOGF(
                     DEBUG,
                     decoder,
@@ -219,7 +228,6 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                     data_processed);
             }
         } else {
-
             /* In every other case, we have to copy to scratch */
             size_t bytes_to_read = bytes_required - decoder->scratch.len;
             bool will_finish_state = true;
@@ -246,6 +254,9 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
 
                 struct aws_byte_cursor state_data = aws_byte_cursor_from_buf(&decoder->scratch);
                 err = decoder->state.fn(decoder, &state_data);
+                if (err) {
+                    goto handle_error;
+                }
 
                 const uint32_t data_processed = (uint32_t)(decoder->scratch.len - state_data.len);
                 const size_t leftover_scratch = state_data.len;
@@ -256,7 +267,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                     decoder->scratch.len = leftover_scratch;
                 }
 
-                if (err == AWS_OP_SUCCESS && bytes_required > 0 && data_processed != bytes_required) {
+                if (bytes_required > 0 && data_processed != bytes_required) {
                     DECODER_LOGF(
                         DEBUG,
                         decoder,
@@ -267,14 +278,13 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                 }
             }
         }
-
-        if (err) {
-            s_decoder_reset_state(decoder);
-            return err;
-        }
     }
 
     return AWS_OP_SUCCESS;
+
+handle_error:
+    decoder->has_errored = true;
+    return err;
 }
 
 void aws_h2_decoder_set_logging_id(struct aws_h2_decoder *decoder, void *id) {
