@@ -66,7 +66,7 @@ static const uint8_t s_setting_block_size = sizeof(uint16_t) + sizeof(uint32_t);
 typedef int(state_fn)(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input);
 struct decoder_state {
     state_fn *fn;
-    uint64_t bytes_required;
+    uint32_t bytes_required;
     const char *name;
 };
 #define DEFINE_STATE(_name, _bytes_required)                                                                           \
@@ -199,21 +199,21 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
     AWS_PRECONDITION(data);
 
     while (data->len) {
-        const uint64_t bytes_required = decoder->state.bytes_required;
+        const uint32_t bytes_required = decoder->state.bytes_required;
         int err = AWS_OP_SUCCESS;
         if (!decoder->scratch.len && data->len >= bytes_required) {
             /* Easy case, there is no scratch and we have enough data, so just send it to the state */
             const char *current_state = decoder->state.name;
-            const uint64_t pre_state_data_len = data->len;
+            const size_t pre_state_data_len = data->len;
 
             err = decoder->state.fn(decoder, data);
 
-            const uint64_t data_processed = pre_state_data_len - data->len;
+            const size_t data_processed = pre_state_data_len - data->len;
             if (err == AWS_OP_SUCCESS && bytes_required > 0 && data_processed != bytes_required) {
                 DECODER_LOGF(
                     DEBUG,
                     decoder,
-                    "Decoder state %s requested %" PRIu64 " bytes of data, but only used %" PRIu64,
+                    "Decoder state %s requested %" PRIu32 " bytes of data, but only used %zu",
                     current_state,
                     bytes_required,
                     data_processed);
@@ -221,7 +221,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
         } else {
 
             /* In every other case, we have to copy to scratch */
-            uint64_t bytes_to_read = bytes_required - decoder->scratch.len;
+            size_t bytes_to_read = bytes_required - decoder->scratch.len;
             bool will_finish_state = true;
             if (AWS_UNLIKELY(bytes_required == 0 && decoder->scratch.len)) {
                 /* If this is a streaming state, and there's data in scratch, just send it all in now w/o reading */
@@ -247,7 +247,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                 struct aws_byte_cursor state_data = aws_byte_cursor_from_buf(&decoder->scratch);
                 err = decoder->state.fn(decoder, &state_data);
 
-                const size_t data_processed = decoder->scratch.len - state_data.len;
+                const uint32_t data_processed = (uint32_t)(decoder->scratch.len - state_data.len);
                 const size_t leftover_scratch = state_data.len;
 
                 if (leftover_scratch) {
@@ -260,7 +260,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                     DECODER_LOGF(
                         DEBUG,
                         decoder,
-                        "Decoder state %s requested %" PRIu64 " bytes of data, but only used %" PRIu64,
+                        "Decoder state %s requested %" PRIu32 " bytes of data, but only used %" PRIu32,
                         current_state,
                         bytes_required,
                         data_processed);
