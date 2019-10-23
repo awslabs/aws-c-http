@@ -99,6 +99,8 @@ DEFINE_STATE(frame_goaway_debug_data, 0);
 DEFINE_STATE(frame_window_update, 4);
 DEFINE_STATE(frame_continuation, 0);
 
+DEFINE_STATE(frame_custom, 0);
+
 /* Helper for states that need to transition to frame-type states */
 static const struct decoder_state *s_state_frames[] = {
     [AWS_H2_FRAME_T_DATA] = &s_state_frame_data,
@@ -312,6 +314,18 @@ static int s_state_fn_length(struct aws_h2_decoder *decoder, struct aws_byte_cur
     /* Assert top byte isn't set */
     AWS_FATAL_ASSERT((payload_len & 0xFF000000) == 0);
 
+    /* #TODO handle the SETTINGS_MAX_FRAME_SIZE setting */
+    static const uint32_t MAX_FRAME_SIZE = 16384;
+    if (payload_len > MAX_FRAME_SIZE) {
+        DECODER_LOGF(
+            ERROR,
+            decoder,
+            "Decoder's max frame size is %" PRIu32 ", but frame of size %" PRIu32 " was received.",
+            MAX_FRAME_SIZE,
+            payload_len);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+
     /* Commit */
     decoder->frame_in_progress.payload_len = payload_len;
 
@@ -328,11 +342,12 @@ static int s_state_fn_type(struct aws_h2_decoder *decoder, struct aws_byte_curso
     AWS_ASSERT(succ);
     (void)succ;
 
-    if (AWS_UNLIKELY(decoder->frame_in_progress.type > 0x09)) {
-        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    if (decoder->frame_in_progress.type <= 0x09) {
+        s_decoder_set_state(decoder, &s_state_flags);
+    } else {
+        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_custom_frame_begin, decoder->frame_in_progress.payload_len);
+        s_decoder_set_state(decoder, &s_state_frame_custom);
     }
-
-    s_decoder_set_state(decoder, &s_state_flags);
 
     return AWS_OP_SUCCESS;
 }
@@ -694,4 +709,30 @@ static int s_state_fn_frame_continuation(struct aws_h2_decoder *decoder, struct 
     }
 
     return AWS_OP_ERR;
+}
+
+static int s_state_fn_frame_custom(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+    (void)decoder;
+    (void)input;
+
+    const uint32_t remaining_length = decoder->frame_in_progress.payload_len;
+
+    struct aws_byte_cursor data_to_pass;
+    bool will_finish_state;
+    if (input->len < remaining_length) {
+        data_to_pass = aws_byte_cursor_advance(input, input->len);
+        will_finish_state = false;
+    } else {
+        data_to_pass = aws_byte_cursor_advance(input, remaining_length);
+        will_finish_state = true;
+    }
+    AWS_FATAL_ASSERT(data_to_pass.len <= UINT32_MAX);
+
+    DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_custom_frame_payload, &data_to_pass);
+
+    if (will_finish_state) {
+        s_decoder_reset_state(decoder);
+    }
+
+    return AWS_OP_SUCCESS;
 }
