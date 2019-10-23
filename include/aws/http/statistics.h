@@ -25,20 +25,33 @@ enum aws_crt_http_statistics_category {
     AWSCRT_STAT_CAT_HTTP2
 };
 
+/**
+ * A statistics struct for http handlers.  Tracks the actual amount of time that incoming and outgoing requests are
+ * waiting for their io to complete.
+ */
 struct aws_crt_statistics_http1 {
     aws_crt_statistics_category_t category;
-    uint64_t pending_read_ms;
-    uint64_t pending_write_ms;
+    uint64_t pending_incoming_stream_ns;
+    uint64_t pending_outgoing_stream_ns;
 };
 
 AWS_EXTERN_C_BEGIN
 
+/**
+ * Initializes a http handler statistics struct
+ */
 AWS_HTTP_API
 int aws_crt_statistics_http1_init(struct aws_crt_statistics_http1 *stats);
 
+/**
+ * Cleans up a http handler statistics struct
+ */
 AWS_HTTP_API
 void aws_crt_statistics_http1_cleanup(struct aws_crt_statistics_http1 *stats);
 
+/**
+ * Resets a http handler statistics struct's statistics
+ */
 AWS_HTTP_API
 void aws_crt_statistics_http1_reset(struct aws_crt_statistics_http1 *stats);
 

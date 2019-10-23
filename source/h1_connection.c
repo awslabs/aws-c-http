@@ -22,6 +22,7 @@
 #include <aws/http/private/h1_encoder.h>
 #include <aws/http/private/h1_stream.h>
 #include <aws/http/private/request_response_impl.h>
+#include <aws/http/statistics.h>
 #include <aws/io/logging.h>
 
 #if _MSC_VER
@@ -76,6 +77,8 @@ static int s_decoder_on_response(int status_code, void *user_data);
 static int s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data);
 static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data);
 static int s_decoder_on_done(void *user_data);
+static void s_reset_statistics(struct aws_channel_handler *handler);
+static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_array_list *stats);
 
 static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .channel_handler_vtable =
@@ -87,6 +90,8 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
             .initial_window_size = s_handler_initial_window_size,
             .message_overhead = s_handler_message_overhead,
             .destroy = s_handler_destroy,
+            .reset_statistics = s_reset_statistics,
+            .gather_statistics = s_gather_statistics,
         },
 
     .make_request = s_make_request,
@@ -153,6 +158,12 @@ struct h1_connection {
 
         /* Server-only. Request-handler streams can only be created while this is true. */
         bool can_create_request_handler_stream;
+
+        struct aws_crt_statistics_http1 stats;
+
+        uint64_t outgoing_stream_timestamp_ns;
+        uint64_t incoming_stream_timestamp_ns;
+
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
@@ -601,6 +612,45 @@ finish_up:
     }
 }
 
+static void s_add_time_measurement_to_stats(uint64_t start_ns, uint64_t end_ns, uint64_t *output_ns) {
+    if (end_ns > start_ns) {
+        *output_ns += end_ns - start_ns;
+    }
+}
+
+static void s_set_outgoing_stream_ptr(struct h1_connection *connection, struct aws_h1_stream *next_outgoing_stream) {
+
+    struct aws_h1_stream *prev = connection->thread_data.outgoing_stream;
+
+    uint64_t now_ns = 0;
+    aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns);
+    if (prev == NULL && next_outgoing_stream != NULL) {
+        /* transition from nothing to write -> something to write */
+        connection->thread_data.outgoing_stream_timestamp_ns = now_ns;
+    } else if (prev != NULL && next_outgoing_stream == NULL) {
+        /* transition from something to write -> nothing to write */
+        s_add_time_measurement_to_stats(connection->thread_data.outgoing_stream_timestamp_ns, now_ns, &connection->thread_data.stats.pending_outgoing_stream_ns);
+    }
+
+    connection->thread_data.outgoing_stream = next_outgoing_stream;
+}
+
+static void s_set_incoming_stream_ptr(struct h1_connection *connection, struct aws_h1_stream *next_incoming_stream) {
+    struct aws_h1_stream *prev = connection->thread_data.incoming_stream;
+
+    uint64_t now_ns = 0;
+    aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns);
+    if (prev == NULL && next_incoming_stream != NULL) {
+        /* transition from nothing to read -> something to read */
+        connection->thread_data.incoming_stream_timestamp_ns = now_ns;
+    } else if (prev != NULL && next_incoming_stream == NULL) {
+        /* transition from something to read -> nothing to read */
+        s_add_time_measurement_to_stats(connection->thread_data.incoming_stream_timestamp_ns, now_ns, &connection->thread_data.stats.pending_incoming_stream_ns);
+    }
+
+    connection->thread_data.incoming_stream = next_incoming_stream;
+}
+
 /**
  * Ensure `incoming_stream` is pointing at the correct stream, and update state if it changes.
  */
@@ -623,7 +673,7 @@ static void s_client_update_incoming_stream_ptr(struct h1_connection *connection
         (void *)&connection->base,
         desired ? (void *)&desired->base : NULL);
 
-    connection->thread_data.incoming_stream = desired;
+    s_set_incoming_stream_ptr(connection, desired);
 }
 
 /**
@@ -732,7 +782,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
             (void *)&connection->base,
             current ? (void *)&current->base : NULL);
 
-        connection->thread_data.outgoing_stream = current;
+        s_set_outgoing_stream_ptr(connection, current);
 
         if (current) {
             err = aws_h1_encoder_start_message(
@@ -1096,7 +1146,7 @@ static int s_decoder_on_done(void *user_data) {
             AWS_ASSERT(&incoming_stream->node == aws_linked_list_begin(&connection->thread_data.stream_list));
             s_stream_complete(incoming_stream, AWS_ERROR_SUCCESS);
         }
-        connection->thread_data.incoming_stream = NULL;
+        s_set_incoming_stream_ptr(connection, NULL);
 
     } else if (incoming_stream->is_outgoing_message_done) {
         /* Client side */
@@ -1466,7 +1516,7 @@ static int s_handler_process_read_message(
                     /* Server side.
                      * Invoke on-incoming-request callback. The user MUST create a new stream from this callback.
                      * The new stream becomes the current incoming stream */
-                    connection->thread_data.incoming_stream = s_server_invoke_on_incoming_request(connection);
+                    s_set_incoming_stream_ptr(connection, s_server_invoke_on_incoming_request(connection));
                     if (!connection->thread_data.incoming_stream) {
                         AWS_LOGF_ERROR(
                             AWS_LS_HTTP_CONNECTION,
@@ -1686,3 +1736,37 @@ static size_t s_handler_message_overhead(struct aws_channel_handler *handler) {
     (void)handler;
     return 0;
 }
+
+static void s_reset_statistics(struct aws_channel_handler *handler) {
+    struct h1_connection *connection = handler->impl;
+
+    aws_crt_statistics_http1_reset(&connection->thread_data.stats);
+}
+
+static void s_pull_up_stats_timestamps(struct h1_connection *connection) {
+    uint64_t now_ns = 0;
+    if (aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns)) {
+        return;
+    }
+
+    if (connection->thread_data.outgoing_stream) {
+        s_add_time_measurement_to_stats(connection->thread_data.outgoing_stream_timestamp_ns, now_ns, &connection->thread_data.stats.pending_outgoing_stream_ns);
+        connection->thread_data.outgoing_stream_timestamp_ns = now_ns;
+    }
+
+    if (connection->thread_data.incoming_stream) {
+        s_add_time_measurement_to_stats(connection->thread_data.incoming_stream_timestamp_ns, now_ns, &connection->thread_data.stats.pending_incoming_stream_ns);
+        connection->thread_data.incoming_stream_timestamp_ns = now_ns;
+    }
+}
+
+static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_array_list *stats) {
+    struct h1_connection *connection = handler->impl;
+
+    s_pull_up_stats_timestamps(connection);
+
+    void *stats_base = &connection->thread_data.stats;
+    aws_array_list_push_back(stats, &stats_base);
+}
+
+

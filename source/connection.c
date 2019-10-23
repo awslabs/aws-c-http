@@ -14,6 +14,7 @@
  */
 
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/private/connection_monitor.h>
 #include <aws/http/private/proxy_impl.h>
 
 #include <aws/common/hash_table.h>
@@ -182,6 +183,16 @@ static struct aws_http_connection *s_connection_new(
     }
 
     connection->channel_slot = connection_slot;
+
+    if (??use_default_monitor) {
+        struct aws_crt_statistics_handler *http_connection_monitor = aws_crt_statistics_handler_new_http_connection_monitor(
+                alloc, ??options);
+        if (http_connection_monitor == NULL) {
+            goto error;
+        }
+
+        aws_channel_set_statistics_handler(channel, http_connection_monitor);
+    }
 
     /* Success! Acquire a hold on the channel to prevent its destruction until the user has
      * given the go-ahead via aws_http_connection_release() */

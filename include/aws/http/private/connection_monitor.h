@@ -1,5 +1,5 @@
-#ifndef AWS_HTTP_H1_MONITOR_H
-#define AWS_HTTP_H1_MONITOR_H
+#ifndef AWS_HTTP_HTTP_MONITOR_H
+#define AWS_HTTP_HTTP_MONITOR_H
 
 /*
  * Copyright 2010-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -20,18 +20,17 @@
 
 struct aws_allocator;
 struct aws_crt_statistics_handler;
-
-struct aws_crt_http_connection_monitor_options {
-    uint32_t tls_timeout_ms;
-    uint64_t minimum_throughput_bytes_per_second;
-    uint32_t minimum_throughput_failure_threshold_in_seconds;
-};
+struct aws_http_connection_monitor_options;
 
 AWS_EXTERN_C_BEGIN
 
+/**
+ * Creates a new http connection monitor that regularly checks the connection's throughput and shuts the connection
+ * down if the a minimum threshold is not met for a configurable number of seconds.
+ */
 AWS_HTTP_API
-struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connection_monitor(struct aws_allocator *allocator, struct aws_crt_http_connection_monitor_options *options);
+struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connection_monitor(struct aws_allocator *allocator, struct aws_http_connection_monitor_options *options);
 
 AWS_EXTERN_C_END
 
-#endif /* AWS_HTTP_H1_MONITOR_H */
+#endif /* AWS_HTTP_HTTP_MONITOR_H */

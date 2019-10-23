@@ -57,6 +57,23 @@ typedef void(
     aws_http_on_client_connection_shutdown_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
 /**
+ * Configuration options for connection monitoring
+ */
+struct aws_http_connection_monitor_options {
+
+    /**
+     * minimum required throughput of the connection.  Throughput is only measured against the interval of time where there is actual io to perform
+     */
+    uint64_t minimum_throughput_bytes_per_second;
+
+    /*
+     * number of throughput failures that may occur before the monitor shuts down the connection.  If zero, no checks will be performed.  A value of two or greater is STRONGLY recommended.  A value of one will result in timing-dependent, unreliable behavior.
+     */
+    uint32_t minimum_throughput_failure_threshold_in_seconds;
+};
+
+
+/**
  * Supported proxy authentication modes
  */
 enum aws_http_proxy_authentication_type {
@@ -157,6 +174,12 @@ struct aws_http_client_connection_options {
      * Relevant fields are copied internally.
      */
     const struct aws_http_proxy_options *proxy_options;
+
+    /**
+     * Optional
+     * Configuration options related to connection health monitoring
+     */
+     const struct aws_http_connection_monitor_options *monitor_options;
 
     /**
      * Optional.
