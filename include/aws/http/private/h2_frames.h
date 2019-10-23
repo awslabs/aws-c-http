@@ -252,6 +252,9 @@ struct aws_h2_frame_decoder {
 
 AWS_EXTERN_C_BEGIN
 
+AWS_HTTP_API
+const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type);
+
 /* Internal methods exposed for testing purposes only */
 AWS_HTTP_API
 int aws_h2_frame_header_block_init(struct aws_h2_frame_header_block *header_block, struct aws_allocator *allocator);

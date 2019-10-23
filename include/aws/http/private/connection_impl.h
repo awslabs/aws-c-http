@@ -106,16 +106,6 @@ struct aws_http_client_bootstrap {
 AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API
-struct aws_http_connection *aws_http_connection_new_http1_1_server(
-    struct aws_allocator *allocator,
-    size_t initial_window_size);
-
-AWS_HTTP_API
-struct aws_http_connection *aws_http_connection_new_http1_1_client(
-    struct aws_allocator *allocator,
-    size_t initial_window_size);
-
-AWS_HTTP_API
 void aws_http_connection_set_system_vtable(const struct aws_http_connection_system_vtable *system_vtable);
 
 AWS_HTTP_API

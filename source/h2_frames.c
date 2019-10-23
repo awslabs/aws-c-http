@@ -34,6 +34,34 @@ static const size_t s_hpack_dynamic_table_initial_size = 4096;
 /* TBD */
 static const size_t s_hpack_dynamic_table_max_size = 4096;
 
+const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type) {
+    switch (type) {
+        case AWS_H2_FRAME_T_DATA:
+            return "DATA";
+        case AWS_H2_FRAME_T_HEADERS:
+            return "HEADERS";
+        case AWS_H2_FRAME_T_PRIORITY:
+            return "PRIORITY";
+        case AWS_H2_FRAME_T_RST_STREAM:
+            return "RST_STREAM";
+        case AWS_H2_FRAME_T_SETTINGS:
+            return "SETTINGS";
+        case AWS_H2_FRAME_T_PUSH_PROMISE:
+            return "PUSH_PROMISE";
+        case AWS_H2_FRAME_T_PING:
+            return "PING";
+        case AWS_H2_FRAME_T_GOAWAY:
+            return "GOAWAY";
+        case AWS_H2_FRAME_T_WINDOW_UPDATE:
+            return "WINDOW_UPDATE";
+        case AWS_H2_FRAME_T_CONTINUATION:
+            return "CONTINUATION";
+    }
+
+    /* unreachable */
+    AWS_ASSUME(false);
+}
+
 /***********************************************************************************************************************
  * Priority
  **********************************************************************************************************************/
@@ -767,7 +795,7 @@ read_error:
 
 protocol_error:
     *decoder = decoder_init;
-    return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+    return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
 
 compression_error:
     *decoder = decoder_init;
@@ -858,7 +886,7 @@ read_error:
 
 protocol_error:
     *decoder = decoder_init;
-    return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+    return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
 }
 
 /***********************************************************************************************************************
@@ -947,7 +975,7 @@ read_error:
 
 protocol_error:
     *decoder = decoder_init;
-    return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+    return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
 }
 
 /***********************************************************************************************************************
@@ -1002,7 +1030,7 @@ int aws_h2_frame_settings_encode(
     uint8_t flags = 0;
     if (frame->ack) {
         if (num_settings != 0) {
-            aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+            aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
             goto write_error;
         }
         flags |= AWS_H2_FRAME_F_ACK;
@@ -1046,7 +1074,7 @@ int aws_h2_frame_settings_decode(struct aws_h2_frame_settings *frame, struct aws
     const struct aws_h2_frame_decoder decoder_init = *decoder;
 
     if (decoder->header.stream_id != 0x0) {
-        return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     /* Initialize the frame */
@@ -1112,7 +1140,7 @@ int aws_h2_frame_push_promise_encode(
     AWS_PRECONDITION(output);
 
     if (frame->promised_stream_id & s_u32_top_bit_mask) {
-        return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     const size_t output_init_len = output->len;
@@ -1221,7 +1249,7 @@ read_error:
 
 protocol_error:
     *decoder = decoder_init;
-    return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+    return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
 
 compression_error:
     *decoder = decoder_init;
@@ -1258,7 +1286,7 @@ int aws_h2_frame_ping_encode(
     (void)encoder;
 
     if (frame->header.stream_id != 0) {
-        return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
     if (frame->opaque_data.len != s_frame_ping_length) {
         return aws_raise_error(AWS_H2_ERR_FRAME_SIZE_ERROR);
@@ -1325,7 +1353,7 @@ read_error:
 
 protocol_error:
     *decoder = decoder_init;
-    return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+    return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
 }
 
 /***********************************************************************************************************************
@@ -1356,7 +1384,7 @@ int aws_h2_frame_goaway_encode(
     (void)encoder;
 
     if (frame->header.stream_id != 0) {
-        return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     const size_t output_init_len = output->len;
@@ -1439,7 +1467,7 @@ read_error:
 
 protocol_error:
     *decoder = decoder_init;
-    return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+    return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
 }
 
 /***********************************************************************************************************************
@@ -1474,7 +1502,7 @@ int aws_h2_frame_window_update_encode(
     const size_t output_init_len = output->len;
 
     if (frame->window_size_increment & s_u32_top_bit_mask) {
-        return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     /* Write the header data */
@@ -1531,7 +1559,7 @@ read_error:
 
 protocol_error:
     *decoder = decoder_init;
-    return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+    return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
 }
 
 /***********************************************************************************************************************

@@ -56,7 +56,7 @@ static int s_state_opcode_byte(struct aws_websocket_decoder *decoder, struct aws
         case AWS_WEBSOCKET_OPCODE_PONG:
             break;
         default:
-            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     /* RFC-6455 Section 5.2 Fragmentation
@@ -71,7 +71,7 @@ static int s_state_opcode_byte(struct aws_websocket_decoder *decoder, struct aws
         bool is_continuation_frame = AWS_WEBSOCKET_OPCODE_CONTINUATION == decoder->current_frame.opcode;
 
         if (decoder->expecting_continuation_data_frame != is_continuation_frame) {
-            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
         }
 
         decoder->expecting_continuation_data_frame = !decoder->current_frame.fin;
@@ -79,7 +79,7 @@ static int s_state_opcode_byte(struct aws_websocket_decoder *decoder, struct aws
     } else {
         /* Control frames themselves MUST NOT be fragmented. */
         if (!decoder->current_frame.fin) {
-            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
         }
     }
 
@@ -161,20 +161,20 @@ static int s_state_extended_length(struct aws_websocket_decoder *decoder, struct
     if (total_bytes_extended_length == 2) {
         uint16_t val;
         if (!aws_byte_cursor_read_be16(&cache_cursor, &val)) {
-            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
         }
 
         decoder->current_frame.payload_length = val;
     } else {
         if (!aws_byte_cursor_read_be64(&cache_cursor, &decoder->current_frame.payload_length)) {
-            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
         }
     }
 
     if (decoder->current_frame.payload_length < min_acceptable_value ||
         decoder->current_frame.payload_length > max_acceptable_value) {
 
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     decoder->state = AWS_WEBSOCKET_DECODER_STATE_MASKING_KEY_CHECK;
