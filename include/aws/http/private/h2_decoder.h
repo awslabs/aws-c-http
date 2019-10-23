@@ -30,7 +30,8 @@ struct aws_h2_decoder_vtable {
     int (*on_ping)(bool ack, uint64_t opaque_data, void *userdata);
     int (*on_setting)(uint16_t setting, uint32_t value, void *userdata);
     int (*on_settings_ack)(void *userdata);
-    int (*on_go_away)(uint32_t last_stream, uint32_t error_code, const struct aws_byte_cursor *data, void *userdata);
+    int (*on_goaway)(uint32_t last_stream, uint32_t error_code, uint32_t debug_data_length, void *userdata);
+    int (*on_goaway_debug_data)(const struct aws_byte_cursor *data, void *userdata);
 };
 
 /**

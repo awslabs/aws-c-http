@@ -76,8 +76,6 @@ struct decoder_state {
         .name = #_name,                                                                                                \
     }
 
-#define WAIT_FOR_FULL_PAYLOAD ((uint64_t)-1)
-
 /* Common states */
 DEFINE_STATE(length, 3);
 DEFINE_STATE(type, 1);
@@ -96,7 +94,8 @@ DEFINE_STATE(frame_rst_stream, 4);
 DEFINE_STATE(frame_settings, 0);
 DEFINE_STATE(frame_push_promise, 0);
 DEFINE_STATE(frame_ping, 8);
-DEFINE_STATE(frame_goaway, WAIT_FOR_FULL_PAYLOAD);
+DEFINE_STATE(frame_goaway, 8);
+DEFINE_STATE(frame_goaway_debug_data, 0);
 DEFINE_STATE(frame_window_update, 4);
 DEFINE_STATE(frame_continuation, 0);
 
@@ -196,9 +195,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
     AWS_PRECONDITION(data);
 
     while (data->len) {
-        const uint64_t bytes_required = decoder->state.bytes_required == WAIT_FOR_FULL_PAYLOAD
-                                            ? decoder->frame_in_progress.payload_len
-                                            : decoder->state.bytes_required;
+        const uint64_t bytes_required = decoder->state.bytes_required;
         int err = AWS_OP_SUCCESS;
         if (!decoder->scratch.len && data->len >= bytes_required) {
             /* Easy case, there is no scratch and we have enough data, so just send it to the state */
@@ -600,8 +597,7 @@ static int s_state_fn_frame_ping(struct aws_h2_decoder *decoder, struct aws_byte
 }
 static int s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    const uint32_t payload_len = decoder->frame_in_progress.payload_len;
-    AWS_FATAL_ASSERT(input->len >= payload_len);
+    AWS_FATAL_ASSERT(input->len >= 8);
 
     uint32_t last_stream = 0;
     uint32_t error_code = AWS_H2_ERR_NO_ERROR;
@@ -614,11 +610,39 @@ static int s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, struct aws_by
     AWS_ASSERT(succ);
     (void)succ;
 
-    struct aws_byte_cursor debug_data = aws_byte_cursor_advance(input, payload_len - 8);
+    decoder->frame_in_progress.payload_len -= 8;
 
-    DECODER_CALL_VTABLE_ARGS(decoder, on_go_away, last_stream, error_code, &debug_data);
+    DECODER_CALL_VTABLE_ARGS(decoder, on_goaway, last_stream, decoder->frame_in_progress.payload_len, error_code);
 
+    if (decoder->frame_in_progress.payload_len) {
+        s_decoder_set_state(decoder, &s_state_frame_goaway_debug_data);
+    } else {
+        s_decoder_reset_state(decoder);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+static int s_state_fn_frame_goaway_debug_data(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+
+    const uint32_t remaining_length = decoder->frame_in_progress.payload_len;
+
+    struct aws_byte_cursor data_to_pass;
+    bool will_finish_state;
+    if (input->len < remaining_length) {
+        data_to_pass = aws_byte_cursor_advance(input, input->len);
+        will_finish_state = false;
+    } else {
+        data_to_pass = aws_byte_cursor_advance(input, remaining_length);
+        will_finish_state = true;
+    }
+    AWS_FATAL_ASSERT(data_to_pass.len <= UINT32_MAX);
+
+    DECODER_CALL_VTABLE_ARGS(decoder, on_goaway_debug_data, &data_to_pass);
+
+    /* This is the last data in the frame, so reset decoder */
+    if (will_finish_state) {
     s_decoder_reset_state(decoder);
+    }
 
     return AWS_OP_SUCCESS;
 }
