@@ -33,6 +33,7 @@ static const size_t s_scratch_space_size = 512;
 
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
+static const uint32_t s_u32_top_bit_mask = UINT32_MAX << 31;
 
 /* The size of each id: value pair in a settings frame */
 static const uint8_t s_setting_block_size = sizeof(uint16_t) + sizeof(uint32_t);
@@ -91,7 +92,8 @@ DEFINE_STATE(frame_data, 0);
 DEFINE_STATE(frame_headers, 0);
 DEFINE_STATE(frame_priority, 5);
 DEFINE_STATE(frame_rst_stream, 4);
-DEFINE_STATE(frame_settings, 0);
+DEFINE_STATE(frame_settings_begin, 0);
+DEFINE_STATE(frame_settings, 6);
 DEFINE_STATE(frame_push_promise, 0);
 DEFINE_STATE(frame_ping, 8);
 DEFINE_STATE(frame_goaway, 8);
@@ -107,7 +109,7 @@ static const struct decoder_state *s_state_frames[] = {
     [AWS_H2_FRAME_T_HEADERS] = &s_state_frame_headers,
     [AWS_H2_FRAME_T_PRIORITY] = &s_state_frame_priority,
     [AWS_H2_FRAME_T_RST_STREAM] = &s_state_frame_rst_stream,
-    [AWS_H2_FRAME_T_SETTINGS] = &s_state_frame_settings,
+    [AWS_H2_FRAME_T_SETTINGS] = &s_state_frame_settings_begin,
     [AWS_H2_FRAME_T_PUSH_PROMISE] = &s_state_frame_push_promise,
     [AWS_H2_FRAME_T_PING] = &s_state_frame_ping,
     [AWS_H2_FRAME_T_GOAWAY] = &s_state_frame_goaway,
@@ -438,8 +440,13 @@ static int s_state_fn_padding_len(struct aws_h2_decoder *decoder, struct aws_byt
         aws_h2_frame_type_to_str(frame_type),
         decoder->frame_in_progress.padding_len);
 
-    /* Set the state to the appropriate frame's state */
-    s_decoder_set_state(decoder, s_state_frames[frame_type]);
+    if (decoder->frame_in_progress.flags & AWS_H2_FRAME_T_PRIORITY) {
+        /* Read the stream dependency and weight if PRIORITY is set */
+        s_decoder_set_state(decoder, &s_state_priority_block);
+    } else {
+        /* Set the state to the appropriate frame's state */
+        s_decoder_set_state(decoder, s_state_frames[frame_type]);
+    }
 
     return AWS_OP_SUCCESS;
 }
@@ -481,11 +488,7 @@ static int s_state_fn_priority_block(struct aws_h2_decoder *decoder, struct aws_
     AWS_ASSERT(succ);
     (void)succ;
 
-#if defined(AWS_H2_ENABLE_PRIORITY)
-    priority->stream_dependency = top_bytes & s_31_bit_mask;
-    priority->stream_dependency_exclusive = top_bytes >> 31;
-    priority->weight = weight;
-#endif
+    /* #NOTE: throw priority data on the GROUND. They make us hecka vulnerable to DDoS and stuff. */
 
     const enum aws_h2_frame_type frame_type = decoder->frame_in_progress.type;
     s_decoder_set_state(decoder, s_state_frames[frame_type]);
@@ -525,7 +528,6 @@ static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte
     return AWS_OP_SUCCESS;
 }
 static int s_state_fn_frame_headers(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
-    (void)decoder;
     (void)input;
 
     /* Read padding and/or finish frame */
@@ -542,7 +544,7 @@ static int s_state_fn_frame_headers(struct aws_h2_decoder *decoder, struct aws_b
         }
     }
 
-    return AWS_OP_ERR;
+    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
 }
 static int s_state_fn_frame_priority(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
@@ -553,8 +555,6 @@ static int s_state_fn_frame_priority(struct aws_h2_decoder *decoder, struct aws_
     return AWS_OP_SUCCESS;
 }
 static int s_state_fn_frame_rst_stream(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
-    (void)decoder;
-    (void)input;
 
     AWS_FATAL_ASSERT(input->len >= 4);
 
@@ -567,19 +567,44 @@ static int s_state_fn_frame_rst_stream(struct aws_h2_decoder *decoder, struct aw
 
     return AWS_OP_SUCCESS;
 }
-static int s_state_fn_frame_settings(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
-    (void)decoder;
+static int s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
     /* If ack is set, report and abort */
     if (decoder->frame_in_progress.flags & AWS_H2_FRAME_F_ACK) {
+        if (decoder->frame_in_progress.payload_len) {
+            DECODER_LOGF(
+                ERROR,
+                decoder,
+                "SETTINGS ACK frame received, but it has non-0 payload length %" PRIu32,
+                decoder->frame_in_progress.payload_len);
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+        }
+
         DECODER_CALL_VTABLE(decoder, on_settings_ack);
         s_decoder_reset_state(decoder);
         return AWS_OP_SUCCESS;
     }
 
-    /* Otherwise, we need to process blocks of 6 octets at a time */
-    decoder->state.bytes_required = s_setting_block_size;
+    if (decoder->frame_in_progress.payload_len % s_setting_block_size != 0) {
+        /* Leftover data is not divisible by 6, error */
+        DECODER_LOGF(
+            ERROR,
+            decoder,
+            "Settings frame payload length is %" PRIu32 ", but it must be divisible by %" PRIu8,
+            decoder->frame_in_progress.payload_len,
+            s_setting_block_size);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+
+    /* If we've made it this far, we have a non-ACK settings frame with a valid payload length */
+    s_decoder_set_state(decoder, &s_state_frame_settings);
+
+    return AWS_OP_SUCCESS;
+}
+static int s_state_fn_frame_settings(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+
+    AWS_FATAL_ASSERT(input->len >= 6);
 
     /* Truck through the list until we run out of space */
     while (input->len >= s_setting_block_size) {
@@ -601,6 +626,7 @@ static int s_state_fn_frame_settings(struct aws_h2_decoder *decoder, struct aws_
     }
 
     if (decoder->frame_in_progress.payload_len == 0) {
+
         /* Huzzah, done with the frame */
         s_decoder_reset_state(decoder);
     }
@@ -610,14 +636,14 @@ static int s_state_fn_frame_settings(struct aws_h2_decoder *decoder, struct aws_
 static int s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)decoder;
     (void)input;
-    return AWS_OP_ERR;
+    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
 }
 static int s_state_fn_frame_ping(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     AWS_FATAL_ASSERT(input->len >= 8);
 
-    uint64_t opaque_data = 0;
-    bool succ = aws_byte_cursor_read_be64(input, &opaque_data);
+    uint8_t opaque_data[8] = {0};
+    bool succ = aws_byte_cursor_read(input, &opaque_data, AWS_ARRAY_SIZE(opaque_data));
     AWS_ASSERT(succ);
     (void)succ;
 
@@ -637,6 +663,12 @@ static int s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, struct aws_by
     bool succ = aws_byte_cursor_read_be32(input, &last_stream);
     AWS_ASSERT(succ);
     (void)succ;
+
+    if (last_stream & s_u32_top_bit_mask) {
+        /* Top bit of stream ids is reserved */
+        DECODER_LOG(ERROR, decoder, "Received GOAWAY frame with last_stream_id with top bit set");
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
 
     succ = aws_byte_cursor_read_be32(input, &error_code);
     AWS_ASSERT(succ);
@@ -679,8 +711,6 @@ static int s_state_fn_frame_goaway_debug_data(struct aws_h2_decoder *decoder, st
     return AWS_OP_SUCCESS;
 }
 static int s_state_fn_frame_window_update(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
-    (void)decoder;
-    (void)input;
 
     AWS_FATAL_ASSERT(input->len >= 4);
 
@@ -689,6 +719,12 @@ static int s_state_fn_frame_window_update(struct aws_h2_decoder *decoder, struct
     AWS_ASSERT(succ);
     (void)succ;
 
+    if (window_increment & s_u32_top_bit_mask) {
+        /* Top bit of stream ids is reserved */
+        DECODER_LOG(ERROR, decoder, "Received WINDOW_UPDATE frame with window size increment with top bit set");
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+
     /* #TODO I still have NO CLUE with this thing is for */
 
     s_decoder_reset_state(decoder);
@@ -696,7 +732,6 @@ static int s_state_fn_frame_window_update(struct aws_h2_decoder *decoder, struct
     return AWS_OP_SUCCESS;
 }
 static int s_state_fn_frame_continuation(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
-    (void)decoder;
     (void)input;
 
     /* #TODO Handle the header block */
@@ -708,12 +743,10 @@ static int s_state_fn_frame_continuation(struct aws_h2_decoder *decoder, struct 
         }
     }
 
-    return AWS_OP_ERR;
+    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
 }
 
 static int s_state_fn_frame_custom(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
-    (void)decoder;
-    (void)input;
 
     const uint32_t remaining_length = decoder->frame_in_progress.payload_len;
 
