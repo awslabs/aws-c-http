@@ -215,20 +215,26 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                     data_processed);
             }
         } else {
+
             /* In every other case, we have to copy to scratch */
             uint64_t bytes_to_read = bytes_required - decoder->scratch.len;
             bool will_finish_state = true;
-            /* Not enough in this cursor, need to read as much as possible and then come back */
-            if (bytes_to_read > data->len) {
+            if (AWS_UNLIKELY(bytes_required == 0 && decoder->scratch.len)) {
+                /* If this is a streaming state, and there's data in scratch, just send it all in now w/o reading */
+                bytes_to_read = 0;
+            } else if (bytes_to_read > data->len) {
+                /* Not enough in this cursor, need to read as much as possible and then come back */
                 bytes_to_read = data->len;
                 will_finish_state = false;
             }
 
-            /* Read the appropriate number of bytes into scratch */
-            struct aws_byte_cursor to_read = aws_byte_cursor_advance(data, bytes_to_read);
-            bool succ = aws_byte_buf_write_from_whole_cursor(&decoder->scratch, to_read);
-            AWS_ASSERT(succ);
-            (void)succ;
+            if (AWS_LIKELY(bytes_to_read)) {
+                /* Read the appropriate number of bytes into scratch */
+                struct aws_byte_cursor to_read = aws_byte_cursor_advance(data, bytes_to_read);
+                bool succ = aws_byte_buf_write_from_whole_cursor(&decoder->scratch, to_read);
+                AWS_ASSERT(succ);
+                (void)succ;
+            }
 
             /* If we have the correct number of bytes, call the state */
             if (will_finish_state) {
@@ -437,8 +443,8 @@ static int s_state_fn_padding(struct aws_h2_decoder *decoder, struct aws_byte_cu
     }
 
     if (will_finish_state) {
-    /* Done with the frame! */
-    s_decoder_reset_state(decoder);
+        /* Done with the frame! */
+        s_decoder_reset_state(decoder);
     }
 
     return AWS_OP_SUCCESS;
@@ -493,12 +499,12 @@ static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte
     DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data, &body_to_pass);
 
     if (will_finish_state) {
-    /* Process padding if necessary, otherwise we're done! */
-    if (decoder->frame_in_progress.flags & AWS_H2_FRAME_F_PADDED) {
-        s_decoder_set_state(decoder, &s_state_padding);
-    } else {
-        s_decoder_reset_state(decoder);
-    }
+        /* Process padding if necessary, otherwise we're done! */
+        if (decoder->frame_in_progress.flags & AWS_H2_FRAME_F_PADDED) {
+            s_decoder_set_state(decoder, &s_state_padding);
+        } else {
+            s_decoder_reset_state(decoder);
+        }
     }
 
     return AWS_OP_SUCCESS;
@@ -652,7 +658,7 @@ static int s_state_fn_frame_goaway_debug_data(struct aws_h2_decoder *decoder, st
 
     /* This is the last data in the frame, so reset decoder */
     if (will_finish_state) {
-    s_decoder_reset_state(decoder);
+        s_decoder_reset_state(decoder);
     }
 
     return AWS_OP_SUCCESS;
