@@ -205,7 +205,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
             err = decoder->state.fn(decoder, data);
 
             const uint64_t data_processed = pre_state_data_len - data->len;
-            if (bytes_required > 0 && data_processed != bytes_required) {
+            if (err == AWS_OP_SUCCESS && bytes_required > 0 && data_processed != bytes_required) {
                 DECODER_LOGF(
                     DEBUG,
                     decoder,
@@ -246,7 +246,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                     decoder->scratch.len = leftover_scratch;
                 }
 
-                if (bytes_required > 0 && data_processed != bytes_required) {
+                if (err == AWS_OP_SUCCESS && bytes_required > 0 && data_processed != bytes_required) {
                     DECODER_LOGF(
                         DEBUG,
                         decoder,
@@ -259,6 +259,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
         }
 
         if (err) {
+            s_decoder_reset_state(decoder);
             return err;
         }
     }
@@ -425,7 +426,9 @@ static int s_state_fn_padding_len(struct aws_h2_decoder *decoder, struct aws_byt
 static int s_state_fn_padding(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     const uint8_t padding_len = decoder->frame_in_progress.padding_len;
+    bool will_finish_state = false;
     if (input->len >= padding_len) {
+        will_finish_state = true;
         aws_byte_cursor_advance(input, padding_len);
     } else {
         AWS_FATAL_ASSERT(input->len <= UINT8_MAX);
@@ -433,8 +436,10 @@ static int s_state_fn_padding(struct aws_h2_decoder *decoder, struct aws_byte_cu
         aws_byte_cursor_advance(input, input->len);
     }
 
+    if (will_finish_state) {
     /* Done with the frame! */
     s_decoder_reset_state(decoder);
+    }
 
     return AWS_OP_SUCCESS;
 }
@@ -469,12 +474,16 @@ static int s_state_fn_priority_block(struct aws_h2_decoder *decoder, struct aws_
 
 static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    struct aws_byte_cursor body_to_pass;
+    const uint32_t remaining_length = decoder->frame_in_progress.payload_len;
 
-    if (input->len < decoder->frame_in_progress.payload_len) {
+    struct aws_byte_cursor body_to_pass;
+    bool will_finish_state;
+    if (input->len < remaining_length) {
         body_to_pass = aws_byte_cursor_advance(input, input->len);
+        will_finish_state = false;
     } else {
-        body_to_pass = aws_byte_cursor_advance(input, decoder->frame_in_progress.payload_len);
+        body_to_pass = aws_byte_cursor_advance(input, remaining_length);
+        will_finish_state = true;
     }
     AWS_FATAL_ASSERT(body_to_pass.len <= UINT32_MAX);
 
@@ -483,11 +492,13 @@ static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte
 
     DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data, &body_to_pass);
 
+    if (will_finish_state) {
     /* Process padding if necessary, otherwise we're done! */
     if (decoder->frame_in_progress.flags & AWS_H2_FRAME_F_PADDED) {
         s_decoder_set_state(decoder, &s_state_padding);
     } else {
         s_decoder_reset_state(decoder);
+    }
     }
 
     return AWS_OP_SUCCESS;
