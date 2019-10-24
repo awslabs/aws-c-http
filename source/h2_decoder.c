@@ -738,6 +738,7 @@ static int s_state_fn_frame_unknown(struct aws_h2_decoder *decoder, struct aws_b
 
     if (input->len < remaining_length) {
         aws_byte_cursor_advance(input, input->len);
+        decoder->frame_in_progress.payload_len -= (uint32_t)input->len;
     } else {
         aws_byte_cursor_advance(input, remaining_length);
         s_decoder_reset_state(decoder);
