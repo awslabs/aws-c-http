@@ -27,6 +27,6 @@ void aws_crt_statistics_http1_cleanup(struct aws_crt_statistics_http1 *stats) {
 }
 
 void aws_crt_statistics_http1_reset(struct aws_crt_statistics_http1 *stats) {
-    stats->pending_read_ns = 0;
-    stats->pending_write_ns = 0;
+    stats->pending_incoming_stream_ns = 0;
+    stats->pending_outgoing_stream_ns = 0;
 }

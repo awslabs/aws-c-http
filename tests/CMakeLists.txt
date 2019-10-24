@@ -247,6 +247,8 @@ if (ENABLE_PROXY_INTEGRATION_TESTS)
     add_test_case(test_https_proxy_connection_get)
 endif()
 
+add_test_case(test_http_connection_monitor_options_is_valid)
+
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})
 

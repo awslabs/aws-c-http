@@ -20,7 +20,7 @@
 
 struct aws_allocator;
 struct aws_crt_statistics_handler;
-struct aws_http_connection_monitor_options;
+struct aws_http_connection_monitoring_options;
 
 AWS_EXTERN_C_BEGIN
 
@@ -29,7 +29,13 @@ AWS_EXTERN_C_BEGIN
  * down if the a minimum threshold is not met for a configurable number of seconds.
  */
 AWS_HTTP_API
-struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connection_monitor(struct aws_allocator *allocator, struct aws_http_connection_monitor_options *options);
+struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connection_monitor(struct aws_allocator *allocator, struct aws_http_connection_monitoring_options *options);
+
+/**
+ * Validates monitoring options to ensure they are sensible
+ */
+AWS_HTTP_API
+bool aws_http_connection_monitoring_options_is_valid(const struct aws_http_connection_monitoring_options *options);
 
 AWS_EXTERN_C_END
 

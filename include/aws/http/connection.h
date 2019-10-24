@@ -59,7 +59,7 @@ typedef void(
 /**
  * Configuration options for connection monitoring
  */
-struct aws_http_connection_monitor_options {
+struct aws_http_connection_monitoring_options {
 
     /**
      * minimum required throughput of the connection.  Throughput is only measured against the interval of time where there is actual io to perform
@@ -179,7 +179,7 @@ struct aws_http_client_connection_options {
      * Optional
      * Configuration options related to connection health monitoring
      */
-     const struct aws_http_connection_monitor_options *monitor_options;
+     const struct aws_http_connection_monitoring_options *monitoring_options;
 
     /**
      * Optional.

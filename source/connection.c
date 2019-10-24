@@ -184,16 +184,6 @@ static struct aws_http_connection *s_connection_new(
 
     connection->channel_slot = connection_slot;
 
-    if (??use_default_monitor) {
-        struct aws_crt_statistics_handler *http_connection_monitor = aws_crt_statistics_handler_new_http_connection_monitor(
-                alloc, ??options);
-        if (http_connection_monitor == NULL) {
-            goto error;
-        }
-
-        aws_channel_set_statistics_handler(channel, http_connection_monitor);
-    }
-
     /* Success! Acquire a hold on the channel to prevent its destruction until the user has
      * given the go-ahead via aws_http_connection_release() */
     aws_channel_acquire_hold(channel);
@@ -628,6 +618,16 @@ static void s_client_bootstrap_on_channel_setup(
         goto error;
     }
 
+    if (aws_http_connection_monitoring_options_is_valid(&http_bootstrap->monitoring_options)) {
+        struct aws_crt_statistics_handler *http_connection_monitor = aws_crt_statistics_handler_new_http_connection_monitor(
+        http_bootstrap->alloc, &http_bootstrap->monitoring_options);
+        if (http_connection_monitor == NULL) {
+            goto error;
+        }
+
+        aws_channel_set_statistics_handler(channel, http_connection_monitor);
+    }
+
     http_bootstrap->connection->proxy_request_transform = http_bootstrap->proxy_request_transform;
     http_bootstrap->connection->user_data = http_bootstrap->user_data;
 
@@ -730,6 +730,9 @@ int aws_http_client_connect_internal(
     http_bootstrap->on_setup = options->on_setup;
     http_bootstrap->on_shutdown = options->on_shutdown;
     http_bootstrap->proxy_request_transform = proxy_request_transform;
+    if (options->monitoring_options) {
+        http_bootstrap->monitoring_options = *options->monitoring_options;
+    }
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,

@@ -25,7 +25,7 @@
 #include <aws/common/clock.h>
 
 struct aws_statistics_handler_http_connection_monitor_impl {
-    struct aws_http_connection_monitor_options options;
+    struct aws_http_connection_monitoring_options options;
 
     uint32_t consecutive_throughput_failures;
 };
@@ -153,7 +153,7 @@ static struct aws_crt_statistics_handler_vtable s_http_connection_monitor_vtable
     .get_report_interval_ms = s_get_report_interval_ms,
 };
 
-struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connection_monitor(struct aws_allocator *allocator, struct aws_http_connection_monitor_options *options) {
+struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connection_monitor(struct aws_allocator *allocator, struct aws_http_connection_monitoring_options *options) {
     struct aws_crt_statistics_handler *handler = NULL;
     struct aws_statistics_handler_http_connection_monitor_impl *impl = NULL;
 
@@ -176,4 +176,12 @@ struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connectio
     handler->impl = impl;
 
     return handler;
+}
+
+bool aws_http_connection_monitoring_options_is_valid(const struct aws_http_connection_monitoring_options *options) {
+    if (options == NULL) {
+        return false;
+    }
+
+    return options->minimum_throughput_failure_threshold_in_seconds > 1 && options->minimum_throughput_bytes_per_second > 0;
 }

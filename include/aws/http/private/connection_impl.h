@@ -95,6 +95,7 @@ struct aws_http_client_bootstrap {
     struct aws_allocator *alloc;
     bool is_using_tls;
     size_t initial_window_size;
+    struct aws_http_connection_monitoring_options monitoring_options;
     void *user_data;
     aws_http_on_client_connection_setup_fn *on_setup;
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
