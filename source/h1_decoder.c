@@ -526,15 +526,6 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                 return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
             }
 
-            if (decoder->body_headers_forbidden) {
-                AWS_LOGF_ERROR(
-                    AWS_LS_HTTP_STREAM,
-                    "id=%p: Incoming headers for content-length received, but it is illegal for this message to have a "
-                    "body",
-                    decoder->logging_id);
-                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-            }
-
             if (s_read_size(header.value_data, &decoder->content_length) != AWS_OP_SUCCESS) {
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,
@@ -547,6 +538,16 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                     AWS_BYTE_CURSOR_PRI(header.value_data));
                 return AWS_OP_ERR;
             }
+
+            if (decoder->body_headers_forbidden && decoder->content_length != 0) {
+                AWS_LOGF_ERROR(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Incoming headers for content-length received, but it is illegal for this message to have a "
+                    "body",
+                    decoder->logging_id);
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+            }
+
             break;
 
         case AWS_HTTP_HEADER_TRANSFER_ENCODING: {
