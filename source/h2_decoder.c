@@ -906,9 +906,13 @@ static int s_state_fn_headers_literal_index(struct aws_h2_decoder *decoder, stru
             return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
     }
 
-    if (progress->index > SIZE_MAX) {
+    if (progress->index > s_hpack_dynamic_table_max_size) {
         DECODER_LOGF(
-            ERROR, decoder, "HPACK header index %" PRIu64 " is above maximum %" PRIu64, progress->index, SIZE_MAX);
+            ERROR,
+            decoder,
+            "HPACK header index %" PRIu64 " is above maximum %zu",
+            progress->index,
+            s_hpack_dynamic_table_max_size);
         return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
     }
 
