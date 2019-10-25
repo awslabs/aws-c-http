@@ -23,6 +23,13 @@ struct aws_byte_cursor;
 struct aws_http_header;
 struct aws_hpack_context;
 
+/* Returned from decode functions to denote how far along the decode process is */
+enum aws_hpack_decode_status {
+    AWS_HPACK_DECODE_ERROR = AWS_OP_ERR,
+    AWS_HPACK_DECODE_COMPLETE = AWS_OP_SUCCESS,
+    AWS_HPACK_DECODE_ONGOING,
+};
+
 AWS_EXTERN_C_BEGIN
 
 /* Library-level init and shutdown */
@@ -37,6 +44,10 @@ AWS_HTTP_API
 struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator, size_t max_dynamic_elements);
 AWS_HTTP_API
 void aws_hpack_context_destroy(struct aws_hpack_context *context);
+
+/* Resets ongoing decode state */
+AWS_HTTP_API
+void aws_hpack_context_reset_decode(struct aws_hpack_context *context);
 
 AWS_HTTP_API
 const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_context *context, size_t index);
@@ -60,7 +71,11 @@ AWS_HTTP_API
 int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_byte_buf *output);
 
 AWS_HTTP_API
-int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_size, uint64_t *integer);
+enum aws_hpack_decode_status aws_hpack_decode_integer(
+    struct aws_hpack_context *context,
+    struct aws_byte_cursor *to_decode,
+    uint8_t prefix_size,
+    uint64_t *integer);
 
 AWS_HTTP_API
 size_t aws_hpack_get_encoded_length_string(
@@ -74,7 +89,7 @@ int aws_hpack_encode_string(
     bool huffman_encode,
     struct aws_byte_buf *output);
 AWS_HTTP_API
-int aws_hpack_decode_string(
+enum aws_hpack_decode_status aws_hpack_decode_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_decode,
     struct aws_byte_buf *output);

@@ -94,57 +94,6 @@ int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_b
     return AWS_OP_SUCCESS;
 }
 
-int aws_hpack_decode_integer(struct aws_byte_cursor *to_decode, uint8_t prefix_size, uint64_t *integer) {
-    AWS_ASSERT(prefix_size <= 8);
-    AWS_ASSERT(integer);
-
-    const struct aws_byte_cursor to_decode_backup = *to_decode;
-
-    const uint8_t cut_bits = 8 - prefix_size;
-    const uint8_t prefix_mask = UINT8_MAX >> cut_bits;
-
-    uint8_t byte = 0;
-    if (!aws_byte_cursor_read_u8(to_decode, &byte)) {
-        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-    }
-    /* Cut the prefix */
-    byte &= prefix_mask;
-
-    /* No matter what, the first byte's value is always added to the integer */
-    *integer = byte;
-
-    if (byte == prefix_mask) {
-        uint8_t bit_count = 0;
-        do {
-            /* 7 Bits are expected to be used, so if we get to the point where any of
-             * those bits can't be used it's a decoding error */
-            if (bit_count > 64 - 7) {
-                aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
-                goto decode_failure;
-            }
-
-            if (!aws_byte_cursor_read_u8(to_decode, &byte)) {
-                aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-                goto decode_failure;
-            }
-            uint64_t new_byte_value = (uint64_t)(byte & 127) << bit_count;
-            if (*integer + new_byte_value < *integer) {
-                aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
-                goto decode_failure;
-            }
-            *integer += new_byte_value;
-            bit_count += 7;
-        } while (byte & 128);
-    }
-
-    return AWS_OP_SUCCESS;
-
-decode_failure:
-    *to_decode = to_decode_backup;
-    *integer = 0;
-    return AWS_OP_ERR;
-}
-
 struct aws_http_header s_static_header_table[] = {
 #define HEADER(_index, _name)                                                                                          \
     [_index] = {                                                                                                       \
@@ -260,6 +209,24 @@ struct aws_hpack_context {
         /* aws_byte_cursor * -> size_t */
         struct aws_hash_table reverse_lookup_name_only;
     } dynamic_table;
+
+    /* PRO TIP: Don't union these, since string_decode calls integer_decode */
+    struct hpack_progress_integer {
+        enum {
+            HPACK_INTEGER_STATE_INIT,
+            HPACK_INTEGER_STATE_VALUE,
+        } state;
+        uint8_t bit_count;
+    } progress_integer;
+    struct hpack_progress_string {
+        enum {
+            HPACK_STRING_STATE_INIT,
+            HPACK_STRING_STATE_LENGTH,
+            HPACK_STRING_STATE_VALUE,
+        } state;
+        bool use_huffman;
+        uint64_t length;
+    } progress_string;
 };
 
 struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator, size_t max_dynamic_elements) {
@@ -335,6 +302,13 @@ void aws_hpack_context_destroy(struct aws_hpack_context *context) {
     aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup);
     aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup_name_only);
     aws_mem_release(context->allocator, context);
+}
+
+void aws_hpack_context_reset_decode(struct aws_hpack_context *context) {
+    AWS_PRECONDITION(context);
+
+    AWS_ZERO_STRUCT(context->progress_integer);
+    AWS_ZERO_STRUCT(context->progress_string);
 }
 
 const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_context *context, size_t index) {
@@ -552,6 +526,96 @@ reset_dyn_table_state:
     return AWS_OP_SUCCESS;
 }
 
+enum aws_hpack_decode_status aws_hpack_decode_integer(
+    struct aws_hpack_context *context,
+    struct aws_byte_cursor *to_decode,
+    uint8_t prefix_size,
+    uint64_t *integer) {
+
+    AWS_PRECONDITION(context);
+    AWS_PRECONDITION(to_decode);
+    AWS_PRECONDITION(prefix_size <= 8);
+    AWS_PRECONDITION(integer);
+
+    /* #TODO once frame decoders go away, but for now this is necessary to avoid asserting in fuzz tests */
+    if (to_decode->len == 0) {
+        aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+        return AWS_OP_ERR;
+    }
+
+    const uint8_t cut_bits = 8 - prefix_size;
+    const uint8_t prefix_mask = UINT8_MAX >> cut_bits;
+
+    struct hpack_progress_integer *progress = &context->progress_integer;
+    enum aws_hpack_decode_status status = AWS_HPACK_DECODE_ONGOING;
+
+    while (to_decode->len) {
+        switch (progress->state) {
+            case HPACK_INTEGER_STATE_INIT: {
+                /* Read the first byte, and check whether this is it, or we need to continue */
+                uint8_t byte = 0;
+                bool succ = aws_byte_cursor_read_u8(to_decode, &byte);
+                AWS_FATAL_ASSERT(succ);
+
+                /* Cut the prefix */
+                byte &= prefix_mask;
+
+                /* No matter what, the first byte's value is always added to the integer */
+                *integer = byte;
+
+                if (byte != prefix_mask) {
+                    status = AWS_HPACK_DECODE_COMPLETE;
+                    goto handle_complete;
+                }
+
+                progress->state = HPACK_INTEGER_STATE_VALUE;
+
+                /* Restart loop to make sure there's data available */
+                continue;
+            }
+
+            case HPACK_INTEGER_STATE_VALUE: {
+                uint8_t byte = 0;
+                bool succ = aws_byte_cursor_read_u8(to_decode, &byte);
+                AWS_FATAL_ASSERT(succ);
+
+                uint64_t new_byte_value = (uint64_t)(byte & 127) << progress->bit_count;
+                if (*integer + new_byte_value < *integer) {
+                    goto overflow_detected;
+                }
+                *integer += new_byte_value;
+
+                /* Check if we're done */
+                if ((byte & 128) == 0) {
+                    status = AWS_HPACK_DECODE_COMPLETE;
+                    goto handle_complete;
+                }
+
+                /* Increment the bit count */
+                progress->bit_count += 7;
+
+                /* 7 Bits are expected to be used, so if we get to the point where any of
+                * those bits can't be used it's a decoding error */
+                if (progress->bit_count > 64 - 7) {
+                    goto overflow_detected;
+                }
+            }
+        }
+    }
+
+    /* Fell out of data loop, must need more data */
+    return AWS_HPACK_DECODE_ONGOING;
+
+overflow_detected:
+    aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
+    status = AWS_HPACK_DECODE_ERROR;
+
+handle_complete:
+    /* Goto if done, or error */
+    AWS_ZERO_STRUCT(context->progress_integer);
+    return status;
+}
+
 size_t aws_hpack_get_encoded_length_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor to_encode,
@@ -628,7 +692,7 @@ error:
     return AWS_OP_ERR;
 }
 
-int aws_hpack_decode_string(
+enum aws_hpack_decode_status aws_hpack_decode_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_decode,
     struct aws_byte_buf *output) {
@@ -637,35 +701,80 @@ int aws_hpack_decode_string(
     AWS_PRECONDITION(to_decode);
     AWS_PRECONDITION(output);
 
-    if (!to_decode->len) {
-        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-    }
-
-    bool use_huffman = *to_decode->ptr >> 7;
-    uint64_t value_length = 0;
-    if (aws_hpack_decode_integer(to_decode, 7, &value_length)) {
+    /* #TODO once frame decoders go away, but for now this is necessary to avoid asserting in fuzz tests */
+    if (to_decode->len == 0) {
+        aws_raise_error(AWS_ERROR_SHORT_BUFFER);
         return AWS_OP_ERR;
     }
 
-    if (value_length > SIZE_MAX) {
-        return aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
-    }
+    struct hpack_progress_string *progress = &context->progress_string;
+    enum aws_hpack_decode_status status = AWS_HPACK_DECODE_ONGOING;
 
-    struct aws_byte_cursor value = aws_byte_cursor_advance(to_decode, (size_t)value_length);
-    if (!value.len) {
-        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-    }
-
-    if (use_huffman) {
-        aws_huffman_decoder_reset(&context->decoder);
-        if (aws_huffman_decode(&context->decoder, &value, output)) {
-            return AWS_OP_ERR;
+    switch (progress->state) {
+        case HPACK_STRING_STATE_INIT: {
+            /* Do init stuff */
+            progress->state = HPACK_STRING_STATE_LENGTH;
+            progress->use_huffman = *to_decode->ptr >> 7;
+            aws_huffman_decoder_reset(&context->decoder);
+            /* fallthrough, since we didn't consume any data */
         }
-    } else {
-        if (!aws_byte_buf_write_from_whole_cursor(output, value)) {
-            return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+
+        case HPACK_STRING_STATE_LENGTH: {
+            status = aws_hpack_decode_integer(context, to_decode, 7, &progress->length);
+            if (status) {
+                goto handle_complete;
+            }
+            if (progress->length > SIZE_MAX) {
+                aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
+                status = AWS_HPACK_DECODE_ERROR;
+                goto handle_complete;
+            }
+
+            /* If this was all of the data we had, return ONGOING */
+            if (!to_decode->len) {
+                return AWS_HPACK_DECODE_ONGOING;
+            }
+
+            /* Otherwise, fallthrough */
+        }
+
+        case HPACK_STRING_STATE_VALUE: {
+            /* Take either as much data as we need, or as we can */
+            size_t to_process = progress->length;
+            bool will_finish = true;
+            if (to_process > to_decode->len) {
+                to_process = to_decode->len;
+                will_finish = false;
+            }
+
+            struct aws_byte_cursor value = aws_byte_cursor_advance(to_decode, to_process);
+
+            if (progress->use_huffman) {
+                if (aws_huffman_decode(&context->decoder, &value, output)) {
+                    status = AWS_HPACK_DECODE_ERROR;
+                    goto handle_complete;
+                }
+            } else {
+                if (!aws_byte_buf_write_from_whole_cursor(output, value)) {
+                    aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+                    status = AWS_HPACK_DECODE_ERROR;
+                    goto handle_complete;
+                }
+            }
+
+            /* If whole length consumed, return complete */
+            if (will_finish) {
+                status = AWS_HPACK_DECODE_COMPLETE;
+                goto handle_complete;
+            }
         }
     }
 
-    return AWS_OP_SUCCESS;
+    /* Fell out of to_decode loop, must still be in progress */
+    return AWS_HPACK_DECODE_ONGOING;
+
+handle_complete:
+    /* Goto if done, or error */
+    AWS_ZERO_STRUCT(context->progress_string);
+    return status;
 }

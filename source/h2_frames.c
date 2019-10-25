@@ -291,7 +291,7 @@ int aws_h2_frame_header_block_decode(
             field.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE;
 
             uint64_t index = 0;
-            if (aws_hpack_decode_integer(&decoder->payload, 7, &index)) {
+            if (aws_hpack_decode_integer(decoder->hpack, &decoder->payload, 7, &index)) {
                 return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
             }
 
@@ -323,7 +323,7 @@ int aws_h2_frame_header_block_decode(
             }
 
             uint64_t index = 0;
-            if (aws_hpack_decode_integer(&decoder->payload, payload_len_prefix, &index)) {
+            if (aws_hpack_decode_integer(decoder->hpack, &decoder->payload, payload_len_prefix, &index)) {
                 return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
             }
 
@@ -370,7 +370,7 @@ int aws_h2_frame_header_block_decode(
         } else {
             /* This header is *actually* a dynamic table size update */
             uint64_t new_size = 0;
-            if (aws_hpack_decode_integer(&decoder->payload, 5, &new_size)) {
+            if (aws_hpack_decode_integer(decoder->hpack, &decoder->payload, 5, &new_size)) {
                 return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
             }
 
