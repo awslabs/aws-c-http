@@ -738,7 +738,7 @@ enum aws_hpack_decode_status aws_hpack_decode_string(
         /* FALLTHRU */
         case HPACK_STRING_STATE_VALUE: {
             /* Take either as much data as we need, or as we can */
-            size_t to_process = progress->length;
+            size_t to_process = (size_t)progress->length;
             bool will_finish = true;
             if (to_process > to_decode->len) {
                 to_process = to_decode->len;
