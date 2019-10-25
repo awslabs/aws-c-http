@@ -595,7 +595,7 @@ enum aws_hpack_decode_status aws_hpack_decode_integer(
                 progress->bit_count += 7;
 
                 /* 7 Bits are expected to be used, so if we get to the point where any of
-                * those bits can't be used it's a decoding error */
+                 * those bits can't be used it's a decoding error */
                 if (progress->bit_count > 64 - 7) {
                     goto overflow_detected;
                 }
@@ -718,7 +718,7 @@ enum aws_hpack_decode_status aws_hpack_decode_string(
             aws_huffman_decoder_reset(&context->decoder);
             /* fallthrough, since we didn't consume any data */
         }
-
+        /* FALLTHRU */
         case HPACK_STRING_STATE_LENGTH: {
             status = aws_hpack_decode_integer(context, to_decode, 7, &progress->length);
             if (status) {
@@ -734,10 +734,8 @@ enum aws_hpack_decode_status aws_hpack_decode_string(
             if (!to_decode->len) {
                 return AWS_HPACK_DECODE_ONGOING;
             }
-
-            /* Otherwise, fallthrough */
         }
-
+        /* FALLTHRU */
         case HPACK_STRING_STATE_VALUE: {
             /* Take either as much data as we need, or as we can */
             size_t to_process = progress->length;

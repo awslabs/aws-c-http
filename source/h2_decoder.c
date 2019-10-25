@@ -915,7 +915,7 @@ static int s_state_fn_headers_literal_index(struct aws_h2_decoder *decoder, stru
     /* Read the name */
     if (progress->index) {
         /* Name is indexed, so just read it */
-        const struct aws_http_header *header = aws_hpack_get_header(decoder->hpack, (size_t)index);
+        const struct aws_http_header *header = aws_hpack_get_header(decoder->hpack, (size_t)progress->index);
         if (!header) {
             return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
         }
@@ -1039,7 +1039,7 @@ static int s_state_fn_headers_dyn_table_resize(struct aws_h2_decoder *decoder, s
         DECODER_LOGF(
             ERROR,
             decoder,
-            "Peer request dynamic table resize to %" PRIu64 " but max table size is %" PRIu64,
+            "Peer request dynamic table resize to %" PRIu64 " but max table size is %zu",
             *new_size,
             s_hpack_dynamic_table_max_size);
         return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);

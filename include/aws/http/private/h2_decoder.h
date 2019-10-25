@@ -16,8 +16,8 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/private/http_impl.h>
 #include <aws/http/private/h2_frames.h>
+#include <aws/http/private/http_impl.h>
 
 struct aws_h2_decoder_vtable {
 
