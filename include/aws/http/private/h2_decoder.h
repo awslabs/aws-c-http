@@ -17,15 +17,22 @@
  */
 
 #include <aws/http/private/http_impl.h>
+#include <aws/http/private/h2_frames.h>
 
 struct aws_h2_decoder_vtable {
 
-    int (*on_headers)(uint32_t stream_id, void *userdata);
+    int (*on_header)(
+        uint32_t stream_id,
+        const struct aws_http_header *header,
+        enum aws_h2_header_field_hpack_behavior hpack_behavior,
+        void *userdata);
     int (*on_end_headers)(uint32_t stream_id, void *userdata);
 
     int (*on_data)(uint32_t stream_id, const struct aws_byte_cursor *data, void *userdata);
 
     int (*on_rst_stream)(uint32_t stream_id, uint32_t error_code, void *userdata);
+
+    int (*on_push_promise)(uint32_t stream_id, uint32_t promised_stream_id, void *userdata);
 
     int (*on_ping)(bool ack, uint8_t opaque_data[8], void *userdata);
     int (*on_setting)(uint16_t setting, uint32_t value, void *userdata);
