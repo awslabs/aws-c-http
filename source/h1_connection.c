@@ -12,11 +12,11 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
+#include <aws/http/private/h1_connection.h>
 
 #include <aws/common/math.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
-#include <aws/http/private/h1_connection.h>
 #include <aws/http/private/h1_decoder.h>
 #include <aws/http/private/h1_encoder.h>
 #include <aws/http/private/h1_stream.h>
