@@ -13,11 +13,10 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/private/connection_impl.h>
-
 #include <aws/common/math.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
+#include <aws/http/private/h1_connection.h>
 #include <aws/http/private/h1_decoder.h>
 #include <aws/http/private/h1_encoder.h>
 #include <aws/http/private/h1_stream.h>
