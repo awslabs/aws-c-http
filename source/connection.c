@@ -733,13 +733,13 @@ int aws_http_client_connect_internal(
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,
         "static: attempting to initialize a new client channel to %s:%d",
-        (const char *)aws_string_bytes(host_name),
+        aws_string_c_str(host_name),
         (int)options->port);
 
     if (options->tls_options) {
         err = s_system_vtable_ptr->new_tls_socket_channel(
             options->bootstrap,
-            (const char *)aws_string_bytes(host_name),
+            aws_string_c_str(host_name),
             options->port,
             options->socket_options,
             options->tls_options,
@@ -749,7 +749,7 @@ int aws_http_client_connect_internal(
     } else {
         err = s_system_vtable_ptr->new_socket_channel(
             options->bootstrap,
-            (const char *)aws_string_bytes(host_name),
+            aws_string_c_str(host_name),
             options->port,
             options->socket_options,
             s_client_bootstrap_on_channel_setup,
