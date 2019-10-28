@@ -99,7 +99,9 @@ static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx)
     /* Test encoding integers
        Test cases taken from https://httpwg.org/specs/rfc7541.html#integer.representation.examples */
 
-    struct aws_hpack_context *hpack = aws_hpack_context_new(allocator, 0);
+    struct aws_hpack_context *hpack = aws_hpack_context_new(allocator);
+    ASSERT_NOT_NULL(hpack);
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(hpack, 0));
 
     uint64_t result = 0;
     struct aws_byte_cursor to_decode;
@@ -209,7 +211,9 @@ static int test_hpack_static_table_find(struct aws_allocator *allocator, void *c
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator, 0);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator);
+    ASSERT_NOT_NULL(context);
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0));
 
     bool found_value = false;
 
@@ -241,7 +245,9 @@ static int test_hpack_static_table_get(struct aws_allocator *allocator, void *ct
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator, 0);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator);
+    ASSERT_NOT_NULL(context);
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0));
 
     const struct aws_http_header *found = NULL;
 
@@ -272,7 +278,9 @@ static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator, 2);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator);
+    ASSERT_NOT_NULL(context);
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 2));
 
     bool found_value = false;
 
@@ -317,7 +325,9 @@ static int test_hpack_dynamic_table_get(struct aws_allocator *allocator, void *c
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator, 2);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator);
+    ASSERT_NOT_NULL(context);
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 2));
 
     const struct aws_http_header *found = NULL;
 

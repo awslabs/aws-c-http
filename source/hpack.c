@@ -23,6 +23,11 @@
 #include <aws/common/hash_table.h>
 #include <aws/common/string.h>
 
+/* RFC-7540 6.5.2 */
+const size_t s_hpack_dynamic_table_initial_size = 4096;
+/* TBD */
+const size_t s_hpack_dynamic_table_max_size = 4096;
+
 struct aws_huffman_symbol_coder *hpack_get_coder(void);
 
 size_t aws_hpack_get_encoded_length_integer(uint64_t integer, uint8_t prefix_size) {
@@ -229,7 +234,7 @@ struct aws_hpack_context {
     } progress_string;
 };
 
-struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator, size_t max_dynamic_elements) {
+struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator) {
 
     struct aws_hpack_context *context = aws_mem_acquire(allocator, sizeof(struct aws_hpack_context));
     if (!context) {
@@ -244,20 +249,19 @@ struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator,
     aws_huffman_decoder_init(&context->decoder, hpack_coder);
 
     /* Initialize dynamic table */
-    if (max_dynamic_elements) {
-        context->dynamic_table.buffer = aws_mem_calloc(allocator, max_dynamic_elements, sizeof(struct aws_http_header));
-        if (!context->dynamic_table.buffer) {
-            goto dynamic_table_buffer_failed;
-        }
+    context->dynamic_table.buffer =
+        aws_mem_calloc(allocator, s_hpack_dynamic_table_initial_size, sizeof(struct aws_http_header));
+    if (!context->dynamic_table.buffer) {
+        goto dynamic_table_buffer_failed;
     }
-    context->dynamic_table.max_elements = max_dynamic_elements;
+    context->dynamic_table.max_elements = s_hpack_dynamic_table_initial_size;
     context->dynamic_table.num_elements = 0;
     context->dynamic_table.index_0 = 0;
 
     if (aws_hash_table_init(
             &context->dynamic_table.reverse_lookup,
             allocator,
-            max_dynamic_elements,
+            s_hpack_dynamic_table_initial_size,
             s_header_hash,
             s_header_eq,
             NULL,
@@ -268,7 +272,7 @@ struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator,
     if (aws_hash_table_init(
             &context->dynamic_table.reverse_lookup_name_only,
             allocator,
-            max_dynamic_elements,
+            s_hpack_dynamic_table_initial_size,
             aws_hash_byte_cursor_ptr,
             (aws_hash_callback_eq_fn *)aws_byte_cursor_eq,
             NULL,
@@ -460,6 +464,10 @@ error:
 
 int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new_max_elements) {
 
+    if (new_max_elements > s_hpack_dynamic_table_max_size) {
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
     /* Clear the old hash tables */
     aws_hash_table_clear(&context->dynamic_table.reverse_lookup);
     aws_hash_table_clear(&context->dynamic_table.reverse_lookup_name_only);
@@ -539,8 +547,7 @@ enum aws_hpack_decode_status aws_hpack_decode_integer(
 
     /* #TODO once frame decoders go away, but for now this is necessary to avoid asserting in fuzz tests */
     if (to_decode->len == 0) {
-        aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
 
     const uint8_t cut_bits = 8 - prefix_size;
@@ -703,8 +710,7 @@ enum aws_hpack_decode_status aws_hpack_decode_string(
 
     /* #TODO once frame decoders go away, but for now this is necessary to avoid asserting in fuzz tests */
     if (to_decode->len == 0) {
-        aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
 
     struct hpack_progress_string *progress = &context->progress_string;
