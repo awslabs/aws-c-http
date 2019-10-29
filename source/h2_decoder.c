@@ -431,8 +431,7 @@ static int s_state_fn_type_flags(struct aws_h2_decoder *decoder, struct aws_byte
     }
 
     if (flags & ~acceptable_flags) {
-        DECODER_LOGF(
-            ERROR, decoder, "Frame type %s has invalid flags %" PRIu8, frame_type_str, flags);
+        DECODER_LOGF(ERROR, decoder, "Frame type %s has invalid flags %" PRIu8, frame_type_str, flags);
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
