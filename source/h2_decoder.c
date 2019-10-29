@@ -293,7 +293,11 @@ void aws_h2_decoder_set_logging_id(struct aws_h2_decoder *decoder, void *id) {
 
 /* Wrap hpack functions to do payload length checks */
 
-static enum aws_hpack_decode_status s_decode_integer(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input, uint8_t prefix_size, uint64_t *integer) {
+static enum aws_hpack_decode_status s_decode_integer(
+    struct aws_h2_decoder *decoder,
+    struct aws_byte_cursor *input,
+    uint8_t prefix_size,
+    uint64_t *integer) {
 
     if (decoder->frame_in_progress.payload_len == 0) {
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
@@ -317,7 +321,10 @@ static enum aws_hpack_decode_status s_decode_integer(struct aws_h2_decoder *deco
     return status;
 }
 
-static enum aws_hpack_decode_status s_decode_string(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input, struct aws_byte_buf *output) {
+static enum aws_hpack_decode_status s_decode_string(
+    struct aws_h2_decoder *decoder,
+    struct aws_byte_cursor *input,
+    struct aws_byte_buf *output) {
 
     if (decoder->frame_in_progress.payload_len == 0) {
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
@@ -455,9 +462,9 @@ static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cur
         case AWS_H2_FRAME_T_UNKNOWN:
             /* Don't actually do anything with unknown frame flags */
             flags = 0;
+            break;
         default:
             /* PRIORITY, RST_STREAM, GOAWAY, WINDOW_UPDATE dont have any flags */
-            acceptable_flags = 0;
             break;
     }
 
