@@ -33,6 +33,7 @@ enum aws_h2_frame_type {
     AWS_H2_FRAME_T_GOAWAY = 0x07,
     AWS_H2_FRAME_T_WINDOW_UPDATE = 0x08,
     AWS_H2_FRAME_T_CONTINUATION = 0x09,
+    AWS_H2_FRAME_T_UNKNOWN,
 };
 
 /* Represents flags that may be set on a frame (RFC-7540 6) */

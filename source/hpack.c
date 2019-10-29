@@ -248,6 +248,8 @@ struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator)
     aws_huffman_encoder_init(&context->encoder, hpack_coder);
     aws_huffman_decoder_init(&context->decoder, hpack_coder);
 
+    /* #TODO Rewrite to be based on octet-size instead of list-size */
+
     /* Initialize dynamic table */
     context->dynamic_table.buffer =
         aws_mem_calloc(allocator, s_hpack_dynamic_table_initial_size, sizeof(struct aws_http_header));

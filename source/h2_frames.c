@@ -51,10 +51,9 @@ const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type) {
             return "WINDOW_UPDATE";
         case AWS_H2_FRAME_T_CONTINUATION:
             return "CONTINUATION";
+        default:
+            return "**UNKOWN**";
     }
-
-    /* unreachable */
-    AWS_ASSUME(false);
 }
 
 /***********************************************************************************************************************
