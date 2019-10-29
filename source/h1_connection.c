@@ -12,8 +12,7 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
-#include <aws/http/private/connection_impl.h>
+#include <aws/http/private/h1_connection.h>
 
 #include <aws/common/math.h>
 #include <aws/common/mutex.h>
