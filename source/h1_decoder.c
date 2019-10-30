@@ -16,6 +16,7 @@
 #include <aws/http/private/h1_decoder.h>
 
 #include <aws/common/string.h>
+#include <aws/http/private/strutil.h>
 #include <aws/io/logging.h>
 
 AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_chunked, "chunked");
@@ -40,10 +41,10 @@ struct aws_h1_decoder {
     state_fn *run_state;
     linestate_fn *process_line;
     int transfer_encoding;
-    size_t content_processed;
-    size_t content_length;
-    size_t chunk_processed;
-    size_t chunk_size;
+    uint64_t content_processed;
+    uint64_t content_length;
+    uint64_t chunk_processed;
+    uint64_t chunk_size;
     bool doing_trailers;
     bool is_done;
     bool body_headers_ignored;
@@ -61,27 +62,6 @@ static int s_linestate_request(struct aws_h1_decoder *decoder, struct aws_byte_c
 static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_cursor input);
 static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cursor input);
 static int s_linestate_chunk_size(struct aws_h1_decoder *decoder, struct aws_byte_cursor input);
-
-static struct aws_byte_cursor s_trim_trailing_whitespace(struct aws_byte_cursor cursor) {
-    while (cursor.len && cursor.ptr[cursor.len - 1] == (uint8_t)' ') {
-        cursor.len--;
-    }
-    return cursor;
-}
-
-static struct aws_byte_cursor s_trim_leading_whitespace(struct aws_byte_cursor cursor) {
-    while (cursor.len && *cursor.ptr == (uint8_t)' ') {
-        cursor.ptr++;
-        cursor.len--;
-    }
-    return cursor;
-}
-
-static struct aws_byte_cursor s_trim_whitespace(struct aws_byte_cursor cursor) {
-    cursor = s_trim_leading_whitespace(cursor);
-    cursor = s_trim_trailing_whitespace(cursor);
-    return cursor;
-}
 
 static bool s_scan_for_crlf(struct aws_h1_decoder *decoder, struct aws_byte_cursor input, size_t *bytes_processed) {
     AWS_ASSERT(input.len > 0);
@@ -154,51 +134,6 @@ static int s_cat(struct aws_h1_decoder *decoder, struct aws_byte_cursor to_appen
     }
 
     return op;
-}
-
-/* strtoull() is too permissive, allows things like whitespace and inputs that start with "0x" */
-static int s_read_size_impl(struct aws_byte_cursor cursor, size_t *size, bool hex) {
-    size_t val = 0;
-    size_t base = hex ? 16 : 10;
-
-    if (cursor.len == 0) {
-        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-    }
-
-    for (; cursor.len > 0; aws_byte_cursor_advance(&cursor, 1)) {
-        uint8_t c = cursor.ptr[0];
-
-        if (aws_mul_size_checked(val, base, &val)) {
-            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-        }
-
-        if (c >= '0' && c <= '9') {
-            if (aws_add_size_checked(val, c - '0', &val)) {
-                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-            }
-        } else if (hex && (c >= 'a' && c <= 'f')) {
-            if (aws_add_size_checked(val, c - 'a' + 10, &val)) {
-                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-            }
-        } else if (hex && (c >= 'A' && c <= 'F')) {
-            if (aws_add_size_checked(val, c - 'A' + 10, &val)) {
-                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-            }
-        } else {
-            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-        }
-    }
-
-    *size = val;
-    return AWS_OP_SUCCESS;
-}
-
-static int s_read_size(struct aws_byte_cursor cursor, size_t *size) {
-    return s_read_size_impl(cursor, size, false);
-}
-
-static int s_read_size_hex(struct aws_byte_cursor cursor, size_t *size) {
-    return s_read_size_impl(cursor, size, true);
 }
 
 /* This state consumes an entire line, then calls a linestate_fn to process the line. */
@@ -336,8 +271,8 @@ static int s_state_unchunked_body(struct aws_h1_decoder *decoder, struct aws_byt
     size_t processed_bytes = 0;
     AWS_FATAL_ASSERT(decoder->content_processed < decoder->content_length); /* shouldn't be possible */
 
-    if ((decoder->content_processed + input->len) > decoder->content_length) {
-        processed_bytes = decoder->content_length - decoder->content_processed;
+    if (input->len > (decoder->content_length - decoder->content_processed)) {
+        processed_bytes = (size_t)(decoder->content_length - decoder->content_processed);
     } else {
         processed_bytes = input->len;
     }
@@ -380,8 +315,8 @@ static int s_state_chunk(struct aws_h1_decoder *decoder, struct aws_byte_cursor 
     size_t processed_bytes = 0;
     AWS_ASSERT(decoder->chunk_processed < decoder->chunk_size);
 
-    if ((decoder->chunk_processed + input->len) > decoder->chunk_size) {
-        processed_bytes = decoder->chunk_size - decoder->chunk_processed;
+    if (input->len > (decoder->chunk_size - decoder->chunk_processed)) {
+        processed_bytes = (size_t)(decoder->chunk_size - decoder->chunk_processed);
     } else {
         processed_bytes = input->len;
     }
@@ -389,7 +324,7 @@ static int s_state_chunk(struct aws_h1_decoder *decoder, struct aws_byte_cursor 
     decoder->chunk_processed += processed_bytes;
 
     bool finished = decoder->chunk_processed == decoder->chunk_size;
-    struct aws_byte_cursor body = aws_byte_cursor_advance(input, decoder->chunk_size);
+    struct aws_byte_cursor body = aws_byte_cursor_advance(input, processed_bytes);
     int err = decoder->vtable.on_body(&body, false, decoder->user_data);
     if (err) {
         return AWS_OP_ERR;
@@ -417,7 +352,7 @@ static int s_linestate_chunk_size(struct aws_h1_decoder *decoder, struct aws_byt
         return AWS_OP_ERR;
     }
 
-    int err = s_read_size_hex(size, &decoder->chunk_size);
+    int err = aws_strutil_read_unsigned_hex(size, &decoder->chunk_size);
     if (err) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Failed to parse size of incoming chunk.", decoder->logging_id);
         AWS_LOGF_DEBUG(
@@ -426,7 +361,7 @@ static int s_linestate_chunk_size(struct aws_h1_decoder *decoder, struct aws_byt
             decoder->logging_id,
             AWS_BYTE_CURSOR_PRI(size));
 
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
     decoder->chunk_processed = 0;
 
@@ -508,7 +443,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
-    struct aws_byte_cursor value = s_trim_whitespace(splits[1]);
+    struct aws_byte_cursor value = aws_strutil_trim_http_whitespace(splits[1]);
 
     struct aws_http_decoded_header header;
     header.name = aws_http_str_to_header_name(name);
@@ -526,7 +461,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                 return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
             }
 
-            if (s_read_size(header.value_data, &decoder->content_length) != AWS_OP_SUCCESS) {
+            if (aws_strutil_read_unsigned_num(header.value_data, &decoder->content_length)) {
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,
                     "id=%p: Incoming content-length header has invalid value.",
@@ -536,7 +471,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                     "id=%p: Bad content-length value is: '" PRInSTR "'",
                     decoder->logging_id,
                     AWS_BYTE_CURSOR_PRI(header.value_data));
-                return AWS_OP_ERR;
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
             }
 
             if (decoder->body_headers_forbidden && decoder->content_length != 0) {
@@ -575,7 +510,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
             struct aws_byte_cursor split;
             AWS_ZERO_STRUCT(split);
             while (aws_byte_cursor_next_split(&header.value_data, ',', &split)) {
-                struct aws_byte_cursor coding = s_trim_whitespace(split);
+                struct aws_byte_cursor coding = aws_strutil_trim_http_whitespace(split);
                 int prev_flags = decoder->transfer_encoding;
 
                 if (aws_string_eq_byte_cursor_ignore_case(s_transfer_coding_chunked, &coding)) {
@@ -700,7 +635,7 @@ static int s_linestate_request(struct aws_h1_decoder *decoder, struct aws_byte_c
     return AWS_OP_SUCCESS;
 }
 
-static bool s_check_info_response_status_code(size_t code_val) {
+static bool s_check_info_response_status_code(int code_val) {
     /* TODO: 101 is an info_response, we need to revise the 101 behaviour. */
     return code_val >= 100 && code_val < 200 && code_val != 101;
 }
@@ -737,17 +672,19 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
     }
 
     /* Status-code is a 3-digit integer. RFC7230 section 3.1.2 */
-    size_t code_val;
-    err = s_read_size(code, &code_val);
-    if (err || code.len != 3 || code_val > 999) {
+    uint64_t code_val_u64;
+    err = aws_strutil_read_unsigned_num(code, &code_val_u64);
+    if (err || code.len != 3 || code_val_u64 > 999) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Incoming response has invalid status code.", decoder->logging_id);
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_STREAM,
             "id=%p: Bad status code is: '" PRInSTR "'",
             decoder->logging_id,
             AWS_BYTE_CURSOR_PRI(code));
-        return AWS_OP_ERR;
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
+
+    int code_val = (int)code_val_u64;
 
     /* RFC-7230 section 3.3 Message Body */
     decoder->body_headers_ignored |= code_val == AWS_HTTP_STATUS_304_NOT_MODIFIED;
@@ -757,7 +694,7 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
         decoder->header_block = AWS_HTTP_HEADER_BLOCK_INFORMATIONAL;
     }
 
-    err = decoder->vtable.on_response((int)code_val, decoder->user_data);
+    err = decoder->vtable.on_response(code_val, decoder->user_data);
     if (err) {
         return AWS_OP_ERR;
     }

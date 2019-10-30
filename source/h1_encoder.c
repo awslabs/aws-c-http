@@ -14,6 +14,7 @@
  */
 #include <aws/http/private/h1_encoder.h>
 
+#include <aws/http/private/strutil.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
 
@@ -27,6 +28,7 @@
 static int s_scan_outgoing_headers(
     const struct aws_http_message *message,
     size_t *out_header_lines_len,
+    bool *out_has_connection_close_header,
     bool body_headers_ignored,
     bool body_headers_forbidden) {
 
@@ -35,6 +37,8 @@ static int s_scan_outgoing_headers(
     bool has_body_stream = aws_http_message_get_body_stream(message);
     bool has_body_headers = false;
 
+    bool has_connection_close_header = false;
+
     const size_t num_headers = aws_http_message_get_header_count(message);
     for (size_t i = 0; i < num_headers; ++i) {
         struct aws_http_header header;
@@ -42,7 +46,19 @@ static int s_scan_outgoing_headers(
 
         enum aws_http_header_name name_enum = aws_http_str_to_header_name(header.name);
         switch (name_enum) {
-            case AWS_HTTP_HEADER_CONTENT_LENGTH:
+            case AWS_HTTP_HEADER_CONNECTION: {
+                struct aws_byte_cursor trimmed_value = aws_strutil_trim_http_whitespace(header.value);
+                if (aws_byte_cursor_eq_c_str_ignore_case(&trimmed_value, "close")) {
+                    has_connection_close_header = true;
+                }
+            } break;
+            case AWS_HTTP_HEADER_CONTENT_LENGTH: {
+                uint64_t content_length = 0;
+                aws_strutil_read_unsigned_num(aws_strutil_trim_http_whitespace(header.value), &content_length);
+                if (content_length > 0) {
+                    has_body_headers = true;
+                }
+            } break;
             case AWS_HTTP_HEADER_TRANSFER_ENCODING:
                 has_body_headers = true;
                 break;
@@ -80,6 +96,7 @@ static int s_scan_outgoing_headers(
     }
 
     *out_header_lines_len = total;
+    *out_has_connection_close_header = has_connection_close_header;
     return AWS_OP_SUCCESS;
 }
 
@@ -133,7 +150,12 @@ int aws_h1_encoder_message_init_from_request(
      */
 
     size_t header_lines_len;
-    err = s_scan_outgoing_headers(request, &header_lines_len, false, false);
+    err = s_scan_outgoing_headers(
+        request,
+        &header_lines_len,
+        &message->has_connection_close_header,
+        false /*body_headers_ignored*/,
+        false /*body_headers_forbidden*/);
     if (err) {
         goto error;
     }
@@ -219,7 +241,12 @@ int aws_h1_encoder_message_init_from_response(
      */
     body_headers_ignored |= status_int == AWS_HTTP_STATUS_304_NOT_MODIFIED;
     bool body_headers_forbidden = status_int == AWS_HTTP_STATUS_204_NO_CONTENT || status_int / 100 == 1;
-    err = s_scan_outgoing_headers(response, &header_lines_len, body_headers_ignored, body_headers_forbidden);
+    err = s_scan_outgoing_headers(
+        response,
+        &header_lines_len,
+        &message->has_connection_close_header,
+        body_headers_ignored,
+        body_headers_forbidden);
     if (err) {
         goto error;
     }
