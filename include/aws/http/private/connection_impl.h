@@ -130,6 +130,12 @@ int aws_http_client_connect_internal(
 AWS_HTTP_API
 void aws_http_connection_acquire(struct aws_http_connection *connection);
 
+/**
+ * Allow tests to fake stats data
+ */
+AWS_HTTP_API
+struct aws_crt_statistics_http1 *aws_h1_connection_get_statistics(struct aws_http_connection *connection);
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_CONNECTION_IMPL_H */

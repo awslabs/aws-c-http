@@ -190,7 +190,8 @@ static int s_tester_init(struct aws_allocator *alloc) {
     ASSERT_SUCCESS(aws_logger_init_standard(&s_tester.logger, s_tester.alloc, &logger_options));
     aws_logger_set(&s_tester.logger);
 
-    ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc));
+    struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
+    ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc, &test_channel_options));
 
     s_tester.server_connection = aws_http_connection_new_http1_1_server(alloc, SIZE_MAX);
     ASSERT_NOT_NULL(s_tester.server_connection);
@@ -1295,7 +1296,8 @@ static int s_error_tester_init(struct aws_allocator *alloc, struct error_from_ca
     ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->alloc, &logger_options));
     aws_logger_set(&tester->logger);
 
-    ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc));
+    struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
+    ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc, &test_channel_options));
 
     tester->server_connection = aws_http_connection_new_http1_1_server(alloc, SIZE_MAX);
     ASSERT_NOT_NULL(tester->server_connection);

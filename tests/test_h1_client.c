@@ -68,7 +68,8 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
     ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->alloc, &logger_options));
     aws_logger_set(&tester->logger);
 
-    ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc));
+    struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
+    ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc, &test_channel_options));
 
     tester->connection = aws_http_connection_new_http1_1_client(alloc, SIZE_MAX);
     ASSERT_NOT_NULL(tester->connection);

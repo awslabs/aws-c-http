@@ -629,7 +629,10 @@ static void s_set_outgoing_stream_ptr(struct h1_connection *connection, struct a
         connection->thread_data.outgoing_stream_timestamp_ns = now_ns;
     } else if (prev != NULL && next_outgoing_stream == NULL) {
         /* transition from something to write -> nothing to write */
-        s_add_time_measurement_to_stats(connection->thread_data.outgoing_stream_timestamp_ns, now_ns, &connection->thread_data.stats.pending_outgoing_stream_ns);
+        s_add_time_measurement_to_stats(
+            connection->thread_data.outgoing_stream_timestamp_ns,
+            now_ns,
+            &connection->thread_data.stats.pending_outgoing_stream_ns);
     }
 
     connection->thread_data.outgoing_stream = next_outgoing_stream;
@@ -645,7 +648,10 @@ static void s_set_incoming_stream_ptr(struct h1_connection *connection, struct a
         connection->thread_data.incoming_stream_timestamp_ns = now_ns;
     } else if (prev != NULL && next_incoming_stream == NULL) {
         /* transition from something to read -> nothing to read */
-        s_add_time_measurement_to_stats(connection->thread_data.incoming_stream_timestamp_ns, now_ns, &connection->thread_data.stats.pending_incoming_stream_ns);
+        s_add_time_measurement_to_stats(
+            connection->thread_data.incoming_stream_timestamp_ns,
+            now_ns,
+            &connection->thread_data.stats.pending_incoming_stream_ns);
     }
 
     connection->thread_data.incoming_stream = next_incoming_stream;
@@ -1750,12 +1756,18 @@ static void s_pull_up_stats_timestamps(struct h1_connection *connection) {
     }
 
     if (connection->thread_data.outgoing_stream) {
-        s_add_time_measurement_to_stats(connection->thread_data.outgoing_stream_timestamp_ns, now_ns, &connection->thread_data.stats.pending_outgoing_stream_ns);
+        s_add_time_measurement_to_stats(
+            connection->thread_data.outgoing_stream_timestamp_ns,
+            now_ns,
+            &connection->thread_data.stats.pending_outgoing_stream_ns);
         connection->thread_data.outgoing_stream_timestamp_ns = now_ns;
     }
 
     if (connection->thread_data.incoming_stream) {
-        s_add_time_measurement_to_stats(connection->thread_data.incoming_stream_timestamp_ns, now_ns, &connection->thread_data.stats.pending_incoming_stream_ns);
+        s_add_time_measurement_to_stats(
+            connection->thread_data.incoming_stream_timestamp_ns,
+            now_ns,
+            &connection->thread_data.stats.pending_incoming_stream_ns);
         connection->thread_data.incoming_stream_timestamp_ns = now_ns;
     }
 }
@@ -1769,4 +1781,8 @@ static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_
     aws_array_list_push_back(stats, &stats_base);
 }
 
+struct aws_crt_statistics_http1 *aws_h1_connection_get_statistics(struct aws_http_connection *connection) {
+    struct h1_connection *h1_conn = (void *)connection;
 
+    return &h1_conn->thread_data.stats;
+}

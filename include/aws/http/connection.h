@@ -62,16 +62,18 @@ typedef void(
 struct aws_http_connection_monitoring_options {
 
     /**
-     * minimum required throughput of the connection.  Throughput is only measured against the interval of time where there is actual io to perform
+     * minimum required throughput of the connection.  Throughput is only measured against the interval of time where
+     * there is actual io to perform
      */
     uint64_t minimum_throughput_bytes_per_second;
 
     /*
-     * number of throughput failures that may occur before the monitor shuts down the connection.  If zero, no checks will be performed.  A value of two or greater is STRONGLY recommended.  A value of one will result in timing-dependent, unreliable behavior.
+     * number of throughput failures that may occur before the monitor shuts down the connection.  If zero, no checks
+     * will be performed.  A value of two or greater is STRONGLY recommended.  A value of one will result in
+     * timing-dependent, unreliable behavior.
      */
     uint32_t minimum_throughput_failure_threshold_in_seconds;
 };
-
 
 /**
  * Supported proxy authentication modes
@@ -179,7 +181,7 @@ struct aws_http_client_connection_options {
      * Optional
      * Configuration options related to connection health monitoring
      */
-     const struct aws_http_connection_monitoring_options *monitoring_options;
+    const struct aws_http_connection_monitoring_options *monitoring_options;
 
     /**
      * Optional.

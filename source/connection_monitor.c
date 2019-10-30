@@ -21,14 +21,7 @@
 #include <aws/io/logging.h>
 #include <aws/io/statistics.h>
 
-
 #include <aws/common/clock.h>
-
-struct aws_statistics_handler_http_connection_monitor_impl {
-    struct aws_http_connection_monitoring_options options;
-
-    uint32_t consecutive_throughput_failures;
-};
 
 static void s_process_statistics(
     struct aws_crt_statistics_handler *handler,
@@ -77,12 +70,14 @@ static void s_process_statistics(
 
     struct aws_channel *channel = context;
 
-    if (impl->options.minimum_throughput_bytes_per_second == 0 || impl->options.minimum_throughput_failure_threshold_in_seconds == 0) {
+    if (impl->options.minimum_throughput_bytes_per_second == 0 ||
+        impl->options.minimum_throughput_failure_threshold_in_seconds == 0) {
         return;
     }
 
     /*
-     * All early-out/negative execution paths reset the failure count to zero.  Keep a copy of the current count for the remaining path.
+     * All early-out/negative execution paths reset the failure count to zero.  Keep a copy of the current count for the
+     * remaining path.
      */
     uint32_t current_failure_count = impl->consecutive_throughput_failures;
     impl->consecutive_throughput_failures = 0;
@@ -111,24 +106,34 @@ static void s_process_statistics(
 
     bytes_per_second /= pending_io_time_ns;
 
-    AWS_LOGF_DEBUG(AWS_LS_IO_CHANNEL, "id=%p: channel throughput - %zu bytes per second", (void *)channel, bytes_per_second);
+    AWS_LOGF_DEBUG(
+        AWS_LS_IO_CHANNEL, "id=%p: channel throughput - %zu bytes per second", (void *)channel, bytes_per_second);
 
     if (bytes_per_second >= impl->options.minimum_throughput_bytes_per_second) {
         return;
     }
 
     /*
-     * We failed the throughput check.  Restore and increment the failure count and then check if the failure threshold has
-     * been crossed.
+     * We failed the throughput check.  Restore and increment the failure count and then check if the failure threshold
+     * has been crossed.
      */
     impl->consecutive_throughput_failures = current_failure_count + 1;
-    AWS_LOGF_INFO(AWS_LS_IO_CHANNEL, "id=%p: Channel low throughput warning.  Currently %u consecutive failures", (void *)channel, impl->consecutive_throughput_failures);
+    AWS_LOGF_INFO(
+        AWS_LS_IO_CHANNEL,
+        "id=%p: Channel low throughput warning.  Currently %u consecutive failures",
+        (void *)channel,
+        impl->consecutive_throughput_failures);
 
     if (impl->consecutive_throughput_failures < impl->options.minimum_throughput_failure_threshold_in_seconds) {
         return;
     }
 
-    AWS_LOGF_INFO(AWS_LS_IO_CHANNEL, "id=%p: Channel low throughput threshold hit (< %zu bytes per second for %u seconds).  Shutting down.", (void *)channel, impl->options.minimum_throughput_bytes_per_second, impl->options.minimum_throughput_failure_threshold_in_seconds);
+    AWS_LOGF_INFO(
+        AWS_LS_IO_CHANNEL,
+        "id=%p: Channel low throughput threshold hit (< %zu bytes per second for %u seconds).  Shutting down.",
+        (void *)channel,
+        impl->options.minimum_throughput_bytes_per_second,
+        impl->options.minimum_throughput_failure_threshold_in_seconds);
 
     aws_channel_shutdown(channel, AWS_ERROR_HTTP_CHANNEL_THROUGHPUT_FAILURE);
 }
@@ -153,7 +158,9 @@ static struct aws_crt_statistics_handler_vtable s_http_connection_monitor_vtable
     .get_report_interval_ms = s_get_report_interval_ms,
 };
 
-struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connection_monitor(struct aws_allocator *allocator, struct aws_http_connection_monitoring_options *options) {
+struct aws_crt_statistics_handler *aws_crt_statistics_handler_new_http_connection_monitor(
+    struct aws_allocator *allocator,
+    struct aws_http_connection_monitoring_options *options) {
     struct aws_crt_statistics_handler *handler = NULL;
     struct aws_statistics_handler_http_connection_monitor_impl *impl = NULL;
 
@@ -183,5 +190,6 @@ bool aws_http_connection_monitoring_options_is_valid(const struct aws_http_conne
         return false;
     }
 
-    return options->minimum_throughput_failure_threshold_in_seconds > 1 && options->minimum_throughput_bytes_per_second > 0;
+    return options->minimum_throughput_failure_threshold_in_seconds > 1 &&
+           options->minimum_throughput_bytes_per_second > 0;
 }

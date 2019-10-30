@@ -248,6 +248,17 @@ if (ENABLE_PROXY_INTEGRATION_TESTS)
 endif()
 
 add_test_case(test_http_connection_monitor_options_is_valid)
+add_test_case(test_http_connection_monitor_above)
+add_test_case(test_http_connection_monitor_below)
+add_test_case(test_http_connection_monitor_below_then_above)
+add_test_case(test_http_connection_monitor_zero_bytes_positive_time)
+add_test_case(test_http_connection_monitor_zero_bytes_zero_time)
+add_test_case(test_http_connection_monitor_tiny)
+add_test_case(test_http_connection_monitor_bytes_overflow)
+add_test_case(test_http_connection_monitor_time_overflow)
+add_test_case(test_http_connection_monitor_shutdown)
+
+add_test_case(test_http_stats_simple)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})
