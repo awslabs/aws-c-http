@@ -49,12 +49,8 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .update_window = NULL,
 };
 
-static const struct aws_http_decoder_vtable s_h2_decoder_vtable = {
-    .on_request = NULL,
-    .on_response = NULL,
-    .on_header = NULL,
-    .on_body = NULL,
-    .on_done = NULL,
+static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
+    .on_data = NULL,
 };
 
 /* Common new() logic for server & client */

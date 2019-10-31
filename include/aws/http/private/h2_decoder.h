@@ -18,13 +18,30 @@
 
 #include <aws/http/private/http_impl.h>
 
+struct aws_h2_decoder_vtable {
+
+    int (*on_headers)(uint32_t stream_id, void *userdata);
+    int (*on_end_headers)(uint32_t stream_id, void *userdata);
+
+    int (*on_data)(uint32_t stream_id, const struct aws_byte_cursor *data, void *userdata);
+
+    int (*on_rst_stream)(uint32_t stream_id, uint32_t error_code, void *userdata);
+
+    int (*on_ping)(bool ack, uint8_t opaque_data[8], void *userdata);
+    int (*on_setting)(uint16_t setting, uint32_t value, void *userdata);
+    int (*on_settings_ack)(void *userdata);
+    int (*on_goaway)(uint32_t last_stream, uint32_t error_code, uint32_t debug_data_length, void *userdata);
+    int (*on_goaway_debug_data)(const struct aws_byte_cursor *data, void *userdata);
+};
+
 /**
  * Structure used to initialize an `aws_h2_decoder`.
  */
 struct aws_h2_decoder_params {
     struct aws_allocator *alloc;
     void *user_data;
-    struct aws_http_decoder_vtable vtable;
+    struct aws_h2_decoder_vtable vtable;
+    void *userdata;
 };
 
 struct aws_h2_decoder;
