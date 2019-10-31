@@ -755,7 +755,7 @@ int aws_h1_decoder_get_encoding_flags(const struct aws_h1_decoder *decoder) {
     return decoder->transfer_encoding;
 }
 
-size_t aws_h1_decoder_get_content_length(const struct aws_h1_decoder *decoder) {
+uint64_t aws_h1_decoder_get_content_length(const struct aws_h1_decoder *decoder) {
     return decoder->content_length;
 }
 
