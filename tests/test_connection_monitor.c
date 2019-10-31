@@ -88,10 +88,10 @@ struct monitor_test_context {
 
 static struct monitor_test_context s_test_context;
 
-static struct aws_atomic_var s_clock_value;
+static uint64_t s_clock_value = 0;
 
 static int s_mock_clock(uint64_t *timestamp) {
-    *timestamp = aws_atomic_load_int(&s_clock_value);
+    *timestamp = s_clock_value;
 
     return AWS_OP_SUCCESS;
 }
@@ -104,7 +104,7 @@ static int s_init_monitor_test(struct aws_allocator *allocator, struct aws_crt_s
 
     aws_http_library_init(allocator);
 
-    aws_atomic_init_int(&s_clock_value, 0);
+    s_clock_value = 0;
 
     AWS_ZERO_STRUCT(s_test_context);
     s_test_context.allocator = allocator;
@@ -211,7 +211,7 @@ static int s_do_http_monitoring_test(
 
     for (size_t i = 0; i < event_count; ++i) {
         struct http_monitor_test_stats_event *event = events + i;
-        aws_atomic_store_int(&s_clock_value, event->timestamp);
+        s_clock_value = event->timestamp;
         switch (event->event_type) {
             case MTET_EMPTY:
                 break;
@@ -792,7 +792,7 @@ static int s_do_http_statistics_test(
 
     for (size_t i = 0; i < event_count; ++i) {
         struct test_http_stats_event *event = events + i;
-        aws_atomic_store_int(&s_clock_value, event->timestamp);
+        s_clock_value = event->timestamp;
 
         switch (event->event_type) {
             case MTHSET_FLUSH:
