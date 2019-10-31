@@ -954,6 +954,12 @@ static int s_test_http_stats_split_across_gather_boundary(struct aws_allocator *
 }
 AWS_TEST_CASE(test_http_stats_split_across_gather_boundary, s_test_http_stats_split_across_gather_boundary);
 
+/*
+ * Pipeline 3 requests before beginning response data.
+ *
+ * The request body sizes have a total length of 4 * TICK_BODY_SIZE which means it will take 5 ticks
+ * to completely "write" them.
+ */
 static struct test_http_stats_event s_http_stats_test_pipelined[] = {
     {
         .event_type = MTHSET_ADD_OUTGOING_STREAM,
