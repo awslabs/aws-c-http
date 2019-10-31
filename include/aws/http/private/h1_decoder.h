@@ -49,7 +49,7 @@ AWS_HTTP_API void aws_h1_decoder_set_body_headers_ignored(struct aws_h1_decoder 
 #define AWS_HTTP_TRANSFER_ENCODING_DEPRECATED_COMPRESS (1 << 3)
 AWS_HTTP_API int aws_h1_decoder_get_encoding_flags(const struct aws_h1_decoder *decoder);
 
-AWS_HTTP_API size_t aws_h1_decoder_get_content_length(const struct aws_h1_decoder *decoder);
+AWS_HTTP_API uint64_t aws_h1_decoder_get_content_length(const struct aws_h1_decoder *decoder);
 AWS_HTTP_API bool aws_h1_decoder_get_body_headers_ignored(const struct aws_h1_decoder *decoder);
 AWS_HTTP_API enum aws_http_header_block aws_h1_decoder_get_header_block(const struct aws_h1_decoder *decoder);
 

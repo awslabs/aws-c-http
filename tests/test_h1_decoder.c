@@ -712,6 +712,7 @@ static int s_h1_decode_bad_requests_and_assert_failure(struct aws_allocator *all
     };
 
     for (size_t iter = 0; iter < AWS_ARRAY_SIZE(requests); ++iter) {
+        printf("--- %zu ---\n", iter);
         struct aws_byte_cursor request = requests[iter];
 
         struct aws_h1_decoder_params params;

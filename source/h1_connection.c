@@ -175,7 +175,7 @@ struct h1_connection {
         bool is_outgoing_stream_task_active;
 
         /* For checking status from outside the event-loop thread. */
-        bool is_shutting_down;
+        bool is_open;
 
         /* If non-zero, reason to immediately reject new streams. (ex: closing, switched protocols) */
         int new_stream_error_code;
@@ -212,6 +212,8 @@ static void s_stop(
     bool schedule_shutdown,
     int error_code) {
 
+    AWS_ASSERT(stop_reading || stop_writing || schedule_shutdown); /* You are required to stop at least 1 thing */
+
     if (stop_reading) {
         AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
         connection->thread_data.is_reading_stopped = true;
@@ -224,12 +226,10 @@ static void s_stop(
     { /* BEGIN CRITICAL SECTION */
         s_h1_connection_lock_synced_data(connection);
 
-        if (connection->synced_data.is_shutting_down) {
-            schedule_shutdown = false;
-        } else {
-            connection->synced_data.is_shutting_down = true;
-            connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
-        }
+        /* Even if we're not scheduling shutdown just yet (ex: sent final request but waiting to read final response)
+         * we don't consider the connection "open" anymore so user can't create more streams */
+        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
+        connection->synced_data.is_open = false;
 
         s_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -275,15 +275,15 @@ static void s_connection_close(struct aws_http_connection *connection_base) {
 
 static bool s_connection_is_open(const struct aws_http_connection *connection_base) {
     struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
-    bool is_shutting_down;
+    bool is_open;
 
     { /* BEGIN CRITICAL SECTION */
         s_h1_connection_lock_synced_data(connection);
-        is_shutting_down = connection->synced_data.is_shutting_down;
+        is_open = connection->synced_data.is_open;
         s_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
-    return !is_shutting_down;
+    return is_open;
 }
 
 static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response) {
@@ -314,6 +314,10 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
         } else {
             h1_stream->synced_data.has_outgoing_response = true;
             h1_stream->encoder_message = encoder_message;
+            if (encoder_message.has_connection_close_header) {
+                h1_stream->is_final_stream = true;
+            }
+
             if (!connection->synced_data.is_outgoing_stream_task_active) {
                 connection->synced_data.is_outgoing_stream_task_active = true;
                 should_schedule_task = true;
@@ -598,17 +602,28 @@ finish_up:
             AWS_BYTE_CURSOR_PRI(stream->base.server_data->request_method_str));
     }
 
+    /* If connection must shut down, do it BEFORE invoking stream-complete callback.
+     * That way, if aws_http_connection_is_open() is called from stream-complete callback, it returns false. */
+    if (!original_error_code) {
+        if (error_code) {
+            s_shutdown_due_to_error(connection, error_code);
+
+        } else if (stream->is_final_stream) {
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Closing connection due to completion of final stream.",
+                (void *)&connection->base);
+
+            s_connection_close(&connection->base);
+        }
+    }
+
     /* Invoke callback and clean up stream. */
     if (stream->base.on_complete) {
         stream->base.on_complete(&stream->base, error_code, stream->base.user_data);
     }
 
     aws_http_stream_release(&stream->base);
-
-    /* If this function started out ok, but ended badly, shut down the connection. */
-    if (!original_error_code && error_code) {
-        s_shutdown_due_to_error(connection, error_code);
-    }
 }
 
 static void s_add_time_measurement_to_stats(uint64_t start_ns, uint64_t end_ns, uint64_t *output_ns) {
@@ -662,7 +677,9 @@ static void s_set_incoming_stream_ptr(struct h1_connection *connection, struct a
 static void s_client_update_incoming_stream_ptr(struct h1_connection *connection) {
     struct aws_linked_list *list = &connection->thread_data.stream_list;
     struct aws_h1_stream *desired;
-    if (aws_linked_list_empty(list)) {
+    if (connection->thread_data.is_reading_stopped) {
+        desired = NULL;
+    } else if (aws_linked_list_empty(list)) {
         desired = NULL;
     } else {
         desired = AWS_CONTAINER_OF(aws_linked_list_begin(list), struct aws_h1_stream, node);
@@ -691,11 +708,28 @@ static void s_client_update_incoming_stream_ptr(struct h1_connection *connection
 static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *connection) {
     struct aws_h1_stream *current = connection->thread_data.outgoing_stream;
     struct aws_h1_stream *prev = current;
+    struct aws_linked_list_node *next_node = NULL;
     int err;
 
     /* If current stream is done sending data... */
     if (current && !aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
-        struct aws_linked_list_node *next_node = aws_linked_list_next(&current->node);
+        next_node = aws_linked_list_next(&current->node);
+
+        /* RFC-7230 section 6.6: Tear-down.
+         * If this was the final stream, don't allows any further streams to be sent */
+        if (current->is_final_stream) {
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Done sending final stream, no further streams will be sent.",
+                (void *)&connection->base);
+
+            s_stop(
+                connection,
+                false /*stop_reading*/,
+                true /*stop_writing*/,
+                false /*schedule_shutdown*/,
+                AWS_ERROR_SUCCESS);
+        }
 
         /* If it's also done receiving data, then it's complete! */
         if (current->is_incoming_message_done) {
@@ -706,19 +740,18 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
             s_stream_complete(current, AWS_ERROR_SUCCESS);
         }
 
-        /* Iterate current stream to the next item in stream_list. */
-        if (next_node == aws_linked_list_end(&connection->thread_data.stream_list)) {
-            current = NULL;
-        } else {
-            current = AWS_CONTAINER_OF(next_node, struct aws_h1_stream, node);
-        }
+        current = NULL;
     }
 
-    /* If current stream is NULL,
-     * Client side: look in synced_data.pending_stream_list for more work
-     * Server side: look in thread_data.waiting_stream_list for more work */
-    if (!current) {
-        if (connection->base.server_data) {
+    /* If current stream is NULL, do one of:
+     * - Look for next item in stream_list.
+     * - Client side: look in synced_data.pending_stream_list for more work
+     * - Server side: look in thread_data.waiting_stream_list for more work */
+    if (!current && !connection->thread_data.is_writing_stopped) {
+        if (next_node && next_node != aws_linked_list_end(&connection->thread_data.stream_list)) {
+            current = AWS_CONTAINER_OF(next_node, struct aws_h1_stream, node);
+
+        } else if (connection->base.server_data) {
             /* server side should check the stream already has response or not
              * Require a lock to prevent the user makes any change to the stream state */
             /* BEGIN CRITICAL SECTION */
@@ -1011,6 +1044,20 @@ static int s_decoder_on_header(const struct aws_http_decoded_header *header, voi
 
     enum aws_http_header_block header_block =
         aws_h1_decoder_get_header_block(connection->thread_data.incoming_stream_decoder);
+
+    /* RFC-7230 section 6.1.
+     * "Connection: close" header signals that a connection will not persist after the current request/response */
+    if (header->name == AWS_HTTP_HEADER_CONNECTION) {
+        if (aws_byte_cursor_eq_c_str(&header->value_data, "close")) {
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Received 'Connection: close' header. This will be the final stream on this connection.",
+                (void *)&incoming_stream->base);
+
+            incoming_stream->is_final_stream = true;
+        }
+    }
+
     if (incoming_stream->base.on_incoming_headers) {
         struct aws_http_header deliver = {
             .name = header->name_data,
@@ -1130,8 +1177,21 @@ static int s_decoder_on_done(void *user_data) {
         return AWS_OP_SUCCESS;
     }
 
-    /* If it is a main header block, the incoming stream is finished decoding and we will update it if needed */
+    /* Otherwise the incoming stream is finished decoding and we will update it if needed */
     incoming_stream->is_incoming_message_done = true;
+
+    /* RFC-7230 section 6.6
+     * After reading the final message, the connection must not read any more */
+    if (incoming_stream->is_final_stream) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Done reading final stream, no further streams will be read.",
+            (void *)&connection->base);
+
+        s_stop(
+            connection, true /*stop_reading*/, false /*stop_writing*/, false /*schedule_shutdown*/, AWS_ERROR_SUCCESS);
+    }
+
     if (connection->base.server_data) {
         /* Server side */
         aws_http_on_incoming_request_done_fn *on_request_done = incoming_stream->base.server_data->on_request_done;
@@ -1206,6 +1266,7 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     }
 
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
+    connection->synced_data.is_open = true;
 
     struct aws_h1_decoder_params options = {
         .alloc = alloc,

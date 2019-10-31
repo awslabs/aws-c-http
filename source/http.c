@@ -166,6 +166,7 @@ static void s_init_str_to_enum_hash_table(
 
     for (size_t i = start_index; i < (size_t)end_index; ++i) {
         int was_created;
+        AWS_FATAL_ASSERT(str_array[i].ptr && "Missing enum string");
         err = aws_hash_table_put(table, &str_array[i], (void *)i, &was_created);
         AWS_FATAL_ASSERT(!err && was_created);
     }
@@ -239,9 +240,10 @@ static struct aws_hash_table s_header_str_to_enum;                         /* fo
 static struct aws_byte_cursor s_header_enum_to_str[AWS_HTTP_HEADER_COUNT]; /* for enum -> string lookup */
 
 static void s_headers_init(struct aws_allocator *alloc) {
-    s_header_enum_to_str[AWS_HTTP_HEADER_TRANSFER_ENCODING] = aws_byte_cursor_from_c_str("transfer-encoding");
+    s_header_enum_to_str[AWS_HTTP_HEADER_CONNECTION] = aws_byte_cursor_from_c_str("connection");
     s_header_enum_to_str[AWS_HTTP_HEADER_CONTENT_LENGTH] = aws_byte_cursor_from_c_str("content-length");
     s_header_enum_to_str[AWS_HTTP_HEADER_EXPECT] = aws_byte_cursor_from_c_str("expect");
+    s_header_enum_to_str[AWS_HTTP_HEADER_TRANSFER_ENCODING] = aws_byte_cursor_from_c_str("transfer-encoding");
 
     s_init_str_to_enum_hash_table(
         &s_header_str_to_enum,
