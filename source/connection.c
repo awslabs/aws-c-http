@@ -750,13 +750,13 @@ int aws_http_client_connect_internal(
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,
         "static: attempting to initialize a new client channel to %s:%d",
-        (const char *)aws_string_bytes(host_name),
+        aws_string_c_str(host_name),
         (int)options->port);
 
     struct aws_socket_channel_bootstrap_options channel_options;
     AWS_ZERO_STRUCT(channel_options);
     channel_options.bootstrap = options->bootstrap;
-    channel_options.host_name = (const char *)aws_string_bytes(host_name);
+    channel_options.host_name = aws_string_c_str(host_name);
     channel_options.port = options->port;
     channel_options.socket_options = options->socket_options;
     channel_options.tls_options = options->tls_options;
