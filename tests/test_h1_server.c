@@ -1116,6 +1116,198 @@ TEST_CASE(h1_server_send_response_large_head) {
     return AWS_OP_SUCCESS;
 }
 
+TEST_CASE(h1_server_receive_close_header_ends_connection) {
+    (void)ctx;
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    /* receive request with "Connection: close" header */
+    const char *incoming_request = "GET / HTTP/1.1\r\n"
+                                   "Host: example.com\r\n"
+                                   "Connection: close\r\n"
+                                   "\r\n";
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(s_tester.request_num == 1);
+
+    /* send response */
+    struct tester_request request = s_tester.requests[0];
+    struct aws_http_message *response;
+    ASSERT_SUCCESS(s_create_response(&response, 200, NULL, 0, NULL));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request.request_handler, response));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    const char *expected = "HTTP/1.1 200 OK\r\n"
+                           "\r\n";
+
+    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+
+    /* stream should complete successfully */
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.requests[0].on_complete_error_code);
+
+    /* connection should have shut down cleanly after sending response */
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&s_tester.testing_channel));
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+
+    /* clean up */
+    aws_http_message_destroy(response);
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+/* It's not legal for a client to send another request after sending one with a "Connection: close" */
+TEST_CASE(h1_server_receive_close_header_more_requests_illegal) {
+    (void)ctx;
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    /* Receive 2 requests, where first one has "Connection: close" header */
+    const char *incoming_request = "GET /first HTTP/1.1\r\n"
+                                   "Host: example.com\r\n"
+                                   "Connection: close\r\n"
+                                   "\r\n"
+                                   "GET /second HTTP/1.1\r\n"
+                                   "Host: example.com\r\n"
+                                   "\r\n";
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* Only the first request should have registered */
+    ASSERT_TRUE(s_tester.request_num == 1);
+    struct tester_request *request = &s_tester.requests[0];
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&request->uri, "/first"));
+
+    /* Not checking any more state.
+     * It would be valid behavior for connection to shutdown with an error code
+     * OR silently ignore the second request. */
+
+    /* clean up */
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h1_server_send_close_header_ends_connection) {
+    (void)ctx;
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    /* receive request */
+    const char *incoming_request = "GET / HTTP/1.1\r\n"
+                                   "Host: example.com\r\n"
+                                   "\r\n";
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(s_tester.request_num == 1);
+
+    struct tester_request request = s_tester.requests[0];
+
+    /* send response with "Connection: close" header */
+    struct aws_http_message *response;
+    struct aws_http_header headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Connection"),
+            .value = aws_byte_cursor_from_c_str("close"),
+        },
+    };
+    ASSERT_SUCCESS(s_create_response(&response, 200, headers, AWS_ARRAY_SIZE(headers), NULL));
+    ASSERT_SUCCESS(aws_http_stream_send_response(request.request_handler, response));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    const char *expected = "HTTP/1.1 200 OK\r\n"
+                           "Connection: close\r\n"
+                           "\r\n";
+
+    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+
+    /* stream should complete successfully */
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.requests[0].on_complete_error_code);
+
+    /* connection should have shut down cleanly after sending response */
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&s_tester.testing_channel));
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+
+    /* clean up */
+    aws_http_message_destroy(response);
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
+/* When pipelining multiple requests
+ * and one of the responses has a "Connection: close" header
+ * ensure that everything goes correctly */
+TEST_CASE(h1_server_send_close_header_with_pipelining) {
+    (void)ctx;
+    (void)ctx;
+    ASSERT_SUCCESS(s_tester_init(allocator));
+
+    /* receive 3 requests at once */
+    const char *incoming_request = "GET /first HTTP/1.1\r\n"
+                                   "Host: example.com\r\n"
+                                   "\r\n"
+                                   "GET /second HTTP/1.1\r\n"
+                                   "Host: example.com\r\n"
+                                   "\r\n"
+                                   "GET /third HTTP/1.1\r\n"
+                                   "Host: example.com\r\n"
+                                   "\r\n";
+    ASSERT_SUCCESS(s_send_message_c_str(incoming_request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_TRUE(s_tester.request_num == 3);
+
+    /* Send 3 responses.
+     * Only the middle response has the "Connection: close" header */
+    struct aws_http_message *responses[3];
+    struct aws_http_header close_headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Connection"),
+            .value = aws_byte_cursor_from_c_str("close"),
+        },
+    };
+
+    /* Create responses in order: third, second, first.
+     * This lets us check that we can still send a response to the first message
+     * even after queueing the response to the second message with a close header. */
+    for (int i = 2; i >= 0; --i) {
+        struct aws_http_header *headers = NULL;
+        size_t num_headers = 0;
+        if (i == 1) {
+            headers = close_headers;
+            num_headers = AWS_ARRAY_SIZE(close_headers);
+        }
+        ASSERT_SUCCESS(s_create_response(&responses[i], 200, headers, num_headers, NULL));
+        ASSERT_SUCCESS(aws_http_stream_send_response(s_tester.requests[i].request_handler, responses[i]));
+    }
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* Only the first two responses should be sent.
+     * The third should not send because the second had the close header. */
+    const char *expected = "HTTP/1.1 200 OK\r\n"
+                           "\r\n"
+                           "HTTP/1.1 200 OK\r\n"
+                           "Connection: close\r\n"
+                           "\r\n";
+
+    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+
+    /* Only the first two streams should complete successfully */
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.requests[0].on_complete_error_code);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.requests[1].on_complete_error_code);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, s_tester.requests[2].on_complete_error_code);
+
+    /* Connection should have shut down due to sending close header. */
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&s_tester.testing_channel));
+
+    /* clean up */
+    for (size_t i = 0; i < 3; ++i) {
+        aws_http_message_destroy(responses[i]);
+    }
+    ASSERT_SUCCESS(s_server_tester_clean_up());
+    return AWS_OP_SUCCESS;
+}
+
 /* Test for errors returned from callbacks */
 /* The connection is closed before the message is sent */
 

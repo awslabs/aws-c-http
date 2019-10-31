@@ -303,6 +303,10 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
         } else {
             h1_stream->synced_data.has_outgoing_response = true;
             h1_stream->encoder_message = encoder_message;
+            if (encoder_message.has_connection_close_header) {
+                h1_stream->is_final_stream = true;
+            }
+
             if (!connection->synced_data.is_outgoing_stream_task_active) {
                 connection->synced_data.is_outgoing_stream_task_active = true;
                 should_schedule_task = true;
