@@ -26,6 +26,7 @@ struct aws_h1_encoder_message {
     /* Upon creation, the "head" (everything preceding body) is buffered here. */
     struct aws_byte_buf outgoing_head_buf;
     struct aws_input_stream *body;
+    bool has_connection_close_header;
 };
 
 enum aws_h1_encoder_state {

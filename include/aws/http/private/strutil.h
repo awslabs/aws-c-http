@@ -1,0 +1,69 @@
+/*
+ * Copyright 2010-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License").
+ * You may not use this file except in compliance with the License.
+ * A copy of the License is located at
+ *
+ *  http://aws.amazon.com/apache2.0
+ *
+ * or in the "license" file accompanying this file. This file is distributed
+ * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+ * express or implied. See the License for the specific language governing
+ * permissions and limitations under the License.
+ */
+#include <aws/http/http.h>
+
+AWS_EXTERN_C_BEGIN
+
+/**
+ * Read entire cursor as ASCII/UTF-8 unsigned base-10 number.
+ * Stricter than strtoull(), which allows whitespace and inputs that start with "0x"
+ *
+ * Examples:
+ * "0" -> 0
+ * "123" -> 123
+ * "00004" -> 4 // leading zeros ok
+ *
+ * Rejects things like:
+ * "-1" // negative numbers not allowed
+ * "1,000" // only characters 0-9 allowed
+ * "" // blank string not allowed
+ * " 0 " // whitespace not allowed
+ * "0x0" // hex not allowed
+ * "FF" // hex not allowed
+ * "999999999999999999999999999999999999999999" // larger than max u64
+ */
+AWS_HTTP_API
+int aws_strutil_read_unsigned_num(struct aws_byte_cursor cursor, uint64_t *dst);
+
+/**
+ * Read entire cursor as ASCII/UTF-8 unsigned base-16 number with NO "0x" prefix.
+ *
+ * Examples:
+ * "F" -> 15
+ * "000000ff" -> 255 // leading zeros ok
+ * "Ff" -> 255 // mixed case ok
+ * "123" -> 291
+ * "FFFFFFFFFFFFFFFF" -> 18446744073709551616 // max u64
+ *
+ * Rejects things like:
+ * "0x0" // 0x prefix not allowed
+ * "" // blank string not allowed
+ * " F " // whitespace not allowed
+ * "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF" // larger than max u64
+ */
+AWS_HTTP_API
+int aws_strutil_read_unsigned_hex(struct aws_byte_cursor cursor, uint64_t *dst);
+
+/**
+ * Return a cursor with all leading and trailing SPACE and TAB characters removed.
+ * RFC7230 section 3.2.3 Whitespace
+ * Examples:
+ * " \t a \t  " -> "a"
+ * "a \t a" -> "a \t a"
+ */
+AWS_HTTP_API
+struct aws_byte_cursor aws_strutil_trim_http_whitespace(struct aws_byte_cursor cursor);
+
+AWS_EXTERN_C_END

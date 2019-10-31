@@ -32,6 +32,10 @@ struct aws_h1_stream {
     bool is_incoming_message_done;
     bool is_incoming_head_done;
 
+    /* If true, this is the last stream the connection should process.
+     * See RFC-7230 Section 6: Connection Management. */
+    bool is_final_stream;
+
     /* Buffer for incoming data that needs to stick around. */
     struct aws_byte_buf incoming_storage_buf;
 

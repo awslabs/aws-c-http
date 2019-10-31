@@ -35,6 +35,7 @@ enum aws_http_method {
  */
 enum aws_http_header_name {
     AWS_HTTP_HEADER_UNKNOWN, /* Unrecognized value */
+    AWS_HTTP_HEADER_CONNECTION,
     AWS_HTTP_HEADER_CONTENT_LENGTH,
     AWS_HTTP_HEADER_EXPECT,
     AWS_HTTP_HEADER_TRANSFER_ENCODING,

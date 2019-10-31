@@ -97,6 +97,12 @@ struct aws_h1_stream *aws_h1_stream_new_request(
         goto error;
     }
 
+    /* RFC-7230 Section 6.3: The "close" connection option is used to signal
+     * that a connection will not persist after the current request/response*/
+    if (stream->encoder_message.has_connection_close_header) {
+        stream->is_final_stream = true;
+    }
+
     return stream;
 
 error:
