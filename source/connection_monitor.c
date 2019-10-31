@@ -23,6 +23,8 @@
 
 #include <aws/common/clock.h>
 
+#include <inttypes.h>
+
 static void s_process_statistics(
     struct aws_crt_statistics_handler *handler,
     struct aws_crt_statistics_sample_interval *interval,
@@ -107,7 +109,10 @@ static void s_process_statistics(
     bytes_per_second /= pending_io_time_ns;
 
     AWS_LOGF_DEBUG(
-        AWS_LS_IO_CHANNEL, "id=%p: channel throughput - %zu bytes per second", (void *)channel, bytes_per_second);
+        AWS_LS_IO_CHANNEL,
+        "id=%p: channel throughput - %" PRIu64 " bytes per second",
+        (void *)channel,
+        bytes_per_second);
 
     if (bytes_per_second >= impl->options.minimum_throughput_bytes_per_second) {
         return;
@@ -130,7 +135,7 @@ static void s_process_statistics(
 
     AWS_LOGF_INFO(
         AWS_LS_IO_CHANNEL,
-        "id=%p: Channel low throughput threshold hit (< %zu bytes per second for %u seconds).  Shutting down.",
+        "id=%p: Channel low throughput threshold hit (< %" PRIu64 " bytes per second for %u seconds).  Shutting down.",
         (void *)channel,
         impl->options.minimum_throughput_bytes_per_second,
         impl->options.minimum_throughput_failure_threshold_in_seconds);
