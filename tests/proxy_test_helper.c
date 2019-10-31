@@ -14,7 +14,7 @@
  */
 
 #include <aws/http/connection.h>
-#include <aws/http/private/connection_impl.h>
+#include <aws/http/private/h1_connection.h>
 #include <aws/http/private/proxy_impl.h>
 #include <aws/http/server.h>
 

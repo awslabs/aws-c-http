@@ -35,9 +35,6 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_UNKNOWN,
         "Encountered an unknown error."),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_PARSE,
-        "Encountered an unexpected form when parsing an http message."),
-    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_HEADER_FIELD,
         "Invalid header field, including a forbidden header field."),
     AWS_DEFINE_ERROR_INFO_HTTP(
@@ -112,6 +109,12 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CHANNEL_THROUGHPUT_FAILURE,
         "Http connection channel shut down due to failure to meet throughput minimum"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR,
+        "Protocol rules violated by API call or peer"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_CLOSED,
+        "Received frame on a closed stream"),
 };
 /* clang-format on */
 

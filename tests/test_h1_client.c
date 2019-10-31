@@ -13,7 +13,7 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/private/connection_impl.h>
+#include <aws/http/private/h1_connection.h>
 #include <aws/http/request_response.h>
 
 #include <aws/common/uuid.h>
@@ -972,7 +972,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_with_bad_data_shuts_down_connection) {
 
     /* check result */
     ASSERT_TRUE(response.on_complete_cb_count == 1);
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PARSE, response.on_complete_error_code);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, response.on_complete_error_code);
 
     /* clean up */
     ASSERT_SUCCESS(s_response_tester_clean_up(&response));

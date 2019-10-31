@@ -162,30 +162,30 @@ static int s_read_size_impl(struct aws_byte_cursor cursor, size_t *size, bool he
     size_t base = hex ? 16 : 10;
 
     if (cursor.len == 0) {
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     for (; cursor.len > 0; aws_byte_cursor_advance(&cursor, 1)) {
         uint8_t c = cursor.ptr[0];
 
         if (aws_mul_size_checked(val, base, &val)) {
-            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
         }
 
         if (c >= '0' && c <= '9') {
             if (aws_add_size_checked(val, c - '0', &val)) {
-                return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
             }
         } else if (hex && (c >= 'a' && c <= 'f')) {
             if (aws_add_size_checked(val, c - 'a' + 10, &val)) {
-                return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
             }
         } else if (hex && (c >= 'A' && c <= 'F')) {
             if (aws_add_size_checked(val, c - 'A' + 10, &val)) {
-                return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
             }
         } else {
-            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
         }
     }
 
@@ -254,14 +254,14 @@ static int s_cursor_split_impl(
     AWS_ZERO_STRUCT(split);
     for (size_t i = 0; i < num_cursors; ++i) {
         if (!aws_byte_cursor_next_split(&input, split_on, &split)) {
-            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
         }
         cursor_array[i] = split;
     }
 
     if (error_if_more_splits_possible) {
         if (aws_byte_cursor_next_split(&input, split_on, &split)) {
-            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
         }
     } else {
         /* Otherwise, the last cursor will contain the remainder of the string */
@@ -368,7 +368,7 @@ static int s_linestate_chunk_terminator(struct aws_h1_decoder *decoder, struct a
     if (AWS_UNLIKELY(input.len != 0)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_STREAM, "id=%p: Incoming chunk is invalid, does not end with CRLF.", decoder->logging_id);
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     s_set_line_state(decoder, s_linestate_chunk_size);
@@ -497,7 +497,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Invalid incoming header, missing colon.", decoder->logging_id);
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_STREAM, "id=%p: Bad header is: '" PRInSTR "'", decoder->logging_id, AWS_BYTE_CURSOR_PRI(input));
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     struct aws_byte_cursor name = splits[0];
@@ -505,7 +505,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Invalid incoming header, name is empty.", decoder->logging_id);
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_STREAM, "id=%p: Bad header is: '" PRInSTR "'", decoder->logging_id, AWS_BYTE_CURSOR_PRI(input));
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     struct aws_byte_cursor value = s_trim_whitespace(splits[1]);
@@ -523,7 +523,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                     AWS_LS_HTTP_STREAM,
                     "id=%p: Incoming headers for both content-length and transfer-encoding received. This is illegal.",
                     decoder->logging_id);
-                return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
             }
 
             if (decoder->body_headers_forbidden) {
@@ -532,7 +532,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                     "id=%p: Incoming headers for content-length received, but it is illegal for this message to have a "
                     "body",
                     decoder->logging_id);
-                return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
             }
 
             if (s_read_size(header.value_data, &decoder->content_length) != AWS_OP_SUCCESS) {
@@ -555,7 +555,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                     AWS_LS_HTTP_STREAM,
                     "id=%p: Incoming headers for both content-length and transfer-encoding received. This is illegal.",
                     decoder->logging_id);
-                return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
             }
 
             if (decoder->body_headers_forbidden) {
@@ -564,7 +564,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                     "id=%p: Incoming headers for transfer-encoding received, but it is illegal for this message to "
                     "have a body",
                     decoder->logging_id);
-                return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
             }
             /* RFC-7230 section 3.3.1 Transfer-Encoding */
             /* RFC-7230 section 4.2 Compression Codings */
@@ -605,7 +605,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                         "id=%p: Unrecognized coding is: '" PRInSTR "'",
                         decoder->logging_id,
                         AWS_BYTE_CURSOR_PRI(coding));
-                    return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+                    return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
                 }
 
                 /* If any transfer coding other than chunked is applied to a request payload body, the sender MUST
@@ -621,7 +621,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                         "id=%p: Misplaced coding is '" PRInSTR "'",
                         decoder->logging_id,
                         AWS_BYTE_CURSOR_PRI(coding));
-                    return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+                    return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
                 }
             }
 
@@ -658,7 +658,7 @@ static int s_linestate_request(struct aws_h1_decoder *decoder, struct aws_byte_c
             "id=%p: Bad request line is: '" PRInSTR "'",
             decoder->logging_id,
             AWS_BYTE_CURSOR_PRI(input));
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     for (size_t i = 0; i < AWS_ARRAY_SIZE(cursors); ++i) {
@@ -669,7 +669,7 @@ static int s_linestate_request(struct aws_h1_decoder *decoder, struct aws_byte_c
                 "id=%p: Bad request line is: '" PRInSTR "'",
                 decoder->logging_id,
                 AWS_BYTE_CURSOR_PRI(input));
-            return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
         }
     }
 
@@ -686,7 +686,7 @@ static int s_linestate_request(struct aws_h1_decoder *decoder, struct aws_byte_c
             "id=%p: Unsupported version is: '" PRInSTR "'",
             decoder->logging_id,
             AWS_BYTE_CURSOR_PRI(version));
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     err = decoder->vtable.on_request(aws_http_str_to_method(method), &method, &uri, decoder->user_data);
@@ -714,7 +714,7 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
             "id=%p: Bad status line is: '" PRInSTR "'",
             decoder->logging_id,
             AWS_BYTE_CURSOR_PRI(input));
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     struct aws_byte_cursor version = cursors[0];
@@ -732,7 +732,7 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
             "id=%p: Unsupported version is: '" PRInSTR "'",
             decoder->logging_id,
             AWS_BYTE_CURSOR_PRI(version));
-        return aws_raise_error(AWS_ERROR_HTTP_PARSE);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     /* Status-code is a 3-digit integer. RFC7230 section 3.1.2 */

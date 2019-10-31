@@ -15,8 +15,8 @@
 
 #include <aws/common/thread.h>
 #include <aws/http/connection.h>
-#include <aws/http/private/connection_impl.h>
 #include <aws/http/private/connection_monitor.h>
+#include <aws/http/private/h1_connection.h>
 #include <aws/http/request_response.h>
 #include <aws/http/statistics.h>
 #include <aws/io/channel.h>
@@ -133,10 +133,8 @@ static int s_init_monitor_test(struct aws_allocator *allocator, struct aws_crt_s
         aws_array_list_init_dynamic(&s_test_context.requests, allocator, 1, sizeof(struct http_request_info)));
 
     aws_byte_buf_init(&s_test_context.large_body_buf, allocator, MAX_BODY_SIZE);
-    struct aws_byte_cursor zero_cursor = aws_byte_cursor_from_c_str("0");
-    for (size_t i = 0; i < MAX_BODY_SIZE; ++i) {
-        aws_byte_buf_append_dynamic(&s_test_context.large_body_buf, &zero_cursor);
-    }
+    memset(s_test_context.large_body_buf.buffer, '0', MAX_BODY_SIZE);
+    s_test_context.large_body_buf.len = MAX_BODY_SIZE;
 
     return AWS_OP_SUCCESS;
 }
