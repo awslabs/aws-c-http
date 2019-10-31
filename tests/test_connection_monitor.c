@@ -26,6 +26,10 @@
 #include <aws/testing/aws_test_harness.h>
 #include <aws/testing/io_testing_channel.h>
 
+#ifdef _MSC_VER
+#    pragma warning(disable : 4996) /* Disable warnings about sptrintf() being insecure */
+#endif
+
 static int s_test_http_connection_monitor_options_is_valid(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
@@ -146,9 +150,11 @@ static void s_clean_up_monitor_test(void) {
         struct http_request_info *request_info = NULL;
         aws_array_list_get_at_ptr(&s_test_context.requests, (void **)&request_info, i);
 
-        aws_http_message_destroy(request_info->request);
-        aws_http_stream_release(request_info->stream);
-        aws_input_stream_destroy(request_info->body);
+        if (request_info) {
+            aws_http_message_destroy(request_info->request);
+            aws_http_stream_release(request_info->stream);
+            aws_input_stream_destroy(request_info->body);
+        }
     }
 
     aws_http_connection_release(s_test_context.connection);
@@ -719,7 +725,9 @@ void s_aws_http_on_stream_complete(struct aws_http_stream *stream, int error_cod
     struct http_request_info *request_info = NULL;
     aws_array_list_get_at_ptr(&s_test_context.requests, (void **)&request_info, request_index);
 
-    request_info->response_completed = true;
+    if (request_info != NULL) {
+        request_info->response_completed = true;
+    }
 }
 
 static void s_add_outgoing_stream(struct test_http_stats_event *event) {
@@ -813,7 +821,7 @@ static int s_do_http_statistics_test(
         struct http_request_info *request_info = NULL;
         aws_array_list_get_at_ptr(&s_test_context.requests, (void **)&request_info, i);
 
-        ASSERT_TRUE(request_info->response_completed);
+        ASSERT_TRUE(request_info && request_info->response_completed);
     }
 
     s_clean_up_monitor_test();
