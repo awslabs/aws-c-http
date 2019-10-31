@@ -594,15 +594,12 @@ finish_up:
             s_shutdown_due_to_error(connection, error_code);
 
         } else if (stream->is_final_stream) {
-            /* TODO: Also close servers. RFC-7230 section 6.6 warns that this is tricky. */
-            if (connection->base.client_data) {
-                AWS_LOGF_TRACE(
-                    AWS_LS_HTTP_CONNECTION,
-                    "id=%p: Closing connection due to completion of final stream.",
-                    (void *)&connection->base);
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Closing connection due to completion of final stream.",
+                (void *)&connection->base);
 
-                s_shutdown_due_to_error(connection, AWS_ERROR_HTTP_CONNECTION_CLOSED);
-            }
+            s_connection_close(&connection->base);
         }
     }
 
@@ -671,7 +668,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
                 false /*stop_reading*/,
                 true /*stop_writing*/,
                 false /*schedule_shutdown*/,
-                AWS_ERROR_HTTP_CONNECTION_CLOSED);
+                AWS_ERROR_SUCCESS);
         }
 
         /* If it's also done receiving data, then it's complete! */
@@ -1132,11 +1129,7 @@ static int s_decoder_on_done(void *user_data) {
             (void *)&connection->base);
 
         s_stop(
-            connection,
-            true /*stop_reading*/,
-            false /*stop_writing*/,
-            false /*schedule_shutdown*/,
-            AWS_ERROR_HTTP_CONNECTION_CLOSED);
+            connection, true /*stop_reading*/, false /*stop_writing*/, false /*schedule_shutdown*/, AWS_ERROR_SUCCESS);
     }
 
     if (connection->base.server_data) {

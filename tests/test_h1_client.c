@@ -1207,10 +1207,9 @@ H1_CLIENT_TEST_CASE(h1_client_response_close_header_ends_connection) {
     ASSERT_TRUE(response.status == 200);
     ASSERT_FALSE(response.on_complete_connection_is_open);
 
-    /* Connection should have shut down after delivering response */
+    /* Connection should have shut down cleanly after delivering response */
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
-    ASSERT_INT_EQUALS(
-        AWS_ERROR_HTTP_CONNECTION_CLOSED, testing_channel_get_shutdown_error_code(&tester.testing_channel));
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, testing_channel_get_shutdown_error_code(&tester.testing_channel));
 
     /* clean up */
     ASSERT_SUCCESS(s_response_tester_clean_up(&response));
@@ -1270,10 +1269,9 @@ H1_CLIENT_TEST_CASE(h1_client_request_close_header_ends_connection) {
     ASSERT_TRUE(response.status == 200);
     ASSERT_FALSE(response.on_complete_connection_is_open);
 
-    /* Connection should have shut down after delivering response */
+    /* Connection should have shut down cleanly after delivering response */
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
-    ASSERT_INT_EQUALS(
-        AWS_ERROR_HTTP_CONNECTION_CLOSED, testing_channel_get_shutdown_error_code(&tester.testing_channel));
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, testing_channel_get_shutdown_error_code(&tester.testing_channel));
 
     /* clean up */
     aws_http_message_destroy(request);
@@ -1337,10 +1335,9 @@ H1_CLIENT_TEST_CASE(h1_client_response_close_header_with_pipelining) {
         ASSERT_FALSE(third->on_complete_connection_is_open);
     }
 
-    /* Connection should have shut down after delivering response */
+    /* Connection should have shut down after delivering response.
+     * Not going to check error_code because it's pretty ambiguous what it ought to be in this circumstance */
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
-    ASSERT_INT_EQUALS(
-        AWS_ERROR_HTTP_CONNECTION_CLOSED, testing_channel_get_shutdown_error_code(&tester.testing_channel));
 
     /* clean up */
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
@@ -1420,10 +1417,9 @@ H1_CLIENT_TEST_CASE(h1_client_request_close_header_with_pipelining) {
         ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, third->on_complete_error_code);
     }
 
-    /* Connection should have shut down after delivering second response */
+    /* Connection should have shut down after delivering second response.
+     * Not going to check error_code because it's pretty ambiguous what it ought to be in this circumstance */
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&tester.testing_channel));
-    ASSERT_INT_EQUALS(
-        AWS_ERROR_HTTP_CONNECTION_CLOSED, testing_channel_get_shutdown_error_code(&tester.testing_channel));
 
     /* clean up */
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
