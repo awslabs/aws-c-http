@@ -258,7 +258,11 @@ add_test_case(test_http_connection_monitor_bytes_overflow)
 add_test_case(test_http_connection_monitor_time_overflow)
 add_test_case(test_http_connection_monitor_shutdown)
 
-add_test_case(test_http_stats_simple)
+add_test_case(test_http_stats_trivial)
+add_test_case(test_http_stats_basic_request)
+add_test_case(test_http_stats_split_across_gather_boundary)
+add_test_case(test_http_stats_pipelined)
+add_test_case(test_http_stats_multiple_requests_with_gap)
 
 set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
 generate_test_driver(${TEST_BINARY_NAME})

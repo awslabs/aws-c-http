@@ -17,9 +17,11 @@
 #include <aws/http/connection.h>
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/connection_monitor.h>
+#include <aws/http/request_response.h>
 #include <aws/http/statistics.h>
 #include <aws/io/channel.h>
 #include <aws/io/statistics.h>
+#include <aws/io/stream.h>
 
 #include <aws/testing/aws_test_harness.h>
 #include <aws/testing/io_testing_channel.h>
@@ -63,8 +65,10 @@ struct http_monitor_test_stats_event {
 };
 
 struct http_request_info {
-    struct aws_http_request *request;
+    struct aws_http_message *request;
     struct aws_http_stream *stream;
+    struct aws_input_stream *body;
+    bool response_completed;
 };
 
 struct monitor_test_context {
@@ -74,6 +78,7 @@ struct monitor_test_context {
     struct aws_crt_statistics_handler *monitor;
 
     struct aws_array_list requests;
+    struct aws_byte_buf large_body_buf;
 };
 
 static struct monitor_test_context s_test_context;
@@ -86,9 +91,11 @@ static int s_mock_clock(uint64_t *timestamp) {
     return AWS_OP_SUCCESS;
 }
 
-static int s_init_monitor_test(
-    struct aws_allocator *allocator,
-    struct aws_crt_statistics_handler *monitor) {
+/* big enough to spill into a second io message when headers/method included */
+#define TICK_BODY_SIZE 16384
+#define MAX_BODY_SIZE (1024 * 1024)
+
+static int s_init_monitor_test(struct aws_allocator *allocator, struct aws_crt_statistics_handler *monitor) {
 
     aws_http_library_init(allocator);
 
@@ -122,18 +129,36 @@ static int s_init_monitor_test(
 
     aws_channel_set_statistics_handler(s_test_context.test_channel.channel, s_test_context.monitor);
 
-    ASSERT_SUCCESS(aws_array_list_init_dynamic(&s_test_context.requests, allocator, 1, sizeof(struct http_request_info)));
+    ASSERT_SUCCESS(
+        aws_array_list_init_dynamic(&s_test_context.requests, allocator, 1, sizeof(struct http_request_info)));
+
+    aws_byte_buf_init(&s_test_context.large_body_buf, allocator, MAX_BODY_SIZE);
+    struct aws_byte_cursor zero_cursor = aws_byte_cursor_from_c_str("0");
+    for (size_t i = 0; i < MAX_BODY_SIZE; ++i) {
+        aws_byte_buf_append_dynamic(&s_test_context.large_body_buf, &zero_cursor);
+    }
 
     return AWS_OP_SUCCESS;
 }
 
 static void s_clean_up_monitor_test(void) {
 
+    size_t request_count = aws_array_list_length(&s_test_context.requests);
+    for (size_t i = 0; i < request_count; ++i) {
+        struct http_request_info *request_info = NULL;
+        aws_array_list_get_at_ptr(&s_test_context.requests, (void **)&request_info, i);
+
+        aws_http_message_destroy(request_info->request);
+        aws_http_stream_release(request_info->stream);
+        aws_input_stream_destroy(request_info->body);
+    }
+
     aws_http_connection_release(s_test_context.connection);
 
     testing_channel_clean_up(&s_test_context.test_channel);
 
     aws_array_list_clean_up(&s_test_context.requests);
+    aws_byte_buf_clean_up(&s_test_context.large_body_buf);
 
     aws_http_library_clean_up();
 }
@@ -174,7 +199,8 @@ static int s_do_http_monitoring_test(
     struct http_monitor_test_stats_event *events,
     size_t event_count) {
 
-    s_init_monitor_test(allocator, aws_crt_statistics_handler_new_http_connection_monitor(allocator, monitoring_options));
+    s_init_monitor_test(
+        allocator, aws_crt_statistics_handler_new_http_connection_monitor(allocator, monitoring_options));
 
     struct aws_statistics_handler_http_connection_monitor_impl *monitor_impl = s_test_context.monitor->impl;
 
@@ -570,20 +596,29 @@ AWS_TEST_CASE(test_http_connection_monitor_shutdown, s_test_http_connection_moni
 
  Create an io testing channel (test_handler <-> http_handler)
  Create and attach a mock stats handler
- Loop over http events [(t_i, http_event)]
+ Loop over h1 connection events [(t_i, http_event)]
     SetCurrentChannelTime(t_i)
     ApplyEvent(http_event)
 
- Inspect mock capture of http statistics: are pending_read_interval_ns and pending_write_interval_ns what we expect?
+where events include instances of verification of mock-captured http stat state
 
  */
 
-enum monitor_test_http_stats_event_type { MTHSET_TIME, MTHSET_ADD_OUTGOING_STREAM, MTHSET_ADD_INCOMING_STREAM, MTHSET_FLUSH, MTHSET_TICK };
+enum monitor_test_http_stats_event_type {
+    MTHSET_ADD_OUTGOING_STREAM,
+    MTHSET_ADD_RESPONSE_DATA,
+    MTHSET_FLUSH,
+    MTHSET_TICK,
+    MTHSET_VERIFY
+};
 
 struct test_http_stats_event {
     uint64_t timestamp;
     enum monitor_test_http_stats_event_type event_type;
-    const char *stream_data;
+    const char *response_stream_data;
+    uint64_t request_body_size;
+    uint64_t verify_pending_read_interval_ns;
+    uint64_t verify_pending_write_interval_ns;
 };
 
 struct mock_http_connection_monitor_impl {
@@ -645,8 +680,7 @@ static struct aws_crt_statistics_handler_vtable s_http_mock_monitor_vtable = {
     .get_report_interval_ms = s_mock_get_report_interval_ms,
 };
 
-static struct aws_crt_statistics_handler *s_aws_crt_statistics_handler_new_http_mock(
-        struct aws_allocator *allocator) {
+static struct aws_crt_statistics_handler *s_aws_crt_statistics_handler_new_http_mock(struct aws_allocator *allocator) {
     struct aws_crt_statistics_handler *handler = NULL;
     struct mock_http_connection_monitor_impl *impl = NULL;
 
@@ -670,77 +704,89 @@ static struct aws_crt_statistics_handler *s_aws_crt_statistics_handler_new_http_
     return handler;
 }
 
-/*
-static int s_response_tester_init_ex(
-    struct response_tester *response,
-    struct tester *master_tester,
-    struct aws_http_message *request,
-    struct aws_http_make_request_options *custom_opt,
-    void *specific_test_data) {
+int s_aws_http_on_incoming_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
+    (void)stream;
+    (void)data;
+    (void)user_data;
 
-    AWS_ZERO_STRUCT(*response);
-    response->master_tester = master_tester;
-    ASSERT_SUCCESS(aws_byte_buf_init(&response->storage, master_tester->alloc, 1024 * 1024 * 1));
-
-struct aws_http_make_request_options opt;
-if (custom_opt) {
-opt = *custom_opt;
-} else {
-AWS_ZERO_STRUCT(opt);
+    return AWS_OP_SUCCESS;
 }
 
-opt.self_size = sizeof(struct aws_http_make_request_options);
-opt.request = request;
-opt.user_data = response;
-opt.on_response_headers = s_response_tester_on_headers;
-opt.on_response_header_block_done = s_response_tester_on_header_block_done;
-opt.on_response_body = s_response_tester_on_body;
-opt.on_complete = s_response_tester_on_complete;
+void s_aws_http_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)stream;
+    (void)error_code;
 
-response->specific_test_data = specific_test_data;
-response->stream = aws_http_connection_make_request(master_tester->connection, &opt);
-if (!response->stream) {
-return AWS_OP_ERR;
+    size_t request_index = (size_t)user_data;
+
+    struct http_request_info *request_info;
+    aws_array_list_get_at_ptr(&s_test_context.requests, (void **)&request_info, request_index);
+
+    request_info->response_completed = true;
 }
 
-return AWS_OP_SUCCESS;
-}
- */
-
-/*
- *
-struct http_request_info {
-    struct aws_http_request *request;
-    struct aws_http_stream *stream;
-};
-
- * Make a request, configure options, submit request
- */
 static void s_add_outgoing_stream(struct test_http_stats_event *event) {
     (void)event;
+
+    struct http_request_info request_info;
+    AWS_ZERO_STRUCT(request_info);
+
+    request_info.request = aws_http_message_new_request(s_test_context.allocator);
+    aws_http_message_set_request_method(request_info.request, aws_byte_cursor_from_c_str("GET"));
+    struct aws_http_header host_header = {
+        .name = aws_byte_cursor_from_c_str("host"),
+        .value = aws_byte_cursor_from_c_str("www.derp.com"),
+    };
+    aws_http_message_add_header(request_info.request, host_header);
+    aws_http_message_set_request_path(request_info.request, aws_byte_cursor_from_c_str("/index.html?queryparam=value"));
+
+    AWS_FATAL_ASSERT(event->request_body_size <= MAX_BODY_SIZE);
+    if (event->request_body_size > 0) {
+        char cl_buffer[256];
+        sprintf(cl_buffer, "%zu", s_test_context.large_body_buf.len);
+
+        struct aws_http_header content_length_header = {
+            .name = aws_byte_cursor_from_c_str("content-length"),
+            .value = aws_byte_cursor_from_c_str(cl_buffer),
+        };
+        aws_http_message_add_header(request_info.request, content_length_header);
+
+        struct aws_byte_cursor body_cursor = aws_byte_cursor_from_buf(&s_test_context.large_body_buf);
+        body_cursor.len = event->request_body_size;
+        request_info.body = aws_input_stream_new_from_cursor(s_test_context.allocator, &body_cursor);
+
+        aws_http_message_set_body_stream(request_info.request, request_info.body);
+    }
+
+    struct aws_http_make_request_options request_options;
+    AWS_ZERO_STRUCT(request_options);
+    request_options.request = request_info.request;
+    request_options.on_complete = s_aws_http_on_stream_complete;
+    request_options.on_response_body = s_aws_http_on_incoming_body;
+    request_options.self_size = sizeof(struct aws_http_make_request_options);
+    request_options.user_data = (void *)aws_array_list_length(&s_test_context.requests);
+
+    request_info.stream = aws_http_connection_make_request(s_test_context.connection, &request_options);
+
+    aws_array_list_push_back(&s_test_context.requests, &request_info);
 }
 
-static void s_add_incoming_stream(struct test_http_stats_event *event) {
-    (void)event;
+static void s_add_response_data(struct test_http_stats_event *event) {
+    testing_channel_send_response_str(&s_test_context.test_channel, event->response_stream_data);
 }
 
 static int s_do_http_statistics_test(
     struct aws_allocator *allocator,
     struct test_http_stats_event *events,
-    size_t event_count,
-    uint64_t expected_pending_read_interval_ns,
-    uint64_t expected_pending_write_interval_ns) {
+    size_t event_count) {
 
     s_init_monitor_test(allocator, s_aws_crt_statistics_handler_new_http_mock(allocator));
+    struct mock_http_connection_monitor_impl *monitor_impl = s_test_context.monitor->impl;
 
     for (size_t i = 0; i < event_count; ++i) {
         struct test_http_stats_event *event = events + i;
+        aws_atomic_store_int(&s_clock_value, event->timestamp);
 
         switch (event->event_type) {
-            case MTHSET_TIME:
-                aws_atomic_store_int(&s_clock_value, event->timestamp);
-                break;
-
             case MTHSET_FLUSH:
                 testing_channel_drain_queued_tasks(&s_test_context.test_channel);
                 break;
@@ -749,37 +795,323 @@ static int s_do_http_statistics_test(
                 s_add_outgoing_stream(event);
                 break;
 
-            case MTHSET_ADD_INCOMING_STREAM:
-                s_add_incoming_stream(event);
+            case MTHSET_ADD_RESPONSE_DATA:
+                s_add_response_data(event);
                 break;
 
             case MTHSET_TICK:
+                testing_channel_run_currently_queued_tasks(&s_test_context.test_channel);
+                break;
+
+            case MTHSET_VERIFY:
+                ASSERT_TRUE(event->verify_pending_read_interval_ns == monitor_impl->pending_read_interval_ns);
+                ASSERT_TRUE(event->verify_pending_write_interval_ns == monitor_impl->pending_write_interval_ns);
                 break;
         }
     }
 
-    struct mock_http_connection_monitor_impl *monitor_impl = s_test_context.monitor->impl;
+    size_t request_count = aws_array_list_length(&s_test_context.requests);
+    for (size_t i = 0; i < request_count; ++i) {
+        struct http_request_info *request_info = NULL;
+        aws_array_list_get_at_ptr(&s_test_context.requests, (void **)&request_info, i);
 
-    ASSERT_TRUE(expected_pending_read_interval_ns == monitor_impl->pending_read_interval_ns);
-    ASSERT_TRUE(expected_pending_write_interval_ns == monitor_impl->pending_write_interval_ns);
+        ASSERT_TRUE(request_info->response_completed);
+    }
 
     s_clean_up_monitor_test();
 
     return AWS_OP_SUCCESS;
 }
 
-static struct test_http_stats_event s_test_events[] = {
-        {
-                .event_type = MTHSET_TIME,
-                .timestamp = 0,
-        },
+static struct test_http_stats_event s_http_stats_test_trivial[] = {
+    {
+        .event_type = MTHSET_VERIFY,
+        .timestamp = 0,
+        .verify_pending_read_interval_ns = 0,
+        .verify_pending_write_interval_ns = 0,
+    },
 };
-static int s_test_http_stats_simple(struct aws_allocator *allocator, void *ctx) {
+static int s_test_http_stats_trivial(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    int result = s_do_http_statistics_test(allocator, s_test_events, AWS_ARRAY_SIZE(s_test_events), 0, 0);
+    int result =
+        s_do_http_statistics_test(allocator, s_http_stats_test_trivial, AWS_ARRAY_SIZE(s_http_stats_test_trivial));
     ASSERT_TRUE(result == AWS_OP_SUCCESS);
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_stats_simple, s_test_http_stats_simple);
+AWS_TEST_CASE(test_http_stats_trivial, s_test_http_stats_trivial);
+
+static struct test_http_stats_event s_http_stats_test_basic_request[] = {
+    {
+        .event_type = MTHSET_ADD_OUTGOING_STREAM,
+        .timestamp = 100,
+        .request_body_size = TICK_BODY_SIZE,
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = 100,
+    },
+    {
+        .event_type = MTHSET_FLUSH,
+        .timestamp = 200,
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = 500,
+        .response_stream_data = "HTTP/1.1 200 OK\r\n",
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = 700,
+        .response_stream_data = "Content-Length: 9\r\n\r\nSomething",
+    },
+    {
+        .event_type = MTHSET_FLUSH,
+        .timestamp = 700,
+    },
+    {
+        .event_type = MTHSET_FLUSH,
+        .timestamp = AWS_TIMESTAMP_NANOS,
+    },
+    {
+        .event_type = MTHSET_VERIFY,
+        .timestamp = AWS_TIMESTAMP_NANOS,
+        .verify_pending_read_interval_ns = 600,  /* [100, 700] */
+        .verify_pending_write_interval_ns = 100, /* [100, 200] */
+    },
+};
+static int s_test_http_stats_basic_request(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    int result = s_do_http_statistics_test(
+        allocator, s_http_stats_test_basic_request, AWS_ARRAY_SIZE(s_http_stats_test_basic_request));
+    ASSERT_TRUE(result == AWS_OP_SUCCESS);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_stats_basic_request, s_test_http_stats_basic_request);
+
+static struct test_http_stats_event s_http_stats_test_split_across_gather_boundary[] = {
+    {
+        .event_type = MTHSET_ADD_OUTGOING_STREAM,
+        .timestamp = AWS_TIMESTAMP_NANOS - 100,
+        .request_body_size = 2 * TICK_BODY_SIZE,
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = AWS_TIMESTAMP_NANOS - 100,
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = AWS_TIMESTAMP_NANOS,
+    },
+    {
+        .event_type = MTHSET_VERIFY,
+        .timestamp = AWS_TIMESTAMP_NANOS,
+        .verify_pending_read_interval_ns = 100,  /* [NANOS - 100, NANOS] */
+        .verify_pending_write_interval_ns = 100, /* [NANOS - 100, NANOS] */
+    },
+    {
+        .event_type = MTHSET_FLUSH,
+        .timestamp = AWS_TIMESTAMP_NANOS + 100,
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = AWS_TIMESTAMP_NANOS + 500,
+        .response_stream_data = "HTTP/1.1 200 OK\r\n",
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = AWS_TIMESTAMP_NANOS + 700,
+        .response_stream_data = "Content-Length: 9\r\n\r\nSomething",
+    },
+    {
+        .event_type = MTHSET_FLUSH,
+        .timestamp = AWS_TIMESTAMP_NANOS + 700,
+    },
+    {
+        .event_type = MTHSET_FLUSH,
+        .timestamp = 2 * AWS_TIMESTAMP_NANOS,
+    },
+    {
+        .event_type = MTHSET_VERIFY,
+        .timestamp = AWS_TIMESTAMP_NANOS,
+        .verify_pending_read_interval_ns = 700,  /* [NANOS, NANOS + 700] */
+        .verify_pending_write_interval_ns = 100, /* [NANOS, NANOS + 100] */
+    },
+};
+static int s_test_http_stats_split_across_gather_boundary(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    int result = s_do_http_statistics_test(
+        allocator,
+        s_http_stats_test_split_across_gather_boundary,
+        AWS_ARRAY_SIZE(s_http_stats_test_split_across_gather_boundary));
+    ASSERT_TRUE(result == AWS_OP_SUCCESS);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_stats_split_across_gather_boundary, s_test_http_stats_split_across_gather_boundary);
+
+static struct test_http_stats_event s_http_stats_test_pipelined[] = {
+    {
+        .event_type = MTHSET_ADD_OUTGOING_STREAM,
+        .timestamp = 100,
+        .request_body_size = 2 * TICK_BODY_SIZE,
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = 100,
+    },
+    {
+        .event_type = MTHSET_ADD_OUTGOING_STREAM,
+        .timestamp = 300,
+        .request_body_size = 1 * TICK_BODY_SIZE,
+    },
+    {
+        .event_type = MTHSET_ADD_OUTGOING_STREAM,
+        .timestamp = 500,
+        .request_body_size = 1 * TICK_BODY_SIZE,
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = 600,
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = 700,
+        .response_stream_data = "HTTP/1.1 200 OK\r\n",
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = 800,
+        .response_stream_data = "Content-Length: 9\r\n\r\nSomething",
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = 900,
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = 1000,
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = 1100,
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = 1200,
+        .response_stream_data = "HTTP/1.1 200 OK\r\n",
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = 1300,
+        .response_stream_data = "Content-Length: 9\r\n\r\nSomethingHTTP/1.1 200 OK\r\n",
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = 1400,
+        .response_stream_data = "Content-Length: 9\r\n\r\nSomething",
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = AWS_TIMESTAMP_NANOS,
+    },
+    {
+        .event_type = MTHSET_VERIFY,
+        .timestamp = AWS_TIMESTAMP_NANOS,
+        .verify_pending_read_interval_ns = 1300,  /* [100, 800] U [300, 1300] U [500, 1400] = [100, 1400] */
+        .verify_pending_write_interval_ns = 1000, /* [100, 600] U [300, 900] U [500, 1100] = [100, 1100] */
+    },
+};
+static int s_test_http_stats_pipelined(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    int result =
+        s_do_http_statistics_test(allocator, s_http_stats_test_pipelined, AWS_ARRAY_SIZE(s_http_stats_test_pipelined));
+    ASSERT_TRUE(result == AWS_OP_SUCCESS);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_stats_pipelined, s_test_http_stats_pipelined);
+
+static struct test_http_stats_event s_http_stats_test_multiple_requests_with_gap[] = {
+    {
+        .event_type = MTHSET_ADD_OUTGOING_STREAM,
+        .timestamp = 100,
+        .request_body_size = TICK_BODY_SIZE,
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = 100,
+    },
+    {
+        .event_type = MTHSET_FLUSH,
+        .timestamp = 200,
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = 500,
+        .response_stream_data = "HTTP/1.1 200 OK\r\n",
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = 700,
+        .response_stream_data = "Content-Length: 9\r\n\r\nSomething",
+    },
+    {
+        .event_type = MTHSET_FLUSH,
+        .timestamp = 700,
+    },
+    {
+        .event_type = MTHSET_ADD_OUTGOING_STREAM,
+        .timestamp = 2000,
+        .request_body_size = TICK_BODY_SIZE,
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = 2000,
+    },
+    {
+        .event_type = MTHSET_FLUSH,
+        .timestamp = 2200,
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = 2500,
+        .response_stream_data = "HTTP/1.1 200 OK\r\n",
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = 2700,
+        .response_stream_data = "Content-Length: 9\r\n\r\nSomething",
+    },
+    {
+        .event_type = MTHSET_FLUSH,
+        .timestamp = 2700,
+    },
+    {
+        .event_type = MTHSET_FLUSH,
+        .timestamp = AWS_TIMESTAMP_NANOS,
+    },
+    {
+        .event_type = MTHSET_VERIFY,
+        .timestamp = AWS_TIMESTAMP_NANOS,
+        .verify_pending_read_interval_ns = 1300, /* [100, 700] + [2000, 2700]*/
+        .verify_pending_write_interval_ns = 300, /* [100, 200] + [2000, 2200] */
+    },
+};
+static int s_test_http_stats_multiple_requests_with_gap(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    int result = s_do_http_statistics_test(
+        allocator,
+        s_http_stats_test_multiple_requests_with_gap,
+        AWS_ARRAY_SIZE(s_http_stats_test_multiple_requests_with_gap));
+    ASSERT_TRUE(result == AWS_OP_SUCCESS);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_stats_multiple_requests_with_gap, s_test_http_stats_multiple_requests_with_gap);

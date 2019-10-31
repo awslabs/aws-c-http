@@ -1196,6 +1196,7 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     aws_linked_list_init(&connection->thread_data.stream_list);
     aws_linked_list_init(&connection->thread_data.waiting_stream_list);
     aws_linked_list_init(&connection->thread_data.midchannel_read_messages);
+    aws_crt_statistics_http1_init(&connection->thread_data.stats);
 
     int err = aws_mutex_init(&connection->synced_data.lock);
     if (err) {
