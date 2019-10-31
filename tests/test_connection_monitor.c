@@ -32,6 +32,7 @@
 
 static int s_test_http_connection_monitor_options_is_valid(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
+    (void)allocator;
 
     struct aws_http_connection_monitoring_options options;
     AWS_ZERO_STRUCT(options);
@@ -639,6 +640,7 @@ static void s_mock_process_statistics(
     void *context) {
 
     (void)interval;
+    (void)context;
 
     struct mock_http_connection_monitor_impl *impl = handler->impl;
 
