@@ -716,7 +716,7 @@ void s_aws_http_on_stream_complete(struct aws_http_stream *stream, int error_cod
 
     size_t request_index = (size_t)user_data;
 
-    struct http_request_info *request_info;
+    struct http_request_info *request_info = NULL;
     aws_array_list_get_at_ptr(&s_test_context.requests, (void **)&request_info, request_index);
 
     request_info->response_completed = true;
