@@ -991,7 +991,7 @@ static int s_decoder_on_header(const struct aws_http_decoded_header *header, voi
     /* RFC-7230 section 6.1.
      * "Connection: close" header signals that a connection will not persist after the current request/response */
     if (header->name == AWS_HTTP_HEADER_CONNECTION) {
-        if (aws_byte_cursor_eq_c_str_ignore_case(&header->value_data, "close")) {
+        if (aws_byte_cursor_eq_c_str(&header->value_data, "close")) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Received 'Connection: close' header. This will be the final stream on this connection.",

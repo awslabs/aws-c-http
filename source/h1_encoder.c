@@ -48,7 +48,7 @@ static int s_scan_outgoing_headers(
         switch (name_enum) {
             case AWS_HTTP_HEADER_CONNECTION: {
                 struct aws_byte_cursor trimmed_value = aws_strutil_trim_http_whitespace(header.value);
-                if (aws_byte_cursor_eq_c_str_ignore_case(&trimmed_value, "close")) {
+                if (aws_byte_cursor_eq_c_str(&trimmed_value, "close")) {
                     has_connection_close_header = true;
                 }
             } break;
