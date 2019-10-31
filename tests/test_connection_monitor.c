@@ -621,7 +621,7 @@ struct test_http_stats_event {
     uint64_t timestamp;
     enum monitor_test_http_stats_event_type event_type;
     const char *response_stream_data;
-    uint64_t request_body_size;
+    size_t request_body_size;
     uint64_t verify_pending_read_interval_ns;
     uint64_t verify_pending_write_interval_ns;
 };
