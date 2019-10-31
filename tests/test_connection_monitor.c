@@ -178,7 +178,7 @@ static void s_apply_stats_event_to_testing_channel(struct http_monitor_test_stat
 
 /*
 
- Test Pattern 1 (monitor calculations and side affect)
+ Test Pattern 1 (monitor calculations and side affect):
 
  Create a testing channel
  Create and attach a (X,Y) http connection monitor
