@@ -28,19 +28,15 @@
  * Scan headers to detect errors and determine anything we'll need to know later (ex: total length).
  */
 static int s_scan_outgoing_headers(
+    struct aws_h1_encoder_message *encoder_message,
     const struct aws_http_message *message,
     size_t *out_header_lines_len,
-    uint64_t *out_content_length,
-    bool *out_has_connection_close_header,
     bool body_headers_ignored,
     bool body_headers_forbidden) {
 
     size_t total = 0;
-    uint64_t content_length = 0;
     bool has_body_stream = aws_http_message_get_body_stream(message);
     bool has_body_headers = false;
-
-    bool has_connection_close_header = false;
 
     const size_t num_headers = aws_http_message_get_header_count(message);
     for (size_t i = 0; i < num_headers; ++i) {
@@ -52,21 +48,20 @@ static int s_scan_outgoing_headers(
             case AWS_HTTP_HEADER_CONNECTION: {
                 struct aws_byte_cursor trimmed_value = aws_strutil_trim_http_whitespace(header.value);
                 if (aws_byte_cursor_eq_c_str(&trimmed_value, "close")) {
-                    has_connection_close_header = true;
+                    encoder_message->has_connection_close_header = true;
                 }
             } break;
             case AWS_HTTP_HEADER_CONTENT_LENGTH: {
                 struct aws_byte_cursor trimmed_value = aws_strutil_trim_http_whitespace(header.value);
-                if (aws_strutil_read_unsigned_num(trimmed_value, &content_length)) {
+                if (aws_strutil_read_unsigned_num(trimmed_value, &encoder_message->content_length)) {
                     AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Invalid Content-Length");
                     return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
                 }
-                if (content_length > 0) {
+                if (encoder_message->content_length > 0) {
                     has_body_headers = true;
                 }
             } break;
             case AWS_HTTP_HEADER_TRANSFER_ENCODING:
-                /*has_body_headers = true;*/
                 AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Sending of chunked messages not yet implemented");
                 return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
             default:
@@ -89,7 +84,7 @@ static int s_scan_outgoing_headers(
     if (body_headers_ignored) {
         /* Don't send body, no matter what the headers are */
         has_body_headers = false;
-        content_length = 0;
+        encoder_message->content_length = 0;
     }
 
     if (has_body_headers && !has_body_stream) {
@@ -97,8 +92,6 @@ static int s_scan_outgoing_headers(
     }
 
     *out_header_lines_len = total;
-    *out_content_length = content_length;
-    *out_has_connection_close_header = has_connection_close_header;
     return AWS_OP_SUCCESS;
 }
 
@@ -153,12 +146,7 @@ int aws_h1_encoder_message_init_from_request(
 
     size_t header_lines_len;
     err = s_scan_outgoing_headers(
-        request,
-        &header_lines_len,
-        &message->content_length,
-        &message->has_connection_close_header,
-        false /*body_headers_ignored*/,
-        false /*body_headers_forbidden*/);
+        message, request, &header_lines_len, false /*body_headers_ignored*/, false /*body_headers_forbidden*/);
     if (err) {
         goto error;
     }
@@ -244,13 +232,7 @@ int aws_h1_encoder_message_init_from_response(
      */
     body_headers_ignored |= status_int == AWS_HTTP_STATUS_304_NOT_MODIFIED;
     bool body_headers_forbidden = status_int == AWS_HTTP_STATUS_204_NO_CONTENT || status_int / 100 == 1;
-    err = s_scan_outgoing_headers(
-        response,
-        &header_lines_len,
-        &message->content_length,
-        &message->has_connection_close_header,
-        body_headers_ignored,
-        body_headers_forbidden);
+    err = s_scan_outgoing_headers(message, response, &header_lines_len, body_headers_ignored, body_headers_forbidden);
     if (err) {
         goto error;
     }
