@@ -66,7 +66,7 @@ static int s_scan_outgoing_headers(
                 }
             } break;
             case AWS_HTTP_HEADER_TRANSFER_ENCODING:
-                has_body_headers = true;
+                /*has_body_headers = true;*/
                 AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Sending of chunked messages not yet implemented");
                 return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
             default:
@@ -358,7 +358,7 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
 
         /* Copy data from outgoing_head_buf */
         struct aws_byte_buf *src = &encoder->message->outgoing_head_buf;
-        size_t src_progress = encoder->progress_bytes;
+        size_t src_progress = (size_t)encoder->progress_bytes;
         size_t src_remaining = src->len - src_progress;
         size_t transferring = src_remaining < dst_available ? src_remaining : dst_available;
 
