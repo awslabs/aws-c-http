@@ -26,6 +26,7 @@ struct aws_h1_encoder_message {
     /* Upon creation, the "head" (everything preceding body) is buffered here. */
     struct aws_byte_buf outgoing_head_buf;
     struct aws_input_stream *body;
+    uint64_t content_length;
     bool has_connection_close_header;
 };
 
@@ -41,7 +42,7 @@ struct aws_h1_encoder {
 
     enum aws_h1_encoder_state state;
     struct aws_h1_encoder_message *message;
-    size_t outgoing_head_progress;
+    uint64_t progress_bytes;
     void *logging_id;
 };
 
