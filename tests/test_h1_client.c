@@ -226,6 +226,62 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
     return AWS_OP_SUCCESS;
 }
 
+H1_CLIENT_TEST_CASE(h1_client_request_content_length_0_ok) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request with Content-Length: 0 and NO body stream */
+    struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("0"),
+        },
+    };
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
+                           "Content-Length: 0\r\n"
+                           "\r\n";
+    ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected));
+    aws_http_stream_release(stream);
+
+    /* send Content-Length: 0 request again, but this time with a body stream whose length is 0 */
+    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("");
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
+    aws_http_message_set_body_stream(request, body_stream);
+
+    stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    ASSERT_SUCCESS(testing_channel_check_written_message(&tester.testing_channel, expected));
+
+    /* clean up */
+    aws_input_stream_destroy(body_stream);
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 /* For checking outgoing data across multiple aws_io_messages */
 struct cross_message_checker {
     struct aws_byte_buf expected;
@@ -1569,6 +1625,67 @@ static void s_on_complete(struct aws_http_stream *stream, int error_code, void *
     (void)stream;
     int *completion_error_code = user_data;
     *completion_error_code = error_code;
+}
+
+static int s_test_content_length_mismatch_is_error(
+    struct aws_allocator *allocator,
+    const char *body,
+    const char *wrong_length) {
+
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request whose Content-Length does not match body length */
+    const struct aws_byte_cursor body_cur = aws_byte_cursor_from_c_str(body);
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body_cur);
+
+    struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+            .value = aws_byte_cursor_from_c_str(wrong_length),
+        },
+    };
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+    aws_http_message_set_body_stream(request, body_stream);
+
+    int completion_error_code = 0;
+
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+        .on_complete = s_on_complete,
+        .user_data = &completion_error_code,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT, completion_error_code);
+
+    /* clean up */
+    aws_input_stream_destroy(body_stream);
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_request_content_length_too_small_is_error) {
+    (void)ctx;
+    return s_test_content_length_mismatch_is_error(allocator, "I am very long", "1");
+}
+
+H1_CLIENT_TEST_CASE(h1_client_request_content_length_too_large_is_error) {
+    (void)ctx;
+    return s_test_content_length_mismatch_is_error(allocator, "I am very short", "999");
 }
 
 H1_CLIENT_TEST_CASE(h1_client_request_cancelled_by_channel_shutdown) {

@@ -18,6 +18,8 @@
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
 
+#include <inttypes.h>
+
 #define ENCODER_LOGF(level, encoder, text, ...)                                                                        \
     AWS_LOGF_##level(AWS_LS_HTTP_STREAM, "id=%p: " text, encoder->logging_id, __VA_ARGS__)
 #define ENCODER_LOG(level, encoder, text) ENCODER_LOGF(level, encoder, "%s", text)
@@ -26,18 +28,15 @@
  * Scan headers to detect errors and determine anything we'll need to know later (ex: total length).
  */
 static int s_scan_outgoing_headers(
+    struct aws_h1_encoder_message *encoder_message,
     const struct aws_http_message *message,
     size_t *out_header_lines_len,
-    bool *out_has_connection_close_header,
     bool body_headers_ignored,
     bool body_headers_forbidden) {
 
     size_t total = 0;
-
     bool has_body_stream = aws_http_message_get_body_stream(message);
     bool has_body_headers = false;
-
-    bool has_connection_close_header = false;
 
     const size_t num_headers = aws_http_message_get_header_count(message);
     for (size_t i = 0; i < num_headers; ++i) {
@@ -49,19 +48,22 @@ static int s_scan_outgoing_headers(
             case AWS_HTTP_HEADER_CONNECTION: {
                 struct aws_byte_cursor trimmed_value = aws_strutil_trim_http_whitespace(header.value);
                 if (aws_byte_cursor_eq_c_str(&trimmed_value, "close")) {
-                    has_connection_close_header = true;
+                    encoder_message->has_connection_close_header = true;
                 }
             } break;
             case AWS_HTTP_HEADER_CONTENT_LENGTH: {
-                uint64_t content_length = 0;
-                aws_strutil_read_unsigned_num(aws_strutil_trim_http_whitespace(header.value), &content_length);
-                if (content_length > 0) {
+                struct aws_byte_cursor trimmed_value = aws_strutil_trim_http_whitespace(header.value);
+                if (aws_strutil_read_unsigned_num(trimmed_value, &encoder_message->content_length)) {
+                    AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Invalid Content-Length");
+                    return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+                }
+                if (encoder_message->content_length > 0) {
                     has_body_headers = true;
                 }
             } break;
             case AWS_HTTP_HEADER_TRANSFER_ENCODING:
-                has_body_headers = true;
-                break;
+                AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Sending of chunked messages not yet implemented");
+                return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
             default:
                 break;
         }
@@ -80,23 +82,16 @@ static int s_scan_outgoing_headers(
     }
 
     if (body_headers_ignored) {
-        /* no body should follow, no matter what the headers are */
-        if (has_body_stream) {
-            return aws_raise_error(AWS_ERROR_HTTP_INVALID_BODY_STREAM);
-        }
+        /* Don't send body, no matter what the headers are */
         has_body_headers = false;
+        encoder_message->content_length = 0;
     }
 
     if (has_body_headers && !has_body_stream) {
         return aws_raise_error(AWS_ERROR_HTTP_MISSING_BODY_STREAM);
     }
 
-    if (!has_body_headers && has_body_stream) {
-        return aws_raise_error(AWS_ERROR_HTTP_MISSING_BODY_HEADERS);
-    }
-
     *out_header_lines_len = total;
-    *out_has_connection_close_header = has_connection_close_header;
     return AWS_OP_SUCCESS;
 }
 
@@ -151,11 +146,7 @@ int aws_h1_encoder_message_init_from_request(
 
     size_t header_lines_len;
     err = s_scan_outgoing_headers(
-        request,
-        &header_lines_len,
-        &message->has_connection_close_header,
-        false /*body_headers_ignored*/,
-        false /*body_headers_forbidden*/);
+        message, request, &header_lines_len, false /*body_headers_ignored*/, false /*body_headers_forbidden*/);
     if (err) {
         goto error;
     }
@@ -241,12 +232,7 @@ int aws_h1_encoder_message_init_from_response(
      */
     body_headers_ignored |= status_int == AWS_HTTP_STATUS_304_NOT_MODIFIED;
     bool body_headers_forbidden = status_int == AWS_HTTP_STATUS_204_NO_CONTENT || status_int / 100 == 1;
-    err = s_scan_outgoing_headers(
-        response,
-        &header_lines_len,
-        &message->has_connection_close_header,
-        body_headers_ignored,
-        body_headers_forbidden);
+    err = s_scan_outgoing_headers(message, response, &header_lines_len, body_headers_ignored, body_headers_forbidden);
     if (err) {
         goto error;
     }
@@ -328,7 +314,7 @@ int aws_h1_encoder_start_message(
     encoder->logging_id = log_as_stream;
     encoder->message = message;
     encoder->state = AWS_H1_ENCODER_STATE_HEAD;
-    encoder->outgoing_head_progress = 0;
+    encoder->progress_bytes = 0;
 
     return AWS_OP_SUCCESS;
 }
@@ -354,7 +340,7 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
 
         /* Copy data from outgoing_head_buf */
         struct aws_byte_buf *src = &encoder->message->outgoing_head_buf;
-        size_t src_progress = encoder->outgoing_head_progress;
+        size_t src_progress = (size_t)encoder->progress_bytes;
         size_t src_remaining = src->len - src_progress;
         size_t transferring = src_remaining < dst_available ? src_remaining : dst_available;
 
@@ -362,26 +348,27 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
         (void)success;
         AWS_ASSERT(success);
 
-        encoder->outgoing_head_progress += transferring;
+        encoder->progress_bytes += transferring;
 
         ENCODER_LOGF(
             TRACE,
             encoder,
-            "Writing to message, outgoing head progress %zu/%zu.",
-            encoder->outgoing_head_progress,
+            "Writing to message, outgoing head progress %" PRIu64 "/%zu.",
+            encoder->progress_bytes,
             encoder->message->outgoing_head_buf.len);
 
-        if (encoder->outgoing_head_progress == src->len) {
+        if (encoder->progress_bytes == src->len) {
             /* Don't NEED to free this buffer now, but we don't need it anymore, so why not */
             aws_byte_buf_clean_up(&encoder->message->outgoing_head_buf);
 
+            encoder->progress_bytes = 0;
             encoder->state++;
         }
     }
 
     if (encoder->state == AWS_H1_ENCODER_STATE_BODY) {
-        if (!encoder->message->body) {
-            ENCODER_LOG(TRACE, encoder, "No body to send.")
+        if (!encoder->message->body || !encoder->message->content_length) {
+            ENCODER_LOG(TRACE, encoder, "Skipping body")
             encoder->state++;
         } else {
             while (true) {
@@ -408,29 +395,51 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
                     return AWS_OP_ERR;
                 }
 
+                if ((amount_read > encoder->message->content_length) ||
+                    (encoder->progress_bytes > encoder->message->content_length - amount_read)) {
+                    ENCODER_LOGF(
+                        ERROR,
+                        encoder,
+                        "Body stream has exceeded Content-Length: %" PRIu64,
+                        encoder->message->content_length);
+                    return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+                }
+
+                encoder->progress_bytes += amount_read;
+
                 ENCODER_LOGF(TRACE, encoder, "Writing %zu body bytes to message", amount_read);
 
-                struct aws_stream_status status;
-                err = aws_input_stream_get_status(encoder->message->body, &status);
-                if (err) {
-                    ENCODER_LOGF(
-                        TRACE,
-                        encoder,
-                        "Failed to query body stream status, error %d (%s)",
-                        aws_last_error(),
-                        aws_error_name(aws_last_error()));
-
-                    return AWS_OP_ERR;
-                }
-                if (status.is_end_of_stream) {
+                if (encoder->progress_bytes == encoder->message->content_length) {
                     ENCODER_LOG(TRACE, encoder, "Done sending body.");
-
+                    encoder->progress_bytes = 0;
                     encoder->state++;
                     break;
                 }
 
                 /* Return if user failed to write anything. Maybe their data isn't ready yet. */
                 if (amount_read == 0) {
+                    /* Ensure we're not at end-of-stream too early */
+                    struct aws_stream_status status;
+                    err = aws_input_stream_get_status(encoder->message->body, &status);
+                    if (err) {
+                        ENCODER_LOGF(
+                            TRACE,
+                            encoder,
+                            "Failed to query body stream status, error %d (%s)",
+                            aws_last_error(),
+                            aws_error_name(aws_last_error()));
+
+                        return AWS_OP_ERR;
+                    }
+                    if (status.is_end_of_stream) {
+                        ENCODER_LOGF(
+                            ERROR,
+                            encoder,
+                            "Reached end of body stream before Content-Length: %" PRIu64 " sent",
+                            encoder->message->content_length);
+                        return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+                    }
+
                     ENCODER_LOG(
                         TRACE,
                         encoder,
