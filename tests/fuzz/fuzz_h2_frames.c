@@ -17,14 +17,13 @@
 #include <aws/http/private/hpack.h>
 
 #include <aws/testing/aws_test_harness.h>
+#include <aws/common/allocator.h>
 
 AWS_EXTERN_C_BEGIN
 
-AWS_TEST_ALLOCATOR_INIT(fuzz_h2_frames)
-
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
-    struct aws_allocator *allocator = &fuzz_h2_frames_allocator;
+    struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), AWS_MEMTRACE_BYTES, 0);
     struct memory_test_allocator *alloc_impl = &fuzz_h2_frames_alloc_impl;
     struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(data, size);
 
@@ -108,13 +107,10 @@ cleanup:
     aws_h2_frame_decoder_clean_up(&decoder);
     aws_hpack_static_table_clean_up();
 
-    ASSERT_UINT_EQUALS(
-        alloc_impl->allocated,
-        alloc_impl->freed,
-        "Memory Leak Detected %d bytes were allocated, "
-        "but only %d were freed.",
-        alloc_impl->allocated,
-        alloc_impl->freed);
+    ASSERT_UINT_EQUALS(0,
+        aws_mem_tracer_count(allocator),
+        "Memory Leak Detected");
+    allocator = aws_mem_tracer_destroy(allocator);
 
     return 0;
 }
