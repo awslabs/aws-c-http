@@ -26,7 +26,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     /* Setup allocator and parameters */
     struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), AWS_MEMTRACE_BYTES, 0);
-    struct memory_test_allocator *alloc_impl = &fuzz_h2_decoder_alloc_impl;
     struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(data, size);
 
     /* Reset the allocator's leak checker */
