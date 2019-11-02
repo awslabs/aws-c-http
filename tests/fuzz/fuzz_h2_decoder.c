@@ -28,10 +28,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), AWS_MEMTRACE_BYTES, 0);
     struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(data, size);
 
-    /* Reset the allocator's leak checker */
-    alloc_impl->allocated = 0;
-    alloc_impl->freed = 0;
-
     /* Enable logging */
     struct aws_logger logger;
     struct aws_logger_standard_options log_options = {

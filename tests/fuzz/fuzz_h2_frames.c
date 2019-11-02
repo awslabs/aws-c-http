@@ -26,9 +26,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), AWS_MEMTRACE_BYTES, 0);
     struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(data, size);
 
-    AWS_ZERO_STRUCT(*alloc_impl);
-    aws_mutex_init(&alloc_impl->mutex);
-
     aws_hpack_static_table_init(allocator);
 
     struct aws_h2_frame_decoder decoder;
