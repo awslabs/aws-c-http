@@ -16,8 +16,8 @@
 #include <aws/http/private/h2_frames.h>
 #include <aws/http/private/hpack.h>
 
-#include <aws/testing/aws_test_harness.h>
 #include <aws/common/allocator.h>
+#include <aws/testing/aws_test_harness.h>
 
 AWS_EXTERN_C_BEGIN
 
@@ -103,9 +103,7 @@ cleanup:
     aws_h2_frame_decoder_clean_up(&decoder);
     aws_hpack_static_table_clean_up();
 
-    ASSERT_UINT_EQUALS(0,
-        aws_mem_tracer_count(allocator),
-        "Memory Leak Detected");
+    ASSERT_UINT_EQUALS(0, aws_mem_tracer_count(allocator), "Memory Leak Detected");
     allocator = aws_mem_tracer_destroy(allocator);
 
     return 0;
