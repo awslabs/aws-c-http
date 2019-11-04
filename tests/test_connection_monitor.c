@@ -750,7 +750,7 @@ static void s_add_outgoing_stream(struct test_http_stats_event *event) {
     AWS_FATAL_ASSERT(event->request_body_size <= MAX_BODY_SIZE);
     if (event->request_body_size > 0) {
         char cl_buffer[256];
-        sprintf(cl_buffer, "%zu", s_test_context.large_body_buf.len);
+        sprintf(cl_buffer, "%zu", event->request_body_size);
 
         struct aws_http_header content_length_header = {
             .name = aws_byte_cursor_from_c_str("content-length"),
