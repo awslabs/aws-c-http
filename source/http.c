@@ -59,9 +59,6 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_INVALID_BODY_STREAM,
         "A body stream provided, but the message does not allow body (ex: response for HEAD Request and 304 response)"),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_MISSING_BODY_HEADERS,
-        "Missing headers (ex: Content-Length) required to send a body."),
-    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_CLOSED,
         "The connection has closed or is closing."),
     AWS_DEFINE_ERROR_INFO_HTTP(
