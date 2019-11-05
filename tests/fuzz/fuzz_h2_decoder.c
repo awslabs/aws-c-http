@@ -17,22 +17,16 @@
 
 #include <aws/testing/aws_test_harness.h>
 
+#include <aws/common/allocator.h>
 #include <aws/common/logging.h>
 
 AWS_EXTERN_C_BEGIN
 
-AWS_TEST_ALLOCATOR_INIT(fuzz_h2_decoder)
-
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     /* Setup allocator and parameters */
-    struct aws_allocator *allocator = &fuzz_h2_decoder_allocator;
-    struct memory_test_allocator *alloc_impl = &fuzz_h2_decoder_alloc_impl;
+    struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), AWS_MEMTRACE_BYTES, 0);
     struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(data, size);
-
-    /* Reset the allocator's leak checker */
-    alloc_impl->allocated = 0;
-    alloc_impl->freed = 0;
 
     /* Enable logging */
     struct aws_logger logger;
@@ -62,7 +56,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     aws_logger_clean_up(&logger);
 
     /* Check for leaks */
-    AWS_FATAL_ASSERT(alloc_impl->allocated == alloc_impl->freed);
+    ASSERT_UINT_EQUALS(0, aws_mem_tracer_count(allocator));
+    allocator = aws_mem_tracer_destroy(allocator);
 
     return 0;
 }
