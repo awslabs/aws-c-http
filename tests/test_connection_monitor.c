@@ -40,14 +40,14 @@ static int s_test_http_connection_monitor_options_is_valid(struct aws_allocator 
     ASSERT_FALSE(aws_http_connection_monitoring_options_is_valid(NULL));
     ASSERT_FALSE(aws_http_connection_monitoring_options_is_valid(&options));
 
-    options.minimum_throughput_failure_threshold_in_seconds = 5;
+    options.allowable_consecutive_throughput_failures = 5;
     ASSERT_FALSE(aws_http_connection_monitoring_options_is_valid(&options));
 
-    options.minimum_throughput_failure_threshold_in_seconds = 1;
+    options.allowable_consecutive_throughput_failures = 0;
     options.minimum_throughput_bytes_per_second = 1000;
     ASSERT_FALSE(aws_http_connection_monitoring_options_is_valid(&options));
 
-    options.minimum_throughput_failure_threshold_in_seconds = 2;
+    options.allowable_consecutive_throughput_failures = 2;
     ASSERT_TRUE(aws_http_connection_monitoring_options_is_valid(&options));
 
     return AWS_OP_SUCCESS;
@@ -223,8 +223,8 @@ static int s_do_http_monitoring_test(
 
         testing_channel_drain_queued_tasks(&s_test_context.test_channel);
         ASSERT_TRUE(monitor_impl->consecutive_throughput_failures == event->expected_consecutive_failure_count);
-        if (monitor_impl->consecutive_throughput_failures ==
-            monitoring_options->minimum_throughput_failure_threshold_in_seconds) {
+        if (monitor_impl->consecutive_throughput_failures >
+            monitoring_options->allowable_consecutive_throughput_failures) {
             ASSERT_TRUE(testing_channel_is_shutdown_completed(&s_test_context.test_channel));
         }
     }
@@ -234,9 +234,8 @@ static int s_do_http_monitoring_test(
     return AWS_OP_SUCCESS;
 }
 
-static struct aws_http_connection_monitoring_options s_test_options = {
-    .minimum_throughput_failure_threshold_in_seconds = 2,
-    .minimum_throughput_bytes_per_second = 1000};
+static struct aws_http_connection_monitoring_options s_test_options = {.allowable_consecutive_throughput_failures = 1,
+                                                                       .minimum_throughput_bytes_per_second = 1000};
 
 static struct http_monitor_test_stats_event s_test_above_events[] = {
     {
@@ -250,8 +249,8 @@ static struct http_monitor_test_stats_event s_test_above_events[] = {
         .socket_stats =
             {
                 .category = AWSCRT_STAT_CAT_SOCKET,
-                .bytes_read = 1000,
-                .bytes_written = 1000,
+                .bytes_read = 500,
+                .bytes_written = 500,
             },
         .http_stats =
             {
@@ -285,8 +284,8 @@ static struct http_monitor_test_stats_event s_test_below_events[] = {
         .socket_stats =
             {
                 .category = AWSCRT_STAT_CAT_SOCKET,
-                .bytes_read = 999,
-                .bytes_written = 1000,
+                .bytes_read = 499,
+                .bytes_written = 500,
             },
         .http_stats =
             {
@@ -320,8 +319,8 @@ static struct http_monitor_test_stats_event s_test_below_then_above_events[] = {
         .socket_stats =
             {
                 .category = AWSCRT_STAT_CAT_SOCKET,
-                .bytes_read = 999,
-                .bytes_written = 1000,
+                .bytes_read = 499,
+                .bytes_written = 500,
             },
         .http_stats =
             {
@@ -337,8 +336,8 @@ static struct http_monitor_test_stats_event s_test_below_then_above_events[] = {
         .socket_stats =
             {
                 .category = AWSCRT_STAT_CAT_SOCKET,
-                .bytes_read = 1500,
-                .bytes_written = 500,
+                .bytes_read = 750,
+                .bytes_written = 250,
             },
         .http_stats =
             {

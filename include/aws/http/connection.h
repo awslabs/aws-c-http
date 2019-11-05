@@ -68,11 +68,10 @@ struct aws_http_connection_monitoring_options {
     uint64_t minimum_throughput_bytes_per_second;
 
     /*
-     * number of throughput failures that may occur before the monitor shuts down the connection.  If zero, no checks
-     * will be performed.  A value of two or greater is STRONGLY recommended.  A value of one will result in
-     * timing-dependent, unreliable behavior.
+     * number of throughput check failures allowed to occur consecutively before the monitor shuts down the connection.
+     * If zero no checks will be performed.
      */
-    uint32_t minimum_throughput_failure_threshold_in_seconds;
+    uint32_t allowable_consecutive_throughput_failures;
 };
 
 /**

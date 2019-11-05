@@ -34,6 +34,8 @@ static void s_process_statistics(
     (void)interval;
 
     struct aws_statistics_handler_http_connection_monitor_impl *impl = handler->impl;
+    if (!aws_http_connection_monitoring_options_is_valid(&impl->options)) {
+    }
 
     uint64_t pending_read_interval_ns = 0;
     uint64_t pending_write_interval_ns = 0;
@@ -72,11 +74,6 @@ static void s_process_statistics(
 
     struct aws_channel *channel = context;
 
-    if (impl->options.minimum_throughput_bytes_per_second == 0 ||
-        impl->options.minimum_throughput_failure_threshold_in_seconds == 0) {
-        return;
-    }
-
     /*
      * All early-out/negative execution paths reset the failure count to zero.  Keep a copy of the current count for the
      * remaining path.
@@ -84,29 +81,37 @@ static void s_process_statistics(
     uint32_t current_failure_count = impl->consecutive_throughput_failures;
     impl->consecutive_throughput_failures = 0;
 
-    uint64_t pending_io_time_ns = 0;
-    if (aws_add_u64_checked(pending_read_interval_ns, pending_write_interval_ns, &pending_io_time_ns)) {
-        AWS_LOGF_ERROR(AWS_LS_IO_CHANNEL, "id=%p: io interval summation overflow", (void *)channel);
+    if (pending_read_interval_ns == 0 && pending_write_interval_ns == 0) {
         return;
     }
 
-    if (pending_io_time_ns == 0) {
-        return;
+    uint64_t bytes_read_per_second = 0;
+    if (pending_read_interval_ns > 0) {
+        double fractional_bytes_read_per_second =
+            (double)bytes_read * (double)AWS_TIMESTAMP_NANOS / (double)pending_read_interval_ns;
+        if (fractional_bytes_read_per_second >= (double)UINT64_MAX) {
+            bytes_read_per_second = UINT64_MAX;
+        } else {
+            bytes_read_per_second = (uint64_t)fractional_bytes_read_per_second;
+        }
     }
 
-    uint64_t total_bytes = 0;
-    if (aws_add_u64_checked(bytes_read, bytes_written, &total_bytes)) {
-        AWS_LOGF_ERROR(AWS_LS_IO_CHANNEL, "id=%p: io bytes summation overflow", (void *)channel);
-        return;
+    uint64_t bytes_written_per_second = 0;
+    if (pending_write_interval_ns) {
+        double fractional_bytes_written_per_second =
+            (double)bytes_written * (double)AWS_TIMESTAMP_NANOS / (double)pending_write_interval_ns;
+        if (fractional_bytes_written_per_second >= (double)UINT64_MAX) {
+            bytes_written_per_second = UINT64_MAX;
+        } else {
+            bytes_written_per_second = (uint64_t)fractional_bytes_written_per_second;
+        }
     }
 
     uint64_t bytes_per_second = 0;
-    if (aws_mul_u64_checked(total_bytes, (uint64_t)AWS_TIMESTAMP_NANOS, &bytes_per_second)) {
+    if (aws_add_u64_checked(bytes_written_per_second, bytes_read_per_second, &bytes_per_second)) {
         AWS_LOGF_INFO(AWS_LS_IO_CHANNEL, "id=%p: io throughput overflow calculation", (void *)channel);
         return;
     }
-
-    bytes_per_second /= pending_io_time_ns;
 
     AWS_LOGF_DEBUG(
         AWS_LS_IO_CHANNEL,
@@ -129,16 +134,17 @@ static void s_process_statistics(
         (void *)channel,
         impl->consecutive_throughput_failures);
 
-    if (impl->consecutive_throughput_failures < impl->options.minimum_throughput_failure_threshold_in_seconds) {
+    if (impl->consecutive_throughput_failures <= impl->options.allowable_consecutive_throughput_failures) {
         return;
     }
 
     AWS_LOGF_INFO(
         AWS_LS_IO_CHANNEL,
-        "id=%p: Channel low throughput threshold hit (< %" PRIu64 " bytes per second for %u seconds).  Shutting down.",
+        "id=%p: Channel low throughput threshold exceeded (< %" PRIu64
+        " bytes per second for more than %u checks).  Shutting down.",
         (void *)channel,
         impl->options.minimum_throughput_bytes_per_second,
-        impl->options.minimum_throughput_failure_threshold_in_seconds);
+        impl->options.allowable_consecutive_throughput_failures);
 
     aws_channel_shutdown(channel, AWS_ERROR_HTTP_CHANNEL_THROUGHPUT_FAILURE);
 }
@@ -195,6 +201,5 @@ bool aws_http_connection_monitoring_options_is_valid(const struct aws_http_conne
         return false;
     }
 
-    return options->minimum_throughput_failure_threshold_in_seconds > 1 &&
-           options->minimum_throughput_bytes_per_second > 0;
+    return options->allowable_consecutive_throughput_failures > 0 && options->minimum_throughput_bytes_per_second > 0;
 }
