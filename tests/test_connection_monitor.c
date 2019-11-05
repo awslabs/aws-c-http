@@ -652,7 +652,7 @@ static void s_mock_process_statistics(
 
         switch (stats_base->category) {
 
-            case AWSCRT_STAT_CAT_HTTP1: {
+            case AWSCRT_STAT_CAT_HTTP1_CHANNEL: {
                 struct aws_crt_statistics_http1 *http1_stats = (struct aws_crt_statistics_http1 *)stats_base;
                 impl->pending_read_interval_ns = http1_stats->pending_incoming_stream_ns;
                 impl->pending_write_interval_ns = http1_stats->pending_outgoing_stream_ns;

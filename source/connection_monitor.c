@@ -38,8 +38,8 @@ static void s_process_statistics(
         return;
     }
 
-    uint64_t pending_read_interval_ns = 0;
-    uint64_t pending_write_interval_ns = 0;
+    uint64_t pending_read_interval_ms = 0;
+    uint64_t pending_write_interval_ms = 0;
     uint64_t bytes_read = 0;
     uint64_t bytes_written = 0;
 
@@ -63,8 +63,8 @@ static void s_process_statistics(
 
             case AWSCRT_STAT_CAT_HTTP1_CHANNEL: {
                 struct aws_crt_statistics_http1 *http1_stats = (struct aws_crt_statistics_http1 *)stats_base;
-                pending_read_interval_ns = http1_stats->pending_incoming_stream_ns;
-                pending_write_interval_ns = http1_stats->pending_outgoing_stream_ns;
+                pending_read_interval_ms = http1_stats->pending_incoming_stream_ms;
+                pending_write_interval_ms = http1_stats->pending_outgoing_stream_ms;
                 break;
             }
 
@@ -82,14 +82,14 @@ static void s_process_statistics(
     uint32_t current_failure_count = impl->consecutive_throughput_failures;
     impl->consecutive_throughput_failures = 0;
 
-    if (pending_read_interval_ns == 0 && pending_write_interval_ns == 0) {
+    if (pending_read_interval_ms == 0 && pending_write_interval_ms == 0) {
         return;
     }
 
     uint64_t bytes_read_per_second = 0;
-    if (pending_read_interval_ns > 0) {
+    if (pending_read_interval_ms > 0) {
         double fractional_bytes_read_per_second =
-            (double)bytes_read * (double)AWS_TIMESTAMP_NANOS / (double)pending_read_interval_ns;
+            (double)bytes_read * (double)AWS_TIMESTAMP_MILLIS / (double)pending_read_interval_ms;
         if (fractional_bytes_read_per_second >= (double)UINT64_MAX) {
             bytes_read_per_second = UINT64_MAX;
         } else {
@@ -98,9 +98,9 @@ static void s_process_statistics(
     }
 
     uint64_t bytes_written_per_second = 0;
-    if (pending_write_interval_ns) {
+    if (pending_write_interval_ms) {
         double fractional_bytes_written_per_second =
-            (double)bytes_written * (double)AWS_TIMESTAMP_NANOS / (double)pending_write_interval_ns;
+            (double)bytes_written * (double)AWS_TIMESTAMP_MILLIS / (double)pending_write_interval_ms;
         if (fractional_bytes_written_per_second >= (double)UINT64_MAX) {
             bytes_written_per_second = UINT64_MAX;
         } else {
