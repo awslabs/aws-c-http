@@ -26,9 +26,6 @@
     AWS_LOGF_##level(AWS_LS_HTTP_CONNECTION, "id=%p: " text, (void *)(connection), __VA_ARGS__)
 #define CONNECTION_LOG(level, connection, text) CONNECTION_LOGF(level, connection, "%s", text)
 
-/* Stream IDs are only 31 bits [5.1.1] */
-static const uint32_t MAX_STREAM_ID = UINT32_MAX >> 1;
-
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
         {
@@ -76,9 +73,6 @@ static struct aws_h2_connection *s_connection_new(
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
 
-    /* Init the next stream id (server must use odd ids, client even [RFC 7540 5.1.1])*/
-    connection->synced_data.next_stream_id = (server ? 2 : 1);
-
     /* Create a new decoder */
     struct aws_h2_decoder_params params = {
         .alloc = alloc,
@@ -87,18 +81,8 @@ static struct aws_h2_connection *s_connection_new(
     };
     connection->thread_data.decoder = aws_h2_decoder_new(&params);
 
-    int err = aws_mutex_init(&connection->synced_data.lock);
-    if (err) {
-        CONNECTION_LOGF(
-            ERROR, connection, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
-
-        goto error_mutex;
-    }
-
     return connection;
 
-error_mutex:
-    aws_mem_release(alloc, connection);
 error_connection_alloc:
     return NULL;
 }
@@ -129,30 +113,4 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
     connection->base.client_data = &connection->base.client_or_server_data.client;
 
     return &connection->base;
-}
-
-uint32_t aws_h2_connection_get_next_stream_id(struct aws_h2_connection *connection) {
-
-    uint32_t next_id = 0;
-
-    { /* BEGIN CRITICAL SECTION */
-        int err = aws_mutex_lock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(err == AWS_OP_SUCCESS);
-
-        next_id = connection->synced_data.next_stream_id;
-        connection->synced_data.next_stream_id += 2;
-
-        /* If next fetch would overflow next_stream_id, set it to 0 */
-        if (AWS_UNLIKELY(next_id > MAX_STREAM_ID)) {
-            CONNECTION_LOG(INFO, connection, "All available stream ids are gone, closing the connection");
-
-            next_id = 0;
-            aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-        }
-
-        err = aws_mutex_unlock(&connection->synced_data.lock);
-        AWS_FATAL_ASSERT(err == AWS_OP_SUCCESS);
-    } /* END CRITICAL SECTION */
-
-    return next_id;
 }

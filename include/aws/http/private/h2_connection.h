@@ -28,14 +28,6 @@ struct aws_h2_connection {
     struct {
         struct aws_h2_decoder *decoder;
     } thread_data;
-
-    /* Any thread may touch this data, but the lock must be held */
-    struct {
-        struct aws_mutex lock;
-
-        /* Refers to the next stream id to vend */
-        uint32_t next_stream_id;
-    } synced_data;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -49,9 +41,6 @@ AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
     size_t initial_window_size);
-
-AWS_HTTP_API
-uint32_t aws_h2_connection_get_next_stream_id(struct aws_h2_connection *connection);
 
 AWS_EXTERN_C_END
 

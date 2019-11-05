@@ -58,6 +58,8 @@ static struct aws_h1_stream *s_stream_new_common(
     stream->base.on_incoming_body = on_incoming_body;
     stream->base.on_complete = on_complete;
 
+    *((uint32_t *)&stream->base.id) = aws_http_connection_get_next_stream_id(owning_connection);
+
     /* Stream refcount starts at 2. 1 for user and 1 for connection to release it's done with the stream */
     aws_atomic_init_int(&stream->base.refcount, 2);
 

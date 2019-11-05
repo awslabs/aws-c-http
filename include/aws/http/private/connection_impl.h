@@ -72,6 +72,9 @@ struct aws_http_connection {
      * aws_http_streams will also acquire holds on their connection for the duration of their lifetime */
     struct aws_atomic_var refcount;
 
+    /* Starts at either 1 or 2, increments by two with each new stream */
+    struct aws_atomic_var next_stream_id;
+
     union {
         struct aws_http_connection_client_data {
             uint8_t delete_me; /* exists to prevent "empty struct" errors */
@@ -124,7 +127,12 @@ void aws_http_connection_acquire(struct aws_http_connection *connection);
  * Allow tests to fake stats data
  */
 AWS_HTTP_API
-struct aws_crt_statistics_http1 *aws_h1_connection_get_statistics(struct aws_http_connection *connection);
+struct aws_crt_statistics_http1_channel *aws_h1_connection_get_statistics(struct aws_http_connection *connection);
+
+
+AWS_HTTP_API
+uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *connection);
+
 
 AWS_EXTERN_C_END
 

@@ -194,6 +194,9 @@ static struct aws_http_connection *s_connection_new(
         goto error;
     }
 
+    /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
+    aws_atomic_init_int(&connection->next_stream_id, (is_server ? 2 : 1));
+
     connection->channel_slot = connection_slot;
 
     /* Success! Acquire a hold on the channel to prevent its destruction until the user has
@@ -832,4 +835,22 @@ int aws_http_connection_configure_server(
     connection->server_data->on_shutdown = options->on_shutdown;
 
     return AWS_OP_SUCCESS;
+}
+
+/* Stream IDs are only 31 bits [5.1.1] */
+static const uint32_t MAX_STREAM_ID = UINT32_MAX >> 1;
+
+
+uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *connection) {
+
+    uint64_t next_id = aws_atomic_fetch_add(&connection->next_stream_id, 2);
+    /* If next fetch would overflow next_stream_id, set it to 0 */
+    if (AWS_UNLIKELY(next_id > MAX_STREAM_ID)) {
+        AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: All available stream ids are gone, closing the connection", (void *)connection);
+
+        next_id = 0;
+        aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+
+    return next_id;
 }

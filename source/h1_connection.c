@@ -14,6 +14,7 @@
  */
 #include <aws/http/private/h1_connection.h>
 
+#include <aws/common/clock.h>
 #include <aws/common/math.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
@@ -158,7 +159,7 @@ struct h1_connection {
         /* Server-only. Request-handler streams can only be created while this is true. */
         bool can_create_request_handler_stream;
 
-        struct aws_crt_statistics_http1 stats;
+        struct aws_crt_statistics_http1_channel stats;
 
         uint64_t outgoing_stream_timestamp_ns;
         uint64_t incoming_stream_timestamp_ns;
@@ -626,15 +627,18 @@ finish_up:
     aws_http_stream_release(&stream->base);
 }
 
-static void s_add_time_measurement_to_stats(uint64_t start_ns, uint64_t end_ns, uint64_t *output_ns) {
+static void s_add_time_measurement_to_stats(uint64_t start_ns, uint64_t end_ns, uint64_t *output_ms) {
     if (end_ns > start_ns) {
-        *output_ns += end_ns - start_ns;
+        *output_ms += aws_timestamp_convert(end_ns - start_ns, AWS_TIMESTAMP_NANOS, AWS_TIMESTAMP_MILLIS, NULL);
     }
 }
 
 static void s_set_outgoing_stream_ptr(struct h1_connection *connection, struct aws_h1_stream *next_outgoing_stream) {
 
     struct aws_h1_stream *prev = connection->thread_data.outgoing_stream;
+    if (next_outgoing_stream != NULL && prev != next_outgoing_stream) {
+        ++connection->thread_data.stats.requests_started;
+    }
 
     uint64_t now_ns = 0;
     aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns);
@@ -646,7 +650,7 @@ static void s_set_outgoing_stream_ptr(struct h1_connection *connection, struct a
         s_add_time_measurement_to_stats(
             connection->thread_data.outgoing_stream_timestamp_ns,
             now_ns,
-            &connection->thread_data.stats.pending_outgoing_stream_ns);
+            &connection->thread_data.stats.pending_outgoing_stream_ms);
     }
 
     connection->thread_data.outgoing_stream = next_outgoing_stream;
@@ -654,6 +658,10 @@ static void s_set_outgoing_stream_ptr(struct h1_connection *connection, struct a
 
 static void s_set_incoming_stream_ptr(struct h1_connection *connection, struct aws_h1_stream *next_incoming_stream) {
     struct aws_h1_stream *prev = connection->thread_data.incoming_stream;
+
+    if (prev != NULL && next_incoming_stream != prev) {
+        ++connection->thread_data.stats.requests_finished;
+    }
 
     uint64_t now_ns = 0;
     aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns);
@@ -665,7 +673,7 @@ static void s_set_incoming_stream_ptr(struct h1_connection *connection, struct a
         s_add_time_measurement_to_stats(
             connection->thread_data.incoming_stream_timestamp_ns,
             now_ns,
-            &connection->thread_data.stats.pending_incoming_stream_ns);
+            &connection->thread_data.stats.pending_incoming_stream_ms);
     }
 
     connection->thread_data.incoming_stream = next_incoming_stream;
@@ -1255,7 +1263,7 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     aws_linked_list_init(&connection->thread_data.stream_list);
     aws_linked_list_init(&connection->thread_data.waiting_stream_list);
     aws_linked_list_init(&connection->thread_data.midchannel_read_messages);
-    aws_crt_statistics_http1_init(&connection->thread_data.stats);
+    aws_crt_statistics_http1_channel_init(&connection->thread_data.stats);
 
     int err = aws_mutex_init(&connection->synced_data.lock);
     if (err) {
@@ -1807,7 +1815,7 @@ static size_t s_handler_message_overhead(struct aws_channel_handler *handler) {
 static void s_reset_statistics(struct aws_channel_handler *handler) {
     struct h1_connection *connection = handler->impl;
 
-    aws_crt_statistics_http1_reset(&connection->thread_data.stats);
+    aws_crt_statistics_http1_channel_reset(&connection->thread_data.stats);
 }
 
 static void s_pull_up_stats_timestamps(struct h1_connection *connection) {
@@ -1820,7 +1828,7 @@ static void s_pull_up_stats_timestamps(struct h1_connection *connection) {
         s_add_time_measurement_to_stats(
             connection->thread_data.outgoing_stream_timestamp_ns,
             now_ns,
-            &connection->thread_data.stats.pending_outgoing_stream_ns);
+            &connection->thread_data.stats.pending_outgoing_stream_ms);
         connection->thread_data.outgoing_stream_timestamp_ns = now_ns;
     }
 
@@ -1828,9 +1836,14 @@ static void s_pull_up_stats_timestamps(struct h1_connection *connection) {
         s_add_time_measurement_to_stats(
             connection->thread_data.incoming_stream_timestamp_ns,
             now_ns,
-            &connection->thread_data.stats.pending_incoming_stream_ns);
+            &connection->thread_data.stats.pending_incoming_stream_ms);
         connection->thread_data.incoming_stream_timestamp_ns = now_ns;
     }
+
+    connection->thread_data.stats.total_pending_incoming_stream_ms = aws_add_u64_saturating(connection->thread_data.stats.pending_incoming_stream_ms, connection->thread_data.stats.total_pending_incoming_stream_ms);
+    connection->thread_data.stats.total_pending_outgoing_stream_ms = aws_add_u64_saturating(connection->thread_data.stats.pending_outgoing_stream_ms, connection->thread_data.stats.total_pending_outgoing_stream_ms);
+    connection->thread_data.stats.total_requests_finished = aws_add_u64_saturating(connection->thread_data.stats.requests_finished, connection->thread_data.stats.total_requests_finished);
+    connection->thread_data.stats.total_requests_started = aws_add_u64_saturating(connection->thread_data.stats.requests_started, connection->thread_data.stats.total_requests_started);
 }
 
 static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_array_list *stats) {
@@ -1842,7 +1855,7 @@ static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_
     aws_array_list_push_back(stats, &stats_base);
 }
 
-struct aws_crt_statistics_http1 *aws_h1_connection_get_statistics(struct aws_http_connection *connection) {
+struct aws_crt_statistics_http1_channel *aws_h1_connection_get_statistics(struct aws_http_connection *connection) {
     struct h1_connection *h1_conn = (void *)connection;
 
     return &h1_conn->thread_data.stats;

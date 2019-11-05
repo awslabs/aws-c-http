@@ -36,6 +36,8 @@ struct aws_http_stream {
     struct aws_allocator *alloc;
     struct aws_http_connection *owning_connection;
 
+    const uint32_t id;
+
     bool manual_window_management;
 
     void *user_data;

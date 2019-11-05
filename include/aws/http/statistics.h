@@ -21,39 +21,39 @@
 #include <aws/common/statistics.h>
 
 enum aws_crt_http_statistics_category {
-    AWSCRT_STAT_CAT_HTTP1 = AWS_CRT_STATISTICS_CATEGORY_BEGIN_RANGE(AWS_C_HTTP_PACKAGE_ID),
-    AWSCRT_STAT_CAT_HTTP2
+    AWSCRT_STAT_CAT_HTTP1_CHANNEL = AWS_CRT_STATISTICS_CATEGORY_BEGIN_RANGE(AWS_C_HTTP_PACKAGE_ID),
 };
 
 /**
  * A statistics struct for http handlers.  Tracks the actual amount of time that incoming and outgoing requests are
- * waiting for their io to complete.
+ * waiting for their IO to complete.
  */
-struct aws_crt_statistics_http1 {
+struct aws_crt_statistics_http1_channel {
     aws_crt_statistics_category_t category;
-    uint64_t pending_incoming_stream_ns;
-    uint64_t pending_outgoing_stream_ns;
+
+    uint64_t pending_outgoing_stream_ms;
+    uint64_t pending_incoming_stream_ms;
 };
 
 AWS_EXTERN_C_BEGIN
 
 /**
- * Initializes a http handler statistics struct
+ * Initializes a http channel handler statistics struct
  */
 AWS_HTTP_API
-int aws_crt_statistics_http1_init(struct aws_crt_statistics_http1 *stats);
+int aws_crt_statistics_http1_channel_init(struct aws_crt_statistics_http1_channel *stats);
 
 /**
- * Cleans up a http handler statistics struct
+ * Cleans up a http channel handler statistics struct
  */
 AWS_HTTP_API
-void aws_crt_statistics_http1_cleanup(struct aws_crt_statistics_http1 *stats);
+void aws_crt_statistics_http1_channel_cleanup(struct aws_crt_statistics_http1_channel *stats);
 
 /**
- * Resets a http handler statistics struct's statistics
+ * Resets a http channel handler statistics struct's statistics
  */
 AWS_HTTP_API
-void aws_crt_statistics_http1_reset(struct aws_crt_statistics_http1 *stats);
+void aws_crt_statistics_http1_channel_reset(struct aws_crt_statistics_http1_channel *stats);
 
 AWS_EXTERN_C_END
 

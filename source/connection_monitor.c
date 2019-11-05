@@ -35,6 +35,7 @@ static void s_process_statistics(
 
     struct aws_statistics_handler_http_connection_monitor_impl *impl = handler->impl;
     if (!aws_http_connection_monitoring_options_is_valid(&impl->options)) {
+        return;
     }
 
     uint64_t pending_read_interval_ns = 0;
@@ -60,7 +61,7 @@ static void s_process_statistics(
                 break;
             }
 
-            case AWSCRT_STAT_CAT_HTTP1: {
+            case AWSCRT_STAT_CAT_HTTP1_CHANNEL: {
                 struct aws_crt_statistics_http1 *http1_stats = (struct aws_crt_statistics_http1 *)stats_base;
                 pending_read_interval_ns = http1_stats->pending_incoming_stream_ns;
                 pending_write_interval_ns = http1_stats->pending_outgoing_stream_ns;

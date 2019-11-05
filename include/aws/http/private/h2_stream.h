@@ -36,8 +36,6 @@ enum aws_h2_stream_state {
 struct aws_h2_stream {
     struct aws_http_stream base;
 
-    const uint32_t id;
-
     /* Only the event-loop thread may touch this data */
     struct {
         bool expects_continuation;
