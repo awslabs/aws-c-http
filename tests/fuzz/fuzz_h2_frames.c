@@ -23,7 +23,7 @@ AWS_EXTERN_C_BEGIN
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
-    struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), AWS_MEMTRACE_BYTES, 0);
+    struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), NULL, AWS_MEMTRACE_BYTES, 0);
     struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(data, size);
 
     aws_hpack_static_table_init(allocator);
