@@ -28,7 +28,10 @@ struct aws_crt_statistics_handler;
 struct aws_statistics_handler_http_connection_monitor_impl {
     struct aws_http_connection_monitoring_options options;
 
-    uint32_t consecutive_throughput_failures;
+    uint64_t throughput_failure_time_ms;
+    uint32_t last_incoming_stream_id;
+    uint32_t last_outgoing_stream_id;
+    uint64_t last_measured_throughput;
 };
 
 AWS_EXTERN_C_BEGIN

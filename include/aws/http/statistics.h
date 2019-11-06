@@ -33,6 +33,9 @@ struct aws_crt_statistics_http1_channel {
 
     uint64_t pending_outgoing_stream_ms;
     uint64_t pending_incoming_stream_ms;
+
+    uint32_t current_outgoing_stream_id;
+    uint32_t current_incoming_stream_id;
 };
 
 AWS_EXTERN_C_BEGIN

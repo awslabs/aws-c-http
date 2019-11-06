@@ -129,10 +129,8 @@ void aws_http_connection_acquire(struct aws_http_connection *connection);
 AWS_HTTP_API
 struct aws_crt_statistics_http1_channel *aws_h1_connection_get_statistics(struct aws_http_connection *connection);
 
-
 AWS_HTTP_API
 uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *connection);
-
 
 AWS_EXTERN_C_END
 

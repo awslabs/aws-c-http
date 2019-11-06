@@ -634,11 +634,7 @@ static void s_add_time_measurement_to_stats(uint64_t start_ns, uint64_t end_ns, 
 }
 
 static void s_set_outgoing_stream_ptr(struct h1_connection *connection, struct aws_h1_stream *next_outgoing_stream) {
-
     struct aws_h1_stream *prev = connection->thread_data.outgoing_stream;
-    if (next_outgoing_stream != NULL && prev != next_outgoing_stream) {
-        ++connection->thread_data.stats.requests_started;
-    }
 
     uint64_t now_ns = 0;
     aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns);
@@ -658,10 +654,6 @@ static void s_set_outgoing_stream_ptr(struct h1_connection *connection, struct a
 
 static void s_set_incoming_stream_ptr(struct h1_connection *connection, struct aws_h1_stream *next_incoming_stream) {
     struct aws_h1_stream *prev = connection->thread_data.incoming_stream;
-
-    if (prev != NULL && next_incoming_stream != prev) {
-        ++connection->thread_data.stats.requests_finished;
-    }
 
     uint64_t now_ns = 0;
     aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns);
@@ -1830,6 +1822,8 @@ static void s_pull_up_stats_timestamps(struct h1_connection *connection) {
             now_ns,
             &connection->thread_data.stats.pending_outgoing_stream_ms);
         connection->thread_data.outgoing_stream_timestamp_ns = now_ns;
+        connection->thread_data.stats.current_outgoing_stream_id =
+            aws_http_stream_get_id(&connection->thread_data.outgoing_stream->base);
     }
 
     if (connection->thread_data.incoming_stream) {
@@ -1838,12 +1832,9 @@ static void s_pull_up_stats_timestamps(struct h1_connection *connection) {
             now_ns,
             &connection->thread_data.stats.pending_incoming_stream_ms);
         connection->thread_data.incoming_stream_timestamp_ns = now_ns;
+        connection->thread_data.stats.current_incoming_stream_id =
+            aws_http_stream_get_id(&connection->thread_data.incoming_stream->base);
     }
-
-    connection->thread_data.stats.total_pending_incoming_stream_ms = aws_add_u64_saturating(connection->thread_data.stats.pending_incoming_stream_ms, connection->thread_data.stats.total_pending_incoming_stream_ms);
-    connection->thread_data.stats.total_pending_outgoing_stream_ms = aws_add_u64_saturating(connection->thread_data.stats.pending_outgoing_stream_ms, connection->thread_data.stats.total_pending_outgoing_stream_ms);
-    connection->thread_data.stats.total_requests_finished = aws_add_u64_saturating(connection->thread_data.stats.requests_finished, connection->thread_data.stats.total_requests_finished);
-    connection->thread_data.stats.total_requests_started = aws_add_u64_saturating(connection->thread_data.stats.requests_started, connection->thread_data.stats.total_requests_started);
 }
 
 static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_array_list *stats) {

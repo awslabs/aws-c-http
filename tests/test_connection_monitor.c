@@ -40,14 +40,14 @@ static int s_test_http_connection_monitor_options_is_valid(struct aws_allocator 
     ASSERT_FALSE(aws_http_connection_monitoring_options_is_valid(NULL));
     ASSERT_FALSE(aws_http_connection_monitoring_options_is_valid(&options));
 
-    options.allowable_consecutive_throughput_failures = 5;
+    options.allowable_throughput_failure_interval_seconds = 5;
     ASSERT_FALSE(aws_http_connection_monitoring_options_is_valid(&options));
 
-    options.allowable_consecutive_throughput_failures = 0;
+    options.allowable_throughput_failure_interval_seconds = 0;
     options.minimum_throughput_bytes_per_second = 1000;
     ASSERT_FALSE(aws_http_connection_monitoring_options_is_valid(&options));
 
-    options.allowable_consecutive_throughput_failures = 2;
+    options.allowable_throughput_failure_interval_seconds = 2;
     ASSERT_TRUE(aws_http_connection_monitoring_options_is_valid(&options));
 
     return AWS_OP_SUCCESS;
@@ -65,8 +65,9 @@ struct http_monitor_test_stats_event {
     uint64_t timestamp;
     enum monitor_test_event_type event_type;
     struct aws_crt_statistics_socket socket_stats;
-    struct aws_crt_statistics_http1 http_stats;
-    uint32_t expected_consecutive_failure_count;
+    struct aws_crt_statistics_http1_channel http_stats;
+    uint32_t expected_consecutive_failure_time_ms;
+    uint64_t expected_throughput;
 };
 
 struct http_request_info {
@@ -118,6 +119,7 @@ static int s_init_monitor_test(struct aws_allocator *allocator, struct aws_crt_s
 
     struct aws_http_connection *connection = aws_http_connection_new_http1_1_client(allocator, SIZE_MAX);
     ASSERT_NOT_NULL(connection);
+    aws_atomic_init_int(&connection->next_stream_id, 1);
 
     struct aws_channel_slot *slot = aws_channel_slot_new(s_test_context.test_channel.channel);
     ASSERT_NOT_NULL(slot);
@@ -179,7 +181,7 @@ static void s_apply_stats_event_to_testing_channel(struct http_monitor_test_stat
 
     struct aws_channel_handler *second_handler = first_slot->adj_right->handler;
     struct aws_http_connection *connection = second_handler->impl;
-    struct aws_crt_statistics_http1 *h1_stats = aws_h1_connection_get_statistics(connection);
+    struct aws_crt_statistics_http1_channel *h1_stats = aws_h1_connection_get_statistics(connection);
     *h1_stats = event->http_stats;
 }
 
@@ -188,7 +190,7 @@ static void s_apply_stats_event_to_testing_channel(struct http_monitor_test_stat
  Test Pattern 1 (monitor calculations and side affect):
 
  Create a testing channel
- Create and attach a (X,Y) http connection monitor
+ Create and attach a (1000, 1) http connection monitor
  Loop over test-specific event list: [(t_i, stats_i)]
    Inject socket and http statistics
    SetCurrentChannelTime(t_i)
@@ -204,6 +206,8 @@ static int s_do_http_monitoring_test(
     struct http_monitor_test_stats_event *events,
     size_t event_count) {
 
+    s_clock_value = 0;
+
     s_init_monitor_test(
         allocator, aws_crt_statistics_handler_new_http_connection_monitor(allocator, monitoring_options));
 
@@ -211,7 +215,7 @@ static int s_do_http_monitoring_test(
 
     for (size_t i = 0; i < event_count; ++i) {
         struct http_monitor_test_stats_event *event = events + i;
-        s_clock_value = event->timestamp;
+        s_clock_value = aws_timestamp_convert(event->timestamp, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
         switch (event->event_type) {
             case MTET_EMPTY:
                 break;
@@ -222,9 +226,14 @@ static int s_do_http_monitoring_test(
         }
 
         testing_channel_drain_queued_tasks(&s_test_context.test_channel);
-        ASSERT_TRUE(monitor_impl->consecutive_throughput_failures == event->expected_consecutive_failure_count);
-        if (monitor_impl->consecutive_throughput_failures >
-            monitoring_options->allowable_consecutive_throughput_failures) {
+        ASSERT_TRUE(monitor_impl->throughput_failure_time_ms == event->expected_consecutive_failure_time_ms);
+        ASSERT_TRUE(monitor_impl->last_measured_throughput == event->expected_throughput);
+        if (monitor_impl->throughput_failure_time_ms >
+            aws_timestamp_convert(
+                monitoring_options->allowable_throughput_failure_interval_seconds,
+                AWS_TIMESTAMP_SECS,
+                AWS_TIMESTAMP_MILLIS,
+                NULL)) {
             ASSERT_TRUE(testing_channel_is_shutdown_completed(&s_test_context.test_channel));
         }
     }
@@ -234,18 +243,17 @@ static int s_do_http_monitoring_test(
     return AWS_OP_SUCCESS;
 }
 
-static struct aws_http_connection_monitoring_options s_test_options = {.allowable_consecutive_throughput_failures = 1,
+static struct aws_http_connection_monitoring_options s_test_options = {.allowable_throughput_failure_interval_seconds =
+                                                                           1,
                                                                        .minimum_throughput_bytes_per_second = 1000};
 
-static struct http_monitor_test_stats_event s_test_above_events[] = {
-    {
-        .event_type = MTET_EMPTY,
-        .timestamp = 0,
-        .expected_consecutive_failure_count = 0,
-    },
+/*
+ * A test where the combined read and write throughput stays above the threshold
+ */
+static struct http_monitor_test_stats_event s_test_rw_above_events[] = {
     {
         .event_type = MTET_STATS,
-        .timestamp = AWS_TIMESTAMP_NANOS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
         .socket_stats =
             {
                 .category = AWSCRT_STAT_CAT_SOCKET,
@@ -254,98 +262,442 @@ static struct http_monitor_test_stats_event s_test_above_events[] = {
             },
         .http_stats =
             {
-                .category = AWSCRT_STAT_CAT_HTTP1,
-                .pending_incoming_stream_ns = AWS_TIMESTAMP_NANOS,
-                .pending_outgoing_stream_ns = AWS_TIMESTAMP_NANOS,
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 3,
             },
-        .expected_consecutive_failure_count = 0,
-    },
-};
-static int s_test_http_connection_monitor_above(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
-
-    int result =
-        s_do_http_monitoring_test(allocator, &s_test_options, s_test_above_events, AWS_ARRAY_SIZE(s_test_above_events));
-    ASSERT_TRUE(result == AWS_OP_SUCCESS);
-
-    return AWS_OP_SUCCESS;
-}
-AWS_TEST_CASE(test_http_connection_monitor_above, s_test_http_connection_monitor_above);
-
-static struct http_monitor_test_stats_event s_test_below_events[] = {
-    {
-        .event_type = MTET_EMPTY,
-        .timestamp = 0,
-        .expected_consecutive_failure_count = 0,
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1000,
     },
     {
         .event_type = MTET_STATS,
-        .timestamp = AWS_TIMESTAMP_NANOS,
+        .timestamp = 2 * AWS_TIMESTAMP_MILLIS,
         .socket_stats =
             {
                 .category = AWSCRT_STAT_CAT_SOCKET,
-                .bytes_read = 499,
+                .bytes_read = 500,
                 .bytes_written = 500,
             },
         .http_stats =
             {
-                .category = AWSCRT_STAT_CAT_HTTP1,
-                .pending_incoming_stream_ns = AWS_TIMESTAMP_NANOS,
-                .pending_outgoing_stream_ns = AWS_TIMESTAMP_NANOS,
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 3,
             },
-        .expected_consecutive_failure_count = 1,
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1000,
     },
 };
-static int s_test_http_connection_monitor_below(struct aws_allocator *allocator, void *ctx) {
+static int s_test_http_connection_monitor_rw_above(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    int result =
-        s_do_http_monitoring_test(allocator, &s_test_options, s_test_below_events, AWS_ARRAY_SIZE(s_test_below_events));
+    int result = s_do_http_monitoring_test(
+        allocator, &s_test_options, s_test_rw_above_events, AWS_ARRAY_SIZE(s_test_rw_above_events));
     ASSERT_TRUE(result == AWS_OP_SUCCESS);
 
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(test_http_connection_monitor_below, s_test_http_connection_monitor_below);
+AWS_TEST_CASE(test_http_connection_monitor_rw_above, s_test_http_connection_monitor_rw_above);
 
+/*
+ * A test where the read throughput stays above the threshold
+ */
+static struct http_monitor_test_stats_event s_test_r_above_events[] = {
+    {
+        .event_type = MTET_STATS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_read = 1000,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 3,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1000,
+    },
+    {
+        .event_type = MTET_STATS,
+        .timestamp = 2 * AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_read = 1000,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 3,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1000,
+    },
+};
+static int s_test_http_connection_monitor_r_above(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    int result = s_do_http_monitoring_test(
+        allocator, &s_test_options, s_test_r_above_events, AWS_ARRAY_SIZE(s_test_r_above_events));
+    ASSERT_TRUE(result == AWS_OP_SUCCESS);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_connection_monitor_r_above, s_test_http_connection_monitor_r_above);
+
+/*
+ * A test where the write throughput stays above the threshold
+ */
+static struct http_monitor_test_stats_event s_test_w_above_events[] = {
+    {
+        .event_type = MTET_STATS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_written = 1000,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 3,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1000,
+    },
+    {
+        .event_type = MTET_STATS,
+        .timestamp = 2 * AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_written = 1000,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 3,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1000,
+    },
+};
+static int s_test_http_connection_monitor_w_above(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    int result = s_do_http_monitoring_test(
+        allocator, &s_test_options, s_test_w_above_events, AWS_ARRAY_SIZE(s_test_w_above_events));
+    ASSERT_TRUE(result == AWS_OP_SUCCESS);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_connection_monitor_w_above, s_test_http_connection_monitor_w_above);
+
+/*
+ * A more realistic test where the write throughput stays above and then the read throughput stays above
+ * A fractional event in the middle contains both read and writes
+ */
+static struct http_monitor_test_stats_event s_test_write_then_read_above_events[] = {
+    {
+        .event_type = MTET_STATS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_written = 1000,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 1,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1000,
+    },
+    {
+        .event_type = MTET_STATS,
+        .timestamp = 2 * AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_written = 1000,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 1,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1000,
+    },
+    {
+        .event_type = MTET_STATS,
+        .timestamp = 3 * AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_written = 100,
+                .bytes_read = 500,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = 1000,
+                .pending_outgoing_stream_ms = 200,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 1,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1000,
+    },
+    {
+        .event_type = MTET_STATS,
+        .timestamp = 4 * AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_read = 1000,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1000,
+    },
+};
+static int s_test_http_connection_monitor_write_then_read_above(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    int result = s_do_http_monitoring_test(
+        allocator,
+        &s_test_options,
+        s_test_write_then_read_above_events,
+        AWS_ARRAY_SIZE(s_test_write_then_read_above_events));
+    ASSERT_TRUE(result == AWS_OP_SUCCESS);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_connection_monitor_write_then_read_above, s_test_http_connection_monitor_write_then_read_above);
+
+/*
+ * A test where the throughput is below the threshold but the requests do not last long enough to register the
+ * failure.
+ */
+static struct http_monitor_test_stats_event s_test_below_but_undetectable_events[] = {
+    {
+        .event_type = MTET_STATS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_written = 100,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_outgoing_stream_id = 1,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 100,
+    },
+    {
+        .event_type = MTET_STATS,
+        .timestamp = 2 * AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_read = 100,
+                .bytes_written = 100,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 3,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 200,
+    },
+    {
+        .event_type = MTET_STATS,
+        .timestamp = 3 * AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_read = 100,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 3,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 100,
+    },
+};
+static int s_test_http_connection_monitor_below_but_undetectable(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    int result = s_do_http_monitoring_test(
+        allocator,
+        &s_test_options,
+        s_test_below_but_undetectable_events,
+        AWS_ARRAY_SIZE(s_test_below_but_undetectable_events));
+    ASSERT_TRUE(result == AWS_OP_SUCCESS);
+
+    return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(
+    test_http_connection_monitor_below_but_undetectable,
+    s_test_http_connection_monitor_below_but_undetectable);
+
+/*
+ * A test where we drop below the threshold with a combination of read and write io
+ */
+static struct http_monitor_test_stats_event s_test_below_rw_events[] = {
+    {
+        .event_type = MTET_STATS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_read = 500,
+                .bytes_written = 500,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 1,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1000,
+    },
+    {
+        .event_type = MTET_STATS,
+        .timestamp = 2 * AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_read = 249,
+                .bytes_written = 125,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = 500,
+                .pending_outgoing_stream_ms = 250,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 1,
+            },
+        .expected_consecutive_failure_time_ms = 500,
+        .expected_throughput = 998,
+    },
+};
+static int s_test_http_connection_monitor_rw_below(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    int result = s_do_http_monitoring_test(
+        allocator, &s_test_options, s_test_below_rw_events, AWS_ARRAY_SIZE(s_test_below_rw_events));
+    ASSERT_TRUE(result == AWS_OP_SUCCESS);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_http_connection_monitor_rw_below, s_test_http_connection_monitor_rw_below);
+
+/*
+ * A test where we drop below the threshold then recover
+ */
 static struct http_monitor_test_stats_event s_test_below_then_above_events[] = {
     {
-        .event_type = MTET_EMPTY,
-        .timestamp = 0,
-        .expected_consecutive_failure_count = 0,
+        .event_type = MTET_STATS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_written = 1500,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 1,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1500,
     },
     {
         .event_type = MTET_STATS,
-        .timestamp = AWS_TIMESTAMP_NANOS,
+        .timestamp = 2 * AWS_TIMESTAMP_MILLIS,
         .socket_stats =
             {
                 .category = AWSCRT_STAT_CAT_SOCKET,
                 .bytes_read = 499,
-                .bytes_written = 500,
-            },
-        .http_stats =
-            {
-                .category = AWSCRT_STAT_CAT_HTTP1,
-                .pending_incoming_stream_ns = AWS_TIMESTAMP_NANOS,
-                .pending_outgoing_stream_ns = AWS_TIMESTAMP_NANOS,
-            },
-        .expected_consecutive_failure_count = 1,
-    },
-    {
-        .event_type = MTET_STATS,
-        .timestamp = 2 * AWS_TIMESTAMP_NANOS,
-        .socket_stats =
-            {
-                .category = AWSCRT_STAT_CAT_SOCKET,
-                .bytes_read = 750,
                 .bytes_written = 250,
             },
         .http_stats =
             {
-                .category = AWSCRT_STAT_CAT_HTTP1,
-                .pending_incoming_stream_ns = AWS_TIMESTAMP_NANOS,
-                .pending_outgoing_stream_ns = AWS_TIMESTAMP_NANOS,
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = 500,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 1,
             },
-        .expected_consecutive_failure_count = 0,
+        .expected_consecutive_failure_time_ms = AWS_TIMESTAMP_MILLIS,
+        .expected_throughput = 999,
+    },
+    {
+        .event_type = MTET_STATS,
+        .timestamp = 3 * AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_read = 2000,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 2000,
     },
 };
 static int s_test_http_connection_monitor_below_then_above(struct aws_allocator *allocator, void *ctx) {
@@ -359,141 +711,102 @@ static int s_test_http_connection_monitor_below_then_above(struct aws_allocator 
 }
 AWS_TEST_CASE(test_http_connection_monitor_below_then_above, s_test_http_connection_monitor_below_then_above);
 
-static struct http_monitor_test_stats_event s_test_zero_bytes_positive_time_events[] = {
-    {
-        .event_type = MTET_EMPTY,
-        .timestamp = 0,
-        .expected_consecutive_failure_count = 0,
-    },
+/*
+ * Test that verifies that the failure time is reset when there's no streams
+ *
+ */
+static struct http_monitor_test_stats_event s_test_failure_reset_when_empty_events[] = {
     {
         .event_type = MTET_STATS,
-        .timestamp = AWS_TIMESTAMP_NANOS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
         .socket_stats =
             {
                 .category = AWSCRT_STAT_CAT_SOCKET,
-                .bytes_read = 0,
-                .bytes_written = 0,
+                .bytes_written = 1500,
             },
         .http_stats =
             {
-                .category = AWSCRT_STAT_CAT_HTTP1,
-                .pending_incoming_stream_ns = 1,
-                .pending_outgoing_stream_ns = 0,
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 1,
             },
-        .expected_consecutive_failure_count = 1,
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1500,
+    },
+    {
+        .event_type = MTET_STATS,
+        .timestamp = 2 * AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_read = 499,
+                .bytes_written = 250,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = 500,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 1,
+            },
+        .expected_consecutive_failure_time_ms = AWS_TIMESTAMP_MILLIS,
+        .expected_throughput = 999,
+    },
+    {
+        .event_type = MTET_STATS,
+        .timestamp = 3 * AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+            },
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 0,
     },
 };
-static int s_test_http_connection_monitor_zero_bytes_positive_time(struct aws_allocator *allocator, void *ctx) {
+static int s_test_http_connection_monitor_failure_reset_when_empty(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
     int result = s_do_http_monitoring_test(
         allocator,
         &s_test_options,
-        s_test_zero_bytes_positive_time_events,
-        AWS_ARRAY_SIZE(s_test_zero_bytes_positive_time_events));
+        s_test_failure_reset_when_empty_events,
+        AWS_ARRAY_SIZE(s_test_failure_reset_when_empty_events));
     ASSERT_TRUE(result == AWS_OP_SUCCESS);
 
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
-    test_http_connection_monitor_zero_bytes_positive_time,
-    s_test_http_connection_monitor_zero_bytes_positive_time);
+    test_http_connection_monitor_failure_reset_when_empty,
+    s_test_http_connection_monitor_failure_reset_when_empty);
 
-static struct http_monitor_test_stats_event s_test_zero_bytes_zero_time_events[] = {
-    {
-        .event_type = MTET_EMPTY,
-        .timestamp = 0,
-        .expected_consecutive_failure_count = 0,
-    },
-    {
-        .event_type = MTET_STATS,
-        .timestamp = AWS_TIMESTAMP_NANOS,
-        .socket_stats =
-            {
-                .category = AWSCRT_STAT_CAT_SOCKET,
-                .bytes_read = 0,
-                .bytes_written = 0,
-            },
-        .http_stats =
-            {
-                .category = AWSCRT_STAT_CAT_HTTP1,
-                .pending_incoming_stream_ns = 0,
-                .pending_outgoing_stream_ns = 0,
-            },
-        .expected_consecutive_failure_count = 0,
-    },
-};
-static int s_test_http_connection_monitor_zero_bytes_zero_time(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
-
-    int result = s_do_http_monitoring_test(
-        allocator,
-        &s_test_options,
-        s_test_zero_bytes_zero_time_events,
-        AWS_ARRAY_SIZE(s_test_zero_bytes_zero_time_events));
-    ASSERT_TRUE(result == AWS_OP_SUCCESS);
-
-    return AWS_OP_SUCCESS;
-}
-AWS_TEST_CASE(test_http_connection_monitor_zero_bytes_zero_time, s_test_http_connection_monitor_zero_bytes_zero_time);
-
-static struct http_monitor_test_stats_event s_test_tiny_events[] = {
-    {
-        .event_type = MTET_EMPTY,
-        .timestamp = 0,
-        .expected_consecutive_failure_count = 0,
-    },
-    {
-        .event_type = MTET_STATS,
-        .timestamp = AWS_TIMESTAMP_NANOS,
-        .socket_stats =
-            {
-                .category = AWSCRT_STAT_CAT_SOCKET,
-                .bytes_read = 1,
-                .bytes_written = 0,
-            },
-        .http_stats =
-            {
-                .category = AWSCRT_STAT_CAT_HTTP1,
-                .pending_incoming_stream_ns = 1,
-                .pending_outgoing_stream_ns = 0,
-            },
-        .expected_consecutive_failure_count = 0,
-    },
-};
-static int s_test_http_connection_monitor_tiny(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
-
-    int result =
-        s_do_http_monitoring_test(allocator, &s_test_options, s_test_tiny_events, AWS_ARRAY_SIZE(s_test_tiny_events));
-    ASSERT_TRUE(result == AWS_OP_SUCCESS);
-
-    return AWS_OP_SUCCESS;
-}
-AWS_TEST_CASE(test_http_connection_monitor_tiny, s_test_http_connection_monitor_tiny);
-
+/*
+ * Edge case test when throughput calculations overflow
+ */
 static struct http_monitor_test_stats_event s_test_bytes_overflow_events[] = {
     {
-        .event_type = MTET_EMPTY,
-        .timestamp = 0,
-        .expected_consecutive_failure_count = 0,
-    },
-    {
         .event_type = MTET_STATS,
-        .timestamp = AWS_TIMESTAMP_NANOS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
         .socket_stats =
             {
                 .category = AWSCRT_STAT_CAT_SOCKET,
-                .bytes_read = UINT64_MAX / 2 + 2,
-                .bytes_written = UINT64_MAX / 2 + 2,
+                .bytes_read = UINT64_MAX / 2 + 10,
+                .bytes_written = UINT64_MAX / 2 + 10,
             },
         .http_stats =
             {
-                .category = AWSCRT_STAT_CAT_HTTP1,
-                .pending_incoming_stream_ns = AWS_TIMESTAMP_NANOS,
-                .pending_outgoing_stream_ns = AWS_TIMESTAMP_NANOS,
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
             },
-        .expected_consecutive_failure_count = 0,
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = UINT64_MAX,
     },
 };
 static int s_test_http_connection_monitor_bytes_overflow(struct aws_allocator *allocator, void *ctx) {
@@ -507,28 +820,27 @@ static int s_test_http_connection_monitor_bytes_overflow(struct aws_allocator *a
 }
 AWS_TEST_CASE(test_http_connection_monitor_bytes_overflow, s_test_http_connection_monitor_bytes_overflow);
 
+/*
+ * Another edge case test when throughput calculations overflow due to time scaling
+ */
 static struct http_monitor_test_stats_event s_test_time_overflow_events[] = {
     {
-        .event_type = MTET_EMPTY,
-        .timestamp = 0,
-        .expected_consecutive_failure_count = 0,
-    },
-    {
         .event_type = MTET_STATS,
-        .timestamp = AWS_TIMESTAMP_NANOS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
         .socket_stats =
             {
                 .category = AWSCRT_STAT_CAT_SOCKET,
-                .bytes_read = 1000,
-                .bytes_written = 1000,
+                .bytes_read = UINT64_MAX / 2 + 10,
+                .bytes_written = UINT64_MAX / 2 - 10,
             },
         .http_stats =
             {
-                .category = AWSCRT_STAT_CAT_HTTP1,
-                .pending_incoming_stream_ns = UINT64_MAX,
-                .pending_outgoing_stream_ns = AWS_TIMESTAMP_NANOS,
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = 1,
             },
-        .expected_consecutive_failure_count = 0,
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = UINT64_MAX,
     },
 };
 static int s_test_http_connection_monitor_time_overflow(struct aws_allocator *allocator, void *ctx) {
@@ -542,45 +854,65 @@ static int s_test_http_connection_monitor_time_overflow(struct aws_allocator *al
 }
 AWS_TEST_CASE(test_http_connection_monitor_time_overflow, s_test_http_connection_monitor_time_overflow);
 
+/*
+ * Test that verifies the channel shuts down when we exceed the failure time threshold
+ */
 static struct http_monitor_test_stats_event s_test_shutdown_events[] = {
     {
-        .event_type = MTET_EMPTY,
-        .timestamp = 0,
-        .expected_consecutive_failure_count = 0,
-    },
-    {
         .event_type = MTET_STATS,
-        .timestamp = AWS_TIMESTAMP_NANOS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
         .socket_stats =
             {
                 .category = AWSCRT_STAT_CAT_SOCKET,
-                .bytes_read = 0,
-                .bytes_written = 0,
+                .bytes_written = 1500,
             },
         .http_stats =
             {
-                .category = AWSCRT_STAT_CAT_HTTP1,
-                .pending_incoming_stream_ns = AWS_TIMESTAMP_NANOS,
-                .pending_outgoing_stream_ns = AWS_TIMESTAMP_NANOS,
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 1,
             },
-        .expected_consecutive_failure_count = 1,
+        .expected_consecutive_failure_time_ms = 0,
+        .expected_throughput = 1500,
     },
     {
         .event_type = MTET_STATS,
-        .timestamp = 2 * AWS_TIMESTAMP_NANOS,
+        .timestamp = 2 * AWS_TIMESTAMP_MILLIS,
         .socket_stats =
             {
                 .category = AWSCRT_STAT_CAT_SOCKET,
-                .bytes_read = 0,
-                .bytes_written = 0,
+                .bytes_read = 499,
+                .bytes_written = 250,
             },
         .http_stats =
             {
-                .category = AWSCRT_STAT_CAT_HTTP1,
-                .pending_incoming_stream_ns = AWS_TIMESTAMP_NANOS,
-                .pending_outgoing_stream_ns = AWS_TIMESTAMP_NANOS,
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .pending_outgoing_stream_ms = 500,
+                .current_incoming_stream_id = 1,
+                .current_outgoing_stream_id = 1,
             },
-        .expected_consecutive_failure_count = 2,
+        .expected_consecutive_failure_time_ms = AWS_TIMESTAMP_MILLIS,
+        .expected_throughput = 999,
+    },
+    {
+        .event_type = MTET_STATS,
+        .timestamp = 3 * AWS_TIMESTAMP_MILLIS,
+        .socket_stats =
+            {
+                .category = AWSCRT_STAT_CAT_SOCKET,
+                .bytes_read = 250,
+            },
+        .http_stats =
+            {
+                .category = AWSCRT_STAT_CAT_HTTP1_CHANNEL,
+                .pending_incoming_stream_ms = AWS_TIMESTAMP_MILLIS,
+                .current_incoming_stream_id = 1,
+            },
+        .expected_consecutive_failure_time_ms = 2000,
+        .expected_throughput = 250,
     },
 };
 static int s_test_http_connection_monitor_shutdown(struct aws_allocator *allocator, void *ctx) {
@@ -621,15 +953,14 @@ struct test_http_stats_event {
     enum monitor_test_http_stats_event_type event_type;
     const char *response_stream_data;
     size_t request_body_size;
-    uint64_t verify_pending_read_interval_ns;
-    uint64_t verify_pending_write_interval_ns;
+
+    struct aws_crt_statistics_http1_channel expected_stats;
 };
 
 struct mock_http_connection_monitor_impl {
     struct aws_http_connection_monitoring_options options;
 
-    uint64_t pending_read_interval_ns;
-    uint64_t pending_write_interval_ns;
+    struct aws_crt_statistics_http1_channel last_seen_stats;
 };
 
 static void s_mock_process_statistics(
@@ -653,9 +984,9 @@ static void s_mock_process_statistics(
         switch (stats_base->category) {
 
             case AWSCRT_STAT_CAT_HTTP1_CHANNEL: {
-                struct aws_crt_statistics_http1 *http1_stats = (struct aws_crt_statistics_http1 *)stats_base;
-                impl->pending_read_interval_ns = http1_stats->pending_incoming_stream_ns;
-                impl->pending_write_interval_ns = http1_stats->pending_outgoing_stream_ns;
+                struct aws_crt_statistics_http1_channel *http1_stats =
+                    (struct aws_crt_statistics_http1_channel *)stats_base;
+                impl->last_seen_stats = *http1_stats;
                 break;
             }
 
@@ -786,12 +1117,14 @@ static int s_do_http_statistics_test(
     struct test_http_stats_event *events,
     size_t event_count) {
 
+    s_clock_value = 0;
+
     s_init_monitor_test(allocator, s_aws_crt_statistics_handler_new_http_mock(allocator));
     struct mock_http_connection_monitor_impl *monitor_impl = s_test_context.monitor->impl;
 
     for (size_t i = 0; i < event_count; ++i) {
         struct test_http_stats_event *event = events + i;
-        s_clock_value = event->timestamp;
+        s_clock_value = aws_timestamp_convert(event->timestamp, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
 
         switch (event->event_type) {
             case MTHSET_FLUSH:
@@ -811,8 +1144,18 @@ static int s_do_http_statistics_test(
                 break;
 
             case MTHSET_VERIFY:
-                ASSERT_TRUE(event->verify_pending_read_interval_ns == monitor_impl->pending_read_interval_ns);
-                ASSERT_TRUE(event->verify_pending_write_interval_ns == monitor_impl->pending_write_interval_ns);
+                ASSERT_TRUE(
+                    event->expected_stats.pending_incoming_stream_ms ==
+                    monitor_impl->last_seen_stats.pending_incoming_stream_ms);
+                ASSERT_TRUE(
+                    event->expected_stats.pending_outgoing_stream_ms ==
+                    monitor_impl->last_seen_stats.pending_outgoing_stream_ms);
+                ASSERT_TRUE(
+                    event->expected_stats.current_incoming_stream_id ==
+                    monitor_impl->last_seen_stats.current_incoming_stream_id);
+                ASSERT_TRUE(
+                    event->expected_stats.current_outgoing_stream_id ==
+                    monitor_impl->last_seen_stats.current_outgoing_stream_id);
                 break;
         }
     }
@@ -834,8 +1177,14 @@ static struct test_http_stats_event s_http_stats_test_trivial[] = {
     {
         .event_type = MTHSET_VERIFY,
         .timestamp = 0,
-        .verify_pending_read_interval_ns = 0,
-        .verify_pending_write_interval_ns = 0,
+        .expected_stats =
+            {
+                .pending_outgoing_stream_ms = 0,
+                .pending_incoming_stream_ms = 0,
+                .current_outgoing_stream_id = 0,
+                .current_incoming_stream_id = 0,
+            },
+
     },
 };
 static int s_test_http_stats_trivial(struct aws_allocator *allocator, void *ctx) {
@@ -879,13 +1228,18 @@ static struct test_http_stats_event s_http_stats_test_basic_request[] = {
     },
     {
         .event_type = MTHSET_FLUSH,
-        .timestamp = AWS_TIMESTAMP_NANOS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
     },
     {
         .event_type = MTHSET_VERIFY,
-        .timestamp = AWS_TIMESTAMP_NANOS,
-        .verify_pending_read_interval_ns = 600,  /* [100, 700] */
-        .verify_pending_write_interval_ns = 100, /* [100, 200] */
+        .timestamp = AWS_TIMESTAMP_MILLIS,
+        .expected_stats =
+            {
+                .pending_outgoing_stream_ms = 100, /* [100, 200] */
+                .pending_incoming_stream_ms = 600, /* [100, 700] */
+                .current_outgoing_stream_id = 0,
+                .current_incoming_stream_id = 0,
+            },
     },
 };
 static int s_test_http_stats_basic_request(struct aws_allocator *allocator, void *ctx) {
@@ -902,50 +1256,60 @@ AWS_TEST_CASE(test_http_stats_basic_request, s_test_http_stats_basic_request);
 static struct test_http_stats_event s_http_stats_test_split_across_gather_boundary[] = {
     {
         .event_type = MTHSET_ADD_OUTGOING_STREAM,
-        .timestamp = AWS_TIMESTAMP_NANOS - 100,
+        .timestamp = AWS_TIMESTAMP_MILLIS - 100,
         .request_body_size = 2 * TICK_BODY_SIZE,
     },
     {
         .event_type = MTHSET_TICK,
-        .timestamp = AWS_TIMESTAMP_NANOS - 100,
+        .timestamp = AWS_TIMESTAMP_MILLIS - 100,
     },
     {
         .event_type = MTHSET_TICK,
-        .timestamp = AWS_TIMESTAMP_NANOS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
     },
     {
         .event_type = MTHSET_VERIFY,
-        .timestamp = AWS_TIMESTAMP_NANOS,
-        .verify_pending_read_interval_ns = 100,  /* [NANOS - 100, NANOS] */
-        .verify_pending_write_interval_ns = 100, /* [NANOS - 100, NANOS] */
+        .timestamp = AWS_TIMESTAMP_MILLIS,
+        .expected_stats =
+            {
+                .pending_outgoing_stream_ms = 100,
+                .pending_incoming_stream_ms = 100,
+                .current_outgoing_stream_id = 1,
+                .current_incoming_stream_id = 1,
+            },
     },
     {
         .event_type = MTHSET_FLUSH,
-        .timestamp = AWS_TIMESTAMP_NANOS + 100,
+        .timestamp = AWS_TIMESTAMP_MILLIS + 100,
     },
     {
         .event_type = MTHSET_ADD_RESPONSE_DATA,
-        .timestamp = AWS_TIMESTAMP_NANOS + 500,
+        .timestamp = AWS_TIMESTAMP_MILLIS + 500,
         .response_stream_data = "HTTP/1.1 200 OK\r\n",
     },
     {
         .event_type = MTHSET_ADD_RESPONSE_DATA,
-        .timestamp = AWS_TIMESTAMP_NANOS + 700,
+        .timestamp = AWS_TIMESTAMP_MILLIS + 700,
         .response_stream_data = "Content-Length: 9\r\n\r\nSomething",
     },
     {
         .event_type = MTHSET_FLUSH,
-        .timestamp = AWS_TIMESTAMP_NANOS + 700,
+        .timestamp = AWS_TIMESTAMP_MILLIS + 700,
     },
     {
         .event_type = MTHSET_FLUSH,
-        .timestamp = 2 * AWS_TIMESTAMP_NANOS,
+        .timestamp = 2 * AWS_TIMESTAMP_MILLIS,
     },
     {
         .event_type = MTHSET_VERIFY,
-        .timestamp = AWS_TIMESTAMP_NANOS,
-        .verify_pending_read_interval_ns = 700,  /* [NANOS, NANOS + 700] */
-        .verify_pending_write_interval_ns = 100, /* [NANOS, NANOS + 100] */
+        .timestamp = 2 * AWS_TIMESTAMP_MILLIS,
+        .expected_stats =
+            {
+                .pending_outgoing_stream_ms = 100,
+                .pending_incoming_stream_ms = 700,
+                .current_outgoing_stream_id = 0,
+                .current_incoming_stream_id = 0,
+            },
     },
 };
 static int s_test_http_stats_split_across_gather_boundary(struct aws_allocator *allocator, void *ctx) {
@@ -979,17 +1343,39 @@ static struct test_http_stats_event s_http_stats_test_pipelined[] = {
     },
     {
         .event_type = MTHSET_ADD_OUTGOING_STREAM,
-        .timestamp = 300,
+        .timestamp = 200,
         .request_body_size = 1 * TICK_BODY_SIZE,
     },
     {
         .event_type = MTHSET_ADD_OUTGOING_STREAM,
-        .timestamp = 500,
+        .timestamp = 300,
         .request_body_size = 1 * TICK_BODY_SIZE,
     },
     {
         .event_type = MTHSET_TICK,
+        .timestamp = 400,
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
+        .timestamp = 500,
+        .response_stream_data = "HTTP/1.1 200 OK\r\n",
+    },
+    {
+        .event_type = MTHSET_ADD_RESPONSE_DATA,
         .timestamp = 600,
+        .response_stream_data = "Content-Length: 9\r\n\r\nSomething",
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = 620,
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = 640,
+    },
+    {
+        .event_type = MTHSET_TICK,
+        .timestamp = 660,
     },
     {
         .event_type = MTHSET_ADD_RESPONSE_DATA,
@@ -999,44 +1385,27 @@ static struct test_http_stats_event s_http_stats_test_pipelined[] = {
     {
         .event_type = MTHSET_ADD_RESPONSE_DATA,
         .timestamp = 800,
-        .response_stream_data = "Content-Length: 9\r\n\r\nSomething",
-    },
-    {
-        .event_type = MTHSET_TICK,
-        .timestamp = 900,
-    },
-    {
-        .event_type = MTHSET_TICK,
-        .timestamp = 1000,
-    },
-    {
-        .event_type = MTHSET_TICK,
-        .timestamp = 1100,
-    },
-    {
-        .event_type = MTHSET_ADD_RESPONSE_DATA,
-        .timestamp = 1200,
-        .response_stream_data = "HTTP/1.1 200 OK\r\n",
-    },
-    {
-        .event_type = MTHSET_ADD_RESPONSE_DATA,
-        .timestamp = 1300,
         .response_stream_data = "Content-Length: 9\r\n\r\nSomethingHTTP/1.1 200 OK\r\n",
     },
     {
         .event_type = MTHSET_ADD_RESPONSE_DATA,
-        .timestamp = 1400,
+        .timestamp = 900,
         .response_stream_data = "Content-Length: 9\r\n\r\nSomething",
     },
     {
         .event_type = MTHSET_TICK,
-        .timestamp = AWS_TIMESTAMP_NANOS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
     },
     {
         .event_type = MTHSET_VERIFY,
-        .timestamp = AWS_TIMESTAMP_NANOS,
-        .verify_pending_read_interval_ns = 1300,  /* [100, 800] U [300, 1300] U [500, 1400] = [100, 1400] */
-        .verify_pending_write_interval_ns = 1000, /* [100, 600] U [300, 900] U [500, 1100] = [100, 1100] */
+        .timestamp = AWS_TIMESTAMP_MILLIS,
+        .expected_stats =
+            {
+                .pending_outgoing_stream_ms = 560, /* [100, 660] */
+                .pending_incoming_stream_ms = 800, /* [100, 900] */
+                .current_outgoing_stream_id = 0,
+                .current_incoming_stream_id = 0,
+            },
     },
 };
 static int s_test_http_stats_pipelined(struct aws_allocator *allocator, void *ctx) {
@@ -1066,54 +1435,55 @@ static struct test_http_stats_event s_http_stats_test_multiple_requests_with_gap
     },
     {
         .event_type = MTHSET_ADD_RESPONSE_DATA,
-        .timestamp = 500,
+        .timestamp = 300,
         .response_stream_data = "HTTP/1.1 200 OK\r\n",
     },
     {
         .event_type = MTHSET_ADD_RESPONSE_DATA,
-        .timestamp = 700,
+        .timestamp = 400,
         .response_stream_data = "Content-Length: 9\r\n\r\nSomething",
     },
     {
         .event_type = MTHSET_FLUSH,
-        .timestamp = 700,
+        .timestamp = 400,
     },
     {
         .event_type = MTHSET_ADD_OUTGOING_STREAM,
-        .timestamp = 2000,
+        .timestamp = 500,
         .request_body_size = TICK_BODY_SIZE,
     },
     {
         .event_type = MTHSET_TICK,
-        .timestamp = 2000,
+        .timestamp = 500,
     },
     {
         .event_type = MTHSET_FLUSH,
-        .timestamp = 2200,
+        .timestamp = 600,
     },
     {
         .event_type = MTHSET_ADD_RESPONSE_DATA,
-        .timestamp = 2500,
+        .timestamp = 700,
         .response_stream_data = "HTTP/1.1 200 OK\r\n",
     },
     {
         .event_type = MTHSET_ADD_RESPONSE_DATA,
-        .timestamp = 2700,
+        .timestamp = 800,
         .response_stream_data = "Content-Length: 9\r\n\r\nSomething",
     },
     {
         .event_type = MTHSET_FLUSH,
-        .timestamp = 2700,
-    },
-    {
-        .event_type = MTHSET_FLUSH,
-        .timestamp = AWS_TIMESTAMP_NANOS,
+        .timestamp = AWS_TIMESTAMP_MILLIS,
     },
     {
         .event_type = MTHSET_VERIFY,
-        .timestamp = AWS_TIMESTAMP_NANOS,
-        .verify_pending_read_interval_ns = 1300, /* [100, 700] + [2000, 2700]*/
-        .verify_pending_write_interval_ns = 300, /* [100, 200] + [2000, 2200] */
+        .timestamp = AWS_TIMESTAMP_MILLIS,
+        .expected_stats =
+            {
+                .pending_outgoing_stream_ms = 200, /* [100, 200] + [500, 600]*/
+                .pending_incoming_stream_ms = 600, /* [100, 400] + [500, 800] */
+                .current_outgoing_stream_id = 0,
+                .current_incoming_stream_id = 0,
+            },
     },
 };
 static int s_test_http_stats_multiple_requests_with_gap(struct aws_allocator *allocator, void *ctx) {

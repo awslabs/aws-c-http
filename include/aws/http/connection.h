@@ -63,15 +63,15 @@ struct aws_http_connection_monitoring_options {
 
     /**
      * minimum required throughput of the connection.  Throughput is only measured against the interval of time where
-     * there is actual io to perform
+     * there is actual io to perform.  Read and write throughput are measured and checked independently of one another.
      */
     uint64_t minimum_throughput_bytes_per_second;
 
     /*
-     * number of throughput check failures allowed to occur consecutively before the monitor shuts down the connection.
-     * If zero no checks will be performed.
+     * amount of time, in seconds, throughput is allowed to drop below the minimum before the connection is shut down
+     * as unhealthy.
      */
-    uint32_t allowable_consecutive_throughput_failures;
+    uint32_t allowable_throughput_failure_interval_seconds;
 };
 
 /**

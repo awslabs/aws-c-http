@@ -42,6 +42,8 @@ static void s_process_statistics(
     uint64_t pending_write_interval_ms = 0;
     uint64_t bytes_read = 0;
     uint64_t bytes_written = 0;
+    uint32_t current_outgoing_stream_id = 0;
+    uint32_t current_incoming_stream_id = 0;
 
     /*
      * Pull out the data needed to perform the throughput calculation
@@ -62,9 +64,13 @@ static void s_process_statistics(
             }
 
             case AWSCRT_STAT_CAT_HTTP1_CHANNEL: {
-                struct aws_crt_statistics_http1 *http1_stats = (struct aws_crt_statistics_http1 *)stats_base;
+                struct aws_crt_statistics_http1_channel *http1_stats =
+                    (struct aws_crt_statistics_http1_channel *)stats_base;
                 pending_read_interval_ms = http1_stats->pending_incoming_stream_ms;
                 pending_write_interval_ms = http1_stats->pending_outgoing_stream_ms;
+                current_outgoing_stream_id = http1_stats->current_outgoing_stream_id;
+                current_incoming_stream_id = http1_stats->current_incoming_stream_id;
+
                 break;
             }
 
@@ -75,43 +81,31 @@ static void s_process_statistics(
 
     struct aws_channel *channel = context;
 
-    /*
-     * All early-out/negative execution paths reset the failure count to zero.  Keep a copy of the current count for the
-     * remaining path.
-     */
-    uint32_t current_failure_count = impl->consecutive_throughput_failures;
-    impl->consecutive_throughput_failures = 0;
+    uint64_t bytes_per_second = 0;
+    uint64_t max_pending_io_interval_ms = 0;
 
-    if (pending_read_interval_ms == 0 && pending_write_interval_ms == 0) {
-        return;
+    if (pending_write_interval_ms > 0) {
+        double fractional_bytes_written_per_second =
+            (double)bytes_written * (double)AWS_TIMESTAMP_MILLIS / (double)pending_write_interval_ms;
+        if (fractional_bytes_written_per_second >= (double)UINT64_MAX) {
+            bytes_per_second = UINT64_MAX;
+        } else {
+            bytes_per_second = (uint64_t)fractional_bytes_written_per_second;
+        }
+        max_pending_io_interval_ms = pending_write_interval_ms;
     }
 
-    uint64_t bytes_read_per_second = 0;
     if (pending_read_interval_ms > 0) {
         double fractional_bytes_read_per_second =
             (double)bytes_read * (double)AWS_TIMESTAMP_MILLIS / (double)pending_read_interval_ms;
         if (fractional_bytes_read_per_second >= (double)UINT64_MAX) {
-            bytes_read_per_second = UINT64_MAX;
+            bytes_per_second = UINT64_MAX;
         } else {
-            bytes_read_per_second = (uint64_t)fractional_bytes_read_per_second;
+            bytes_per_second = aws_add_u64_saturating(bytes_per_second, (uint64_t)fractional_bytes_read_per_second);
         }
-    }
-
-    uint64_t bytes_written_per_second = 0;
-    if (pending_write_interval_ms) {
-        double fractional_bytes_written_per_second =
-            (double)bytes_written * (double)AWS_TIMESTAMP_MILLIS / (double)pending_write_interval_ms;
-        if (fractional_bytes_written_per_second >= (double)UINT64_MAX) {
-            bytes_written_per_second = UINT64_MAX;
-        } else {
-            bytes_written_per_second = (uint64_t)fractional_bytes_written_per_second;
+        if (pending_read_interval_ms > max_pending_io_interval_ms) {
+            max_pending_io_interval_ms = pending_read_interval_ms;
         }
-    }
-
-    uint64_t bytes_per_second = 0;
-    if (aws_add_u64_checked(bytes_written_per_second, bytes_read_per_second, &bytes_per_second)) {
-        AWS_LOGF_INFO(AWS_LS_IO_CHANNEL, "id=%p: io throughput overflow calculation", (void *)channel);
-        return;
     }
 
     AWS_LOGF_DEBUG(
@@ -120,32 +114,48 @@ static void s_process_statistics(
         (void *)channel,
         bytes_per_second);
 
-    if (bytes_per_second >= impl->options.minimum_throughput_bytes_per_second) {
+    /* Check throughput only if at least one stream exists and was observed in that role pregviously */
+    bool check_throughput =
+        (current_incoming_stream_id != 0 && current_incoming_stream_id == impl->last_incoming_stream_id) ||
+        (current_outgoing_stream_id != 0 && current_outgoing_stream_id == impl->last_outgoing_stream_id);
+
+    impl->last_outgoing_stream_id = current_outgoing_stream_id;
+    impl->last_incoming_stream_id = current_incoming_stream_id;
+    impl->last_measured_throughput = bytes_per_second;
+
+    if (!check_throughput) {
+        AWS_LOGF_TRACE(AWS_LS_IO_CHANNEL, "id=%p: channel throughput does not need to be checked", (void *)channel);
+        impl->throughput_failure_time_ms = 0;
         return;
     }
 
-    /*
-     * We failed the throughput check.  Restore and increment the failure count and then check if the failure threshold
-     * has been crossed.
-     */
-    impl->consecutive_throughput_failures = current_failure_count + 1;
+    if (bytes_per_second >= impl->options.minimum_throughput_bytes_per_second) {
+        impl->throughput_failure_time_ms = 0;
+        return;
+    }
+
+    impl->throughput_failure_time_ms =
+        aws_add_u64_saturating(impl->throughput_failure_time_ms, max_pending_io_interval_ms);
+
     AWS_LOGF_INFO(
         AWS_LS_IO_CHANNEL,
-        "id=%p: Channel low throughput warning.  Currently %u consecutive failures",
+        "id=%p: Channel low throughput warning.  Currently %" PRIu64 " milliseconds of consecutive failure time",
         (void *)channel,
-        impl->consecutive_throughput_failures);
+        impl->throughput_failure_time_ms);
 
-    if (impl->consecutive_throughput_failures <= impl->options.allowable_consecutive_throughput_failures) {
+    uint64_t maximum_failure_time_ms = aws_timestamp_convert(
+        impl->options.allowable_throughput_failure_interval_seconds, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL);
+    if (impl->throughput_failure_time_ms <= maximum_failure_time_ms) {
         return;
     }
 
     AWS_LOGF_INFO(
         AWS_LS_IO_CHANNEL,
         "id=%p: Channel low throughput threshold exceeded (< %" PRIu64
-        " bytes per second for more than %u checks).  Shutting down.",
+        " bytes per second for more than %u seconds).  Shutting down.",
         (void *)channel,
         impl->options.minimum_throughput_bytes_per_second,
-        impl->options.allowable_consecutive_throughput_failures);
+        impl->options.allowable_throughput_failure_interval_seconds);
 
     aws_channel_shutdown(channel, AWS_ERROR_HTTP_CHANNEL_THROUGHPUT_FAILURE);
 }
@@ -202,5 +212,6 @@ bool aws_http_connection_monitoring_options_is_valid(const struct aws_http_conne
         return false;
     }
 
-    return options->allowable_consecutive_throughput_failures > 0 && options->minimum_throughput_bytes_per_second > 0;
+    return options->allowable_throughput_failure_interval_seconds > 0 &&
+           options->minimum_throughput_bytes_per_second > 0;
 }

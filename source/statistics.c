@@ -29,4 +29,6 @@ void aws_crt_statistics_http1_channel_cleanup(struct aws_crt_statistics_http1_ch
 void aws_crt_statistics_http1_channel_reset(struct aws_crt_statistics_http1_channel *stats) {
     stats->pending_outgoing_stream_ms = 0;
     stats->pending_incoming_stream_ms = 0;
+    stats->current_outgoing_stream_id = 0;
+    stats->current_incoming_stream_id = 0;
 }
