@@ -854,5 +854,7 @@ uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *conn
         aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
-    return next_id;
+    AWS_FATAL_ASSERT(next_id <= UINT32_MAX);
+
+    return (uint32_t)next_id;
 }

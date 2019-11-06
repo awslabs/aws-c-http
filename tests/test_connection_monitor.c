@@ -63,11 +63,11 @@ enum monitor_test_event_type { MTET_EMPTY, MTET_STATS };
 
 struct http_monitor_test_stats_event {
     uint64_t timestamp;
-    enum monitor_test_event_type event_type;
+    uint64_t expected_throughput;
     struct aws_crt_statistics_socket socket_stats;
     struct aws_crt_statistics_http1_channel http_stats;
+    enum monitor_test_event_type event_type;
     uint32_t expected_consecutive_failure_time_ms;
-    uint64_t expected_throughput;
 };
 
 struct http_request_info {
