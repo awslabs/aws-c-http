@@ -737,6 +737,7 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
     /* Even if we can't init this array, we still need to invoke error callbacks properly */
     bool push_errors = false;
 
+    AWS_FATAL_ASSERT(!should_destroy || work->new_connections == 0);
     if (work->new_connections > 0) {
         AWS_LOGF_INFO(
             AWS_LS_HTTP_CONNECTION_MANAGER,
