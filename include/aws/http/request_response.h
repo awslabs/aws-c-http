@@ -39,6 +39,11 @@ struct aws_http_header {
 };
 
 /**
+ * A transformable block of HTTP headers.
+ */
+struct aws_http_headers;
+
+/**
  * Header block type.
  * INFORMATIONAL: Header block for 1xx informational (interim) responses.
  * MAIN: Main header block sent with request or response.
@@ -271,6 +276,64 @@ struct aws_http_request_handler_options {
     { .self_size = sizeof(struct aws_http_request_handler_options), }
 
 AWS_EXTERN_C_BEGIN
+
+/**
+ * Return whether both names are equivalent.
+ * This is a case-insensitive string comparison.
+ *
+ * Example Matches:
+ * "Content-Length" == "content-length" // upper or lower case ok
+
+ * Example Mismatches:
+ * "Content-Length" != " Content-Length // leading whitespace bad
+ */
+AWS_HTTP_API
+bool aws_http_header_name_eq(struct aws_byte_cursor name_a, struct aws_byte_cursor name_b);
+
+AWS_HTTP_API
+struct aws_http_headers *aws_http_headers_new(
+    struct aws_allocator *allocator,
+    struct aws_http_header *array,
+    size_t count);
+
+AWS_HTTP_API
+void aws_http_headers_destroy(struct aws_http_headers *headers);
+
+AWS_HTTP_API
+int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value);
+
+AWS_HTTP_API
+int aws_http_headers_add_array(struct aws_http_headers *headers, struct aws_http_header *array, size_t count);
+
+AWS_HTTP_API
+int aws_http_headers_set(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value);
+
+AWS_HTTP_API
+size_t aws_http_headers_count(const struct aws_http_headers *headers);
+
+AWS_HTTP_API
+const struct aws_http_header *aws_http_headers_array(const struct aws_http_headers *headers);
+
+AWS_HTTP_API
+int aws_http_headers_get(
+    const struct aws_http_headers *headers,
+    struct aws_byte_cursor name,
+    struct aws_byte_cursor *out_value);
+
+AWS_HTTP_API
+int aws_http_headers_erase(struct aws_http_headers *headers, struct aws_byte_cursor name);
+
+AWS_HTTP_API
+int aws_http_headers_erase_value(
+    struct aws_http_headers *headers,
+    struct aws_byte_cursor name,
+    struct aws_byte_cursor value);
+
+AWS_HTTP_API
+int aws_http_headers_erase_index(struct aws_http_headers *headers, size_t index);
+
+AWS_HTTP_API
+void aws_http_headers_clear(struct aws_http_headers *headers);
 
 /**
  * Create a new request message.
