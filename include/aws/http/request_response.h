@@ -288,7 +288,7 @@ AWS_EXTERN_C_BEGIN
  * "Content-Length" == "content-length" // upper or lower case ok
 
  * Example Mismatches:
- * "Content-Length" != " Content-Length // leading whitespace bad
+ * "Content-Length" != " Content-Length" // leading whitespace bad
  */
 AWS_HTTP_API
 bool aws_http_header_name_eq(struct aws_byte_cursor name_a, struct aws_byte_cursor name_b);

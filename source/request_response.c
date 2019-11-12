@@ -53,10 +53,8 @@ int aws_byte_buf_append_and_update(struct aws_byte_buf *to, struct aws_byte_curs
 
 /**
  * -- Datastructure Notes --
- * Headers are stored in a linear array although this make operations like "get by name" O(N).
- * If we used a hash_table (keyed on name and containing lists of values) "get by name" would be O(1).
- * We chose the linear array because it was simpler to implement,
- * and possibly faster due to having fewer allocations and a linear memory access.
+ * Headers are stored in a linear array, rather than a hash-table of arrays.
+ * The linear array was simpler to implement and may be faster due to having fewer allocations.
  * The API has been designed so we can swap out the implementation later if desired.
  *
  * -- String Storage Notes --
@@ -145,7 +143,7 @@ void aws_http_headers_clear(struct aws_http_headers *headers) {
 
     const size_t count = aws_http_headers_count(headers);
     for (size_t i = 0; i < count; ++i) {
-        struct aws_http_header *header;
+        struct aws_http_header *header = NULL;
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
 
         /* Storage for name & value is in the same allocation */
@@ -157,7 +155,7 @@ void aws_http_headers_clear(struct aws_http_headers *headers) {
 
 /* Does not check index */
 static void s_http_headers_erase_index(struct aws_http_headers *headers, size_t index) {
-    struct aws_http_header *header;
+    struct aws_http_header *header = NULL;
     aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, index);
 
     /* Storage for name & value is in the same allocation */
@@ -181,7 +179,7 @@ int aws_http_headers_erase_index(struct aws_http_headers *headers, size_t index)
 static int s_http_headers_erase(struct aws_http_headers *headers, struct aws_byte_cursor name, size_t end_index) {
     bool erased_any = false;
     for (size_t i = 0; i < end_index;) {
-        struct aws_http_header *header;
+        struct aws_http_header *header = NULL;
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
         if (aws_http_header_name_eq(header->name, name)) {
             s_http_headers_erase_index(headers, i);
@@ -216,7 +214,7 @@ int aws_http_headers_erase_value(
 
     const size_t count = aws_http_headers_count(headers);
     for (size_t i = 0; i < count; ++i) {
-        struct aws_http_header *header;
+        struct aws_http_header *header = NULL;
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
         if (aws_http_header_name_eq(header->name, name) && aws_byte_cursor_eq(&header->value, &value)) {
             s_http_headers_erase_index(headers, i);
@@ -243,8 +241,8 @@ int aws_http_headers_add_array(struct aws_http_headers *headers, const struct aw
 
 error:
     /* Erase headers from the end until we're back to our previous state */
-    for (size_t count = aws_http_headers_count(headers); count > orig_count; --count) {
-        s_http_headers_erase_index(headers, count - 1);
+    for (size_t new_count = aws_http_headers_count(headers); new_count > orig_count; --new_count) {
+        s_http_headers_erase_index(headers, new_count - 1);
     }
 
     return AWS_OP_ERR;
@@ -292,7 +290,7 @@ int aws_http_headers_get(
 
     const size_t count = aws_http_headers_count(headers);
     for (size_t i = 0; i < count; ++i) {
-        struct aws_http_header *header;
+        struct aws_http_header *header = NULL;
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
         if (aws_http_header_name_eq(header->name, name)) {
             *out_value = header->value;
