@@ -157,12 +157,12 @@ TEST_CASE(headers_add) {
 
     /* get-by-index */
     struct aws_http_header get;
-    ASSERT_SUCCESS(aws_http_headers_get_index(headers, &get, 0));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 0, &get));
     ASSERT_SUCCESS(s_check_header_eq(get, "Host", "example.com"));
 
     /* get-by-name (ignore case) */
     struct aws_byte_cursor value_get;
-    ASSERT_SUCCESS(aws_http_headers_get(headers, &value_get, aws_byte_cursor_from_c_str("host"))); /* ignore case */
+    ASSERT_SUCCESS(aws_http_headers_get(headers, aws_byte_cursor_from_c_str("host"), &value_get)); /* ignore case */
     ASSERT_SUCCESS(s_check_value_eq(value_get, "example.com"));
 
     aws_http_headers_destroy(headers);
@@ -184,13 +184,13 @@ TEST_CASE(headers_add_array) {
 
     for (size_t i = 0; i < AWS_ARRAY_SIZE(src_headers); ++i) {
         struct aws_http_header get;
-        ASSERT_SUCCESS(aws_http_headers_get_index(headers, &get, i));
+        ASSERT_SUCCESS(aws_http_headers_get_index(headers, i, &get));
         ASSERT_SUCCESS(s_check_headers_eq(src_headers[i], get));
     }
 
     /* check the get-by-name returns first one it sees */
     struct aws_byte_cursor get;
-    ASSERT_SUCCESS(aws_http_headers_get(headers, &get, aws_byte_cursor_from_c_str("COOKIE")));
+    ASSERT_SUCCESS(aws_http_headers_get(headers, aws_byte_cursor_from_c_str("COOKIE"), &get));
     ASSERT_SUCCESS(s_check_value_eq(get, "a=1"));
 
     aws_http_headers_destroy(headers);
@@ -207,7 +207,7 @@ TEST_CASE(headers_set) {
         aws_http_headers_set(headers, aws_byte_cursor_from_c_str("Cookie"), aws_byte_cursor_from_c_str("a=1")));
 
     struct aws_http_header get;
-    ASSERT_SUCCESS(aws_http_headers_get_index(headers, &get, 0));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 0, &get));
     ASSERT_SUCCESS(s_check_header_eq(get, "Cookie", "a=1"));
 
     /* Add more headers with same name, then check that set() replaces them ALL */
@@ -223,7 +223,7 @@ TEST_CASE(headers_set) {
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(headers));
 
     struct aws_byte_cursor value_get;
-    ASSERT_SUCCESS(aws_http_headers_get(headers, &value_get, aws_byte_cursor_from_c_str("cookie")));
+    ASSERT_SUCCESS(aws_http_headers_get(headers, aws_byte_cursor_from_c_str("cookie"), &value_get));
     ASSERT_SUCCESS(s_check_value_eq(value_get, "d=4"));
 
     aws_http_headers_destroy(headers);
@@ -250,7 +250,7 @@ TEST_CASE(headers_erase_index) {
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(headers));
 
     struct aws_http_header get;
-    ASSERT_SUCCESS(aws_http_headers_get_index(headers, &get, 0));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 0, &get));
     ASSERT_SUCCESS(s_check_header_eq(get, "Cookie", "b=2"));
 
     aws_http_headers_destroy(headers);
@@ -304,10 +304,10 @@ TEST_CASE(headers_erase_value) {
     ASSERT_UINT_EQUALS(2, aws_http_headers_count(headers));
 
     struct aws_http_header get;
-    ASSERT_SUCCESS(aws_http_headers_get_index(headers, &get, 0));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 0, &get));
     ASSERT_SUCCESS(s_check_header_eq(get, "Cookie", "a=1"));
 
-    ASSERT_SUCCESS(aws_http_headers_get_index(headers, &get, 1));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 1, &get));
     ASSERT_SUCCESS(s_check_header_eq(get, "COOKIE", "b=2"));
 
     aws_http_headers_destroy(headers);

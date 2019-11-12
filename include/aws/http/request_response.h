@@ -343,8 +343,8 @@ size_t aws_http_headers_count(const struct aws_http_headers *headers);
 AWS_HTTP_API
 int aws_http_headers_get_index(
     const struct aws_http_headers *headers,
-    struct aws_http_header *out_header,
-    size_t index);
+    size_t index,
+    struct aws_http_header *out_header);
 
 /**
  * Get the first value for this name, ignoring any additional values.
@@ -353,8 +353,8 @@ int aws_http_headers_get_index(
 AWS_HTTP_API
 int aws_http_headers_get(
     const struct aws_http_headers *headers,
-    struct aws_byte_cursor *out_value,
-    struct aws_byte_cursor name);
+    struct aws_byte_cursor name,
+    struct aws_byte_cursor *out_value);
 
 /**
  * Remove all headers with this name.
@@ -472,6 +472,9 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
 
 /**
  * Get the message's aws_http_headers.
+ *
+ * This datastructure has more functions for inspecting and modifying headers than
+ * are available on the aws_http_message datastructure.
  */
 struct aws_http_headers *aws_http_message_get_headers(struct aws_http_message *message);
 
@@ -480,29 +483,52 @@ struct aws_http_headers *aws_http_message_get_headers(struct aws_http_message *m
  */
 const struct aws_http_headers *aws_http_message_get_const_headers(const struct aws_http_message *message);
 
-/** DEPRECATED. Use aws_http_headers API */
+/**
+ * Get the number of headers.
+ */
 AWS_HTTP_API
 size_t aws_http_message_get_header_count(const struct aws_http_message *message);
 
-/** DEPRECATED. Use aws_http_headers API */
+/**
+ * Get the header at the specified index.
+ * This function cannot fail if a valid index is provided.
+ * Otherwise, AWS_ERROR_INVALID_INDEX will be raised.
+ *
+ * The underlying strings are stored within the message.
+ */
 AWS_HTTP_API
 int aws_http_message_get_header(
     const struct aws_http_message *message,
     struct aws_http_header *out_header,
     size_t index);
 
-/** DEPRECATED. Use aws_http_headers API */
+/**
+ * Add a header to the end of the array.
+ * The message makes its own copy of the underlying strings.
+ */
 AWS_HTTP_API
 int aws_http_message_add_header(struct aws_http_message *message, struct aws_http_header header);
 
-/** DEPRECATED. Use aws_http_headers API */
+/**
+ * Add an array of headers to the end of the header array.
+ * The message makes its own copy of the underlying strings.
+ *
+ * This is a helper function useful when it's easier to define headers as a stack array, rather than calling add_header
+ * repeatedly.
+ */
 AWS_HTTP_API
 int aws_http_message_add_header_array(
     struct aws_http_message *message,
     const struct aws_http_header *headers,
     size_t num_headers);
 
-/** DEPRECATED. Use aws_http_headers API */
+/**
+ * Remove the header at the specified index.
+ * Headers after this index are all shifted back one position.
+ *
+ * This function cannot fail if a valid index is provided.
+ * Otherwise, AWS_ERROR_INVALID_INDEX will be raised.
+ */
 AWS_HTTP_API
 int aws_http_message_erase_header(struct aws_http_message *message, size_t index);
 

@@ -141,9 +141,9 @@ error:
 void aws_http_headers_clear(struct aws_http_headers *headers) {
     AWS_PRECONDITION(headers);
 
+    struct aws_http_header *header = NULL;
     const size_t count = aws_http_headers_count(headers);
     for (size_t i = 0; i < count; ++i) {
-        struct aws_http_header *header = NULL;
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
         AWS_ASSUME(header);
 
@@ -180,17 +180,18 @@ int aws_http_headers_erase_index(struct aws_http_headers *headers, size_t index)
 /* Erase entries with name, stop at end_index */
 static int s_http_headers_erase(struct aws_http_headers *headers, struct aws_byte_cursor name, size_t end_index) {
     bool erased_any = false;
-    for (size_t i = 0; i < end_index;) {
-        struct aws_http_header *header = NULL;
+    struct aws_http_header *header = NULL;
+
+    /* Iterating in reverse is simpler */
+    for (size_t n = end_index; n > 0; --n) {
+        size_t i = n - 1;
+
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
         AWS_ASSUME(header);
 
         if (aws_http_header_name_eq(header->name, name)) {
             s_http_headers_erase_index(headers, i);
-            --end_index;
             erased_any = true;
-        } else {
-            ++i;
         }
     }
 
@@ -216,9 +217,9 @@ int aws_http_headers_erase_value(
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&name) && aws_byte_cursor_is_valid(&value));
 
+    struct aws_http_header *header = NULL;
     const size_t count = aws_http_headers_count(headers);
     for (size_t i = 0; i < count; ++i) {
-        struct aws_http_header *header = NULL;
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
         AWS_ASSUME(header);
 
@@ -276,8 +277,8 @@ size_t aws_http_headers_count(const struct aws_http_headers *headers) {
 
 int aws_http_headers_get_index(
     const struct aws_http_headers *headers,
-    struct aws_http_header *out_header,
-    size_t index) {
+    size_t index,
+    struct aws_http_header *out_header) {
 
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(out_header);
@@ -287,16 +288,16 @@ int aws_http_headers_get_index(
 
 int aws_http_headers_get(
     const struct aws_http_headers *headers,
-    struct aws_byte_cursor *out_value,
-    struct aws_byte_cursor name) {
+    struct aws_byte_cursor name,
+    struct aws_byte_cursor *out_value) {
 
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(out_value);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
 
+    struct aws_http_header *header = NULL;
     const size_t count = aws_http_headers_count(headers);
     for (size_t i = 0; i < count; ++i) {
-        struct aws_http_header *header = NULL;
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
         AWS_ASSUME(header);
 
@@ -555,7 +556,7 @@ int aws_http_message_get_header(
     struct aws_http_header *out_header,
     size_t index) {
 
-    return aws_http_headers_get_index(message->headers, out_header, index);
+    return aws_http_headers_get_index(message->headers, index, out_header);
 }
 
 struct aws_http_stream *aws_http_connection_make_request(
