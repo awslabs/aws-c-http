@@ -143,7 +143,7 @@ void aws_http_headers_clear(struct aws_http_headers *headers) {
 
     const size_t count = aws_http_headers_count(headers);
     for (size_t i = 0; i < count; ++i) {
-        struct aws_http_header *header;
+        struct aws_http_header *header = NULL;
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
         AWS_ASSUME(header);
 
@@ -156,7 +156,7 @@ void aws_http_headers_clear(struct aws_http_headers *headers) {
 
 /* Does not check index */
 static void s_http_headers_erase_index(struct aws_http_headers *headers, size_t index) {
-    struct aws_http_header *header;
+    struct aws_http_header *header = NULL;
     aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, index);
     AWS_ASSUME(header);
 
@@ -181,7 +181,7 @@ int aws_http_headers_erase_index(struct aws_http_headers *headers, size_t index)
 static int s_http_headers_erase(struct aws_http_headers *headers, struct aws_byte_cursor name, size_t end_index) {
     bool erased_any = false;
     for (size_t i = 0; i < end_index;) {
-        struct aws_http_header *header;
+        struct aws_http_header *header = NULL;
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
         AWS_ASSUME(header);
 
@@ -218,7 +218,7 @@ int aws_http_headers_erase_value(
 
     const size_t count = aws_http_headers_count(headers);
     for (size_t i = 0; i < count; ++i) {
-        struct aws_http_header *header;
+        struct aws_http_header *header = NULL;
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
         AWS_ASSUME(header);
 
@@ -296,7 +296,7 @@ int aws_http_headers_get(
 
     const size_t count = aws_http_headers_count(headers);
     for (size_t i = 0; i < count; ++i) {
-        struct aws_http_header *header;
+        struct aws_http_header *header = NULL;
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
         AWS_ASSUME(header);
 
