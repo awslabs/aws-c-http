@@ -65,6 +65,7 @@ int aws_byte_buf_append_and_update(struct aws_byte_buf *to, struct aws_byte_curs
 struct aws_http_headers {
     struct aws_allocator *alloc;
     struct aws_array_list array_list; /* Contains aws_http_header */
+    struct aws_atomic_var refcount;
 };
 
 struct aws_http_headers *aws_http_headers_new(struct aws_allocator *allocator) {
@@ -76,6 +77,7 @@ struct aws_http_headers *aws_http_headers_new(struct aws_allocator *allocator) {
     }
 
     headers->alloc = allocator;
+    aws_atomic_init_int(&headers->refcount, 1);
 
     if (aws_array_list_init_dynamic(
             &headers->array_list, allocator, AWS_HTTP_REQUEST_NUM_RESERVED_HEADERS, sizeof(struct aws_http_header))) {
@@ -90,15 +92,25 @@ alloc_failed:
     return NULL;
 }
 
-void aws_http_headers_destroy(struct aws_http_headers *headers) {
+void aws_http_headers_release(struct aws_http_headers *headers) {
     AWS_PRECONDITION(!headers || headers->alloc);
     if (!headers) {
         return;
     }
 
-    aws_http_headers_clear(headers);
-    aws_array_list_clean_up(&headers->array_list);
-    aws_mem_release(headers->alloc, headers);
+    size_t prev_refcount = aws_atomic_fetch_sub(&headers->refcount, 1);
+    if (prev_refcount == 1) {
+        aws_http_headers_clear(headers);
+        aws_array_list_clean_up(&headers->array_list);
+        aws_mem_release(headers->alloc, headers);
+    } else {
+        AWS_ASSERT(prev_refcount != 0);
+    }
+}
+
+void aws_http_headers_acquire_hold(struct aws_http_headers *headers) {
+    AWS_PRECONDITION(headers);
+    aws_atomic_fetch_add(&headers->refcount, 1);
 }
 
 int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value) {
@@ -314,6 +326,7 @@ struct aws_http_message {
     struct aws_allocator *allocator;
     struct aws_http_headers *headers;
     struct aws_input_stream *body_stream;
+    struct aws_atomic_var refcount;
 
     /* Data specific to the request or response subclasses */
     union {
@@ -361,6 +374,7 @@ static struct aws_http_message *s_message_new_common(struct aws_allocator *alloc
     }
 
     message->allocator = allocator;
+    aws_atomic_init_int(&message->refcount, 1);
 
     message->headers = aws_http_headers_new(allocator);
     if (!message->headers) {
@@ -395,20 +409,34 @@ struct aws_http_message *aws_http_message_new_response(struct aws_allocator *all
 }
 
 void aws_http_message_destroy(struct aws_http_message *message) {
-    /* Note that request_destroy() may also used by request_new() to clean up if something goes wrong */
+    aws_http_message_release(message);
+}
+
+void aws_http_message_release(struct aws_http_message *message) {
+    /* Note that release() may also be used by new() functions to clean up if something goes wrong */
     AWS_PRECONDITION(!message || message->allocator);
     if (!message) {
         return;
     }
 
-    if (message->request_data) {
-        aws_string_destroy(message->request_data->method);
-        aws_string_destroy(message->request_data->path);
+    size_t prev_refcount = aws_atomic_fetch_sub(&message->refcount, 1);
+    if (prev_refcount == 1) {
+        if (message->request_data) {
+            aws_string_destroy(message->request_data->method);
+            aws_string_destroy(message->request_data->path);
+        }
+
+        aws_http_headers_release(message->headers);
+
+        aws_mem_release(message->allocator, message);
+    } else {
+        AWS_ASSERT(prev_refcount != 0);
     }
+}
 
-    aws_http_headers_destroy(message->headers);
-
-    aws_mem_release(message->allocator, message);
+void aws_http_message_acquire_hold(struct aws_http_message *message) {
+    AWS_PRECONDITION(message);
+    aws_atomic_fetch_add(&message->refcount, 1);
 }
 
 bool aws_http_message_is_request(const struct aws_http_message *message) {

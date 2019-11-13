@@ -165,7 +165,7 @@ TEST_CASE(headers_add) {
     ASSERT_SUCCESS(aws_http_headers_get(headers, aws_byte_cursor_from_c_str("host"), &value_get)); /* ignore case */
     ASSERT_SUCCESS(s_check_value_eq(value_get, "example.com"));
 
-    aws_http_headers_destroy(headers);
+    aws_http_headers_release(headers);
     return AWS_OP_SUCCESS;
 }
 
@@ -193,7 +193,7 @@ TEST_CASE(headers_add_array) {
     ASSERT_SUCCESS(aws_http_headers_get(headers, aws_byte_cursor_from_c_str("COOKIE"), &get));
     ASSERT_SUCCESS(s_check_value_eq(get, "a=1"));
 
-    aws_http_headers_destroy(headers);
+    aws_http_headers_release(headers);
     return AWS_OP_SUCCESS;
 }
 
@@ -226,7 +226,7 @@ TEST_CASE(headers_set) {
     ASSERT_SUCCESS(aws_http_headers_get(headers, aws_byte_cursor_from_c_str("cookie"), &value_get));
     ASSERT_SUCCESS(s_check_value_eq(value_get, "d=4"));
 
-    aws_http_headers_destroy(headers);
+    aws_http_headers_release(headers);
     return AWS_OP_SUCCESS;
 }
 
@@ -253,7 +253,7 @@ TEST_CASE(headers_erase_index) {
     ASSERT_SUCCESS(aws_http_headers_get_index(headers, 0, &get));
     ASSERT_SUCCESS(s_check_header_eq(get, "Cookie", "b=2"));
 
-    aws_http_headers_destroy(headers);
+    aws_http_headers_release(headers);
     return AWS_OP_SUCCESS;
 }
 
@@ -275,7 +275,7 @@ TEST_CASE(headers_erase) {
 
     ASSERT_UINT_EQUALS(0, aws_http_headers_count(headers));
 
-    aws_http_headers_destroy(headers);
+    aws_http_headers_release(headers);
     return AWS_OP_SUCCESS;
 }
 
@@ -310,7 +310,7 @@ TEST_CASE(headers_erase_value) {
     ASSERT_SUCCESS(aws_http_headers_get_index(headers, 1, &get));
     ASSERT_SUCCESS(s_check_header_eq(get, "COOKIE", "b=2"));
 
-    aws_http_headers_destroy(headers);
+    aws_http_headers_release(headers);
     return AWS_OP_SUCCESS;
 }
 
@@ -328,7 +328,30 @@ TEST_CASE(headers_clear) {
     aws_http_headers_clear(headers);
     ASSERT_UINT_EQUALS(0, aws_http_headers_count(headers));
 
-    aws_http_headers_destroy(headers);
+    aws_http_headers_release(headers);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(message_refcounts) {
+    (void)ctx;
+    struct aws_http_message *message = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(message);
+
+    struct aws_http_headers *headers = aws_http_message_get_headers(message);
+    ASSERT_NOT_NULL(headers);
+
+    /* assert message is still valid after acquire/release */
+    aws_http_message_acquire_hold(message);
+    aws_http_message_release(message);
+    ASSERT_SUCCESS(aws_http_message_set_request_path(message, aws_byte_cursor_from_c_str("PATCH")));
+
+    /* keep headers alive after message is destroyed */
+    aws_http_headers_acquire_hold(headers);
+    aws_http_message_release(message);
+    ASSERT_SUCCESS(
+        aws_http_headers_add(headers, aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com")));
+
+    aws_http_headers_release(headers);
     return AWS_OP_SUCCESS;
 }
 

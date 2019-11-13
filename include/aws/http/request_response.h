@@ -41,8 +41,16 @@ struct aws_http_header {
 /**
  * A transformable block of HTTP headers.
  * Provides a nice API for getting/setting header names and values.
+ *
  * All strings are copied and stored within this datastructure.
- * Headers with same name are stored in order, but ordering between headers with different names is not guaranteed.
+ * The index of a given header may change any time headers are modified.
+ * When iterating headers, the following ordering rules apply:
+ *
+ * - Headers with the same name will always be in the same order, relative to one another.
+ *   If "A: one" is added before "A: two", then "A: one" will always precede "A: two".
+ *
+ * - Headers with different names could be in any order, relative to one another.
+ *   If "A: one" is seen before "B: bee" in one iteration, you might see "B: bee" before "A: one" on the next.
  */
 struct aws_http_headers;
 
@@ -293,11 +301,26 @@ AWS_EXTERN_C_BEGIN
 AWS_HTTP_API
 bool aws_http_header_name_eq(struct aws_byte_cursor name_a, struct aws_byte_cursor name_b);
 
+/**
+ * Create a new headers object.
+ * The caller has a hold on the object and must call aws_http_headers_release() when they are done with it.
+ */
 AWS_HTTP_API
 struct aws_http_headers *aws_http_headers_new(struct aws_allocator *allocator);
 
+/**
+ * Acquire a hold on the object, preventing it from being deleted until
+ * aws_http_headers_release() is called by all those with a hold on it.
+ */
 AWS_HTTP_API
-void aws_http_headers_destroy(struct aws_http_headers *headers);
+void aws_http_headers_acquire_hold(struct aws_http_headers *headers);
+
+/**
+ * Release a hold on the object.
+ * The object is deleted when all holds on it are released.
+ */
+AWS_HTTP_API
+void aws_http_headers_release(struct aws_http_headers *headers);
 
 /**
  * Add a header.
@@ -390,6 +413,8 @@ void aws_http_headers_clear(struct aws_http_headers *headers);
 /**
  * Create a new request message.
  * The message is blank, all properties (method, path, etc) must be set individually.
+ *
+ * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
  */
 AWS_HTTP_API
 struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allocator);
@@ -397,12 +422,28 @@ struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allo
 /**
  * Create a new response message.
  * The message is blank, all properties (status, headers, etc) must be set individually.
+ *
+ * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
  */
 AWS_HTTP_API
 struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator);
 
 /**
- * Destroy the message.
+ * Acquire a hold on the object, preventing it from being deleted until
+ * aws_http_message_release() is called by all those with a hold on it.
+ */
+AWS_HTTP_API
+void aws_http_message_acquire_hold(struct aws_http_message *message);
+
+/**
+ * Release a hold on the object.
+ * The object is deleted when all holds on it are released.
+ */
+AWS_HTTP_API
+void aws_http_message_release(struct aws_http_message *message);
+
+/**
+ * Deprecated. This is equivalent to aws_http_message_release().
  */
 AWS_HTTP_API
 void aws_http_message_destroy(struct aws_http_message *message);
