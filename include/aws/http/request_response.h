@@ -313,7 +313,7 @@ struct aws_http_headers *aws_http_headers_new(struct aws_allocator *allocator);
  * aws_http_headers_release() is called by all those with a hold on it.
  */
 AWS_HTTP_API
-void aws_http_headers_acquire_hold(struct aws_http_headers *headers);
+void aws_http_headers_acquire(struct aws_http_headers *headers);
 
 /**
  * Release a hold on the object.
@@ -433,7 +433,7 @@ struct aws_http_message *aws_http_message_new_response(struct aws_allocator *all
  * aws_http_message_release() is called by all those with a hold on it.
  */
 AWS_HTTP_API
-void aws_http_message_acquire_hold(struct aws_http_message *message);
+void aws_http_message_acquire(struct aws_http_message *message);
 
 /**
  * Release a hold on the object.

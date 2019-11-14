@@ -108,7 +108,7 @@ void aws_http_headers_release(struct aws_http_headers *headers) {
     }
 }
 
-void aws_http_headers_acquire_hold(struct aws_http_headers *headers) {
+void aws_http_headers_acquire(struct aws_http_headers *headers) {
     AWS_PRECONDITION(headers);
     aws_atomic_fetch_add(&headers->refcount, 1);
 }
@@ -434,7 +434,7 @@ void aws_http_message_release(struct aws_http_message *message) {
     }
 }
 
-void aws_http_message_acquire_hold(struct aws_http_message *message) {
+void aws_http_message_acquire(struct aws_http_message *message) {
     AWS_PRECONDITION(message);
     aws_atomic_fetch_add(&message->refcount, 1);
 }

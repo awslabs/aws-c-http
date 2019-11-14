@@ -341,12 +341,12 @@ TEST_CASE(message_refcounts) {
     ASSERT_NOT_NULL(headers);
 
     /* assert message is still valid after acquire/release */
-    aws_http_message_acquire_hold(message);
+    aws_http_message_acquire(message);
     aws_http_message_release(message);
     ASSERT_SUCCESS(aws_http_message_set_request_path(message, aws_byte_cursor_from_c_str("PATCH")));
 
     /* keep headers alive after message is destroyed */
-    aws_http_headers_acquire_hold(headers);
+    aws_http_headers_acquire(headers);
     aws_http_message_release(message);
     ASSERT_SUCCESS(
         aws_http_headers_add(headers, aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com")));
