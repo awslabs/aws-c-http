@@ -196,7 +196,7 @@ static int s_http_headers_erase(struct aws_http_headers *headers, struct aws_byt
 
     /* Iterating in reverse is simpler */
     for (size_t n = end_index; n > 0; --n) {
-        size_t i = n - 1;
+        const size_t i = n - 1;
 
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
         AWS_ASSUME(header);
@@ -271,7 +271,7 @@ int aws_http_headers_set(struct aws_http_headers *headers, struct aws_byte_curso
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&name) && aws_byte_cursor_is_valid(&value));
 
-    size_t prev_count = aws_http_headers_count(headers);
+    const size_t prev_count = aws_http_headers_count(headers);
     if (aws_http_headers_add(headers, name, value)) {
         return AWS_OP_ERR;
     }
