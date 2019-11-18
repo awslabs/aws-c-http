@@ -367,7 +367,10 @@ static int s_set_string_from_cursor(
     *dst = new_str;
     return AWS_OP_SUCCESS;
 }
-static struct aws_http_message *s_message_new_common(struct aws_allocator *allocator) {
+static struct aws_http_message *s_message_new_common(
+    struct aws_allocator *allocator,
+    struct aws_http_headers *existing_headers) {
+
     struct aws_http_message *message = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_message));
     if (!message) {
         goto error;
@@ -376,9 +379,14 @@ static struct aws_http_message *s_message_new_common(struct aws_allocator *alloc
     message->allocator = allocator;
     aws_atomic_init_int(&message->refcount, 1);
 
-    message->headers = aws_http_headers_new(allocator);
-    if (!message->headers) {
-        goto error;
+    if (existing_headers) {
+        message->headers = existing_headers;
+        aws_http_headers_acquire(message->headers);
+    } else {
+        message->headers = aws_http_headers_new(allocator);
+        if (!message->headers) {
+            goto error;
+        }
     }
 
     return message;
@@ -387,20 +395,36 @@ error:
     return NULL;
 }
 
-struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allocator) {
-    AWS_PRECONDITION(allocator);
+static struct aws_http_message *s_message_new_request_common(
+    struct aws_allocator *allocator,
+    struct aws_http_headers *existing_headers) {
 
-    struct aws_http_message *message = s_message_new_common(allocator);
+    struct aws_http_message *message = s_message_new_common(allocator, existing_headers);
     if (message) {
         message->request_data = &message->subclass_data.request;
     }
     return message;
 }
 
+struct aws_http_message *aws_http_message_new_request_use_headers(
+    struct aws_allocator *allocator,
+    struct aws_http_headers *existing_headers) {
+
+    AWS_PRECONDITION(allocator);
+    AWS_PRECONDITION(existing_headers);
+
+    return s_message_new_request_common(allocator, existing_headers);
+}
+
+struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allocator) {
+    AWS_PRECONDITION(allocator);
+    return s_message_new_request_common(allocator, NULL);
+}
+
 struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator) {
     AWS_PRECONDITION(allocator);
 
-    struct aws_http_message *message = s_message_new_common(allocator);
+    struct aws_http_message *message = s_message_new_common(allocator, NULL);
     if (message) {
         message->response_data = &message->subclass_data.response;
         message->response_data->status = AWS_HTTP_STATUS_UNKNOWN;

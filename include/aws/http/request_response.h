@@ -420,6 +420,15 @@ AWS_HTTP_API
 struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allocator);
 
 /**
+ * Like aws_http_message_new_request(), but uses existing aws_http_headers instead of creating a new one.
+ * Acquires a hold on the headers, and releases it when the request is destroyed.
+ */
+AWS_HTTP_API
+struct aws_http_message *aws_http_message_new_request_use_headers(
+    struct aws_allocator *allocator,
+    struct aws_http_headers *existing_headers);
+
+/**
  * Create a new response message.
  * The message is blank, all properties (status, headers, etc) must be set individually.
  *

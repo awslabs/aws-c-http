@@ -19,6 +19,7 @@ add_test_case(message_request_method)
 add_test_case(message_request_path)
 add_test_case(message_response_status)
 add_test_case(message_refcounts)
+add_test_case(message_with_existing_headers)
 add_test_case(message_handles_oom)
 
 add_test_case(h1_test_get_request)
