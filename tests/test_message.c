@@ -355,6 +355,28 @@ TEST_CASE(message_refcounts) {
     return AWS_OP_SUCCESS;
 }
 
+TEST_CASE(message_with_existing_headers) {
+    (void)ctx;
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
+
+    struct aws_http_message *message = aws_http_message_new_request_with_headers(allocator, headers);
+    ASSERT_NOT_NULL(message);
+
+    ASSERT_PTR_EQUALS(headers, aws_http_message_get_headers(message));
+
+    /* assert message has acquired hold on headers */
+    aws_http_headers_release(headers);
+
+    /* still valid, right? */
+    struct aws_http_header new_header = {aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com")};
+    ASSERT_SUCCESS(aws_http_message_add_header(message, new_header));
+
+    /* clean up*/
+    aws_http_message_release(message);
+    return AWS_OP_SUCCESS;
+}
+
 /* Do every operation that involves allocating some memory */
 int s_message_handles_oom_attempt(struct aws_http_message *request) {
     ASSERT_NOT_NULL(request);
