@@ -424,7 +424,7 @@ struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allo
  * Acquires a hold on the headers, and releases it when the request is destroyed.
  */
 AWS_HTTP_API
-struct aws_http_message *aws_http_message_new_request_use_headers(
+struct aws_http_message *aws_http_message_new_request_with_headers(
     struct aws_allocator *allocator,
     struct aws_http_headers *existing_headers);
 

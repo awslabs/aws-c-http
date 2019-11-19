@@ -360,7 +360,7 @@ TEST_CASE(message_with_existing_headers) {
     struct aws_http_headers *headers = aws_http_headers_new(allocator);
     ASSERT_NOT_NULL(headers);
 
-    struct aws_http_message *message = aws_http_message_new_request_use_headers(allocator, headers);
+    struct aws_http_message *message = aws_http_message_new_request_with_headers(allocator, headers);
     ASSERT_NOT_NULL(message);
 
     ASSERT_PTR_EQUALS(headers, aws_http_message_get_headers(message));

@@ -406,7 +406,7 @@ static struct aws_http_message *s_message_new_request_common(
     return message;
 }
 
-struct aws_http_message *aws_http_message_new_request_use_headers(
+struct aws_http_message *aws_http_message_new_request_with_headers(
     struct aws_allocator *allocator,
     struct aws_http_headers *existing_headers) {
 
