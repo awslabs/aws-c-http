@@ -1079,6 +1079,11 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
         return AWS_OP_ERR;
     }
 
+    /* No need to invoke callback for 0-length data */
+    if (data->len == 0) {
+        return AWS_OP_SUCCESS;
+    }
+
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM, "id=%p: Incoming body: %zu bytes received.", (void *)&incoming_stream->base, data->len);
 
