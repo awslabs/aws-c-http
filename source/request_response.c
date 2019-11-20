@@ -35,22 +35,6 @@ bool aws_http_header_name_eq(struct aws_byte_cursor name_a, struct aws_byte_curs
     return aws_byte_cursor_eq_ignore_case(&name_a, &name_b);
 }
 
-/* TODO: move to aws-c-common */
-/**
- * Copy contents of cursor to buffer, then update cursor to reference the memory stored in the buffer.
- * If buffer is too small, AWS_ERROR_DEST_COPY_TOO_SMALL will be returned.
- *
- * The cursor is permitted to reference memory from earlier in the buffer.
- */
-int aws_byte_buf_append_and_update(struct aws_byte_buf *to, struct aws_byte_cursor *from_and_update) {
-    if (aws_byte_buf_append(to, from_and_update)) {
-        return AWS_OP_ERR;
-    }
-
-    from_and_update->ptr = to->buffer + (to->len - from_and_update->len);
-    return AWS_OP_SUCCESS;
-}
-
 /**
  * -- Datastructure Notes --
  * Headers are stored in a linear array, rather than a hash-table of arrays.
