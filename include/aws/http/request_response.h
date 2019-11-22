@@ -526,11 +526,13 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
  * This datastructure has more functions for inspecting and modifying headers than
  * are available on the aws_http_message datastructure.
  */
+AWS_HTTP_API
 struct aws_http_headers *aws_http_message_get_headers(struct aws_http_message *message);
 
 /**
  * Get the message's const aws_http_headers.
  */
+AWS_HTTP_API
 const struct aws_http_headers *aws_http_message_get_const_headers(const struct aws_http_message *message);
 
 /**
