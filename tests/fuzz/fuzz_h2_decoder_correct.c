@@ -147,7 +147,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
                 aws_byte_cursor_read_be32(&input, &frame.header.stream_id);
 
-
                 aws_h2_frame_push_promise_encode(&frame, &encoder, &frame_data);
                 aws_h2_frame_push_promise_clean_up(&frame);
                 break;
