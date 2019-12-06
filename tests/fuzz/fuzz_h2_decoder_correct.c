@@ -12,16 +12,68 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
-#include <aws/http/private/h2_decoder.h>
-
 #include <aws/testing/aws_test_harness.h>
 
 #include <aws/common/allocator.h>
+#include <aws/common/byte_buf.h>
 #include <aws/common/logging.h>
+
+#include <aws/http/private/h2_decoder.h>
+#include <aws/http/private/h2_frames.h>
 
 static const uint32_t FRAME_HEADER_SIZE = 3 + 1 + 1 + 4;
 static const uint32_t MAX_PAYLOAD_SIZE = 16384;
+
+static void s_generate_header_block(struct aws_byte_cursor *input, struct aws_h2_frame_header_block *header_block) {
+
+    /* Requires 4 bytes: type, size, and then 1 each for name & value */
+    while (input->len >= 4) {
+        struct aws_h2_frame_header_field header;
+        AWS_ZERO_STRUCT(header);
+
+        uint8_t type = 0;
+        aws_byte_cursor_read_u8(input, &type);
+        switch (type % 3) {
+            case 0:
+                header.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE;
+                break;
+            case 1:
+                header.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_SAVE;
+                break;
+            case 2:
+                header.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_FORWARD_SAVE;
+                break;
+        }
+
+        uint8_t lengths = 0;
+        aws_byte_cursor_read_u8(input, &lengths);
+
+        /* Pull a byte, split it in half, and use the top for name length, and bottom for value length */
+        uint8_t name_len = lengths >> 4;
+        uint8_t value_len = lengths & (UINT8_MAX >> 4);
+
+        /* Handle the 0 length cases */
+        if ((name_len == 0 && value_len == 0) || (name_len + value_len < 2)) {
+            continue;
+        } else if (name_len == 0) {
+            name_len = value_len / 2;
+            value_len -= name_len;
+        } else if (value_len == 0) {
+            value_len = name_len / 2;
+            name_len -= value_len;
+        }
+
+        /* If there's less than enough bytes left, just split the data in half */
+        if (input->len < name_len + value_len) {
+            name_len = input->len / 2;
+            value_len = input->len - name_len;
+        }
+        header.header.name = aws_byte_cursor_advance(input, name_len);
+        header.header.value = aws_byte_cursor_advance(input, value_len);
+
+        aws_array_list_push_back(&header_block->header_fields, &header);
+    }
+}
 
 AWS_EXTERN_C_BEGIN
 
@@ -65,7 +117,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     {
         uint8_t frame_type = 0;
         aws_byte_cursor_read_u8(&input, &frame_type);
-        switch (frame_type) {
+
+        /* Hijack the top bit of the type to figure out if we should use huffman encoding */
+        encoder.use_huffman = (frame_type >> 7) == 1;
+
+        switch (frame_type % (AWS_H2_FRAME_T_UNKNOWN + 1)) {
             case AWS_H2_FRAME_T_DATA: {
                 struct aws_h2_frame_data frame;
                 aws_h2_frame_data_init(&frame, allocator);
@@ -89,6 +145,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 aws_h2_frame_headers_init(&frame, allocator);
 
                 aws_byte_cursor_read_be32(&input, &frame.header.stream_id);
+
+                s_generate_header_block(&input, &frame.header_block);
 
                 aws_h2_frame_headers_encode(&frame, &encoder, &frame_data);
                 aws_h2_frame_headers_clean_up(&frame);
@@ -147,6 +205,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
                 aws_byte_cursor_read_be32(&input, &frame.header.stream_id);
 
+                s_generate_header_block(&input, &frame.header_block);
+
                 aws_h2_frame_push_promise_encode(&frame, &encoder, &frame_data);
                 aws_h2_frame_push_promise_clean_up(&frame);
                 break;
@@ -157,7 +217,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
                 if (input.len >= 8) {
                     frame.opaque_data = aws_byte_cursor_advance(&input, 8);
-                    frame.ack = *frame.opaque_data.ptr > 0;
+                    frame.ack = *frame.opaque_data.ptr != 0;
                 } else if (input.len >= 1) {
                     frame.ack = *input.ptr != 0;
                 }
@@ -199,11 +259,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
                 aws_byte_cursor_read_be32(&input, &frame.header.stream_id);
 
+                s_generate_header_block(&input, &frame.header_block);
+
                 aws_h2_frame_continuation_encode(&frame, &encoder, &frame_data);
                 aws_h2_frame_continuation_clean_up(&frame);
                 break;
             }
-            default: {
+            case AWS_H2_FRAME_T_UNKNOWN: {
                 /* #YOLO roll our own frame */
                 uint32_t payload_length = input.len - (FRAME_HEADER_SIZE - 1);
                 if (payload_length > MAX_PAYLOAD_SIZE) {
@@ -222,6 +284,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
                 /* Write payload */
                 aws_byte_buf_write_from_whole_cursor(&frame_data, aws_byte_cursor_advance(&input, payload_length));
+                break;
+            }
+            default: {
+                AWS_FATAL_ASSERT(false);
             }
         }
     }

@@ -366,6 +366,8 @@ size_t aws_hpack_find_index(
     }
 
     if (elem) {
+        *found_value = true;
+
         size_t index;
         const size_t absolute_index = (size_t)elem->value;
         if (absolute_index >= context->dynamic_table.index_0) {

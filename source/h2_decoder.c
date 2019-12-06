@@ -223,7 +223,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
 
     AWS_FATAL_ASSERT(!decoder->has_errored);
 
-    int err = AWS_OP_SUCCESS;
+    int err = AWS_ERROR_SUCCESS;
 
     while (data->len) {
         const uint32_t bytes_required = decoder->state.bytes_required;
