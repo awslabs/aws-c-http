@@ -48,6 +48,25 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
     ASSERT_BIN_ARRAYS_EQUALS(zeros, 3, &output_buffer[1], 3);
     ASSERT_UINT_EQUALS(1, aws_hpack_get_encoded_length_integer(10, 5));
 
+    /* Test full first byte (6 bits) */
+    AWS_ZERO_ARRAY(output_buffer);
+    output_buf = aws_byte_buf_from_empty_array(output_buffer, AWS_ARRAY_SIZE(output_buffer));
+    ASSERT_SUCCESS(aws_hpack_encode_integer(63, 6, &output_buf));
+    /**
+     * Expected:
+     *   0   1   2   3   4   5   6   7
+     * +---+---+---+---+---+---+---+---+
+     * | X | X | 1 | 1 | 1 | 1 | 1 | 1 |  63
+     * +---+---+---+---+---+---+---+---+
+     * | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |  0
+     * +---+---+---+---+---+---+---+---+
+     */
+    ASSERT_UINT_EQUALS(2, output_buf.len);
+    ASSERT_UINT_EQUALS(63, output_buffer[0]);
+    ASSERT_UINT_EQUALS(0, output_buffer[1]);
+    ASSERT_BIN_ARRAYS_EQUALS(zeros, 2, &output_buffer[2], 2);
+    ASSERT_UINT_EQUALS(2, aws_hpack_get_encoded_length_integer(63, 6));
+
     /* Test 42 in 8 bits */
     AWS_ZERO_ARRAY(output_buffer);
     output_buf = aws_byte_buf_from_empty_array(output_buffer, AWS_ARRAY_SIZE(output_buffer));
@@ -113,11 +132,26 @@ static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx)
      * | X | X | X | 0 | 1 | 0 | 1 | 0 |  10
      * +---+---+---+---+---+---+---+---+
      */
-    uint8_t test_1[] = {10};
-    to_decode = aws_byte_cursor_from_array(test_1, AWS_ARRAY_SIZE(test_1));
+    uint8_t test_0[] = {10};
+    to_decode = aws_byte_cursor_from_array(test_0, AWS_ARRAY_SIZE(test_0));
     ASSERT_SUCCESS(aws_hpack_decode_integer(hpack, &to_decode, 5, &result));
     ASSERT_UINT_EQUALS(0, to_decode.len);
     ASSERT_UINT_EQUALS(10, result);
+
+    /* Test full first byte (6 bits)
+     * Layout:
+     *   0   1   2   3   4   5   6   7
+     * +---+---+---+---+---+---+---+---+
+     * | X | X | 1 | 1 | 1 | 1 | 1 | 1 |  63
+     * +---+---+---+---+---+---+---+---+
+     * | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |  0
+     * +---+---+---+---+---+---+---+---+
+     */
+    uint8_t test_1[] = {63, 0};
+    to_decode = aws_byte_cursor_from_array(test_1, AWS_ARRAY_SIZE(test_1));
+    ASSERT_SUCCESS(aws_hpack_decode_integer(hpack, &to_decode, 6, &result));
+    ASSERT_UINT_EQUALS(0, to_decode.len);
+    ASSERT_UINT_EQUALS(63, result);
 
     /* Test 42 in 8 bits
      * Layout:

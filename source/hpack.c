@@ -42,10 +42,10 @@ size_t aws_hpack_get_encoded_length_integer(uint64_t integer, uint8_t prefix_siz
         integer -= prefix_mask;
 
         size_t num_bytes = 1;
-        while (integer) {
+        do {
             ++num_bytes;
             integer >>= 7;
-        }
+        } while (integer);
         return num_bytes;
     }
 }
@@ -76,7 +76,7 @@ int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_b
 
         const uint64_t hi_57bit_mask = UINT64_MAX - (UINT8_MAX >> 1);
 
-        while (integer) {
+        do {
             if (output->len == output->capacity) {
                 *output = output_backup;
                 return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
@@ -93,7 +93,7 @@ int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_b
 
             /* Remove the written bits */
             integer >>= 7;
-        }
+        } while (integer);
     }
 
     return AWS_OP_SUCCESS;
@@ -366,7 +366,7 @@ size_t aws_hpack_find_index(
     }
 
     if (elem) {
-        *found_value = true;
+        /* DO NOT SET found_value HERE! We only found the name, not the value! */
 
         size_t index;
         const size_t absolute_index = (size_t)elem->value;
