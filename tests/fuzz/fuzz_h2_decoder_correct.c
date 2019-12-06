@@ -96,8 +96,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     aws_logger_init_standard(&logger, allocator, &log_options);
     aws_logger_set(&logger);
 
-    /* Init HTTP */
-    aws_http_library_init(allocator);
+    /* Init HTTP (s2n init is weird, so don't do this under the tracer) */
+    aws_http_library_init(aws_default_allocator());
 
     /* Create the encoder */
     struct aws_h2_frame_encoder encoder;
@@ -302,9 +302,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     aws_byte_buf_clean_up(&frame_data);
     aws_h2_decoder_destroy(decoder);
     aws_h2_frame_encoder_clean_up(&encoder);
-    aws_http_library_clean_up();
     aws_logger_set(NULL);
     aws_logger_clean_up(&logger);
+
+    atexit(aws_http_library_clean_up);
 
     /* Check for leaks */
     ASSERT_UINT_EQUALS(0, aws_mem_tracer_count(allocator));
