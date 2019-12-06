@@ -72,6 +72,16 @@ void proxy_tester_on_client_connection_shutdown(
     aws_condition_variable_notify_one(&tester->wait_cvar);
 }
 
+void proxy_tester_on_client_bootstrap_shutdown(void *user_data) {
+    struct proxy_tester *tester = user_data;
+    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
+
+    tester->client_bootstrap_is_shutdown = true;
+
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
+    aws_condition_variable_notify_one(&tester->wait_cvar);
+}
+
 int proxy_tester_wait(struct proxy_tester *tester, bool (*pred)(void *user_data)) {
     ASSERT_SUCCESS(aws_mutex_lock(&tester->wait_lock));
     ASSERT_SUCCESS(aws_condition_variable_wait_pred(&tester->wait_cvar, &tester->wait_lock, pred, tester));
@@ -93,6 +103,11 @@ bool proxy_tester_connection_shutdown_pred(void *user_data) {
 bool proxy_tester_request_complete_pred_fn(void *user_data) {
     struct proxy_tester *tester = user_data;
     return tester->request_complete || tester->client_connection_is_shutdown;
+}
+
+bool proxy_tester_client_bootstrap_shutdown_pred(void *user_data) {
+    struct proxy_tester *tester = user_data;
+    return tester->client_bootstrap_is_shutdown;
 }
 
 int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_options *options) {
@@ -131,8 +146,13 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
             (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
     };
 
-    tester->client_bootstrap =
-        aws_client_bootstrap_new(tester->alloc, &tester->event_loop_group, &tester->host_resolver, NULL);
+    struct aws_client_bootstrap_options bootstrap_options = {
+        .event_loop_group = &tester->event_loop_group,
+        .host_resolver = &tester->host_resolver,
+        .on_shutdown_complete = proxy_tester_on_client_bootstrap_shutdown,
+        .user_data = tester,
+    };
+    tester->client_bootstrap = aws_client_bootstrap_new(tester->alloc, &bootstrap_options);
     ASSERT_NOT_NULL(tester->client_bootstrap);
 
     bool use_tls = options->test_mode == PTTM_HTTPS;
@@ -196,6 +216,7 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
     }
 
     aws_client_bootstrap_release(tester->client_bootstrap);
+    ASSERT_SUCCESS(proxy_tester_wait(tester, proxy_tester_client_bootstrap_shutdown_pred));
 
     aws_host_resolver_clean_up(&tester->host_resolver);
     aws_event_loop_group_clean_up(&tester->event_loop_group);
