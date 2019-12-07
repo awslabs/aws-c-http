@@ -255,11 +255,11 @@ int aws_h2_frame_header_block_encode(
                 return AWS_OP_ERR;
             }
             AWS_ASSERT(scratch.len == 0);
-        }
 
-        if (field->hpack_behavior == AWS_H2_HEADER_BEHAVIOR_SAVE) {
-            /* Save for next time */
-            aws_hpack_insert_header(encoder->hpack, &field->header);
+            if (field->hpack_behavior == AWS_H2_HEADER_BEHAVIOR_SAVE) {
+                /* Save for next time */
+                aws_hpack_insert_header(encoder->hpack, &field->header);
+            }
         }
     }
 
