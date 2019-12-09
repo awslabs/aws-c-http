@@ -35,18 +35,20 @@ static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 static const uint8_t s_setting_block_size = sizeof(uint16_t) + sizeof(uint32_t);
 
 #define DECODER_LOGF(level, decoder, text, ...)                                                                        \
-    AWS_LOGF_##level(AWS_LS_HTTP_CONNECTION, "id=%p " text, (decoder)->logging_id, __VA_ARGS__)
+    AWS_LOGF_##level(AWS_LS_HTTP_DECODER, "id=%p " text, (decoder)->logging_id, __VA_ARGS__)
 #define DECODER_LOG(level, decoder, text) DECODER_LOGF(level, decoder, "%s", text)
 
 #define DECODER_CALL_VTABLE(decoder, fn)                                                                               \
     do {                                                                                                               \
         if ((decoder)->vtable.fn) {                                                                                    \
+            DECODER_LOG(DEBUG, decoder, "Calling user callback " #fn)                                                  \
             (decoder)->vtable.fn((decoder)->userdata);                                                                 \
         }                                                                                                              \
     } while (false)
 #define DECODER_CALL_VTABLE_ARGS(decoder, fn, ...)                                                                     \
     do {                                                                                                               \
         if ((decoder)->vtable.fn) {                                                                                    \
+            DECODER_LOG(DEBUG, decoder, "Calling user callback " #fn)                                                  \
             (decoder)->vtable.fn(__VA_ARGS__, (decoder)->userdata);                                                    \
         }                                                                                                              \
     } while (false)
@@ -230,11 +232,16 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
         if (!decoder->scratch.len && data->len >= bytes_required) {
             /* Easy case, there is no scratch and we have enough data, so just send it to the state */
 
-            /* Root state to run, not used for anything, but can be useful for debugging */
             const char *current_state_name = decoder->state.name;
-            (void)current_state_name;
             const size_t pre_state_data_len = data->len;
             (void)pre_state_data_len;
+
+            DECODER_LOGF(
+                TRACE,
+                decoder,
+                "Skipping scratch and running state %s with %zu bytes available",
+                current_state_name,
+                data->len);
 
             err = decoder->state.fn(decoder, data);
             if (err) {
@@ -263,11 +270,13 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                 (void)succ;
             }
 
+            /* Root state to run, not used for anything, but can be useful for debugging */
+            const char *current_state_name = decoder->state.name;
+
             /* If we have the correct number of bytes, call the state */
             if (will_finish_state) {
-                /* Root state to run, not used for anything, but can be useful for debugging */
-                const char *current_state_name = decoder->state.name;
-                (void)current_state_name;
+
+                DECODER_LOGF(TRACE, decoder, "Enough bytes now available, running state %s", current_state_name);
 
                 struct aws_byte_cursor state_data = aws_byte_cursor_from_buf(&decoder->scratch);
                 err = decoder->state.fn(decoder, &state_data);
@@ -276,6 +285,14 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                 }
 
                 AWS_ASSERT(state_data.len == 0 && "Decoder state requested more data than it used");
+            } else {
+                DECODER_LOGF(
+                    TRACE,
+                    decoder,
+                    "State %s requires %" PRIu32 " bytes, but only %zu available, trying again later",
+                    current_state_name,
+                    bytes_required,
+                    decoder->scratch.len);
             }
         }
     }
@@ -292,7 +309,6 @@ void aws_h2_decoder_set_logging_id(struct aws_h2_decoder *decoder, void *id) {
 }
 
 /* Wrap hpack functions to do payload length checks */
-
 static enum aws_hpack_decode_status s_decode_integer(
     struct aws_h2_decoder *decoder,
     struct aws_byte_cursor *input,
@@ -320,7 +336,6 @@ static enum aws_hpack_decode_status s_decode_integer(
 
     return status;
 }
-
 static enum aws_hpack_decode_status s_decode_string(
     struct aws_h2_decoder *decoder,
     struct aws_byte_cursor *input,
@@ -837,6 +852,8 @@ static int s_state_fn_headers_begin(struct aws_h2_decoder *decoder, struct aws_b
     /* If we're out of payload data, handle frame complete */
     if (decoder->frame_in_progress.payload_len == 0) {
 
+        DECODER_LOG(TRACE, decoder, "Done decoding header block");
+
         /* Hollaback if this is the last HEADERS frame */
         if (decoder->frame_in_progress.end_headers) {
             DECODER_CALL_VTABLE_STREAM(decoder, on_end_headers);
@@ -846,6 +863,12 @@ static int s_state_fn_headers_begin(struct aws_h2_decoder *decoder, struct aws_b
         s_decoder_set_state(decoder, &s_state_padding);
         return AWS_OP_SUCCESS;
     }
+
+    DECODER_LOGF(
+        TRACE,
+        decoder,
+        "Decoding header, %" PRIu32 " bytes remaining in payload",
+        decoder->frame_in_progress.payload_len);
 
     /* Consts for decoding header blocks */
     static const uint8_t s_indexed_header_field_mask = 1 << 7;
@@ -1075,6 +1098,8 @@ static int s_state_fn_headers_dyn_table_resize(struct aws_h2_decoder *decoder, s
                 aws_error_debug_str(aws_last_error()));
             return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
     }
+
+    DECODER_LOGF(INFO, decoder, "Resizing dynamic table to %" PRIu64, *new_size);
 
     if (aws_hpack_resize_dynamic_table(decoder->hpack, (size_t)*new_size)) {
         if (aws_last_error() == AWS_ERROR_INVALID_ARGUMENT) {

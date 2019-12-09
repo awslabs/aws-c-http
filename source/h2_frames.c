@@ -20,6 +20,10 @@
 
 #include <aws/compression/huffman.h>
 
+#include <aws/common/logging.h>
+
+#include <inttypes.h>
+
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 static const uint32_t s_u32_top_bit_mask = UINT32_MAX << 31;
@@ -192,6 +196,8 @@ int aws_h2_frame_header_block_encode(
     AWS_PRECONDITION(output);
 
     const size_t num_headers = aws_array_list_length(&header_block->header_fields);
+    AWS_LOGF(AWS_LL_TRACE, AWS_LS_HTTP_FRAMES, "Encoding header block with %zu headers", num_headers);
+
     for (size_t i = 0; i < num_headers; ++i) {
 
         const struct aws_h2_frame_header_field *field = NULL;
@@ -228,6 +234,8 @@ int aws_h2_frame_header_block_encode(
             }
         }
 
+        const size_t before_len = output->len;
+
         /* Write the top bits to signal representation */
         output->buffer[output->len] = mask;
 
@@ -261,6 +269,9 @@ int aws_h2_frame_header_block_encode(
                 aws_hpack_insert_header(encoder->hpack, &field->header);
             }
         }
+
+        const size_t encoded_bytes = output->len - before_len;
+        AWS_LOGF(AWS_LL_TRACE, AWS_LS_HTTP_FRAMES, "Encoded header %zu as %zu bytes", i, encoded_bytes);
     }
 
     return AWS_OP_SUCCESS;
@@ -270,6 +281,8 @@ int aws_h2_frame_header_block_decode(
     struct aws_h2_frame_decoder *decoder) {
     AWS_PRECONDITION(header_block);
     AWS_PRECONDITION(decoder);
+
+    AWS_LOGF(AWS_LL_TRACE, AWS_LS_HTTP_FRAMES, "Decoding header block");
 
     /* Don't need to call init, frames will have done that */
 
@@ -387,6 +400,15 @@ static int s_frame_header_encode(
     struct aws_byte_buf *output) {
     AWS_PRECONDITION(header);
     AWS_PRECONDITION(output);
+
+    AWS_LOGF(
+        AWS_LL_TRACE,
+        AWS_LS_HTTP_FRAMES,
+        "Beginning encode of frame %s: stream: %" PRIu32 " payload length: %zu flags: %" PRIu8,
+        aws_h2_frame_type_to_str(header->type),
+        header->stream_id,
+        length,
+        flags);
 
     /* Length must fit in 24 bits */
     if (length > 0x00FFFFFF) {

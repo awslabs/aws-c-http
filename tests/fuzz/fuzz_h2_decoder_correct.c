@@ -21,8 +21,27 @@
 #include <aws/http/private/h2_decoder.h>
 #include <aws/http/private/h2_frames.h>
 
+#include <inttypes.h>
+
 static const uint32_t FRAME_HEADER_SIZE = 3 + 1 + 1 + 4;
 static const uint32_t MAX_PAYLOAD_SIZE = 16384;
+
+static struct { uint64_t headers_decoded; } fuzz_state;
+
+static int s_on_header(
+    uint32_t stream_id,
+    const struct aws_http_header *header,
+    enum aws_h2_header_field_hpack_behavior hpack_behavior,
+    void *userdata) {
+    (void)stream_id;
+    (void)header;
+    (void)hpack_behavior;
+    (void)userdata;
+
+    AWS_LOGF_INFO(AWS_LS_HTTP_GENERAL, "Decoded header %" PRIu64, fuzz_state.headers_decoded++);
+
+    return AWS_OP_SUCCESS;
+}
 
 static void s_generate_header_block(struct aws_byte_cursor *input, struct aws_h2_frame_header_block *header_block) {
 
@@ -83,6 +102,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         return 0;
     }
 
+    AWS_ZERO_STRUCT(fuzz_state);
+
     /* Setup allocator and parameters */
     struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), NULL, AWS_MEMTRACE_BYTES, 0);
     struct aws_byte_cursor input = aws_byte_cursor_from_array(data, size);
@@ -106,6 +127,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     /* Create the decoder */
     struct aws_h2_decoder_params decoder_params = {
         .alloc = allocator,
+        .vtable = {
+            .on_header = s_on_header,
+        },
     };
     struct aws_h2_decoder *decoder = aws_h2_decoder_new(&decoder_params);
 
