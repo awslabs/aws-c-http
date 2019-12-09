@@ -313,7 +313,7 @@ int aws_h2_frame_header_block_decode(
                 payload_len_prefix = 4;
             } else {
                 field.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_SAVE;
-                payload_len_prefix = 5;
+                payload_len_prefix = 4;
             }
 
             uint64_t index = 0;

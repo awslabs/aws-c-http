@@ -869,7 +869,7 @@ static int s_state_fn_headers_begin(struct aws_h2_decoder *decoder, struct aws_b
             decoder->header_in_progress.literal.payload_len_prefix = 4;
         } else {
             decoder->header_in_progress.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_SAVE;
-            decoder->header_in_progress.literal.payload_len_prefix = 5;
+            decoder->header_in_progress.literal.payload_len_prefix = 4;
         }
 
         /* Process header data */
