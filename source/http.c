@@ -129,11 +129,15 @@ static struct aws_error_info_list s_error_list = {
 static struct aws_log_subject_info s_log_subject_infos[] = {
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_GENERAL, "http", "Misc HTTP logging"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION, "http-connection", "HTTP client or server connection"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_ENCODER, "http-encoder", "HTTP data encoder"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_DECODER, "http-decoder", "HTTP data decoder"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_SERVER, "http-server", "HTTP server socket listening for incoming connections"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_STREAM, "http-stream", "HTTP request-response exchange"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "connection-manager", "HTTP connection manager"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET, "websocket", "Websocket"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET_SETUP, "websocket-setup", "Websocket setup"),
+
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_FRAMES, "http-frames", "HTTP frame library"),
 };
 
 static struct aws_log_subject_info_list s_log_subject_list = {

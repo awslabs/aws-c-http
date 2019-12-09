@@ -57,11 +57,15 @@ enum aws_http_errors {
 enum aws_http_log_subject {
     AWS_LS_HTTP_GENERAL = 0x800,
     AWS_LS_HTTP_CONNECTION,
+    AWS_LS_HTTP_ENCODER,
+    AWS_LS_HTTP_DECODER,
     AWS_LS_HTTP_SERVER,
     AWS_LS_HTTP_STREAM,
     AWS_LS_HTTP_CONNECTION_MANAGER,
     AWS_LS_HTTP_WEBSOCKET,
     AWS_LS_HTTP_WEBSOCKET_SETUP,
+
+    AWS_LS_HTTP_FRAMES,
 };
 
 enum aws_http_version {
