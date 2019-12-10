@@ -74,6 +74,7 @@ struct tester {
     int server_connection_is_shutdown;
     int wait_client_connection_is_shutdown;
     int wait_server_connection_is_shutdown;
+    bool client_bootstrap_is_shutdown;
 
     bool server_is_shutdown;
     struct aws_http_connection *new_client_connection;
@@ -186,6 +187,15 @@ static void s_tester_on_client_connection_shutdown(
     AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
     aws_condition_variable_notify_one(&tester->wait_cvar);
 }
+static void s_tester_on_client_bootstrap_shutdown(void *user_data) {
+    struct tester *tester = user_data;
+    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
+
+    tester->client_bootstrap_is_shutdown = true;
+
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
+    aws_condition_variable_notify_one(&tester->wait_cvar);
+}
 
 static int s_tester_wait(struct tester *tester, bool (*pred)(void *user_data)) {
     int local_wait_result;
@@ -228,6 +238,11 @@ static bool s_tester_connection_shutdown_pred(void *user_data) {
 static bool s_tester_server_shutdown_pred(void *user_data) {
     struct tester *tester = user_data;
     return tester->server_is_shutdown;
+}
+
+static bool s_tester_client_bootstrap_shutdown_pred(void *user_data) {
+    struct tester *tester = user_data;
+    return tester->client_bootstrap_is_shutdown;
 }
 
 static int s_tester_init(struct tester *tester, const struct tester_options *options) {
@@ -289,8 +304,13 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
         return AWS_OP_SUCCESS;
     }
 
-    tester->client_bootstrap =
-        aws_client_bootstrap_new(tester->alloc, &tester->event_loop_group, &tester->host_resolver, NULL);
+    struct aws_client_bootstrap_options bootstrap_options = {
+        .event_loop_group = &tester->event_loop_group,
+        .host_resolver = &tester->host_resolver,
+        .on_shutdown_complete = s_tester_on_client_bootstrap_shutdown,
+        .user_data = tester,
+    };
+    tester->client_bootstrap = aws_client_bootstrap_new(tester->alloc, &bootstrap_options);
     ASSERT_NOT_NULL(tester->client_bootstrap);
 
     /* Connect */
@@ -377,6 +397,7 @@ static int s_test_connection_setup_shutdown(struct aws_allocator *allocator, voi
     ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
 
     aws_client_bootstrap_release(tester.client_bootstrap);
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_client_bootstrap_shutdown_pred));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -403,6 +424,7 @@ static int s_test_connection_destroy_server_with_connection_existing(struct aws_
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
     aws_client_bootstrap_release(tester.client_bootstrap);
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_client_bootstrap_shutdown_pred));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -445,7 +467,10 @@ static int s_test_connection_destroy_server_with_multiple_connections_existing(
     /* release memory */
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
+
     aws_client_bootstrap_release(tester.client_bootstrap);
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_client_bootstrap_shutdown_pred));
+
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
@@ -541,8 +566,11 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
     aws_task_init(server_block_task, s_block_task, &tester, "wait_a_bit");
     aws_event_loop_schedule_task_now(server_eventloop, server_block_task);
 
-    struct aws_client_bootstrap *bootstrap =
-        aws_client_bootstrap_new(allocator, &event_loop_group, &tester.host_resolver, NULL);
+    struct aws_client_bootstrap_options bootstrap_options = {
+        .event_loop_group = &event_loop_group,
+        .host_resolver = &tester.host_resolver,
+    };
+    struct aws_client_bootstrap *bootstrap = aws_client_bootstrap_new(allocator, &bootstrap_options);
     struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
     client_options.allocator = tester.alloc;
     client_options.bootstrap = bootstrap;
@@ -580,8 +608,9 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
     /* release memory */
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
-    aws_client_bootstrap_release(tester.client_bootstrap);
     aws_client_bootstrap_release(bootstrap);
+    aws_client_bootstrap_release(tester.client_bootstrap);
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_client_bootstrap_shutdown_pred));
     aws_event_loop_group_clean_up(&event_loop_group);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
 

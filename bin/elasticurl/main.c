@@ -72,6 +72,7 @@ struct elasticurl_ctx {
     const char *trace_file;
     enum aws_log_level log_level;
     bool exchange_completed;
+    bool bootstrap_shutdown_completed;
 };
 
 static void s_usage(int exit_code) {
@@ -525,6 +526,20 @@ static bool s_completion_predicate(void *arg) {
     return app_ctx->exchange_completed;
 }
 
+static void s_bootstrap_on_shutdown(void *user_data) {
+    struct elasticurl_ctx *app_ctx = user_data;
+
+    aws_mutex_lock(&app_ctx->mutex);
+    app_ctx->bootstrap_shutdown_completed = true;
+    aws_mutex_unlock(&app_ctx->mutex);
+    aws_condition_variable_notify_all(&app_ctx->c_var);
+}
+
+static bool s_bootstrap_shutdown_predicate(void *arg) {
+    struct elasticurl_ctx *app_ctx = arg;
+    return app_ctx->bootstrap_shutdown_completed;
+}
+
 int main(int argc, char **argv) {
     struct aws_allocator *allocator = aws_default_allocator();
 
@@ -664,7 +679,13 @@ int main(int argc, char **argv) {
     struct aws_host_resolver resolver;
     aws_host_resolver_init_default(&resolver, allocator, 8, &el_group);
 
-    struct aws_client_bootstrap *bootstrap = aws_client_bootstrap_new(allocator, &el_group, &resolver, NULL);
+    struct aws_client_bootstrap_options bootstrap_options = {
+        .event_loop_group = &el_group,
+        .host_resolver = &resolver,
+        .on_shutdown_complete = s_bootstrap_on_shutdown,
+        .user_data = &app_ctx,
+    };
+    struct aws_client_bootstrap *bootstrap = aws_client_bootstrap_new(allocator, &bootstrap_options);
 
     struct aws_socket_options socket_options = {
         .type = AWS_SOCKET_STREAM,
@@ -691,8 +712,13 @@ int main(int argc, char **argv) {
     aws_http_client_connect(&http_client_options);
     aws_mutex_lock(&app_ctx.mutex);
     aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_completion_predicate, &app_ctx);
+    aws_mutex_unlock(&app_ctx.mutex);
 
     aws_client_bootstrap_release(bootstrap);
+    aws_mutex_lock(&app_ctx.mutex);
+    aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_bootstrap_shutdown_predicate, &app_ctx);
+    aws_mutex_unlock(&app_ctx.mutex);
+
     aws_host_resolver_clean_up(&resolver);
     aws_event_loop_group_clean_up(&el_group);
 
