@@ -73,6 +73,7 @@ struct proxy_tester {
     struct testing_channel *testing_channel;
 
     bool client_connection_is_shutdown;
+    bool client_bootstrap_is_shutdown;
 
     /* If we need to wait for some async process*/
     struct aws_mutex wait_lock;
@@ -104,6 +105,8 @@ void proxy_tester_on_client_connection_shutdown(
     struct aws_http_connection *connection,
     int error_code,
     void *user_data);
+
+void proxy_tester_on_client_bootstrap_shutdown(void *user_data);
 
 int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester);
 
