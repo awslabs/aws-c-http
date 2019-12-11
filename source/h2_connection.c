@@ -82,8 +82,8 @@ static struct aws_h2_connection *s_connection_new(
     /* Create a new decoder */
     struct aws_h2_decoder_params params = {
         .alloc = alloc,
-        .user_data = connection,
         .vtable = s_h2_decoder_vtable,
+        .userdata = connection,
     };
     connection->thread_data.decoder = aws_h2_decoder_new(&params);
 

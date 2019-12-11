@@ -46,7 +46,6 @@ struct aws_h2_decoder_vtable {
  */
 struct aws_h2_decoder_params {
     struct aws_allocator *alloc;
-    void *user_data;
     struct aws_h2_decoder_vtable vtable;
     void *userdata;
 };
