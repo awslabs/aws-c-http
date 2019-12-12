@@ -12,7 +12,6 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
 #include <aws/testing/aws_test_harness.h>
 
 #include <aws/http/private/h2_frames.h>
@@ -29,8 +28,6 @@ struct frame_test_fixture;
 typedef int(frame_init_fn)(struct frame_test_fixture *);
 /* Function used to tear down frame instances */
 typedef int(frame_clean_up_fn)(void *);
-/* Function used to encode a frame (this should be set to a function from h2_frames.h) */
-typedef int(frame_encode_fn)(void *, struct aws_h2_frame_encoder *, struct aws_byte_buf *);
 /* Function used to check if two frames are equal */
 typedef bool(frame_eq_fn)(const void *, const void *, size_t);
 
@@ -54,7 +51,6 @@ struct frame_test_fixture {
     enum aws_h2_frame_type type;
     size_t size;
     frame_init_fn *init;
-    frame_encode_fn *encode;
     int (*decode)(struct frame_test_fixture *);
     frame_clean_up_fn *frame_clean_up;
     frame_init_fn *teardown;
@@ -107,7 +103,7 @@ static int s_frame_test_run(struct aws_allocator *allocator, void *ctx) {
     ASSERT_SUCCESS(aws_byte_buf_init(&output_buffer, allocator, S_BUFFER_SIZE));
 
     /* Encode the frame */
-    ASSERT_SUCCESS(fixture->encode(fixture->in_frame, &fixture->encoder, &output_buffer));
+    ASSERT_SUCCESS(aws_h2_frame_encode(fixture->in_frame, &fixture->encoder, &output_buffer));
 
     /* Compare the buffers */
     ASSERT_BIN_ARRAYS_EQUALS(fixture->buffer.buffer, fixture->buffer.len, output_buffer.buffer, output_buffer.len);
@@ -162,7 +158,6 @@ static void s_frame_test_after(struct aws_allocator *allocator, void *ctx) {
         .type = AWS_H2_FRAME_T_##e_type,                                                                               \
         .size = sizeof(struct aws_h2_frame_##s_name),                                                                  \
         .init = (i),                                                                                                   \
-        .encode = (frame_encode_fn *)&aws_h2_frame_##s_name##_encode,                                                  \
         .decode = s_h2_frame_##t_name##_decode,                                                                        \
         .frame_clean_up = (frame_clean_up_fn *)aws_h2_frame_##s_name##_clean_up,                                       \
         .teardown = (t),                                                                                               \

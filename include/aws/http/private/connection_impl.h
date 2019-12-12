@@ -57,6 +57,8 @@ struct aws_http_connection_system_vtable {
 struct aws_http_connection_vtable {
     struct aws_channel_handler_vtable channel_handler_vtable;
 
+    int (*on_setup)(struct aws_http_connection *connection);
+
     struct aws_http_stream *(*make_request)(
         struct aws_http_connection *client_connection,
         const struct aws_http_make_request_options *options);

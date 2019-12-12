@@ -15,11 +15,12 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
 #include <aws/http/private/h2_frames.h>
 #include <aws/http/private/request_response_impl.h>
 
 #include <aws/common/mutex.h>
+
+struct aws_h2_connection;
 
 enum aws_h2_stream_state {
     AWS_H2_STREAM_STATE_IDLE,
@@ -35,6 +36,8 @@ enum aws_h2_stream_state {
 
 struct aws_h2_stream {
     struct aws_http_stream base;
+
+    struct aws_linked_list_node node;
 
     const uint32_t id;
 
@@ -60,8 +63,9 @@ AWS_HTTP_API
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);
 
 AWS_HTTP_API
-struct aws_h2_stream *aws_h1_stream_new_request(
-    struct aws_http_connection *client_connection,
+struct aws_h2_stream *aws_h2_stream_new_request(
+    struct aws_h2_connection *client_connection,
+    uint32_t id,
     const struct aws_http_make_request_options *options);
 
 AWS_HTTP_API

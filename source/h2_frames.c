@@ -12,7 +12,6 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
 #include <aws/http/private/h2_frames.h>
 #include <aws/http/private/hpack.h>
 
@@ -55,6 +54,25 @@ const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type) {
             return "WINDOW_UPDATE";
         case AWS_H2_FRAME_T_CONTINUATION:
             return "CONTINUATION";
+        default:
+            return "**UNKOWN**";
+    }
+}
+
+const char *aws_h2_settings_to_str(enum aws_h2_settings setting) {
+    switch (setting) {
+        case AWS_H2_SETTINGS_HEADER_TABLE_SIZE:
+            return "HEADER_TABLE_SIZE";
+        case AWS_H2_SETTINGS_ENABLE_PUSH:
+            return "ENABLE_PUSH";
+        case AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS:
+            return "MAX_CONCURRENT_STREAMS";
+        case AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE:
+            return "INITIAL_WINDOW_SIZE";
+        case AWS_H2_SETTINGS_MAX_FRAME_SIZE:
+            return "MAX_FRAME_SIZE";
+        case AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE:
+            return "MAX_HEADER_LIST_SIZE";
         default:
             return "**UNKOWN**";
     }
@@ -1663,4 +1681,46 @@ int aws_h2_frame_continuation_decode(struct aws_h2_frame_continuation *frame, st
 compression_error:
     *decoder = decoder_init;
     return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
+}
+
+/***********************************************************************************************************************
+ * Generic
+ **********************************************************************************************************************/
+int aws_h2_frame_encode(
+    struct aws_h2_frame_header *frame,
+    struct aws_h2_frame_encoder *encoder,
+    struct aws_byte_buf *output) {
+
+#define ENCODE_FRAME(upcase, downcase)                                                                                 \
+    case AWS_H2_FRAME_T_##upcase: {                                                                                    \
+        struct aws_h2_frame_##downcase *super_frame = AWS_CONTAINER_OF(frame, struct aws_h2_frame_##downcase, header); \
+        return aws_h2_frame_##downcase##_encode(super_frame, encoder, output);                                         \
+    }
+
+    switch (frame->type) {
+        AWS_H2_FRAME_T_FOREACH(ENCODE_FRAME)
+
+        default:
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+
+#undef ENCODE_FRAME
+}
+
+void aws_h2_frame_clean_up(struct aws_h2_frame_header *frame) {
+
+#define CLEAN_UP_FRAME(upcase, downcase)                                                                               \
+    case AWS_H2_FRAME_T_##upcase: {                                                                                    \
+        struct aws_h2_frame_##downcase *super_frame = AWS_CONTAINER_OF(frame, struct aws_h2_frame_##downcase, header); \
+        aws_h2_frame_##downcase##_clean_up(super_frame);                                                               \
+    }
+
+    switch (frame->type) {
+        AWS_H2_FRAME_T_FOREACH(CLEAN_UP_FRAME)
+
+        default:
+            return;
+    }
+
+#undef CLEAN_UP_FRAME
 }

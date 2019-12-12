@@ -12,7 +12,6 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
 #include <aws/http/private/h2_stream.h>
 
 #include <aws/http/private/h2_connection.h>
@@ -99,7 +98,7 @@ static int s_h2_stream_handle_data(struct aws_h2_stream *stream, struct aws_h2_f
     stream->base.on_incoming_body(&stream->base, &frame.data, stream->base.user_data);
 
     if (!stream->base.manual_window_management) {
-        /* Increment read window */
+        /* #TODO Increment read window */
     }
 
     return AWS_OP_SUCCESS;
@@ -122,7 +121,7 @@ static int s_h2_stream_handle_headers(struct aws_h2_stream *stream, struct aws_h
 
     if (frame.end_headers) {
         STREAM_LOG(DEBUG, stream, "HEADERS frame is self-containing, calling header_block_done");
-        stream->base.on_incoming_header_block_done(&stream->base, false, stream->base.user_data);
+        stream->base.on_incoming_header_block_done(&stream->base, AWS_HTTP_HEADER_BLOCK_MAIN, stream->base.user_data);
     } else {
         STREAM_LOG(DEBUG, stream, "HEADERS frame does not have END_HEADERS set, expecting following CONTINUATION");
         stream->thread_data.expects_continuation = true;
@@ -372,23 +371,23 @@ static int (*s_state_handlers[])(struct aws_h2_stream *, struct aws_h2_frame_dec
  * Public API
  **********************************************************************************************************************/
 
-struct aws_h2_stream *aws_h2_stream_new(
-    struct aws_http_connection *client_connection,
+struct aws_h2_stream *aws_h2_stream_new_request(
+    struct aws_h2_connection *client_connection,
+    uint32_t id,
     const struct aws_http_make_request_options *options) {
     AWS_PRECONDITION(client_connection);
     AWS_PRECONDITION(options);
+    AWS_PRECONDITION(options->request!= NULL);
 
-    struct aws_h2_connection *connection = AWS_CONTAINER_OF(client_connection, struct aws_h2_connection, base);
-
-    struct aws_h2_stream *stream = aws_mem_calloc(client_connection->alloc, 1, sizeof(struct aws_h2_stream));
+    struct aws_h2_stream *stream = aws_mem_calloc(client_connection->base.alloc, 1, sizeof(struct aws_h2_stream));
     if (!stream) {
         return NULL;
     }
 
     /* Initialize base stream */
     stream->base.vtable = &s_h2_stream_vtable;
-    stream->base.alloc = client_connection->alloc;
-    stream->base.owning_connection = client_connection;
+    stream->base.alloc = client_connection->base.alloc;
+    stream->base.owning_connection = &client_connection->base;
     stream->base.user_data = options->user_data;
     stream->base.on_incoming_headers = options->on_response_headers;
     stream->base.on_incoming_header_block_done = options->on_response_header_block_done;
@@ -399,7 +398,7 @@ struct aws_h2_stream *aws_h2_stream_new(
     aws_atomic_init_int(&stream->base.refcount, 2);
 
     /* Init H2 specific stuff */
-    *((uint32_t *)&stream->id) = aws_h2_connection_get_next_stream_id(connection);
+    *((uint32_t *)&stream->id) = id;
     s_h2_stream_set_state(stream, AWS_H2_STREAM_STATE_IDLE);
 
     STREAM_LOG(DEBUG, stream, "Created stream");

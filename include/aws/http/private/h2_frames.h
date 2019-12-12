@@ -36,6 +36,19 @@ enum aws_h2_frame_type {
     AWS_H2_FRAME_T_UNKNOWN,
 };
 
+/* Call X for each frame type with it's uppercase and lowercase names */
+#define AWS_H2_FRAME_T_FOREACH(X)                                                                                      \
+    X(DATA, data)                                                                                                      \
+    X(HEADERS, headers)                                                                                                \
+    X(PRIORITY, priority)                                                                                              \
+    X(RST_STREAM, rst_stream)                                                                                          \
+    X(SETTINGS, settings)                                                                                              \
+    X(PUSH_PROMISE, push_promise)                                                                                      \
+    X(PING, ping)                                                                                                      \
+    X(GOAWAY, goaway)                                                                                                  \
+    X(WINDOW_UPDATE, window_update)                                                                                    \
+    X(CONTINUATION, continuation)
+
 /* Represents flags that may be set on a frame (RFC-7540 6) */
 enum aws_h2_frame_flag {
     AWS_H2_FRAME_F_ACK = 0x01,
@@ -256,6 +269,9 @@ AWS_EXTERN_C_BEGIN
 AWS_HTTP_API
 const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type);
 
+AWS_HTTP_API
+const char *aws_h2_settings_to_str(enum aws_h2_settings setting);
+
 /* Internal methods exposed for testing purposes only */
 AWS_HTTP_API
 int aws_h2_frame_header_block_init(struct aws_h2_frame_header_block *header_block, struct aws_allocator *allocator);
@@ -425,6 +441,17 @@ int aws_h2_frame_continuation_encode(
     struct aws_byte_buf *output);
 AWS_HTTP_API
 int aws_h2_frame_continuation_decode(struct aws_h2_frame_continuation *frame, struct aws_h2_frame_decoder *decoder);
+
+/* Generic function for encoding a frame of unknown type */
+AWS_HTTP_API
+int aws_h2_frame_encode(
+    struct aws_h2_frame_header *frame,
+    struct aws_h2_frame_encoder *encoder,
+    struct aws_byte_buf *output);
+
+/* Generic function for cleaning up a frame of unknown type */
+AWS_HTTP_API
+void aws_h2_frame_clean_up(struct aws_h2_frame_header *frame);
 
 AWS_EXTERN_C_END
 

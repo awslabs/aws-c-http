@@ -20,13 +20,27 @@
 #include <aws/common/mutex.h>
 
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/private/h2_frames.h>
 
 struct aws_h2_connection {
     struct aws_http_connection base;
 
+    /* Single task used for moving new streams to the outgoing_requests list */
+    struct aws_channel_task new_stream_task;
+
+    /* Single task used repeatedly for sending data from streams */
+    struct aws_channel_task run_encoder_task;
+
     /* Only the event-loop thread may touch this data */
     struct {
         struct aws_h2_decoder *decoder;
+        struct aws_h2_encoder *encoder;
+
+        /* uint32_t -> aws_h2_stream * */
+        struct aws_hash_table streams;
+
+        /* Outgoing request queue */
+        struct aws_linked_list outgoing_requests;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
@@ -35,8 +49,18 @@ struct aws_h2_connection {
 
         /* Refers to the next stream id to vend */
         uint32_t next_stream_id;
+
+        /* New streams that have not been moved to streams yet */
+        struct aws_linked_list pending_stream_list;
+
+        /* queued_frame */
+        struct aws_linked_list frame_queue;
+
+        bool encode_task_in_progress;
     } synced_data;
 };
+
+typedef void aws_h2_frame_complete_fn(struct aws_h2_frame_header *frame, int error_code, void *userdata);
 
 AWS_EXTERN_C_BEGIN
 
@@ -50,8 +74,13 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
     size_t initial_window_size);
 
+/* Queue a frame to be written */
 AWS_HTTP_API
-uint32_t aws_h2_connection_get_next_stream_id(struct aws_h2_connection *connection);
+int aws_h2_connection_queue_frame(
+    struct aws_h2_connection *connection,
+    struct aws_h2_frame_header *frame,
+    aws_h2_frame_complete_fn *on_complete,
+    void *userdata);
 
 AWS_EXTERN_C_END
 

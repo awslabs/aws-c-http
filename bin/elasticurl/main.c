@@ -644,7 +644,7 @@ int main(int argc, char **argv) {
         }
 
         /* "h2;http/1.1", add this back when we have h2 support */
-        if (aws_tls_ctx_options_set_alpn_list(&tls_ctx_options, "http/1.1")) {
+        if (aws_tls_ctx_options_set_alpn_list(&tls_ctx_options, "h2;http/1.1")) {
             fprintf(stderr, "Failed to load alpn list with error %s.", aws_error_debug_str(aws_last_error()));
             exit(1);
         }

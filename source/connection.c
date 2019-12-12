@@ -149,7 +149,6 @@ static struct aws_http_connection *s_connection_new(
             }
             break;
         case AWS_HTTP_VERSION_2:
-            AWS_FATAL_ASSERT(false && "H2 is not currently supported"); /* lol nice try */
             if (is_server) {
                 connection = aws_http_connection_new_http2_server(alloc, initial_window_size);
             } else {
@@ -196,6 +195,13 @@ static struct aws_http_connection *s_connection_new(
     /* Success! Acquire a hold on the channel to prevent its destruction until the user has
      * given the go-ahead via aws_http_connection_release() */
     aws_channel_acquire_hold(channel);
+
+    if (connection->vtable->on_setup) {
+        err = connection->vtable->on_setup(connection);
+        if (err) {
+            goto error;
+        }
+    }
 
     return connection;
 

@@ -21,6 +21,11 @@
 
 struct aws_h2_decoder_vtable {
 
+    /* Notifications, optional */
+
+    int (*on_begin_frame)(uint32_t stream_id, enum aws_h2_frame_type type, void *userdata);
+    int (*on_end_frame)(uint32_t stream_id, enum aws_h2_frame_type type, void *userdata);
+
     int (*on_header)(
         uint32_t stream_id,
         const struct aws_http_header *header,
@@ -39,6 +44,10 @@ struct aws_h2_decoder_vtable {
     int (*on_settings_ack)(void *userdata);
     int (*on_goaway)(uint32_t last_stream, uint32_t error_code, uint32_t debug_data_length, void *userdata);
     int (*on_goaway_debug_data)(const struct aws_byte_cursor *data, void *userdata);
+
+    /* Functionality, required */
+
+    int (*do_send_settings_ack)(void *userdata);
 };
 
 /**
