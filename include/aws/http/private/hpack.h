@@ -15,7 +15,6 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
 #include <aws/http/http.h>
 
 struct aws_byte_buf;
@@ -41,13 +40,21 @@ void aws_hpack_static_table_clean_up(void);
 
 /* General HPACK API */
 AWS_HTTP_API
-struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator);
+struct aws_hpack_context *aws_hpack_context_new(
+    struct aws_allocator *allocator,
+    enum aws_http_log_subject log_subject,
+    void *log_id);
+
 AWS_HTTP_API
 void aws_hpack_context_destroy(struct aws_hpack_context *context);
 
 /* Resets ongoing decode state */
 AWS_HTTP_API
 void aws_hpack_context_reset_decode(struct aws_hpack_context *context);
+
+/* Returns the hpack size of a header (name.len + value.len + 32) [4.1] */
+AWS_HTTP_API
+size_t aws_hpack_get_header_size(const struct aws_http_header *header);
 
 AWS_HTTP_API
 const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_context *context, size_t index);
@@ -61,8 +68,11 @@ size_t aws_hpack_find_index(
 AWS_HTTP_API
 int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_http_header *header);
 
+/**
+ * Set the max size of the dynamic table (in octets). The size of each header is name.len + value.len + 32 [4.1].
+ */
 AWS_HTTP_API
-int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new_max_elements);
+int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new_max_size);
 
 /* Public for testing purposes */
 AWS_HTTP_API

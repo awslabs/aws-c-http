@@ -12,7 +12,6 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
 #include <aws/testing/aws_test_harness.h>
 
 #include <aws/http/private/hpack.h>
@@ -118,7 +117,7 @@ static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx)
     /* Test encoding integers
        Test cases taken from https://httpwg.org/specs/rfc7541.html#integer.representation.examples */
 
-    struct aws_hpack_context *hpack = aws_hpack_context_new(allocator);
+    struct aws_hpack_context *hpack = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(hpack);
     ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(hpack, 0));
 
@@ -245,7 +244,7 @@ static int test_hpack_static_table_find(struct aws_allocator *allocator, void *c
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
     ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0));
 
@@ -279,7 +278,7 @@ static int test_hpack_static_table_get(struct aws_allocator *allocator, void *ct
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
     ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0));
 
@@ -312,9 +311,8 @@ static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 2));
 
     bool found_value = false;
 
@@ -338,16 +336,20 @@ static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *
     ASSERT_UINT_EQUALS(63, aws_hpack_find_index(context, &s_herp2, &found_value));
     ASSERT_FALSE(found_value);
 
+    /* Test resizing up doesn't break anything */
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 8 * 1024 * 1024));
+
     /* Check invalid header */
     DEFINE_STATIC_HEADER(s_garbage, "colden's mother's maiden name", "nice try mr hacker");
     ASSERT_UINT_EQUALS(0, aws_hpack_find_index(context, &s_garbage, &found_value));
 
-    /* Test resizing */
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 1));
+    /* Test resizing so only the first element stays */
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, aws_hpack_get_header_size(&s_fizz)));
 
     ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &s_fizz, &found_value));
     ASSERT_TRUE(found_value);
     ASSERT_UINT_EQUALS(0, aws_hpack_find_index(context, &s_herp, &found_value));
+    ASSERT_FALSE(found_value);
 
     aws_hpack_context_destroy(context);
     aws_hpack_static_table_clean_up();
@@ -359,15 +361,18 @@ static int test_hpack_dynamic_table_get(struct aws_allocator *allocator, void *c
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 2));
 
     const struct aws_http_header *found = NULL;
 
     DEFINE_STATIC_HEADER(s_herp, "herp", "derp");
     DEFINE_STATIC_HEADER(s_fizz, "fizz", "buzz");
     DEFINE_STATIC_HEADER(s_status, ":status", "418");
+
+    /* Make the dynamic table only big enough for 2 headers */
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(
+        context, aws_hpack_get_header_size(&s_fizz) + aws_hpack_get_header_size(&s_status)));
 
     ASSERT_SUCCESS(aws_hpack_insert_header(context, &s_herp));
     found = aws_hpack_get_header(context, 62);
@@ -398,8 +403,8 @@ static int test_hpack_dynamic_table_get(struct aws_allocator *allocator, void *c
     found = aws_hpack_get_header(context, 64);
     ASSERT_NULL(found);
 
-    /* Test resizing */
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 1));
+    /* Test resizing to evict entries */
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, aws_hpack_get_header_size(&s_status)));
 
     found = aws_hpack_get_header(context, 62);
     ASSERT_NOT_NULL(found);
