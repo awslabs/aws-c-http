@@ -12,7 +12,6 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
 #include <aws/http/private/hpack.h>
 
 #include <aws/http/request_response.h>
@@ -25,8 +24,12 @@
 
 /* RFC-7540 6.5.2 */
 const size_t s_hpack_dynamic_table_initial_size = 4096;
+const size_t s_hpack_dynamic_table_initial_elements = 512;
 /* TBD */
-const size_t s_hpack_dynamic_table_max_size = 4096;
+const size_t s_hpack_dynamic_table_max_size = 16 * 1024 * 1024;
+
+/* Used for growing the dynamic table buffer when it fills up */
+const float s_hpack_dynamic_table_buffer_growth_rate = 1.5F;
 
 struct aws_huffman_symbol_coder *hpack_get_coder(void);
 
@@ -205,9 +208,14 @@ struct aws_hpack_context {
 
     struct {
         struct aws_http_header *buffer;
-        size_t max_elements;
+        size_t buffer_capacity; /* Number of http_headers that can fit in buffer */
+
         size_t num_elements;
         size_t index_0;
+
+        /* Size in bytes, according to [4.1] */
+        size_t size;
+        size_t max_size;
 
         /* aws_http_header * -> size_t */
         struct aws_hash_table reverse_lookup;
@@ -236,11 +244,10 @@ struct aws_hpack_context {
 
 struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator) {
 
-    struct aws_hpack_context *context = aws_mem_acquire(allocator, sizeof(struct aws_hpack_context));
+    struct aws_hpack_context *context = aws_mem_calloc(allocator, 1, sizeof(struct aws_hpack_context));
     if (!context) {
         return NULL;
     }
-    AWS_ZERO_STRUCT(*context);
     context->allocator = allocator;
 
     /* Initialize the huffman coders */
@@ -251,19 +258,19 @@ struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator)
     /* #TODO Rewrite to be based on octet-size instead of list-size */
 
     /* Initialize dynamic table */
+    context->dynamic_table.max_size = s_hpack_dynamic_table_initial_size;
+
+    context->dynamic_table.buffer_capacity = s_hpack_dynamic_table_initial_elements;
     context->dynamic_table.buffer =
-        aws_mem_calloc(allocator, s_hpack_dynamic_table_initial_size, sizeof(struct aws_http_header));
+        aws_mem_calloc(allocator, context->dynamic_table.buffer_capacity, sizeof(struct aws_http_header));
     if (!context->dynamic_table.buffer) {
         goto dynamic_table_buffer_failed;
     }
-    context->dynamic_table.max_elements = s_hpack_dynamic_table_initial_size;
-    context->dynamic_table.num_elements = 0;
-    context->dynamic_table.index_0 = 0;
 
     if (aws_hash_table_init(
             &context->dynamic_table.reverse_lookup,
             allocator,
-            s_hpack_dynamic_table_initial_size,
+            s_hpack_dynamic_table_initial_elements,
             s_header_hash,
             s_header_eq,
             NULL,
@@ -274,7 +281,7 @@ struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator)
     if (aws_hash_table_init(
             &context->dynamic_table.reverse_lookup_name_only,
             allocator,
-            s_hpack_dynamic_table_initial_size,
+            s_hpack_dynamic_table_initial_elements,
             aws_hash_byte_cursor_ptr,
             (aws_hash_callback_eq_fn *)aws_byte_cursor_eq,
             NULL,
@@ -317,6 +324,22 @@ void aws_hpack_context_reset_decode(struct aws_hpack_context *context) {
     AWS_ZERO_STRUCT(context->progress_string);
 }
 
+size_t aws_hpack_get_header_size(const struct aws_http_header *header) {
+    return header->name.len + header->value.len + 32;
+}
+
+/*
+ * Gets the header from the dynamic table.
+ * NOTE: This function only bounds checks on the buffer size, not the number of elements.
+ */
+static struct aws_http_header *s_dynamic_table_get(const struct aws_hpack_context *context, size_t index) {
+
+    AWS_ASSERT(index < context->dynamic_table.buffer_capacity);
+
+    return &context->dynamic_table
+                .buffer[(context->dynamic_table.index_0 + index) % context->dynamic_table.buffer_capacity];
+}
+
 const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_context *context, size_t index) {
     if (index == 0 || index >= s_static_header_table_size + context->dynamic_table.num_elements) {
         aws_raise_error(AWS_ERROR_INVALID_INDEX);
@@ -329,10 +352,7 @@ const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_contex
     }
 
     /* Check dynamic table */
-    index -= s_static_header_table_size;
-    AWS_ASSERT(index < context->dynamic_table.num_elements);
-    return &context->dynamic_table
-                .buffer[(context->dynamic_table.index_0 + index) % context->dynamic_table.max_elements];
+    return s_dynamic_table_get(context, index - s_static_header_table_size);
 }
 
 size_t aws_hpack_find_index(
@@ -373,7 +393,7 @@ size_t aws_hpack_find_index(
         if (absolute_index >= context->dynamic_table.index_0) {
             index = absolute_index - context->dynamic_table.index_0;
         } else {
-            index = (context->dynamic_table.max_elements - context->dynamic_table.index_0) + absolute_index;
+            index = (context->dynamic_table.buffer_capacity - context->dynamic_table.index_0) + absolute_index;
         }
         /* Need to add the static table size to re-base indicies */
         index += s_static_header_table_size;
@@ -383,94 +403,42 @@ size_t aws_hpack_find_index(
     return 0;
 }
 
-int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_http_header *header) {
+/* Remove elements from the dynamic table until it fits in max_size bytes */
+static int s_dynamic_table_shrink(struct aws_hpack_context *context, size_t max_size) {
+    while (context->dynamic_table.size > max_size && context->dynamic_table.num_elements > 0) {
+        struct aws_http_header *back = s_dynamic_table_get(context, context->dynamic_table.num_elements - 1);
 
-    /* Don't move forward if no elements allowed in the dynamic table */
-    if (AWS_UNLIKELY(context->dynamic_table.max_elements == 0)) {
-        return AWS_OP_SUCCESS;
-    }
+        /* "Remove" the header from the table */
+        context->dynamic_table.size -= aws_hpack_get_header_size(back);
+        context->dynamic_table.num_elements -= 1;
 
-    /* Cache state */
-    const size_t old_index_0 = context->dynamic_table.index_0;
-    bool removed_from_name_table = false;
-
-    /* Decrement index 0, wrapping if necessary */
-    if (context->dynamic_table.index_0 == 0) {
-        context->dynamic_table.index_0 = context->dynamic_table.max_elements - 1;
-    } else {
-        context->dynamic_table.index_0--;
-    }
-    struct aws_http_header *table_header = &context->dynamic_table.buffer[context->dynamic_table.index_0];
-
-    /* If max size reached, start rotating out headers */
-    if (context->dynamic_table.num_elements == context->dynamic_table.max_elements) {
         /* Remove old header from hash tables */
-        if (aws_hash_table_remove(&context->dynamic_table.reverse_lookup, table_header, NULL, NULL)) {
+        if (aws_hash_table_remove(&context->dynamic_table.reverse_lookup, back, NULL, NULL)) {
             goto error;
         }
 
         /* If the name-only lookup is pointing to the element we're removing, it needs to go.
          * If not, it's pointing to a younger, sexier element. */
         struct aws_hash_element *elem = NULL;
-        aws_hash_table_find(&context->dynamic_table.reverse_lookup_name_only, &table_header->name, &elem);
-        if (elem && elem->key == table_header) {
+        aws_hash_table_find(&context->dynamic_table.reverse_lookup_name_only, &back->name, &elem);
+        if (elem && elem->key == back) {
             if (aws_hash_table_remove_element(&context->dynamic_table.reverse_lookup_name_only, elem)) {
                 goto error;
             }
-            removed_from_name_table = true;
         }
-    }
-
-    /* Write the new header */
-    struct aws_http_header old_header = *table_header;
-    *table_header = *header;
-    if (aws_hash_table_put(
-            &context->dynamic_table.reverse_lookup, table_header, (void *)context->dynamic_table.index_0, NULL)) {
-        /* Roll back and handle the error */
-        *table_header = old_header;
-        goto error;
-    }
-    /* Note that we can just blindly put here, we want to overwrite any older entry so it isn't accidentally removed. */
-    if (aws_hash_table_put(
-            &context->dynamic_table.reverse_lookup_name_only,
-            &table_header->name,
-            (void *)context->dynamic_table.index_0,
-            NULL)) {
-        /* Roll back and handle the error */
-        aws_hash_table_remove(&context->dynamic_table.reverse_lookup, table_header, NULL, NULL);
-        *table_header = old_header;
-        goto error;
-    }
-
-    /* Increment num_elements if necessary */
-    if (context->dynamic_table.num_elements < context->dynamic_table.max_elements) {
-        ++context->dynamic_table.num_elements;
     }
 
     return AWS_OP_SUCCESS;
 
 error:
-    /* Attempt to replace old header in map */
-    aws_hash_table_put(
-        &context->dynamic_table.reverse_lookup, table_header, (void *)context->dynamic_table.index_0, NULL);
-    if (removed_from_name_table) {
-        aws_hash_table_put(
-            &context->dynamic_table.reverse_lookup_name_only,
-            &table_header->name,
-            (void *)context->dynamic_table.index_0,
-            NULL);
-    }
-    /* Reset index 0 */
-    context->dynamic_table.index_0 = old_index_0;
-
     return AWS_OP_ERR;
 }
 
-int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new_max_elements) {
-
-    if (new_max_elements > s_hpack_dynamic_table_max_size) {
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-    }
+/*
+ * Resizes the dynamic table storage buffer to new_max_elements.
+ * Useful when inserting over capacity, or when downsizing.
+ */
+static int s_dynamic_table_resize_buffer(struct aws_hpack_context *context, size_t new_max_elements) {
 
     /* Clear the old hash tables */
     aws_hash_table_clear(&context->dynamic_table.reverse_lookup);
@@ -478,23 +446,41 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
 
     struct aws_http_header *new_buffer = NULL;
 
-    if (AWS_UNLIKELY(!new_max_elements)) {
+    if (AWS_UNLIKELY(new_max_elements == 0)) {
         /* If new buffer is of size 0, don't both initializing, just clean up the old one. */
         goto cleanup_old_buffer;
     }
 
+    /* Allocate the new buffer */
     new_buffer = aws_mem_calloc(context->allocator, new_max_elements, sizeof(struct aws_http_header));
     if (!new_buffer) {
         return AWS_OP_ERR;
     }
 
     /* Don't bother copying data if old buffer was of size 0 */
-    if (AWS_UNLIKELY(context->dynamic_table.max_elements == 0)) {
+    if (AWS_UNLIKELY(context->dynamic_table.num_elements == 0)) {
         goto reset_dyn_table_state;
     }
 
+    /*
+     * Take a buffer that looks like this:
+     *
+     *               Index 0
+     *               ^
+     * +---------------------------+
+     * | Below Block | Above Block |
+     * +---------------------------+
+     * And make it look like this:
+     *
+     * Index 0
+     * ^
+     * +-------------+-------------+
+     * | Above Block | Below Block |
+     * +-------------+-------------+
+     */
+
     /* Copy as much the above block as possible */
-    size_t above_block_size = context->dynamic_table.max_elements - context->dynamic_table.index_0;
+    size_t above_block_size = context->dynamic_table.buffer_capacity - context->dynamic_table.index_0;
     if (above_block_size > new_max_elements) {
         above_block_size = new_max_elements;
     }
@@ -505,7 +491,7 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
 
     /* Copy as much of below block as possible */
     const size_t free_blocks_available = new_max_elements - above_block_size;
-    const size_t old_blocks_to_copy = context->dynamic_table.max_elements - above_block_size;
+    const size_t old_blocks_to_copy = context->dynamic_table.buffer_capacity - above_block_size;
     const size_t below_block_size =
         free_blocks_available > old_blocks_to_copy ? old_blocks_to_copy : free_blocks_available;
     if (below_block_size) {
@@ -524,7 +510,7 @@ reset_dyn_table_state:
     if (context->dynamic_table.num_elements > new_max_elements) {
         context->dynamic_table.num_elements = new_max_elements;
     }
-    context->dynamic_table.max_elements = new_max_elements;
+    context->dynamic_table.buffer_capacity = new_max_elements;
     context->dynamic_table.index_0 = 0;
     context->dynamic_table.buffer = new_buffer;
 
@@ -536,6 +522,105 @@ reset_dyn_table_state:
     }
 
     return AWS_OP_SUCCESS;
+}
+
+int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_http_header *header) {
+
+    /* Don't move forward if no elements allowed in the dynamic table */
+    if (AWS_UNLIKELY(context->dynamic_table.max_size == 0)) {
+        return AWS_OP_SUCCESS;
+    }
+
+    const size_t header_size = aws_hpack_get_header_size(header);
+
+    /* If for whatever reason this new header is bigger than the total table size, burn everything to the ground. */
+    if (AWS_UNLIKELY(header_size > context->dynamic_table.max_size)) {
+        return s_dynamic_table_shrink(context, 0);
+    }
+
+    /* If max size reached, rotate out headers until there's room for the new header */
+    if (s_dynamic_table_shrink(context, context->dynamic_table.max_size - header_size)) {
+        goto error;
+    }
+
+    /* If we're out of space in the buffer, grow it */
+    if (context->dynamic_table.num_elements == context->dynamic_table.buffer_capacity) {
+        /* If the buffer is currently of 0 size, reset it back to its initial size */
+        const size_t new_size =
+            context->dynamic_table.buffer_capacity
+                ? (size_t)(context->dynamic_table.buffer_capacity * s_hpack_dynamic_table_buffer_growth_rate)
+                : s_hpack_dynamic_table_initial_elements;
+
+        if (s_dynamic_table_resize_buffer(context, new_size)) {
+            goto error;
+        }
+    }
+
+    /* Decrement index 0, wrapping if necessary */
+    if (context->dynamic_table.index_0 == 0) {
+        context->dynamic_table.index_0 = context->dynamic_table.buffer_capacity - 1;
+    } else {
+        context->dynamic_table.index_0--;
+    }
+
+    /* Increment num_elements */
+    context->dynamic_table.num_elements++;
+    /* Increment the size */
+    context->dynamic_table.size += header_size;
+
+    /* Put the header at the "front" of the table */
+    struct aws_http_header *table_header = s_dynamic_table_get(context, 0);
+    *table_header = *header;
+
+    /* Write the new header to the look up tables */
+    if (aws_hash_table_put(
+            &context->dynamic_table.reverse_lookup, table_header, (void *)context->dynamic_table.index_0, NULL)) {
+        goto error;
+    }
+    /* Note that we can just blindly put here, we want to overwrite any older entry so it isn't accidentally removed. */
+    if (aws_hash_table_put(
+            &context->dynamic_table.reverse_lookup_name_only,
+            &table_header->name,
+            (void *)context->dynamic_table.index_0,
+            NULL)) {
+        goto error;
+    }
+
+    return AWS_OP_SUCCESS;
+
+error:
+    /* Do not attempt to handle the error, if something goes wrong, close the connection */
+    return AWS_OP_ERR;
+}
+
+int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new_max_size) {
+
+    /* Nothing to see here! */
+    if (new_max_size == context->dynamic_table.max_size) {
+        return AWS_OP_SUCCESS;
+    }
+
+    if (new_max_size > s_hpack_dynamic_table_max_size) {
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    /* If downsizing, remove elements until we're within the new size constraints */
+    if (s_dynamic_table_shrink(context, new_max_size)) {
+        goto error;
+    }
+
+    /* Resize the buffer to the current size */
+    if (s_dynamic_table_resize_buffer(context, context->dynamic_table.num_elements)) {
+        goto error;
+    }
+
+    /* Update the max size */
+    context->dynamic_table.max_size = new_max_size;
+
+    return AWS_OP_SUCCESS;
+
+error:
+    return AWS_OP_ERR;
 }
 
 enum aws_hpack_decode_status aws_hpack_decode_integer(
