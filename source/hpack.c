@@ -20,6 +20,7 @@
 
 #include <aws/common/byte_buf.h>
 #include <aws/common/hash_table.h>
+#include <aws/common/logging.h>
 #include <aws/common/string.h>
 
 /* RFC-7540 6.5.2 */
@@ -203,6 +204,9 @@ void aws_hpack_static_table_clean_up() {
 struct aws_hpack_context {
     struct aws_allocator *allocator;
 
+    enum aws_http_log_subject log_subject;
+    void *log_id;
+
     struct aws_huffman_encoder encoder;
     struct aws_huffman_decoder decoder;
 
@@ -242,13 +246,22 @@ struct aws_hpack_context {
     } progress_string;
 };
 
-struct aws_hpack_context *aws_hpack_context_new(struct aws_allocator *allocator) {
+#define HPACK_LOGF(level, hpack, text, ...)                                                                            \
+    AWS_LOGF_##level((hpack)->log_subject, "id=%p [HPACK]: " text, (hpack)->log_id, __VA_ARGS__)
+#define HPACK_LOG(level, hpack, text) HPACK_LOGF(level, hpack, "%s", text)
+
+struct aws_hpack_context *aws_hpack_context_new(
+    struct aws_allocator *allocator,
+    enum aws_http_log_subject log_subject,
+    void *log_id) {
 
     struct aws_hpack_context *context = aws_mem_calloc(allocator, 1, sizeof(struct aws_hpack_context));
     if (!context) {
         return NULL;
     }
     context->allocator = allocator;
+    context->log_subject = log_subject;
+    context->log_id = log_id;
 
     /* Initialize the huffman coders */
     struct aws_huffman_symbol_coder *hpack_coder = hpack_get_coder();
@@ -414,6 +427,10 @@ static int s_dynamic_table_shrink(struct aws_hpack_context *context, size_t max_
 
         /* Remove old header from hash tables */
         if (aws_hash_table_remove(&context->dynamic_table.reverse_lookup, back, NULL, NULL)) {
+            HPACK_LOG(
+                ERROR,
+                context,
+                "Failed to remove header from the reverse lookup table");
             goto error;
         }
 
@@ -423,6 +440,10 @@ static int s_dynamic_table_shrink(struct aws_hpack_context *context, size_t max_
         aws_hash_table_find(&context->dynamic_table.reverse_lookup_name_only, &back->name, &elem);
         if (elem && elem->key == back) {
             if (aws_hash_table_remove_element(&context->dynamic_table.reverse_lookup_name_only, elem)) {
+                HPACK_LOG(
+                    ERROR,
+                    context,
+                    "Failed to remove header from the reverse lookup (name-only) table");
                 goto error;
             }
         }
@@ -535,10 +556,10 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
 
     /* If for whatever reason this new header is bigger than the total table size, burn everything to the ground. */
     if (AWS_UNLIKELY(header_size > context->dynamic_table.max_size)) {
-        return s_dynamic_table_shrink(context, 0);
+        goto error;
     }
 
-    /* If max size reached, rotate out headers until there's room for the new header */
+    /* Rotate out headers until there's room for the new header (this function will return immediately if nothing needs to be evicted) */
     if (s_dynamic_table_shrink(context, context->dynamic_table.max_size - header_size)) {
         goto error;
     }
@@ -601,7 +622,14 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
     }
 
     if (new_max_size > s_hpack_dynamic_table_max_size) {
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+
+        HPACK_LOGF(
+            ERROR,
+            context,
+            "new_max_size %zu is greater than the supported max size (%zu)",
+            new_max_size,
+            s_hpack_dynamic_table_max_size);
+        goto error;
     }
 
     /* If downsizing, remove elements until we're within the new size constraints */
@@ -620,7 +648,7 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
     return AWS_OP_SUCCESS;
 
 error:
-    return AWS_OP_ERR;
+    return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
 }
 
 enum aws_hpack_decode_status aws_hpack_decode_integer(

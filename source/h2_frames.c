@@ -447,7 +447,7 @@ int aws_h2_frame_encoder_init(struct aws_h2_frame_encoder *encoder, struct aws_a
     AWS_ZERO_STRUCT(*encoder);
     encoder->allocator = allocator;
 
-    encoder->hpack = aws_hpack_context_new(allocator);
+    encoder->hpack = aws_hpack_context_new(allocator, AWS_LS_HTTP_ENCODER, encoder);
     if (!encoder->hpack) {
         return AWS_OP_ERR;
     }
@@ -470,7 +470,7 @@ int aws_h2_frame_decoder_init(struct aws_h2_frame_decoder *decoder, struct aws_a
     AWS_ZERO_STRUCT(*decoder);
     decoder->allocator = allocator;
 
-    decoder->hpack = aws_hpack_context_new(allocator);
+    decoder->hpack = aws_hpack_context_new(allocator, AWS_LS_HTTP_DECODER, decoder);
     if (!decoder->hpack) {
         goto failed_create_hpack;
     }

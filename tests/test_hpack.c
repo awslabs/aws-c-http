@@ -12,7 +12,6 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
 #include <aws/testing/aws_test_harness.h>
 
 #include <aws/http/private/hpack.h>
@@ -118,7 +117,7 @@ static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx)
     /* Test encoding integers
        Test cases taken from https://httpwg.org/specs/rfc7541.html#integer.representation.examples */
 
-    struct aws_hpack_context *hpack = aws_hpack_context_new(allocator);
+    struct aws_hpack_context *hpack = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(hpack);
     ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(hpack, 0));
 
@@ -245,7 +244,7 @@ static int test_hpack_static_table_find(struct aws_allocator *allocator, void *c
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
     ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0));
 
@@ -279,7 +278,7 @@ static int test_hpack_static_table_get(struct aws_allocator *allocator, void *ct
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
     ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0));
 
@@ -312,7 +311,7 @@ static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
 
     bool found_value = false;
@@ -362,7 +361,7 @@ static int test_hpack_dynamic_table_get(struct aws_allocator *allocator, void *c
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
 
     const struct aws_http_header *found = NULL;

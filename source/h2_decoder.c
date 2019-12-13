@@ -12,7 +12,6 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
 #include <aws/http/private/h2_decoder.h>
 
 #include <aws/http/private/hpack.h>
@@ -197,7 +196,7 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
 
     decoder->scratch = aws_byte_buf_from_array(scratch_buf, s_scratch_space_size);
 
-    decoder->hpack = aws_hpack_context_new(params->alloc);
+    decoder->hpack = aws_hpack_context_new(params->alloc, AWS_LS_HTTP_DECODER, decoder);
     if (!decoder->hpack) {
         goto failed_new_hpack;
     }
