@@ -242,6 +242,15 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
     return &connection->base;
 }
 
+void aws_h2_frame_complete_destroy(struct aws_h2_frame_header *frame, int error_code, void *userdata) {
+    (void)error_code;
+
+    struct aws_allocator *allocator = userdata;
+
+    aws_h2_frame_clean_up(frame);
+    aws_mem_release(allocator, frame);
+}
+
 int aws_h2_connection_queue_frame(
     struct aws_h2_connection *connection,
     struct aws_h2_frame_header *frame,
@@ -340,10 +349,6 @@ static int s_shutdown(
 
     struct aws_h2_connection *connection = handler->impl;
     (void)connection;
-
-    if (dir == AWS_CHANNEL_DIR_WRITE) {
-
-    }
 
     aws_channel_slot_on_handler_shutdown_complete(slot, dir, error_code, free_scarce_resources_immediately);
 
@@ -491,17 +496,6 @@ static int s_decoder_on_settings_ack(void *userdata) {
     return AWS_OP_SUCCESS;
 }
 
-static void s_on_settings_ack_complete(struct aws_h2_frame_header *frame, int error_code, void *userdata) {
-
-    (void)error_code;
-
-    struct aws_h2_frame_settings *settings = AWS_CONTAINER_OF(frame, struct aws_h2_frame_settings, header);
-    struct aws_h2_connection *connection = userdata;
-
-    aws_h2_frame_settings_clean_up(settings);
-    aws_mem_release(connection->base.alloc, settings);
-}
-
 static int s_decoder_do_send_settings_ack(void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
@@ -510,7 +504,7 @@ static int s_decoder_do_send_settings_ack(void *userdata) {
     aws_h2_frame_settings_init(settings, connection->base.alloc);
     settings->ack = true;
 
-    aws_h2_connection_queue_frame(connection, &settings->header, s_on_settings_ack_complete, connection);
+    aws_h2_connection_queue_frame(connection, &settings->header, aws_h2_frame_complete_destroy, connection->base.alloc);
 
     return AWS_OP_SUCCESS;
 }

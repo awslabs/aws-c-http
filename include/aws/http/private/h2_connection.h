@@ -74,6 +74,9 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
     size_t initial_window_size);
 
+/* Helper callback that cleans up and destroys the frame (userdata must be the allocator) */
+aws_h2_frame_complete_fn aws_h2_frame_complete_destroy;
+
 /* Queue a frame to be written */
 AWS_HTTP_API
 int aws_h2_connection_queue_frame(

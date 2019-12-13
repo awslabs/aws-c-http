@@ -377,7 +377,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     const struct aws_http_make_request_options *options) {
     AWS_PRECONDITION(client_connection);
     AWS_PRECONDITION(options);
-    AWS_PRECONDITION(options->request!= NULL);
+    AWS_PRECONDITION(options->request != NULL);
 
     struct aws_h2_stream *stream = aws_mem_calloc(client_connection->base.alloc, 1, sizeof(struct aws_h2_stream));
     if (!stream) {

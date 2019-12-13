@@ -311,9 +311,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 aws_byte_buf_write_from_whole_cursor(&frame_data, aws_byte_cursor_advance(&input, payload_length));
                 break;
             }
-            default: {
+            default:
                 AWS_FATAL_ASSERT(false);
-            }
         }
     }
 
