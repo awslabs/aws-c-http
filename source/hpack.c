@@ -427,10 +427,7 @@ static int s_dynamic_table_shrink(struct aws_hpack_context *context, size_t max_
 
         /* Remove old header from hash tables */
         if (aws_hash_table_remove(&context->dynamic_table.reverse_lookup, back, NULL, NULL)) {
-            HPACK_LOG(
-                ERROR,
-                context,
-                "Failed to remove header from the reverse lookup table");
+            HPACK_LOG(ERROR, context, "Failed to remove header from the reverse lookup table");
             goto error;
         }
 
@@ -440,10 +437,7 @@ static int s_dynamic_table_shrink(struct aws_hpack_context *context, size_t max_
         aws_hash_table_find(&context->dynamic_table.reverse_lookup_name_only, &back->name, &elem);
         if (elem && elem->key == back) {
             if (aws_hash_table_remove_element(&context->dynamic_table.reverse_lookup_name_only, elem)) {
-                HPACK_LOG(
-                    ERROR,
-                    context,
-                    "Failed to remove header from the reverse lookup (name-only) table");
+                HPACK_LOG(ERROR, context, "Failed to remove header from the reverse lookup (name-only) table");
                 goto error;
             }
         }
@@ -559,7 +553,8 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
         goto error;
     }
 
-    /* Rotate out headers until there's room for the new header (this function will return immediately if nothing needs to be evicted) */
+    /* Rotate out headers until there's room for the new header (this function will return immediately if nothing needs
+     * to be evicted) */
     if (s_dynamic_table_shrink(context, context->dynamic_table.max_size - header_size)) {
         goto error;
     }
