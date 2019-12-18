@@ -6,6 +6,12 @@
             "_comment": "al2012 can't currently pull builder.py from github. SSL: CERTIFICATE_VERIFY_FAILED"
         }
     },
+    "targets": {
+        "android": {
+            "enabled": false,
+            "_comment": "disabled until we need to support it. LibCrypto needs to be configured on build machine."
+        }
+    },
     "upstream": [
         { "name": "aws-c-io" },
         { "name": "aws-c-compression" }
