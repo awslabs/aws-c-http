@@ -27,7 +27,7 @@ sys.argv = sys.argv[:1]
 
 def run_command(args):
     # gather all stderr and stdout to a single string that we print only if things go wrong
-    process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True)
+    process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     output = process.communicate()[0]
 
     if process.returncode != 0:
