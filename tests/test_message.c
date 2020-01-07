@@ -133,96 +133,247 @@ static int s_check_header_eq(struct aws_http_header header, const char *name, co
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(message_add_headers) {
-    (void)ctx;
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
-    ASSERT_NOT_NULL(request);
-
-    /* Test queries on 0 headers */
-    struct aws_http_header get;
-    ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_message_get_header(request, &get, 0));
-    ASSERT_UINT_EQUALS(0, aws_http_message_get_header_count(request));
-
-    /* Add a header */
-    char name_src[] = "Host";
-    char value_src[] = "example.com";
-
-    ASSERT_SUCCESS(aws_http_message_add_header(request, s_make_header(name_src, value_src)));
-    ASSERT_UINT_EQUALS(1, aws_http_message_get_header_count(request));
-
-    /* Mutilate source strings to be sure the request isn't referencing their memory */
-    name_src[0] = 0;
-    value_src[0] = 0;
-
-    /* Check values */
-    ASSERT_SUCCESS(aws_http_message_get_header(request, &get, 0));
-    ASSERT_SUCCESS(s_check_header_eq(get, "Host", "example.com"));
-
-    /* Overwrite header and check values */
-    ASSERT_SUCCESS(aws_http_message_set_header(request, s_make_header("Connection", "Upgrade"), 0));
-    ASSERT_SUCCESS(aws_http_message_get_header(request, &get, 0));
-    ASSERT_SUCCESS(s_check_header_eq(get, "Connection", "Upgrade"));
-
-    aws_http_message_destroy(request);
+static int s_check_value_eq(struct aws_byte_cursor cursor, const char *value) {
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&cursor, value));
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(message_erase_headers) {
+TEST_CASE(headers_add) {
+    (void)ctx;
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
+
+    char name_src[] = "Host";
+    char value_src[] = "example.com";
+
+    ASSERT_SUCCESS(
+        aws_http_headers_add(headers, aws_byte_cursor_from_c_str(name_src), aws_byte_cursor_from_c_str(value_src)));
+
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(headers));
+
+    /* Mutilate source strings to be sure the datastructure isn't referencing their memory */
+    name_src[0] = 0;
+    value_src[0] = 0;
+
+    /* get-by-index */
+    struct aws_http_header get;
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 0, &get));
+    ASSERT_SUCCESS(s_check_header_eq(get, "Host", "example.com"));
+
+    /* get-by-name (ignore case) */
+    struct aws_byte_cursor value_get;
+    ASSERT_SUCCESS(aws_http_headers_get(headers, aws_byte_cursor_from_c_str("host"), &value_get)); /* ignore case */
+    ASSERT_SUCCESS(s_check_value_eq(value_get, "example.com"));
+
+    aws_http_headers_release(headers);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(headers_add_array) {
+    (void)ctx;
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
+
+    const struct aws_http_header src_headers[] = {
+        s_make_header("Cookie", "a=1"),
+        s_make_header("COOKIE", "b=2"),
+    };
+
+    ASSERT_SUCCESS(aws_http_headers_add_array(headers, src_headers, AWS_ARRAY_SIZE(src_headers)));
+    ASSERT_UINT_EQUALS(AWS_ARRAY_SIZE(src_headers), aws_http_headers_count(headers));
+
+    for (size_t i = 0; i < AWS_ARRAY_SIZE(src_headers); ++i) {
+        struct aws_http_header get;
+        ASSERT_SUCCESS(aws_http_headers_get_index(headers, i, &get));
+        ASSERT_SUCCESS(s_check_headers_eq(src_headers[i], get));
+    }
+
+    /* check the get-by-name returns first one it sees */
+    struct aws_byte_cursor get;
+    ASSERT_SUCCESS(aws_http_headers_get(headers, aws_byte_cursor_from_c_str("COOKIE"), &get));
+    ASSERT_SUCCESS(s_check_value_eq(get, "a=1"));
+
+    aws_http_headers_release(headers);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(headers_set) {
+    (void)ctx;
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
+
+    /* Check that set() can add a new header */
+    ASSERT_SUCCESS(
+        aws_http_headers_set(headers, aws_byte_cursor_from_c_str("Cookie"), aws_byte_cursor_from_c_str("a=1")));
+
+    struct aws_http_header get;
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 0, &get));
+    ASSERT_SUCCESS(s_check_header_eq(get, "Cookie", "a=1"));
+
+    /* Add more headers with same name, then check that set() replaces them ALL */
+    const struct aws_http_header src_headers[] = {
+        s_make_header("Cookie", "b=2"),
+        s_make_header("COOKIE", "c=3"),
+    };
+    ASSERT_SUCCESS(aws_http_headers_add_array(headers, src_headers, AWS_ARRAY_SIZE(src_headers)));
+
+    ASSERT_SUCCESS(
+        aws_http_headers_set(headers, aws_byte_cursor_from_c_str("Cookie"), aws_byte_cursor_from_c_str("d=4")));
+
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(headers));
+
+    struct aws_byte_cursor value_get;
+    ASSERT_SUCCESS(aws_http_headers_get(headers, aws_byte_cursor_from_c_str("cookie"), &value_get));
+    ASSERT_SUCCESS(s_check_value_eq(value_get, "d=4"));
+
+    aws_http_headers_release(headers);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(headers_erase_index) {
+    (void)ctx;
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
+
+    const struct aws_http_header src_headers[] = {
+        s_make_header("Cookie", "a=1"),
+        s_make_header("Cookie", "b=2"),
+    };
+    ASSERT_SUCCESS(aws_http_headers_add_array(headers, src_headers, AWS_ARRAY_SIZE(src_headers)));
+
+    /* Ensure bad attempts to erase data are detected */
+    ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_headers_erase_index(headers, 99));
+
+    /* Erase by index */
+    ASSERT_SUCCESS(aws_http_headers_erase_index(headers, 0));
+
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(headers));
+
+    struct aws_http_header get;
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 0, &get));
+    ASSERT_SUCCESS(s_check_header_eq(get, "Cookie", "b=2"));
+
+    aws_http_headers_release(headers);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(headers_erase) {
+    (void)ctx;
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
+
+    const struct aws_http_header src_headers[] = {
+        s_make_header("cookie", "a=1"),
+        s_make_header("CoOkIe", "b=2"),
+    };
+    ASSERT_SUCCESS(aws_http_headers_add_array(headers, src_headers, AWS_ARRAY_SIZE(src_headers)));
+
+    /* Ensure bad attempts to erase data are detected */
+    ASSERT_ERROR(AWS_ERROR_HTTP_HEADER_NOT_FOUND, aws_http_headers_erase(headers, aws_byte_cursor_from_c_str("asdf")));
+
+    ASSERT_SUCCESS(aws_http_headers_erase(headers, aws_byte_cursor_from_c_str("COOKIE")));
+
+    ASSERT_UINT_EQUALS(0, aws_http_headers_count(headers));
+
+    aws_http_headers_release(headers);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(headers_erase_value) {
+    (void)ctx;
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
+
+    const struct aws_http_header src_headers[] = {
+        s_make_header("Cookie", "a=1"),
+        s_make_header("CoOkIe", "b=2"),
+        s_make_header("COOKIE", "b=2"),
+    };
+    ASSERT_SUCCESS(aws_http_headers_add_array(headers, src_headers, AWS_ARRAY_SIZE(src_headers)));
+
+    /* Ensure bad attempts to erase data are detected */
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_HEADER_NOT_FOUND,
+        aws_http_headers_erase_value(
+            headers, aws_byte_cursor_from_c_str("cookie"), aws_byte_cursor_from_c_str("asdf")));
+
+    /* Pluck out the first instance of b=2 */
+    ASSERT_SUCCESS(
+        aws_http_headers_erase_value(headers, aws_byte_cursor_from_c_str("cookie"), aws_byte_cursor_from_c_str("b=2")));
+
+    ASSERT_UINT_EQUALS(2, aws_http_headers_count(headers));
+
+    struct aws_http_header get;
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 0, &get));
+    ASSERT_SUCCESS(s_check_header_eq(get, "Cookie", "a=1"));
+
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 1, &get));
+    ASSERT_SUCCESS(s_check_header_eq(get, "COOKIE", "b=2"));
+
+    aws_http_headers_release(headers);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(headers_clear) {
+    (void)ctx;
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
+
+    const struct aws_http_header src_headers[] = {
+        s_make_header("Host", "example.com"),
+        s_make_header("Cookie", "a=1"),
+    };
+    ASSERT_SUCCESS(aws_http_headers_add_array(headers, src_headers, AWS_ARRAY_SIZE(src_headers)));
+
+    aws_http_headers_clear(headers);
+    ASSERT_UINT_EQUALS(0, aws_http_headers_count(headers));
+
+    aws_http_headers_release(headers);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(message_refcounts) {
     (void)ctx;
     struct aws_http_message *message = aws_http_message_new_request(allocator);
     ASSERT_NOT_NULL(message);
 
-    /* Should have no effect to try and erase non-existent headers */
-    ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_message_erase_header(message, 0));
+    struct aws_http_headers *headers = aws_http_message_get_headers(message);
+    ASSERT_NOT_NULL(headers);
 
-    /* Add a bunch of headers */
-    struct aws_http_header src_headers[] = {
-        s_make_header("NameA", "ValueA"),
-        s_make_header("NameB", "ValueB"),
-        s_make_header("NameC", "ValueC"),
-        s_make_header("NameD", "ValueD"),
-    };
+    /* assert message is still valid after acquire/release */
+    aws_http_message_acquire(message);
+    aws_http_message_release(message);
+    ASSERT_SUCCESS(aws_http_message_set_request_path(message, aws_byte_cursor_from_c_str("PATCH")));
 
-    for (size_t i = 0; i < AWS_ARRAY_SIZE(src_headers); ++i) {
-        ASSERT_SUCCESS(aws_http_message_add_header(message, src_headers[i]));
-    }
+    /* keep headers alive after message is destroyed */
+    aws_http_headers_acquire(headers);
+    aws_http_message_release(message);
+    ASSERT_SUCCESS(
+        aws_http_headers_add(headers, aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com")));
 
-    struct aws_http_header get;
-    for (size_t i = 0; i < AWS_ARRAY_SIZE(src_headers); ++i) {
-        ASSERT_SUCCESS(aws_http_message_get_header(message, &get, i));
-        ASSERT_SUCCESS(s_check_headers_eq(src_headers[i], get));
-    }
+    aws_http_headers_release(headers);
+    return AWS_OP_SUCCESS;
+}
 
-    /* Remove a middle one and check */
-    const size_t kill_i = 1;
-    ASSERT_SUCCESS(aws_http_message_erase_header(message, kill_i));
-    ASSERT_UINT_EQUALS(AWS_ARRAY_SIZE(src_headers) - 1, aws_http_message_get_header_count(message));
+TEST_CASE(message_with_existing_headers) {
+    (void)ctx;
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
 
-    for (size_t i = 0; i < aws_http_message_get_header_count(message); ++i) {
-        /* Headers to the right should have shifted over */
-        size_t compare_i = (i < kill_i) ? i : (i + 1);
+    struct aws_http_message *message = aws_http_message_new_request_with_headers(allocator, headers);
+    ASSERT_NOT_NULL(message);
 
-        ASSERT_SUCCESS(aws_http_message_get_header(message, &get, i));
-        ASSERT_SUCCESS(s_check_headers_eq(src_headers[compare_i], get));
-    }
+    ASSERT_PTR_EQUALS(headers, aws_http_message_get_headers(message));
 
-    /* Removing an invalid index should have no effect */
-    ASSERT_ERROR(AWS_ERROR_INVALID_INDEX, aws_http_message_erase_header(message, 99));
+    /* assert message has acquired hold on headers */
+    aws_http_headers_release(headers);
 
-    /* Remove a front and a back header, only "NameC: ValueC" should remain */
-    ASSERT_SUCCESS(aws_http_message_erase_header(message, 0));
-    ASSERT_SUCCESS(aws_http_message_erase_header(message, aws_http_message_get_header_count(message) - 1));
+    /* still valid, right? */
+    struct aws_http_header new_header = {aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com")};
+    ASSERT_SUCCESS(aws_http_message_add_header(message, new_header));
 
-    ASSERT_UINT_EQUALS(1, aws_http_message_get_header_count(message));
-    ASSERT_SUCCESS(aws_http_message_get_header(message, &get, 0));
-    ASSERT_SUCCESS(s_check_header_eq(get, "NameC", "ValueC"));
-
-    /* Ensure that add() still works after remove() */
-    ASSERT_SUCCESS(aws_http_message_add_header(message, s_make_header("Big", "Guy")));
-    ASSERT_SUCCESS(aws_http_message_get_header(message, &get, aws_http_message_get_header_count(message) - 1));
-    ASSERT_SUCCESS(s_check_header_eq(get, "Big", "Guy"));
-
-    aws_http_message_destroy(message);
+    /* clean up*/
+    aws_http_message_release(message);
     return AWS_OP_SUCCESS;
 }
 
@@ -254,7 +405,7 @@ int s_message_handles_oom_attempt(struct aws_http_message *request) {
         snprintf(name_buf, sizeof(name_buf), "New-Value-%zu", i);
         struct aws_http_header header = {.name = aws_byte_cursor_from_c_str(name_buf),
                                          .value = aws_byte_cursor_from_c_str(value_buf)};
-        ASSERT_SUCCESS(aws_http_message_set_header(request, header, i));
+        ASSERT_SUCCESS(aws_http_headers_set(aws_http_message_get_headers(request), header.name, header.value));
     }
 
     return AWS_OP_SUCCESS;

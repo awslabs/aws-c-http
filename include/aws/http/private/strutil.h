@@ -1,3 +1,6 @@
+#ifndef AWS_HTTP_STRUTIL_H
+#define AWS_HTTP_STRUTIL_H
+
 /*
  * Copyright 2010-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
@@ -67,3 +70,4 @@ AWS_HTTP_API
 struct aws_byte_cursor aws_strutil_trim_http_whitespace(struct aws_byte_cursor cursor);
 
 AWS_EXTERN_C_END
+#endif /* AWS_HTTP_STRUTIL_H */

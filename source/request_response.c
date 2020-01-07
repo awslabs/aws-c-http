@@ -18,6 +18,7 @@
 #include <aws/common/array_list.h>
 #include <aws/common/string.h>
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/private/strutil.h>
 #include <aws/http/server.h>
 #include <aws/io/logging.h>
 
@@ -30,10 +31,286 @@ enum {
     AWS_HTTP_REQUEST_NUM_RESERVED_HEADERS = 16,
 };
 
+bool aws_http_header_name_eq(struct aws_byte_cursor name_a, struct aws_byte_cursor name_b) {
+    return aws_byte_cursor_eq_ignore_case(&name_a, &name_b);
+}
+
+/**
+ * -- Datastructure Notes --
+ * Headers are stored in a linear array, rather than a hash-table of arrays.
+ * The linear array was simpler to implement and may be faster due to having fewer allocations.
+ * The API has been designed so we can swap out the implementation later if desired.
+ *
+ * -- String Storage Notes --
+ * We use a single allocation to hold the name and value of each aws_http_header.
+ * We could optimize storage by using something like a string pool. If we do this, be sure to maintain
+ * the address of existing strings when adding new strings (a dynamic aws_byte_buf would not suffice).
+ */
+struct aws_http_headers {
+    struct aws_allocator *alloc;
+    struct aws_array_list array_list; /* Contains aws_http_header */
+    struct aws_atomic_var refcount;
+};
+
+struct aws_http_headers *aws_http_headers_new(struct aws_allocator *allocator) {
+    AWS_PRECONDITION(allocator);
+
+    struct aws_http_headers *headers = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_headers));
+    if (!headers) {
+        goto alloc_failed;
+    }
+
+    headers->alloc = allocator;
+    aws_atomic_init_int(&headers->refcount, 1);
+
+    if (aws_array_list_init_dynamic(
+            &headers->array_list, allocator, AWS_HTTP_REQUEST_NUM_RESERVED_HEADERS, sizeof(struct aws_http_header))) {
+        goto array_list_failed;
+    }
+
+    return headers;
+
+array_list_failed:
+    aws_mem_release(headers->alloc, headers);
+alloc_failed:
+    return NULL;
+}
+
+void aws_http_headers_release(struct aws_http_headers *headers) {
+    AWS_PRECONDITION(!headers || headers->alloc);
+    if (!headers) {
+        return;
+    }
+
+    size_t prev_refcount = aws_atomic_fetch_sub(&headers->refcount, 1);
+    if (prev_refcount == 1) {
+        aws_http_headers_clear(headers);
+        aws_array_list_clean_up(&headers->array_list);
+        aws_mem_release(headers->alloc, headers);
+    } else {
+        AWS_ASSERT(prev_refcount != 0);
+    }
+}
+
+void aws_http_headers_acquire(struct aws_http_headers *headers) {
+    AWS_PRECONDITION(headers);
+    aws_atomic_fetch_add(&headers->refcount, 1);
+}
+
+int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value) {
+    AWS_PRECONDITION(headers);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&name) && aws_byte_cursor_is_valid(&value));
+
+    if (name.len == 0) {
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_NAME);
+    }
+
+    size_t total_len;
+    if (aws_add_size_checked(name.len, value.len, &total_len)) {
+        return AWS_OP_ERR;
+    }
+
+    struct aws_http_header header = {name, value};
+
+    /* Store our own copy of the strings.
+     * We put the name and value into the same allocation. */
+    uint8_t *strmem = aws_mem_acquire(headers->alloc, total_len);
+    if (!strmem) {
+        return AWS_OP_ERR;
+    }
+
+    struct aws_byte_buf strbuf = aws_byte_buf_from_empty_array(strmem, total_len);
+    aws_byte_buf_append_and_update(&strbuf, &header.name);
+    aws_byte_buf_append_and_update(&strbuf, &header.value);
+
+    if (aws_array_list_push_back(&headers->array_list, &header)) {
+        goto error;
+    }
+
+    return AWS_OP_SUCCESS;
+
+error:
+    aws_mem_release(headers->alloc, strmem);
+    return AWS_OP_ERR;
+}
+
+void aws_http_headers_clear(struct aws_http_headers *headers) {
+    AWS_PRECONDITION(headers);
+
+    struct aws_http_header *header = NULL;
+    const size_t count = aws_http_headers_count(headers);
+    for (size_t i = 0; i < count; ++i) {
+        aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
+        AWS_ASSUME(header);
+
+        /* Storage for name & value is in the same allocation */
+        aws_mem_release(headers->alloc, header->name.ptr);
+    }
+
+    aws_array_list_clear(&headers->array_list);
+}
+
+/* Does not check index */
+static void s_http_headers_erase_index(struct aws_http_headers *headers, size_t index) {
+    struct aws_http_header *header = NULL;
+    aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, index);
+    AWS_ASSUME(header);
+
+    /* Storage for name & value is in the same allocation */
+    aws_mem_release(headers->alloc, header->name.ptr);
+
+    aws_array_list_erase(&headers->array_list, index);
+}
+
+int aws_http_headers_erase_index(struct aws_http_headers *headers, size_t index) {
+    AWS_PRECONDITION(headers);
+
+    if (index >= aws_http_headers_count(headers)) {
+        return aws_raise_error(AWS_ERROR_INVALID_INDEX);
+    }
+
+    s_http_headers_erase_index(headers, index);
+    return AWS_OP_SUCCESS;
+}
+
+/* Erase entries with name, stop at end_index */
+static int s_http_headers_erase(struct aws_http_headers *headers, struct aws_byte_cursor name, size_t end_index) {
+    bool erased_any = false;
+    struct aws_http_header *header = NULL;
+
+    /* Iterating in reverse is simpler */
+    for (size_t n = end_index; n > 0; --n) {
+        const size_t i = n - 1;
+
+        aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
+        AWS_ASSUME(header);
+
+        if (aws_http_header_name_eq(header->name, name)) {
+            s_http_headers_erase_index(headers, i);
+            erased_any = true;
+        }
+    }
+
+    if (!erased_any) {
+        return aws_raise_error(AWS_ERROR_HTTP_HEADER_NOT_FOUND);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+int aws_http_headers_erase(struct aws_http_headers *headers, struct aws_byte_cursor name) {
+    AWS_PRECONDITION(headers);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
+
+    return s_http_headers_erase(headers, name, aws_http_headers_count(headers));
+}
+
+int aws_http_headers_erase_value(
+    struct aws_http_headers *headers,
+    struct aws_byte_cursor name,
+    struct aws_byte_cursor value) {
+
+    AWS_PRECONDITION(headers);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&name) && aws_byte_cursor_is_valid(&value));
+
+    struct aws_http_header *header = NULL;
+    const size_t count = aws_http_headers_count(headers);
+    for (size_t i = 0; i < count; ++i) {
+        aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
+        AWS_ASSUME(header);
+
+        if (aws_http_header_name_eq(header->name, name) && aws_byte_cursor_eq(&header->value, &value)) {
+            s_http_headers_erase_index(headers, i);
+            return AWS_OP_SUCCESS;
+        }
+    }
+
+    return aws_raise_error(AWS_ERROR_HTTP_HEADER_NOT_FOUND);
+}
+
+int aws_http_headers_add_array(struct aws_http_headers *headers, const struct aws_http_header *array, size_t count) {
+    AWS_PRECONDITION(headers);
+    AWS_PRECONDITION(AWS_MEM_IS_READABLE(array, count));
+
+    const size_t orig_count = aws_http_headers_count(headers);
+
+    for (size_t i = 0; i < count; ++i) {
+        if (aws_http_headers_add(headers, array[i].name, array[i].value)) {
+            goto error;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+
+error:
+    /* Erase headers from the end until we're back to our previous state */
+    for (size_t new_count = aws_http_headers_count(headers); new_count > orig_count; --new_count) {
+        s_http_headers_erase_index(headers, new_count - 1);
+    }
+
+    return AWS_OP_ERR;
+}
+
+int aws_http_headers_set(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value) {
+    AWS_PRECONDITION(headers);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&name) && aws_byte_cursor_is_valid(&value));
+
+    const size_t prev_count = aws_http_headers_count(headers);
+    if (aws_http_headers_add(headers, name, value)) {
+        return AWS_OP_ERR;
+    }
+
+    /* Erase pre-existing headers AFTER add, in case name or value was referencing their memory. */
+    s_http_headers_erase(headers, name, prev_count);
+    return AWS_OP_SUCCESS;
+}
+
+size_t aws_http_headers_count(const struct aws_http_headers *headers) {
+    AWS_PRECONDITION(headers);
+
+    return aws_array_list_length(&headers->array_list);
+}
+
+int aws_http_headers_get_index(
+    const struct aws_http_headers *headers,
+    size_t index,
+    struct aws_http_header *out_header) {
+
+    AWS_PRECONDITION(headers);
+    AWS_PRECONDITION(out_header);
+
+    return aws_array_list_get_at(&headers->array_list, out_header, index);
+}
+
+int aws_http_headers_get(
+    const struct aws_http_headers *headers,
+    struct aws_byte_cursor name,
+    struct aws_byte_cursor *out_value) {
+
+    AWS_PRECONDITION(headers);
+    AWS_PRECONDITION(out_value);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
+
+    struct aws_http_header *header = NULL;
+    const size_t count = aws_http_headers_count(headers);
+    for (size_t i = 0; i < count; ++i) {
+        aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
+        AWS_ASSUME(header);
+
+        if (aws_http_header_name_eq(header->name, name)) {
+            *out_value = header->value;
+            return AWS_OP_SUCCESS;
+        }
+    }
+
+    return aws_raise_error(AWS_ERROR_HTTP_HEADER_NOT_FOUND);
+}
+
 struct aws_http_message {
     struct aws_allocator *allocator;
-    struct aws_array_list headers; /* Contains aws_http_header_impl */
+    struct aws_http_headers *headers;
     struct aws_input_stream *body_stream;
+    struct aws_atomic_var refcount;
 
     /* Data specific to the request or response subclasses */
     union {
@@ -48,13 +325,6 @@ struct aws_http_message {
 
     struct aws_http_message_request_data *request_data;
     struct aws_http_message_response_data *response_data;
-};
-
-/* Type stored within the aws_http_message.headers array_list.
- * Different from aws_http_header in that it owns its string memory. */
-struct aws_http_header_impl {
-    struct aws_string *name;
-    struct aws_string *value;
 };
 
 static int s_set_string_from_cursor(
@@ -81,57 +351,26 @@ static int s_set_string_from_cursor(
     *dst = new_str;
     return AWS_OP_SUCCESS;
 }
+static struct aws_http_message *s_message_new_common(
+    struct aws_allocator *allocator,
+    struct aws_http_headers *existing_headers) {
 
-static void s_header_impl_clean_up(struct aws_http_header_impl *header_impl) {
-    AWS_PRECONDITION(header_impl);
-
-    aws_string_destroy(header_impl->name);
-    aws_string_destroy(header_impl->value);
-    AWS_ZERO_STRUCT(*header_impl);
-}
-
-static int s_header_impl_init(
-    struct aws_http_header_impl *header_impl,
-    const struct aws_http_header *header_view,
-    struct aws_allocator *alloc) {
-
-    AWS_PRECONDITION(header_impl);
-
-    AWS_ZERO_STRUCT(*header_impl);
-
-    if (!header_view->name.len) {
-        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_NAME);
-    }
-
-    int err = s_set_string_from_cursor(&header_impl->name, header_view->name, alloc);
-    if (err) {
-        goto error;
-    }
-
-    err = s_set_string_from_cursor(&header_impl->value, header_view->value, alloc);
-    if (err) {
-        goto error;
-    }
-
-    return AWS_OP_SUCCESS;
-
-error:
-    s_header_impl_clean_up(header_impl);
-    return AWS_OP_ERR;
-}
-
-static struct aws_http_message *s_message_new_common(struct aws_allocator *allocator) {
     struct aws_http_message *message = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_message));
     if (!message) {
         goto error;
     }
 
     message->allocator = allocator;
+    aws_atomic_init_int(&message->refcount, 1);
 
-    int err = aws_array_list_init_dynamic(
-        &message->headers, allocator, AWS_HTTP_REQUEST_NUM_RESERVED_HEADERS, sizeof(struct aws_http_header_impl));
-    if (err) {
-        goto error;
+    if (existing_headers) {
+        message->headers = existing_headers;
+        aws_http_headers_acquire(message->headers);
+    } else {
+        message->headers = aws_http_headers_new(allocator);
+        if (!message->headers) {
+            goto error;
+        }
     }
 
     return message;
@@ -140,20 +379,36 @@ error:
     return NULL;
 }
 
-struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allocator) {
-    AWS_PRECONDITION(allocator);
+static struct aws_http_message *s_message_new_request_common(
+    struct aws_allocator *allocator,
+    struct aws_http_headers *existing_headers) {
 
-    struct aws_http_message *message = s_message_new_common(allocator);
+    struct aws_http_message *message = s_message_new_common(allocator, existing_headers);
     if (message) {
         message->request_data = &message->subclass_data.request;
     }
     return message;
 }
 
+struct aws_http_message *aws_http_message_new_request_with_headers(
+    struct aws_allocator *allocator,
+    struct aws_http_headers *existing_headers) {
+
+    AWS_PRECONDITION(allocator);
+    AWS_PRECONDITION(existing_headers);
+
+    return s_message_new_request_common(allocator, existing_headers);
+}
+
+struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allocator) {
+    AWS_PRECONDITION(allocator);
+    return s_message_new_request_common(allocator, NULL);
+}
+
 struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator) {
     AWS_PRECONDITION(allocator);
 
-    struct aws_http_message *message = s_message_new_common(allocator);
+    struct aws_http_message *message = s_message_new_common(allocator, NULL);
     if (message) {
         message->response_data = &message->subclass_data.response;
         message->response_data->status = AWS_HTTP_STATUS_UNKNOWN;
@@ -162,29 +417,34 @@ struct aws_http_message *aws_http_message_new_response(struct aws_allocator *all
 }
 
 void aws_http_message_destroy(struct aws_http_message *message) {
-    /* Note that request_destroy() may also used by request_new() to clean up if something goes wrong */
+    aws_http_message_release(message);
+}
+
+void aws_http_message_release(struct aws_http_message *message) {
+    /* Note that release() may also be used by new() functions to clean up if something goes wrong */
     AWS_PRECONDITION(!message || message->allocator);
     if (!message) {
         return;
     }
 
-    if (message->request_data) {
-        aws_string_destroy(message->request_data->method);
-        aws_string_destroy(message->request_data->path);
-    }
-
-    if (aws_array_list_is_valid(&message->headers)) {
-        const size_t length = aws_array_list_length(&message->headers);
-        struct aws_http_header_impl *header_impl = NULL;
-        for (size_t i = 0; i < length; ++i) {
-            aws_array_list_get_at_ptr(&message->headers, (void **)&header_impl, i);
-            AWS_ASSERT(header_impl);
-            s_header_impl_clean_up(header_impl);
+    size_t prev_refcount = aws_atomic_fetch_sub(&message->refcount, 1);
+    if (prev_refcount == 1) {
+        if (message->request_data) {
+            aws_string_destroy(message->request_data->method);
+            aws_string_destroy(message->request_data->path);
         }
-    }
-    aws_array_list_clean_up(&message->headers);
 
-    aws_mem_release(message->allocator, message);
+        aws_http_headers_release(message->headers);
+
+        aws_mem_release(message->allocator, message);
+    } else {
+        AWS_ASSERT(prev_refcount != 0);
+    }
+}
+
+void aws_http_message_acquire(struct aws_http_message *message) {
+    AWS_PRECONDITION(message);
+    aws_atomic_fetch_add(&message->refcount, 1);
 }
 
 bool aws_http_message_is_request(const struct aws_http_message *message) {
@@ -297,26 +557,18 @@ struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_
     return message->body_stream;
 }
 
-int aws_http_message_add_header(struct aws_http_message *message, struct aws_http_header header) {
+struct aws_http_headers *aws_http_message_get_headers(struct aws_http_message *message) {
     AWS_PRECONDITION(message);
-    AWS_PRECONDITION(aws_byte_cursor_is_valid(&header.name) && aws_byte_cursor_is_valid(&header.value));
+    return message->headers;
+}
 
-    struct aws_http_header_impl header_impl;
-    int err = s_header_impl_init(&header_impl, &header, message->allocator);
-    if (err) {
-        return AWS_OP_ERR;
-    }
+const struct aws_http_headers *aws_http_message_get_const_headers(const struct aws_http_message *message) {
+    AWS_PRECONDITION(message);
+    return message->headers;
+}
 
-    err = aws_array_list_push_back(&message->headers, &header_impl);
-    if (err) {
-        goto error;
-    }
-
-    return AWS_OP_SUCCESS;
-
-error:
-    s_header_impl_clean_up(&header_impl);
-    return AWS_OP_ERR;
+int aws_http_message_add_header(struct aws_http_message *message, struct aws_http_header header) {
+    return aws_http_headers_add(message->headers, header.name, header.value);
 }
 
 int aws_http_message_add_header_array(
@@ -324,73 +576,15 @@ int aws_http_message_add_header_array(
     const struct aws_http_header *headers,
     size_t num_headers) {
 
-    AWS_PRECONDITION(message);
-    AWS_PRECONDITION(headers);
-    AWS_PRECONDITION(num_headers > 0);
-
-    const size_t beginning_headers_size = aws_array_list_length(&message->headers);
-
-    for (size_t i = 0; i < num_headers; ++i) {
-        if (aws_http_message_add_header(message, headers[i])) {
-            goto error;
-        }
-    }
-
-    return AWS_OP_SUCCESS;
-
-error:
-    /* Remove all headers we added */
-    for (size_t len = aws_array_list_length(&message->headers); len > beginning_headers_size; --len) {
-        aws_http_message_erase_header(message, len - 1);
-    }
-
-    return AWS_OP_ERR;
-}
-
-int aws_http_message_set_header(struct aws_http_message *message, struct aws_http_header header, size_t index) {
-    AWS_PRECONDITION(message);
-    AWS_PRECONDITION(aws_byte_cursor_is_valid(&header.name) && aws_byte_cursor_is_valid(&header.value));
-
-    struct aws_http_header_impl *header_impl;
-    int err = aws_array_list_get_at_ptr(&message->headers, (void **)&header_impl, index);
-    if (err) {
-        return AWS_OP_ERR;
-    }
-
-    /* Prepare new value */
-    struct aws_http_header_impl new_impl;
-    err = s_header_impl_init(&new_impl, &header, message->allocator);
-    if (err) {
-        return AWS_OP_ERR;
-    }
-
-    /* Destroy existing strings (if any) */
-    aws_string_destroy(header_impl->name);
-    aws_string_destroy(header_impl->value);
-
-    /* Overwrite old value */
-    *header_impl = new_impl;
-    return AWS_OP_SUCCESS;
+    return aws_http_headers_add_array(message->headers, headers, num_headers);
 }
 
 int aws_http_message_erase_header(struct aws_http_message *message, size_t index) {
-    AWS_PRECONDITION(message);
-
-    struct aws_http_header_impl *header_impl;
-    int err = aws_array_list_get_at_ptr(&message->headers, (void **)&header_impl, index);
-    if (err) {
-        return AWS_OP_ERR;
-    }
-
-    s_header_impl_clean_up(header_impl);
-    aws_array_list_erase(&message->headers, index);
-    return AWS_OP_SUCCESS;
+    return aws_http_headers_erase_index(message->headers, index);
 }
 
 size_t aws_http_message_get_header_count(const struct aws_http_message *message) {
-    AWS_PRECONDITION(message);
-
-    return aws_array_list_length(&message->headers);
+    return aws_http_headers_count(message->headers);
 }
 
 int aws_http_message_get_header(
@@ -398,22 +592,7 @@ int aws_http_message_get_header(
     struct aws_http_header *out_header,
     size_t index) {
 
-    AWS_PRECONDITION(message);
-    AWS_PRECONDITION(out_header);
-
-    AWS_ZERO_STRUCT(*out_header);
-
-    struct aws_http_header_impl *header_impl;
-    int err = aws_array_list_get_at_ptr(&message->headers, (void **)&header_impl, index);
-    if (err) {
-        return AWS_OP_ERR;
-    }
-
-    out_header->name = aws_byte_cursor_from_string(header_impl->name);
-    if (header_impl->value) {
-        out_header->value = aws_byte_cursor_from_string(header_impl->value);
-    }
-    return AWS_OP_SUCCESS;
+    return aws_http_headers_get_index(message->headers, index, out_header);
 }
 
 struct aws_http_stream *aws_http_connection_make_request(

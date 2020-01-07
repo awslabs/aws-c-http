@@ -15,19 +15,22 @@
 
 #include <aws/http/connection_manager.h>
 
-#include <aws/common/atomics.h>
-#include <aws/common/hash_table.h>
-#include <aws/common/linked_list.h>
-#include <aws/common/mutex.h>
 #include <aws/http/connection.h>
 #include <aws/http/private/connection_manager_system_vtable.h>
 #include <aws/http/private/connection_monitor.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/proxy_impl.h>
+
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
+
+#include <aws/common/atomics.h>
+#include <aws/common/hash_table.h>
+#include <aws/common/linked_list.h>
+#include <aws/common/mutex.h>
+#include <aws/common/string.h>
 
 /*
  * System vtable to use under normal circumstances

@@ -39,6 +39,22 @@ struct aws_http_header {
 };
 
 /**
+ * A transformable block of HTTP headers.
+ * Provides a nice API for getting/setting header names and values.
+ *
+ * All strings are copied and stored within this datastructure.
+ * The index of a given header may change any time headers are modified.
+ * When iterating headers, the following ordering rules apply:
+ *
+ * - Headers with the same name will always be in the same order, relative to one another.
+ *   If "A: one" is added before "A: two", then "A: one" will always precede "A: two".
+ *
+ * - Headers with different names could be in any order, relative to one another.
+ *   If "A: one" is seen before "B: bee" in one iteration, you might see "B: bee" before "A: one" on the next.
+ */
+struct aws_http_headers;
+
+/**
  * Header block type.
  * INFORMATIONAL: Header block for 1xx informational (interim) responses.
  * MAIN: Main header block sent with request or response.
@@ -273,21 +289,170 @@ struct aws_http_request_handler_options {
 AWS_EXTERN_C_BEGIN
 
 /**
+ * Return whether both names are equivalent.
+ * This is a case-insensitive string comparison.
+ *
+ * Example Matches:
+ * "Content-Length" == "content-length" // upper or lower case ok
+
+ * Example Mismatches:
+ * "Content-Length" != " Content-Length" // leading whitespace bad
+ */
+AWS_HTTP_API
+bool aws_http_header_name_eq(struct aws_byte_cursor name_a, struct aws_byte_cursor name_b);
+
+/**
+ * Create a new headers object.
+ * The caller has a hold on the object and must call aws_http_headers_release() when they are done with it.
+ */
+AWS_HTTP_API
+struct aws_http_headers *aws_http_headers_new(struct aws_allocator *allocator);
+
+/**
+ * Acquire a hold on the object, preventing it from being deleted until
+ * aws_http_headers_release() is called by all those with a hold on it.
+ */
+AWS_HTTP_API
+void aws_http_headers_acquire(struct aws_http_headers *headers);
+
+/**
+ * Release a hold on the object.
+ * The object is deleted when all holds on it are released.
+ */
+AWS_HTTP_API
+void aws_http_headers_release(struct aws_http_headers *headers);
+
+/**
+ * Add a header.
+ * The underlying strings are copied.
+ */
+AWS_HTTP_API
+int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value);
+
+/**
+ * Add an array of headers.
+ * The underlying strings are copied.
+ */
+AWS_HTTP_API
+int aws_http_headers_add_array(struct aws_http_headers *headers, const struct aws_http_header *array, size_t count);
+
+/**
+ * Set a header value.
+ * The header is added if necessary and any existing values for this name are removed.
+ * The underlying strings are copied.
+ */
+AWS_HTTP_API
+int aws_http_headers_set(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value);
+
+/**
+ * Get the total number of headers.
+ */
+AWS_HTTP_API
+size_t aws_http_headers_count(const struct aws_http_headers *headers);
+
+/**
+ * Get the header at the specified index.
+ * The index of a given header may change any time headers are modified.
+ * When iterating headers, the following ordering rules apply:
+ *
+ * - Headers with the same name will always be in the same order, relative to one another.
+ *   If "A: one" is added before "A: two", then "A: one" will always precede "A: two".
+ *
+ * - Headers with different names could be in any order, relative to one another.
+ *   If "A: one" is seen before "B: bee" in one iteration, you might see "B: bee" before "A: one" on the next.
+ *
+ * AWS_ERROR_INVALID_INDEX is raised if the index is invalid.
+ */
+AWS_HTTP_API
+int aws_http_headers_get_index(
+    const struct aws_http_headers *headers,
+    size_t index,
+    struct aws_http_header *out_header);
+
+/**
+ * Get the first value for this name, ignoring any additional values.
+ * AWS_ERROR_HTTP_HEADER_NOT_FOUND is raised if the name is not found.
+ */
+AWS_HTTP_API
+int aws_http_headers_get(
+    const struct aws_http_headers *headers,
+    struct aws_byte_cursor name,
+    struct aws_byte_cursor *out_value);
+
+/**
+ * Remove all headers with this name.
+ * AWS_ERROR_HTTP_HEADER_NOT_FOUND is raised if no headers with this name are found.
+ */
+AWS_HTTP_API
+int aws_http_headers_erase(struct aws_http_headers *headers, struct aws_byte_cursor name);
+
+/**
+ * Remove the first header found with this name and value.
+ * AWS_ERROR_HTTP_HEADER_NOT_FOUND is raised if no such header is found.
+ */
+AWS_HTTP_API
+int aws_http_headers_erase_value(
+    struct aws_http_headers *headers,
+    struct aws_byte_cursor name,
+    struct aws_byte_cursor value);
+
+/**
+ * Remove the header at the specified index.
+ *
+ * AWS_ERROR_INVALID_INDEX is raised if the index is invalid.
+ */
+AWS_HTTP_API
+int aws_http_headers_erase_index(struct aws_http_headers *headers, size_t index);
+
+/**
+ * Clear all headers.
+ */
+AWS_HTTP_API
+void aws_http_headers_clear(struct aws_http_headers *headers);
+
+/**
  * Create a new request message.
  * The message is blank, all properties (method, path, etc) must be set individually.
+ *
+ * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
  */
 AWS_HTTP_API
 struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allocator);
 
 /**
+ * Like aws_http_message_new_request(), but uses existing aws_http_headers instead of creating a new one.
+ * Acquires a hold on the headers, and releases it when the request is destroyed.
+ */
+AWS_HTTP_API
+struct aws_http_message *aws_http_message_new_request_with_headers(
+    struct aws_allocator *allocator,
+    struct aws_http_headers *existing_headers);
+
+/**
  * Create a new response message.
  * The message is blank, all properties (status, headers, etc) must be set individually.
+ *
+ * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
  */
 AWS_HTTP_API
 struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator);
 
 /**
- * Destroy the message.
+ * Acquire a hold on the object, preventing it from being deleted until
+ * aws_http_message_release() is called by all those with a hold on it.
+ */
+AWS_HTTP_API
+void aws_http_message_acquire(struct aws_http_message *message);
+
+/**
+ * Release a hold on the object.
+ * The object is deleted when all holds on it are released.
+ */
+AWS_HTTP_API
+void aws_http_message_release(struct aws_http_message *message);
+
+/**
+ * Deprecated. This is equivalent to aws_http_message_release().
  */
 AWS_HTTP_API
 void aws_http_message_destroy(struct aws_http_message *message);
@@ -356,6 +521,21 @@ AWS_HTTP_API
 void aws_http_message_set_body_stream(struct aws_http_message *message, struct aws_input_stream *body_stream);
 
 /**
+ * Get the message's aws_http_headers.
+ *
+ * This datastructure has more functions for inspecting and modifying headers than
+ * are available on the aws_http_message datastructure.
+ */
+AWS_HTTP_API
+struct aws_http_headers *aws_http_message_get_headers(struct aws_http_message *message);
+
+/**
+ * Get the message's const aws_http_headers.
+ */
+AWS_HTTP_API
+const struct aws_http_headers *aws_http_message_get_const_headers(const struct aws_http_message *message);
+
+/**
  * Get the number of headers.
  */
 AWS_HTTP_API
@@ -393,14 +573,6 @@ int aws_http_message_add_header_array(
     struct aws_http_message *message,
     const struct aws_http_header *headers,
     size_t num_headers);
-
-/**
- * Modify the header at the specified index.
- * The message makes its own copy of the underlying strings.
- * The previous strings may be destroyed.
- */
-AWS_HTTP_API
-int aws_http_message_set_header(struct aws_http_message *message, struct aws_http_header header, size_t index);
 
 /**
  * Remove the header at the specified index.

@@ -6,12 +6,20 @@ file(GLOB TEST_HDRS "*.h")
 file(GLOB TEST_SRC "*.c")
 file(GLOB TESTS ${TEST_HDRS} ${TEST_SRC})
 
+add_test_case(headers_add)
+add_test_case(headers_add_array)
+add_test_case(headers_set)
+add_test_case(headers_erase_index)
+add_test_case(headers_erase)
+add_test_case(headers_erase_value)
+add_test_case(headers_clear)
+
 add_test_case(message_sanity_check)
 add_test_case(message_request_method)
 add_test_case(message_request_path)
 add_test_case(message_response_status)
-add_test_case(message_add_headers)
-add_test_case(message_erase_headers)
+add_test_case(message_refcounts)
+add_test_case(message_with_existing_headers)
 add_test_case(message_handles_oom)
 
 add_test_case(h1_test_get_request)
@@ -282,7 +290,8 @@ add_test_case(test_http_stats_split_across_gather_boundary)
 add_test_case(test_http_stats_pipelined)
 add_test_case(test_http_stats_multiple_requests_with_gap)
 
-set(TEST_BINARY_NAME ${CMAKE_PROJECT_NAME}-tests)
+set(TEST_BINARY_NAME ${PROJECT_NAME}-tests)
+
 generate_test_driver(${TEST_BINARY_NAME})
 
 file(GLOB FUZZ_TESTS "fuzz/*.c")

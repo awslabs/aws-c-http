@@ -140,9 +140,12 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
 
     ASSERT_SUCCESS(aws_event_loop_group_default_init(&test.event_loop_group, test.alloc, 1));
     ASSERT_SUCCESS(aws_host_resolver_init_default(&test.host_resolver, test.alloc, 1, &test.event_loop_group));
-    ASSERT_NOT_NULL(
-        test.client_bootstrap =
-            aws_client_bootstrap_new(test.alloc, &test.event_loop_group, &test.host_resolver, NULL));
+
+    struct aws_client_bootstrap_options bootstrap_options = {
+        .event_loop_group = &test.event_loop_group,
+        .host_resolver = &test.host_resolver,
+    };
+    ASSERT_NOT_NULL(test.client_bootstrap = aws_client_bootstrap_new(test.alloc, &bootstrap_options));
     struct aws_tls_ctx_options tls_ctx_options;
     aws_tls_ctx_options_init_default_client(&tls_ctx_options, allocator);
     ASSERT_NOT_NULL(test.tls_ctx = aws_tls_client_ctx_new(allocator, &tls_ctx_options));

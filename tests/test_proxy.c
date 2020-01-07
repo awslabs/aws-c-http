@@ -18,7 +18,11 @@
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/h1_stream.h>
 #include <aws/http/private/proxy_impl.h>
+
 #include <aws/io/uri.h>
+
+#include <aws/common/string.h>
+
 #include <aws/testing/aws_test_harness.h>
 #include <aws/testing/io_testing_channel.h>
 
