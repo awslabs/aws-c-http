@@ -114,7 +114,12 @@ static void s_process_statistics(
         (void *)channel,
         bytes_per_second);
 
-    /* Check throughput only if at least one stream exists and was observed in that role pregviously */
+    /*
+     * Check throughput only if at least one stream exists and was observed in that role previously
+     *
+     * ToDo: This logic only makes sense from an h1 perspective.  A similar requirement could be placed on
+     * h2 stats by analyzing/tracking the min and max stream ids (per odd/even) at process timepoints.
+     */
     bool check_throughput =
         (current_incoming_stream_id != 0 && current_incoming_stream_id == impl->last_incoming_stream_id) ||
         (current_outgoing_stream_id != 0 && current_outgoing_stream_id == impl->last_outgoing_stream_id);
