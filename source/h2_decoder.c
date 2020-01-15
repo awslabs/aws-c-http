@@ -330,7 +330,7 @@ static enum aws_hpack_decode_status s_decode_integer(
             "HPACK integer decoding decoded more data than was available '%s'",
             aws_error_debug_str(aws_last_error()));
 
-        return AWS_HPACK_DECODE_ERROR;
+        return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
     }
     decoder->frame_in_progress.payload_len -= (uint32_t)decoded_len;
 
@@ -356,7 +356,7 @@ static enum aws_hpack_decode_status s_decode_string(
             "HPACK integer decoding decoded more data than was available '%s'",
             aws_error_debug_str(aws_last_error()));
 
-        return AWS_HPACK_DECODE_ERROR;
+        return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
     }
     decoder->frame_in_progress.payload_len -= (uint32_t)decoded_len;
 
@@ -403,7 +403,7 @@ static struct aws_byte_cursor s_decoder_get_payload(struct aws_h2_decoder *decod
 
     const uint32_t remaining_length = decoder->frame_in_progress.payload_len;
     if (input->len < remaining_length) {
-        AWS_FATAL_ASSERT(input->len <= UINT32_MAX);
+        AWS_ASSERT(input->len <= UINT32_MAX);
         result = aws_byte_cursor_advance(input, input->len);
         decoder->frame_in_progress.payload_len -= (uint32_t)input->len;
     } else {
@@ -414,9 +414,21 @@ static struct aws_byte_cursor s_decoder_get_payload(struct aws_h2_decoder *decod
     return result;
 }
 
+/* All frames begin with a fixed 9-octet header followed by a variable-length payload. (RFC-7540 4.1)
+ * This function processes everything preceding Frame Payload in the following diagram:
+ *  +-----------------------------------------------+
+ *  |                 Length (24)                   |
+ *  +---------------+---------------+---------------+
+ *  |   Type (8)    |   Flags (8)   |
+ *  +-+-------------+---------------+-------------------------------+
+ *  |R|                 Stream Identifier (31)                      |
+ *  +=+=============================================================+
+ *  |                   Frame Payload (0...)                      ...
+ *  +---------------------------------------------------------------+
+ */
 static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    AWS_FATAL_ASSERT(input->len >= 9);
+    AWS_ASSERT(input->len >= 9);
 
     uint32_t payload_len = 0;
     uint8_t *length_ptr = ((uint8_t *)&payload_len);
@@ -429,7 +441,7 @@ static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cur
     /* Reverse from network order */
     payload_len = aws_ntoh24(payload_len);
     /* Assert top byte isn't set */
-    AWS_FATAL_ASSERT((payload_len & 0xFF000000) == 0);
+    AWS_ASSERT((payload_len & 0xFF000000) == 0);
 
     /* #TODO handle the SETTINGS_MAX_FRAME_SIZE setting */
     static const uint32_t MAX_FRAME_SIZE = 16384;
@@ -484,21 +496,14 @@ static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cur
         case AWS_H2_FRAME_T_CONTINUATION:
             acceptable_flags = AWS_H2_FRAME_F_END_HEADERS;
             break;
-        case AWS_H2_FRAME_T_UNKNOWN:
-            /* Don't actually do anything with unknown frame flags */
-            flags = 0;
-            break;
         default:
-            /* PRIORITY, RST_STREAM, GOAWAY, WINDOW_UPDATE dont have any flags */
+            /* PRIORITY, RST_STREAM, GOAWAY, WINDOW_UPDATE dont have any flags.
+             * Don't do anything with the flags of UNKNOWN frames. */
             break;
     }
 
-    /* Validate the flags */
-    if (flags & ~acceptable_flags) {
-        DECODER_LOGF(
-            ERROR, decoder, "Frame type %s has invalid flags %" PRIu8, aws_h2_frame_type_to_str(frame_type), flags);
-        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
-    }
+    /* Flags that have no defined semantics for a particular frame type MUST be ignored (RFC-7540 4.1) */
+    flags &= acceptable_flags;
 
     /* Don't store is_padded on the decoder so that other states must check padding_len instead */
     bool is_padded = false;
@@ -526,11 +531,37 @@ static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cur
     /* Discard top bit */
     decoder->frame_in_progress.stream_id = stream_id & s_31_bit_mask;
 
+    /* Frame-types generally either require a stream-id, or require that it be zero.
+     * But WINDOW_UPDATE is special and can do either.
+     * And of course everything in an UNKNOWN frame type is ignored */
+    if (decoder->frame_in_progress.stream_id == 0) {
+        switch (frame_type) {
+            case AWS_H2_FRAME_T_DATA:
+            case AWS_H2_FRAME_T_HEADERS:
+            case AWS_H2_FRAME_T_PRIORITY:
+            case AWS_H2_FRAME_T_RST_STREAM:
+            case AWS_H2_FRAME_T_PUSH_PROMISE:
+            case AWS_H2_FRAME_T_CONTINUATION:
+                DECODER_LOGF(
+                    ERROR, decoder, "Stream ID for %s frame cannot be 0.", aws_h2_frame_type_to_str(frame_type));
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+        }
+    } else {
+        switch (frame_type) {
+            case AWS_H2_FRAME_T_SETTINGS:
+            case AWS_H2_FRAME_T_PING:
+            case AWS_H2_FRAME_T_GOAWAY:
+                DECODER_LOGF(ERROR, decoder, "Stream ID for %s frame must be 0.", aws_h2_frame_type_to_str(frame_type));
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+        }
+    }
+
     DECODER_LOGF(
         TRACE,
         decoder,
-        "Done decoding frame header, beginning to process body of frame (stream id=%" PRIu32 " payload len=%" PRIu32
-        ")",
+        "Done decoding frame header, beginning to process body of frame (type=%s stream id=%" PRIu32
+        " payload len=%" PRIu32 ")",
+        aws_h2_frame_type_to_str(frame_type),
         decoder->frame_in_progress.stream_id,
         decoder->frame_in_progress.payload_len);
 
@@ -551,9 +582,15 @@ static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cur
     return AWS_OP_SUCCESS;
 }
 
+/* Frames that support padding, and have the PADDED flag set, begin with a 1-byte Pad Length.
+ * (Actual padding comes later at the very end of the frame)
+ *  +---------------+
+ *  |Pad Length? (8)|
+ *  +---------------+
+ */
 static int s_state_fn_padding_len(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    AWS_FATAL_ASSERT(input->len >= 1);
+    AWS_ASSERT(input->len >= 1);
 
     /* Read the padding length */
     bool succ = aws_byte_cursor_read_u8(input, &decoder->frame_in_progress.padding_len);
@@ -584,7 +621,7 @@ static int s_state_fn_padding(struct aws_h2_decoder *decoder, struct aws_byte_cu
         will_finish_state = true;
         aws_byte_cursor_advance(input, padding_len);
     } else {
-        AWS_FATAL_ASSERT(input->len <= UINT8_MAX);
+        AWS_ASSERT(input->len <= UINT8_MAX);
         decoder->frame_in_progress.padding_len -= (uint8_t)input->len;
         aws_byte_cursor_advance(input, input->len);
     }
@@ -597,25 +634,23 @@ static int s_state_fn_padding(struct aws_h2_decoder *decoder, struct aws_byte_cu
     return AWS_OP_SUCCESS;
 }
 
+/* Shared code for:
+ * PRIORITY frame (RFC-7540 6.3)
+ * Start of HEADERS frame IF the priority flag is set (RFC-7540 6.2)
+ *  +-+-------------+-----------------------------------------------+
+ *  |E|                 Stream Dependency (31)                      |
+ *  +-+-------------+-----------------------------------------------+
+ *  |  Weight (8)   |
+ *  +-+-------------+-----------------------------------------------+
+ */
 static int s_state_fn_priority_block(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    AWS_FATAL_ASSERT(input->len >= 5);
-
-    /* Read the top 4 bytes */
-    uint32_t top_bytes = 0;
-    bool succ = aws_byte_cursor_read_be32(input, &top_bytes);
-    AWS_ASSERT(succ);
-    (void)succ;
-
-    /* Write the priority weight */
-    uint8_t weight = 0;
-    succ = aws_byte_cursor_read_u8(input, &weight);
-    AWS_ASSERT(succ);
-    (void)succ;
+    AWS_ASSERT(input->len >= 5);
 
     /* #NOTE: throw priority data on the GROUND. They make us hecka vulnerable to DDoS and stuff.
      * https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-9513
      */
+    aws_byte_cursor_advance(input, 5);
 
     s_decoder_run_frame_state(decoder, input);
 
@@ -647,14 +682,20 @@ static int s_state_fn_frame_headers(struct aws_h2_decoder *decoder, struct aws_b
 static int s_state_fn_frame_priority(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
-    /* No data to process here, we're done! */
+    /* We already processed this data in the shared priority_block state, so we're done! */
     s_decoder_reset_state(decoder);
 
     return AWS_OP_SUCCESS;
 }
+
+/*  RST_STREAM is just a 4-byte error code.
+ *  +---------------------------------------------------------------+
+ *  |                        Error Code (32)                        |
+ *  +---------------------------------------------------------------+
+ */
 static int s_state_fn_frame_rst_stream(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    AWS_FATAL_ASSERT(input->len >= 4);
+    AWS_ASSERT(input->len >= 4);
 
     uint32_t error_code = 0;
     bool succ = aws_byte_cursor_read_be32(input, &error_code);
@@ -665,18 +706,23 @@ static int s_state_fn_frame_rst_stream(struct aws_h2_decoder *decoder, struct aw
 
     return AWS_OP_SUCCESS;
 }
+
+/* A SETTINGS frame maybe contain any number of settings.
+ * We consume each 6-byte setting in the next state. */
 static int s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
     /* If ack is set, report and abort */
     if (decoder->frame_in_progress.flags.ack) {
+        /* Receipt of a SETTINGS frame with the ACK flag set and a length field value other
+         * than 0 MUST be treated as a connection error of type FRAME_SIZE_ERROR */
         if (decoder->frame_in_progress.payload_len) {
             DECODER_LOGF(
                 ERROR,
                 decoder,
                 "SETTINGS ACK frame received, but it has non-0 payload length %" PRIu32,
                 decoder->frame_in_progress.payload_len);
-            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+            return aws_raise_error(AWS_ERROR_HTTP_INVALID_FRAME_SIZE);
         }
 
         DECODER_CALL_VTABLE(decoder, on_settings_ack);
@@ -685,14 +731,15 @@ static int s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struc
     }
 
     if (decoder->frame_in_progress.payload_len % s_setting_block_size != 0) {
-        /* Leftover data is not divisible by 6, error */
+        /* A SETTINGS frame with a length other than a multiple of 6 octets MUST be
+         * treated as a connection error (Section 5.4.1) of type FRAME_SIZE_ERROR */
         DECODER_LOGF(
             ERROR,
             decoder,
             "Settings frame payload length is %" PRIu32 ", but it must be divisible by %" PRIu8,
             decoder->frame_in_progress.payload_len,
             s_setting_block_size);
-        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_FRAME_SIZE);
     }
 
     /* If we've made it this far, we have a non-ACK settings frame with a valid payload length */
@@ -700,9 +747,18 @@ static int s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struc
 
     return AWS_OP_SUCCESS;
 }
+
+/* Each run through this state consumes one 6-byte setting.
+ * There may be multiple settings in a SETTINGS frame.
+ *  +-------------------------------+
+ *  |       Identifier (16)         |
+ *  +-------------------------------+-------------------------------+
+ *  |                        Value (32)                             |
+ *  +---------------------------------------------------------------+
+ */
 static int s_state_fn_frame_settings(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    AWS_FATAL_ASSERT(input->len >= 6);
+    AWS_ASSERT(input->len >= 6);
 
     /* Truck through the list until we run out of space */
     while (input->len >= s_setting_block_size) {
@@ -731,13 +787,20 @@ static int s_state_fn_frame_settings(struct aws_h2_decoder *decoder, struct aws_
 
     return AWS_OP_SUCCESS;
 }
+
+/* Read 4-byte Promised Stream ID
+ * The rest of the frame is just like HEADERS, so move on to shared states...
+ *  +-+-------------------------------------------------------------+
+ *  |R|                  Promised Stream ID (31)                    |
+ *  +-+-----------------------------+-------------------------------+
+ */
 static int s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    AWS_FATAL_ASSERT(input->len >= 4);
+    AWS_ASSERT(input->len >= 4);
 
     uint32_t promised_stream_id = 0;
     bool succ = aws_byte_cursor_read_be32(input, &promised_stream_id);
-    AWS_FATAL_ASSERT(succ);
+    AWS_ASSERT(succ);
     decoder->frame_in_progress.payload_len -= 4;
 
     /* Remove top bit */
@@ -754,9 +817,17 @@ static int s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct 
 
     return AWS_OP_SUCCESS;
 }
+
+/* PING frame is just 8-bytes of opaque data.
+ *  +---------------------------------------------------------------+
+ *  |                                                               |
+ *  |                      Opaque Data (64)                         |
+ *  |                                                               |
+ *  +---------------------------------------------------------------+
+ */
 static int s_state_fn_frame_ping(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    AWS_FATAL_ASSERT(input->len >= 8);
+    AWS_ASSERT(input->len >= 8);
 
     uint8_t opaque_data[8] = {0};
     bool succ = aws_byte_cursor_read(input, &opaque_data, AWS_ARRAY_SIZE(opaque_data));
@@ -769,9 +840,18 @@ static int s_state_fn_frame_ping(struct aws_h2_decoder *decoder, struct aws_byte
 
     return AWS_OP_SUCCESS;
 }
+
+/* Read first 8 bytes of GOAWAY.
+ * This may be followed by N bytes of debug data.
+ *  +-+-------------------------------------------------------------+
+ *  |R|                  Last-Stream-ID (31)                        |
+ *  +-+-------------------------------------------------------------+
+ *  |                      Error Code (32)                          |
+ *  +---------------------------------------------------------------+
+ */
 static int s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    AWS_FATAL_ASSERT(input->len >= 8);
+    AWS_ASSERT(input->len >= 8);
 
     uint32_t last_stream = 0;
     uint32_t error_code = AWS_H2_ERR_NO_ERROR;
@@ -798,6 +878,12 @@ static int s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, struct aws_by
 
     return AWS_OP_SUCCESS;
 }
+
+/* Optional remainder of GOAWAY frame.
+ *  +---------------------------------------------------------------+
+ *  |                  Additional Debug Data (*)                    |
+ *  +---------------------------------------------------------------+
+ */
 static int s_state_fn_frame_goaway_debug_data(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     struct aws_byte_cursor debug_data = s_decoder_get_payload(decoder, input);
@@ -810,9 +896,15 @@ static int s_state_fn_frame_goaway_debug_data(struct aws_h2_decoder *decoder, st
 
     return AWS_OP_SUCCESS;
 }
+
+/* WINDOW_UPDATE frame.
+ *  +-+-------------------------------------------------------------+
+ *  |R|              Window Size Increment (31)                     |
+ *  +-+-------------------------------------------------------------+
+ */
 static int s_state_fn_frame_window_update(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    AWS_FATAL_ASSERT(input->len >= 4);
+    AWS_ASSERT(input->len >= 4);
 
     uint32_t window_increment = 0;
     bool succ = aws_byte_cursor_read_be32(input, &window_increment);
@@ -827,6 +919,8 @@ static int s_state_fn_frame_window_update(struct aws_h2_decoder *decoder, struct
 
     return AWS_OP_SUCCESS;
 }
+
+/* CONTINUATION is a lot like HEADERS, so it uses shared states. */
 static int s_state_fn_frame_continuation(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
@@ -841,6 +935,8 @@ static int s_state_fn_frame_continuation(struct aws_h2_decoder *decoder, struct 
 
     return AWS_OP_SUCCESS;
 }
+
+/* Implementations MUST ignore and discard any frame that has a type that is unknown. */
 static int s_state_fn_frame_unknown(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     /* Read all data possible, and throw it on the floor */
