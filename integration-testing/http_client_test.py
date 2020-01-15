@@ -25,11 +25,18 @@ if not elasticurl_cmd_prefix:
 # Remove args from sys.argv so that unittest doesn't also try to parse them.
 sys.argv = sys.argv[:1]
 
-shell = sys.platform.startswith('win')
-
-
 def run_command(args):
-    subprocess.check_call(args, shell=shell)
+    # gather all stderr and stdout to a single string that we print only if things go wrong
+    process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    output = process.communicate()[0]
+
+    if process.returncode != 0:
+        args_str = subprocess.list2cmdline(args)
+        print(args_str)
+        for line in output.splitlines():
+            print(line.decode())
+
+        raise RuntimeError("Return code {code} from: {cmd}".format(code=process.returncode, cmd=args_str))
 
 def compare_files(filename_expected, filename_other):
     if not filecmp.cmp(filename_expected, filename_other, shallow=False):
