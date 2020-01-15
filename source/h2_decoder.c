@@ -801,6 +801,7 @@ static int s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct 
     uint32_t promised_stream_id = 0;
     bool succ = aws_byte_cursor_read_be32(input, &promised_stream_id);
     AWS_ASSERT(succ);
+    (void)succ;
     decoder->frame_in_progress.payload_len -= 4;
 
     /* Remove top bit */
