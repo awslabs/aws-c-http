@@ -12,7 +12,6 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-
 #include <aws/testing/aws_test_harness.h>
 
 #include <aws/http/private/hpack.h>
@@ -47,6 +46,25 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
     ASSERT_UINT_EQUALS(10, output_buffer[0]);
     ASSERT_BIN_ARRAYS_EQUALS(zeros, 3, &output_buffer[1], 3);
     ASSERT_UINT_EQUALS(1, aws_hpack_get_encoded_length_integer(10, 5));
+
+    /* Test full first byte (6 bits) */
+    AWS_ZERO_ARRAY(output_buffer);
+    output_buf = aws_byte_buf_from_empty_array(output_buffer, AWS_ARRAY_SIZE(output_buffer));
+    ASSERT_SUCCESS(aws_hpack_encode_integer(63, 6, &output_buf));
+    /**
+     * Expected:
+     *   0   1   2   3   4   5   6   7
+     * +---+---+---+---+---+---+---+---+
+     * | X | X | 1 | 1 | 1 | 1 | 1 | 1 |  63
+     * +---+---+---+---+---+---+---+---+
+     * | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |  0
+     * +---+---+---+---+---+---+---+---+
+     */
+    ASSERT_UINT_EQUALS(2, output_buf.len);
+    ASSERT_UINT_EQUALS(63, output_buffer[0]);
+    ASSERT_UINT_EQUALS(0, output_buffer[1]);
+    ASSERT_BIN_ARRAYS_EQUALS(zeros, 2, &output_buffer[2], 2);
+    ASSERT_UINT_EQUALS(2, aws_hpack_get_encoded_length_integer(63, 6));
 
     /* Test 42 in 8 bits */
     AWS_ZERO_ARRAY(output_buffer);
@@ -95,10 +113,13 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
 
 AWS_TEST_CASE(hpack_decode_integer, test_hpack_decode_integer)
 static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx) {
-    (void)allocator;
     (void)ctx;
     /* Test encoding integers
        Test cases taken from https://httpwg.org/specs/rfc7541.html#integer.representation.examples */
+
+    struct aws_hpack_context *hpack = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
+    ASSERT_NOT_NULL(hpack);
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(hpack, 0));
 
     uint64_t result = 0;
     struct aws_byte_cursor to_decode;
@@ -110,11 +131,26 @@ static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx)
      * | X | X | X | 0 | 1 | 0 | 1 | 0 |  10
      * +---+---+---+---+---+---+---+---+
      */
-    uint8_t test_1[] = {10};
-    to_decode = aws_byte_cursor_from_array(test_1, AWS_ARRAY_SIZE(test_1));
-    ASSERT_SUCCESS(aws_hpack_decode_integer(&to_decode, 5, &result));
+    uint8_t test_0[] = {10};
+    to_decode = aws_byte_cursor_from_array(test_0, AWS_ARRAY_SIZE(test_0));
+    ASSERT_SUCCESS(aws_hpack_decode_integer(hpack, &to_decode, 5, &result));
     ASSERT_UINT_EQUALS(0, to_decode.len);
     ASSERT_UINT_EQUALS(10, result);
+
+    /* Test full first byte (6 bits)
+     * Layout:
+     *   0   1   2   3   4   5   6   7
+     * +---+---+---+---+---+---+---+---+
+     * | X | X | 1 | 1 | 1 | 1 | 1 | 1 |  63
+     * +---+---+---+---+---+---+---+---+
+     * | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |  0
+     * +---+---+---+---+---+---+---+---+
+     */
+    uint8_t test_1[] = {63, 0};
+    to_decode = aws_byte_cursor_from_array(test_1, AWS_ARRAY_SIZE(test_1));
+    ASSERT_SUCCESS(aws_hpack_decode_integer(hpack, &to_decode, 6, &result));
+    ASSERT_UINT_EQUALS(0, to_decode.len);
+    ASSERT_UINT_EQUALS(63, result);
 
     /* Test 42 in 8 bits
      * Layout:
@@ -125,7 +161,7 @@ static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx)
      */
     uint8_t test_2[] = {42};
     to_decode = aws_byte_cursor_from_array(test_2, AWS_ARRAY_SIZE(test_2));
-    ASSERT_SUCCESS(aws_hpack_decode_integer(&to_decode, 8, &result));
+    ASSERT_SUCCESS(aws_hpack_decode_integer(hpack, &to_decode, 8, &result));
     ASSERT_UINT_EQUALS(0, to_decode.len);
     ASSERT_UINT_EQUALS(42, result);
 
@@ -140,7 +176,7 @@ static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx)
      */
     uint8_t test_3[] = {UINT8_MAX >> 3, 154, 10};
     to_decode = aws_byte_cursor_from_array(test_3, AWS_ARRAY_SIZE(test_3));
-    ASSERT_SUCCESS(aws_hpack_decode_integer(&to_decode, 5, &result));
+    ASSERT_SUCCESS(aws_hpack_decode_integer(hpack, &to_decode, 5, &result));
     ASSERT_UINT_EQUALS(0, to_decode.len);
     ASSERT_UINT_EQUALS(1337, result);
 
@@ -154,9 +190,9 @@ static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx)
      */
     uint8_t test_4[] = {UINT8_MAX >> 3, UINT8_MAX};
     to_decode = aws_byte_cursor_from_array(test_4, AWS_ARRAY_SIZE(test_4));
-    ASSERT_FAILS(aws_hpack_decode_integer(&to_decode, 5, &result));
-    ASSERT_UINT_EQUALS(AWS_ERROR_SHORT_BUFFER, aws_last_error());
-    ASSERT_UINT_EQUALS(AWS_ARRAY_SIZE(test_4), to_decode.len);
+    ASSERT_INT_EQUALS(AWS_HPACK_DECODE_ONGOING, aws_hpack_decode_integer(hpack, &to_decode, 5, &result));
+    ASSERT_UINT_EQUALS(0, to_decode.len);
+    aws_hpack_context_reset_decode(hpack);
 
     /* Test number too big
      * Layout:
@@ -189,9 +225,10 @@ static int test_hpack_decode_integer(struct aws_allocator *allocator, void *ctx)
         UINT8_MAX,
     };
     to_decode = aws_byte_cursor_from_array(test_5, AWS_ARRAY_SIZE(test_5));
-    ASSERT_FAILS(aws_hpack_decode_integer(&to_decode, 5, &result));
+    ASSERT_FAILS(aws_hpack_decode_integer(hpack, &to_decode, 5, &result));
     ASSERT_UINT_EQUALS(AWS_ERROR_OVERFLOW_DETECTED, aws_last_error());
-    ASSERT_UINT_EQUALS(AWS_ARRAY_SIZE(test_5), to_decode.len);
+
+    aws_hpack_context_destroy(hpack);
 
     return AWS_OP_SUCCESS;
 }
@@ -207,7 +244,9 @@ static int test_hpack_static_table_find(struct aws_allocator *allocator, void *c
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator, 0);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
+    ASSERT_NOT_NULL(context);
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0));
 
     bool found_value = false;
 
@@ -239,7 +278,9 @@ static int test_hpack_static_table_get(struct aws_allocator *allocator, void *ct
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator, 0);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
+    ASSERT_NOT_NULL(context);
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0));
 
     const struct aws_http_header *found = NULL;
 
@@ -270,7 +311,8 @@ static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator, 2);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
+    ASSERT_NOT_NULL(context);
 
     bool found_value = false;
 
@@ -294,16 +336,20 @@ static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *
     ASSERT_UINT_EQUALS(63, aws_hpack_find_index(context, &s_herp2, &found_value));
     ASSERT_FALSE(found_value);
 
+    /* Test resizing up doesn't break anything */
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 8 * 1024 * 1024));
+
     /* Check invalid header */
     DEFINE_STATIC_HEADER(s_garbage, "colden's mother's maiden name", "nice try mr hacker");
     ASSERT_UINT_EQUALS(0, aws_hpack_find_index(context, &s_garbage, &found_value));
 
-    /* Test resizing */
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 1));
+    /* Test resizing so only the first element stays */
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, aws_hpack_get_header_size(&s_fizz)));
 
     ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &s_fizz, &found_value));
     ASSERT_TRUE(found_value);
     ASSERT_UINT_EQUALS(0, aws_hpack_find_index(context, &s_herp, &found_value));
+    ASSERT_FALSE(found_value);
 
     aws_hpack_context_destroy(context);
     aws_hpack_static_table_clean_up();
@@ -315,13 +361,18 @@ static int test_hpack_dynamic_table_get(struct aws_allocator *allocator, void *c
     (void)ctx;
 
     aws_hpack_static_table_init(allocator);
-    struct aws_hpack_context *context = aws_hpack_context_new(allocator, 2);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
+    ASSERT_NOT_NULL(context);
 
     const struct aws_http_header *found = NULL;
 
     DEFINE_STATIC_HEADER(s_herp, "herp", "derp");
     DEFINE_STATIC_HEADER(s_fizz, "fizz", "buzz");
     DEFINE_STATIC_HEADER(s_status, ":status", "418");
+
+    /* Make the dynamic table only big enough for 2 headers */
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(
+        context, aws_hpack_get_header_size(&s_fizz) + aws_hpack_get_header_size(&s_status)));
 
     ASSERT_SUCCESS(aws_hpack_insert_header(context, &s_herp));
     found = aws_hpack_get_header(context, 62);
@@ -352,8 +403,8 @@ static int test_hpack_dynamic_table_get(struct aws_allocator *allocator, void *c
     found = aws_hpack_get_header(context, 64);
     ASSERT_NULL(found);
 
-    /* Test resizing */
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 1));
+    /* Test resizing to evict entries */
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, aws_hpack_get_header_size(&s_status)));
 
     found = aws_hpack_get_header(context, 62);
     ASSERT_NOT_NULL(found);

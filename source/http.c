@@ -115,6 +115,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_FRAME_SIZE,
         "Received frame with an illegal frame size"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_COMPRESSION,
+        "Error compressing or decompressing HPACK headers"),
 };
 /* clang-format on */
 
@@ -126,11 +129,15 @@ static struct aws_error_info_list s_error_list = {
 static struct aws_log_subject_info s_log_subject_infos[] = {
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_GENERAL, "http", "Misc HTTP logging"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION, "http-connection", "HTTP client or server connection"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_ENCODER, "http-encoder", "HTTP data encoder"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_DECODER, "http-decoder", "HTTP data decoder"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_SERVER, "http-server", "HTTP server socket listening for incoming connections"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_STREAM, "http-stream", "HTTP request-response exchange"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "connection-manager", "HTTP connection manager"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET, "websocket", "Websocket"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET_SETUP, "websocket-setup", "Websocket setup"),
+
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_FRAMES, "http-frames", "HTTP frame library"),
 };
 
 static struct aws_log_subject_info_list s_log_subject_list = {
@@ -417,6 +424,7 @@ void aws_http_library_clean_up(void) {
     if (!s_library_initialized) {
         return;
     }
+    s_library_initialized = false;
 
     aws_unregister_error_info(&s_error_list);
     aws_unregister_log_subject_info_list(&s_log_subject_list);

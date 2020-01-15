@@ -20,6 +20,10 @@
 
 #include <aws/compression/huffman.h>
 
+#include <aws/common/logging.h>
+
+#include <inttypes.h>
+
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 static const uint32_t s_u32_top_bit_mask = UINT32_MAX << 31;
@@ -28,11 +32,6 @@ static const uint8_t s_indexed_header_field_mask = 1 << 7;
 static const uint8_t s_literal_save_field_mask = 1 << 6;
 static const uint8_t s_dynamic_table_size_update_mask = 1 << 5;
 static const uint8_t s_literal_no_forward_save_mask = 1 << 4;
-
-/* RFC-7540 6.5.2 */
-static const size_t s_hpack_dynamic_table_initial_size = 4096;
-/* TBD */
-static const size_t s_hpack_dynamic_table_max_size = 4096;
 
 const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type) {
     switch (type) {
@@ -56,10 +55,9 @@ const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type) {
             return "WINDOW_UPDATE";
         case AWS_H2_FRAME_T_CONTINUATION:
             return "CONTINUATION";
+        default:
+            return "**UNKNOWN**";
     }
-
-    /* unreachable */
-    AWS_ASSUME(false);
 }
 
 /***********************************************************************************************************************
@@ -198,6 +196,8 @@ int aws_h2_frame_header_block_encode(
     AWS_PRECONDITION(output);
 
     const size_t num_headers = aws_array_list_length(&header_block->header_fields);
+    AWS_LOGF(AWS_LL_TRACE, AWS_LS_HTTP_FRAMES, "Encoding header block with %zu headers", num_headers);
+
     for (size_t i = 0; i < num_headers; ++i) {
 
         const struct aws_h2_frame_header_field *field = NULL;
@@ -234,6 +234,8 @@ int aws_h2_frame_header_block_encode(
             }
         }
 
+        const size_t before_len = output->len;
+
         /* Write the top bits to signal representation */
         output->buffer[output->len] = mask;
 
@@ -261,12 +263,15 @@ int aws_h2_frame_header_block_encode(
                 return AWS_OP_ERR;
             }
             AWS_ASSERT(scratch.len == 0);
+
+            if (field->hpack_behavior == AWS_H2_HEADER_BEHAVIOR_SAVE) {
+                /* Save for next time */
+                aws_hpack_insert_header(encoder->hpack, &field->header);
+            }
         }
 
-        if (field->hpack_behavior == AWS_H2_HEADER_BEHAVIOR_SAVE) {
-            /* Save for next time */
-            aws_hpack_insert_header(encoder->hpack, &field->header);
-        }
+        const size_t encoded_bytes = output->len - before_len;
+        AWS_LOGF(AWS_LL_TRACE, AWS_LS_HTTP_FRAMES, "Encoded header %zu as %zu bytes", i, encoded_bytes);
     }
 
     return AWS_OP_SUCCESS;
@@ -276,6 +281,8 @@ int aws_h2_frame_header_block_decode(
     struct aws_h2_frame_decoder *decoder) {
     AWS_PRECONDITION(header_block);
     AWS_PRECONDITION(decoder);
+
+    AWS_LOGF(AWS_LL_TRACE, AWS_LS_HTTP_FRAMES, "Decoding header block");
 
     /* Don't need to call init, frames will have done that */
 
@@ -291,17 +298,17 @@ int aws_h2_frame_header_block_decode(
             field.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE;
 
             uint64_t index = 0;
-            if (aws_hpack_decode_integer(&decoder->payload, 7, &index)) {
-                return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+            if (aws_hpack_decode_integer(decoder->hpack, &decoder->payload, 7, &index)) {
+                return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
             }
 
             if (index > SIZE_MAX) {
-                return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+                return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
             }
 
             const struct aws_http_header *header = aws_hpack_get_header(decoder->hpack, (size_t)index);
             if (!header) {
-                return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+                return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
             }
             field.header = *header;
 
@@ -319,16 +326,16 @@ int aws_h2_frame_header_block_decode(
                 payload_len_prefix = 4;
             } else {
                 field.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_SAVE;
-                payload_len_prefix = 5;
+                payload_len_prefix = 4;
             }
 
             uint64_t index = 0;
-            if (aws_hpack_decode_integer(&decoder->payload, payload_len_prefix, &index)) {
-                return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+            if (aws_hpack_decode_integer(decoder->hpack, &decoder->payload, payload_len_prefix, &index)) {
+                return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
             }
 
             if (index > SIZE_MAX) {
-                return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+                return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
             }
 
             /* Read the name */
@@ -336,14 +343,14 @@ int aws_h2_frame_header_block_decode(
                 /* Name is indexed, so just read it */
                 const struct aws_http_header *header = aws_hpack_get_header(decoder->hpack, (size_t)index);
                 if (!header) {
-                    return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+                    return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
                 }
                 field.header.name = header->name;
             } else {
                 const size_t scratch_len = decoder->header_scratch.len;
                 /* New name, decode as string */
                 if (aws_hpack_decode_string(decoder->hpack, &decoder->payload, &decoder->header_scratch)) {
-                    return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+                    return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
                 }
                 /* Get a cursor to the string we just decoded */
                 field.header.name = aws_byte_cursor_from_array(
@@ -353,7 +360,7 @@ int aws_h2_frame_header_block_decode(
             const size_t scratch_len = decoder->header_scratch.len;
             /* Read the value */
             if (aws_hpack_decode_string(decoder->hpack, &decoder->payload, &decoder->header_scratch)) {
-                return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+                return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
             }
             field.header.value = aws_byte_cursor_from_array(
                 decoder->header_scratch.buffer + scratch_len, decoder->header_scratch.len - scratch_len);
@@ -361,7 +368,7 @@ int aws_h2_frame_header_block_decode(
             /* Save if necessary */
             if (field.hpack_behavior == AWS_H2_HEADER_BEHAVIOR_SAVE) {
                 if (aws_hpack_insert_header(decoder->hpack, &field.header)) {
-                    return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+                    return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
                 }
             }
 
@@ -370,16 +377,12 @@ int aws_h2_frame_header_block_decode(
         } else {
             /* This header is *actually* a dynamic table size update */
             uint64_t new_size = 0;
-            if (aws_hpack_decode_integer(&decoder->payload, 5, &new_size)) {
-                return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
-            }
-
-            if (new_size > s_hpack_dynamic_table_max_size) {
-                return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+            if (aws_hpack_decode_integer(decoder->hpack, &decoder->payload, 5, &new_size)) {
+                return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
             }
 
             if (aws_hpack_resize_dynamic_table(decoder->hpack, (size_t)new_size)) {
-                return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+                return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
             }
         }
     }
@@ -397,6 +400,15 @@ static int s_frame_header_encode(
     struct aws_byte_buf *output) {
     AWS_PRECONDITION(header);
     AWS_PRECONDITION(output);
+
+    AWS_LOGF(
+        AWS_LL_TRACE,
+        AWS_LS_HTTP_FRAMES,
+        "Beginning encode of frame %s: stream: %" PRIu32 " payload length: %zu flags: %" PRIu8,
+        aws_h2_frame_type_to_str(header->type),
+        header->stream_id,
+        length,
+        flags);
 
     /* Length must fit in 24 bits */
     if (length > 0x00FFFFFF) {
@@ -435,7 +447,7 @@ int aws_h2_frame_encoder_init(struct aws_h2_frame_encoder *encoder, struct aws_a
     AWS_ZERO_STRUCT(*encoder);
     encoder->allocator = allocator;
 
-    encoder->hpack = aws_hpack_context_new(allocator, s_hpack_dynamic_table_initial_size);
+    encoder->hpack = aws_hpack_context_new(allocator, AWS_LS_HTTP_ENCODER, encoder);
     if (!encoder->hpack) {
         return AWS_OP_ERR;
     }
@@ -458,7 +470,7 @@ int aws_h2_frame_decoder_init(struct aws_h2_frame_decoder *decoder, struct aws_a
     AWS_ZERO_STRUCT(*decoder);
     decoder->allocator = allocator;
 
-    decoder->hpack = aws_hpack_context_new(allocator, s_hpack_dynamic_table_initial_size);
+    decoder->hpack = aws_hpack_context_new(allocator, AWS_LS_HTTP_DECODER, decoder);
     if (!decoder->hpack) {
         goto failed_create_hpack;
     }
@@ -730,7 +742,7 @@ write_error:
 
 compression_error:
     output->len = output_init_len;
-    return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+    return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
 }
 int aws_h2_frame_headers_decode(struct aws_h2_frame_headers *frame, struct aws_h2_frame_decoder *decoder) {
     AWS_PRECONDITION(frame);
@@ -799,7 +811,7 @@ protocol_error:
 
 compression_error:
     *decoder = decoder_init;
-    return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+    return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
 }
 
 /***********************************************************************************************************************
@@ -1192,7 +1204,7 @@ write_error:
 
 compression_error:
     output->len = output_init_len;
-    return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+    return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
 }
 int aws_h2_frame_push_promise_decode(struct aws_h2_frame_push_promise *frame, struct aws_h2_frame_decoder *decoder) {
     AWS_PRECONDITION(frame);
@@ -1253,7 +1265,7 @@ protocol_error:
 
 compression_error:
     *decoder = decoder_init;
-    return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+    return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
 }
 
 /***********************************************************************************************************************
@@ -1618,7 +1630,7 @@ write_error:
 
 compression_error:
     output->len = output_init_len;
-    return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+    return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
 }
 
 int aws_h2_frame_continuation_decode(struct aws_h2_frame_continuation *frame, struct aws_h2_frame_decoder *decoder) {
@@ -1650,5 +1662,5 @@ int aws_h2_frame_continuation_decode(struct aws_h2_frame_continuation *frame, st
 
 compression_error:
     *decoder = decoder_init;
-    return aws_raise_error(AWS_H2_ERR_COMPRESSION_ERROR);
+    return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
 }

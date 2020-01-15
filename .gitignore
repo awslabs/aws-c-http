@@ -64,3 +64,4 @@ cmake-build*
 *.out
 *.app
 
+corpus/
