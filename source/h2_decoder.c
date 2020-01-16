@@ -194,6 +194,7 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
     decoder->alloc = params->alloc;
     decoder->vtable = params->vtable;
     decoder->userdata = params->userdata;
+    decoder->logging_id = params->logging_id;
 
     decoder->scratch = aws_byte_buf_from_array(scratch_buf, s_scratch_space_size);
 
@@ -215,6 +216,9 @@ failed_alloc:
 }
 
 void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder) {
+    if (!decoder) {
+        return;
+    }
     aws_hpack_context_destroy(decoder->hpack);
     aws_mem_release(decoder->alloc, decoder);
 }
@@ -229,6 +233,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
 
     while (data->len) {
         const uint32_t bytes_required = decoder->state.bytes_required;
+        AWS_ASSERT(bytes_required <= decoder->scratch.capacity);
         if (!decoder->scratch.len && data->len >= bytes_required) {
             /* Easy case, there is no scratch and we have enough data, so just send it to the state */
 
@@ -302,10 +307,6 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
 handle_error:
     decoder->has_errored = true;
     return err;
-}
-
-void aws_h2_decoder_set_logging_id(struct aws_h2_decoder *decoder, void *id) {
-    decoder->logging_id = id;
 }
 
 /* Wrap hpack functions to do payload length checks */

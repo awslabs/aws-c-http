@@ -18,10 +18,6 @@
 #include <aws/http/private/h2_frames.h>
 #include <aws/http/private/hpack.h>
 
-#ifdef _MSC_VER
-#    pragma warning(disable : 4232) /* function pointer to dll symbol */
-#endif
-
 enum { S_BUFFER_SIZE = 128 };
 
 struct header_test_fixture;

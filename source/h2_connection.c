@@ -29,16 +29,42 @@
 /* Stream IDs are only 31 bits [5.1.1] */
 static const uint32_t MAX_STREAM_ID = UINT32_MAX >> 1;
 
+static int s_handler_process_read_message(
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    struct aws_io_message *message);
+
+static int s_handler_process_write_message(
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    struct aws_io_message *message);
+
+static int s_handler_increment_read_window(
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    size_t size);
+
+static int s_handler_shutdown(
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    enum aws_channel_direction dir,
+    int error_code,
+    bool free_scarce_resources_immediately);
+
+static size_t s_handler_initial_window_size(struct aws_channel_handler *handler);
+static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
+static void s_handler_destroy(struct aws_channel_handler *handler);
+
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
         {
-            .process_read_message = NULL,
-            .process_write_message = NULL,
-            .increment_read_window = NULL,
-            .shutdown = NULL,
-            .initial_window_size = NULL,
-            .message_overhead = NULL,
-            .destroy = NULL,
+            .process_read_message = s_handler_process_read_message,
+            .process_write_message = s_handler_process_write_message,
+            .increment_read_window = s_handler_increment_read_window,
+            .shutdown = s_handler_shutdown,
+            .initial_window_size = s_handler_initial_window_size,
+            .message_overhead = s_handler_message_overhead,
+            .destroy = s_handler_destroy,
         },
 
     .make_request = NULL,
@@ -63,12 +89,20 @@ static struct aws_h2_connection *s_connection_new(
 
     struct aws_h2_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct aws_h2_connection));
     if (!connection) {
-        goto error_connection_alloc;
+        return NULL;
+    }
+
+    /* Init mutex first, because its error handling is different than every other init failure */
+    if (aws_mutex_init(&connection->synced_data.lock)) {
+        CONNECTION_LOGF(
+            ERROR, connection, "Mutex init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
+        goto error_mutex;
     }
 
     connection->base.vtable = &s_h2_connection_vtable;
     connection->base.alloc = alloc;
     connection->base.channel_handler.vtable = &s_h2_connection_vtable.channel_handler_vtable;
+    connection->base.channel_handler.alloc = alloc;
     connection->base.channel_handler.impl = connection;
     connection->base.http_version = AWS_HTTP_VERSION_2;
     connection->base.initial_window_size = initial_window_size;
@@ -84,22 +118,30 @@ static struct aws_h2_connection *s_connection_new(
         .alloc = alloc,
         .vtable = s_h2_decoder_vtable,
         .userdata = connection,
+        .logging_id = connection,
     };
     connection->thread_data.decoder = aws_h2_decoder_new(&params);
-
-    int err = aws_mutex_init(&connection->synced_data.lock);
-    if (err) {
+    if (!connection->thread_data.decoder) {
         CONNECTION_LOGF(
-            ERROR, connection, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
+            ERROR, connection, "Decoder init error %d (%s)", aws_last_error(), aws_error_name(aws_last_error()));
+        goto error;
+    }
 
-        goto error_mutex;
+    if (aws_h2_frame_encoder_init(&connection->thread_data.encoder, alloc)) {
+        CONNECTION_LOGF(
+            ERROR, connection, "Encoder init error %d (%s)", aws_last_error(), aws_error_name(aws_last_error()));
+        goto error;
     }
 
     return connection;
 
 error_mutex:
+    /* If mutex fails, don't invoke its clean_up() */
     aws_mem_release(alloc, connection);
-error_connection_alloc:
+    return NULL;
+error:
+    /* Everything else has idempotent clean_up()/destroy() functions, so we can naively call our own destroy() */
+    s_handler_destroy(&connection->base.channel_handler);
     return NULL;
 }
 
@@ -131,6 +173,16 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
     return &connection->base;
 }
 
+static void s_handler_destroy(struct aws_channel_handler *handler) {
+    struct aws_h2_connection *connection = handler->impl;
+    CONNECTION_LOG(TRACE, connection, "Destroying connection");
+
+    aws_h2_decoder_destroy(connection->thread_data.decoder);
+    aws_h2_frame_encoder_clean_up(&connection->thread_data.encoder);
+    aws_mutex_clean_up(&connection->synced_data.lock);
+    aws_mem_release(connection->base.alloc, connection);
+}
+
 uint32_t aws_h2_connection_get_next_stream_id(struct aws_h2_connection *connection) {
 
     uint32_t next_id = 0;
@@ -155,4 +207,69 @@ uint32_t aws_h2_connection_get_next_stream_id(struct aws_h2_connection *connecti
     } /* END CRITICAL SECTION */
 
     return next_id;
+}
+
+static int s_handler_process_read_message(
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    struct aws_io_message *message) {
+
+    (void)handler;
+    (void)slot;
+    (void)message;
+    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+}
+
+static int s_handler_process_write_message(
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    struct aws_io_message *message) {
+
+    (void)handler;
+    (void)slot;
+    (void)message;
+    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+}
+
+static int s_handler_increment_read_window(
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    size_t size) {
+
+    (void)handler;
+    (void)slot;
+    (void)size;
+    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+}
+
+static int s_handler_shutdown(
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    enum aws_channel_direction dir,
+    int error_code,
+    bool free_scarce_resources_immediately) {
+
+    struct aws_h2_connection *connection = handler->impl;
+    CONNECTION_LOGF(
+        TRACE,
+        connection,
+        "Channel shutting down in %s direction with error code %d (%s).",
+        (dir == AWS_CHANNEL_DIR_READ) ? "read" : "write",
+        error_code,
+        aws_error_name(error_code));
+
+    aws_channel_slot_on_handler_shutdown_complete(slot, dir, error_code, free_scarce_resources_immediately);
+    return AWS_OP_SUCCESS;
+}
+
+static size_t s_handler_initial_window_size(struct aws_channel_handler *handler) {
+    struct aws_h2_connection *connection = handler->impl;
+    return connection->base.initial_window_size;
+}
+
+static size_t s_handler_message_overhead(struct aws_channel_handler *handler) {
+    (void)handler;
+
+    /* "All frames begin with a fixed 9-octet header followed by a variable-length payload" (RFC-7540 4.1) */
+    return 9;
 }
