@@ -48,6 +48,7 @@ struct aws_h2_decoder_params {
     struct aws_allocator *alloc;
     struct aws_h2_decoder_vtable vtable;
     void *userdata;
+    void *logging_id;
 };
 
 struct aws_h2_decoder;
@@ -57,8 +58,6 @@ AWS_EXTERN_C_BEGIN
 AWS_HTTP_API struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params);
 AWS_HTTP_API void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder);
 AWS_HTTP_API int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data);
-
-AWS_HTTP_API void aws_h2_decoder_set_logging_id(struct aws_h2_decoder *decoder, void *id);
 
 AWS_EXTERN_C_END
 

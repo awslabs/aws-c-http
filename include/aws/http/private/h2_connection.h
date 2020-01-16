@@ -20,6 +20,9 @@
 #include <aws/common/mutex.h>
 
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/private/h2_frames.h>
+
+struct aws_h2_decoder;
 
 struct aws_h2_connection {
     struct aws_http_connection base;
@@ -27,6 +30,7 @@ struct aws_h2_connection {
     /* Only the event-loop thread may touch this data */
     struct {
         struct aws_h2_decoder *decoder;
+        struct aws_h2_frame_encoder encoder;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */

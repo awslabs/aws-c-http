@@ -1189,6 +1189,7 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     connection->base.vtable = &s_h1_connection_vtable;
     connection->base.alloc = alloc;
     connection->base.channel_handler.vtable = &s_h1_connection_vtable.channel_handler_vtable;
+    connection->base.channel_handler.alloc = alloc;
     connection->base.channel_handler.impl = connection;
     connection->base.http_version = AWS_HTTP_VERSION_1_1;
     connection->base.initial_window_size = initial_window_size;
@@ -1208,7 +1209,10 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     int err = aws_mutex_init(&connection->synced_data.lock);
     if (err) {
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
+            AWS_LS_HTTP_CONNECTION,
+            "static: Failed to initialize mutex, error %d (%s).",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
 
         goto error_mutex;
     }
