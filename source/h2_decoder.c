@@ -25,8 +25,7 @@
  * Constants
  **********************************************************************************************************************/
 
-/* Big enough to hold the "required_bytes" for any state */
-static const size_t s_scratch_space_size = 9;
+static const size_t s_scratch_space_size = 512;
 
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
