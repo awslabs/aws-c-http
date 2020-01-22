@@ -20,18 +20,6 @@
 #include <aws/io/channel.h>
 #include <aws/io/logging.h>
 
-#include <inttypes.h>
-
-#define STREAM_LOGF(level, stream, text, ...)                                                                          \
-    AWS_LOGF_##level(                                                                                                  \
-        AWS_LS_HTTP_STREAM,                                                                                            \
-        "id=%" PRIu32 "(%p) state=%s: " text,                                                                          \
-        (stream)->id,                                                                                                  \
-        (void *)(stream),                                                                                              \
-        aws_h2_stream_state_to_str((stream)->thread_data.state),                                                       \
-        __VA_ARGS__)
-#define STREAM_LOG(level, stream, text) STREAM_LOGF(level, stream, "%s", text)
-
 static void s_stream_destroy(struct aws_http_stream *stream_base);
 
 struct aws_http_stream_vtable s_h2_stream_vtable = {
@@ -41,7 +29,7 @@ struct aws_http_stream_vtable s_h2_stream_vtable = {
 
 /* Shortcut for logging invalid stream and raising an error */
 static int s_h2_stream_raise_invalid_frame(struct aws_h2_stream *stream, enum aws_h2_frame_type type, int error_code) {
-    STREAM_LOGF(
+    AWS_H2_STREAM_LOGF(
         ERROR,
         stream,
         "Not allowed to receive frame of type %s when in %s state, raising %s",
@@ -52,7 +40,7 @@ static int s_h2_stream_raise_invalid_frame(struct aws_h2_stream *stream, enum aw
 }
 
 static void s_h2_stream_set_state(struct aws_h2_stream *stream, enum aws_h2_stream_state new_state) {
-    STREAM_LOGF(
+    AWS_H2_STREAM_LOGF(
         DEBUG,
         stream,
         "Stream moving from state %s to %s",
@@ -80,6 +68,7 @@ const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state) {
             return "CLOSED";
         default:
             /* unreachable */
+            AWS_ASSERT(0);
             return "*** UNKNOWN ***";
     }
 }
@@ -109,7 +98,7 @@ static int s_h2_stream_handle_headers(struct aws_h2_stream *stream, struct aws_h
 
     struct aws_h2_frame_headers frame;
     if (aws_h2_frame_headers_decode(&frame, decoder)) {
-        STREAM_LOG(ERROR, stream, "Failed to decode HEADERS frame");
+        AWS_H2_STREAM_LOG(ERROR, stream, "Failed to decode HEADERS frame");
         return AWS_OP_ERR;
     }
 
@@ -121,10 +110,11 @@ static int s_h2_stream_handle_headers(struct aws_h2_stream *stream, struct aws_h
         stream->base.user_data);
 
     if (frame.end_headers) {
-        STREAM_LOG(DEBUG, stream, "HEADERS frame is self-containing, calling header_block_done");
+        AWS_H2_STREAM_LOG(DEBUG, stream, "HEADERS frame is self-containing, calling header_block_done");
         stream->base.on_incoming_header_block_done(&stream->base, false, stream->base.user_data);
     } else {
-        STREAM_LOG(DEBUG, stream, "HEADERS frame does not have END_HEADERS set, expecting following CONTINUATION");
+        AWS_H2_STREAM_LOG(
+            DEBUG, stream, "HEADERS frame does not have END_HEADERS set, expecting following CONTINUATION");
         stream->thread_data.expects_continuation = true;
     }
 
@@ -135,7 +125,7 @@ static int s_h2_stream_handle_priority(struct aws_h2_stream *stream, struct aws_
 
     struct aws_h2_frame_priority frame;
     if (aws_h2_frame_priority_decode(&frame, decoder)) {
-        STREAM_LOG(ERROR, stream, "Failed to decode PRIORITY frame");
+        AWS_H2_STREAM_LOG(ERROR, stream, "Failed to decode PRIORITY frame");
         return AWS_OP_ERR;
     }
 
@@ -149,7 +139,7 @@ static int s_h2_stream_handle_rst_stream(struct aws_h2_stream *stream, struct aw
 
     struct aws_h2_frame_rst_stream frame;
     if (aws_h2_frame_rst_stream_decode(&frame, decoder)) {
-        STREAM_LOG(ERROR, stream, "Failed to decode RST_STREAM frame");
+        AWS_H2_STREAM_LOG(ERROR, stream, "Failed to decode RST_STREAM frame");
         return AWS_OP_ERR;
     }
 
@@ -165,12 +155,12 @@ static int s_h2_stream_handle_push_promise(struct aws_h2_stream *stream, struct 
 
     struct aws_h2_frame_push_promise frame;
     if (aws_h2_frame_push_promise_decode(&frame, decoder)) {
-        STREAM_LOG(ERROR, stream, "Failed to decode PUSH_PROMISE frame");
+        AWS_H2_STREAM_LOG(ERROR, stream, "Failed to decode PUSH_PROMISE frame");
         return AWS_OP_ERR;
     }
 
     if (!frame.end_headers) {
-        STREAM_LOG(TRACE, stream, "PUSH_PROMISE END_HEADERS not set, expecting CONTINUATION frame next");
+        AWS_H2_STREAM_LOG(TRACE, stream, "PUSH_PROMISE END_HEADERS not set, expecting CONTINUATION frame next");
         stream->thread_data.expects_continuation = true;
     }
 
@@ -183,7 +173,7 @@ static int s_h2_stream_handle_window_update(struct aws_h2_stream *stream, struct
 
     struct aws_h2_frame_window_update frame;
     if (aws_h2_frame_window_update_decode(&frame, decoder)) {
-        STREAM_LOG(ERROR, stream, "Failed to decode WINDOW_UPDATE frame");
+        AWS_H2_STREAM_LOG(ERROR, stream, "Failed to decode WINDOW_UPDATE frame");
         return AWS_OP_ERR;
     }
 
@@ -196,7 +186,7 @@ static int s_h2_stream_handle_continuation(struct aws_h2_stream *stream, struct 
     AWS_PRECONDITION(decoder->header.type == AWS_H2_FRAME_T_CONTINUATION);
 
     if (!stream->thread_data.expects_continuation) {
-        STREAM_LOG(
+        AWS_H2_STREAM_LOG(
             ERROR,
             stream,
             "Received CONTINUATION frame following a frame with END_HEADERS set, raising PROTOCOL_ERROR");
@@ -205,16 +195,16 @@ static int s_h2_stream_handle_continuation(struct aws_h2_stream *stream, struct 
 
     struct aws_h2_frame_continuation frame;
     if (aws_h2_frame_continuation_decode(&frame, decoder)) {
-        STREAM_LOG(ERROR, stream, "Failed to decode CONTINUATION frame");
+        AWS_H2_STREAM_LOG(ERROR, stream, "Failed to decode CONTINUATION frame");
         return AWS_OP_ERR;
     }
 
     if (frame.end_headers) {
-        STREAM_LOG(TRACE, stream, "CONTINUATION frames complete, calling header_block_done");
+        AWS_H2_STREAM_LOG(TRACE, stream, "CONTINUATION frames complete, calling header_block_done");
         stream->thread_data.expects_continuation = false;
         stream->base.on_incoming_header_block_done(&stream->base, false, stream->base.user_data);
     } else {
-        STREAM_LOG(TRACE, stream, "CONTINUATION END_HEADERS not set, expecting CONTINUATION frame next");
+        AWS_H2_STREAM_LOG(TRACE, stream, "CONTINUATION END_HEADERS not set, expecting CONTINUATION frame next");
         stream->thread_data.expects_continuation = true;
     }
 
@@ -372,13 +362,11 @@ static int (*s_state_handlers[])(struct aws_h2_stream *, struct aws_h2_frame_dec
  * Public API
  **********************************************************************************************************************/
 
-struct aws_h2_stream *aws_h2_stream_new(
+struct aws_h2_stream *aws_h2_stream_new_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options) {
     AWS_PRECONDITION(client_connection);
     AWS_PRECONDITION(options);
-
-    struct aws_h2_connection *connection = AWS_CONTAINER_OF(client_connection, struct aws_h2_connection, base);
 
     struct aws_h2_stream *stream = aws_mem_calloc(client_connection->alloc, 1, sizeof(struct aws_h2_stream));
     if (!stream) {
@@ -395,14 +383,12 @@ struct aws_h2_stream *aws_h2_stream_new(
     stream->base.on_incoming_body = options->on_response_body;
     stream->base.on_complete = options->on_complete;
 
-    /* Stream refcount starts at 2. 1 for user and 1 for connection to release it's done with the stream */
+    /* Stream refcount starts at 2. 1 for user and 1 for connection to release when it's done with the stream */
     aws_atomic_init_int(&stream->base.refcount, 2);
 
     /* Init H2 specific stuff */
-    *((uint32_t *)&stream->id) = aws_h2_connection_get_next_stream_id(connection);
-    s_h2_stream_set_state(stream, AWS_H2_STREAM_STATE_IDLE);
-
-    STREAM_LOG(DEBUG, stream, "Created stream");
+    stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
+    aws_linked_list_node_reset(&stream->node);
 
     return stream;
 }
@@ -410,7 +396,7 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     AWS_PRECONDITION(stream_base);
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
 
-    STREAM_LOG(DEBUG, stream, "Destroying stream");
+    AWS_H2_STREAM_LOG(DEBUG, stream, "Destroying stream");
 
     aws_mem_release(stream->base.alloc, stream);
 }
@@ -419,7 +405,7 @@ int aws_h2_stream_handle_frame(struct aws_h2_stream *stream, struct aws_h2_frame
     AWS_PRECONDITION(stream);
     AWS_PRECONDITION(decoder);
 
-    STREAM_LOGF(DEBUG, stream, "Received frame of type %s", aws_h2_frame_type_to_str(decoder->header.type));
+    AWS_H2_STREAM_LOGF(DEBUG, stream, "Received frame of type %s", aws_h2_frame_type_to_str(decoder->header.type));
 
     return s_state_handlers[stream->thread_data.state](stream, decoder);
 }

@@ -27,18 +27,40 @@ struct aws_h2_decoder;
 struct aws_h2_connection {
     struct aws_http_connection base;
 
+    struct aws_channel_task cross_thread_work_task;
+
     /* Only the event-loop thread may touch this data */
     struct {
         struct aws_h2_decoder *decoder;
         struct aws_h2_frame_encoder encoder;
+
+        /* True when reading/writing has stopped, whether due to errors or normal channel shutdown. */
+        bool is_reading_stopped;
+        bool is_writing_stopped;
+
+        /* Maps stream-id to aws_h2_frame* */
+        struct aws_hash_table active_streams_map;
+
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
     struct {
         struct aws_mutex lock;
 
+        /* New `aws_h2_stream *` that haven't moved to `thread_data` yet */
+        struct aws_linked_list pending_stream_list;
+
         /* Refers to the next stream id to vend */
         uint32_t next_stream_id;
+
+        /* If non-zero, reason to immediately reject new streams. (ex: closing) */
+        int new_stream_error_code;
+
+        bool is_cross_thread_work_task_scheduled;
+
+        /* For checking status from outside the event-loop thread. */
+        bool is_open;
+
     } synced_data;
 };
 
@@ -53,9 +75,6 @@ AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
     size_t initial_window_size);
-
-AWS_HTTP_API
-uint32_t aws_h2_connection_get_next_stream_id(struct aws_h2_connection *connection);
 
 AWS_EXTERN_C_END
 

@@ -198,6 +198,7 @@ add_test_case(h2_frame_window_update)
 add_test_case(h2_frame_continuation)
 
 add_test_case(h2_client_sanity_check)
+add_test_case(h2_client_request_create)
 
 add_test_case(server_new_destroy)
 add_test_case(connection_setup_shutdown)
