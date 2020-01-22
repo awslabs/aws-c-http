@@ -14,6 +14,8 @@
  */
 
 #include <aws/http/private/h2_connection.h>
+
+#include <aws/http/request_response.h>
 #include <aws/testing/io_testing_channel.h>
 
 #define TEST_CASE(NAME)                                                                                                \
@@ -23,7 +25,6 @@
 /* Singleton used by tests in this file */
 struct tester {
     struct aws_allocator *alloc;
-    struct aws_logger logger;
     struct aws_http_connection *connection;
     struct testing_channel testing_channel;
 } s_tester;
@@ -33,13 +34,6 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
     aws_http_library_init(alloc);
 
     s_tester.alloc = alloc;
-
-    struct aws_logger_standard_options logger_options = {
-        .level = AWS_LOG_LEVEL_TRACE,
-        .file = stderr,
-    };
-    ASSERT_SUCCESS(aws_logger_init_standard(&s_tester.logger, alloc, &logger_options));
-    aws_logger_set(&s_tester.logger);
 
     ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc));
 
@@ -63,12 +57,46 @@ static int s_tester_clean_up(void) {
     aws_http_connection_release(s_tester.connection);
     ASSERT_SUCCESS(testing_channel_clean_up(&s_tester.testing_channel));
     aws_http_library_clean_up();
-    aws_logger_clean_up(&s_tester.logger);
     return AWS_OP_SUCCESS;
 }
 
 /* Test the common setup/teardown used by all tests in this file */
 TEST_CASE(h2_client_sanity_check) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    return s_tester_clean_up();
+}
+
+/* Test that a stream can be created and destroyed. */
+TEST_CASE(h2_client_request_create) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* create request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header headers[] = {
+        {aws_byte_cursor_from_c_str(":method"), aws_byte_cursor_from_c_str("GET")},
+        {aws_byte_cursor_from_c_str(":scheme"), aws_byte_cursor_from_c_str("https")},
+        {aws_byte_cursor_from_c_str(":path"), aws_byte_cursor_from_c_str("/")},
+    };
+    ASSERT_SUCCESS(aws_http_headers_add_array(aws_http_message_get_headers(request), headers, AWS_ARRAY_SIZE(headers)));
+
+    struct aws_http_make_request_options options = {
+        .self_size = sizeof(options),
+        .request = request,
+    };
+
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &options);
+    ASSERT_NOT_NULL(stream);
+
+    /* shutdown channel so request can be released */
+    aws_channel_shutdown(s_tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&s_tester.testing_channel));
+
+    /* release request */
+    aws_http_stream_release(stream);
+    aws_http_message_release(request);
+
     return s_tester_clean_up();
 }

@@ -113,6 +113,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_STREAM_CLOSED,
         "Received frame on a closed stream"),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_IDS_EXHAUSTED,
+        "Connection exhausted all possible stream IDs. Establish a new connection for new streams."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_FRAME_SIZE,
         "Received frame with an illegal frame size"),
     AWS_DEFINE_ERROR_INFO_HTTP(

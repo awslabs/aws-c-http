@@ -1576,6 +1576,11 @@ static int s_handler_process_read_message(
     }
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Done processing message.", (void *)&connection->base);
+    if (message) {
+        /* release message back to pool before re-opening window */
+        aws_mem_release(message->allocator, message);
+        message = NULL;
+    }
 
     /* Increment read window */
     if (incoming_message_size > connection->thread_data.incoming_message_window_shrink_size) {
@@ -1593,9 +1598,6 @@ static int s_handler_process_read_message(
         }
     }
 
-    if (message) {
-        aws_mem_release(message->allocator, message);
-    }
     return AWS_OP_SUCCESS;
 
 shutdown:
@@ -1735,7 +1737,7 @@ static int s_handler_shutdown(
         }
 
         /* It's OK to access synced_data.pending_stream_list without holding the lock because
-         * no more streams can be added after s_shutdown_connection() has been invoked. */
+         * no more streams can be added after s_stop() has been invoked. */
         while (!aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
             struct aws_linked_list_node *node = aws_linked_list_front(&connection->synced_data.pending_stream_list);
             s_stream_complete(AWS_CONTAINER_OF(node, struct aws_h1_stream, node), stream_error_code);
