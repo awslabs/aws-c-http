@@ -50,12 +50,13 @@ struct aws_h2_stream {
 
     uint32_t id;
 
+    struct aws_linked_list_node node;
+
     /* Only the event-loop thread may touch this data */
     struct {
         bool expects_continuation;
         enum aws_h2_stream_state state;
         uint64_t window_size; /* #TODO try to figure out how this actually works, and then implement it */
-        struct aws_linked_list_node node;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */

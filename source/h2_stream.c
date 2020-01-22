@@ -388,7 +388,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
 
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
-    aws_linked_list_node_reset(&stream->thread_data.node);
+    aws_linked_list_node_reset(&stream->node);
 
     return stream;
 }

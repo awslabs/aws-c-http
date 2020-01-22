@@ -327,7 +327,7 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
     /* Process new pending_streams */
     while (!aws_linked_list_empty(&pending_streams)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&pending_streams);
-        struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, thread_data.node);
+        struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
         s_activate_stream(connection, stream);
     }
 
@@ -384,7 +384,7 @@ static struct aws_http_stream *s_connection_make_request(
         was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
         connection->synced_data.is_cross_thread_work_task_scheduled = true;
 
-        aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &stream->thread_data.node);
+        aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &stream->node);
 
     unlock:
         s_unlock_synced_data(connection);
@@ -491,7 +491,7 @@ static int s_handler_shutdown(
          * no more streams can be added after s_stop() has been invoked. */
         while (!aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
             struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->synced_data.pending_stream_list);
-            struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, thread_data.node);
+            struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
             s_stream_complete(stream, AWS_ERROR_HTTP_CONNECTION_CLOSED);
         }
     }
