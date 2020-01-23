@@ -378,8 +378,14 @@ struct aws_h2_stream *aws_h2_stream_new(
     AWS_PRECONDITION(client_connection);
     AWS_PRECONDITION(options);
 
+    uint32_t stream_id = aws_http_connection_get_next_stream_id(client_connection);
+    if (stream_id == 0) {
+        return NULL;
+    }
+
     struct aws_h2_stream *stream = aws_mem_calloc(client_connection->alloc, 1, sizeof(struct aws_h2_stream));
     if (!stream) {
+        /* stream id exhausted error was already raised*/
         return NULL;
     }
 
@@ -397,7 +403,7 @@ struct aws_h2_stream *aws_h2_stream_new(
     aws_atomic_init_int(&stream->base.refcount, 2);
 
     /* Init H2 specific stuff */
-    *((uint32_t *)&stream->base.id) = aws_http_connection_get_next_stream_id(client_connection);
+    stream->base.id = stream_id;
     s_h2_stream_set_state(stream, AWS_H2_STREAM_STATE_IDLE);
 
     STREAM_LOG(DEBUG, stream, "Created stream");

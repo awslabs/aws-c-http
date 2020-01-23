@@ -194,9 +194,6 @@ static struct aws_http_connection *s_connection_new(
         goto error;
     }
 
-    /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
-    aws_atomic_init_int(&connection->next_stream_id, (is_server ? 2 : 1));
-
     connection->channel_slot = connection_slot;
 
     /* Success! Acquire a hold on the channel to prevent its destruction until the user has
@@ -634,6 +631,11 @@ static void s_client_bootstrap_on_channel_setup(
     }
 
     if (aws_http_connection_monitoring_options_is_valid(&http_bootstrap->monitoring_options)) {
+        /*
+         * On creation we validate monitoring options, if they exist, and fail if they're not
+         * valid.  So at this point, is_valid() functions as an is-monitoring-on? check.  A false
+         * value here is not an error, it's just not enabled.
+         */
         struct aws_crt_statistics_handler *http_connection_monitor =
             aws_crt_statistics_handler_new_http_connection_monitor(
                 http_bootstrap->alloc, &http_bootstrap->monitoring_options);
@@ -728,6 +730,12 @@ int aws_http_client_connect_internal(
         goto error;
     }
 
+    if (options->monitoring_options && !aws_http_connection_monitoring_options_is_valid(options->monitoring_options)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: invalid monitoring options");
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        goto error;
+    }
+
     /* bootstrap_new() functions requires a null-terminated c-str */
     host_name = aws_string_new_from_array(options->allocator, options->host_name.ptr, options->host_name.len);
     if (!host_name) {
@@ -756,16 +764,16 @@ int aws_http_client_connect_internal(
         aws_string_c_str(host_name),
         (int)options->port);
 
-    struct aws_socket_channel_bootstrap_options channel_options;
-    AWS_ZERO_STRUCT(channel_options);
-    channel_options.bootstrap = options->bootstrap;
-    channel_options.host_name = aws_string_c_str(host_name);
-    channel_options.port = options->port;
-    channel_options.socket_options = options->socket_options;
-    channel_options.tls_options = options->tls_options;
-    channel_options.setup_callback = s_client_bootstrap_on_channel_setup;
-    channel_options.shutdown_callback = s_client_bootstrap_on_channel_shutdown;
-    channel_options.user_data = http_bootstrap;
+    struct aws_socket_channel_bootstrap_options channel_options = {
+        .bootstrap = options->bootstrap,
+        .host_name = aws_string_c_str(host_name),
+        .port = options->port,
+        .socket_options = options->socket_options,
+        .tls_options = options->tls_options,
+        .setup_callback = s_client_bootstrap_on_channel_setup,
+        .shutdown_callback = s_client_bootstrap_on_channel_shutdown,
+        .user_data = http_bootstrap,
+    };
 
     err = s_system_vtable_ptr->new_socket_channel(&channel_options);
 
@@ -842,19 +850,14 @@ static const uint32_t MAX_STREAM_ID = UINT32_MAX >> 1;
 
 uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *connection) {
 
-    uint64_t next_id = aws_atomic_fetch_add(&connection->next_stream_id, 2);
+    uint32_t next_id = aws_atomic_fetch_add(&connection->next_stream_id, 2);
     /* If next fetch would overflow next_stream_id, set it to 0 */
     if (AWS_UNLIKELY(next_id > MAX_STREAM_ID)) {
-        AWS_LOGF_INFO(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: All available stream ids are gone, closing the connection",
-            (void *)connection);
+        AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: All available stream ids are gone", (void *)connection);
 
         next_id = 0;
-        aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+        aws_raise_error(AWS_ERROR_HTTP_STREAM_IDS_EXHAUSTED);
     }
 
-    AWS_FATAL_ASSERT(next_id <= UINT32_MAX);
-
-    return (uint32_t)next_id;
+    return next_id;
 }

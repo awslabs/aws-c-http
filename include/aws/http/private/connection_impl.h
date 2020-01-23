@@ -30,7 +30,7 @@ struct aws_http_make_request_options;
 struct aws_http_request_handler_options;
 struct aws_http_stream;
 
-typedef int(aws_client_bootstrap_new_socket_channel_fn)(struct aws_socket_channel_bootstrap_options *options);
+typedef int aws_client_bootstrap_new_socket_channel_fn(struct aws_socket_channel_bootstrap_options *options);
 
 struct aws_http_connection_system_vtable {
     aws_client_bootstrap_new_socket_channel_fn *new_socket_channel;
@@ -129,6 +129,11 @@ void aws_http_connection_acquire(struct aws_http_connection *connection);
 AWS_HTTP_API
 struct aws_crt_statistics_http1_channel *aws_h1_connection_get_statistics(struct aws_http_connection *connection);
 
+/**
+ * Gets the next available stream id within the connection.  Valid for creating both h1 and h2 streams.
+ *
+ * Returns 0 if there was an error.
+ */
 AWS_HTTP_API
 uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *connection);
 

@@ -1249,6 +1249,9 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     connection->base.http_version = AWS_HTTP_VERSION_1_1;
     connection->base.initial_window_size = initial_window_size;
 
+    /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
+    aws_atomic_init_int(&connection->base.next_stream_id, (server ? 2 : 1));
+
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
 
@@ -1826,7 +1829,9 @@ static void s_pull_up_stats_timestamps(struct h1_connection *connection) {
             connection->thread_data.outgoing_stream_timestamp_ns,
             now_ns,
             &connection->thread_data.stats.pending_outgoing_stream_ms);
+
         connection->thread_data.outgoing_stream_timestamp_ns = now_ns;
+
         connection->thread_data.stats.current_outgoing_stream_id =
             aws_http_stream_get_id(&connection->thread_data.outgoing_stream->base);
     }
@@ -1836,7 +1841,9 @@ static void s_pull_up_stats_timestamps(struct h1_connection *connection) {
             connection->thread_data.incoming_stream_timestamp_ns,
             now_ns,
             &connection->thread_data.stats.pending_incoming_stream_ms);
+
         connection->thread_data.incoming_stream_timestamp_ns = now_ns;
+
         connection->thread_data.stats.current_incoming_stream_id =
             aws_http_stream_get_id(&connection->thread_data.incoming_stream->base);
     }
@@ -1852,6 +1859,8 @@ static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_
 }
 
 struct aws_crt_statistics_http1_channel *aws_h1_connection_get_statistics(struct aws_http_connection *connection) {
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->channel_slot->channel));
+
     struct h1_connection *h1_conn = (void *)connection;
 
     return &h1_conn->thread_data.stats;

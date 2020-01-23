@@ -69,6 +69,8 @@ static struct aws_h2_connection *s_connection_new(
     connection->base.channel_handler.impl = connection;
     connection->base.http_version = AWS_HTTP_VERSION_2;
     connection->base.initial_window_size = initial_window_size;
+    /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
+    aws_atomic_init_int(&connection->base.next_stream_id, (server ? 2 : 1));
 
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);

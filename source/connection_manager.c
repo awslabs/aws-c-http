@@ -552,6 +552,13 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         return NULL;
     }
 
+    if (options->monitoring_options && !aws_http_connection_monitoring_options_is_valid(options->monitoring_options)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION_MANAGER, "(static) invalid monitoring options for connection manager creation");
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
     struct aws_http_connection_manager *manager =
         aws_mem_acquire(allocator, sizeof(struct aws_http_connection_manager));
     if (manager == NULL) {
@@ -591,7 +598,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         }
     }
 
-    if (aws_http_connection_monitoring_options_is_valid(options->monitoring_options)) {
+    if (options->monitoring_options) {
         manager->monitoring_options = *options->monitoring_options;
     }
 
