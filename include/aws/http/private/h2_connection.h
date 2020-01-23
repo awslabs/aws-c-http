@@ -20,14 +20,45 @@
 #include <aws/common/mutex.h>
 
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/private/h2_frames.h>
+
+struct aws_h2_decoder;
 
 struct aws_h2_connection {
     struct aws_http_connection base;
 
+    struct aws_channel_task cross_thread_work_task;
+
     /* Only the event-loop thread may touch this data */
     struct {
         struct aws_h2_decoder *decoder;
+        struct aws_h2_frame_encoder encoder;
+
+        /* True when reading/writing has stopped, whether due to errors or normal channel shutdown. */
+        bool is_reading_stopped;
+        bool is_writing_stopped;
+
+        /* Maps stream-id to aws_h2_frame* */
+        struct aws_hash_table active_streams_map;
+
     } thread_data;
+
+    /* Any thread may touch this data, but the lock must be held */
+    struct {
+        struct aws_mutex lock;
+
+        /* New `aws_h2_stream *` that haven't moved to `thread_data` yet */
+        struct aws_linked_list pending_stream_list;
+
+        /* If non-zero, reason to immediately reject new streams. (ex: closing) */
+        int new_stream_error_code;
+
+        bool is_cross_thread_work_task_scheduled;
+
+        /* For checking status from outside the event-loop thread. */
+        bool is_open;
+
+    } synced_data;
 };
 
 AWS_EXTERN_C_BEGIN

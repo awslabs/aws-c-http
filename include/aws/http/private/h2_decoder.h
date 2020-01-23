@@ -16,16 +16,23 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/http/private/h2_frames.h>
 #include <aws/http/private/http_impl.h>
 
 struct aws_h2_decoder_vtable {
 
-    int (*on_headers)(uint32_t stream_id, void *userdata);
+    int (*on_header)(
+        uint32_t stream_id,
+        const struct aws_http_header *header,
+        enum aws_h2_header_field_hpack_behavior hpack_behavior,
+        void *userdata);
     int (*on_end_headers)(uint32_t stream_id, void *userdata);
 
     int (*on_data)(uint32_t stream_id, const struct aws_byte_cursor *data, void *userdata);
 
     int (*on_rst_stream)(uint32_t stream_id, uint32_t error_code, void *userdata);
+
+    int (*on_push_promise)(uint32_t stream_id, uint32_t promised_stream_id, void *userdata);
 
     int (*on_ping)(bool ack, uint8_t opaque_data[8], void *userdata);
     int (*on_setting)(uint16_t setting, uint32_t value, void *userdata);
@@ -39,9 +46,9 @@ struct aws_h2_decoder_vtable {
  */
 struct aws_h2_decoder_params {
     struct aws_allocator *alloc;
-    void *user_data;
     struct aws_h2_decoder_vtable vtable;
     void *userdata;
+    void *logging_id;
 };
 
 struct aws_h2_decoder;
@@ -51,8 +58,6 @@ AWS_EXTERN_C_BEGIN
 AWS_HTTP_API struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params);
 AWS_HTTP_API void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder);
 AWS_HTTP_API int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data);
-
-AWS_HTTP_API void aws_h2_decoder_set_logging_id(struct aws_h2_decoder *decoder, void *id);
 
 AWS_EXTERN_C_END
 

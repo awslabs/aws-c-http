@@ -1245,6 +1245,7 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     connection->base.vtable = &s_h1_connection_vtable;
     connection->base.alloc = alloc;
     connection->base.channel_handler.vtable = &s_h1_connection_vtable.channel_handler_vtable;
+    connection->base.channel_handler.alloc = alloc;
     connection->base.channel_handler.impl = connection;
     connection->base.http_version = AWS_HTTP_VERSION_1_1;
     connection->base.initial_window_size = initial_window_size;
@@ -1268,7 +1269,10 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     int err = aws_mutex_init(&connection->synced_data.lock);
     if (err) {
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION, "static: Failed to initialize mutex, error %d (%s).", err, aws_error_name(err));
+            AWS_LS_HTTP_CONNECTION,
+            "static: Failed to initialize mutex, error %d (%s).",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
 
         goto error_mutex;
     }
@@ -1632,6 +1636,11 @@ static int s_handler_process_read_message(
     }
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Done processing message.", (void *)&connection->base);
+    if (message) {
+        /* release message back to pool before re-opening window */
+        aws_mem_release(message->allocator, message);
+        message = NULL;
+    }
 
     /* Increment read window */
     if (incoming_message_size > connection->thread_data.incoming_message_window_shrink_size) {
@@ -1649,9 +1658,6 @@ static int s_handler_process_read_message(
         }
     }
 
-    if (message) {
-        aws_mem_release(message->allocator, message);
-    }
     return AWS_OP_SUCCESS;
 
 shutdown:
@@ -1791,7 +1797,7 @@ static int s_handler_shutdown(
         }
 
         /* It's OK to access synced_data.pending_stream_list without holding the lock because
-         * no more streams can be added after s_shutdown_connection() has been invoked. */
+         * no more streams can be added after s_stop() has been invoked. */
         while (!aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
             struct aws_linked_list_node *node = aws_linked_list_front(&connection->synced_data.pending_stream_list);
             s_stream_complete(AWS_CONTAINER_OF(node, struct aws_h1_stream, node), stream_error_code);

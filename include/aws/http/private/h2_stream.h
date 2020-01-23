@@ -21,6 +21,18 @@
 
 #include <aws/common/mutex.h>
 
+#include <inttypes.h>
+
+#define AWS_H2_STREAM_LOGF(level, stream, text, ...)                                                                   \
+    AWS_LOGF_##level(                                                                                                  \
+        AWS_LS_HTTP_STREAM,                                                                                            \
+        "id=%" PRIu32 " connection=%p state=%s: " text,                                                                \
+        (stream)->id,                                                                                                  \
+        (void *)(stream)->base.owning_connection,                                                                      \
+        aws_h2_stream_state_to_str((stream)->thread_data.state),                                                       \
+        __VA_ARGS__)
+#define AWS_H2_STREAM_LOG(level, stream, text) AWS_H2_STREAM_LOGF(level, (stream), "%s", (text))
+
 enum aws_h2_stream_state {
     AWS_H2_STREAM_STATE_IDLE,
     AWS_H2_STREAM_STATE_RESERVED_LOCAL,
@@ -35,6 +47,8 @@ enum aws_h2_stream_state {
 
 struct aws_h2_stream {
     struct aws_http_stream base;
+
+    struct aws_linked_list_node node;
 
     /* Only the event-loop thread may touch this data */
     struct {
@@ -58,7 +72,7 @@ AWS_HTTP_API
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);
 
 AWS_HTTP_API
-struct aws_h2_stream *aws_h1_stream_new_request(
+struct aws_h2_stream *aws_h2_stream_new_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options);
 

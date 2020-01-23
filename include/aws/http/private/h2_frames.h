@@ -33,6 +33,7 @@ enum aws_h2_frame_type {
     AWS_H2_FRAME_T_GOAWAY = 0x07,
     AWS_H2_FRAME_T_WINDOW_UPDATE = 0x08,
     AWS_H2_FRAME_T_CONTINUATION = 0x09,
+    AWS_H2_FRAME_T_UNKNOWN,
 };
 
 /* Represents flags that may be set on a frame (RFC-7540 6) */
@@ -44,18 +45,18 @@ enum aws_h2_frame_flag {
     AWS_H2_FRAME_F_PRIORITY = 0x20,
 };
 
-/* Error codes that may be present in an RST_STREAM frame (RFC-7540 7) */
+/* Error codes that may be present in RST_STREAM and GOAWAY frames (RFC-7540 7). */
 enum aws_h2_error_codes {
     AWS_H2_ERR_NO_ERROR = 0x00,
-    AWS_H2_ERR_PROTOCOL_ERROR = 0x01,
+    AWS_H2_ERR_PROTOCOL_ERROR = 0x01, /* corresponds to AWS_ERROR_HTTP_PROTOCOL_ERROR */
     AWS_H2_ERR_INTERNAL_ERROR = 0x02,
     AWS_H2_ERR_FLOW_CONTROL_ERROR = 0x03,
     AWS_H2_ERR_SETTINGS_TIMEOUT = 0x04,
-    AWS_H2_ERR_STREAM_CLOSED = 0x05,
-    AWS_H2_ERR_FRAME_SIZE_ERROR = 0x06,
+    AWS_H2_ERR_STREAM_CLOSED = 0x05,    /* corresponds to AWS_ERROR_HTTP_STREAM_CLOSED */
+    AWS_H2_ERR_FRAME_SIZE_ERROR = 0x06, /* corresponds to AWS_ERROR_HTTP_INVALID_FRAME_SIZE */
     AWS_H2_ERR_REFUSED_STREAM = 0x07,
     AWS_H2_ERR_CANCEL = 0x08,
-    AWS_H2_ERR_COMPRESSION_ERROR = 0x09,
+    AWS_H2_ERR_COMPRESSION_ERROR = 0x09, /* corresponds to AWS_ERROR_HTTP_COMPRESSION */
     AWS_H2_ERR_CONNECT_ERROR = 0x0A,
     AWS_H2_ERR_ENHANCE_YOUR_CALM = 0x0B,
     AWS_H2_ERR_INADEQUATE_SECURITY = 0x0C,
