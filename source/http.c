@@ -121,9 +121,6 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_FRAME_SIZE,
         "Received frame with an illegal frame size"),
-    AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_STREAM_IDS_EXHAUSTED,
-        "Stream id allocation exceeded the per-connection maximum allowed id"),
     AWS_DEFINE_ERROR_INFO_HTTP(  
         AWS_ERROR_HTTP_COMPRESSION,
         "Error compressing or decompressing HPACK headers"),

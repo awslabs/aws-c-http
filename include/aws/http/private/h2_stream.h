@@ -27,7 +27,7 @@
     AWS_LOGF_##level(                                                                                                  \
         AWS_LS_HTTP_STREAM,                                                                                            \
         "id=%" PRIu32 " connection=%p state=%s: " text,                                                                \
-        (stream)->id,                                                                                                  \
+        (stream)->base.id,                                                                                             \
         (void *)(stream)->base.owning_connection,                                                                      \
         aws_h2_stream_state_to_str((stream)->thread_data.state),                                                       \
         __VA_ARGS__)
