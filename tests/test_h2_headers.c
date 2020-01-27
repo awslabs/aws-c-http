@@ -28,20 +28,22 @@ typedef int(header_init_fn)(struct header_test_fixture *);
 /* Function used to tear down header instances */
 typedef int(header_clean_up_fn)(void *);
 
-/* Default header compare function, checks headers then memcmps the rest */
-static int s_header_block_eq(const struct aws_h2_frame_header_block *l, const struct aws_h2_frame_header_block *r) {
+/* Header compare function */
+static int s_header_block_eq(
+    const struct aws_array_list *l_header_fields,
+    const struct aws_array_list *r_header_fields) {
 
-    const size_t l_size = aws_array_list_length(&l->header_fields);
-    const size_t r_size = aws_array_list_length(&r->header_fields);
+    const size_t l_size = aws_array_list_length(l_header_fields);
+    const size_t r_size = aws_array_list_length(r_header_fields);
     ASSERT_UINT_EQUALS(l_size, r_size);
 
     for (size_t i = 0; i < l_size; ++i) {
         const struct aws_h2_frame_header_field *l_field = NULL;
-        aws_array_list_get_at_ptr(&l->header_fields, (void **)&l_field, i);
+        aws_array_list_get_at_ptr(l_header_fields, (void **)&l_field, i);
         AWS_FATAL_ASSERT(l_field);
 
         const struct aws_h2_frame_header_field *r_field = NULL;
-        aws_array_list_get_at_ptr(&r->header_fields, (void **)&r_field, i);
+        aws_array_list_get_at_ptr(r_header_fields, (void **)&r_field, i);
         AWS_FATAL_ASSERT(r_field);
 
         ASSERT_INT_EQUALS(l_field->hpack_behavior, r_field->hpack_behavior);
@@ -65,8 +67,8 @@ struct header_test_fixture {
 
     struct aws_h2_frame_headers headers_to_encode;
     struct aws_byte_buf expected_encoding_buf;
-    struct aws_h2_frame_header_block decoded_headers;
-    struct aws_byte_buf decoder_storage_buf;
+    struct aws_array_list decoded_headers;   /* array_list of aws_h2_frame_header_field */
+    struct aws_byte_buf decoder_storage_buf; /* string storage */
 };
 
 static int s_decoder_on_header(
@@ -85,7 +87,7 @@ static int s_decoder_on_header(
     ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.header.name));
     ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.header.value));
 
-    ASSERT_SUCCESS(aws_array_list_push_back(&fixture->decoded_headers.header_fields, &header_field));
+    ASSERT_SUCCESS(aws_array_list_push_back(&fixture->decoded_headers, &header_field));
 
     return AWS_OP_SUCCESS;
 }
@@ -119,7 +121,8 @@ static void s_header_test_before(struct aws_allocator *allocator, void *ctx) {
     ret_value = aws_byte_buf_init(&fixture->expected_encoding_buf, allocator, S_BUFFER_SIZE);
     AWS_FATAL_ASSERT(ret_value == AWS_OP_SUCCESS);
 
-    ret_value = aws_h2_frame_header_block_init(&fixture->decoded_headers, allocator);
+    ret_value =
+        aws_array_list_init_dynamic(&fixture->decoded_headers, allocator, 8, sizeof(struct aws_h2_frame_header_field));
     AWS_FATAL_ASSERT(ret_value == AWS_OP_SUCCESS);
 
     ret_value = aws_byte_buf_init(&fixture->decoder_storage_buf, allocator, S_BUFFER_SIZE);
@@ -162,7 +165,8 @@ static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
     ASSERT_UINT_EQUALS(0, payload.len);
 
     /* Compare the headers */
-    ASSERT_SUCCESS(s_header_block_eq(&fixture->headers_to_encode.header_block, &fixture->decoded_headers));
+    ASSERT_SUCCESS(
+        s_header_block_eq(&fixture->headers_to_encode.header_block.header_fields, &fixture->decoded_headers));
 
     aws_byte_buf_clean_up(&output_buffer);
     return AWS_OP_SUCCESS;
@@ -181,7 +185,7 @@ static void s_header_test_after(struct aws_allocator *allocator, void *ctx) {
 
     /* Tear down the fixture */
     aws_byte_buf_clean_up(&fixture->decoder_storage_buf);
-    aws_h2_frame_header_block_clean_up(&fixture->decoded_headers);
+    aws_array_list_clean_up(&fixture->decoded_headers);
     aws_h2_frame_headers_clean_up(&fixture->headers_to_encode);
     aws_byte_buf_clean_up(&fixture->expected_encoding_buf);
     aws_h2_decoder_destroy(fixture->decoder);

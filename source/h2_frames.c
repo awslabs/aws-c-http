@@ -594,6 +594,8 @@ int aws_h2_frame_settings_init(struct aws_h2_frame_settings *frame, struct aws_a
 }
 void aws_h2_frame_settings_clean_up(struct aws_h2_frame_settings *frame) {
     AWS_PRECONDITION(frame);
+
+    (void)frame;
 }
 
 int aws_h2_frame_settings_encode(
