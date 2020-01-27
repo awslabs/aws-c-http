@@ -17,6 +17,7 @@
  */
 
 #include <aws/common/atomics.h>
+#include <aws/common/hash_table.h>
 #include <aws/common/mutex.h>
 
 #include <aws/http/private/connection_impl.h>

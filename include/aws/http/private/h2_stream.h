@@ -78,9 +78,6 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options);
 
-AWS_HTTP_API
-int aws_h2_stream_handle_frame(struct aws_h2_stream *stream, struct aws_h2_frame_decoder *decoder);
-
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_H2_STREAM_H */
