@@ -263,7 +263,7 @@ TEST_CASE(h2_encoder_ping) {
     struct aws_h2_frame_ping frame;
     ASSERT_SUCCESS(aws_h2_frame_ping_init(&frame, allocator));
     frame.ack = true;
-    for (size_t i = 0; i < AWS_H2_PING_DATA_SIZE; ++i) {
+    for (uint8_t i = 0; i < AWS_H2_PING_DATA_SIZE; ++i) {
         frame.opaque_data[i] = i;
     }
 

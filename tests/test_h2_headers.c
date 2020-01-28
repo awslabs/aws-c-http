@@ -77,6 +77,7 @@ static int s_decoder_on_header(
     enum aws_h2_header_field_hpack_behavior hpack_behavior,
     void *userdata) {
 
+    (void)stream_id;
     struct header_test_fixture *fixture = userdata;
     struct aws_h2_frame_header_field header_field = {
         .header = *header,
@@ -213,6 +214,7 @@ static void s_header_test_after(struct aws_allocator *allocator, void *ctx) {
 
 /* Test HEADERS frame with empty payload */
 static int s_test_empty_payload(struct header_test_fixture *fixture) {
+    (void)fixture;
     return AWS_OP_SUCCESS;
 }
 HEADER_TEST(h2_header_empty_payload, s_test_empty_payload, NULL);
