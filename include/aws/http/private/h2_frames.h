@@ -278,7 +278,7 @@ void aws_h2_frame_encoder_clean_up(struct aws_h2_frame_encoder *encoder);
 
 /* #TODO: remove each frame type's specific encode() function from API */
 AWS_HTTP_API
-int aws_h2_encode(
+int aws_h2_encode_frame(
     struct aws_h2_frame_encoder *encoder,
     struct aws_h2_frame_header *frame_header,
     struct aws_byte_buf *output);

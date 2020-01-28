@@ -42,10 +42,10 @@ static int s_encode(
     ASSERT_SUCCESS(aws_h2_frame_encoder_init(&encoder, allocator));
 
     struct aws_byte_buf buffer;
-    /* Allocate more room than necessary, easier to debug the full output than a failed aws_h2_encode() call */
+    /* Allocate more room than necessary, easier to debug the full output than a failed aws_h2_encode_frame() call */
     ASSERT_SUCCESS(aws_byte_buf_init(&buffer, allocator, expected_size * 2));
 
-    ASSERT_SUCCESS(aws_h2_encode(&encoder, frame_header, &buffer));
+    ASSERT_SUCCESS(aws_h2_encode_frame(&encoder, frame_header, &buffer));
     ASSERT_BIN_ARRAYS_EQUALS(expected, expected_size, buffer.buffer, buffer.len);
 
     aws_byte_buf_clean_up(&buffer);
@@ -70,9 +70,9 @@ TEST_CASE(h2_encoder_data) {
         AWS_H2_FRAME_F_END_STREAM | AWS_H2_FRAME_F_PADDED, /* Flags (8) */
         0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
         /* DATA */
-        0x02,                       /* Pad Length? (8) */
+        0x02,                       /* Pad Length (8)                           - F_PADDED */
         'h', 'e', 'l', 'l', 'o',    /* Data (*) */
-        0x00, 0x00                  /* Padding (*) */
+        0x00, 0x00                  /* Padding (*)                              - F_PADDED */
     };
     /* clang-format on */
 
@@ -104,11 +104,11 @@ TEST_CASE(h2_encoder_headers) {
         AWS_H2_FRAME_F_END_STREAM | AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_PADDED | AWS_H2_FRAME_F_PRIORITY, /* Flags (8) */
         0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
         /* HEADERS */
-        0x02,                       /* Pad Length? (8) */
-        0x81, 0x23, 0x45, 0x67,     /* Exclusive (1) | Stream Dependency? (31) */
-        0x09,                       /* Weight? (8) */
+        0x02,                       /* Pad Length (8)                           - F_PADDED */
+        0x81, 0x23, 0x45, 0x67,     /* Exclusive (1) | Stream Dependency (31)   - F_PRIORITY*/
+        0x09,                       /* Weight (8)                               - F_PRIORITY */
                                     /* Header Block Fragment (*) */
-        0x00, 0x00                  /* Padding (*) */
+        0x00, 0x00                  /* Padding (*)                              - F_PADDED */
     };
     /* clang-format on */
 
@@ -245,10 +245,10 @@ TEST_CASE(h2_encoder_push_promise) {
         AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_PADDED, /* Flags (8) */
         0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31) */
         /* PUSH_PROMISE */
-        0x02,                       /* Pad Length? (8) */
+        0x02,                       /* Pad Length (8)                           | F_PADDED */
         0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Promised Stream ID (31) */
                                     /* Header Block Fragment (*) */
-        0x00, 0x00,                 /* Padding (*) */
+        0x00, 0x00,                 /* Padding (*)                              | F_PADDED*/
     };
     /* clang-format on */
 

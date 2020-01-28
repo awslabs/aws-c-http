@@ -946,7 +946,7 @@ compression_error:
     return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
 }
 
-int aws_h2_encode(
+int aws_h2_encode_frame(
     struct aws_h2_frame_encoder *encoder,
     struct aws_h2_frame_header *frame_header,
     struct aws_byte_buf *output) {
