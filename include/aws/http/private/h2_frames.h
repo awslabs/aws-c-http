@@ -191,7 +191,7 @@ struct aws_h2_frame_push_promise {
     struct aws_h2_frame_header_block header_block;
 };
 
-enum { AWS_H2_PING_DATA_SIZE = 8 };
+#define AWS_H2_PING_DATA_SIZE (8)
 
 /* Represents a PING frame */
 struct aws_h2_frame_ping {
