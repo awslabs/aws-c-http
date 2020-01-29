@@ -243,7 +243,7 @@ AWS_TEST_CASE(hpack_static_table_find, test_hpack_static_table_find)
 static int test_hpack_static_table_find(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    aws_hpack_static_table_init(allocator);
+    aws_http_library_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
     ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0));
@@ -269,7 +269,7 @@ static int test_hpack_static_table_find(struct aws_allocator *allocator, void *c
     ASSERT_UINT_EQUALS(0, aws_hpack_find_index(context, &s_garbage, &found_value));
 
     aws_hpack_context_destroy(context);
-    aws_hpack_static_table_clean_up();
+    aws_http_library_clean_up();
     return AWS_OP_SUCCESS;
 }
 
@@ -277,7 +277,7 @@ AWS_TEST_CASE(hpack_static_table_get, test_hpack_static_table_get)
 static int test_hpack_static_table_get(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    aws_hpack_static_table_init(allocator);
+    aws_http_library_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
     ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0));
@@ -302,7 +302,7 @@ static int test_hpack_static_table_get(struct aws_allocator *allocator, void *ct
     ASSERT_NULL(found);
 
     aws_hpack_context_destroy(context);
-    aws_hpack_static_table_clean_up();
+    aws_http_library_clean_up();
     return AWS_OP_SUCCESS;
 }
 
@@ -310,7 +310,7 @@ AWS_TEST_CASE(hpack_dynamic_table_find, test_hpack_dynamic_table_find)
 static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    aws_hpack_static_table_init(allocator);
+    aws_http_library_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
 
@@ -352,7 +352,7 @@ static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *
     ASSERT_FALSE(found_value);
 
     aws_hpack_context_destroy(context);
-    aws_hpack_static_table_clean_up();
+    aws_http_library_clean_up();
     return AWS_OP_SUCCESS;
 }
 
@@ -360,7 +360,7 @@ AWS_TEST_CASE(hpack_dynamic_table_get, test_hpack_dynamic_table_get)
 static int test_hpack_dynamic_table_get(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    aws_hpack_static_table_init(allocator);
+    aws_http_library_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
 
@@ -414,6 +414,6 @@ static int test_hpack_dynamic_table_get(struct aws_allocator *allocator, void *c
     ASSERT_NULL(found);
 
     aws_hpack_context_destroy(context);
-    aws_hpack_static_table_clean_up();
+    aws_http_library_clean_up();
     return AWS_OP_SUCCESS;
 }

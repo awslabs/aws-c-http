@@ -219,17 +219,17 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             case AWS_H2_FRAME_T_SETTINGS: {
                 struct aws_h2_frame_settings frame;
                 aws_h2_frame_settings_init(&frame, allocator);
+                frame.settings_count = input.len / 6;
+                frame.settings_array =
+                    aws_mem_calloc(allocator, frame.settings_count, sizeof(struct aws_h2_frame_settings));
 
-                while (input.len > 6) {
-                    uint16_t key = 0;
-                    aws_byte_cursor_read_be16(&input, &key);
-                    uint32_t value = 0;
-                    aws_byte_cursor_read_be32(&input, &value);
-
-                    aws_h2_frame_settings_set(&frame, key, value);
+                for (size_t i = 0; i < frame.settings_count; ++i) {
+                    aws_byte_cursor_read_be16(&input, &frame.settings_array[i].id);
+                    aws_byte_cursor_read_be32(&input, &frame.settings_array[i].value);
                 }
 
                 aws_h2_frame_settings_encode(&frame, &encoder, &frame_data);
+                aws_mem_release(allocator, frame.settings_array);
                 aws_h2_frame_settings_clean_up(&frame);
                 break;
             }
@@ -249,9 +249,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 struct aws_h2_frame_ping frame;
                 aws_h2_frame_ping_init(&frame, allocator);
 
-                if (input.len >= 8) {
-                    frame.opaque_data = aws_byte_cursor_advance(&input, 8);
-                    frame.ack = *frame.opaque_data.ptr != 0;
+                if (input.len >= AWS_H2_PING_DATA_SIZE) {
+                    memcpy(frame.opaque_data, input.ptr, AWS_H2_PING_DATA_SIZE);
+                    aws_byte_cursor_advance(&input, AWS_H2_PING_DATA_SIZE);
+                    frame.ack = frame.opaque_data[0] != 0;
                 } else if (input.len >= 1) {
                     frame.ack = *input.ptr != 0;
                 }
@@ -310,8 +311,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 }
 
                 /* Write payload length */
-                uint32_t len_to_write = aws_hton24(payload_length);
-                aws_byte_buf_write(&frame_data, (uint8_t *)&len_to_write, 3);
+                aws_byte_buf_write_be24(&frame_data, payload_length);
 
                 /* Write type */
                 aws_byte_buf_write_u8(&frame_data, frame_type);
