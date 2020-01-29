@@ -838,6 +838,34 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
     return current;
 }
 
+static void s_aws_channel_on_message_write_completed(
+    struct aws_channel *channel,
+    struct aws_io_message *message,
+    int err_code,
+    void *user_data) {
+
+    (void)channel;
+    (void)message;
+    (void)err_code;
+    (void)user_data;
+
+    struct h1_connection *connection = user_data;
+    struct aws_h1_stream *outgoing_stream = s_update_outgoing_stream_ptr(connection);
+
+    /* Reschedule task if there's still more work to do. */
+    if (outgoing_stream) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Outgoing stream task has written all it can, but there's still more work to do, rescheduling "
+            "task.",
+            (void *)&connection->base);
+
+        aws_channel_schedule_task_now(channel, &connection->outgoing_stream_task);
+    } else {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Outgoing stream task complete.", (void *)&connection->base);
+    }
+}
+
 static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;
@@ -850,6 +878,11 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
 
     /* Stop task if we're no longer writing stream data */
     if (connection->thread_data.is_writing_stopped || connection->thread_data.has_switched_protocols) {
+        return;
+    }
+
+    struct aws_h1_stream *outgoing_stream = s_update_outgoing_stream_ptr(connection);
+    if (outgoing_stream == NULL) {
         return;
     }
 
@@ -880,25 +913,18 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         goto error;
     }
 
+    msg->on_completion = s_aws_channel_on_message_write_completed;
+    msg->user_data = connection;
+
     /**
-     * Fill message with as much data as possible before sending.
-     * At first, we might be resuming work on a stream from a previous run of this task.
-     * Loop until no more streams have data to send,
-     * OR a stream still is unable to continue writing to the msg (probably because msg is full).
+     * Fill message with as much data as possible from a single stream before sending.
      */
-    struct aws_h1_stream *outgoing_stream;
-    while ((outgoing_stream = s_update_outgoing_stream_ptr(connection)) != NULL) {
-        if (aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
-            /* Error sending data, abandon ship */
-            goto error;
-        }
+    if (aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
+        /* Error sending data, abandon ship */
+        goto error;
+    }
 
-        /* If there is a stream in progress, it means msg filled up before we finished a stream */
-        if (aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
-            break;
-        }
-
-        /* If stream is done sending data, mark as done sending, loop, and start sending the next stream's data */
+    if (!aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
         outgoing_stream->is_outgoing_message_done = true;
     }
 
@@ -931,19 +957,19 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
             outgoing_stream ? (void *)&outgoing_stream->base : NULL);
 
         aws_mem_release(msg->allocator, msg);
-    }
 
-    /* Reschedule task if there's still more work to do. */
-    if (outgoing_stream) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Outgoing stream task has written all it can, but there's still more work to do, rescheduling "
-            "task.",
-            (void *)&connection->base);
+        /* Reschedule task if there's still more work to do. */
+        if (outgoing_stream) {
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Outgoing stream task has written all it can, but there's still more work to do, rescheduling "
+                "task.",
+                (void *)&connection->base);
 
-        aws_channel_schedule_task_now(channel, task);
-    } else {
-        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Outgoing stream task complete.", (void *)&connection->base);
+            aws_channel_schedule_task_now(channel, task);
+        } else {
+            AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Outgoing stream task complete.", (void *)&connection->base);
+        }
     }
 
     return;
