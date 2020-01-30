@@ -1109,7 +1109,7 @@ static void s_add_outgoing_stream(struct test_http_stats_event *event) {
 }
 
 static void s_add_response_data(struct test_http_stats_event *event) {
-    testing_channel_send_response_str(&s_test_context.test_channel, event->response_stream_data);
+    testing_channel_push_read_str(&s_test_context.test_channel, event->response_stream_data);
 }
 
 static int s_do_http_statistics_test(

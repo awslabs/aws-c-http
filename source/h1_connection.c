@@ -838,6 +838,47 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
     return current;
 }
 
+/* Runs after an aws_io_message containing HTTP has completed (written to the network, or failed).
+ * This does NOT run after switching protocols, when we're dumbly forwarding aws_io_messages
+ * as a midchannel handler. */
+static void s_on_channel_write_complete(
+    struct aws_channel *channel,
+    struct aws_io_message *message,
+    int err_code,
+    void *user_data) {
+
+    (void)message;
+    struct h1_connection *connection = user_data;
+
+    if (err_code) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Message did not write to network, error %d (%s)",
+            (void *)&connection->base,
+            err_code,
+            aws_error_name(err_code));
+
+        s_shutdown_due_to_error(connection, err_code);
+        return;
+    }
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Message finished writing to network. Rescheduling outgoing stream task.",
+        (void *)&connection->base);
+
+    /* To avoid wasting memory, we only want ONE of our written aws_io_messages in the channel at a time.
+     * Therefore, we wait until it's written to the network before trying to send another
+     * by running the outgoing-stream-task again.
+     *
+     * We also want to share the network with other channels.
+     * Therefore, when the write completes, we SCHEDULE the outgoing-stream-task
+     * to run again instead of calling the function directly.
+     * This way, if the message completes synchronously,
+     * we're not hogging the network by writing message after message in a tight loop */
+    aws_channel_schedule_task_now(channel, &connection->outgoing_stream_task);
+}
+
 static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;
@@ -846,7 +887,6 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
     struct h1_connection *connection = arg;
     struct aws_channel *channel = connection->base.channel_slot->channel;
     struct aws_io_message *msg = NULL;
-    int err;
 
     /* Stop task if we're no longer writing stream data */
     if (connection->thread_data.is_writing_stopped || connection->thread_data.has_switched_protocols) {
@@ -854,6 +894,14 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
     }
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Outgoing stream task is running.", (void *)&connection->base);
+
+    struct aws_h1_stream *outgoing_stream = s_update_outgoing_stream_ptr(connection);
+    if (!outgoing_stream) {
+        /* Note: outgoing_stream_task_active is set false by s_update_outgoing_stream_ptr()
+         * if there are no streams are ready to write. We do it there while holding the lock. */
+        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Outgoing stream task complete.", (void *)&connection->base);
+        return;
+    }
 
     /* If outgoing_message_size_hint isn't set yet, calculate it */
     size_t overhead = aws_channel_slot_upstream_message_overhead(connection->base.channel_slot);
@@ -880,27 +928,21 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         goto error;
     }
 
+    /* Set up callback so we can send another message when this one completes */
+    msg->on_completion = s_on_channel_write_complete;
+    msg->user_data = connection;
+
     /**
-     * Fill message with as much data as possible before sending.
-     * At first, we might be resuming work on a stream from a previous run of this task.
-     * Loop until no more streams have data to send,
-     * OR a stream still is unable to continue writing to the msg (probably because msg is full).
+     * Fill message data from the outgoing stream.
+     * Note that we might be resuming work on a stream from a previous run of this task.
      */
-    struct aws_h1_stream *outgoing_stream;
-    while ((outgoing_stream = s_update_outgoing_stream_ptr(connection)) != NULL) {
-        if (aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
-            /* Error sending data, abandon ship */
-            goto error;
-        }
-
-        /* If there is a stream in progress, it means msg filled up before we finished a stream */
-        if (aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)) {
-            break;
-        }
-
-        /* If stream is done sending data, mark as done sending, loop, and start sending the next stream's data */
-        outgoing_stream->is_outgoing_message_done = true;
+    if (aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
+        /* Error sending data, abandon ship */
+        goto error;
     }
+
+    outgoing_stream->is_outgoing_message_done =
+        !aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder);
 
     if (msg->message_data.len > 0) {
         AWS_LOGF_TRACE(
@@ -909,19 +951,20 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
             (void *)&connection->base,
             msg->message_data.len);
 
-        err = aws_channel_slot_send_message(connection->base.channel_slot, msg, AWS_CHANNEL_DIR_WRITE);
-        if (err) {
+        if (aws_channel_slot_send_message(connection->base.channel_slot, msg, AWS_CHANNEL_DIR_WRITE)) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
-                "id=%p: Failed to send message up channel, error %d (%s). Closing connection.",
+                "id=%p: Failed to send message down channel, error %d (%s). Closing connection.",
                 (void *)&connection->base,
                 aws_last_error(),
                 aws_error_name(aws_last_error()));
 
             goto error;
         }
+
     } else {
-        /* If message is empty, warn that no work is being done.
+        /* If message is empty, warn that no work is being done
+         * and reschedule the task to try again next tick.
          * It's likely that body isn't ready, so body streaming function has no data to write yet.
          * If this scenario turns out to be common we should implement a "pause" feature. */
         AWS_LOGF_WARN(
@@ -931,19 +974,8 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
             outgoing_stream ? (void *)&outgoing_stream->base : NULL);
 
         aws_mem_release(msg->allocator, msg);
-    }
-
-    /* Reschedule task if there's still more work to do. */
-    if (outgoing_stream) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Outgoing stream task has written all it can, but there's still more work to do, rescheduling "
-            "task.",
-            (void *)&connection->base);
 
         aws_channel_schedule_task_now(channel, task);
-    } else {
-        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Outgoing stream task complete.", (void *)&connection->base);
     }
 
     return;
