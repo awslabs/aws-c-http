@@ -2008,18 +2008,19 @@ struct protocol_switcher {
 
     /* Results */
     int upgrade_response_status;
-    bool is_upgrade_response_complete;
     bool has_installed_downstream_handler;
 };
 
-static void s_switch_protocols_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
-    struct protocol_switcher *switcher = user_data;
+static int s_switch_protocols_on_response_header_block_done(
+    struct aws_http_stream *stream,
+    enum aws_http_header_block header_block,
+    void *user_data) {
 
-    switcher->is_upgrade_response_complete = true;
+    struct protocol_switcher *switcher = user_data;
     aws_http_stream_get_incoming_response_status(stream, &switcher->upgrade_response_status);
 
     /* install downstream hander */
-    if (switcher->install_downstream_handler && !error_code &&
+    if (switcher->install_downstream_handler &&
         (switcher->upgrade_response_status == AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS)) {
 
         int err = testing_channel_install_downstream_handler(
@@ -2028,6 +2029,8 @@ static void s_switch_protocols_on_stream_complete(struct aws_http_stream *stream
             switcher->has_installed_downstream_handler = true;
         }
     }
+
+    return AWS_OP_SUCCESS;
 }
 
 /* Send "Connection: Upgrade" request and receive "101 Switching Protocols" response.
@@ -2056,7 +2059,7 @@ static int s_switch_protocols(struct protocol_switcher *switcher) {
         .self_size = sizeof(upgrade_request),
         .request = request,
         .user_data = switcher,
-        .on_complete = s_switch_protocols_on_stream_complete,
+        .on_response_header_block_done = s_switch_protocols_on_response_header_block_done,
     };
 
     struct aws_http_stream *upgrade_stream =
@@ -2092,7 +2095,6 @@ static int s_switch_protocols(struct protocol_switcher *switcher) {
 
     /* wait for response to complete, and check results */
     testing_channel_drain_queued_tasks(&switcher->tester->testing_channel);
-    ASSERT_TRUE(switcher->is_upgrade_response_complete);
     ASSERT_INT_EQUALS(101, switcher->upgrade_response_status);
 
     /* if we wanted downstream handler installed, ensure that happened */
@@ -2378,9 +2380,6 @@ H1_CLIENT_TEST_CASE(h1_client_switching_protocols_fails_pending_requests) {
         "\r\n"));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    ASSERT_UINT_EQUALS(1, upgrade_response.on_complete_cb_count);
-    ASSERT_INT_EQUALS(101, upgrade_response.status);
 
     /* confirm that the next request was cancelled */
     ASSERT_UINT_EQUALS(1, next_response.on_complete_cb_count);
