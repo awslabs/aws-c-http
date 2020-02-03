@@ -315,7 +315,7 @@ int proxy_tester_send_connect_response(struct proxy_tester *tester) {
     }
 
     /* send response */
-    ASSERT_SUCCESS(testing_channel_send_response_str(tester->testing_channel, response_string));
+    ASSERT_SUCCESS(testing_channel_push_read_str(tester->testing_channel, response_string));
 
     testing_channel_drain_queued_tasks(tester->testing_channel);
 
