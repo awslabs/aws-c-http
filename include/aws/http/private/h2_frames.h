@@ -19,7 +19,6 @@
 #include <aws/http/request_response.h>
 
 #include <aws/common/byte_buf.h>
-#include <aws/common/hash_table.h>
 
 /* Ids for each frame type (RFC-7540 6) */
 enum aws_h2_frame_type {
@@ -159,6 +158,12 @@ struct aws_h2_frame_rst_stream {
     enum aws_h2_error_codes error_code;
 };
 
+/* A h2 setting and its value, used in SETTINGS frame */
+struct aws_h2_frame_setting {
+    uint16_t id; /* aws_h2_settings */
+    uint32_t value;
+};
+
 /* Represents a SETTINGS frame */
 struct aws_h2_frame_settings {
     /* Header */
@@ -168,8 +173,8 @@ struct aws_h2_frame_settings {
     bool ack; /* AWS_H2_FRAME_F_ACK */
 
     /* Payload */
-    /* uint16_t -> uint32_t */
-    struct aws_hash_table settings;
+    struct aws_h2_frame_setting *settings_array;
+    size_t settings_count;
 };
 
 /* Represents a PUSH_PROMISE frame */
@@ -186,6 +191,8 @@ struct aws_h2_frame_push_promise {
     struct aws_h2_frame_header_block header_block;
 };
 
+#define AWS_H2_PING_DATA_SIZE (8)
+
 /* Represents a PING frame */
 struct aws_h2_frame_ping {
     /* Header */
@@ -195,7 +202,7 @@ struct aws_h2_frame_ping {
     bool ack; /* AWS_H2_FRAME_F_ACK */
 
     /* Payload */
-    struct aws_byte_cursor opaque_data;
+    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE];
 };
 
 /* Represents a GOAWAY frame */
@@ -238,19 +245,6 @@ struct aws_h2_frame_encoder {
     bool use_huffman;
 };
 
-/* Used to decode a frame */
-struct aws_h2_frame_decoder {
-    /* Larger state */
-    struct aws_allocator *allocator;
-    struct aws_byte_buf header_scratch;
-    struct aws_hpack_context *hpack;
-
-    /* Packet-in-progress */
-    struct aws_h2_frame_header header;
-    uint8_t flags;
-    struct aws_byte_cursor payload;
-};
-
 AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API
@@ -271,48 +265,34 @@ int aws_h2_frame_header_block_encode(
     const struct aws_h2_frame_header_block *header_block,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output);
-AWS_HTTP_API
-int aws_h2_frame_header_block_decode(
-    struct aws_h2_frame_header_block *header_block,
-    struct aws_h2_frame_decoder *decoder);
 
 /**
  * The process of encoding a frame looks like:
  * 1. Create a encoder object on the stack and initialize with aws_h2_frame_encoder_init
  * 2. Encode the header using aws_h2_frame_*_encode
  */
-
 AWS_HTTP_API
 int aws_h2_frame_encoder_init(struct aws_h2_frame_encoder *encoder, struct aws_allocator *allocator);
 AWS_HTTP_API
 void aws_h2_frame_encoder_clean_up(struct aws_h2_frame_encoder *encoder);
 
-/**
- * The process of decoding a frame looks like:
- * 1. Create a decoder object on the stack and initialize with aws_h2_frame_decoder_init
- * 2. Decode the header using aws_h2_frame_decoder_begin
- * 3. Switch on header->type, and create a new instance of the appropriate frame type
- * 4. Call aws_h2_frame_*_decode to decode the rest of the frame
- */
-
+/* #TODO: remove each frame type's specific encode() function from API */
 AWS_HTTP_API
-int aws_h2_frame_decoder_init(struct aws_h2_frame_decoder *decoder, struct aws_allocator *allocator);
-AWS_HTTP_API
-void aws_h2_frame_decoder_clean_up(struct aws_h2_frame_decoder *decoder);
-AWS_HTTP_API
-int aws_h2_frame_decoder_begin(struct aws_h2_frame_decoder *decoder, struct aws_byte_cursor *data);
+int aws_h2_encode_frame(
+    struct aws_h2_frame_encoder *encoder,
+    struct aws_h2_frame_header *frame_header,
+    struct aws_byte_buf *output);
 
 AWS_HTTP_API
 int aws_h2_frame_data_init(struct aws_h2_frame_data *frame, struct aws_allocator *allocator);
 AWS_HTTP_API
 void aws_h2_frame_data_clean_up(struct aws_h2_frame_data *frame);
+
 AWS_HTTP_API
 int aws_h2_frame_data_encode(
     struct aws_h2_frame_data *frame,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output);
-AWS_HTTP_API
-int aws_h2_frame_data_decode(struct aws_h2_frame_data *frame, struct aws_h2_frame_decoder *decoder);
 
 AWS_HTTP_API
 int aws_h2_frame_headers_init(struct aws_h2_frame_headers *frame, struct aws_allocator *allocator);
@@ -323,8 +303,6 @@ int aws_h2_frame_headers_encode(
     struct aws_h2_frame_headers *frame,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output);
-AWS_HTTP_API
-int aws_h2_frame_headers_decode(struct aws_h2_frame_headers *frame, struct aws_h2_frame_decoder *decoder);
 
 AWS_HTTP_API
 int aws_h2_frame_priority_init(struct aws_h2_frame_priority *frame, struct aws_allocator *allocator);
@@ -335,8 +313,6 @@ int aws_h2_frame_priority_encode(
     struct aws_h2_frame_priority *frame,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output);
-AWS_HTTP_API
-int aws_h2_frame_priority_decode(struct aws_h2_frame_priority *frame, struct aws_h2_frame_decoder *decoder);
 
 AWS_HTTP_API
 int aws_h2_frame_rst_stream_init(struct aws_h2_frame_rst_stream *frame, struct aws_allocator *allocator);
@@ -347,24 +323,16 @@ int aws_h2_frame_rst_stream_encode(
     struct aws_h2_frame_rst_stream *frame,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output);
-AWS_HTTP_API
-int aws_h2_frame_rst_stream_decode(struct aws_h2_frame_rst_stream *frame, struct aws_h2_frame_decoder *decoder);
 
 AWS_HTTP_API
 int aws_h2_frame_settings_init(struct aws_h2_frame_settings *frame, struct aws_allocator *allocator);
 AWS_HTTP_API
 void aws_h2_frame_settings_clean_up(struct aws_h2_frame_settings *frame);
 AWS_HTTP_API
-int aws_h2_frame_settings_set(struct aws_h2_frame_settings *frame, uint16_t identifier, uint32_t value);
-AWS_HTTP_API
-int aws_h2_frame_settings_remove(struct aws_h2_frame_settings *frame, uint16_t identifier);
-AWS_HTTP_API
 int aws_h2_frame_settings_encode(
     struct aws_h2_frame_settings *frame,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output);
-AWS_HTTP_API
-int aws_h2_frame_settings_decode(struct aws_h2_frame_settings *frame, struct aws_h2_frame_decoder *decoder);
 
 AWS_HTTP_API
 int aws_h2_frame_push_promise_init(struct aws_h2_frame_push_promise *frame, struct aws_allocator *allocator);
@@ -375,8 +343,6 @@ int aws_h2_frame_push_promise_encode(
     struct aws_h2_frame_push_promise *frame,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output);
-AWS_HTTP_API
-int aws_h2_frame_push_promise_decode(struct aws_h2_frame_push_promise *frame, struct aws_h2_frame_decoder *decoder);
 
 AWS_HTTP_API
 int aws_h2_frame_ping_init(struct aws_h2_frame_ping *frame, struct aws_allocator *allocator);
@@ -387,8 +353,6 @@ int aws_h2_frame_ping_encode(
     struct aws_h2_frame_ping *frame,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output);
-AWS_HTTP_API
-int aws_h2_frame_ping_decode(struct aws_h2_frame_ping *frame, struct aws_h2_frame_decoder *decoder);
 
 AWS_HTTP_API
 int aws_h2_frame_goaway_init(struct aws_h2_frame_goaway *frame, struct aws_allocator *allocator);
@@ -399,8 +363,6 @@ int aws_h2_frame_goaway_encode(
     struct aws_h2_frame_goaway *frame,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output);
-AWS_HTTP_API
-int aws_h2_frame_goaway_decode(struct aws_h2_frame_goaway *frame, struct aws_h2_frame_decoder *decoder);
 
 AWS_HTTP_API
 int aws_h2_frame_window_update_init(struct aws_h2_frame_window_update *frame, struct aws_allocator *allocator);
@@ -411,8 +373,6 @@ int aws_h2_frame_window_update_encode(
     struct aws_h2_frame_window_update *frame,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output);
-AWS_HTTP_API
-int aws_h2_frame_window_update_decode(struct aws_h2_frame_window_update *frame, struct aws_h2_frame_decoder *decoder);
 
 AWS_HTTP_API
 int aws_h2_frame_continuation_init(struct aws_h2_frame_continuation *frame, struct aws_allocator *allocator);
@@ -423,8 +383,6 @@ int aws_h2_frame_continuation_encode(
     struct aws_h2_frame_continuation *frame,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output);
-AWS_HTTP_API
-int aws_h2_frame_continuation_decode(struct aws_h2_frame_continuation *frame, struct aws_h2_frame_decoder *decoder);
 
 AWS_EXTERN_C_END
 

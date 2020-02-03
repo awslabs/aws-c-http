@@ -368,13 +368,16 @@ static enum aws_hpack_decode_status s_decode_string(
  * State functions
  **********************************************************************************************************************/
 
-static void s_decoder_run_state(
+static void s_decoder_run_state_ex(
     struct aws_h2_decoder *decoder,
     const struct decoder_state *state,
-    struct aws_byte_cursor *input) {
+    struct aws_byte_cursor *input,
+    bool preserve_scratch) {
 
     DECODER_LOGF(TRACE, decoder, "Moving from state %s to %s", decoder->state.name, state->name);
-    decoder->scratch.len = 0;
+    if (!preserve_scratch) {
+        decoder->scratch.len = 0;
+    }
 
     /* Special case for 0 length frames, otherwise frames could sit in incomplete until more data arrives */
     if (state->bytes_required == 0) {
@@ -382,6 +385,21 @@ static void s_decoder_run_state(
     } else {
         decoder->state = *state;
     }
+}
+
+static void s_decoder_run_state(
+    struct aws_h2_decoder *decoder,
+    const struct decoder_state *state,
+    struct aws_byte_cursor *input) {
+
+    s_decoder_run_state_ex(decoder, state, input, false /*preserve_scratch*/);
+}
+static void s_decoder_run_state_preserve_scratch(
+    struct aws_h2_decoder *decoder,
+    const struct decoder_state *state,
+    struct aws_byte_cursor *input) {
+
+    s_decoder_run_state_ex(decoder, state, input, true /*preserve_scratch*/);
 }
 
 static void s_decoder_run_frame_state(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
@@ -431,18 +449,11 @@ static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cur
 
     AWS_ASSERT(input->len >= 9);
 
-    uint32_t payload_len = 0;
-    uint8_t *length_ptr = ((uint8_t *)&payload_len);
-
     /* Read the first 3 bytes */
-    bool succ = aws_byte_cursor_read(input, length_ptr, 3);
+    uint32_t payload_len = 0;
+    bool succ = aws_byte_cursor_read_be24(input, &payload_len);
     AWS_ASSERT(succ);
     (void)succ;
-
-    /* Reverse from network order */
-    payload_len = aws_ntoh24(payload_len);
-    /* Assert top byte isn't set */
-    AWS_ASSERT((payload_len & 0xFF000000) == 0);
 
     /* #TODO handle the SETTINGS_MAX_FRAME_SIZE setting */
     static const uint32_t MAX_FRAME_SIZE = 16384;
@@ -831,8 +842,8 @@ static int s_state_fn_frame_ping(struct aws_h2_decoder *decoder, struct aws_byte
 
     AWS_ASSERT(input->len >= 8);
 
-    uint8_t opaque_data[8] = {0};
-    bool succ = aws_byte_cursor_read(input, &opaque_data, AWS_ARRAY_SIZE(opaque_data));
+    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE] = {0};
+    bool succ = aws_byte_cursor_read(input, &opaque_data, AWS_H2_PING_DATA_SIZE);
     AWS_ASSERT(succ);
     (void)succ;
 
@@ -1139,8 +1150,8 @@ static int s_state_fn_headers_literal_name(struct aws_h2_decoder *decoder, struc
     /* The value will start after the name, so save how long it is */
     progress->value_offset = decoder->scratch.len;
 
-    /* Name gotten, go to value */
-    s_decoder_run_state(decoder, &s_state_headers_literal_value, input);
+    /* Name is in scratch, preserve it and go to value */
+    s_decoder_run_state_preserve_scratch(decoder, &s_state_headers_literal_value, input);
 
     return AWS_OP_SUCCESS;
 }
