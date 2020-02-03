@@ -1366,16 +1366,8 @@ static struct test_http_stats_event s_http_stats_test_pipelined[] = {
         .response_stream_data = "Content-Length: 9\r\n\r\nSomething",
     },
     {
-        .event_type = MTHSET_TICK,
-        .timestamp = 620,
-    },
-    {
-        .event_type = MTHSET_TICK,
-        .timestamp = 640,
-    },
-    {
-        .event_type = MTHSET_TICK,
-        .timestamp = 660,
+        .event_type = MTHSET_FLUSH,
+        .timestamp = 690,
     },
     {
         .event_type = MTHSET_ADD_RESPONSE_DATA,
@@ -1401,7 +1393,7 @@ static struct test_http_stats_event s_http_stats_test_pipelined[] = {
         .timestamp = AWS_TIMESTAMP_MILLIS,
         .expected_stats =
             {
-                .pending_outgoing_stream_ms = 560, /* [100, 660] */
+                .pending_outgoing_stream_ms = 590, /* [100, 690] */
                 .pending_incoming_stream_ms = 800, /* [100, 900] */
                 .current_outgoing_stream_id = 0,
                 .current_incoming_stream_id = 0,
