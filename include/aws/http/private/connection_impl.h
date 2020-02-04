@@ -30,28 +30,10 @@ struct aws_http_make_request_options;
 struct aws_http_request_handler_options;
 struct aws_http_stream;
 
-typedef int(aws_client_bootstrap_new_socket_channel_fn)(
-    struct aws_client_bootstrap *bootstrap,
-    const char *host_name,
-    uint16_t port,
-    const struct aws_socket_options *options,
-    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
-    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
-    void *user_data);
-
-typedef int(aws_client_bootstrap_new_tls_socket_channel_fn)(
-    struct aws_client_bootstrap *bootstrap,
-    const char *host_name,
-    uint16_t port,
-    const struct aws_socket_options *options,
-    const struct aws_tls_connection_options *connection_options,
-    aws_client_bootstrap_on_channel_setup_fn *setup_callback,
-    aws_client_bootstrap_on_channel_shutdown_fn *shutdown_callback,
-    void *user_data);
+typedef int aws_client_bootstrap_new_socket_channel_fn(struct aws_socket_channel_bootstrap_options *options);
 
 struct aws_http_connection_system_vtable {
     aws_client_bootstrap_new_socket_channel_fn *new_socket_channel;
-    aws_client_bootstrap_new_tls_socket_channel_fn *new_tls_socket_channel;
 };
 
 struct aws_http_connection_vtable {
@@ -90,6 +72,9 @@ struct aws_http_connection {
      * aws_http_streams will also acquire holds on their connection for the duration of their lifetime */
     struct aws_atomic_var refcount;
 
+    /* Starts at either 1 or 2, increments by two with each new stream */
+    struct aws_atomic_var next_stream_id;
+
     union {
         struct aws_http_connection_client_data {
             uint8_t delete_me; /* exists to prevent "empty struct" errors */
@@ -113,6 +98,7 @@ struct aws_http_client_bootstrap {
     struct aws_allocator *alloc;
     bool is_using_tls;
     size_t initial_window_size;
+    struct aws_http_connection_monitoring_options monitoring_options;
     void *user_data;
     aws_http_on_client_connection_setup_fn *on_setup;
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
@@ -136,6 +122,20 @@ int aws_http_client_connect_internal(
  */
 AWS_HTTP_API
 void aws_http_connection_acquire(struct aws_http_connection *connection);
+
+/**
+ * Allow tests to fake stats data
+ */
+AWS_HTTP_API
+struct aws_crt_statistics_http1_channel *aws_h1_connection_get_statistics(struct aws_http_connection *connection);
+
+/**
+ * Gets the next available stream id within the connection.  Valid for creating both h1 and h2 streams.
+ *
+ * Returns 0 if there was an error.
+ */
+AWS_HTTP_API
+uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *connection);
 
 AWS_EXTERN_C_END
 

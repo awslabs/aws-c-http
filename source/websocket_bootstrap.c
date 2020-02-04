@@ -99,7 +99,11 @@ static int s_ws_bootstrap_on_handshake_response_headers(
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data);
-static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream, int error_code, void *user_data);
+static int s_ws_bootstrap_on_handshake_response_header_block_done(
+    struct aws_http_stream *stream,
+    enum aws_http_header_block header_block,
+    void *user_data);
+static void s_ws_bootstrap_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data);
 
 int aws_websocket_client_connect(const struct aws_websocket_client_connection_options *options) {
     aws_http_fatal_assert_library_initialized();
@@ -307,7 +311,8 @@ static void s_ws_bootstrap_on_http_setup(struct aws_http_connection *http_connec
         .request = ws_bootstrap->handshake_request,
         .user_data = ws_bootstrap,
         .on_response_headers = s_ws_bootstrap_on_handshake_response_headers,
-        .on_complete = s_ws_bootstrap_on_handshake_complete,
+        .on_response_header_block_done = s_ws_bootstrap_on_handshake_response_header_block_done,
+        .on_complete = s_ws_bootstrap_on_stream_complete,
     };
 
     struct aws_http_stream *handshake_stream =
@@ -393,6 +398,7 @@ static void s_ws_bootstrap_on_http_shutdown(
     s_ws_bootstrap_destroy(ws_bootstrap);
 }
 
+/* Invoked repeatedly as handshake response headers arrive */
 static int s_ws_bootstrap_on_handshake_response_headers(
     struct aws_http_stream *stream,
     enum aws_http_header_block header_block,
@@ -444,14 +450,24 @@ error:
     return AWS_OP_ERR;
 }
 
-static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+/**
+ * Invoked each time we reach the end of a block of response headers.
+ * If we got a valid 101 Switching Protocols response, we insert the websocket handler.
+ * Note:
+ *      In HTTP, 1xx responses are "interim" responses. So a 101 Switching Protocols
+ *      response does not "complete" the stream. Once the connection has switched
+ *      protocols, the stream does not end until the whole connection is closed.
+ */
+static int s_ws_bootstrap_on_handshake_response_header_block_done(
+    struct aws_http_stream *stream,
+    enum aws_http_header_block header_block,
+    void *user_data) {
+
+    (void)header_block;
+
     struct aws_websocket_client_bootstrap *ws_bootstrap = user_data;
     struct aws_http_connection *http_connection = s_system_vtable->aws_http_stream_get_connection(stream);
     AWS_ASSERT(http_connection);
-
-    if (error_code) {
-        goto error;
-    }
 
     /* Get data from stream */
     s_system_vtable->aws_http_stream_get_incoming_response_status(stream, &ws_bootstrap->response_status);
@@ -522,13 +538,20 @@ static void s_ws_bootstrap_on_handshake_complete(struct aws_http_stream *stream,
     /* Clear setup callback so that we know that it's been invoked. */
     ws_bootstrap->websocket_setup_callback = NULL;
 
-    s_system_vtable->aws_http_stream_release(stream);
-    return;
+    return AWS_OP_SUCCESS;
 
 error:
-    if (!error_code) {
-        error_code = aws_last_error();
-    }
-    s_ws_bootstrap_cancel_setup_due_to_err(ws_bootstrap, http_connection, error_code);
+    s_ws_bootstrap_cancel_setup_due_to_err(ws_bootstrap, http_connection, aws_last_error());
+    /* Returning error stops HTTP from processing any further data */
+    return AWS_OP_ERR;
+}
+
+static void s_ws_bootstrap_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    /* Not checking error_code because a stream error ends the HTTP connection.
+     * We'll deal with finishing setup and/or shutdown from the http-shutdown callback */
+    (void)error_code;
+    (void)user_data;
+
+    /* Done with stream, let it be cleaned up */
     s_system_vtable->aws_http_stream_release(stream);
 }

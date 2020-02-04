@@ -17,6 +17,7 @@
 
 #include <aws/http/connection.h>
 #include <aws/http/private/connection_manager_system_vtable.h>
+#include <aws/http/private/connection_monitor.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/proxy_impl.h>
 
@@ -184,6 +185,7 @@ struct aws_http_connection_manager {
     struct aws_socket_options socket_options;
     struct aws_tls_connection_options *tls_connection_options;
     struct aws_http_proxy_config *proxy_config;
+    struct aws_http_connection_monitoring_options monitoring_options;
     struct aws_string *host;
     uint16_t port;
 
@@ -550,6 +552,13 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         return NULL;
     }
 
+    if (options->monitoring_options && !aws_http_connection_monitoring_options_is_valid(options->monitoring_options)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION_MANAGER, "(static) invalid monitoring options for connection manager creation");
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
     struct aws_http_connection_manager *manager =
         aws_mem_acquire(allocator, sizeof(struct aws_http_connection_manager));
     if (manager == NULL) {
@@ -587,6 +596,10 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         if (manager->proxy_config == NULL) {
             goto on_error;
         }
+    }
+
+    if (options->monitoring_options) {
+        manager->monitoring_options = *options->monitoring_options;
     }
 
     manager->state = AWS_HCMST_READY;
@@ -673,6 +686,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.socket_options = &manager->socket_options;
     options.on_setup = s_aws_http_connection_manager_on_connection_setup;
     options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
+    options.monitoring_options = &manager->monitoring_options;
 
     struct aws_http_proxy_options proxy_options;
     AWS_ZERO_STRUCT(proxy_options);

@@ -51,9 +51,6 @@ struct aws_h2_connection {
         /* New `aws_h2_stream *` that haven't moved to `thread_data` yet */
         struct aws_linked_list pending_stream_list;
 
-        /* Refers to the next stream id to vend */
-        uint32_t next_stream_id;
-
         /* If non-zero, reason to immediately reject new streams. (ex: closing) */
         int new_stream_error_code;
 

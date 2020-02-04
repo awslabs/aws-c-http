@@ -43,6 +43,12 @@ static struct aws_h1_stream *s_stream_new_common(
     aws_http_on_incoming_body_fn *on_incoming_body,
     aws_http_on_stream_complete_fn on_complete) {
 
+    uint32_t stream_id = aws_http_connection_get_next_stream_id(owning_connection);
+    if (stream_id == 0) {
+        /* stream id exhausted error was already raised*/
+        return NULL;
+    }
+
     struct aws_h1_stream *stream = aws_mem_calloc(owning_connection->alloc, 1, sizeof(struct aws_h1_stream));
     if (!stream) {
         return NULL;
@@ -57,6 +63,7 @@ static struct aws_h1_stream *s_stream_new_common(
     stream->base.on_incoming_header_block_done = on_incoming_header_block_done;
     stream->base.on_incoming_body = on_incoming_body;
     stream->base.on_complete = on_complete;
+    stream->base.id = stream_id;
 
     /* Stream refcount starts at 2. 1 for user and 1 for connection to release it's done with the stream */
     aws_atomic_init_int(&stream->base.refcount, 2);

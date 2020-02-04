@@ -35,7 +35,9 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
 
     s_tester.alloc = alloc;
 
-    ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc));
+    struct aws_testing_channel_options options = {.clock_fn = aws_high_res_clock_get_ticks};
+
+    ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc, &options));
 
     s_tester.connection = aws_http_connection_new_http2_client(alloc, SIZE_MAX);
     ASSERT_NOT_NULL(s_tester.connection);
