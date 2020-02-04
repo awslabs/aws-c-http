@@ -2015,6 +2015,7 @@ static int s_switch_protocols_on_response_header_block_done(
     struct aws_http_stream *stream,
     enum aws_http_header_block header_block,
     void *user_data) {
+    (void)header_block;
 
     struct protocol_switcher *switcher = user_data;
     aws_http_stream_get_incoming_response_status(stream, &switcher->upgrade_response_status);
