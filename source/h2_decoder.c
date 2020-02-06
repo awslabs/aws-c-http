@@ -676,18 +676,12 @@ static int s_state_fn_padding_len(struct aws_h2_decoder *decoder, struct aws_byt
 
 static int s_state_fn_padding(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    const uint8_t padding_len = decoder->frame_in_progress.padding_len;
-    bool will_finish_state = false;
-    if (input->len >= padding_len) {
-        will_finish_state = true;
-        aws_byte_cursor_advance(input, padding_len);
-    } else {
-        AWS_ASSERT(input->len <= UINT8_MAX);
-        decoder->frame_in_progress.padding_len -= (uint8_t)input->len;
-        aws_byte_cursor_advance(input, input->len);
-    }
+    const uint8_t remaining_len = decoder->frame_in_progress.padding_len;
+    const uint8_t consuming_len = input->len < remaining_len ? (uint8_t)input->len : remaining_len;
+    aws_byte_cursor_advance(input, consuming_len);
+    decoder->frame_in_progress.padding_len -= consuming_len;
 
-    if (will_finish_state) {
+    if (remaining_len == consuming_len) {
         /* Done with the frame! */
         s_decoder_reset_state(decoder);
     }
