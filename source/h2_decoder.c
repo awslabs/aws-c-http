@@ -39,16 +39,16 @@ static const uint8_t s_setting_block_size = sizeof(uint16_t) + sizeof(uint32_t);
 
 #define DECODER_CALL_VTABLE(decoder, fn)                                                                               \
     do {                                                                                                               \
-        if ((decoder)->vtable.fn) {                                                                                    \
+        if ((decoder)->vtable->fn) {                                                                                   \
             DECODER_LOG(TRACE, decoder, "Calling user callback " #fn)                                                  \
-            (decoder)->vtable.fn((decoder)->userdata);                                                                 \
+            (decoder)->vtable->fn((decoder)->userdata);                                                                \
         }                                                                                                              \
     } while (false)
 #define DECODER_CALL_VTABLE_ARGS(decoder, fn, ...)                                                                     \
     do {                                                                                                               \
-        if ((decoder)->vtable.fn) {                                                                                    \
+        if ((decoder)->vtable->fn) {                                                                                   \
             DECODER_LOG(TRACE, decoder, "Calling user callback " #fn)                                                  \
-            (decoder)->vtable.fn(__VA_ARGS__, (decoder)->userdata);                                                    \
+            (decoder)->vtable->fn(__VA_ARGS__, (decoder)->userdata);                                                   \
         }                                                                                                              \
     } while (false)
 #define DECODER_CALL_VTABLE_STREAM(decoder, fn)                                                                        \
@@ -147,6 +147,22 @@ struct aws_h2_decoder {
         } flags;
     } frame_in_progress;
 
+    /* A header-block starts with a HEADERS or PUSH_PROMISE frame, followed by 0 or more CONTINUATION frames.
+     * It's an error for any other frame-type or stream ID to arrive while a header block is in progress.
+     * The header-block ends when a frame has the END_HEADERS flag set. (RFC-7540 4.3) */
+    struct {
+        /* If 0, then no header-block in progress */
+        uint32_t stream_id;
+
+        /* T: PUSH_PROMISE header-block
+         * F: HEADERS header-block */
+        bool is_push_promise;
+
+        /* If frame that starts header-block has END_STREAM flag,
+         * then frame that ends header-block also ends the stream. */
+        bool ends_stream;
+    } header_block_in_progress;
+
     union {
         struct h2_header_progress_indexed {
             uint64_t index;
@@ -164,7 +180,7 @@ struct aws_h2_decoder {
     } header_in_progress;
 
     /* User callbacks and settings. */
-    struct aws_h2_decoder_vtable vtable;
+    const struct aws_h2_decoder_vtable *vtable;
     void *userdata;
 
     /* If this is set to true, decode may no longer be called */
@@ -379,11 +395,12 @@ static void s_decoder_run_state_ex(
         decoder->scratch.len = 0;
     }
 
+    decoder->state = *state;
+
     /* Special case for 0 length frames, otherwise frames could sit in incomplete until more data arrives */
+    /* #TODO handle this differently to protect against stack overflow */
     if (state->bytes_required == 0) {
         state->fn(decoder, input);
-    } else {
-        decoder->state = *state;
     }
 }
 
@@ -408,6 +425,9 @@ static void s_decoder_run_frame_state(struct aws_h2_decoder *decoder, struct aws
 }
 
 static void s_decoder_reset_state(struct aws_h2_decoder *decoder) {
+    AWS_ASSERT(decoder->frame_in_progress.payload_len == 0);
+    AWS_ASSERT(decoder->frame_in_progress.padding_len == 0);
+
     decoder->scratch.len = 0;
     decoder->state = s_state_header;
 
@@ -424,11 +444,11 @@ static struct aws_byte_cursor s_decoder_get_payload(struct aws_h2_decoder *decod
     if (input->len < remaining_length) {
         AWS_ASSERT(input->len <= UINT32_MAX);
         result = aws_byte_cursor_advance(input, input->len);
-        decoder->frame_in_progress.payload_len -= (uint32_t)input->len;
     } else {
         result = aws_byte_cursor_advance(input, remaining_length);
-        decoder->frame_in_progress.payload_len = 0;
     }
+
+    decoder->frame_in_progress.payload_len -= (uint32_t)result.len;
 
     return result;
 }
@@ -496,7 +516,7 @@ static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cur
             break;
         case AWS_H2_FRAME_T_HEADERS:
             acceptable_flags = AWS_H2_FRAME_F_END_STREAM | AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_PADDED |
-                               AWS_H2_FRAME_T_PRIORITY;
+                               AWS_H2_FRAME_F_PRIORITY;
             break;
         case AWS_H2_FRAME_T_PUSH_PROMISE:
             acceptable_flags = AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_PADDED;
@@ -568,6 +588,35 @@ static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cur
         }
     }
 
+    /* A header-block starts with a HEADERS or PUSH_PROMISE frame, followed by 0 or more CONTINUATION frames.
+     * It's an error for any other frame-type or stream ID to arrive while a header block is in progress.
+     * (RFC-7540 4.3) */
+    switch (frame_type) {
+        case AWS_H2_FRAME_T_DATA:
+        case AWS_H2_FRAME_T_HEADERS:
+        case AWS_H2_FRAME_T_PRIORITY:
+        case AWS_H2_FRAME_T_RST_STREAM:
+        case AWS_H2_FRAME_T_SETTINGS:
+        case AWS_H2_FRAME_T_PUSH_PROMISE:
+        case AWS_H2_FRAME_T_PING:
+        case AWS_H2_FRAME_T_GOAWAY:
+        case AWS_H2_FRAME_T_WINDOW_UPDATE:
+            if (decoder->header_block_in_progress.stream_id != 0) {
+                DECODER_LOG(ERROR, decoder, "Expected CONTINUATION frame.");
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+            }
+            break;
+        case AWS_H2_FRAME_T_CONTINUATION:
+            if (decoder->header_block_in_progress.stream_id != decoder->frame_in_progress.stream_id) {
+                DECODER_LOG(ERROR, decoder, "Unexpected CONTINUATION frame.");
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+            }
+            break;
+        case AWS_H2_FRAME_T_UNKNOWN:
+            /* ignore UNKNOWN frames */
+            break;
+    }
+
     DECODER_LOGF(
         TRACE,
         decoder,
@@ -610,7 +659,7 @@ static int s_state_fn_padding_len(struct aws_h2_decoder *decoder, struct aws_byt
     (void)succ;
 
     /* Adjust payload size */
-    decoder->frame_in_progress.payload_len -= decoder->frame_in_progress.padding_len;
+    decoder->frame_in_progress.payload_len -= 1 + decoder->frame_in_progress.padding_len;
 
     DECODER_LOGF(TRACE, decoder, "Padding length of frame: %" PRIu32, decoder->frame_in_progress.padding_len);
 
@@ -664,6 +713,8 @@ static int s_state_fn_priority_block(struct aws_h2_decoder *decoder, struct aws_
      */
     aws_byte_cursor_advance(input, 5);
 
+    decoder->frame_in_progress.payload_len -= 5;
+
     s_decoder_run_frame_state(decoder, input);
 
     return AWS_OP_SUCCESS;
@@ -673,10 +724,13 @@ static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte
 
     const struct aws_byte_cursor body_data = s_decoder_get_payload(decoder, input);
     if (body_data.len) {
-        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data, &body_data);
+        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data, body_data);
     }
 
     if (decoder->frame_in_progress.payload_len == 0) {
+        /* If frame had END_STREAM flag, alert user now */
+        DECODER_CALL_VTABLE_STREAM(decoder, on_end_stream);
+
         /* Process padding if necessary, otherwise we're done! */
         s_decoder_run_state(decoder, &s_state_padding, input);
     }
@@ -686,7 +740,14 @@ static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte
 static int s_state_fn_frame_headers(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
-    /* Read the headers block */
+    /* Start header-block and alert the user */
+    decoder->header_block_in_progress.stream_id = decoder->frame_in_progress.stream_id;
+    decoder->header_block_in_progress.is_push_promise = false;
+    decoder->header_block_in_progress.ends_stream = decoder->frame_in_progress.flags.end_stream;
+
+    DECODER_CALL_VTABLE_STREAM(decoder, on_headers_begin);
+
+    /* Read the header block fragment */
     s_decoder_run_state(decoder, &s_state_headers_begin, input);
 
     return AWS_OP_SUCCESS;
@@ -724,7 +785,7 @@ static int s_state_fn_frame_rst_stream(struct aws_h2_decoder *decoder, struct aw
 static int s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
-    /* If ack is set, report and abort */
+    /* If ack is set, report and we're done */
     if (decoder->frame_in_progress.flags.ack) {
         /* Receipt of a SETTINGS frame with the ACK flag set and a length field value other
          * than 0 MUST be treated as a connection error of type FRAME_SIZE_ERROR */
@@ -753,6 +814,9 @@ static int s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struc
             s_setting_block_size);
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_FRAME_SIZE);
     }
+
+    /* Report start of non-ACK settings frame */
+    DECODER_CALL_VTABLE(decoder, on_settings_begin);
 
     /* If we've made it this far, we have a non-ACK settings frame with a valid payload length */
     s_decoder_run_state(decoder, &s_state_frame_settings, input);
@@ -785,15 +849,15 @@ static int s_state_fn_frame_settings(struct aws_h2_decoder *decoder, struct aws_
         AWS_ASSERT(succ);
         (void)succ;
 
-        DECODER_CALL_VTABLE_ARGS(decoder, on_setting, id, value);
+        DECODER_CALL_VTABLE_ARGS(decoder, on_settings_i, id, value);
 
         /* Update payload len */
         decoder->frame_in_progress.payload_len -= s_setting_block_size;
     }
 
     if (decoder->frame_in_progress.payload_len == 0) {
-
         /* Huzzah, done with the frame */
+        DECODER_CALL_VTABLE(decoder, on_settings_end);
         s_decoder_reset_state(decoder);
     }
 
@@ -819,13 +883,14 @@ static int s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct 
     /* Remove top bit */
     promised_stream_id &= s_31_bit_mask;
 
-    /* Alert the user */
-    DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise, promised_stream_id);
+    /* Start header-block and alert the user. */
+    decoder->header_block_in_progress.stream_id = decoder->frame_in_progress.stream_id;
+    decoder->header_block_in_progress.is_push_promise = true;
+    decoder->header_block_in_progress.ends_stream = false;
 
-    /* Update the stream id of the decoder so that future on_header and on_end_headers calls use the promised id */
-    decoder->frame_in_progress.stream_id = promised_stream_id;
+    DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_begin, promised_stream_id);
 
-    /* Read the headers block */
+    /* Read the header block fragment */
     s_decoder_run_state(decoder, &s_state_headers_begin, input);
 
     return AWS_OP_SUCCESS;
@@ -847,7 +912,11 @@ static int s_state_fn_frame_ping(struct aws_h2_decoder *decoder, struct aws_byte
     AWS_ASSERT(succ);
     (void)succ;
 
-    DECODER_CALL_VTABLE_ARGS(decoder, on_ping, decoder->frame_in_progress.flags.ack, opaque_data);
+    if (decoder->frame_in_progress.flags.ack) {
+        DECODER_CALL_VTABLE_ARGS(decoder, on_ping_ack, opaque_data);
+    } else {
+        DECODER_CALL_VTABLE_ARGS(decoder, on_ping, opaque_data);
+    }
 
     s_decoder_reset_state(decoder);
 
@@ -881,7 +950,7 @@ static int s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, struct aws_by
 
     decoder->frame_in_progress.payload_len -= 8;
 
-    DECODER_CALL_VTABLE_ARGS(decoder, on_goaway, last_stream, decoder->frame_in_progress.payload_len, error_code);
+    DECODER_CALL_VTABLE_ARGS(decoder, on_goaway_begin, last_stream, decoder->frame_in_progress.payload_len, error_code);
 
     if (decoder->frame_in_progress.payload_len) {
         s_decoder_run_state(decoder, &s_state_frame_goaway_debug_data, input);
@@ -900,10 +969,13 @@ static int s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, struct aws_by
 static int s_state_fn_frame_goaway_debug_data(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     struct aws_byte_cursor debug_data = s_decoder_get_payload(decoder, input);
-    DECODER_CALL_VTABLE_ARGS(decoder, on_goaway_debug_data, &debug_data);
+    if (debug_data.len > 0) {
+        DECODER_CALL_VTABLE_ARGS(decoder, on_goaway_i, debug_data);
+    }
 
     /* This is the last data in the frame, so reset decoder */
     if (decoder->frame_in_progress.payload_len == 0) {
+        DECODER_CALL_VTABLE(decoder, on_goaway_end);
         s_decoder_reset_state(decoder);
     }
 
@@ -926,7 +998,7 @@ static int s_state_fn_frame_window_update(struct aws_h2_decoder *decoder, struct
 
     window_increment &= s_31_bit_mask;
 
-    /* #TODO I still have NO CLUE with this thing is for */
+    DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_window_update, window_increment);
 
     s_decoder_reset_state(decoder);
 
@@ -938,7 +1010,7 @@ static int s_state_fn_frame_continuation(struct aws_h2_decoder *decoder, struct 
     (void)input;
 
     if (decoder->frame_in_progress.payload_len) {
-        /* Read the headers block */
+        /* Read the header block fragment */
         s_decoder_run_state(decoder, &s_state_headers_begin, input);
 
     } else {
@@ -965,17 +1037,25 @@ static int s_state_fn_frame_unknown(struct aws_h2_decoder *decoder, struct aws_b
 
 static int s_state_fn_headers_begin(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    /* Starting new header, so zero out the data */
-    AWS_ZERO_STRUCT(decoder->header_in_progress);
-
     /* If we're out of payload data, handle frame complete */
     if (decoder->frame_in_progress.payload_len == 0) {
 
         DECODER_LOG(TRACE, decoder, "Done decoding header block");
 
-        /* Hollaback if this is the last HEADERS frame */
+        /* If this is the end of the header-block, invoke callback and clear header_block_in_progress */
         if (decoder->frame_in_progress.flags.end_headers) {
-            DECODER_CALL_VTABLE_STREAM(decoder, on_end_headers);
+            if (decoder->header_block_in_progress.is_push_promise) {
+                DECODER_CALL_VTABLE_STREAM(decoder, on_push_promise_end);
+            } else {
+                DECODER_CALL_VTABLE_STREAM(decoder, on_headers_end);
+            }
+
+            /* If header-block began with END_STREAM flag, alert user now */
+            if (decoder->header_block_in_progress.ends_stream) {
+                DECODER_CALL_VTABLE_STREAM(decoder, on_end_stream);
+            }
+
+            AWS_ZERO_STRUCT(decoder->header_block_in_progress);
         }
 
         /* Finish the fight */
@@ -988,13 +1068,16 @@ static int s_state_fn_headers_begin(struct aws_h2_decoder *decoder, struct aws_b
         return AWS_OP_SUCCESS;
     }
 
+    /* Starting new header, so zero out the data */
+    AWS_ZERO_STRUCT(decoder->header_in_progress);
+
     DECODER_LOGF(
         TRACE,
         decoder,
         "Decoding header, %" PRIu32 " bytes remaining in payload",
         decoder->frame_in_progress.payload_len);
 
-    /* Consts for decoding header blocks */
+    /* Consts for decoding */
     static const uint8_t s_indexed_header_field_mask = 1 << 7;
     static const uint8_t s_literal_save_field_mask = 1 << 6;
     static const uint8_t s_dynamic_table_size_update_mask = 1 << 5;
@@ -1070,7 +1153,11 @@ static int s_state_fn_headers_indexed(struct aws_h2_decoder *decoder, struct aws
         return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
     }
 
-    DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_header, header, AWS_H2_HEADER_BEHAVIOR_SAVE);
+    if (decoder->header_block_in_progress.is_push_promise) {
+        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, header, AWS_H2_HEADER_BEHAVIOR_SAVE);
+    } else {
+        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, header, AWS_H2_HEADER_BEHAVIOR_SAVE);
+    }
 
     s_decoder_run_state(decoder, &s_state_headers_begin, input);
     return AWS_OP_SUCCESS;
@@ -1192,7 +1279,11 @@ static int s_state_fn_headers_literal_value(struct aws_h2_decoder *decoder, stru
     }
 
     /* Report to the user */
-    DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_header, &progress->header, progress->hpack_behavior);
+    if (decoder->header_block_in_progress.is_push_promise) {
+        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, &progress->header, progress->hpack_behavior);
+    } else {
+        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, &progress->header, progress->hpack_behavior);
+    }
 
     s_decoder_run_state(decoder, &s_state_headers_begin, input);
     return AWS_OP_SUCCESS;

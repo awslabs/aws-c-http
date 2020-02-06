@@ -94,7 +94,7 @@ static int s_decoder_on_header(
 }
 
 static struct aws_h2_decoder_vtable s_decoder_vtable = {
-    .on_header = s_decoder_on_header,
+    .on_headers_i = s_decoder_on_header,
 };
 
 static void s_header_test_before(struct aws_allocator *allocator, void *ctx) {
@@ -109,7 +109,7 @@ static void s_header_test_before(struct aws_allocator *allocator, void *ctx) {
 
     struct aws_h2_decoder_params decoder_params = {
         .alloc = allocator,
-        .vtable = s_decoder_vtable,
+        .vtable = &s_decoder_vtable,
         .userdata = fixture,
     };
     fixture->decoder = aws_h2_decoder_new(&decoder_params);
