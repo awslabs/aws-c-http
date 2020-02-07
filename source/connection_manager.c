@@ -686,7 +686,10 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.socket_options = &manager->socket_options;
     options.on_setup = s_aws_http_connection_manager_on_connection_setup;
     options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
-    options.monitoring_options = &manager->monitoring_options;
+
+    if (aws_http_connection_monitoring_options_is_valid(&manager->monitoring_options)) {
+        options.monitoring_options = &manager->monitoring_options;
+    }
 
     struct aws_http_proxy_options proxy_options;
     AWS_ZERO_STRUCT(proxy_options);
