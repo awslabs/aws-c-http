@@ -96,13 +96,13 @@ DEFINE_STATE(frame_window_update, 4);
 DEFINE_STATE(frame_continuation, 0);
 DEFINE_STATE(frame_unknown, 0);
 
-/* Header-block states (NOTE: all of these states are streaming states) */
+/* Header-block states */
 DEFINE_STATE(headers_begin, 0);
-DEFINE_STATE(headers_indexed, 0);
-DEFINE_STATE(headers_literal_index, 0);
-DEFINE_STATE(headers_literal_name, 0);
-DEFINE_STATE(headers_literal_value, 0);
-DEFINE_STATE(headers_dyn_table_resize, 0);
+DEFINE_STATE(headers_indexed, 1);
+DEFINE_STATE(headers_literal_index, 1);
+DEFINE_STATE(headers_literal_name, 1);
+DEFINE_STATE(headers_literal_value, 1);
+DEFINE_STATE(headers_dyn_table_resize, 1);
 
 /* Helper for states that need to transition to frame-type states */
 static const struct decoder_state *s_state_frames[] = {
@@ -130,7 +130,7 @@ struct aws_h2_decoder {
     struct aws_hpack_context *hpack;
 
     struct aws_byte_buf scratch;
-    struct decoder_state state;
+    const struct decoder_state *state;
 
     /* Packet-in-progress */
     struct {
@@ -191,7 +191,7 @@ struct aws_h2_decoder {
  * Public API
  **********************************************************************************************************************/
 
-static void s_decoder_reset_state(struct aws_h2_decoder *decoder);
+static int s_decoder_reset_state(struct aws_h2_decoder *decoder);
 
 struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) {
     AWS_PRECONDITION(params);
@@ -212,16 +212,14 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
     decoder->userdata = params->userdata;
     decoder->logging_id = params->logging_id;
 
-    decoder->scratch = aws_byte_buf_from_array(scratch_buf, s_scratch_space_size);
+    decoder->scratch = aws_byte_buf_from_empty_array(scratch_buf, s_scratch_space_size);
 
     decoder->hpack = aws_hpack_context_new(params->alloc, AWS_LS_HTTP_DECODER, decoder);
     if (!decoder->hpack) {
         goto failed_new_hpack;
     }
 
-    AWS_ZERO_STRUCT(decoder->state);
-    decoder->state.name = "<NONE>";
-    s_decoder_reset_state(decoder);
+    decoder->state = &s_state_header;
 
     return decoder;
 
@@ -247,15 +245,25 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
 
     int err = AWS_ERROR_SUCCESS;
 
-    while (data->len) {
-        const uint32_t bytes_required = decoder->state.bytes_required;
-        AWS_ASSERT(bytes_required <= decoder->scratch.capacity);
-        if (!decoder->scratch.len && data->len >= bytes_required) {
-            /* Easy case, there is no scratch and we have enough data, so just send it to the state */
+    /* Run decoder state machine until we're no longer consuming data or changing states */
+    size_t prev_data_len = 0;
+    const struct decoder_state *prev_state = NULL;
+    while (prev_data_len != data->len || prev_state != decoder->state) {
 
-            const char *current_state_name = decoder->state.name;
-            const size_t pre_state_data_len = data->len;
-            (void)pre_state_data_len;
+        /* Stop if a state requires a minimum amount of data and there's nothing left to consume. */
+        const uint32_t bytes_required = decoder->state->bytes_required;
+        AWS_ASSERT(bytes_required <= decoder->scratch.capacity);
+        if (bytes_required > 0 && data->len == 0) {
+            break;
+        }
+
+        const char *current_state_name = decoder->state->name;
+        prev_state = decoder->state;
+        prev_data_len = data->len;
+
+        if ((bytes_required == 0) || (!decoder->scratch.len && data->len >= bytes_required)) {
+            /* Easy case: either state doesn't require minimum amount of data,
+             * or there is no scratch and we have enough data, so just send it to the state */
 
             DECODER_LOGF(
                 TRACE,
@@ -264,16 +272,16 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                 current_state_name,
                 data->len);
 
-            err = decoder->state.fn(decoder, data);
+            err = decoder->state->fn(decoder, data);
             if (err) {
                 goto handle_error;
             }
 
             AWS_ASSERT(
-                (bytes_required == 0 || pre_state_data_len - data->len >= bytes_required) &&
+                (bytes_required == 0 || prev_data_len - data->len >= bytes_required) &&
                 "Decoder state requested more data than it used");
         } else {
-            /* In every other case, we have to copy to scratch */
+            /* Otherwise, state requires a minimum amount of data and we have to use the scratch */
             size_t bytes_to_read = bytes_required - decoder->scratch.len;
             bool will_finish_state = true;
 
@@ -291,16 +299,13 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                 (void)succ;
             }
 
-            /* Root state to run, not used for anything, but can be useful for debugging */
-            const char *current_state_name = decoder->state.name;
-
             /* If we have the correct number of bytes, call the state */
             if (will_finish_state) {
 
                 DECODER_LOGF(TRACE, decoder, "Enough bytes now available, running state %s", current_state_name);
 
                 struct aws_byte_cursor state_data = aws_byte_cursor_from_buf(&decoder->scratch);
-                err = decoder->state.fn(decoder, &state_data);
+                err = decoder->state->fn(decoder, &state_data);
                 if (err) {
                     goto handle_error;
                 }
@@ -384,55 +389,43 @@ static enum aws_hpack_decode_status s_decode_string(
  * State functions
  **********************************************************************************************************************/
 
-static void s_decoder_run_state_ex(
+static int s_decoder_switch_state_ex(
     struct aws_h2_decoder *decoder,
     const struct decoder_state *state,
-    struct aws_byte_cursor *input,
     bool preserve_scratch) {
 
-    DECODER_LOGF(TRACE, decoder, "Moving from state %s to %s", decoder->state.name, state->name);
+    DECODER_LOGF(TRACE, decoder, "Moving from state %s to %s", decoder->state->name, state->name);
     if (!preserve_scratch) {
         decoder->scratch.len = 0;
     }
 
-    decoder->state = *state;
-
-    /* Special case for 0 length frames, otherwise frames could sit in incomplete until more data arrives */
-    /* #TODO handle this differently to protect against stack overflow */
-    if (state->bytes_required == 0) {
-        state->fn(decoder, input);
-    }
+    decoder->state = state;
+    return AWS_OP_SUCCESS;
 }
 
-static void s_decoder_run_state(
-    struct aws_h2_decoder *decoder,
-    const struct decoder_state *state,
-    struct aws_byte_cursor *input) {
-
-    s_decoder_run_state_ex(decoder, state, input, false /*preserve_scratch*/);
-}
-static void s_decoder_run_state_preserve_scratch(
-    struct aws_h2_decoder *decoder,
-    const struct decoder_state *state,
-    struct aws_byte_cursor *input) {
-
-    s_decoder_run_state_ex(decoder, state, input, true /*preserve_scratch*/);
+static int s_decoder_switch_state(struct aws_h2_decoder *decoder, const struct decoder_state *state) {
+    return s_decoder_switch_state_ex(decoder, state, false /*preserve_scratch*/);
 }
 
-static void s_decoder_run_frame_state(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_decoder_switch_state_preserve_scratch(struct aws_h2_decoder *decoder, const struct decoder_state *state) {
+    return s_decoder_switch_state_ex(decoder, state, true /*preserve_scratch*/);
+}
+
+static int s_decoder_switch_to_frame_state(struct aws_h2_decoder *decoder) {
     AWS_ASSERT(decoder->frame_in_progress.type <= AWS_H2_FRAME_T_UNKNOWN);
-    s_decoder_run_state(decoder, s_state_frames[decoder->frame_in_progress.type], input);
+    return s_decoder_switch_state(decoder, s_state_frames[decoder->frame_in_progress.type]);
 }
 
-static void s_decoder_reset_state(struct aws_h2_decoder *decoder) {
+static int s_decoder_reset_state(struct aws_h2_decoder *decoder) {
     AWS_ASSERT(decoder->frame_in_progress.payload_len == 0);
     AWS_ASSERT(decoder->frame_in_progress.padding_len == 0);
 
     decoder->scratch.len = 0;
-    decoder->state = s_state_header;
+    decoder->state = &s_state_header;
 
     DECODER_LOG(TRACE, decoder, "Resetting frame in progress");
     AWS_ZERO_STRUCT(decoder->frame_in_progress);
+    return AWS_OP_SUCCESS;
 }
 
 /** Returns as much of the current frame's payload as possible, and updates payload_len */
@@ -629,18 +622,15 @@ static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cur
     if (is_padded) {
 
         /* Read padding length if necessary */
-        s_decoder_run_state(decoder, &s_state_padding_len, input);
+        return s_decoder_switch_state(decoder, &s_state_padding_len);
     } else if (decoder->frame_in_progress.flags.priority) {
 
         /* Read the stream dependency and weight if PRIORITY is set */
-        s_decoder_run_state(decoder, &s_state_priority_block, input);
-    } else {
-
-        /* Set the state to the appropriate frame's state */
-        s_decoder_run_frame_state(decoder, input);
+        return s_decoder_switch_state(decoder, &s_state_priority_block);
     }
 
-    return AWS_OP_SUCCESS;
+    /* Set the state to the appropriate frame's state */
+    return s_decoder_switch_to_frame_state(decoder);
 }
 
 /* Frames that support padding, and have the PADDED flag set, begin with a 1-byte Pad Length.
@@ -665,13 +655,11 @@ static int s_state_fn_padding_len(struct aws_h2_decoder *decoder, struct aws_byt
 
     if (decoder->frame_in_progress.flags.priority) {
         /* Read the stream dependency and weight if PRIORITY is set */
-        s_decoder_run_state(decoder, &s_state_priority_block, input);
-    } else {
-        /* Set the state to the appropriate frame's state */
-        s_decoder_run_frame_state(decoder, input);
+        return s_decoder_switch_state(decoder, &s_state_priority_block);
     }
 
-    return AWS_OP_SUCCESS;
+    /* Set the state to the appropriate frame's state */
+    return s_decoder_switch_to_frame_state(decoder);
 }
 
 static int s_state_fn_padding(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
@@ -683,7 +671,7 @@ static int s_state_fn_padding(struct aws_h2_decoder *decoder, struct aws_byte_cu
 
     if (remaining_len == consuming_len) {
         /* Done with the frame! */
-        s_decoder_reset_state(decoder);
+        return s_decoder_reset_state(decoder);
     }
 
     return AWS_OP_SUCCESS;
@@ -709,9 +697,7 @@ static int s_state_fn_priority_block(struct aws_h2_decoder *decoder, struct aws_
 
     decoder->frame_in_progress.payload_len -= 5;
 
-    s_decoder_run_frame_state(decoder, input);
-
-    return AWS_OP_SUCCESS;
+    return s_decoder_switch_to_frame_state(decoder);
 }
 
 static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
@@ -726,7 +712,7 @@ static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte
         DECODER_CALL_VTABLE_STREAM(decoder, on_end_stream);
 
         /* Process padding if necessary, otherwise we're done! */
-        s_decoder_run_state(decoder, &s_state_padding, input);
+        return s_decoder_switch_state(decoder, &s_state_padding);
     }
 
     return AWS_OP_SUCCESS;
@@ -742,17 +728,13 @@ static int s_state_fn_frame_headers(struct aws_h2_decoder *decoder, struct aws_b
     DECODER_CALL_VTABLE_STREAM(decoder, on_headers_begin);
 
     /* Read the header block fragment */
-    s_decoder_run_state(decoder, &s_state_headers_begin, input);
-
-    return AWS_OP_SUCCESS;
+    return s_decoder_switch_state(decoder, &s_state_headers_begin);
 }
 static int s_state_fn_frame_priority(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
     /* We already processed this data in the shared priority_block state, so we're done! */
-    s_decoder_reset_state(decoder);
-
-    return AWS_OP_SUCCESS;
+    return s_decoder_reset_state(decoder);
 }
 
 /*  RST_STREAM is just a 4-byte error code.
@@ -793,8 +775,7 @@ static int s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struc
         }
 
         DECODER_CALL_VTABLE(decoder, on_settings_ack);
-        s_decoder_reset_state(decoder);
-        return AWS_OP_SUCCESS;
+        return s_decoder_reset_state(decoder);
     }
 
     if (decoder->frame_in_progress.payload_len % s_setting_block_size != 0) {
@@ -813,9 +794,7 @@ static int s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struc
     DECODER_CALL_VTABLE(decoder, on_settings_begin);
 
     /* If we've made it this far, we have a non-ACK settings frame with a valid payload length */
-    s_decoder_run_state(decoder, &s_state_frame_settings, input);
-
-    return AWS_OP_SUCCESS;
+    return s_decoder_switch_state(decoder, &s_state_frame_settings);
 }
 
 /* Each run through this state consumes one 6-byte setting.
@@ -852,7 +831,7 @@ static int s_state_fn_frame_settings(struct aws_h2_decoder *decoder, struct aws_
     if (decoder->frame_in_progress.payload_len == 0) {
         /* Huzzah, done with the frame */
         DECODER_CALL_VTABLE(decoder, on_settings_end);
-        s_decoder_reset_state(decoder);
+        return s_decoder_reset_state(decoder);
     }
 
     return AWS_OP_SUCCESS;
@@ -885,9 +864,7 @@ static int s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct 
     DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_begin, promised_stream_id);
 
     /* Read the header block fragment */
-    s_decoder_run_state(decoder, &s_state_headers_begin, input);
-
-    return AWS_OP_SUCCESS;
+    return s_decoder_switch_state(decoder, &s_state_headers_begin);
 }
 
 /* PING frame is just 8-bytes of opaque data.
@@ -912,9 +889,7 @@ static int s_state_fn_frame_ping(struct aws_h2_decoder *decoder, struct aws_byte
         DECODER_CALL_VTABLE_ARGS(decoder, on_ping, opaque_data);
     }
 
-    s_decoder_reset_state(decoder);
-
-    return AWS_OP_SUCCESS;
+    return s_decoder_reset_state(decoder);
 }
 
 /* Read first 8 bytes of GOAWAY.
@@ -947,12 +922,10 @@ static int s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, struct aws_by
     DECODER_CALL_VTABLE_ARGS(decoder, on_goaway_begin, last_stream, decoder->frame_in_progress.payload_len, error_code);
 
     if (decoder->frame_in_progress.payload_len) {
-        s_decoder_run_state(decoder, &s_state_frame_goaway_debug_data, input);
-    } else {
-        s_decoder_reset_state(decoder);
+        return s_decoder_switch_state(decoder, &s_state_frame_goaway_debug_data);
     }
 
-    return AWS_OP_SUCCESS;
+    return s_decoder_reset_state(decoder);
 }
 
 /* Optional remainder of GOAWAY frame.
@@ -970,7 +943,7 @@ static int s_state_fn_frame_goaway_debug_data(struct aws_h2_decoder *decoder, st
     /* This is the last data in the frame, so reset decoder */
     if (decoder->frame_in_progress.payload_len == 0) {
         DECODER_CALL_VTABLE(decoder, on_goaway_end);
-        s_decoder_reset_state(decoder);
+        return s_decoder_reset_state(decoder);
     }
 
     return AWS_OP_SUCCESS;
@@ -994,9 +967,7 @@ static int s_state_fn_frame_window_update(struct aws_h2_decoder *decoder, struct
 
     DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_window_update, window_increment);
 
-    s_decoder_reset_state(decoder);
-
-    return AWS_OP_SUCCESS;
+    return s_decoder_reset_state(decoder);
 }
 
 /* CONTINUATION is a lot like HEADERS, so it uses shared states. */
@@ -1005,14 +976,11 @@ static int s_state_fn_frame_continuation(struct aws_h2_decoder *decoder, struct 
 
     if (decoder->frame_in_progress.payload_len) {
         /* Read the header block fragment */
-        s_decoder_run_state(decoder, &s_state_headers_begin, input);
-
-    } else {
-        /* For whatever reason, HEADERS and PUSH_PROMISE frames have padding but CONTINUATION doesn't */
-        s_decoder_reset_state(decoder);
+        return s_decoder_switch_state(decoder, &s_state_headers_begin);
     }
 
-    return AWS_OP_SUCCESS;
+    /* For whatever reason, HEADERS and PUSH_PROMISE frames have padding but CONTINUATION doesn't */
+    return s_decoder_reset_state(decoder);
 }
 
 /* Implementations MUST ignore and discard any frame that has a type that is unknown. */
@@ -1023,7 +991,7 @@ static int s_state_fn_frame_unknown(struct aws_h2_decoder *decoder, struct aws_b
 
     /* If there's no more data expected, end the frame */
     if (decoder->frame_in_progress.payload_len == 0) {
-        s_decoder_reset_state(decoder);
+        return s_decoder_reset_state(decoder);
     }
 
     return AWS_OP_SUCCESS;
@@ -1053,8 +1021,7 @@ static int s_state_fn_headers_begin(struct aws_h2_decoder *decoder, struct aws_b
         }
 
         /* Finish the fight */
-        s_decoder_run_state(decoder, &s_state_padding, input);
-        return AWS_OP_SUCCESS;
+        return s_decoder_switch_state(decoder, &s_state_padding);
     }
 
     /* If no input, return and come back later */
@@ -1071,43 +1038,46 @@ static int s_state_fn_headers_begin(struct aws_h2_decoder *decoder, struct aws_b
         "Decoding header, %" PRIu32 " bytes remaining in payload",
         decoder->frame_in_progress.payload_len);
 
-    /* Consts for decoding */
-    static const uint8_t s_indexed_header_field_mask = 1 << 7;
-    static const uint8_t s_literal_save_field_mask = 1 << 6;
-    static const uint8_t s_dynamic_table_size_update_mask = 1 << 5;
-    static const uint8_t s_literal_no_forward_save_mask = 1 << 4;
-
     uint8_t first_byte = *input->ptr;
 
-    if (first_byte & s_indexed_header_field_mask) {
-        /* This is a purely indexed header, so it's the easiest to decompress */
-        s_decoder_run_state(decoder, &s_state_headers_indexed, input);
-
-    } else if (first_byte & s_literal_save_field_mask || (first_byte & s_dynamic_table_size_update_mask) == 0) {
-
-        if (first_byte & s_literal_save_field_mask) {
-            decoder->header_in_progress.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE;
-            decoder->header_in_progress.literal.payload_len_prefix = 6;
-        } else if (first_byte & s_literal_no_forward_save_mask) {
-            decoder->header_in_progress.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_FORWARD_SAVE;
-            decoder->header_in_progress.literal.payload_len_prefix = 4;
-        } else {
-            decoder->header_in_progress.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_SAVE;
-            decoder->header_in_progress.literal.payload_len_prefix = 4;
-        }
-
-        /* Process header data */
-        s_decoder_run_state(decoder, &s_state_headers_literal_index, input);
-
-    } else {
-        /* This header is *actually* a dynamic table size update */
-        s_decoder_run_state(decoder, &s_state_headers_dyn_table_resize, input);
+    /* Determine next state by looking at first few bits of the next byte:
+     * 1xxxxxxx: Indexed Header Field Representation
+     * 01xxxxxx: Literal Header Field with Incremental Indexing
+     * 001xxxxx: Dynamic Table Size Update
+     * 0001xxxx: Literal Header Field Never Indexed
+     * 0000xxxx: Literal Header Field without Indexing */
+    if (first_byte & (1 << 7)) {
+        /* 1xxxxxxx: Indexed Header Field Representation */
+        return s_decoder_switch_state(decoder, &s_state_headers_indexed);
+    }
+    if (first_byte & (1 << 6)) {
+        /* 01xxxxxx: Literal Header Field with Incremental Indexing */
+        decoder->header_in_progress.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE;
+        decoder->header_in_progress.literal.payload_len_prefix = 6;
+        return s_decoder_switch_state(decoder, &s_state_headers_literal_index);
+    }
+    if (first_byte & (1 << 5)) {
+        /* 001xxxxx: Dynamic Table Size Update */
+        /* #TODO update must be at start of first header-block after receiving settings-ack.
+         * But is it a crime to receive an update at any other time? */
+        return s_decoder_switch_state(decoder, &s_state_headers_dyn_table_resize);
+    }
+    if (first_byte & (1 << 4)) {
+        /* 0001xxxx: Literal Header Field Never Indexed */
+        decoder->header_in_progress.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_FORWARD_SAVE;
+        decoder->header_in_progress.literal.payload_len_prefix = 4;
+        return s_decoder_switch_state(decoder, &s_state_headers_literal_index);
     }
 
-    return AWS_OP_SUCCESS;
+    /* 0000xxxx: Literal Header Field without Indexing */
+    decoder->header_in_progress.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_SAVE;
+    decoder->header_in_progress.literal.payload_len_prefix = 4;
+    return s_decoder_switch_state(decoder, &s_state_headers_literal_index);
 }
 
 static int s_state_fn_headers_indexed(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+
+    AWS_ASSERT(input->len >= 1);
 
     struct h2_header_progress_indexed *progress = &decoder->header_in_progress.indexed;
 
@@ -1153,11 +1123,12 @@ static int s_state_fn_headers_indexed(struct aws_h2_decoder *decoder, struct aws
         DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, header, AWS_H2_HEADER_BEHAVIOR_SAVE);
     }
 
-    s_decoder_run_state(decoder, &s_state_headers_begin, input);
-    return AWS_OP_SUCCESS;
+    return s_decoder_switch_state(decoder, &s_state_headers_begin);
 }
 
 static int s_state_fn_headers_literal_index(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+
+    AWS_ASSERT(input->len >= 1);
 
     struct h2_header_progress_literal *progress = &decoder->header_in_progress.literal;
     const enum aws_hpack_decode_status status =
@@ -1191,18 +1162,16 @@ static int s_state_fn_headers_literal_index(struct aws_h2_decoder *decoder, stru
         decoder->header_in_progress.literal.header.name = header->name;
 
         /* Name gotten, skip to value */
-        s_decoder_run_state(decoder, &s_state_headers_literal_value, input);
-
-    } else {
-
-        /* Need to hpack decode the header name */
-        s_decoder_run_state(decoder, &s_state_headers_literal_name, input);
+        return s_decoder_switch_state(decoder, &s_state_headers_literal_value);
     }
 
-    return AWS_OP_SUCCESS;
+    /* Need to hpack decode the header name */
+    return s_decoder_switch_state(decoder, &s_state_headers_literal_name);
 }
 
 static int s_state_fn_headers_literal_name(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+
+    AWS_ASSERT(input->len >= 1);
 
     struct h2_header_progress_literal *progress = &decoder->header_in_progress.literal;
 
@@ -1232,12 +1201,12 @@ static int s_state_fn_headers_literal_name(struct aws_h2_decoder *decoder, struc
     progress->value_offset = decoder->scratch.len;
 
     /* Name is in scratch, preserve it and go to value */
-    s_decoder_run_state_preserve_scratch(decoder, &s_state_headers_literal_value, input);
-
-    return AWS_OP_SUCCESS;
+    return s_decoder_switch_state_preserve_scratch(decoder, &s_state_headers_literal_value);
 }
 
 static int s_state_fn_headers_literal_value(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+
+    AWS_ASSERT(input->len >= 1);
 
     struct h2_header_progress_literal *progress = &decoder->header_in_progress.literal;
 
@@ -1279,11 +1248,12 @@ static int s_state_fn_headers_literal_value(struct aws_h2_decoder *decoder, stru
         DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, &progress->header, progress->hpack_behavior);
     }
 
-    s_decoder_run_state(decoder, &s_state_headers_begin, input);
-    return AWS_OP_SUCCESS;
+    return s_decoder_switch_state(decoder, &s_state_headers_begin);
 }
 
 static int s_state_fn_headers_dyn_table_resize(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+
+    AWS_ASSERT(input->len >= 1);
 
     uint64_t *new_size = &decoder->header_in_progress.dyn_table_resize.new_size;
 
@@ -1323,6 +1293,5 @@ static int s_state_fn_headers_dyn_table_resize(struct aws_h2_decoder *decoder, s
         return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
     }
 
-    s_decoder_run_state(decoder, &s_state_headers_begin, input);
-    return AWS_OP_SUCCESS;
+    return s_decoder_switch_state(decoder, &s_state_headers_begin);
 }

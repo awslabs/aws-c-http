@@ -656,11 +656,7 @@ enum aws_hpack_decode_status aws_hpack_decode_integer(
     AWS_PRECONDITION(to_decode);
     AWS_PRECONDITION(prefix_size <= 8);
     AWS_PRECONDITION(integer);
-
-    /* #TODO once frame decoders go away, but for now this is necessary to avoid asserting in fuzz tests */
-    if (to_decode->len == 0) {
-        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-    }
+    AWS_PRECONDITION(to_decode->len > 0);
 
     const uint8_t cut_bits = 8 - prefix_size;
     const uint8_t prefix_mask = UINT8_MAX >> cut_bits;
@@ -819,11 +815,7 @@ enum aws_hpack_decode_status aws_hpack_decode_string(
     AWS_PRECONDITION(context);
     AWS_PRECONDITION(to_decode);
     AWS_PRECONDITION(output);
-
-    /* #TODO once frame decoders go away, but for now this is necessary to avoid asserting in fuzz tests */
-    if (to_decode->len == 0) {
-        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-    }
+    AWS_PRECONDITION(to_decode->len > 0);
 
     struct hpack_progress_string *progress = &context->progress_string;
     enum aws_hpack_decode_status status = AWS_HPACK_DECODE_ONGOING;

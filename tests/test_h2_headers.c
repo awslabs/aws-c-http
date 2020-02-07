@@ -61,6 +61,7 @@ struct header_test_fixture {
     header_init_fn *teardown;
 
     struct aws_allocator *allocator;
+    bool one_byte_at_a_time; /* T: decode one byte at a time. F: decode whole buffer at once */
 
     struct aws_h2_frame_encoder encoder;
     struct aws_h2_decoder *decoder;
@@ -162,8 +163,14 @@ static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
     struct aws_byte_cursor payload = aws_byte_cursor_from_buf(&output_buffer);
 
     /* Decode the buffer */
-    ASSERT_SUCCESS(aws_h2_decode(fixture->decoder, &payload));
-    ASSERT_UINT_EQUALS(0, payload.len);
+    while (payload.len > 0) {
+        if (fixture->one_byte_at_a_time) {
+            struct aws_byte_cursor one_byte_payload = aws_byte_cursor_advance(&payload, 1);
+            ASSERT_SUCCESS(aws_h2_decode(fixture->decoder, &one_byte_payload));
+        } else {
+            ASSERT_SUCCESS(aws_h2_decode(fixture->decoder, &payload));
+        }
+    }
 
     /* Compare the headers */
     ASSERT_SUCCESS(
@@ -200,7 +207,18 @@ static void s_header_test_after(struct aws_allocator *allocator, void *ctx) {
         .init = (i),                                                                                                   \
         .teardown = (t),                                                                                               \
     };                                                                                                                 \
-    AWS_TEST_CASE_FIXTURE(t_name, s_header_test_before, s_header_test_run, s_header_test_after, &s_##t_name##_fixture)
+    AWS_TEST_CASE_FIXTURE(t_name, s_header_test_before, s_header_test_run, s_header_test_after, &s_##t_name##_fixture) \
+    static struct header_test_fixture s_##t_name##_one_byte_at_a_time_fixture = {                                      \
+        .init = (i),                                                                                                   \
+        .teardown = (t),                                                                                               \
+        .one_byte_at_a_time = true,                                                                                    \
+    };                                                                                                                 \
+    AWS_TEST_CASE_FIXTURE(                                                                                             \
+        t_name##_one_byte_at_a_time,                                                                                   \
+        s_header_test_before,                                                                                          \
+        s_header_test_run,                                                                                             \
+        s_header_test_after,                                                                                           \
+        &s_##t_name##_one_byte_at_a_time_fixture)
 
 #define DEFINE_STATIC_HEADER(_name, _key, _value, _behavior)                                                           \
     static const struct aws_h2_frame_header_field _name = {                                                            \
