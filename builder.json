@@ -1,11 +1,5 @@
 {
     "name": "aws-c-http",
-    "hosts": {
-        "al2012": {
-            "enabled": false,
-            "_comment": "al2012 can't currently pull builder.py from github. SSL: CERTIFICATE_VERIFY_FAILED"
-        }
-    },
     "targets": {
         "android": {
             "enabled": false,
@@ -20,7 +14,7 @@
         { "name": "aws-c-auth" }
     ],
     "test": [
-        ["ctest", ".", "--output-on-failure"],
-        ["{python}", "{source_dir}/integration-testing/http_client_test.py", "{install_dir}/bin/elasticurl{exe}"]
+        ["ctest", "{build_dir}", "-v", "--output-on-failure"],
+        ["{python}", "{project_dir}/integration-testing/http_client_test.py", "{install_dir}/bin/elasticurl{exe}"]
     ]
 }
