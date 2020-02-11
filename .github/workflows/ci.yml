@@ -23,7 +23,7 @@ jobs:
           - manylinux2014-x86
     steps:
         # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
-    - name: Build aws-c-io + consumers
+    - name: Build ${{ env.PACKAGE_NAME }}
       run: |
         echo "${{ secrets.GITHUB_TOKEN }}" | docker login docker.pkg.github.com -u awslabs --password-stdin
         export DOCKER_IMAGE=docker.pkg.github.com/awslabs/aws-crt-builder/aws-crt-${{ matrix.image }}:${{ env.BUILDER_VERSION }}
@@ -34,12 +34,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
         # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
-    - name: Build aws-c-io + consumers
+    - name: Build ${{ env.PACKAGE_NAME }} + consumers
       run: |
         echo "${{ secrets.GITHUB_TOKEN }}" | docker login docker.pkg.github.com -u awslabs --password-stdin
         export DOCKER_IMAGE=docker.pkg.github.com/awslabs/aws-crt-builder/aws-crt-al2-x64:${{ env.BUILDER_VERSION }}
         docker pull $DOCKER_IMAGE
-        docker run --env GITHUB_REF $DOCKER_IMAGE -p ${{ env.PACKAGE_NAME }} build al2-default-default-default-default
+        docker run --env GITHUB_REF $DOCKER_IMAGE -p ${{ env.PACKAGE_NAME }} build al2-default-default-default-default-downstream
       
   clang-compat:
     runs-on: ubuntu-latest
@@ -48,7 +48,7 @@ jobs:
         version: [3, 6, 8, 9]
     steps:
         # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
-    - name: Build aws-c-io
+    - name: Build ${{ env.PACKAGE_NAME }}
       run: |
         echo "${{ secrets.GITHUB_TOKEN }}" | docker login docker.pkg.github.com -u awslabs --password-stdin
         export DOCKER_IMAGE=docker.pkg.github.com/awslabs/aws-crt-builder/aws-crt-${{ env.LINUX_BASE_IMAGE }}:${{ env.BUILDER_VERSION }}
@@ -62,7 +62,7 @@ jobs:
         version: [4.8, 5, 6, 7, 8]      
     steps:
         # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
-    - name: Build aws-c-io
+    - name: Build ${{ env.PACKAGE_NAME }}
       run: |
         echo "${{ secrets.GITHUB_TOKEN }}" | docker login docker.pkg.github.com -u awslabs --password-stdin
         export DOCKER_IMAGE=docker.pkg.github.com/awslabs/aws-crt-builder/aws-crt-${{ env.LINUX_BASE_IMAGE }}:${{ env.BUILDER_VERSION }}
@@ -72,18 +72,18 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-    - name: Build aws-c-io
+    - name: Build ${{ env.PACKAGE_NAME }} + consumers
       run: |
         python -c "from urllib.request import urlretrieve; urlretrieve('https://aws-crt-builder.s3.amazonaws.com/${{ env.BUILDER_VERSION }}/builder', 'builder.pyz')"
-        python builder.pyz -p ${{ env.PACKAGE_NAME }} build
+        python builder.pyz -p ${{ env.PACKAGE_NAME }} build default-downstream
 
   osx:
     runs-on: macos-latest
     steps:
-    - name: Build aws-c-io
+    - name: Build ${{ env.PACKAGE_NAME }} + consumers
       run: |
         python3 -c "from urllib.request import urlretrieve; urlretrieve('https://aws-crt-builder.s3.amazonaws.com/${{ env.BUILDER_VERSION }}/builder', 'builder')"
         chmod a+x builder
-        ./builder -p ${{ env.PACKAGE_NAME }} build
+        ./builder -p ${{ env.PACKAGE_NAME }} build default-downstream
 
         
