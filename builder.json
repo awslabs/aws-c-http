@@ -1,5 +1,11 @@
 {
     "name": "aws-c-http",
+    "hosts": {
+        "al2": {
+            "run_tests": false,
+            "_comment": "No ctest on al2"
+        }
+    },
     "targets": {
         "android": {
             "enabled": false,
