@@ -16,15 +16,18 @@
 
 #include <aws/http/private/h2_frames.h>
 
-static void s_fixture_init(struct aws_allocator *allocator, void *ctx) {
+static int s_fixture_init(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     aws_http_library_init(allocator);
+    return AWS_OP_SUCCESS;
 }
 
-static void s_fixture_clean_up(struct aws_allocator *allocator, void *ctx) {
+static int s_fixture_clean_up(struct aws_allocator *allocator, int setup_res, void *ctx) {
     (void)allocator;
     (void)ctx;
+    (void)setup_res;
     aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
 }
 
 #define TEST_CASE(NAME)                                                                                                \
