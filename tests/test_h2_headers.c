@@ -132,8 +132,8 @@ static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
         ASSERT_INT_EQUALS(AWS_HPACK_DECODE_T_HEADER_FIELD, result.type);
 
         struct aws_h2_frame_header_field header_field = {
-            .header = result.data.header.field,
-            .hpack_behavior = result.data.header.hpack_behavior,
+            .header = result.data.header_field.header,
+            .hpack_behavior = result.data.header_field.hpack_behavior,
         };
 
         /* Backup string values */

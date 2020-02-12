@@ -679,7 +679,7 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
         HPACK_LOGF(
             ERROR,
             context,
-            "new_max_size %zu is greater than the supported max size (%zu)",
+            "New dynamic table max size %zu is greater than the supported max size (%zu)",
             new_max_size,
             s_hpack_dynamic_table_max_size);
         goto error;
@@ -1123,15 +1123,17 @@ int aws_hpack_decode(
                 }
 
                 result->type = AWS_HPACK_DECODE_T_HEADER_FIELD;
-                result->u.header.field = header;
-                result->u.header.hpack_behavior = literal->hpack_behavior;
+                result->data.header_field.header = header;
+                result->data.header_field.hpack_behavior = literal->hpack_behavior;
                 goto handle_complete;
             } break;
 
+            /* RFC-7541 6.3. Dynamic Table Size Update
+             * Read one integer, which is the new maximum size for the dynamic table. */
             case HPACK_ENTRY_STATE_DYNAMIC_TABLE_RESIZE: {
-                uint64_t *size = &context->progress_entry.u.dynamic_table_resize.size;
+                uint64_t *size64 = &context->progress_entry.u.dynamic_table_resize.size;
                 bool size_complete = false;
-                if (aws_hpack_decode_integer(context, to_decode, 5, size, &size_complete)) {
+                if (aws_hpack_decode_integer(context, to_decode, 5, size64, &size_complete)) {
                     return AWS_OP_ERR;
                 }
 
@@ -1139,17 +1141,19 @@ int aws_hpack_decode(
                     break;
                 }
 
-                if (*size > SIZE_MAX) {
+                if (*size64 > SIZE_MAX) {
                     HPACK_LOG(ERROR, context, "Dynamic table update size too large");
                     return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
                 }
+                size_t size = *size64;
 
-                if (aws_hpack_resize_dynamic_table(context, (size_t)*size)) {
+                HPACK_LOGF(TRACE, context, "Dynamic table size update %zu", size);
+                if (aws_hpack_resize_dynamic_table(context, size)) {
                     return AWS_OP_ERR;
                 }
 
                 result->type = AWS_HPACK_DECODE_T_DYNAMIC_TABLE_RESIZE;
-                result->u.dynamic_table_resize.size = (size_t)*size;
+                result->data.dynamic_table_resize.size = size;
                 goto handle_complete;
             } break;
 

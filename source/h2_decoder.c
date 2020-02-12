@@ -937,7 +937,7 @@ static int s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct 
 
     struct aws_hpack_decode_result result;
     if (aws_hpack_decode(decoder->hpack, &fragment, &result)) {
-        DECODER_LOG(ERROR, decoder, "Error while decoding header-block fragment: %s", aws_error_name(aws_last_error()));
+        DECODER_LOGF(ERROR, decoder, "Error decoding header-block fragment: %s", aws_error_name(aws_last_error()));
 
         /* Any possible error from HPACK decoder is treated as a COMPRESSION error */
         return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
@@ -945,7 +945,7 @@ static int s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct 
 
     /* HPACK decoder returns when it reaches the end of an entry, or when it's consumed the whole fragment.
      * Update input & payload_len to reflect the number of bytes consumed. */
-    const size_t bytes_consumed = prev_fragment_len - fragment->len;
+    const size_t bytes_consumed = prev_fragment_len - fragment.len;
     aws_byte_cursor_advance(input, bytes_consumed);
     decoder->frame_in_progress.payload_len -= bytes_consumed;
 
@@ -975,8 +975,8 @@ static int s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct 
      * These make the message "malformed", which is a STREAM error, not PROTOCOL error, not sure how to handle that */
 
     if (result.type == AWS_HPACK_DECODE_T_HEADER_FIELD) {
-        const struct aws_hpack_decoded_header *header_field = &result.data.header_field;
-        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_header, &header_field.header, header_field->hpack_behavior);
+        const struct aws_hpack_decoded_header_field *header_field = &result.data.header_field;
+        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_header, &header_field->header, header_field->hpack_behavior);
     }
 
     s_decoder_run_state(decoder, &s_state_header_block_loop, input);
