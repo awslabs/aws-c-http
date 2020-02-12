@@ -15,7 +15,6 @@
 
 #include <aws/testing/aws_test_harness.h>
 
-#include <aws/http/private/h2_decoder.h>
 #include <aws/http/private/h2_frames.h>
 #include <aws/http/private/hpack.h>
 
@@ -63,38 +62,12 @@ struct header_test_fixture {
     struct aws_allocator *allocator;
 
     struct aws_h2_frame_encoder encoder;
-    struct aws_h2_decoder *decoder;
+    struct aws_hpack_context *decoder;
 
     struct aws_h2_frame_headers headers_to_encode;
     struct aws_byte_buf expected_encoding_buf;
     struct aws_array_list decoded_headers;   /* array_list of aws_h2_frame_header_field */
     struct aws_byte_buf decoder_storage_buf; /* string storage */
-};
-
-static int s_decoder_on_header(
-    uint32_t stream_id,
-    const struct aws_http_header *header,
-    enum aws_h2_header_field_hpack_behavior hpack_behavior,
-    void *userdata) {
-
-    (void)stream_id;
-    struct header_test_fixture *fixture = userdata;
-    struct aws_h2_frame_header_field header_field = {
-        .header = *header,
-        .hpack_behavior = hpack_behavior,
-    };
-
-    /* Backup string values */
-    ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.header.name));
-    ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.header.value));
-
-    ASSERT_SUCCESS(aws_array_list_push_back(&fixture->decoded_headers, &header_field));
-
-    return AWS_OP_SUCCESS;
-}
-
-static struct aws_h2_decoder_vtable s_decoder_vtable = {
-    .on_header = s_decoder_on_header,
 };
 
 static void s_header_test_before(struct aws_allocator *allocator, void *ctx) {
@@ -107,12 +80,7 @@ static void s_header_test_before(struct aws_allocator *allocator, void *ctx) {
     int ret_value = aws_h2_frame_encoder_init(&fixture->encoder, allocator);
     AWS_FATAL_ASSERT(ret_value == AWS_OP_SUCCESS);
 
-    struct aws_h2_decoder_params decoder_params = {
-        .alloc = allocator,
-        .vtable = s_decoder_vtable,
-        .userdata = fixture,
-    };
-    fixture->decoder = aws_h2_decoder_new(&decoder_params);
+    fixture->decoder = aws_hpack_context_new(allocator, AWS_LS_HTTP_DECODER, NULL);
     AWS_FATAL_ASSERT(fixture->decoder);
 
     ret_value = aws_h2_frame_headers_init(&fixture->headers_to_encode, allocator);
@@ -159,11 +127,27 @@ static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
 
     /* Decode */
 
+    /* Skip past the 9 byte frame header, this is tested elsewhere */
     struct aws_byte_cursor payload = aws_byte_cursor_from_buf(&output_buffer);
+    aws_byte_cursor_advance(&payload, 9);
 
     /* Decode the buffer */
-    ASSERT_SUCCESS(aws_h2_decode(fixture->decoder, &payload));
-    ASSERT_UINT_EQUALS(0, payload.len);
+    while (payload.len) {
+        struct aws_hpack_decode_result result;
+        ASSERT_SUCCESS(aws_hpack_decode(fixture->decoder, &payload, &result));
+        ASSERT_INT_EQUALS(AWS_HPACK_DECODE_T_HEADER, result.type);
+
+        struct aws_h2_frame_header_field header_field = {
+            .header = result.u.header.field,
+            .hpack_behavior = result.u.header.hpack_behavior,
+        };
+
+        /* Backup string values */
+        ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.header.name));
+        ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.header.value));
+
+        ASSERT_SUCCESS(aws_array_list_push_back(&fixture->decoded_headers, &header_field));
+    }
 
     /* Compare the headers */
     ASSERT_SUCCESS(
@@ -189,7 +173,7 @@ static void s_header_test_after(struct aws_allocator *allocator, void *ctx) {
     aws_array_list_clean_up(&fixture->decoded_headers);
     aws_h2_frame_headers_clean_up(&fixture->headers_to_encode);
     aws_byte_buf_clean_up(&fixture->expected_encoding_buf);
-    aws_h2_decoder_destroy(fixture->decoder);
+    aws_hpack_context_destroy(fixture->decoder);
     aws_h2_frame_encoder_clean_up(&fixture->encoder);
 
     aws_http_library_clean_up();

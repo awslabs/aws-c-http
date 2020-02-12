@@ -15,18 +15,32 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-#include <aws/http/http.h>
+#include <aws/http/private/h2_frames.h>
 
 struct aws_byte_buf;
 struct aws_byte_cursor;
 struct aws_http_header;
 struct aws_hpack_context;
 
-/* Returned from decode functions to denote how far along the decode process is */
-enum aws_hpack_decode_status {
-    AWS_HPACK_DECODE_ERROR = AWS_OP_ERR,
-    AWS_HPACK_DECODE_COMPLETE = AWS_OP_SUCCESS,
-    AWS_HPACK_DECODE_ONGOING,
+enum aws_hpack_decode_type {
+    AWS_HPACK_DECODE_T_ONGOING,
+    AWS_HPACK_DECODE_T_HEADER,
+    AWS_HPACK_DECODE_T_DYNAMIC_TABLE_RESIZE,
+};
+
+struct aws_hpack_decode_result {
+    enum aws_hpack_decode_type type;
+
+    union {
+        struct {
+            struct aws_http_header field;
+            enum aws_h2_header_field_hpack_behavior hpack_behavior;
+        } header;
+
+        struct {
+            size_t size;
+        } dynamic_table_resize;
+    } u;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -48,9 +62,14 @@ struct aws_hpack_context *aws_hpack_context_new(
 AWS_HTTP_API
 void aws_hpack_context_destroy(struct aws_hpack_context *context);
 
-/* Resets ongoing decode state */
+/* Decode the next entry in the header-block-fragment.
+ * If result is ONGOING, then call decode() again with more data to resume decoding.
+ * If an error occurs, decode() must never be called again. */
 AWS_HTTP_API
-void aws_hpack_context_reset_decode(struct aws_hpack_context *context);
+int aws_hpack_decode(
+    struct aws_hpack_context *context,
+    struct aws_byte_cursor *to_decode,
+    struct aws_hpack_decode_result *result);
 
 /* Returns the hpack size of a header (name.len + value.len + 32) [4.1] */
 AWS_HTTP_API
@@ -77,32 +96,39 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
 /* Public for testing purposes */
 AWS_HTTP_API
 size_t aws_hpack_get_encoded_length_integer(uint64_t integer, uint8_t prefix_size);
+
 AWS_HTTP_API
 int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_byte_buf *output);
 
+/* Public for testing purposes */
 AWS_HTTP_API
-enum aws_hpack_decode_status aws_hpack_decode_integer(
+int aws_hpack_decode_integer(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_decode,
     uint8_t prefix_size,
-    uint64_t *integer);
+    uint64_t *integer,
+    bool *complete);
 
 AWS_HTTP_API
 size_t aws_hpack_get_encoded_length_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor to_encode,
     bool huffman_encode);
+
 AWS_HTTP_API
 int aws_hpack_encode_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_encode,
     bool huffman_encode,
     struct aws_byte_buf *output);
+
+/* Public for testing purposes */
 AWS_HTTP_API
-enum aws_hpack_decode_status aws_hpack_decode_string(
+int aws_hpack_decode_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_decode,
-    struct aws_byte_buf *output);
+    struct aws_byte_buf *output,
+    bool *complete);
 
 AWS_EXTERN_C_END
 
