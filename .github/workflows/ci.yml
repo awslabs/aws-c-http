@@ -8,6 +8,7 @@ on:
 
 env:
   BUILDER_VERSION: v0.3.1
+  BUILDER_HOST: https://d19elf31gohf1l.cloudfront.net
   PACKAGE_NAME: aws-c-http
   LINUX_BASE_IMAGE: ubuntu-16-x64
 
@@ -74,7 +75,7 @@ jobs:
     steps:
     - name: Build aws-c-io
       run: |
-        python -c "from urllib.request import urlretrieve; urlretrieve('https://aws-crt-builder.s3.amazonaws.com/${{ env.BUILDER_VERSION }}/builder', 'builder.pyz')"
+        python -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_VERSION }}/builder', 'builder.pyz')"
         python builder.pyz -p ${{ env.PACKAGE_NAME }} build
 
   osx:
@@ -82,7 +83,7 @@ jobs:
     steps:
     - name: Build aws-c-io
       run: |
-        python3 -c "from urllib.request import urlretrieve; urlretrieve('https://aws-crt-builder.s3.amazonaws.com/${{ env.BUILDER_VERSION }}/builder', 'builder')"
+        python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_VERSION }}/builder', 'builder')"
         chmod a+x builder
         ./builder -p ${{ env.PACKAGE_NAME }} build
 
