@@ -289,6 +289,8 @@ struct aws_hpack_context {
         } u;
 
         enum aws_hpack_decode_type type;
+
+        /* Scratch holds header name and value while decoding */
         struct aws_byte_buf scratch;
     } progress_entry;
 };
@@ -419,6 +421,7 @@ const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_contex
 
 static const struct aws_http_header *s_get_header_u64(const struct aws_hpack_context *context, uint64_t index) {
     if (index > SIZE_MAX) {
+        HPACK_LOG(ERROR, context, "Header index is absurdly large")
         aws_raise_error(AWS_ERROR_INVALID_INDEX);
         return NULL;
     }
@@ -1040,7 +1043,7 @@ int aws_hpack_decode(
              *
              * This BEGIN state decodes one integer.
              * If it's non-zero, then it's the index in the table where we'll get the header-name from.
-             * If it's zero, then we move to the HEADER_NAME state and decode it as a string instead */
+             * If it's zero, then we move to the HEADER_NAME state and decode header-name as a string instead */
             case HPACK_ENTRY_STATE_LITERAL_BEGIN: {
                 struct hpack_progress_literal *literal = &context->progress_entry.u.literal;
 
@@ -1142,7 +1145,7 @@ int aws_hpack_decode(
                 }
 
                 if (*size64 > SIZE_MAX) {
-                    HPACK_LOG(ERROR, context, "Dynamic table update size too large");
+                    HPACK_LOG(ERROR, context, "Dynamic table update size is absurdly large");
                     return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
                 }
                 size_t size = *size64;

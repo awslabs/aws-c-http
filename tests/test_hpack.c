@@ -112,7 +112,6 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
 }
 
 struct decode_fixture {
-    struct aws_allocator *allocator;
     struct aws_hpack_context *hpack;
     bool one_byte_at_a_time;
 };
@@ -120,7 +119,6 @@ struct decode_fixture {
 static int s_decode_fixture_setup(struct aws_allocator *allocator, void *ctx) {
     struct decode_fixture *fixture = ctx;
 
-    fixture->allocator = allocator;
     fixture->hpack = aws_hpack_context_new(allocator, AWS_LS_HTTP_DECODER, NULL);
     ASSERT_NOT_NULL(fixture->hpack);
 
@@ -128,6 +126,7 @@ static int s_decode_fixture_setup(struct aws_allocator *allocator, void *ctx) {
 }
 
 static int s_decode_fixture_teardown(struct aws_allocator *allocator, int setup_result, void *ctx) {
+    (void)allocator;
     struct decode_fixture *fixture = ctx;
     aws_hpack_context_destroy(fixture->hpack);
     return AWS_OP_SUCCESS;
@@ -183,27 +182,22 @@ static int s_decode_string(
 /* declare 2 tests, where the first decodes the input all at once,
  * and the other decodes the input one byte at a time. */
 #define TEST_DECODE_ONE_BYTE_AT_A_TIME(NAME)                                                                           \
-    static struct decode_fixture s_##NAME##_fixture;                                                                   \
-    static int s_test_##NAME##_common(struct decode_fixture *fixture);                                                 \
-    static int s_test_##NAME(struct aws_allocator *allocator, void *ctx) {                                             \
-        struct decode_fixture *fixture = &s_##NAME##_fixture;                                                          \
-        ASSERT_SUCCESS(s_decode_fixture_setup(allocator, fixture));                                                    \
-        ASSERT_SUCCESS(s_test_##NAME##_common(fixture));                                                               \
-        return s_decode_fixture_teardown(allocator, AWS_OP_SUCCESS, fixture);                                          \
-    }                                                                                                                  \
-    AWS_TEST_CASE(NAME, s_test_##NAME)                                                                                 \
-    static int s_test_##NAME##_one_byte_at_a_time(struct aws_allocator *allocator, void *ctx) {                        \
-        struct decode_fixture *fixture = &s_##NAME##_fixture;                                                          \
-        fixture->one_byte_at_a_time = true;                                                                            \
-        ASSERT_SUCCESS(s_decode_fixture_setup(allocator, fixture));                                                    \
-        ASSERT_SUCCESS(s_test_##NAME##_common(fixture));                                                               \
-        return s_decode_fixture_teardown(allocator, AWS_OP_SUCCESS, fixture);                                          \
-    }                                                                                                                  \
-    AWS_TEST_CASE(NAME##_one_byte_at_a_time, s_test_##NAME##_one_byte_at_a_time)                                       \
-    static int s_test_##NAME##_common(struct decode_fixture *fixture)
+    static struct decode_fixture s_##NAME##_fixture = {.one_byte_at_a_time = false};                                   \
+    static struct decode_fixture s_##NAME##_one_byte_at_a_time_fixture = {.one_byte_at_a_time = true};                 \
+    AWS_TEST_CASE_FIXTURE(NAME, s_decode_fixture_setup, s_test_##NAME, s_decode_fixture_teardown, &s_##NAME##_fixture) \
+    AWS_TEST_CASE_FIXTURE(                                                                                             \
+        NAME##_one_byte_at_a_time,                                                                                     \
+        s_decode_fixture_setup,                                                                                        \
+        s_test_##NAME,                                                                                                 \
+        s_decode_fixture_teardown,                                                                                     \
+        &s_##NAME##_one_byte_at_a_time_fixture)                                                                        \
+    static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
 /* RFC-7541 - Integer Representation Examples - C.1.1. Encoding 10 Using a 5-Bit Prefix */
 TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_5bits) {
+    (void)allocator;
+    struct decode_fixture *fixture = ctx;
+
     /* Layout:
      *   0   1   2   3   4   5   6   7
      * +---+---+---+---+---+---+---+---+
@@ -223,6 +217,9 @@ TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_5bits) {
 
 /* Encoding 63 across a 6-bit prefix + one byte */
 TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_14bits) {
+    (void)allocator;
+    struct decode_fixture *fixture = ctx;
+
     /* Layout:
      *   0   1   2   3   4   5   6   7
      * +---+---+---+---+---+---+---+---+
@@ -244,6 +241,9 @@ TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_14bits) {
 
 /* RFC-7541 - Integer Representation Examples - C.1.3. Encoding 42 Starting at an Octet Boundary */
 TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_8bits) {
+    (void)allocator;
+    struct decode_fixture *fixture = ctx;
+
     /* Layout:
      *   0   1   2   3   4   5   6   7
      * +---+---+---+---+---+---+---+---+
@@ -263,6 +263,9 @@ TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_8bits) {
 
 /* RFC-7541 - Integer Representation Examples - C.1.2. Encoding 1337 Using a 5-Bit Prefix */
 TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_21bits) {
+    (void)allocator;
+    struct decode_fixture *fixture = ctx;
+
     /* Layout:
      *   0   1   2   3   4   5   6   7
      * +---+---+---+---+---+---+---+---+
@@ -283,6 +286,9 @@ TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_21bits) {
 }
 
 TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_ongoing) {
+    (void)allocator;
+    struct decode_fixture *fixture = ctx;
+
     /* Test number ending with continue byte
      * Layout:
      *   0   1   2   3   4   5   6   7
@@ -302,6 +308,9 @@ TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_ongoing) {
 }
 
 TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_too_big) {
+    (void)allocator;
+    struct decode_fixture *fixture = ctx;
+
     /* Test number too big
      * Layout:
      *   0   1   2   3   4   5   6   7
@@ -347,6 +356,8 @@ TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_too_big) {
  * - from multibyte to multibyte
  * - from multibyte to 1 byte */
 TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_few_in_a_row) {
+    (void)allocator;
+    struct decode_fixture *fixture = ctx;
 
     uint8_t input[] = {
         /* 10 with 5-bit prefix
@@ -416,10 +427,12 @@ TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_integer_few_in_a_row) {
 }
 
 TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_blank) {
+    struct decode_fixture *fixture = ctx;
+
     uint8_t input[] = {0};
     struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(input, AWS_ARRAY_SIZE(input));
     struct aws_byte_buf output;
-    ASSERT_SUCCESS(aws_byte_buf_init(&output, fixture->allocator, 4));
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, allocator, 4));
     bool complete;
     ASSERT_SUCCESS(s_decode_string(fixture, &to_decode, &output, &complete));
 
@@ -431,11 +444,14 @@ TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_blank) {
     return AWS_OP_SUCCESS;
 }
 
+/* Test a string that is NOT Huffman encoded */
 TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_uncompressed) {
+    struct decode_fixture *fixture = ctx;
+
     uint8_t input[] = {5, 'h', 'e', 'l', 'l', 'o'};
     struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(input, AWS_ARRAY_SIZE(input));
     struct aws_byte_buf output;
-    ASSERT_SUCCESS(aws_byte_buf_init(&output, fixture->allocator, 5));
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, allocator, 5));
     bool complete;
     ASSERT_SUCCESS(s_decode_string(fixture, &to_decode, &output, &complete));
 
@@ -448,6 +464,8 @@ TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_uncompressed) {
 }
 
 TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_huffman) {
+    struct decode_fixture *fixture = ctx;
+
     /* This is Huffman-encoded "www.example.com", copied from:
      * RFC-7541 - Request Examples with Huffman Coding - C.4.1. First Request */
     uint8_t input[] = {0x8c, 0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a, 0x6b, 0xa0, 0xab, 0x90, 0xf4, 0xff};
@@ -456,7 +474,7 @@ TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_huffman) {
     const char *expected = "www.example.com";
 
     struct aws_byte_buf output;
-    ASSERT_SUCCESS(aws_byte_buf_init(&output, fixture->allocator, strlen(expected)));
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, allocator, strlen(expected)));
     bool complete;
     ASSERT_SUCCESS(s_decode_string(fixture, &to_decode, &output, &complete));
 
@@ -470,10 +488,12 @@ TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_huffman) {
 
 /* Test that partial input doesn't register as "complete" */
 TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_ongoing) {
+    struct decode_fixture *fixture = ctx;
+
     uint8_t input[] = {5, 'h', 'e', 'l'};
     struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(input, AWS_ARRAY_SIZE(input));
     struct aws_byte_buf output;
-    ASSERT_SUCCESS(aws_byte_buf_init(&output, fixture->allocator, 5));
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, allocator, 5));
     bool complete;
     ASSERT_SUCCESS(s_decode_string(fixture, &to_decode, &output, &complete));
 
@@ -486,11 +506,13 @@ TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_ongoing) {
 
 /* Test that output buffer is gets resized if it's too small */
 TEST_DECODE_ONE_BYTE_AT_A_TIME(hpack_decode_string_short_buffer) {
+    struct decode_fixture *fixture = ctx;
+
     uint8_t input[] = {5, 'h', 'e', 'l', 'l', 'o'};
     struct aws_byte_cursor to_decode = aws_byte_cursor_from_array(input, AWS_ARRAY_SIZE(input));
 
     struct aws_byte_buf output;
-    ASSERT_SUCCESS(aws_byte_buf_init(&output, fixture->allocator, 1)); /* Note buffer is initially too small */
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, allocator, 1)); /* Note buffer is initially too small */
     bool complete;
     ASSERT_SUCCESS(s_decode_string(fixture, &to_decode, &output, &complete));
 
