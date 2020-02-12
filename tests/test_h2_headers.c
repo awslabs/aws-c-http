@@ -70,32 +70,26 @@ struct header_test_fixture {
     struct aws_byte_buf decoder_storage_buf; /* string storage */
 };
 
-static void s_header_test_before(struct aws_allocator *allocator, void *ctx) {
+static int s_header_test_before(struct aws_allocator *allocator, void *ctx) {
 
     struct header_test_fixture *fixture = ctx;
     fixture->allocator = allocator;
 
     aws_http_library_init(allocator);
 
-    int ret_value = aws_h2_frame_encoder_init(&fixture->encoder, allocator);
-    AWS_FATAL_ASSERT(ret_value == AWS_OP_SUCCESS);
+    ASSERT_SUCCESS(aws_h2_frame_encoder_init(&fixture->encoder, allocator));
 
     fixture->decoder = aws_hpack_context_new(allocator, AWS_LS_HTTP_DECODER, NULL);
-    AWS_FATAL_ASSERT(fixture->decoder);
-
-    ret_value = aws_h2_frame_headers_init(&fixture->headers_to_encode, allocator);
-    AWS_FATAL_ASSERT(ret_value == AWS_OP_SUCCESS);
+    ASSERT_NOT_NULL(fixture->decoder);
+    ASSERT_SUCCESS(aws_h2_frame_headers_init(&fixture->headers_to_encode, allocator));
     fixture->headers_to_encode.header.stream_id = 1;
 
-    ret_value = aws_byte_buf_init(&fixture->expected_encoding_buf, allocator, S_BUFFER_SIZE);
-    AWS_FATAL_ASSERT(ret_value == AWS_OP_SUCCESS);
+    ASSERT_SUCCESS(aws_byte_buf_init(&fixture->expected_encoding_buf, allocator, S_BUFFER_SIZE));
+    ASSERT_SUCCESS(
+        aws_array_list_init_dynamic(&fixture->decoded_headers, allocator, 8, sizeof(struct aws_h2_frame_header_field)));
+    ASSERT_SUCCESS(aws_byte_buf_init(&fixture->decoder_storage_buf, allocator, S_BUFFER_SIZE));
 
-    ret_value =
-        aws_array_list_init_dynamic(&fixture->decoded_headers, allocator, 8, sizeof(struct aws_h2_frame_header_field));
-    AWS_FATAL_ASSERT(ret_value == AWS_OP_SUCCESS);
-
-    ret_value = aws_byte_buf_init(&fixture->decoder_storage_buf, allocator, S_BUFFER_SIZE);
-    AWS_FATAL_ASSERT(ret_value == AWS_OP_SUCCESS);
+    return AWS_OP_SUCCESS;
 }
 
 static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
@@ -157,26 +151,29 @@ static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
     return AWS_OP_SUCCESS;
 }
 
-static void s_header_test_after(struct aws_allocator *allocator, void *ctx) {
+static int s_header_test_after(struct aws_allocator *allocator, int setup_res, void *ctx) {
 
     (void)allocator;
 
-    struct header_test_fixture *fixture = ctx;
+    if (!setup_res) {
+        struct header_test_fixture *fixture = ctx;
 
-    /* Tear down the header & buffer */
-    if (fixture->teardown) {
-        fixture->teardown(fixture);
+        /* Tear down the header & buffer */
+        if (fixture->teardown) {
+            fixture->teardown(fixture);
+        }
+
+        /* Tear down the fixture */
+        aws_byte_buf_clean_up(&fixture->decoder_storage_buf);
+        aws_array_list_clean_up(&fixture->decoded_headers);
+        aws_h2_frame_headers_clean_up(&fixture->headers_to_encode);
+        aws_byte_buf_clean_up(&fixture->expected_encoding_buf);
+        aws_hpack_context_destroy(fixture->decoder);
+        aws_h2_frame_encoder_clean_up(&fixture->encoder);
     }
-
-    /* Tear down the fixture */
-    aws_byte_buf_clean_up(&fixture->decoder_storage_buf);
-    aws_array_list_clean_up(&fixture->decoded_headers);
-    aws_h2_frame_headers_clean_up(&fixture->headers_to_encode);
-    aws_byte_buf_clean_up(&fixture->expected_encoding_buf);
-    aws_hpack_context_destroy(fixture->decoder);
-    aws_h2_frame_encoder_clean_up(&fixture->encoder);
-
     aws_http_library_clean_up();
+
+    return AWS_OP_SUCCESS;
 }
 
 #define HEADER_TEST(t_name, i, t)                                                                                      \

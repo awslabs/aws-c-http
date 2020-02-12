@@ -248,7 +248,9 @@ static void s_testing_channel_shutdown_callback(int error_code, void *user_data)
 
 int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester) {
     tester->testing_channel = aws_mem_calloc(tester->alloc, 1, sizeof(struct testing_channel));
-    ASSERT_SUCCESS(testing_channel_init(tester->testing_channel, tester->alloc));
+
+    struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
+    ASSERT_SUCCESS(testing_channel_init(tester->testing_channel, tester->alloc, &test_channel_options));
     tester->testing_channel->channel_shutdown = s_testing_channel_shutdown_callback;
     tester->testing_channel->channel_shutdown_user_data = tester;
 
@@ -313,7 +315,7 @@ int proxy_tester_send_connect_response(struct proxy_tester *tester) {
     }
 
     /* send response */
-    ASSERT_SUCCESS(testing_channel_send_response_str(tester->testing_channel, response_string));
+    ASSERT_SUCCESS(testing_channel_push_read_str(tester->testing_channel, response_string));
 
     testing_channel_drain_queued_tasks(tester->testing_channel);
 

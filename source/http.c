@@ -107,6 +107,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_CONNECTION_MANAGER_SHUTTING_DOWN,
         "Connection acquisition failed because connection manager is shutting down"),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_CHANNEL_THROUGHPUT_FAILURE,
+        "Http connection channel shut down due to failure to meet throughput minimum"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_PROTOCOL_ERROR,
         "Protocol rules violated by API call or peer"),
     AWS_DEFINE_ERROR_INFO_HTTP(
@@ -118,7 +121,7 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_FRAME_SIZE,
         "Received frame with an illegal frame size"),
-    AWS_DEFINE_ERROR_INFO_HTTP(
+    AWS_DEFINE_ERROR_INFO_HTTP(  
         AWS_ERROR_HTTP_COMPRESSION,
         "Error compressing or decompressing HPACK headers"),
 };

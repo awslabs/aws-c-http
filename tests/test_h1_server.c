@@ -190,7 +190,8 @@ static int s_tester_init(struct aws_allocator *alloc) {
     ASSERT_SUCCESS(aws_logger_init_standard(&s_tester.logger, s_tester.alloc, &logger_options));
     aws_logger_set(&s_tester.logger);
 
-    ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc));
+    struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
+    ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc, &test_channel_options));
 
     s_tester.server_connection = aws_http_connection_new_http1_1_server(alloc, SIZE_MAX);
     ASSERT_NOT_NULL(s_tester.server_connection);
@@ -415,20 +416,6 @@ TEST_CASE(h1_server_receive_bad_request_shut_down_connection) {
     return AWS_OP_SUCCESS;
 }
 
-/* Pop first message from queue and compare its contents to expected string. */
-static int s_check_written_message(struct tester *tester, const char *expected) {
-    struct aws_linked_list *msgs = testing_channel_get_written_message_queue(&tester->testing_channel);
-    ASSERT_TRUE(!aws_linked_list_empty(msgs));
-    struct aws_linked_list_node *node = aws_linked_list_pop_front(msgs);
-    struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
-
-    ASSERT_TRUE(aws_byte_buf_eq_c_str(&msg->message_data, expected));
-
-    aws_mem_release(msg->allocator, msg);
-
-    return AWS_OP_SUCCESS;
-}
-
 /* Response creation helper function */
 static int s_create_response(
     struct aws_http_message **out_response,
@@ -470,7 +457,7 @@ TEST_CASE(h1_server_send_1line_response) {
     const char *expected = "HTTP/1.1 204 No Content\r\n"
                            "\r\n";
 
-    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&s_tester.testing_channel, allocator, expected));
 
     aws_http_message_destroy(response);
     ASSERT_SUCCESS(s_server_tester_clean_up());
@@ -512,7 +499,7 @@ TEST_CASE(h1_server_send_response_headers) {
                            "Location: /index.html\r\n"
                            "\r\n";
 
-    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&s_tester.testing_channel, allocator, expected));
 
     aws_http_message_destroy(response);
     ASSERT_SUCCESS(s_server_tester_clean_up());
@@ -564,7 +551,7 @@ TEST_CASE(h1_server_send_response_body) {
                            "\r\n"
                            "write more tests";
 
-    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&s_tester.testing_channel, allocator, expected));
 
     aws_http_message_destroy(response);
     ASSERT_SUCCESS(s_server_tester_clean_up());
@@ -622,7 +609,7 @@ static int s_test_send_expected_no_body_response(int status_int, bool head_reque
     c_status_text[status_text.len] = '\0';
     snprintf(expected, sizeof(expected), "HTTP/1.1 %d %s\r\n%s", status_int, c_status_text, expected_headers);
 
-    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&s_tester.testing_channel, s_tester.alloc, expected));
 
     aws_http_message_destroy(response);
     return AWS_OP_SUCCESS;
@@ -709,7 +696,7 @@ TEST_CASE(h1_server_send_multiple_responses_in_order) {
                            "\r\n"
                            "response3";
 
-    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&s_tester.testing_channel, allocator, expected));
 
     aws_http_message_destroy(response1);
     aws_http_message_destroy(response2);
@@ -799,7 +786,7 @@ TEST_CASE(h1_server_send_multiple_responses_out_of_order) {
                            "\r\n"
                            "response3";
 
-    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&s_tester.testing_channel, allocator, expected));
 
     aws_http_message_destroy(response1);
     aws_http_message_destroy(response2);
@@ -869,7 +856,7 @@ TEST_CASE(h1_server_send_multiple_responses_out_of_order_only_one_sent) {
                            "\r\n"
                            "response1";
 
-    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&s_tester.testing_channel, allocator, expected));
 
     aws_http_message_destroy(response1);
     aws_http_message_destroy(response3);
@@ -911,7 +898,7 @@ TEST_CASE(h1_server_send_response_before_request_finished) {
     const char *expected = "HTTP/1.1 200 OK\r\n"
                            "\r\n";
 
-    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&s_tester.testing_channel, allocator, expected));
 
     const char *incoming_request_part2 = "more tests"
                                          "GET / HTTP/1.1\r\n"
@@ -1141,7 +1128,7 @@ TEST_CASE(h1_server_receive_close_header_ends_connection) {
     const char *expected = "HTTP/1.1 200 OK\r\n"
                            "\r\n";
 
-    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&s_tester.testing_channel, allocator, expected));
 
     /* stream should complete successfully */
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.requests[0].on_complete_error_code);
@@ -1219,7 +1206,7 @@ TEST_CASE(h1_server_send_close_header_ends_connection) {
                            "Connection: close\r\n"
                            "\r\n";
 
-    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&s_tester.testing_channel, allocator, expected));
 
     /* stream should complete successfully */
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.requests[0].on_complete_error_code);
@@ -1290,7 +1277,7 @@ TEST_CASE(h1_server_send_close_header_with_pipelining) {
                            "Connection: close\r\n"
                            "\r\n";
 
-    ASSERT_SUCCESS(s_check_written_message(&s_tester, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&s_tester.testing_channel, allocator, expected));
 
     /* Only the first two streams should complete successfully */
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.requests[0].on_complete_error_code);
@@ -1487,7 +1474,8 @@ static int s_error_tester_init(struct aws_allocator *alloc, struct error_from_ca
     ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->alloc, &logger_options));
     aws_logger_set(&tester->logger);
 
-    ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc));
+    struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
+    ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc, &test_channel_options));
 
     tester->server_connection = aws_http_connection_new_http1_1_server(alloc, SIZE_MAX);
     ASSERT_NOT_NULL(tester->server_connection);
