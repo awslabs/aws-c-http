@@ -23,6 +23,8 @@
 #include <aws/common/logging.h>
 #include <aws/common/string.h>
 
+/* #TODO split hpack encoder/decoder into different types */
+
 /* RFC-7540 6.5.2 */
 const size_t s_hpack_dynamic_table_initial_size = 4096;
 const size_t s_hpack_dynamic_table_initial_elements = 512;
@@ -32,7 +34,7 @@ const size_t s_hpack_dynamic_table_max_size = 16 * 1024 * 1024;
 /* Used for growing the dynamic table buffer when it fills up */
 const float s_hpack_dynamic_table_buffer_growth_rate = 1.5F;
 
-/* Used for decoding the header name & value */
+/* Used while decoding the header name & value, grows if necessary */
 const size_t s_hpack_decoder_scratch_initial_size = 512;
 
 struct aws_huffman_symbol_coder *hpack_get_coder(void);
@@ -909,6 +911,7 @@ int aws_hpack_decode_string(
 
                 if (progress->use_huffman) {
                     if (aws_huffman_decode(&context->decoder, &chunk, output)) {
+                        HPACK_LOGF(ERROR, context, "Error from Huffman decoder: %s", aws_error_name(aws_last_error()));
                         return AWS_OP_ERR;
                     }
 
@@ -951,6 +954,7 @@ handle_complete:
     return AWS_OP_SUCCESS;
 }
 
+/* Implements RFC-7541 Section 6 - Binary Format */
 int aws_hpack_decode(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_decode,
@@ -964,31 +968,49 @@ int aws_hpack_decode(
      * Every state requires data, so we can simply loop until no more data available. */
     while (to_decode->len) {
         switch (context->progress_entry.state) {
+
             case HPACK_ENTRY_STATE_INIT: {
-                /* reset progress_entry */
+                /* Reset entry */
                 AWS_ZERO_STRUCT(context->progress_entry.u);
                 context->progress_entry.scratch.len = 0;
 
+                /* Determine next state by looking at first few bits of the next byte:
+                 * 1xxxxxxx: Indexed Header Field Representation
+                 * 01xxxxxx: Literal Header Field with Incremental Indexing
+                 * 001xxxxx: Dynamic Table Size Update
+                 * 0001xxxx: Literal Header Field Never Indexed
+                 * 0000xxxx: Literal Header Field without Indexing */
                 uint8_t first_byte = to_decode->ptr[0];
                 if (first_byte & (1 << 7)) {
+                    /* 1xxxxxxx: Indexed Header Field Representation */
                     context->progress_entry.state = HPACK_ENTRY_STATE_INDEXED;
+
                 } else if (first_byte & (1 << 6)) {
+                    /* 01xxxxxx: Literal Header Field with Incremental Indexing */
                     context->progress_entry.u.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE;
                     context->progress_entry.u.literal.prefix_size = 6;
                     context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
+
                 } else if (first_byte & (1 << 5)) {
+                    /* 001xxxxx: Dynamic Table Size Update */
                     context->progress_entry.state = HPACK_ENTRY_STATE_DYNAMIC_TABLE_RESIZE;
+
                 } else if (first_byte & (1 << 4)) {
+                    /* 0001xxxx: Literal Header Field Never Indexed */
                     context->progress_entry.u.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_FORWARD_SAVE;
                     context->progress_entry.u.literal.prefix_size = 4;
                     context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
                 } else {
+                    /* 0000xxxx: Literal Header Field without Indexing */
                     context->progress_entry.u.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_SAVE;
                     context->progress_entry.u.literal.prefix_size = 4;
                     context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
                 }
             } break;
 
+            /* RFC-7541 6.1. Indexed Header Field Representation.
+             * Decode one integer, which is an index into the table.
+             * Result is the header name and value stored there. */
             case HPACK_ENTRY_STATE_INDEXED: {
                 bool complete = false;
                 uint64_t *index = &context->progress_entry.u.indexed.index;
@@ -1005,12 +1027,20 @@ int aws_hpack_decode(
                     return AWS_OP_ERR;
                 }
 
-                result->type = AWS_HPACK_DECODE_T_HEADER;
-                result->u.header.field = *header;
-                result->u.header.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE;
+                result->type = AWS_HPACK_DECODE_T_HEADER_FIELD;
+                result->data.header_field.header = *header;
+                result->data.header_field.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE;
                 goto handle_complete;
             } break;
 
+            /* RFC-7541 6.2. Literal Header Field Representation.
+             * We use multiple states to decode a literal...
+             * The header-name MAY come from the table and MAY be encoded as a string.
+             * The header-value is ALWAYS encoded as a string.
+             *
+             * This BEGIN state decodes one integer.
+             * If it's non-zero, then it's the index in the table where we'll get the header-name from.
+             * If it's zero, then we move to the HEADER_NAME state and decode it as a string instead */
             case HPACK_ENTRY_STATE_LITERAL_BEGIN: {
                 struct hpack_progress_literal *literal = &context->progress_entry.u.literal;
 
@@ -1036,16 +1066,19 @@ int aws_hpack_decode(
                     return AWS_OP_ERR;
                 }
 
-                /* Store the name in scratch in case it's evicted from the table later, when we save the literal. */
+                /* Store the name in scratch. We don't just keep a pointer to it because it could be
+                 * evicted from the dynamic table later, when we save the literal. */
                 if (aws_byte_buf_append_dynamic(&context->progress_entry.scratch, &header->name)) {
                     return AWS_OP_ERR;
                 }
 
-                /* Move on to decoding header-value */
+                /* Move on to decoding header-value.
+                 * Value will also decode into the scratch, so save where name ends. */
                 literal->name_length = header->name.len;
                 context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_VALUE_STRING;
             } break;
 
+            /* We only end up in this state if header-name is encoded as string. */
             case HPACK_ENTRY_STATE_LITERAL_NAME_STRING: {
                 bool string_complete = false;
                 if (aws_hpack_decode_string(context, to_decode, &context->progress_entry.scratch, &string_complete)) {
@@ -1062,6 +1095,8 @@ int aws_hpack_decode(
                 context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_VALUE_STRING;
             } break;
 
+            /* Final state for "literal" entries.
+             * Decode the header-value string, then deliver the results. */
             case HPACK_ENTRY_STATE_LITERAL_VALUE_STRING: {
                 bool string_complete = false;
                 if (aws_hpack_decode_string(context, to_decode, &context->progress_entry.scratch, &string_complete)) {
@@ -1087,7 +1122,7 @@ int aws_hpack_decode(
                     }
                 }
 
-                result->type = AWS_HPACK_DECODE_T_HEADER;
+                result->type = AWS_HPACK_DECODE_T_HEADER_FIELD;
                 result->u.header.field = header;
                 result->u.header.hpack_behavior = literal->hpack_behavior;
                 goto handle_complete;

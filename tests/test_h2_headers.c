@@ -129,11 +129,11 @@ static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
     while (payload.len) {
         struct aws_hpack_decode_result result;
         ASSERT_SUCCESS(aws_hpack_decode(fixture->decoder, &payload, &result));
-        ASSERT_INT_EQUALS(AWS_HPACK_DECODE_T_HEADER, result.type);
+        ASSERT_INT_EQUALS(AWS_HPACK_DECODE_T_HEADER_FIELD, result.type);
 
         struct aws_h2_frame_header_field header_field = {
-            .header = result.u.header.field,
-            .hpack_behavior = result.u.header.hpack_behavior,
+            .header = result.data.header.field,
+            .hpack_behavior = result.data.header.hpack_behavior,
         };
 
         /* Backup string values */

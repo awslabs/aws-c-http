@@ -22,25 +22,30 @@ struct aws_byte_cursor;
 struct aws_http_header;
 struct aws_hpack_context;
 
-enum aws_hpack_decode_type {
-    AWS_HPACK_DECODE_T_ONGOING,
-    AWS_HPACK_DECODE_T_HEADER,
-    AWS_HPACK_DECODE_T_DYNAMIC_TABLE_RESIZE,
-};
-
+/**
+ * Result of aws_hpack_decode() call.
+ * If a complete entry has not been decoded yet, type is ONGOING.
+ * Otherwise, type informs which data to look at.
+ */
 struct aws_hpack_decode_result {
-    enum aws_hpack_decode_type type;
+    enum aws_hpack_decode_type {
+        AWS_HPACK_DECODE_T_ONGOING,
+        AWS_HPACK_DECODE_T_HEADER_FIELD,
+        AWS_HPACK_DECODE_T_DYNAMIC_TABLE_RESIZE,
+    } type;
 
     union {
-        struct {
-            struct aws_http_header field;
+        /* If type is AWS_HPACK_DECODE_T_HEADER_FIELD */
+        struct aws_hpack_decoded_header_field {
+            struct aws_http_header header;
             enum aws_h2_header_field_hpack_behavior hpack_behavior;
-        } header;
+        } header_field;
 
-        struct {
+        /* If type is AWS_HPACK_DECODE_T_DYNAMIC_TABLE_RESIZE */
+        struct aws_hpack_decoded_resize {
             size_t size;
         } dynamic_table_resize;
-    } u;
+    } data;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -62,9 +67,13 @@ struct aws_hpack_context *aws_hpack_context_new(
 AWS_HTTP_API
 void aws_hpack_context_destroy(struct aws_hpack_context *context);
 
-/* Decode the next entry in the header-block-fragment.
- * If result is ONGOING, then call decode() again with more data to resume decoding.
- * If an error occurs, decode() must never be called again. */
+/**
+ * Decode the next entry in the header-block-fragment.
+ * If result->type is ONGOING, then call decode() again with more data to resume decoding.
+ * Otherwise, type is either a HEADER_FIELD or a DYNAMIC_TABLE_RESIZE.
+ *
+ * If an error occurs, the decoder is broken and decode() must not be called again.
+ */
 AWS_HTTP_API
 int aws_hpack_decode(
     struct aws_hpack_context *context,
