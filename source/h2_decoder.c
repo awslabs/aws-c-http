@@ -940,8 +940,16 @@ static int s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct 
         return AWS_OP_SUCCESS;
     }
 
-    /* #TODO Enforces rules from RFC-7541 4.2
-     * If dynamic table size changed via SETTINGS frame, next header-block must start with DYNAMIC_TABLE_RESIZE entry */
+    /* #TODO Enforces dynamic table resize rules from RFC-7541 4.2
+     * If dynamic table size changed via SETTINGS frame, next header-block must start with DYNAMIC_TABLE_RESIZE entry.
+     * Is it illegal to receive a resize entry at other times? */
+
+    /* #TODO Enforce pseudo-header rules from RFC-7540 8.1.2.1
+     * - request must have specific pseudo-headers and can't have response ones, and vice-versa
+     * - pseudo-headers must precede normal headers
+     * - pseudo-headers must not appear in trailer
+     * - can't have unrecognized/invalid pseudo-headers
+     * These make the message "malformed", which is a STREAM error, not PROTOCOL error, not sure how to handle that */
 
     if (result.type == AWS_HPACK_DECODE_T_HEADER) {
         DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_header, &result.u.header.field, result.u.header.hpack_behavior);

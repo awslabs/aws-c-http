@@ -277,8 +277,8 @@ struct aws_hpack_context {
             struct hpack_progress_literal {
                 uint8_t prefix_size;
                 enum aws_h2_header_field_hpack_behavior hpack_behavior;
-                uint64_t name_index; /* used if name is indexed */
-                size_t name_length;  /* used if name is literal */
+                uint64_t name_index;
+                size_t name_length;
             } literal;
 
             struct {
@@ -979,11 +979,11 @@ int aws_hpack_decode(
                 } else if (first_byte & (1 << 5)) {
                     context->progress_entry.state = HPACK_ENTRY_STATE_DYNAMIC_TABLE_RESIZE;
                 } else if (first_byte & (1 << 4)) {
-                    context->progress_entry.u.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_SAVE;
+                    context->progress_entry.u.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_FORWARD_SAVE;
                     context->progress_entry.u.literal.prefix_size = 4;
                     context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
                 } else {
-                    context->progress_entry.u.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_FORWARD_SAVE;
+                    context->progress_entry.u.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_SAVE;
                     context->progress_entry.u.literal.prefix_size = 4;
                     context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
                 }
@@ -1027,10 +1027,23 @@ int aws_hpack_decode(
                 if (literal->name_index == 0) {
                     /* Index 0 means header-name is not in table. Need to decode header-name as a string instead */
                     context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_NAME_STRING;
-                } else {
-                    /* Otherwise we found index of header-name in table, move on to decoding the header-value string */
-                    context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_VALUE_STRING;
+                    break;
                 }
+
+                /* Otherwise we found index of header-name in table. */
+                const struct aws_http_header *header = s_get_header_u64(context, literal->name_index);
+                if (!header) {
+                    return AWS_OP_ERR;
+                }
+
+                /* Store the name in scratch in case it's evicted from the table later, when we save the literal. */
+                if (aws_byte_buf_append_dynamic(&context->progress_entry.scratch, &header->name)) {
+                    return AWS_OP_ERR;
+                }
+
+                /* Move on to decoding header-value */
+                literal->name_length = header->name.len;
+                context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_VALUE_STRING;
             } break;
 
             case HPACK_ENTRY_STATE_LITERAL_NAME_STRING: {
@@ -1043,6 +1056,8 @@ int aws_hpack_decode(
                     break;
                 }
 
+                /* Done decoding name string! Move on to decoding the value string.
+                 * Value will also decode into the scratch, so save where name ends. */
                 context->progress_entry.u.literal.name_length = context->progress_entry.scratch.len;
                 context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_VALUE_STRING;
             } break;
@@ -1057,24 +1072,23 @@ int aws_hpack_decode(
                     break;
                 }
 
+                /* Done decoding value string. Done decoding entry. */
                 struct hpack_progress_literal *literal = &context->progress_entry.u.literal;
-                struct aws_byte_cursor name;
-                struct aws_byte_cursor value = aws_byte_cursor_from_buf(&context->progress_entry.scratch);
-                /* #TODO comment */
-                if (literal->name_index > 0) {
-                    const struct aws_http_header *header = s_get_header_u64(context, literal->name_index);
-                    if (!header) {
+
+                /* Set up a header with name and value (which are packed one after the other in scratch) */
+                struct aws_http_header header;
+                header.value = aws_byte_cursor_from_buf(&context->progress_entry.scratch);
+                header.name = aws_byte_cursor_advance(&header.value, literal->name_length);
+
+                /* Save to table if necessary */
+                if (literal->hpack_behavior == AWS_H2_HEADER_BEHAVIOR_SAVE) {
+                    if (aws_hpack_insert_header(context, &header)) {
                         return AWS_OP_ERR;
                     }
-                    name = header->name;
-                } else {
-                    /* Else both name and value were decoded into scratch */
-                    name = aws_byte_cursor_advance(&value, literal->name_length);
                 }
 
                 result->type = AWS_HPACK_DECODE_T_HEADER;
-                result->u.header.field.name = name;
-                result->u.header.field.value = value;
+                result->u.header.field = header;
                 result->u.header.hpack_behavior = literal->hpack_behavior;
                 goto handle_complete;
             } break;
