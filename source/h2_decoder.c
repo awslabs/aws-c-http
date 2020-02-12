@@ -947,7 +947,7 @@ static int s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct 
      * Update input & payload_len to reflect the number of bytes consumed. */
     const size_t bytes_consumed = prev_fragment_len - fragment.len;
     aws_byte_cursor_advance(input, bytes_consumed);
-    decoder->frame_in_progress.payload_len -= bytes_consumed;
+    decoder->frame_in_progress.payload_len -= (uint32_t)bytes_consumed;
 
     if (result.type == AWS_HPACK_DECODE_T_ONGOING) {
         if (decoder->frame_in_progress.payload_len == 0) {
