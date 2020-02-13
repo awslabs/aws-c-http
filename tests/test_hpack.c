@@ -127,6 +127,10 @@ static int s_decode_fixture_setup(struct aws_allocator *allocator, void *ctx) {
 
 static int s_decode_fixture_teardown(struct aws_allocator *allocator, int setup_result, void *ctx) {
     (void)allocator;
+    if (setup_result) {
+        return AWS_OP_ERR;
+    }
+
     struct decode_fixture *fixture = ctx;
     aws_hpack_context_destroy(fixture->hpack);
     return AWS_OP_SUCCESS;
