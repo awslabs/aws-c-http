@@ -223,11 +223,9 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
 
     AWS_FATAL_ASSERT(!decoder->has_errored);
 
-    int err = AWS_ERROR_SUCCESS;
-
     /* Run decoder state machine until we're no longer consuming data or changing states.
-     * We don't simply loop while(data->len) because some states consume no data,
-     * and we want these states to run even when there is no data left. */
+     * We don't simply loop `while(data->len)` because some states consume no data,
+     * and these states should run even when there is no data left. */
     size_t prev_data_len = 0;
     const struct decoder_state *prev_state = NULL;
     while (prev_data_len != data->len || prev_state != decoder->state) {
@@ -243,14 +241,12 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
         prev_state = decoder->state;
         prev_data_len = data->len;
 
-        if ((bytes_required == 0) || (!decoder->scratch.len && data->len >= bytes_required)) {
-            /* Easy case: either state doesn't require minimum amount of data,
-             * or there is no scratch and we have enough data, so just send it to the state */
+        if (!decoder->scratch.len && data->len >= bytes_required) {
+            /* Easy case, there is no scratch and we have enough data, so just send it to the state */
 
             DECODER_LOGF(TRACE, decoder, "Running state '%s' with %zu bytes available", current_state_name, data->len);
 
-            err = decoder->state->fn(decoder, data);
-            if (err) {
+            if (decoder->state->fn(decoder, data)) {
                 goto handle_error;
             }
 
@@ -282,8 +278,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                 DECODER_LOGF(TRACE, decoder, "Running state '%s' (using scratch)", current_state_name);
 
                 struct aws_byte_cursor state_data = aws_byte_cursor_from_buf(&decoder->scratch);
-                err = decoder->state->fn(decoder, &state_data);
-                if (err) {
+                if (decoder->state->fn(decoder, &state_data)) {
                     goto handle_error;
                 }
 
@@ -304,7 +299,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
 
 handle_error:
     decoder->has_errored = true;
-    return err;
+    return AWS_OP_ERR;
 }
 
 /***********************************************************************************************************************
@@ -313,9 +308,10 @@ handle_error:
 
 static int s_decoder_switch_state(struct aws_h2_decoder *decoder, const struct decoder_state *state) {
     /* Ensure payload is big enough to enter next state.
-     * This might fail if the stated payload length is just too small for this frame type */
+     * If this fails, then the payload length we received is just too small for this frame type */
     if (decoder->frame_in_progress.payload_len < state->bytes_required) {
-        DECODER_LOGF(ERROR, decoder, "Frame's payload is too small to enter state '%s'.", state->name);
+        DECODER_LOGF(
+            ERROR, decoder, "%s payload is too small", aws_h2_frame_type_to_str(decoder->frame_in_progress.type));
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 

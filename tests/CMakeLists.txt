@@ -236,7 +236,7 @@ add_test_case(h2_decoder_data_one_byte_at_a_time)
 add_test_case(h2_decoder_data_padded)
 add_test_case(h2_decoder_data_padded_one_byte_at_a_time)
 add_test_case(h2_decoder_headers)
-#add_test_case(h2_decoder_headers_one_byte_at_a_time)
+add_test_case(h2_decoder_headers_one_byte_at_a_time)
 
 add_test_case(h2_client_sanity_check)
 add_test_case(h2_client_request_create)
