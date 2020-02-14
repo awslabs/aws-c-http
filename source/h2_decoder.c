@@ -312,14 +312,15 @@ handle_error:
  **********************************************************************************************************************/
 
 static int s_decoder_switch_state(struct aws_h2_decoder *decoder, const struct decoder_state *state) {
-    /* Ensure payload is big enough to enter state.
-     * This could fail if the stated payload length is just too small for this frame type */
+    /* Ensure payload is big enough to enter next state.
+     * This might fail if the stated payload length is just too small for this frame type */
     if (decoder->frame_in_progress.payload_len < state->bytes_required) {
         DECODER_LOGF(ERROR, decoder, "Frame's payload is too small to enter state '%s'.", state->name);
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
     DECODER_LOGF(TRACE, decoder, "Moving from state '%s' to '%s'", decoder->state->name, state->name);
+    decoder->scratch.len = 0;
     decoder->state = state;
     return AWS_OP_SUCCESS;
 }
@@ -669,6 +670,8 @@ static int s_state_fn_frame_rst_stream(struct aws_h2_decoder *decoder, struct aw
     AWS_ASSERT(succ);
     (void)succ;
 
+    decoder->frame_in_progress.payload_len -= 4;
+
     DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_rst_stream, error_code);
 
     return AWS_OP_SUCCESS;
@@ -802,6 +805,8 @@ static int s_state_fn_frame_ping(struct aws_h2_decoder *decoder, struct aws_byte
     AWS_ASSERT(succ);
     (void)succ;
 
+    decoder->frame_in_progress.payload_len -= 8;
+
     if (decoder->frame_in_progress.flags.ack) {
         DECODER_CALL_VTABLE_ARGS(decoder, on_ping_ack, opaque_data);
     } else {
@@ -881,6 +886,8 @@ static int s_state_fn_frame_window_update(struct aws_h2_decoder *decoder, struct
     bool succ = aws_byte_cursor_read_be32(input, &window_increment);
     AWS_ASSERT(succ);
     (void)succ;
+
+    decoder->frame_in_progress.payload_len -= 4;
 
     window_increment &= s_31_bit_mask;
 
