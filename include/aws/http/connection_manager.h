@@ -48,6 +48,7 @@ struct aws_http_connection_manager_options {
     const struct aws_socket_options *socket_options;
     const struct aws_tls_connection_options *tls_connection_options;
     const struct aws_http_proxy_options *proxy_options;
+    const struct aws_http_connection_monitoring_options *monitoring_options;
     struct aws_byte_cursor host;
     uint16_t port;
 

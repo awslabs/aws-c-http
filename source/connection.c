@@ -13,8 +13,12 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/http/private/connection_impl.h>
+#include <aws/http/private/connection_monitor.h>
+
 #include <aws/http/private/h1_connection.h>
 #include <aws/http/private/h2_connection.h>
+
 #include <aws/http/private/proxy_impl.h>
 
 #include <aws/common/hash_table.h>
@@ -32,7 +36,6 @@
 
 static struct aws_http_connection_system_vtable s_default_system_vtable = {
     .new_socket_channel = aws_client_bootstrap_new_socket_channel,
-    .new_tls_socket_channel = aws_client_bootstrap_new_tls_socket_channel,
 };
 
 static const struct aws_http_connection_system_vtable *s_system_vtable_ptr = &s_default_system_vtable;
@@ -627,6 +630,22 @@ static void s_client_bootstrap_on_channel_setup(
         goto error;
     }
 
+    if (aws_http_connection_monitoring_options_is_valid(&http_bootstrap->monitoring_options)) {
+        /*
+         * On creation we validate monitoring options, if they exist, and fail if they're not
+         * valid.  So at this point, is_valid() functions as an is-monitoring-on? check.  A false
+         * value here is not an error, it's just not enabled.
+         */
+        struct aws_crt_statistics_handler *http_connection_monitor =
+            aws_crt_statistics_handler_new_http_connection_monitor(
+                http_bootstrap->alloc, &http_bootstrap->monitoring_options);
+        if (http_connection_monitor == NULL) {
+            goto error;
+        }
+
+        aws_channel_set_statistics_handler(channel, http_connection_monitor);
+    }
+
     http_bootstrap->connection->proxy_request_transform = http_bootstrap->proxy_request_transform;
     http_bootstrap->connection->user_data = http_bootstrap->user_data;
 
@@ -711,6 +730,12 @@ int aws_http_client_connect_internal(
         goto error;
     }
 
+    if (options->monitoring_options && !aws_http_connection_monitoring_options_is_valid(options->monitoring_options)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: invalid monitoring options");
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        goto error;
+    }
+
     /* bootstrap_new() functions requires a null-terminated c-str */
     host_name = aws_string_new_from_array(options->allocator, options->host_name.ptr, options->host_name.len);
     if (!host_name) {
@@ -729,6 +754,9 @@ int aws_http_client_connect_internal(
     http_bootstrap->on_setup = options->on_setup;
     http_bootstrap->on_shutdown = options->on_shutdown;
     http_bootstrap->proxy_request_transform = proxy_request_transform;
+    if (options->monitoring_options) {
+        http_bootstrap->monitoring_options = *options->monitoring_options;
+    }
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,
@@ -736,26 +764,18 @@ int aws_http_client_connect_internal(
         aws_string_c_str(host_name),
         (int)options->port);
 
-    if (options->tls_options) {
-        err = s_system_vtable_ptr->new_tls_socket_channel(
-            options->bootstrap,
-            aws_string_c_str(host_name),
-            options->port,
-            options->socket_options,
-            options->tls_options,
-            s_client_bootstrap_on_channel_setup,
-            s_client_bootstrap_on_channel_shutdown,
-            http_bootstrap);
-    } else {
-        err = s_system_vtable_ptr->new_socket_channel(
-            options->bootstrap,
-            aws_string_c_str(host_name),
-            options->port,
-            options->socket_options,
-            s_client_bootstrap_on_channel_setup,
-            s_client_bootstrap_on_channel_shutdown,
-            http_bootstrap);
-    }
+    struct aws_socket_channel_bootstrap_options channel_options = {
+        .bootstrap = options->bootstrap,
+        .host_name = aws_string_c_str(host_name),
+        .port = options->port,
+        .socket_options = options->socket_options,
+        .tls_options = options->tls_options,
+        .setup_callback = s_client_bootstrap_on_channel_setup,
+        .shutdown_callback = s_client_bootstrap_on_channel_shutdown,
+        .user_data = http_bootstrap,
+    };
+
+    err = s_system_vtable_ptr->new_socket_channel(&channel_options);
 
     if (err) {
         AWS_LOGF_ERROR(
@@ -823,4 +843,21 @@ int aws_http_connection_configure_server(
     connection->server_data->on_shutdown = options->on_shutdown;
 
     return AWS_OP_SUCCESS;
+}
+
+/* Stream IDs are only 31 bits [5.1.1] */
+static const uint32_t MAX_STREAM_ID = UINT32_MAX >> 1;
+
+uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *connection) {
+
+    uint32_t next_id = (uint32_t)aws_atomic_fetch_add(&connection->next_stream_id, 2);
+    /* If next fetch would overflow next_stream_id, set it to 0 */
+    if (AWS_UNLIKELY(next_id > MAX_STREAM_ID)) {
+        AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: All available stream ids are gone", (void *)connection);
+
+        next_id = 0;
+        aws_raise_error(AWS_ERROR_HTTP_STREAM_IDS_EXHAUSTED);
+    }
+
+    return next_id;
 }

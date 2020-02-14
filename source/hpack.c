@@ -23,6 +23,8 @@
 #include <aws/common/logging.h>
 #include <aws/common/string.h>
 
+/* #TODO split hpack encoder/decoder into different types */
+
 /* RFC-7540 6.5.2 */
 const size_t s_hpack_dynamic_table_initial_size = 4096;
 const size_t s_hpack_dynamic_table_initial_elements = 512;
@@ -32,11 +34,21 @@ const size_t s_hpack_dynamic_table_max_size = 16 * 1024 * 1024;
 /* Used for growing the dynamic table buffer when it fills up */
 const float s_hpack_dynamic_table_buffer_growth_rate = 1.5F;
 
+/* Used while decoding the header name & value, grows if necessary */
+const size_t s_hpack_decoder_scratch_initial_size = 512;
+
 struct aws_huffman_symbol_coder *hpack_get_coder(void);
 
+/* Return a byte with the N right-most bits masked.
+ * Ex: 2 -> 00000011 */
+static uint8_t s_masked_right_bits_u8(uint8_t num_masked_bits) {
+    AWS_ASSERT(num_masked_bits <= 8);
+    const uint8_t cut_bits = 8 - num_masked_bits;
+    return UINT8_MAX >> cut_bits;
+}
+
 size_t aws_hpack_get_encoded_length_integer(uint64_t integer, uint8_t prefix_size) {
-    const uint8_t cut_bits = 8 - prefix_size;
-    const uint8_t prefix_mask = UINT8_MAX >> cut_bits;
+    const uint8_t prefix_mask = s_masked_right_bits_u8(prefix_size);
 
     if (integer < prefix_mask) {
         /* If the integer fits inside the specified number of bits but won't be all 1's, then that's all she wrote */
@@ -62,8 +74,7 @@ int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_b
     if (output->len == output->capacity) {
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
-    const uint8_t cut_bits = 8 - prefix_size;
-    const uint8_t prefix_mask = UINT8_MAX >> cut_bits;
+    const uint8_t prefix_mask = s_masked_right_bits_u8(prefix_size);
 
     if (integer < prefix_mask) {
         /* If the integer fits inside the specified number of bits but won't be all 1's, just write it */
@@ -244,6 +255,44 @@ struct aws_hpack_context {
         bool use_huffman;
         uint64_t length;
     } progress_string;
+
+    struct hpack_progress_entry {
+        enum {
+            HPACK_ENTRY_STATE_INIT,
+            /* Indexed header field: just 1 state. read index, find name and value at index */
+            HPACK_ENTRY_STATE_INDEXED,
+            /* Literal header field: name may be indexed OR literal, value is always literal */
+            HPACK_ENTRY_STATE_LITERAL_BEGIN,
+            HPACK_ENTRY_STATE_LITERAL_NAME_STRING,
+            HPACK_ENTRY_STATE_LITERAL_VALUE_STRING,
+            /* Dynamic table resize: just 1 state. read new size */
+            HPACK_ENTRY_STATE_DYNAMIC_TABLE_RESIZE,
+            /* Done */
+            HPACK_ENTRY_STATE_COMPLETE,
+        } state;
+
+        union {
+            struct {
+                uint64_t index;
+            } indexed;
+
+            struct hpack_progress_literal {
+                uint8_t prefix_size;
+                enum aws_h2_header_field_hpack_behavior hpack_behavior;
+                uint64_t name_index;
+                size_t name_length;
+            } literal;
+
+            struct {
+                uint64_t size;
+            } dynamic_table_resize;
+        } u;
+
+        enum aws_hpack_decode_type type;
+
+        /* Scratch holds header name and value while decoding */
+        struct aws_byte_buf scratch;
+    } progress_entry;
 };
 
 #define HPACK_LOGF(level, hpack, text, ...)                                                                            \
@@ -267,6 +316,7 @@ struct aws_hpack_context *aws_hpack_context_new(
     struct aws_huffman_symbol_coder *hpack_coder = hpack_get_coder();
     aws_huffman_encoder_init(&context->encoder, hpack_coder);
     aws_huffman_decoder_init(&context->decoder, hpack_coder);
+    aws_huffman_decoder_allow_growth(&context->decoder, true);
 
     /* #TODO Rewrite to be based on octet-size instead of list-size */
 
@@ -302,7 +352,14 @@ struct aws_hpack_context *aws_hpack_context_new(
         goto name_only_failed;
     }
 
+    if (aws_byte_buf_init(&context->progress_entry.scratch, allocator, s_hpack_decoder_scratch_initial_size)) {
+        goto scratch_failed;
+    }
+
     return context;
+
+scratch_failed:
+    aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup_name_only);
 
 name_only_failed:
     aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup);
@@ -327,14 +384,8 @@ void aws_hpack_context_destroy(struct aws_hpack_context *context) {
     }
     aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup);
     aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup_name_only);
+    aws_byte_buf_clean_up(&context->progress_entry.scratch);
     aws_mem_release(context->allocator, context);
-}
-
-void aws_hpack_context_reset_decode(struct aws_hpack_context *context) {
-    AWS_PRECONDITION(context);
-
-    AWS_ZERO_STRUCT(context->progress_integer);
-    AWS_ZERO_STRUCT(context->progress_string);
 }
 
 size_t aws_hpack_get_header_size(const struct aws_http_header *header) {
@@ -366,6 +417,16 @@ const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_contex
 
     /* Check dynamic table */
     return s_dynamic_table_get(context, index - s_static_header_table_size);
+}
+
+static const struct aws_http_header *s_get_header_u64(const struct aws_hpack_context *context, uint64_t index) {
+    if (index > SIZE_MAX) {
+        HPACK_LOG(ERROR, context, "Header index is absurdly large")
+        aws_raise_error(AWS_ERROR_INVALID_INDEX);
+        return NULL;
+    }
+
+    return aws_hpack_get_header(context, (size_t)index);
 }
 
 size_t aws_hpack_find_index(
@@ -621,7 +682,7 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
         HPACK_LOGF(
             ERROR,
             context,
-            "new_max_size %zu is greater than the supported max size (%zu)",
+            "New dynamic table max size %zu is greater than the supported max size (%zu)",
             new_max_size,
             s_hpack_dynamic_table_max_size);
         goto error;
@@ -646,23 +707,21 @@ error:
     return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
 }
 
-enum aws_hpack_decode_status aws_hpack_decode_integer(
+int aws_hpack_decode_integer(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_decode,
     uint8_t prefix_size,
-    uint64_t *integer) {
+    uint64_t *integer,
+    bool *complete) {
 
     AWS_PRECONDITION(context);
     AWS_PRECONDITION(to_decode);
     AWS_PRECONDITION(prefix_size <= 8);
     AWS_PRECONDITION(integer);
-    AWS_PRECONDITION(to_decode->len > 0);
 
-    const uint8_t cut_bits = 8 - prefix_size;
-    const uint8_t prefix_mask = UINT8_MAX >> cut_bits;
+    const uint8_t prefix_mask = s_masked_right_bits_u8(prefix_size);
 
     struct hpack_progress_integer *progress = &context->progress_integer;
-    enum aws_hpack_decode_status status = AWS_HPACK_DECODE_ONGOING;
 
     while (to_decode->len) {
         switch (progress->state) {
@@ -679,15 +738,11 @@ enum aws_hpack_decode_status aws_hpack_decode_integer(
                 *integer = byte;
 
                 if (byte != prefix_mask) {
-                    status = AWS_HPACK_DECODE_COMPLETE;
                     goto handle_complete;
                 }
 
                 progress->state = HPACK_INTEGER_STATE_VALUE;
-
-                /* Restart loop to make sure there's data available */
-                continue;
-            }
+            } break;
 
             case HPACK_INTEGER_STATE_VALUE: {
                 uint8_t byte = 0;
@@ -696,13 +751,12 @@ enum aws_hpack_decode_status aws_hpack_decode_integer(
 
                 uint64_t new_byte_value = (uint64_t)(byte & 127) << progress->bit_count;
                 if (*integer + new_byte_value < *integer) {
-                    goto overflow_detected;
+                    return aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
                 }
                 *integer += new_byte_value;
 
                 /* Check if we're done */
                 if ((byte & 128) == 0) {
-                    status = AWS_HPACK_DECODE_COMPLETE;
                     goto handle_complete;
                 }
 
@@ -712,23 +766,20 @@ enum aws_hpack_decode_status aws_hpack_decode_integer(
                 /* 7 Bits are expected to be used, so if we get to the point where any of
                  * those bits can't be used it's a decoding error */
                 if (progress->bit_count > 64 - 7) {
-                    goto overflow_detected;
+                    return aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
                 }
-            }
+            } break;
         }
     }
 
     /* Fell out of data loop, must need more data */
-    return AWS_HPACK_DECODE_ONGOING;
-
-overflow_detected:
-    aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
-    status = AWS_HPACK_DECODE_ERROR;
+    *complete = false;
+    return AWS_OP_SUCCESS;
 
 handle_complete:
-    /* Goto if done, or error */
     AWS_ZERO_STRUCT(context->progress_integer);
-    return status;
+    *complete = true;
+    return AWS_OP_SUCCESS;
 }
 
 size_t aws_hpack_get_encoded_length_string(
@@ -807,82 +858,320 @@ error:
     return AWS_OP_ERR;
 }
 
-enum aws_hpack_decode_status aws_hpack_decode_string(
+int aws_hpack_decode_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_decode,
-    struct aws_byte_buf *output) {
+    struct aws_byte_buf *output,
+    bool *complete) {
 
     AWS_PRECONDITION(context);
     AWS_PRECONDITION(to_decode);
     AWS_PRECONDITION(output);
-    AWS_PRECONDITION(to_decode->len > 0);
+    AWS_PRECONDITION(complete);
 
     struct hpack_progress_string *progress = &context->progress_string;
-    enum aws_hpack_decode_status status = AWS_HPACK_DECODE_ONGOING;
 
-    switch (progress->state) {
-        case HPACK_STRING_STATE_INIT: {
-            /* Do init stuff */
-            progress->state = HPACK_STRING_STATE_LENGTH;
-            progress->use_huffman = *to_decode->ptr >> 7;
-            aws_huffman_decoder_reset(&context->decoder);
-            /* fallthrough, since we didn't consume any data */
-        }
-        /* FALLTHRU */
-        case HPACK_STRING_STATE_LENGTH: {
-            status = aws_hpack_decode_integer(context, to_decode, 7, &progress->length);
-            if (status) {
-                goto handle_complete;
+    while (to_decode->len) {
+        switch (progress->state) {
+            case HPACK_STRING_STATE_INIT: {
+                /* Do init stuff */
+                progress->state = HPACK_STRING_STATE_LENGTH;
+                progress->use_huffman = *to_decode->ptr >> 7;
+                aws_huffman_decoder_reset(&context->decoder);
+                /* fallthrough, since we didn't consume any data */
             }
-            if (progress->length > SIZE_MAX) {
-                aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
-                status = AWS_HPACK_DECODE_ERROR;
-                goto handle_complete;
-            }
+            /* FALLTHRU */
+            case HPACK_STRING_STATE_LENGTH: {
+                bool length_complete = false;
+                if (aws_hpack_decode_integer(context, to_decode, 7, &progress->length, &length_complete)) {
+                    return AWS_OP_ERR;
+                }
 
-            /* If this was all of the data we had, return ONGOING */
-            if (!to_decode->len) {
-                return AWS_HPACK_DECODE_ONGOING;
-            }
-        }
-        /* FALLTHRU */
-        case HPACK_STRING_STATE_VALUE: {
-            /* Take either as much data as we need, or as we can */
-            size_t to_process = (size_t)progress->length;
-            bool will_finish = true;
-            if (to_process > to_decode->len) {
-                to_process = to_decode->len;
-                will_finish = false;
-            }
+                if (!length_complete) {
+                    goto handle_ongoing;
+                }
 
-            struct aws_byte_cursor value = aws_byte_cursor_advance(to_decode, to_process);
-
-            if (progress->use_huffman) {
-                if (aws_huffman_decode(&context->decoder, &value, output)) {
-                    status = AWS_HPACK_DECODE_ERROR;
+                if (progress->length == 0) {
                     goto handle_complete;
                 }
-            } else {
-                if (!aws_byte_buf_write_from_whole_cursor(output, value)) {
-                    aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-                    status = AWS_HPACK_DECODE_ERROR;
+
+                if (progress->length > SIZE_MAX) {
+                    return aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
+                }
+
+                progress->state = HPACK_STRING_STATE_VALUE;
+            } break;
+
+            case HPACK_STRING_STATE_VALUE: {
+                /* Take either as much data as we need, or as much as we can */
+                size_t to_process = (size_t)progress->length;
+                if (to_process > to_decode->len) {
+                    to_process = to_decode->len;
+                }
+                progress->length -= to_process;
+
+                struct aws_byte_cursor chunk = aws_byte_cursor_advance(to_decode, to_process);
+
+                if (progress->use_huffman) {
+                    if (aws_huffman_decode(&context->decoder, &chunk, output)) {
+                        HPACK_LOGF(ERROR, context, "Error from Huffman decoder: %s", aws_error_name(aws_last_error()));
+                        return AWS_OP_ERR;
+                    }
+
+                    /* Decoder should consume all bytes we feed it.
+                     * EOS (end-of-string) symbol could stop it early, but HPACK says to treat EOS as error. */
+                    if (chunk.len != 0) {
+                        HPACK_LOG(ERROR, context, "Huffman encoded end-of-string symbol is illegal");
+                        return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
+                    }
+                } else {
+                    if (aws_byte_buf_append_dynamic(output, &chunk)) {
+                        return AWS_OP_ERR;
+                    }
+                }
+
+                /* If whole length consumed, we're done */
+                if (progress->length == 0) {
+                    /* #TODO Validate any padding bits left over in final byte of string.
+                     * "A padding not corresponding to the most significant bits of the
+                     * code for the EOS symbol MUST be treated as a decoding error" */
+
+                    /* #TODO impose limits on string length */
+
                     goto handle_complete;
                 }
-            }
-
-            /* If whole length consumed, return complete */
-            if (will_finish) {
-                status = AWS_HPACK_DECODE_COMPLETE;
-                goto handle_complete;
-            }
+            } break;
         }
     }
 
+handle_ongoing:
     /* Fell out of to_decode loop, must still be in progress */
-    return AWS_HPACK_DECODE_ONGOING;
+    AWS_ASSERT(to_decode->len == 0);
+    *complete = false;
+    return AWS_OP_SUCCESS;
 
 handle_complete:
-    /* Goto if done, or error */
+    AWS_ASSERT(context->progress_string.length == 0);
     AWS_ZERO_STRUCT(context->progress_string);
-    return status;
+    *complete = true;
+    return AWS_OP_SUCCESS;
+}
+
+/* Implements RFC-7541 Section 6 - Binary Format */
+int aws_hpack_decode(
+    struct aws_hpack_context *context,
+    struct aws_byte_cursor *to_decode,
+    struct aws_hpack_decode_result *result) {
+
+    AWS_PRECONDITION(context);
+    AWS_PRECONDITION(to_decode);
+    AWS_PRECONDITION(result);
+
+    /* Run state machine until we decode a complete entry.
+     * Every state requires data, so we can simply loop until no more data available. */
+    while (to_decode->len) {
+        switch (context->progress_entry.state) {
+
+            case HPACK_ENTRY_STATE_INIT: {
+                /* Reset entry */
+                AWS_ZERO_STRUCT(context->progress_entry.u);
+                context->progress_entry.scratch.len = 0;
+
+                /* Determine next state by looking at first few bits of the next byte:
+                 * 1xxxxxxx: Indexed Header Field Representation
+                 * 01xxxxxx: Literal Header Field with Incremental Indexing
+                 * 001xxxxx: Dynamic Table Size Update
+                 * 0001xxxx: Literal Header Field Never Indexed
+                 * 0000xxxx: Literal Header Field without Indexing */
+                uint8_t first_byte = to_decode->ptr[0];
+                if (first_byte & (1 << 7)) {
+                    /* 1xxxxxxx: Indexed Header Field Representation */
+                    context->progress_entry.state = HPACK_ENTRY_STATE_INDEXED;
+
+                } else if (first_byte & (1 << 6)) {
+                    /* 01xxxxxx: Literal Header Field with Incremental Indexing */
+                    context->progress_entry.u.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE;
+                    context->progress_entry.u.literal.prefix_size = 6;
+                    context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
+
+                } else if (first_byte & (1 << 5)) {
+                    /* 001xxxxx: Dynamic Table Size Update */
+                    context->progress_entry.state = HPACK_ENTRY_STATE_DYNAMIC_TABLE_RESIZE;
+
+                } else if (first_byte & (1 << 4)) {
+                    /* 0001xxxx: Literal Header Field Never Indexed */
+                    context->progress_entry.u.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_FORWARD_SAVE;
+                    context->progress_entry.u.literal.prefix_size = 4;
+                    context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
+                } else {
+                    /* 0000xxxx: Literal Header Field without Indexing */
+                    context->progress_entry.u.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_SAVE;
+                    context->progress_entry.u.literal.prefix_size = 4;
+                    context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
+                }
+            } break;
+
+            /* RFC-7541 6.1. Indexed Header Field Representation.
+             * Decode one integer, which is an index into the table.
+             * Result is the header name and value stored there. */
+            case HPACK_ENTRY_STATE_INDEXED: {
+                bool complete = false;
+                uint64_t *index = &context->progress_entry.u.indexed.index;
+                if (aws_hpack_decode_integer(context, to_decode, 7, index, &complete)) {
+                    return AWS_OP_ERR;
+                }
+
+                if (!complete) {
+                    break;
+                }
+
+                const struct aws_http_header *header = s_get_header_u64(context, *index);
+                if (!header) {
+                    return AWS_OP_ERR;
+                }
+
+                result->type = AWS_HPACK_DECODE_T_HEADER_FIELD;
+                result->data.header_field.header = *header;
+                result->data.header_field.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE;
+                goto handle_complete;
+            } break;
+
+            /* RFC-7541 6.2. Literal Header Field Representation.
+             * We use multiple states to decode a literal...
+             * The header-name MAY come from the table and MAY be encoded as a string.
+             * The header-value is ALWAYS encoded as a string.
+             *
+             * This BEGIN state decodes one integer.
+             * If it's non-zero, then it's the index in the table where we'll get the header-name from.
+             * If it's zero, then we move to the HEADER_NAME state and decode header-name as a string instead */
+            case HPACK_ENTRY_STATE_LITERAL_BEGIN: {
+                struct hpack_progress_literal *literal = &context->progress_entry.u.literal;
+
+                bool index_complete = false;
+                if (aws_hpack_decode_integer(
+                        context, to_decode, literal->prefix_size, &literal->name_index, &index_complete)) {
+                    return AWS_OP_ERR;
+                }
+
+                if (!index_complete) {
+                    break;
+                }
+
+                if (literal->name_index == 0) {
+                    /* Index 0 means header-name is not in table. Need to decode header-name as a string instead */
+                    context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_NAME_STRING;
+                    break;
+                }
+
+                /* Otherwise we found index of header-name in table. */
+                const struct aws_http_header *header = s_get_header_u64(context, literal->name_index);
+                if (!header) {
+                    return AWS_OP_ERR;
+                }
+
+                /* Store the name in scratch. We don't just keep a pointer to it because it could be
+                 * evicted from the dynamic table later, when we save the literal. */
+                if (aws_byte_buf_append_dynamic(&context->progress_entry.scratch, &header->name)) {
+                    return AWS_OP_ERR;
+                }
+
+                /* Move on to decoding header-value.
+                 * Value will also decode into the scratch, so save where name ends. */
+                literal->name_length = header->name.len;
+                context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_VALUE_STRING;
+            } break;
+
+            /* We only end up in this state if header-name is encoded as string. */
+            case HPACK_ENTRY_STATE_LITERAL_NAME_STRING: {
+                bool string_complete = false;
+                if (aws_hpack_decode_string(context, to_decode, &context->progress_entry.scratch, &string_complete)) {
+                    return AWS_OP_ERR;
+                }
+
+                if (!string_complete) {
+                    break;
+                }
+
+                /* Done decoding name string! Move on to decoding the value string.
+                 * Value will also decode into the scratch, so save where name ends. */
+                context->progress_entry.u.literal.name_length = context->progress_entry.scratch.len;
+                context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_VALUE_STRING;
+            } break;
+
+            /* Final state for "literal" entries.
+             * Decode the header-value string, then deliver the results. */
+            case HPACK_ENTRY_STATE_LITERAL_VALUE_STRING: {
+                bool string_complete = false;
+                if (aws_hpack_decode_string(context, to_decode, &context->progress_entry.scratch, &string_complete)) {
+                    return AWS_OP_ERR;
+                }
+
+                if (!string_complete) {
+                    break;
+                }
+
+                /* Done decoding value string. Done decoding entry. */
+                struct hpack_progress_literal *literal = &context->progress_entry.u.literal;
+
+                /* Set up a header with name and value (which are packed one after the other in scratch) */
+                struct aws_http_header header;
+                header.value = aws_byte_cursor_from_buf(&context->progress_entry.scratch);
+                header.name = aws_byte_cursor_advance(&header.value, literal->name_length);
+
+                /* Save to table if necessary */
+                if (literal->hpack_behavior == AWS_H2_HEADER_BEHAVIOR_SAVE) {
+                    if (aws_hpack_insert_header(context, &header)) {
+                        return AWS_OP_ERR;
+                    }
+                }
+
+                result->type = AWS_HPACK_DECODE_T_HEADER_FIELD;
+                result->data.header_field.header = header;
+                result->data.header_field.hpack_behavior = literal->hpack_behavior;
+                goto handle_complete;
+            } break;
+
+            /* RFC-7541 6.3. Dynamic Table Size Update
+             * Read one integer, which is the new maximum size for the dynamic table. */
+            case HPACK_ENTRY_STATE_DYNAMIC_TABLE_RESIZE: {
+                uint64_t *size64 = &context->progress_entry.u.dynamic_table_resize.size;
+                bool size_complete = false;
+                if (aws_hpack_decode_integer(context, to_decode, 5, size64, &size_complete)) {
+                    return AWS_OP_ERR;
+                }
+
+                if (!size_complete) {
+                    break;
+                }
+
+                if (*size64 > SIZE_MAX) {
+                    HPACK_LOG(ERROR, context, "Dynamic table update size is absurdly large");
+                    return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
+                }
+                size_t size = *size64;
+
+                HPACK_LOGF(TRACE, context, "Dynamic table size update %zu", size);
+                if (aws_hpack_resize_dynamic_table(context, size)) {
+                    return AWS_OP_ERR;
+                }
+
+                result->type = AWS_HPACK_DECODE_T_DYNAMIC_TABLE_RESIZE;
+                result->data.dynamic_table_resize.size = size;
+                goto handle_complete;
+            } break;
+
+            default: {
+                AWS_ASSERT(0 && "invalid state");
+            } break;
+        }
+    }
+
+    AWS_ASSERT(to_decode->len == 0);
+    result->type = AWS_HPACK_DECODE_T_ONGOING;
+    return AWS_OP_SUCCESS;
+
+handle_complete:
+    AWS_ASSERT(result->type != AWS_HPACK_DECODE_T_ONGOING);
+    context->progress_entry.state = HPACK_ENTRY_STATE_INIT;
+    return AWS_OP_SUCCESS;
 }

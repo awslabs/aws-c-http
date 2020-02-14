@@ -28,9 +28,6 @@
     AWS_LOGF_##level(AWS_LS_HTTP_CONNECTION, "id=%p: " text, (void *)(connection), __VA_ARGS__)
 #define CONNECTION_LOG(level, connection, text) CONNECTION_LOGF(level, connection, "%s", text)
 
-/* Stream IDs are only 31 bits [5.1.1] */
-static const uint32_t MAX_STREAM_ID = UINT32_MAX >> 1;
-
 static int s_handler_process_read_message(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
@@ -167,15 +164,14 @@ static struct aws_h2_connection *s_connection_new(
     connection->base.channel_handler.impl = connection;
     connection->base.http_version = AWS_HTTP_VERSION_2;
     connection->base.initial_window_size = initial_window_size;
+    /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
+    aws_atomic_init_int(&connection->base.next_stream_id, (server ? 2 : 1));
 
     aws_channel_task_init(
         &connection->cross_thread_work_task, s_cross_thread_work_task, connection, "HTTP/2 cross-thread work");
 
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
-
-    /* Init the next stream id (server must use odd ids, client even [RFC 7540 5.1.1])*/
-    connection->synced_data.next_stream_id = (server ? 2 : 1);
 
     connection->synced_data.is_open = true;
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
@@ -218,6 +214,7 @@ static struct aws_h2_connection *s_connection_new(
 
 error:
     s_handler_destroy(&connection->base.channel_handler);
+
     return NULL;
 }
 
@@ -292,7 +289,8 @@ static void s_stream_complete(struct aws_h2_stream *stream, int error_code) {
 static void s_activate_stream(struct aws_h2_connection *connection, struct aws_h2_stream *stream) {
     /* #TODO: don't exceed peer's max-concurrent-streams setting */
 
-    if (aws_hash_table_put(&connection->thread_data.active_streams_map, (void *)(size_t)stream->id, stream, NULL)) {
+    if (aws_hash_table_put(
+            &connection->thread_data.active_streams_map, (void *)(size_t)stream->base.id, stream, NULL)) {
         goto error;
     }
 
@@ -334,18 +332,6 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
     /* #TODO: process stuff from other API calls (ex: window-updates) */
 }
 
-/* Set ID for new stream. Lock must be held while calling this. */
-static int s_acquire_next_stream_id(struct aws_h2_connection *connection, uint32_t *out_stream_id) {
-    if (AWS_UNLIKELY(connection->synced_data.next_stream_id > MAX_STREAM_ID)) {
-        CONNECTION_LOG(ERROR, connection, "Connection exhausted all possible stream IDs.");
-        return aws_raise_error(AWS_ERROR_HTTP_STREAM_IDS_EXHAUSTED);
-    }
-
-    *out_stream_id = connection->synced_data.next_stream_id;
-    connection->synced_data.next_stream_id += 2;
-    return AWS_OP_SUCCESS;
-}
-
 static struct aws_http_stream *s_connection_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options) {
@@ -372,11 +358,6 @@ static struct aws_http_stream *s_connection_make_request(
 
         if (connection->synced_data.new_stream_error_code) {
             new_stream_error_code = connection->synced_data.new_stream_error_code;
-            goto unlock;
-        }
-
-        if (s_acquire_next_stream_id(connection, &stream->id)) {
-            new_stream_error_code = aws_last_error();
             goto unlock;
         }
 

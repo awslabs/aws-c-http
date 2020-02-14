@@ -74,7 +74,8 @@ enum boot_step {
     BOOT_STEP_HTTP_CONNECT = 0x4000000, /* Use values that don't overlap with another aws-c-xyz library */
     BOOT_STEP_HTTP_CONNECT_COMPLETE,
     BOOT_STEP_REQUEST_NEW,
-    BOOT_STEP_REQUEST_COMPLETE,
+    BOOT_STEP_HEADERS,
+    BOOT_STEP_HEADERS_DONE,
     /* If the response validation steps fail, we expect a specific error */
     BOOT_STEP_VALIDATE_RESPONSE_STATUS = AWS_ERROR_HTTP_WEBSOCKET_UPGRADE_FAILURE,
     BOOT_STEP_WEBSOCKET_NEW = 0x50000000, /* Back to using made-up error-codes */
@@ -374,6 +375,11 @@ static void s_on_websocket_shutdown(struct aws_websocket *websocket, int error_c
     s_tester.websocket_shutdown_error_code = error_code;
 }
 
+static void s_complete_http_stream_and_connection(int error_code) {
+    s_tester.http_stream_on_complete(s_mock_stream, error_code, s_tester.http_stream_user_data);
+    s_tester.http_connect_shutdown_callback(s_mock_http_connection, error_code, s_tester.http_stream_user_data);
+}
+
 /* Calls aws_websocket_client_connect(), and drives the async call to its conclusions.
  * Reports the reason for the failure via `out_error_code`. */
 static int s_drive_websocket_connect(int *out_error_code) {
@@ -433,29 +439,38 @@ static int s_drive_websocket_connect(int *out_error_code) {
     /* Bootstrap should have created new stream */
     ASSERT_TRUE(s_tester.http_stream_new_called_successfully);
 
-    /* Invoke stream response callbacks.
-     * We don't check for HTTP close after each of these callbacks because HTTP connection is guaranteed to fire the
-     * stream-complete callbacks before the HTTP-connection-closed callback */
-    s_tester.http_stream_on_response_headers(
-        s_mock_stream,
-        AWS_HTTP_HEADER_BLOCK_MAIN,
-        s_tester.handshake_response_headers,
-        s_tester.num_handshake_response_headers,
-        s_tester.http_stream_user_data);
-
-    if (s_tester.http_stream_on_response_header_block_done) {
-        s_tester.http_stream_on_response_header_block_done(s_mock_stream, false, s_tester.http_stream_user_data);
+    /* HTTP connection could fail before any headers arrive */
+    if (s_tester.fail_at_step == BOOT_STEP_HEADERS) {
+        s_complete_http_stream_and_connection(BOOT_STEP_HEADERS);
+        goto finishing_checks;
     }
 
-    if (s_tester.fail_at_step == BOOT_STEP_REQUEST_COMPLETE) {
-        s_tester.http_stream_on_complete(s_mock_stream, BOOT_STEP_REQUEST_COMPLETE, s_tester.http_stream_user_data);
-    } else {
-        s_tester.http_stream_on_complete(s_mock_stream, AWS_ERROR_SUCCESS, s_tester.http_stream_user_data);
+    /* Headers arrive, HTTP connection ends if callback returns error */
+    if (s_tester.http_stream_on_response_headers(
+            s_mock_stream,
+            AWS_HTTP_HEADER_BLOCK_MAIN,
+            s_tester.handshake_response_headers,
+            s_tester.num_handshake_response_headers,
+            s_tester.http_stream_user_data)) {
+
+        s_complete_http_stream_and_connection(aws_last_error());
+        goto finishing_checks;
+    }
+
+    /* HTTP connection could fail before headers are done */
+    if (s_tester.fail_at_step == BOOT_STEP_HEADERS_DONE) {
+        s_complete_http_stream_and_connection(BOOT_STEP_HEADERS_DONE);
+        goto finishing_checks;
+    }
+
+    /* Headers are done, HTTP connection ends if error returned */
+    if (s_tester.http_stream_on_response_header_block_done(s_mock_stream, false, s_tester.http_stream_user_data)) {
+        s_complete_http_stream_and_connection(aws_last_error());
+        goto finishing_checks;
     }
 
     if (s_tester.http_connection_close_called) {
-        s_tester.http_connect_shutdown_callback(
-            s_mock_http_connection, AWS_OP_SUCCESS, s_tester.http_connect_user_data);
+        s_complete_http_stream_and_connection(AWS_OP_SUCCESS);
         goto finishing_checks;
     }
 
@@ -470,12 +485,11 @@ static int s_drive_websocket_connect(int *out_error_code) {
 
     /* Invoke HTTP shutdown callback */
     if (s_tester.fail_at_step == BOOT_STEP_HTTP_SHUTDOWN) {
-        s_tester.http_connect_shutdown_callback(
-            s_mock_http_connection, BOOT_STEP_HTTP_SHUTDOWN, s_tester.http_connect_user_data);
+        s_complete_http_stream_and_connection(BOOT_STEP_HTTP_SHUTDOWN);
         goto finishing_checks;
     }
 
-    s_tester.http_connect_shutdown_callback(s_mock_http_connection, AWS_ERROR_SUCCESS, s_tester.http_connect_user_data);
+    s_complete_http_stream_and_connection(AWS_OP_SUCCESS);
 
 finishing_checks:
 
@@ -566,8 +580,12 @@ TEST_CASE(websocket_boot_fail_at_new_request) {
     return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_REQUEST_NEW);
 }
 
-TEST_CASE(websocket_boot_fail_at_response_error) {
-    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_REQUEST_COMPLETE);
+TEST_CASE(websocket_boot_fail_before_response_headers) {
+    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_HEADERS);
+}
+
+TEST_CASE(websocket_boot_fail_before_response_headers_done) {
+    return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_HEADERS);
 }
 
 TEST_CASE(websocket_boot_fail_at_response_status) {
