@@ -119,6 +119,12 @@ int aws_http_connection_manager_release_connection(
     struct aws_http_connection_manager *manager,
     struct aws_http_connection *connection);
 
+/*
+ * Returns number of open connections for the manager.
+ */ 
+AWS_HTTP_API
+int aws_http_connection_manager_get_open_connection_count(struct aws_http_connection_manager *manager);
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_CONNECTION_MANAGER_H */
