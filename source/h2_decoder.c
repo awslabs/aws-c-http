@@ -250,9 +250,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                 goto handle_error;
             }
 
-            AWS_ASSERT(
-                (bytes_required == 0 || prev_data_len - data->len >= bytes_required) &&
-                "Decoder state requested more data than it used");
+            AWS_ASSERT(prev_data_len - data->len >= bytes_required && "Decoder state requested more data than it used");
         } else {
             /* Otherwise, state requires a minimum amount of data and we have to use the scratch */
             size_t bytes_to_read = bytes_required - decoder->scratch.len;
@@ -523,18 +521,16 @@ static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cur
     DECODER_LOGF(
         TRACE,
         decoder,
-        "Done decoding frame header, beginning to process body of frame (type=%s stream id=%" PRIu32
-        " payload len=%" PRIu32 ")",
+        "Done decoding frame header (type=%s stream-id=%" PRIu32 " payload-len=%" PRIu32 "), moving on to payload",
         aws_h2_frame_type_to_str(frame_type),
         decoder->frame_in_progress.stream_id,
         decoder->frame_in_progress.payload_len);
 
     if (is_padded) {
-
         /* Read padding length if necessary */
         return s_decoder_switch_state(decoder, &s_state_padding_len);
-    } else if (decoder->frame_in_progress.flags.priority) {
 
+    } else if (decoder->frame_in_progress.flags.priority) {
         /* Read the stream dependency and weight if PRIORITY is set */
         return s_decoder_switch_state(decoder, &s_state_priority_block);
     }
@@ -624,7 +620,9 @@ static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte
 
     if (decoder->frame_in_progress.payload_len == 0) {
         /* If frame had END_STREAM flag, alert user now */
-        DECODER_CALL_VTABLE_STREAM(decoder, on_end_stream);
+        if (decoder->frame_in_progress.flags.end_stream) {
+            DECODER_CALL_VTABLE_STREAM(decoder, on_end_stream);
+        }
 
         /* Process padding if necessary, otherwise we're done! */
         return s_decoder_switch_state(decoder, &s_state_padding);
@@ -923,10 +921,10 @@ static int s_state_fn_header_block_loop(struct aws_h2_decoder *decoder, struct a
     /* If we're out of payload data, handle frame complete */
     if (decoder->frame_in_progress.payload_len == 0) {
 
-        DECODER_LOG(TRACE, decoder, "Done decoding header block");
-
         /* If this is the end of the header-block, invoke callback and clear header_block_in_progress */
         if (decoder->frame_in_progress.flags.end_headers) {
+            DECODER_LOG(TRACE, decoder, "Done decoding header block");
+
             if (decoder->header_block_in_progress.is_push_promise) {
                 DECODER_CALL_VTABLE_STREAM(decoder, on_push_promise_end);
             } else {
@@ -939,16 +937,19 @@ static int s_state_fn_header_block_loop(struct aws_h2_decoder *decoder, struct a
             }
 
             AWS_ZERO_STRUCT(decoder->header_block_in_progress);
+
+        } else {
+            DECODER_LOG(TRACE, decoder, "Done decoding header block fragment, expecting CONTINUATION frames");
         }
 
-        /* Finish the fight */
+        /* Finish this frame */
         return s_decoder_switch_state(decoder, &s_state_padding);
     }
 
     DECODER_LOGF(
         TRACE,
         decoder,
-        "Decoding header, %" PRIu32 " bytes remaining in payload",
+        "Decoding header-block entry, %" PRIu32 " bytes remaining in payload",
         decoder->frame_in_progress.payload_len);
 
     return s_decoder_switch_state(decoder, &s_state_header_block_entry);
@@ -984,14 +985,23 @@ static int s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct 
     decoder->frame_in_progress.payload_len -= (uint32_t)bytes_consumed;
 
     if (result.type == AWS_HPACK_DECODE_T_ONGOING) {
-        /* Error if there's an incomplete entry at the end of a header-block. */
-        if (decoder->frame_in_progress.payload_len == 0 && decoder->frame_in_progress.flags.end_headers) {
-            DECODER_LOG(ERROR, decoder, "Incomplete header field");
+        /* HPACK decoder hasn't finished entry */
+
+        if (decoder->frame_in_progress.payload_len > 0) {
+            /* More payload is coming. Remain in state until it arrives */
+            DECODER_LOG(TRACE, decoder, "Header-block entry partially decoded, waiting for more data.");
+            return AWS_OP_SUCCESS;
+        }
+
+        if (decoder->frame_in_progress.flags.end_headers) {
+            /* Error if we've reached the end of the header-block with a partially decoded entry */
+            DECODER_LOG(ERROR, decoder, "Compression error: incomplete entry at end of header-block");
             return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
         }
 
-        /* HPACK decoder hasn't finished entry yet. Remain in this state until more data arrives */
-        return AWS_OP_SUCCESS;
+        /* CONTINUATION frames are expected, we'll resume decoding this entry when we get them. */
+        DECODER_LOG(TRACE, decoder, "Header-block entry partially decoded, resumes in CONTINUATION frame");
+        return s_decoder_switch_state(decoder, &s_state_header_block_loop);
     }
 
     /* Finished decoding HPACK entry! */
@@ -1009,6 +1019,14 @@ static int s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct 
 
     if (result.type == AWS_HPACK_DECODE_T_HEADER_FIELD) {
         const struct aws_hpack_decoded_header_field *field = &result.data.header_field;
+
+        DECODER_LOGF(
+            TRACE,
+            decoder,
+            "Decoded header field: \"" PRInSTR ": " PRInSTR "\"",
+            AWS_BYTE_CURSOR_PRI(field->header.name),
+            AWS_BYTE_CURSOR_PRI(field->header.value));
+
         if (decoder->header_block_in_progress.is_push_promise) {
             DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, &field->header, field->hpack_behavior);
         } else {
