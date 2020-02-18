@@ -91,7 +91,8 @@ DEFINE_STATE(frame_headers, 0);
 DEFINE_STATE(frame_priority, 0);
 DEFINE_STATE(frame_rst_stream, 4);
 DEFINE_STATE(frame_settings_begin, 0);
-DEFINE_STATE(frame_settings, 6);
+DEFINE_STATE(frame_settings_loop, 0);
+DEFINE_STATE(frame_settings_i, 6);
 DEFINE_STATE(frame_push_promise, 4);
 DEFINE_STATE(frame_ping, 8);
 DEFINE_STATE(frame_goaway, 8);
@@ -306,11 +307,12 @@ handle_error:
 
 static int s_decoder_switch_state(struct aws_h2_decoder *decoder, const struct decoder_state *state) {
     /* Ensure payload is big enough to enter next state.
-     * If this fails, then the payload length we received is just too small for this frame type */
+     * If this fails, then the payload length we received is too small for this frame type.
+     * (ex: a RST_STREAM frame with < 4 bytes) */
     if (decoder->frame_in_progress.payload_len < state->bytes_required) {
         DECODER_LOGF(
             ERROR, decoder, "%s payload is too small", aws_h2_frame_type_to_str(decoder->frame_in_progress.type));
-        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_FRAME_SIZE);
     }
 
     DECODER_LOGF(TRACE, decoder, "Moving from state '%s' to '%s'", decoder->state->name, state->name);
@@ -325,8 +327,14 @@ static int s_decoder_switch_to_frame_state(struct aws_h2_decoder *decoder) {
 }
 
 static int s_decoder_reset_state(struct aws_h2_decoder *decoder) {
-    AWS_FATAL_ASSERT(decoder->frame_in_progress.payload_len == 0);
-    AWS_FATAL_ASSERT(decoder->frame_in_progress.padding_len == 0);
+    /* Ensure we've consumed all payload (and padding) when state machine finishes this frame.
+     * If this fails, the payload length we received is too large for this frame type.
+     * (ex: a RST_STREAM frame with > 4 bytes) */
+    if (decoder->frame_in_progress.payload_len > 0 || decoder->frame_in_progress.padding_len > 0) {
+        DECODER_LOGF(
+            ERROR, decoder, "%s frame payload is too large", aws_h2_frame_type_to_str(decoder->frame_in_progress.type));
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_FRAME_SIZE);
+    }
 
     decoder->scratch.len = 0;
     decoder->state = &s_state_header;
@@ -668,11 +676,11 @@ static int s_state_fn_frame_rst_stream(struct aws_h2_decoder *decoder, struct aw
 
     DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_rst_stream, error_code);
 
-    return AWS_OP_SUCCESS;
+    return s_decoder_reset_state(decoder);
 }
 
-/* A SETTINGS frame maybe contain any number of settings.
- * We consume each 6-byte setting in the next state. */
+/* A SETTINGS frame may contain any number of 6-byte entries.
+ * This state consumes no data, but sends us into the appropriate next state */
 static int s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
@@ -693,23 +701,24 @@ static int s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struc
         return s_decoder_reset_state(decoder);
     }
 
-    if (decoder->frame_in_progress.payload_len % s_setting_block_size != 0) {
-        /* A SETTINGS frame with a length other than a multiple of 6 octets MUST be
-         * treated as a connection error (Section 5.4.1) of type FRAME_SIZE_ERROR */
-        DECODER_LOGF(
-            ERROR,
-            decoder,
-            "Settings frame payload length is %" PRIu32 ", but it must be divisible by %" PRIu8,
-            decoder->frame_in_progress.payload_len,
-            s_setting_block_size);
-        return aws_raise_error(AWS_ERROR_HTTP_INVALID_FRAME_SIZE);
-    }
-
     /* Report start of non-ACK settings frame */
     DECODER_CALL_VTABLE(decoder, on_settings_begin);
 
-    /* If we've made it this far, we have a non-ACK settings frame with a valid payload length */
-    return s_decoder_switch_state(decoder, &s_state_frame_settings);
+    /* Enter looping states until all entries are consumed. */
+    return s_decoder_switch_state(decoder, &s_state_frame_settings_loop);
+}
+
+/* Check if we're done consuming settings */
+static int s_state_fn_frame_settings_loop(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+    (void)input;
+
+    if (decoder->frame_in_progress.payload_len == 0) {
+        /* Huzzah, done with the frame */
+        DECODER_CALL_VTABLE(decoder, on_settings_end);
+        return s_decoder_reset_state(decoder);
+    }
+
+    return s_decoder_switch_state(decoder, &s_state_frame_settings_i);
 }
 
 /* Each run through this state consumes one 6-byte setting.
@@ -720,36 +729,27 @@ static int s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struc
  *  |                        Value (32)                             |
  *  +---------------------------------------------------------------+
  */
-static int s_state_fn_frame_settings(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_state_fn_frame_settings_i(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     AWS_ASSERT(input->len >= 6);
 
-    /* Truck through the list until we run out of space */
-    while (input->len >= s_setting_block_size) {
-        uint16_t id = 0;
-        uint32_t value = 0;
+    uint16_t id = 0;
+    uint32_t value = 0;
 
-        bool succ = aws_byte_cursor_read_be16(input, &id);
-        AWS_ASSERT(succ);
-        (void)succ;
+    bool succ = aws_byte_cursor_read_be16(input, &id);
+    AWS_ASSERT(succ);
+    (void)succ;
 
-        succ = aws_byte_cursor_read_be32(input, &value);
-        AWS_ASSERT(succ);
-        (void)succ;
+    succ = aws_byte_cursor_read_be32(input, &value);
+    AWS_ASSERT(succ);
+    (void)succ;
 
-        DECODER_CALL_VTABLE_ARGS(decoder, on_settings_i, id, value);
+    DECODER_CALL_VTABLE_ARGS(decoder, on_settings_i, id, value);
 
-        /* Update payload len */
-        decoder->frame_in_progress.payload_len -= s_setting_block_size;
-    }
+    /* Update payload len */
+    decoder->frame_in_progress.payload_len -= s_setting_block_size;
 
-    if (decoder->frame_in_progress.payload_len == 0) {
-        /* Huzzah, done with the frame */
-        DECODER_CALL_VTABLE(decoder, on_settings_end);
-        return s_decoder_reset_state(decoder);
-    }
-
-    return AWS_OP_SUCCESS;
+    return s_decoder_switch_state(decoder, &s_state_frame_settings_loop);
 }
 
 /* Read 4-byte Promised Stream ID
@@ -994,12 +994,14 @@ static int s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct 
         }
 
         if (decoder->frame_in_progress.flags.end_headers) {
-            /* Error if we've reached the end of the header-block with a partially decoded entry */
+            /* Reached end of the frame's payload, and this frame ends the header-block.
+             * Error if we ended up with a partially decoded entry. */
             DECODER_LOG(ERROR, decoder, "Compression error: incomplete entry at end of header-block");
             return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
         }
 
-        /* CONTINUATION frames are expected, we'll resume decoding this entry when we get them. */
+        /* Reached end of this frame's payload, but CONTINUATION frames are expected to arrive.
+         * We'll resume decoding this entry when we get them. */
         DECODER_LOG(TRACE, decoder, "Header-block entry partially decoded, resumes in CONTINUATION frame");
         return s_decoder_switch_state(decoder, &s_state_header_block_loop);
     }

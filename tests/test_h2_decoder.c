@@ -40,7 +40,7 @@ struct frame {
     bool end_stream;
     uint32_t error_code;
     uint32_t promised_stream_id;
-    bool ping_ack;
+    bool ack;
     uint32_t goaway_last_stream_id;
     uint32_t goaway_debug_data_remaining;
     uint8_t ping_opaque_data[AWS_H2_PING_DATA_SIZE];
@@ -145,7 +145,7 @@ static int s_decoder_on_headers_i(
     /* validate */
     ASSERT_INT_EQUALS(AWS_H2_FRAME_T_HEADERS, frame->type);
     ASSERT_FALSE(frame->finished);
-    ASSERT_INT_EQUALS(frame->stream_id, stream_id);
+    ASSERT_UINT_EQUALS(frame->stream_id, stream_id);
 
     /* Stash header strings in frame->data.
      * DO NOT resize buffer or pointers will get messed up */
@@ -200,12 +200,71 @@ static int s_decoder_on_end_stream(uint32_t stream_id, void *userdata) {
     return AWS_OP_SUCCESS;
 }
 
+static int s_decoder_on_rst_stream(uint32_t stream_id, uint32_t error_code, void *userdata) {
+    struct fixture *fixture = userdata;
+    struct frame *frame;
+
+    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_RST_STREAM, stream_id, &frame));
+
+    /* Stash data*/
+    frame->error_code = error_code;
+
+    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_RST_STREAM, stream_id));
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_settings_begin(void *userdata) {
+    struct fixture *fixture = userdata;
+    struct frame *frame;
+    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_SETTINGS, 0, &frame));
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_settings_i(uint16_t setting_id, uint32_t value, void *userdata) {
+    struct fixture *fixture = userdata;
+    struct frame *frame = s_latest_frame(fixture);
+
+    /* Validate */
+    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_SETTINGS, frame->type);
+    ASSERT_FALSE(frame->finished);
+
+    /* Stash setting */
+    struct aws_h2_frame_setting setting = {setting_id, value};
+    ASSERT_SUCCESS(aws_array_list_push_back(&frame->settings, &setting));
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_settings_end(void *userdata) {
+    struct fixture *fixture = userdata;
+    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_SETTINGS, 0));
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_settings_ack(void *userdata) {
+    struct fixture *fixture = userdata;
+    struct frame *frame;
+
+    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/, &frame));
+
+    /* Stash data*/
+    frame->ack = true;
+
+    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
+    return AWS_OP_SUCCESS;
+}
+
 static struct aws_h2_decoder_vtable s_decoder_vtable = {
     .on_headers_begin = s_decoder_on_headers_begin,
     .on_headers_i = s_decoder_on_headers_i,
     .on_headers_end = s_decoder_on_headers_end,
     .on_data = s_decoder_on_data,
     .on_end_stream = s_decoder_on_end_stream,
+    .on_rst_stream = s_decoder_on_rst_stream,
+    .on_settings_begin = s_decoder_on_settings_begin,
+    .on_settings_i = s_decoder_on_settings_i,
+    .on_settings_end = s_decoder_on_settings_end,
+    .on_settings_ack = s_decoder_on_settings_ack,
 };
 
 /************************** END DECODER CALLBACKS *****************************/
@@ -499,7 +558,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_payload_too_small_for_pad_length) {
     /* clang-format on */
 
     ASSERT_ERROR(
-        AWS_ERROR_HTTP_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
     return AWS_OP_SUCCESS;
 }
 
@@ -667,7 +726,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_headers_ignores_unknown_flags) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_headers_payload_too_small_for_padding) {
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_headers_payload_too_small_for_padding) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -688,12 +747,12 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_headers_payload_too_small_for_padding) {
 
     /* Decode */
     ASSERT_ERROR(
-        AWS_ERROR_HTTP_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_headers_payload_too_small_for_priority) {
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_headers_payload_too_small_for_priority) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -714,7 +773,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_headers_payload_too_small_for_priority) 
 
     /* Decode */
     ASSERT_ERROR(
-        AWS_ERROR_HTTP_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -962,7 +1021,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_continuation_frame_expected) {
 
 /* Once a header-block starts, it's illegal for any frame but a CONTINUATION on that same stream to arrive.
  * This test sends a different stream-id next */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_continuation_same_stream_expected) {
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_continuation_frame_same_stream_expected) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -993,8 +1052,379 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_continuation_same_stream_expected) {
     return AWS_OP_SUCCESS;
 }
 
+/* It's an error for a header-block to end with a partially decoded header-field */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_partial_header) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* HEADERS FRAME*/
+        0x00, 0x00, 0x03,           /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,     /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS, /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* PAYLOAD */
+        0x48, 0x03, '3',            /* ":status: 302" - Note that final 2 characters are not encoded */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_ERROR(AWS_ERROR_HTTP_COMPRESSION, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Ensure that random HPACK decoding errors are reported as ERROR_COMPRESSION */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_bad_hpack_data) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* HEADERS FRAME*/
+        0x00, 0x00, 32,             /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,     /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS, /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* PAYLOAD */
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, /* indexed header field, with index bigger than 64bits */
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_ERROR(AWS_ERROR_HTTP_COMPRESSION, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Test PRIORITY frame */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_priority) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x05,           /* Length (24) */
+        AWS_H2_FRAME_T_PRIORITY,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* PRIORITY */
+        0x81, 0x23, 0x45, 0x67,     /* Exclusive (1) | Stream Dependency (31) */
+        0x09,                       /* Weight (8)                             */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Our implementation currently chooses to ignore PRIORITY frames, so no callbacks should have fired */
+    ASSERT_UINT_EQUALS(0, aws_array_list_length(&fixture->frames));
+    return AWS_OP_SUCCESS;
+}
+
+/* Unknown flags should be ignored. PRIORITY frames don't have any flags. */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_priority_ignores_unknown_flags) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x05,           /* Length (24) */
+        AWS_H2_FRAME_T_PRIORITY,    /* Type (8) */
+        0xFF,                       /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* PRIORITY */
+        0x81, 0x23, 0x45, 0x67,     /* Exclusive (1) | Stream Dependency (31) */
+        0x09,                       /* Weight (8)                             */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Our implementation currently chooses to ignore PRIORITY frames, so no callbacks should have fired */
+    ASSERT_UINT_EQUALS(0, aws_array_list_length(&fixture->frames));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test PRIORITY frame */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_priority_payload_too_small) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x04,           /* Length (24) */
+        AWS_H2_FRAME_T_PRIORITY,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* PRIORITY */
+        0x81, 0x23, 0x45, 0x67,     /* Exclusive (1) | Stream Dependency (31) */
+                                    /* Weight (8)                             */
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Test PRIORITY frame */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_priority_payload_too_large) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x06,           /* Length (24) */
+        AWS_H2_FRAME_T_PRIORITY,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* PRIORITY */
+        0x81, 0x23, 0x45, 0x67,     /* Exclusive (1) | Stream Dependency (31) */
+        0x09,                       /* Weight (8)                             */
+        0x00,                       /* TOO MUCH PAYLOAD*/
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Test RST_STREAM frame */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_rst_stream) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x04,           /* Length (24) */
+        AWS_H2_FRAME_T_RST_STREAM,  /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* RST_STREAM */
+        0xFF, 0xEE, 0xDD, 0xCC,     /* Error Code (32) */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_RST_STREAM, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(0xFFEEDDCC, frame->error_code);
+    return AWS_OP_SUCCESS;
+}
+
+/* Unknown flags should be ignored. RST_STREAM frame doesn't support any flags */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_rst_stream_ignores_unknown_flags) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x04,           /* Length (24) */
+        AWS_H2_FRAME_T_RST_STREAM,  /* Type (8) */
+        0xFF,                       /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* RST_STREAM */
+        0xFF, 0xEE, 0xDD, 0xCC,     /* Error Code (32) */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_RST_STREAM, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(0xFFEEDDCC, frame->error_code);
+    return AWS_OP_SUCCESS;
+}
+
+/* Payload must be 4 bytes exactly */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_rst_stream_payload_too_small) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x03,           /* Length (24) */
+        AWS_H2_FRAME_T_RST_STREAM,  /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* RST_STREAM */
+        0xFF, 0xEE, 0xDD,           /* Error Code (32) <-- missing one byte */
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Payload must be 4 bytes exactly */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_rst_stream_payload_too_large) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x05,           /* Length (24) */
+        AWS_H2_FRAME_T_RST_STREAM,  /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* RST_STREAM */
+        0xFF, 0xEE, 0xDD, 0xCC,     /* Error Code (32) */
+        0x00,                       /* TOO MUCH PAYLOAD */
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Test SETTINGS frame */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 12,             /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* SETTINGS */
+        0x00, 0x05,                 /* Identifier (16) */
+        0x00, 0xFF, 0xFF, 0xFF,     /* Value (32) */
+        0x00, 0x02,                 /* Identifier (16) */
+        0x00, 0x00, 0x00, 0x01,     /* Value (32) */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate. */
+    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
+    ASSERT_FALSE(frame->ack);
+    ASSERT_UINT_EQUALS(2, aws_array_list_length(&frame->settings));
+
+    struct aws_h2_frame_setting setting;
+    aws_array_list_get_at(&frame->settings, &setting, 0);
+    ASSERT_UINT_EQUALS(0x00005, setting.id);
+    ASSERT_UINT_EQUALS(0x00FFFFFF, setting.value);
+
+    aws_array_list_get_at(&frame->settings, &setting, 1);
+    ASSERT_UINT_EQUALS(0x00002, setting.id);
+    ASSERT_UINT_EQUALS(0x00000001, setting.value);
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Test SETTINGS frame */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_empty) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x00,           /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* SETTINGS */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate. */
+    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
+    ASSERT_FALSE(frame->ack);
+    ASSERT_UINT_EQUALS(0, aws_array_list_length(&frame->settings));
+
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_ack) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x00,           /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        AWS_H2_FRAME_F_ACK,         /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* SETTINGS */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate. */
+    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
+    ASSERT_TRUE(frame->ack);
+    ASSERT_UINT_EQUALS(0, aws_array_list_length(&frame->settings));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Frames of unknown type must be ignored */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_unknown_frame_type_ignored) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* UNKNOWN FRAME WITHOUT FLAGS OR STREAM-ID */
+        0x00, 0x00, 0x04,           /* Length (24) */
+        0xFF,                       /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        0xFF, 0xFF, 0xFF, 0xFF,     /* Payload (*) */
+
+        /* UNKNOWN FRAME WITH FLAGS AND STREAM-ID */
+        0x00, 0x00, 0x04,           /* Length (24) */
+        0xFF,                       /* Type (8) */
+        0xFF,                       /* Flags (8) */
+        0xFF, 0xFF, 0xFF, 0xFF,     /* Reserved (1) | Stream Identifier (31) */
+        0xFF, 0xFF, 0xFF, 0xFF,     /* Payload (*) */
+
+        /* UNKNOWN FRAME WITH NO PAYLOAD */
+        0x00, 0x00, 0x00,           /* Length (24) */
+        0xFF,                       /* Type (8) */
+        0xFF,                       /* Flags (8) */
+        0xFF, 0xFF, 0xFF, 0xFF,     /* Reserved (1) | Stream Identifier (31) */
+                                    /* Payload (*) */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* No callbacks should have fired about the frame*/
+    ASSERT_UINT_EQUALS(0, aws_array_list_length(&fixture->frames));
+    return AWS_OP_SUCCESS;
+}
+
 /* #TODO
  * - verify stream-id required/forbidden
  * - enormous payload
- * - unknown frame
+ * - every frame type in a row
  * */
