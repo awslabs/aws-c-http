@@ -662,9 +662,9 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
     s_aws_http_connection_manager_execute_transaction(&work);
 }
 
-int aws_http_connection_manager_get_open_connection_count(struct aws_http_connection_manager *manager)
+size_t aws_http_connection_manager_get_open_connection_count(struct aws_http_connection_manager *manager)
 {
-    int open_connection_count = 0;
+    size_t open_connection_count = 0;
     
     aws_mutex_lock(&manager->lock);
     open_connection_count = manager->open_connection_count;
