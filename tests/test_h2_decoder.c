@@ -125,15 +125,8 @@ static int s_end_current_frame(struct fixture *fixture, enum aws_h2_frame_type t
     return AWS_OP_SUCCESS;
 }
 
-/**************************** DECODER CALLBACKS *******************************/
-
-static int s_decoder_on_headers_begin(uint32_t stream_id, void *userdata) {
-    struct fixture *fixture = userdata;
-    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_HEADERS, stream_id, NULL /*out_frame*/));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_headers_i(
+static int s_on_header(
+    bool is_push_promise,
     uint32_t stream_id,
     const struct aws_http_header *header,
     enum aws_h2_header_field_hpack_behavior hpack_behavior,
@@ -143,7 +136,12 @@ static int s_decoder_on_headers_i(
     struct frame *frame = s_latest_frame(fixture);
 
     /* validate */
-    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_HEADERS, frame->type);
+    if (is_push_promise) {
+        ASSERT_INT_EQUALS(AWS_H2_FRAME_T_PUSH_PROMISE, frame->type);
+    } else {
+        ASSERT_INT_EQUALS(AWS_H2_FRAME_T_HEADERS, frame->type);
+    }
+
     ASSERT_FALSE(frame->finished);
     ASSERT_UINT_EQUALS(frame->stream_id, stream_id);
 
@@ -161,9 +159,51 @@ static int s_decoder_on_headers_i(
     return AWS_OP_SUCCESS;
 }
 
+/**************************** DECODER CALLBACKS *******************************/
+
+static int s_decoder_on_headers_begin(uint32_t stream_id, void *userdata) {
+    struct fixture *fixture = userdata;
+    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_HEADERS, stream_id, NULL /*out_frame*/));
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_headers_i(
+    uint32_t stream_id,
+    const struct aws_http_header *header,
+    enum aws_h2_header_field_hpack_behavior hpack_behavior,
+    void *userdata) {
+
+    return s_on_header(false /* is_push_promise */, stream_id, header, hpack_behavior, userdata);
+}
+
 static int s_decoder_on_headers_end(uint32_t stream_id, void *userdata) {
     struct fixture *fixture = userdata;
     ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_HEADERS, stream_id));
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_push_promise_begin(uint32_t stream_id, uint32_t promised_stream_id, void *userdata) {
+    struct fixture *fixture = userdata;
+    struct frame *frame;
+    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_PUSH_PROMISE, stream_id, &frame /*out_frame*/));
+
+    frame->promised_stream_id = promised_stream_id;
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_push_promise_i(
+    uint32_t stream_id,
+    const struct aws_http_header *header,
+    enum aws_h2_header_field_hpack_behavior hpack_behavior,
+    void *userdata) {
+
+    return s_on_header(true /* is_push_promise */, stream_id, header, hpack_behavior, userdata);
+}
+
+static int s_decoder_on_push_promise_end(uint32_t stream_id, void *userdata) {
+    struct fixture *fixture = userdata;
+    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_PUSH_PROMISE, stream_id));
     return AWS_OP_SUCCESS;
 }
 
@@ -188,7 +228,8 @@ static int s_decoder_on_end_stream(uint32_t stream_id, void *userdata) {
     /* Validate */
 
     /* on_end_stream should fire IMMEDIATELY after on_data OR after on_headers_end.
-     * This timing lets the user close the stream from this callback without waiting for any trailing data/headers */
+     * This timing lets the user close the stream from this callback without waiting for any trailing data/headers
+     */
     ASSERT_TRUE(frame->finished);
     ASSERT_TRUE(frame->type == AWS_H2_FRAME_T_HEADERS || frame->type == AWS_H2_FRAME_T_DATA);
 
@@ -258,6 +299,9 @@ static struct aws_h2_decoder_vtable s_decoder_vtable = {
     .on_headers_begin = s_decoder_on_headers_begin,
     .on_headers_i = s_decoder_on_headers_i,
     .on_headers_end = s_decoder_on_headers_end,
+    .on_push_promise_begin = s_decoder_on_push_promise_begin,
+    .on_push_promise_i = s_decoder_on_push_promise_i,
+    .on_push_promise_end = s_decoder_on_push_promise_end,
     .on_data = s_decoder_on_data,
     .on_end_stream = s_decoder_on_end_stream,
     .on_rst_stream = s_decoder_on_rst_stream,
@@ -1497,6 +1541,163 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_settings_payload_size) {
 
     ASSERT_ERROR(
         AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_push_promise) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x07,           /* Length (24) */
+        AWS_H2_FRAME_T_PUSH_PROMISE,/* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS, /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31) */
+        /* PUSH_PROMISE */
+        0x80, 0x00, 0x00, 0x02,     /* Reserved (1) | Promised Stream ID (31) */
+        0x82,                       /* ":method: GET" - indexed header field */
+        0x87,                       /* ":scheme: https" - indexed header field */
+        0x85,                       /* ":path: /index.html" - indexed header field */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
+    ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
+    ASSERT_UINT_EQUALS(3, aws_array_list_length(&frame->headers));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_FALSE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+/* Unknown flags should be ignored.
+ * PUSH_PROMISE supports END_HEADERS and PADDED */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_push_promise_ignores_unknown_flags) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 10,             /* Length (24) */
+        AWS_H2_FRAME_T_PUSH_PROMISE,/* Type (8) */
+        0xFF,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31) */
+        /* PUSH_PROMISE */
+        0x02,                       /* Pad Length (8)                           - F_PADDED */
+        0x80, 0x00, 0x00, 0x02,     /* Reserved (1) | Promised Stream ID (31) */
+        0x82,                       /* ":method: GET" - indexed header field */
+        0x87,                       /* ":scheme: https" - indexed header field */
+        0x85,                       /* ":path: /index.html" - indexed header field */
+        0x00, 0x00,                 /* Padding (*)                              - F_PADDED */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
+    ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
+    ASSERT_UINT_EQUALS(3, aws_array_list_length(&frame->headers));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_FALSE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_push_promise_continuation) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* PUSH_PROMISE FRAME */
+        0x00, 0x00, 0x08,           /* Length (24) */
+        AWS_H2_FRAME_T_PUSH_PROMISE,/* Type (8) */
+        AWS_H2_FRAME_F_PADDED,      /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31) */
+        /* PAYLOAD */
+        0x02,                       /* Pad Length (8)                           - F_PADDED */
+        0x80, 0x00, 0x00, 0x02,     /* Reserved (1) | Promised Stream ID (31) */
+        0x82,                       /* ":method: GET" - indexed header field */
+        0x00, 0x00,                 /* Padding (*)                              - F_PADDED */
+
+        /* CONTINUATION FRAME - empty payload just for kicks */
+        0x00, 0x00, 0x00,           /* Length (24) */
+        AWS_H2_FRAME_T_CONTINUATION,/* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31) */
+        /* PAYLOAD */
+
+
+        /* CONTINUATION FRAME */
+        0x00, 0x00, 0x02,           /* Length (24) */
+        AWS_H2_FRAME_T_CONTINUATION,/* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS, /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31) */
+        /* PAYLOAD */
+        0x87,                       /* ":scheme: https" - indexed header field */
+        0x85,                       /* ":path: /index.html" - indexed header field */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
+    ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
+    ASSERT_UINT_EQUALS(3, aws_array_list_length(&frame->headers));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_FALSE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+/* Once a header-block starts, it's illegal for any frame but a CONTINUATION on that same stream to arrive.
+ * This test sends a different frame type next */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_push_promise_continuation_expected) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* PUSH_PROMISE FRAME */
+        0x00, 0x00, 0x07,           /* Length (24) */
+        AWS_H2_FRAME_T_PUSH_PROMISE,/* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31) */
+        /* PAYLOAD */
+        0x80, 0x00, 0x00, 0x02,     /* Reserved (1) | Promised Stream ID (31) */
+        0x82,                       /* ":method: GET" - indexed header field */
+        0x87,                       /* ":scheme: https" - indexed header field */
+        0x85,                       /* ":path: /index.html" - indexed header field */
+
+        /* DATA FRAME <-- ERROR should be CONTINUATION because PUSH_PROMISE lacked END_HEADERS flag */
+        0x00, 0x00, 0x05,           /* Length (24) */
+        AWS_H2_FRAME_T_DATA,        /* Type (8) */
+        AWS_H2_FRAME_F_END_STREAM,  /* Flags (8) */
+        0x00, 0x00, 0x00, 0x02,     /* Reserved (1) | Stream Identifier (31) */
+        /* DATA */
+        'h', 'e', 'l', 'l', 'o',    /* Data (*) */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
