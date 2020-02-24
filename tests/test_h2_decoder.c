@@ -295,6 +295,33 @@ static int s_decoder_on_settings_ack(void *userdata) {
     return AWS_OP_SUCCESS;
 }
 
+static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
+    struct fixture *fixture = userdata;
+    struct frame *frame;
+
+    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_PING, 0 /*stream_id*/, &frame));
+
+    /* Stash data*/
+    memcpy(frame->ping_opaque_data, opaque_data, AWS_H2_PING_DATA_SIZE);
+
+    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_PING, 0 /*stream_id*/));
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_ping_ack(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
+    struct fixture *fixture = userdata;
+    struct frame *frame;
+
+    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_PING, 0 /*stream_id*/, &frame));
+
+    /* Stash data*/
+    memcpy(frame->ping_opaque_data, opaque_data, AWS_H2_PING_DATA_SIZE);
+    frame->ack = true;
+
+    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_PING, 0 /*stream_id*/));
+    return AWS_OP_SUCCESS;
+}
+
 static struct aws_h2_decoder_vtable s_decoder_vtable = {
     .on_headers_begin = s_decoder_on_headers_begin,
     .on_headers_i = s_decoder_on_headers_i,
@@ -309,6 +336,8 @@ static struct aws_h2_decoder_vtable s_decoder_vtable = {
     .on_settings_i = s_decoder_on_settings_i,
     .on_settings_end = s_decoder_on_settings_end,
     .on_settings_ack = s_decoder_on_settings_ack,
+    .on_ping = s_decoder_on_ping,
+    .on_ping_ack = s_decoder_on_ping_ack,
 };
 
 /************************** END DECODER CALLBACKS *****************************/
@@ -1702,6 +1731,102 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_push_promise_continuation_expected) 
     return AWS_OP_SUCCESS;
 }
 
+/* Test PING frame */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_ping) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x08,           /* Length (24) */
+        AWS_H2_FRAME_T_PING,        /* Type (8) */
+        0x0,                        /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* PING */
+        'p', 'i', 'n', 'g', 'p', 'o', 'n', 'g' /* Opaque Data (64) */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate. */
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_PING, 0x0 /*stream_id*/));
+    ASSERT_BIN_ARRAYS_EQUALS("pingpong", AWS_H2_PING_DATA_SIZE, frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+    ASSERT_FALSE(frame->ack);
+    return AWS_OP_SUCCESS;
+}
+
+/* Test PING frame with ALL flags set (ACK is only supported flag) */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_ping_ack) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x08,           /* Length (24) */
+        AWS_H2_FRAME_T_PING,        /* Type (8) */
+        0xFF,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* PING */
+        'p', 'i', 'n', 'g', 'p', 'o', 'n', 'g' /* Opaque Data (64) */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate. */
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_PING, 0x0 /*stream_id*/));
+    ASSERT_BIN_ARRAYS_EQUALS("pingpong", AWS_H2_PING_DATA_SIZE, frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+    ASSERT_TRUE(frame->ack);
+    return AWS_OP_SUCCESS;
+}
+
+/* PING payload MUST be 8 bytes */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_ping_payload_too_small) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x00,           /* Length (24) */
+        AWS_H2_FRAME_T_PING,        /* Type (8) */
+        0x0,                        /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* PING */
+                                    /* Opaque Data (64) <-- MISSING */
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* PING payload MUST be 8 bytes */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_ping_payload_too_large) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x09,           /* Length (24) */
+        AWS_H2_FRAME_T_PING,        /* Type (8) */
+        0x0,                        /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* PING */
+        'p', 'i', 'n', 'g', 'p', 'o', 'n', 'g', 0x00 /* Opaque Data (64) <-- ERROR: TOO LARGE */
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
 /* Frames of unknown type must be ignored */
 TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_unknown_frame_type_ignored) {
     (void)allocator;
@@ -1734,7 +1859,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_unknown_frame_type_ignored) {
 
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
-    /* No callbacks should have fired about the frame*/
+    /* No callbacks should have fired about any of these frames */
     ASSERT_UINT_EQUALS(0, aws_array_list_length(&fixture->frames));
     return AWS_OP_SUCCESS;
 }
