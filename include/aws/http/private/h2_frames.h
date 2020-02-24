@@ -64,12 +64,14 @@ enum aws_h2_error_codes {
 
 /* Predefined settings identifiers (RFC-7540 6.5.2) */
 enum aws_h2_settings {
+    AWS_H2_SETTINGS_BEGIN_RANGE = 0x1, /* Beginning of known values */
     AWS_H2_SETTINGS_HEADER_TABLE_SIZE = 0x1,
     AWS_H2_SETTINGS_ENABLE_PUSH = 0x2,
     AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS = 0x3,
     AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE = 0x4,
     AWS_H2_SETTINGS_MAX_FRAME_SIZE = 0x5,
     AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE = 0x6,
+    AWS_H2_SETTINGS_END_RANGE, /* End of known values */
 };
 
 /* RFC-7541 2.4 */

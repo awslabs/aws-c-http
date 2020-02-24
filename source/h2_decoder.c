@@ -701,6 +701,18 @@ static int s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struc
         return s_decoder_reset_state(decoder);
     }
 
+    if (decoder->frame_in_progress.payload_len % s_setting_block_size != 0) {
+        /* A SETTINGS frame with a length other than a multiple of 6 octets MUST be
+         * treated as a connection error (Section 5.4.1) of type FRAME_SIZE_ERROR */
+        DECODER_LOGF(
+            ERROR,
+            decoder,
+            "Settings frame payload length is %" PRIu32 ", but it must be divisible by %" PRIu8,
+            decoder->frame_in_progress.payload_len,
+            s_setting_block_size);
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_FRAME_SIZE);
+    }
+
     /* Report start of non-ACK settings frame */
     DECODER_CALL_VTABLE(decoder, on_settings_begin);
 
@@ -744,7 +756,11 @@ static int s_state_fn_frame_settings_i(struct aws_h2_decoder *decoder, struct aw
     AWS_ASSERT(succ);
     (void)succ;
 
-    DECODER_CALL_VTABLE_ARGS(decoder, on_settings_i, id, value);
+    /* An endpoint that receives a SETTINGS frame with any unknown or unsupported identifier MUST ignore that setting.
+     * RFC-7540 6.5.2 */
+    if (id >= AWS_H2_SETTINGS_BEGIN_RANGE && id < AWS_H2_SETTINGS_END_RANGE) {
+        DECODER_CALL_VTABLE_ARGS(decoder, on_settings_i, id, value);
+    }
 
     /* Update payload len */
     decoder->frame_in_progress.payload_len -= s_setting_block_size;

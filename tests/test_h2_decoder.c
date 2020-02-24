@@ -1323,11 +1323,11 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings) {
 
     struct aws_h2_frame_setting setting;
     aws_array_list_get_at(&frame->settings, &setting, 0);
-    ASSERT_UINT_EQUALS(0x00005, setting.id);
+    ASSERT_UINT_EQUALS(0x0005, setting.id);
     ASSERT_UINT_EQUALS(0x00FFFFFF, setting.value);
 
     aws_array_list_get_at(&frame->settings, &setting, 1);
-    ASSERT_UINT_EQUALS(0x00002, setting.id);
+    ASSERT_UINT_EQUALS(0x0002, setting.id);
     ASSERT_UINT_EQUALS(0x00000001, setting.value);
 
     return AWS_OP_SUCCESS;
@@ -1360,6 +1360,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_empty) {
     return AWS_OP_SUCCESS;
 }
 
+/* SETTINGS frame with ACK flag set */
 TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_ack) {
     (void)allocator;
     struct fixture *fixture = ctx;
@@ -1382,6 +1383,120 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_ack) {
     ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
     ASSERT_TRUE(frame->ack);
     ASSERT_UINT_EQUALS(0, aws_array_list_length(&frame->settings));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Decoder must ignore settings with unknown IDs */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_ignores_unknown_ids) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 18,             /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* SETTINGS */
+        0x00, 0x00,                 /* Identifier (16) <-- SHOULD IGNORE. 0 is invalid ID */
+        0x00, 0xFF, 0xFF, 0xFF,     /* Value (32) */
+        0x00, 0x01,                 /* Identifier (16) <-- This is OK */
+        0x00, 0x00, 0x00, 0x01,     /* Value (32) */
+        0x00, AWS_H2_SETTINGS_END_RANGE, /* Identifier (16) <-- SHOULD IGNORE */
+        0x00, 0x00, 0x00, 0x01,     /* Value (32) */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate. */
+    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
+    ASSERT_FALSE(frame->ack);
+    ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->settings));
+
+    struct aws_h2_frame_setting setting;
+    aws_array_list_get_at(&frame->settings, &setting, 0);
+    ASSERT_UINT_EQUALS(0x0001, setting.id);
+    ASSERT_UINT_EQUALS(0x00000001, setting.value);
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Unexpected flags should be ignored.
+ * SETTINGS frames only support ACK */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_ignores_unknown_flags) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x00,           /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        0xFF,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* SETTINGS */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate. */
+    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
+    ASSERT_TRUE(frame->ack);
+    ASSERT_UINT_EQUALS(0, aws_array_list_length(&frame->settings));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Error if SETTINGS ACK frame has any individual settings in it */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_settings_ack_with_data) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x06,           /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        AWS_H2_FRAME_F_ACK,         /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* SETTINGS */
+        0x00, 0x05,                 /* Identifier (16) */
+        0x00, 0xFF, 0xFF, 0xFF,     /* Value (32) */
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Error if SETTINGS payload is not a multiple of 6 */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_settings_payload_size) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x08,           /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* SETTINGS */
+        0x00, 0x05,                 /* Identifier (16) */
+        0x00, 0xFF, 0xFF, 0xFF,     /* Value (32) */
+        0x00, 0x02,                 /* Identifier (16) */
+                                    /* Value (32) <-- MISSING */
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
