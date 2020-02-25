@@ -853,13 +853,9 @@ static int s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, struct aws_by
 
     decoder->frame_in_progress.payload_len -= 8;
 
-    DECODER_CALL_VTABLE_ARGS(decoder, on_goaway_begin, last_stream, decoder->frame_in_progress.payload_len, error_code);
+    DECODER_CALL_VTABLE_ARGS(decoder, on_goaway_begin, last_stream, error_code, decoder->frame_in_progress.payload_len);
 
-    if (decoder->frame_in_progress.payload_len) {
-        return s_decoder_switch_state(decoder, &s_state_frame_goaway_debug_data);
-    }
-
-    return s_decoder_reset_state(decoder);
+    return s_decoder_switch_state(decoder, &s_state_frame_goaway_debug_data);
 }
 
 /* Optional remainder of GOAWAY frame.
@@ -874,7 +870,7 @@ static int s_state_fn_frame_goaway_debug_data(struct aws_h2_decoder *decoder, st
         DECODER_CALL_VTABLE_ARGS(decoder, on_goaway_i, debug_data);
     }
 
-    /* This is the last data in the frame, so reset decoder */
+    /* If this is the last data in the frame, reset decoder */
     if (decoder->frame_in_progress.payload_len == 0) {
         DECODER_CALL_VTABLE(decoder, on_goaway_end);
         return s_decoder_reset_state(decoder);

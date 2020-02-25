@@ -322,6 +322,50 @@ static int s_decoder_on_ping_ack(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], voi
     return AWS_OP_SUCCESS;
 }
 
+static int s_decoder_on_goaway_begin(
+    uint32_t last_stream,
+    uint32_t error_code,
+    uint32_t debug_data_length,
+    void *userdata) {
+
+    struct fixture *fixture = userdata;
+    struct frame *frame;
+    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_GOAWAY, 0, &frame));
+
+    frame->goaway_last_stream_id = last_stream;
+    frame->error_code = error_code;
+    frame->goaway_debug_data_remaining = debug_data_length;
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_goaway_i(struct aws_byte_cursor debug_data, void *userdata) {
+    struct fixture *fixture = userdata;
+    struct frame *frame = s_latest_frame(fixture);
+
+    /* Validate */
+    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_GOAWAY, frame->type);
+    ASSERT_FALSE(frame->finished);
+    ASSERT_TRUE(frame->goaway_debug_data_remaining >= debug_data.len);
+
+    frame->goaway_debug_data_remaining -= debug_data.len;
+
+    /* Stash data */
+    ASSERT_SUCCESS(aws_byte_buf_append_dynamic(&frame->data, &debug_data));
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_goaway_end(void *userdata) {
+    struct fixture *fixture = userdata;
+    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_GOAWAY, 0));
+
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_UINT_EQUALS(0, frame->goaway_debug_data_remaining);
+
+    return AWS_OP_SUCCESS;
+}
+
 static struct aws_h2_decoder_vtable s_decoder_vtable = {
     .on_headers_begin = s_decoder_on_headers_begin,
     .on_headers_i = s_decoder_on_headers_i,
@@ -338,6 +382,9 @@ static struct aws_h2_decoder_vtable s_decoder_vtable = {
     .on_settings_ack = s_decoder_on_settings_ack,
     .on_ping = s_decoder_on_ping,
     .on_ping_ack = s_decoder_on_ping_ack,
+    .on_goaway_begin = s_decoder_on_goaway_begin,
+    .on_goaway_i = s_decoder_on_goaway_i,
+    .on_goaway_end = s_decoder_on_goaway_end,
 };
 
 /************************** END DECODER CALLBACKS *****************************/
@@ -1818,6 +1865,89 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_ping_payload_too_large) {
         0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
         /* PING */
         'p', 'i', 'n', 'g', 'p', 'o', 'n', 'g', 0x00 /* Opaque Data (64) <-- ERROR: TOO LARGE */
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Test GOAWAY frame */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_goaway) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 11,             /* Length (24) */
+        AWS_H2_FRAME_T_GOAWAY,      /* Type (8) */
+        0xFF,                       /* Flags (8) <-- set all flags, all of which should be ignored */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* GOAWAY */
+        0xFF, 0x00, 0x00, 0x01,     /* Reserved (1) | Last Stream ID (31) */
+        0xFE, 0xED, 0xBE, 0xEF,     /* Error Code (32) */
+        'b', 'y', 'e'               /* Additional Debug Data (*) */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate. */
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_GOAWAY, 0x0 /*stream_id*/));
+    ASSERT_UINT_EQUALS(0x7F000001, frame->goaway_last_stream_id);
+    ASSERT_UINT_EQUALS(0xFEEDBEEF, frame->error_code);
+    ASSERT_BIN_ARRAYS_EQUALS("bye", 3, frame->data.buffer, frame->data.len);
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Test GOAWAY frame with no debug data */
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_goaway_empty) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x08,           /* Length (24) */
+        AWS_H2_FRAME_T_GOAWAY,      /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* GOAWAY */
+        0xFF, 0x00, 0x00, 0x01,     /* Reserved (1) | Last Stream ID (31) */
+        0xFE, 0xED, 0xBE, 0xEF,     /* Error Code (32) */
+                                    /* Additional Debug Data (*) */
+    };
+    /* clang-format on */
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate. */
+    struct frame *frame = s_latest_frame(fixture);
+    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_GOAWAY, 0x0 /*stream_id*/));
+    ASSERT_UINT_EQUALS(0x7F000001, frame->goaway_last_stream_id);
+    ASSERT_UINT_EQUALS(0xFEEDBEEF, frame->error_code);
+    ASSERT_BIN_ARRAYS_EQUALS("", 0, frame->data.buffer, frame->data.len);
+
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_goaway_payload_too_small) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x00,           /* Length (24) */
+        AWS_H2_FRAME_T_GOAWAY,      /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* GOAWAY */
+                                    /* Reserved (1) | Last Stream ID (31) <-- MISSING */
+                                    /* Error Code (32)                    <-- MISSING */
+                                    /* Additional Debug Data (*) */
     };
     /* clang-format on */
 
