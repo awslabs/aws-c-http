@@ -52,7 +52,13 @@ struct fixture {
     struct aws_h2_decoder *decoder;
     struct aws_array_list frames; /* contains frame */
 
+    /* If true, run decoder over input one byte at a time */
     bool one_byte_at_a_time;
+
+    /* If set, run decoder over input in two chunks, divided at the split, and we test every possible split */
+    aws_test_run_fn *split_test_fn;
+    size_t split_i;
+    bool split_tests_complete;
 };
 
 static int s_frame_init(
@@ -403,10 +409,9 @@ static struct aws_h2_decoder_vtable s_decoder_vtable = {
 
 /************************** END DECODER CALLBACKS *****************************/
 
-static int s_fixture_setup(struct aws_allocator *allocator, void *ctx) {
-    aws_http_library_init(allocator);
-
-    struct fixture *fixture = ctx;
+/* Note that init() and clean_up() are called multiple times in "split tests",
+ * which re-runs the test at each possible split point */
+static int s_fixture_init(struct fixture *fixture, struct aws_allocator *allocator) {
     fixture->allocator = allocator;
     ASSERT_SUCCESS(aws_array_list_init_dynamic(&fixture->frames, allocator, 2, sizeof(struct frame)));
 
@@ -417,17 +422,10 @@ static int s_fixture_setup(struct aws_allocator *allocator, void *ctx) {
     };
     fixture->decoder = aws_h2_decoder_new(&options);
     ASSERT_NOT_NULL(fixture->decoder);
-
     return AWS_OP_SUCCESS;
 }
 
-static int s_fixture_teardown(struct aws_allocator *allocator, int setup_result, void *ctx) {
-    (void)allocator;
-    if (setup_result) {
-        return AWS_OP_ERR;
-    }
-
-    struct fixture *fixture = ctx;
+static void s_fixture_clean_up(struct fixture *fixture) {
     for (size_t i = 0; i < aws_array_list_length(&fixture->frames); ++i) {
         struct frame *frame;
         aws_array_list_get_at_ptr(&fixture->frames, (void **)&frame, i);
@@ -435,27 +433,73 @@ static int s_fixture_teardown(struct aws_allocator *allocator, int setup_result,
     }
     aws_array_list_clean_up(&fixture->frames);
     aws_h2_decoder_destroy(fixture->decoder);
+}
+
+static int s_fixture_test_setup(struct aws_allocator *allocator, void *ctx) {
+    aws_http_library_init(allocator);
+
+    struct fixture *fixture = ctx;
+    ASSERT_SUCCESS(s_fixture_init(fixture, allocator));
+    return AWS_OP_SUCCESS;
+}
+
+static int s_fixture_test_teardown(struct aws_allocator *allocator, int setup_result, void *ctx) {
+    (void)allocator;
+    if (setup_result) {
+        return AWS_OP_ERR;
+    }
+
+    struct fixture *fixture = ctx;
+    s_fixture_clean_up(fixture);
     aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+/* Runs all "split_at_i" tests */
+static int s_test_splits(struct aws_allocator *allocator, void *ctx) {
+    struct fixture *fixture = ctx;
+
+    /* Run the named test, with a split at each possible byte, until s_decode_all() tells us that we're done */
+    for (size_t i = 1; !fixture->split_tests_complete; ++i) {
+        fixture->split_i = i;
+        AWS_LOGF_INFO(AWS_LS_COMMON_GENERAL, "Running split test at byte %zu", i);
+        ASSERT_SUCCESS(fixture->split_test_fn(fixture->allocator, fixture));
+
+        /* Reset state */
+        s_fixture_clean_up(fixture);
+        ASSERT_SUCCESS(s_fixture_init(fixture, allocator));
+    }
+
     return AWS_OP_SUCCESS;
 }
 
 /* declare 1 test using the fixture */
 #define TEST_CASE(NAME)                                                                                                \
     static struct fixture s_fixture_##NAME;                                                                            \
-    AWS_TEST_CASE_FIXTURE(NAME, s_fixture_setup, s_test_##NAME, s_fixture_teardown, &s_fixture_##NAME);                \
+    AWS_TEST_CASE_FIXTURE(NAME, s_fixture_test_setup, s_test_##NAME, s_fixture_test_teardown, &s_fixture_##NAME);      \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
-/* declare 2 tests, where one of them runs the decoder on one byte of input at a time. */
-#define TEST_CASE_ONE_BYTE_AT_A_TIME(NAME)                                                                             \
+/* declare 3 tests, where:
+ * 1) NAME runs the decoder over input all at once
+ * 2) NAME_one_byte_at_a_time runs the decoder on one byte of input at a time.
+ * 3) NAME_split_at_i runs the decoder on input, split into two chunks. And re-runs test over every possible split */
+#define H2_DECODER_TEST_CASE(NAME)                                                                                     \
     static struct fixture s_fixture_##NAME;                                                                            \
-    AWS_TEST_CASE_FIXTURE(NAME, s_fixture_setup, s_test_##NAME, s_fixture_teardown, &s_fixture_##NAME);                \
+    AWS_TEST_CASE_FIXTURE(NAME, s_fixture_test_setup, s_test_##NAME, s_fixture_test_teardown, &s_fixture_##NAME);      \
     static struct fixture s_fixture_##NAME##_one_byte_at_a_time = {.one_byte_at_a_time = true};                        \
     AWS_TEST_CASE_FIXTURE(                                                                                             \
         NAME##_one_byte_at_a_time,                                                                                     \
-        s_fixture_setup,                                                                                               \
+        s_fixture_test_setup,                                                                                          \
         s_test_##NAME,                                                                                                 \
-        s_fixture_teardown,                                                                                            \
+        s_fixture_test_teardown,                                                                                       \
         &s_fixture_##NAME##_one_byte_at_a_time);                                                                       \
+    static struct fixture s_fixture_##NAME##_split_at_i = {.split_test_fn = s_test_##NAME};                            \
+    AWS_TEST_CASE_FIXTURE(                                                                                             \
+        NAME##_split_at_i,                                                                                             \
+        s_fixture_test_setup,                                                                                          \
+        s_test_splits,                                                                                                 \
+        s_fixture_test_teardown,                                                                                       \
+        &s_fixture_##NAME##_split_at_i);                                                                               \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
 /* Make sure fixture works */
@@ -466,9 +510,10 @@ TEST_CASE(h2_decoder_sanity_check) {
     return AWS_OP_SUCCESS;
 }
 
-/* Run aws_h2_decode() on input. Decode the whole buffer at once, or decode it one byte at a time */
+/* Run aws_h2_decode() on input in special ways determined by the fixture */
 static int s_decode_all(struct fixture *fixture, struct aws_byte_cursor input) {
     if (fixture->one_byte_at_a_time) {
+        /* Decode input one byte at a time */
         while (input.len) {
             struct aws_byte_cursor one_byte = aws_byte_cursor_advance(&input, 1);
             if (aws_h2_decode(fixture->decoder, &one_byte)) {
@@ -477,7 +522,27 @@ static int s_decode_all(struct fixture *fixture, struct aws_byte_cursor input) {
             ASSERT_UINT_EQUALS(0, one_byte.len);
         }
 
+    } else if (fixture->split_i) {
+        /* Decode input in 2 chunks, divided at the split */
+        ASSERT_TRUE(fixture->split_i < input.len);
+        if (fixture->split_i == input.len - 1) {
+            /* Inform the fixture that we've done every possible split */
+            fixture->split_tests_complete = true;
+        }
+
+        struct aws_byte_cursor first_chunk = aws_byte_cursor_advance(&input, fixture->split_i);
+        if (aws_h2_decode(fixture->decoder, &first_chunk)) {
+            return AWS_OP_ERR;
+        }
+        ASSERT_UINT_EQUALS(0, first_chunk.len);
+
+        if (aws_h2_decode(fixture->decoder, &input)) {
+            return AWS_OP_ERR;
+        }
+        ASSERT_UINT_EQUALS(0, input.len);
+
     } else {
+        /* Decode buffer all at once */
         if (aws_h2_decode(fixture->decoder, &input)) {
             return AWS_OP_ERR;
         }
@@ -519,7 +584,7 @@ static int s_check_data_across_frames(
 }
 
 /* Test DATA frame */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_data) {
+H2_DECODER_TEST_CASE(h2_decoder_data) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -544,7 +609,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_data) {
 }
 
 /* Test padded DATA frame */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_data_padded) {
+H2_DECODER_TEST_CASE(h2_decoder_data_padded) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -571,7 +636,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_data_padded) {
 }
 
 /* OK for PADDED frame to have pad length of zero */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_data_pad_length_zero) {
+H2_DECODER_TEST_CASE(h2_decoder_data_pad_length_zero) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -598,7 +663,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_data_pad_length_zero) {
 }
 
 /* OK for DATA frame to have no data */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_data_empty) {
+H2_DECODER_TEST_CASE(h2_decoder_data_empty) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -621,7 +686,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_data_empty) {
 }
 
 /* OK for padded DATA frame to have no data */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_data_empty_padded) {
+H2_DECODER_TEST_CASE(h2_decoder_data_empty_padded) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -647,7 +712,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_data_empty_padded) {
 
 /* Unexpected flags should be ignored.
  * DATA frames only support END_STREAM and PADDED*/
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_data_ignores_unknown_flags) {
+H2_DECODER_TEST_CASE(h2_decoder_data_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -674,7 +739,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_data_ignores_unknown_flags) {
 }
 
 /* DATA frames MUST specify a stream-id */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_data_requires_stream_id) {
+H2_DECODER_TEST_CASE(h2_decoder_err_data_requires_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -696,7 +761,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_data_requires_stream_id) {
 }
 
 /* Error if frame is padded, but not big enough to contain the padding length */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_payload_too_small_for_pad_length) {
+H2_DECODER_TEST_CASE(h2_decoder_err_payload_too_small_for_pad_length) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -719,7 +784,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_payload_too_small_for_pad_length) {
 }
 
 /* The most-significant-bit of the encoded stream ID is reserved, and should be ignored when decoding */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_stream_id_ignores_reserved_bit) {
+H2_DECODER_TEST_CASE(h2_decoder_stream_id_ignores_reserved_bit) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -762,7 +827,7 @@ static int s_check_header(
 
 /* Test a simple HEADERS frame
  * Note that we're not stressing the HPACK decoder here, that's done in other test files */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_headers) {
+H2_DECODER_TEST_CASE(h2_decoder_headers) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -790,7 +855,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_headers) {
 }
 
 /* Test a HEADERS frame with padding */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_headers_padded) {
+H2_DECODER_TEST_CASE(h2_decoder_headers_padded) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -821,7 +886,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_headers_padded) {
 /* Test a HEADERS frame with priority information
  * Note that priority information is ignored for now.
  * We're not testing that it was reported properly, just that decoder can properly consume it */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_headers_priority) {
+H2_DECODER_TEST_CASE(h2_decoder_headers_priority) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -851,7 +916,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_headers_priority) {
 
 /* Test a HEADERS frame with ALL flags set.
  * Unexpected flags should be ignored, but HEADERS supports: priority and padding and end-headers and end-stream */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_headers_ignores_unknown_flags) {
+H2_DECODER_TEST_CASE(h2_decoder_headers_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -883,7 +948,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_headers_ignores_unknown_flags) {
 }
 
 /* HEADERS must specify a valid stream-id */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_headers_requires_stream_id) {
+H2_DECODER_TEST_CASE(h2_decoder_err_headers_requires_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -905,7 +970,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_headers_requires_stream_id) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_headers_payload_too_small_for_padding) {
+H2_DECODER_TEST_CASE(h2_decoder_err_headers_payload_too_small_for_padding) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -931,7 +996,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_headers_payload_too_small_for_paddin
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_headers_payload_too_small_for_priority) {
+H2_DECODER_TEST_CASE(h2_decoder_err_headers_payload_too_small_for_priority) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -959,7 +1024,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_headers_payload_too_small_for_priori
 
 /* Test CONTINUATION frame.
  * Decoder requires that a HEADERS or PUSH_PROMISE frame be sent first */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_continuation) {
+H2_DECODER_TEST_CASE(h2_decoder_continuation) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -999,7 +1064,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_continuation) {
 /* Try setting ALL the flags on CONTINUATION frame.
  * Only END_HEADERS and should trigger.
  * Continuation doesn't support PRIORITY and PADDING like HEADERS does, so they should just be ignored */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_continuation_ignores_unknown_flags) {
+H2_DECODER_TEST_CASE(h2_decoder_continuation_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1037,7 +1102,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_continuation_ignores_unknown_flags) {
 
 /* Test that we an handle a header-field whose encoding is spread across multiple frames.
  * Throw some padding in to make it extra complicated */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_continuation_header_field_spans_frames) {
+H2_DECODER_TEST_CASE(h2_decoder_continuation_header_field_spans_frames) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1076,7 +1141,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_continuation_header_field_spans_frames) 
 }
 
 /* Test having multiple CONTINUATION frames in a row */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_continuation_many_frames) {
+H2_DECODER_TEST_CASE(h2_decoder_continuation_many_frames) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1123,7 +1188,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_continuation_many_frames) {
 }
 
 /* Test having HEADERS and CONTINUATION frames with empty header-block-fragments */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_continuation_empty_payloads) {
+H2_DECODER_TEST_CASE(h2_decoder_continuation_empty_payloads) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1167,7 +1232,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_continuation_empty_payloads) {
 
 /* Once a header-block starts, it's illegal for any frame but a CONTINUATION on that same stream to arrive.
  * This test sends a different frame type next */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_continuation_frame_expected) {
+H2_DECODER_TEST_CASE(h2_decoder_err_continuation_frame_expected) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1200,7 +1265,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_continuation_frame_expected) {
 
 /* Once a header-block starts, it's illegal for any frame but a CONTINUATION on that same stream to arrive.
  * This test sends a different stream-id next */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_continuation_frame_same_stream_expected) {
+H2_DECODER_TEST_CASE(h2_decoder_err_continuation_frame_same_stream_expected) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1232,7 +1297,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_continuation_frame_same_stream_expec
 }
 
 /* It's an error for a header-block to end with a partially decoded header-field */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_partial_header) {
+H2_DECODER_TEST_CASE(h2_decoder_err_partial_header) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1255,7 +1320,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_partial_header) {
 }
 
 /* Ensure that random HPACK decoding errors are reported as ERROR_COMPRESSION */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_bad_hpack_data) {
+H2_DECODER_TEST_CASE(h2_decoder_err_bad_hpack_data) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1281,7 +1346,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_bad_hpack_data) {
 }
 
 /* Test PRIORITY frame */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_priority) {
+H2_DECODER_TEST_CASE(h2_decoder_priority) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1305,7 +1370,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_priority) {
 }
 
 /* Unknown flags should be ignored. PRIORITY frames don't have any flags. */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_priority_ignores_unknown_flags) {
+H2_DECODER_TEST_CASE(h2_decoder_priority_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1328,7 +1393,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_priority_ignores_unknown_flags) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_priority_requires_stream_id) {
+H2_DECODER_TEST_CASE(h2_decoder_err_priority_requires_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1351,7 +1416,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_priority_requires_stream_id) {
 }
 
 /* Test PRIORITY frame */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_priority_payload_too_small) {
+H2_DECODER_TEST_CASE(h2_decoder_err_priority_payload_too_small) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1374,7 +1439,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_priority_payload_too_small) {
 }
 
 /* Test PRIORITY frame */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_priority_payload_too_large) {
+H2_DECODER_TEST_CASE(h2_decoder_err_priority_payload_too_large) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1398,7 +1463,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_priority_payload_too_large) {
 }
 
 /* Test RST_STREAM frame */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_rst_stream) {
+H2_DECODER_TEST_CASE(h2_decoder_rst_stream) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1424,7 +1489,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_rst_stream) {
 }
 
 /* Unknown flags should be ignored. RST_STREAM frame doesn't support any flags */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_rst_stream_ignores_unknown_flags) {
+H2_DECODER_TEST_CASE(h2_decoder_rst_stream_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1449,7 +1514,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_rst_stream_ignores_unknown_flags) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_rst_stream_requires_stream_id) {
+H2_DECODER_TEST_CASE(h2_decoder_err_rst_stream_requires_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1471,7 +1536,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_rst_stream_requires_stream_id) {
 }
 
 /* Payload must be 4 bytes exactly */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_rst_stream_payload_too_small) {
+H2_DECODER_TEST_CASE(h2_decoder_err_rst_stream_payload_too_small) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1493,7 +1558,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_rst_stream_payload_too_small) {
 }
 
 /* Payload must be 4 bytes exactly */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_rst_stream_payload_too_large) {
+H2_DECODER_TEST_CASE(h2_decoder_err_rst_stream_payload_too_large) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1516,7 +1581,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_rst_stream_payload_too_large) {
 }
 
 /* Test SETTINGS frame */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings) {
+H2_DECODER_TEST_CASE(h2_decoder_settings) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1556,7 +1621,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings) {
 }
 
 /* Test SETTINGS frame */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_empty) {
+H2_DECODER_TEST_CASE(h2_decoder_settings_empty) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1583,7 +1648,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_empty) {
 }
 
 /* SETTINGS frame with ACK flag set */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_ack) {
+H2_DECODER_TEST_CASE(h2_decoder_settings_ack) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1610,7 +1675,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_ack) {
 }
 
 /* Decoder must ignore settings with unknown IDs */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_ignores_unknown_ids) {
+H2_DECODER_TEST_CASE(h2_decoder_settings_ignores_unknown_ids) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1649,7 +1714,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_ignores_unknown_ids) {
 
 /* Unexpected flags should be ignored.
  * SETTINGS frames only support ACK */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_ignores_unknown_flags) {
+H2_DECODER_TEST_CASE(h2_decoder_settings_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1676,7 +1741,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_settings_ignores_unknown_flags) {
 }
 
 /* Error if SETTINGS ACK frame has any individual settings in it */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_settings_ack_with_data) {
+H2_DECODER_TEST_CASE(h2_decoder_err_settings_ack_with_data) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1698,7 +1763,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_settings_ack_with_data) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_settings_forbids_stream_id) {
+H2_DECODER_TEST_CASE(h2_decoder_err_settings_forbids_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1723,7 +1788,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_settings_forbids_stream_id) {
 }
 
 /* Error if SETTINGS payload is not a multiple of 6 */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_settings_payload_size) {
+H2_DECODER_TEST_CASE(h2_decoder_err_settings_payload_size) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1747,7 +1812,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_settings_payload_size) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_push_promise) {
+H2_DECODER_TEST_CASE(h2_decoder_push_promise) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1782,7 +1847,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_push_promise) {
 
 /* Unknown flags should be ignored.
  * PUSH_PROMISE supports END_HEADERS and PADDED */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_push_promise_ignores_unknown_flags) {
+H2_DECODER_TEST_CASE(h2_decoder_push_promise_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1817,7 +1882,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_push_promise_ignores_unknown_flags) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_push_promise_continuation) {
+H2_DECODER_TEST_CASE(h2_decoder_push_promise_continuation) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1870,7 +1935,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_push_promise_continuation) {
 
 /* Once a header-block starts, it's illegal for any frame but a CONTINUATION on that same stream to arrive.
  * This test sends a different frame type next */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_push_promise_continuation_expected) {
+H2_DECODER_TEST_CASE(h2_decoder_err_push_promise_continuation_expected) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1904,7 +1969,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_push_promise_continuation_expected) 
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_push_promise_requires_stream_id) {
+H2_DECODER_TEST_CASE(h2_decoder_err_push_promise_requires_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1930,7 +1995,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_push_promise_requires_stream_id) {
 }
 
 /* Test PING frame */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_ping) {
+H2_DECODER_TEST_CASE(h2_decoder_ping) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1956,7 +2021,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_ping) {
 }
 
 /* Test PING frame with ALL flags set (ACK is only supported flag) */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_ping_ack) {
+H2_DECODER_TEST_CASE(h2_decoder_ping_ack) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1981,7 +2046,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_ping_ack) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_ping_forbids_stream_id) {
+H2_DECODER_TEST_CASE(h2_decoder_err_ping_forbids_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -2003,7 +2068,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_ping_forbids_stream_id) {
 }
 
 /* PING payload MUST be 8 bytes */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_ping_payload_too_small) {
+H2_DECODER_TEST_CASE(h2_decoder_err_ping_payload_too_small) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -2025,7 +2090,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_ping_payload_too_small) {
 }
 
 /* PING payload MUST be 8 bytes */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_ping_payload_too_large) {
+H2_DECODER_TEST_CASE(h2_decoder_err_ping_payload_too_large) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -2047,7 +2112,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_ping_payload_too_large) {
 }
 
 /* Test GOAWAY frame */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_goaway) {
+H2_DECODER_TEST_CASE(h2_decoder_goaway) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -2077,7 +2142,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_goaway) {
 }
 
 /* Test GOAWAY frame with no debug data */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_goaway_empty) {
+H2_DECODER_TEST_CASE(h2_decoder_goaway_empty) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -2106,7 +2171,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_goaway_empty) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_goaway_forbids_stream_id) {
+H2_DECODER_TEST_CASE(h2_decoder_err_goaway_forbids_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -2129,7 +2194,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_goaway_forbids_stream_id) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_goaway_payload_too_small) {
+H2_DECODER_TEST_CASE(h2_decoder_err_goaway_payload_too_small) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -2153,7 +2218,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_goaway_payload_too_small) {
 }
 
 /* Test WINDOW_UPDATE frame on stream 0 */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_window_update_connection) {
+H2_DECODER_TEST_CASE(h2_decoder_window_update_connection) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -2180,7 +2245,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_window_update_connection) {
 
 /* Test WINDOW_UPDATE frame on a specific stream.
  * This the only frame type whose stream-id can be zero OR non-zero*/
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_window_update_stream) {
+H2_DECODER_TEST_CASE(h2_decoder_window_update_stream) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -2206,7 +2271,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_window_update_stream) {
 }
 
 /* WINDOW_UPDATE payload must always be 4 bytes */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_window_update_payload_too_small) {
+H2_DECODER_TEST_CASE(h2_decoder_err_window_update_payload_too_small) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -2228,7 +2293,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_window_update_payload_too_small) {
 }
 
 /* WINDOW_UPDATE payload must always be 4 bytes */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_window_update_payload_too_large) {
+H2_DECODER_TEST_CASE(h2_decoder_err_window_update_payload_too_large) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -2251,7 +2316,7 @@ TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_err_window_update_payload_too_large) {
 }
 
 /* Frames of unknown type must be ignored */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_unknown_frame_type_ignored) {
+H2_DECODER_TEST_CASE(h2_decoder_unknown_frame_type_ignored) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -2302,7 +2367,7 @@ static int s_get_finished_frame_i(
 
 /* Test processing many different frame types in a row.
  * (most other tests just operate on 1 frame) */
-TEST_CASE_ONE_BYTE_AT_A_TIME(h2_decoder_many_frames_in_a_row) {
+H2_DECODER_TEST_CASE(h2_decoder_many_frames_in_a_row) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
