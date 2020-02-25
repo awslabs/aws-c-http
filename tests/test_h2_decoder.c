@@ -232,6 +232,7 @@ static int s_decoder_on_end_stream(uint32_t stream_id, void *userdata) {
      */
     ASSERT_TRUE(frame->finished);
     ASSERT_TRUE(frame->type == AWS_H2_FRAME_T_HEADERS || frame->type == AWS_H2_FRAME_T_DATA);
+    ASSERT_UINT_EQUALS(frame->stream_id, stream_id);
 
     ASSERT_FALSE(frame->end_stream);
 
@@ -348,7 +349,7 @@ static int s_decoder_on_goaway_i(struct aws_byte_cursor debug_data, void *userda
     ASSERT_FALSE(frame->finished);
     ASSERT_TRUE(frame->goaway_debug_data_remaining >= debug_data.len);
 
-    frame->goaway_debug_data_remaining -= debug_data.len;
+    frame->goaway_debug_data_remaining -= (uint32_t)debug_data.len;
 
     /* Stash data */
     ASSERT_SUCCESS(aws_byte_buf_append_dynamic(&frame->data, &debug_data));

@@ -568,7 +568,7 @@ static int s_state_fn_padding_len(struct aws_h2_decoder *decoder, struct aws_byt
         DECODER_LOG(ERROR, decoder, "Padding length exceeds payload length");
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
-    decoder->frame_in_progress.payload_len -= reduce_payload;
+    decoder->frame_in_progress.payload_len -= (uint32_t)reduce_payload;
 
     DECODER_LOGF(TRACE, decoder, "Padding length of frame: %" PRIu32, decoder->frame_in_progress.padding_len);
 
