@@ -176,7 +176,8 @@ static int s_decoder_reset_state(struct aws_h2_decoder *decoder);
 
 struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) {
     AWS_PRECONDITION(params);
-    (void)params;
+    AWS_PRECONDITION(params->alloc);
+    AWS_PRECONDITION(params->vtable);
 
     struct aws_h2_decoder *decoder = NULL;
     void *scratch_buf = NULL;
