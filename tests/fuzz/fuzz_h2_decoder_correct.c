@@ -26,23 +26,6 @@
 static const uint32_t FRAME_HEADER_SIZE = 3 + 1 + 1 + 4;
 static const uint32_t MAX_PAYLOAD_SIZE = 16384;
 
-static struct { uint64_t headers_decoded; } fuzz_state;
-
-static int s_on_header(
-    uint32_t stream_id,
-    const struct aws_http_header *header,
-    enum aws_h2_header_field_hpack_behavior hpack_behavior,
-    void *userdata) {
-    (void)stream_id;
-    (void)header;
-    (void)hpack_behavior;
-    (void)userdata;
-
-    AWS_LOGF_INFO(AWS_LS_HTTP_GENERAL, "Decoded header %" PRIu64, fuzz_state.headers_decoded++);
-
-    return AWS_OP_SUCCESS;
-}
-
 static void s_generate_header_block(struct aws_byte_cursor *input, struct aws_h2_frame_header_block *header_block) {
 
     /* Requires 4 bytes: type, size, and then 1 each for name & value */
@@ -111,8 +94,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         return 0;
     }
 
-    AWS_ZERO_STRUCT(fuzz_state);
-
     /* Setup allocator and parameters */
     struct aws_allocator *allocator = aws_mem_tracer_new(aws_default_allocator(), NULL, AWS_MEMTRACE_BYTES, 0);
     struct aws_byte_cursor input = aws_byte_cursor_from_array(data, size);
@@ -134,12 +115,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     aws_h2_frame_encoder_init(&encoder, allocator);
 
     /* Create the decoder */
+    const struct aws_h2_decoder_vtable decoder_vtable = {0};
     struct aws_h2_decoder_params decoder_params = {
         .alloc = allocator,
-        .vtable =
-            {
-                .on_header = s_on_header,
-            },
+        .vtable = &decoder_vtable,
     };
     struct aws_h2_decoder *decoder = aws_h2_decoder_new(&decoder_params);
 
@@ -292,15 +271,27 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 break;
             }
             case AWS_H2_FRAME_T_CONTINUATION: {
-                struct aws_h2_frame_continuation frame;
-                aws_h2_frame_continuation_init(&frame, allocator);
+                uint32_t stream_id;
+                s_generate_stream_id(&input, &stream_id);
 
-                s_generate_stream_id(&input, &frame.header.stream_id);
+                /* HEADERS frame must precede CONTINUATION */
+                struct aws_h2_frame_headers headers_frame;
+                aws_h2_frame_headers_init(&headers_frame, allocator);
 
-                s_generate_header_block(&input, &frame.header_block);
+                headers_frame.header.stream_id = stream_id;
 
-                aws_h2_frame_continuation_encode(&frame, &encoder, &frame_data);
-                aws_h2_frame_continuation_clean_up(&frame);
+                aws_h2_frame_headers_encode(&headers_frame, &encoder, &frame_data);
+                aws_h2_frame_headers_clean_up(&headers_frame);
+
+                /* Now do the CONTINUATION frame */
+                struct aws_h2_frame_continuation continuation_frame;
+                aws_h2_frame_continuation_init(&continuation_frame, allocator);
+
+                continuation_frame.header.stream_id = stream_id;
+                s_generate_header_block(&input, &continuation_frame.header_block);
+
+                aws_h2_frame_continuation_encode(&continuation_frame, &encoder, &frame_data);
+                aws_h2_frame_continuation_clean_up(&continuation_frame);
                 break;
             }
             case AWS_H2_FRAME_T_UNKNOWN: {

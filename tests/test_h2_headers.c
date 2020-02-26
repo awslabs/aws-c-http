@@ -60,6 +60,7 @@ struct header_test_fixture {
     header_init_fn *teardown;
 
     struct aws_allocator *allocator;
+    bool one_byte_at_a_time; /* T: decode one byte at a time. F: decode whole buffer at once */
 
     struct aws_h2_frame_encoder encoder;
     struct aws_hpack_context *decoder;
@@ -128,19 +129,27 @@ static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
     /* Decode the buffer */
     while (payload.len) {
         struct aws_hpack_decode_result result;
-        ASSERT_SUCCESS(aws_hpack_decode(fixture->decoder, &payload, &result));
-        ASSERT_INT_EQUALS(AWS_HPACK_DECODE_T_HEADER_FIELD, result.type);
 
-        struct aws_h2_frame_header_field header_field = {
-            .header = result.data.header_field.header,
-            .hpack_behavior = result.data.header_field.hpack_behavior,
-        };
+        if (fixture->one_byte_at_a_time) {
+            struct aws_byte_cursor one_byte_payload = aws_byte_cursor_advance(&payload, 1);
+            ASSERT_SUCCESS(aws_hpack_decode(fixture->decoder, &one_byte_payload, &result));
+            ASSERT_UINT_EQUALS(0, one_byte_payload.len);
+        } else {
+            ASSERT_SUCCESS(aws_hpack_decode(fixture->decoder, &payload, &result));
+        }
 
-        /* Backup string values */
-        ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.header.name));
-        ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.header.value));
+        if (result.type == AWS_HPACK_DECODE_T_HEADER_FIELD) {
+            struct aws_h2_frame_header_field header_field = {
+                .header = result.data.header_field.header,
+                .hpack_behavior = result.data.header_field.hpack_behavior,
+            };
 
-        ASSERT_SUCCESS(aws_array_list_push_back(&fixture->decoded_headers, &header_field));
+            /* Backup string values */
+            ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.header.name));
+            ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.header.value));
+
+            ASSERT_SUCCESS(aws_array_list_push_back(&fixture->decoded_headers, &header_field));
+        }
     }
 
     /* Compare the headers */
@@ -181,7 +190,18 @@ static int s_header_test_after(struct aws_allocator *allocator, int setup_res, v
         .init = (i),                                                                                                   \
         .teardown = (t),                                                                                               \
     };                                                                                                                 \
-    AWS_TEST_CASE_FIXTURE(t_name, s_header_test_before, s_header_test_run, s_header_test_after, &s_##t_name##_fixture)
+    AWS_TEST_CASE_FIXTURE(t_name, s_header_test_before, s_header_test_run, s_header_test_after, &s_##t_name##_fixture) \
+    static struct header_test_fixture s_##t_name##_one_byte_at_a_time_fixture = {                                      \
+        .init = (i),                                                                                                   \
+        .teardown = (t),                                                                                               \
+        .one_byte_at_a_time = true,                                                                                    \
+    };                                                                                                                 \
+    AWS_TEST_CASE_FIXTURE(                                                                                             \
+        t_name##_one_byte_at_a_time,                                                                                   \
+        s_header_test_before,                                                                                          \
+        s_header_test_run,                                                                                             \
+        s_header_test_after,                                                                                           \
+        &s_##t_name##_one_byte_at_a_time_fixture)
 
 #define DEFINE_STATIC_HEADER(_name, _key, _value, _behavior)                                                           \
     static const struct aws_h2_frame_header_field _name = {                                                            \
