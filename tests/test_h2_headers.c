@@ -83,7 +83,7 @@ static int s_header_test_before(struct aws_allocator *allocator, void *ctx) {
     fixture->decoder = aws_hpack_context_new(allocator, AWS_LS_HTTP_DECODER, NULL);
     ASSERT_NOT_NULL(fixture->decoder);
     ASSERT_SUCCESS(aws_h2_frame_headers_init(&fixture->headers_to_encode, allocator));
-    fixture->headers_to_encode.header.stream_id = 1;
+    fixture->headers_to_encode.base.stream_id = 1;
 
     ASSERT_SUCCESS(aws_byte_buf_init(&fixture->expected_encoding_buf, allocator, S_BUFFER_SIZE));
     ASSERT_SUCCESS(

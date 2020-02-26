@@ -263,20 +263,20 @@ int aws_h2_frame_header_block_encode(
 /***********************************************************************************************************************
  * Common Header
  **********************************************************************************************************************/
-static int s_frame_header_encode(
-    struct aws_h2_frame_header *header,
+static int s_frame_prefix_encode(
+    struct aws_h2_frame_base *frame_base,
     size_t length,
     uint8_t flags,
     struct aws_byte_buf *output) {
-    AWS_PRECONDITION(header);
+    AWS_PRECONDITION(frame_base);
     AWS_PRECONDITION(output);
 
     AWS_LOGF(
         AWS_LL_TRACE,
         AWS_LS_HTTP_FRAMES,
         "Beginning encode of frame %s: stream: %" PRIu32 " payload length: %zu flags: %" PRIu8,
-        aws_h2_frame_type_to_str(header->type),
-        header->stream_id,
+        aws_h2_frame_type_to_str(frame_base->type),
+        frame_base->stream_id,
         length,
         flags);
 
@@ -290,7 +290,7 @@ static int s_frame_header_encode(
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
     /* Write type */
-    if (!aws_byte_buf_write_u8(output, header->type)) {
+    if (!aws_byte_buf_write_u8(output, frame_base->type)) {
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
     /* Write flags */
@@ -298,7 +298,7 @@ static int s_frame_header_encode(
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
     /* Write stream id (with reserved first bit) */
-    if (!aws_byte_buf_write_be32(output, header->stream_id & s_31_bit_mask)) {
+    if (!aws_byte_buf_write_be32(output, frame_base->stream_id & s_31_bit_mask)) {
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
 
@@ -335,7 +335,7 @@ int aws_h2_frame_data_init(struct aws_h2_frame_data *frame, struct aws_allocator
     (void)allocator;
 
     AWS_ZERO_STRUCT(*frame);
-    frame->header.type = AWS_H2_FRAME_T_DATA;
+    frame->base.type = AWS_H2_FRAME_T_DATA;
 
     return AWS_OP_SUCCESS;
 }
@@ -369,7 +369,7 @@ int aws_h2_frame_data_encode(
     }
 
     /* Write the header data */
-    if (s_frame_header_encode(&frame->header, length, flags, output)) {
+    if (s_frame_prefix_encode(&frame->base, length, flags, output)) {
         goto write_error;
     }
 
@@ -404,7 +404,7 @@ int aws_h2_frame_headers_init(struct aws_h2_frame_headers *frame, struct aws_all
     (void)allocator;
 
     AWS_ZERO_STRUCT(*frame);
-    frame->header.type = AWS_H2_FRAME_T_HEADERS;
+    frame->base.type = AWS_H2_FRAME_T_HEADERS;
 
     return aws_h2_frame_header_block_init(&frame->header_block, allocator);
 }
@@ -447,7 +447,7 @@ int aws_h2_frame_headers_encode(
     }
 
     /* Write the header data */
-    if (s_frame_header_encode(&frame->header, length, flags, output)) {
+    if (s_frame_prefix_encode(&frame->base, length, flags, output)) {
         goto write_error;
     }
 
@@ -494,7 +494,7 @@ int aws_h2_frame_priority_init(struct aws_h2_frame_priority *frame, struct aws_a
     (void)allocator;
 
     AWS_ZERO_STRUCT(*frame);
-    frame->header.type = AWS_H2_FRAME_T_PRIORITY;
+    frame->base.type = AWS_H2_FRAME_T_PRIORITY;
 
     return AWS_OP_SUCCESS;
 }
@@ -517,7 +517,7 @@ int aws_h2_frame_priority_encode(
     const size_t output_init_len = output->len;
 
     /* Write the header data */
-    if (s_frame_header_encode(&frame->header, s_frame_priority_length, 0, output)) {
+    if (s_frame_prefix_encode(&frame->base, s_frame_priority_length, 0, output)) {
         goto write_error;
     }
 
@@ -542,7 +542,7 @@ int aws_h2_frame_rst_stream_init(struct aws_h2_frame_rst_stream *frame, struct a
     (void)allocator;
 
     AWS_ZERO_STRUCT(*frame);
-    frame->header.type = AWS_H2_FRAME_T_RST_STREAM;
+    frame->base.type = AWS_H2_FRAME_T_RST_STREAM;
 
     return AWS_OP_SUCCESS;
 }
@@ -565,7 +565,7 @@ int aws_h2_frame_rst_stream_encode(
     const size_t output_init_len = output->len;
 
     /* Write the header data */
-    if (s_frame_header_encode(&frame->header, s_frame_rst_stream_length, 0, output)) {
+    if (s_frame_prefix_encode(&frame->base, s_frame_rst_stream_length, 0, output)) {
         goto write_error;
     }
 
@@ -588,7 +588,7 @@ int aws_h2_frame_settings_init(struct aws_h2_frame_settings *frame, struct aws_a
     (void)allocator;
 
     AWS_ZERO_STRUCT(*frame);
-    frame->header.type = AWS_H2_FRAME_T_SETTINGS;
+    frame->base.type = AWS_H2_FRAME_T_SETTINGS;
 
     return AWS_OP_SUCCESS;
 }
@@ -621,7 +621,7 @@ int aws_h2_frame_settings_encode(
         flags |= AWS_H2_FRAME_F_ACK;
     }
 
-    if (s_frame_header_encode(&frame->header, frame->settings_count * 6, flags, output)) {
+    if (s_frame_prefix_encode(&frame->base, frame->settings_count * 6, flags, output)) {
         goto write_error;
     }
 
@@ -649,7 +649,7 @@ int aws_h2_frame_push_promise_init(struct aws_h2_frame_push_promise *frame, stru
     (void)allocator;
 
     AWS_ZERO_STRUCT(*frame);
-    frame->header.type = AWS_H2_FRAME_T_PUSH_PROMISE;
+    frame->base.type = AWS_H2_FRAME_T_PUSH_PROMISE;
 
     return aws_h2_frame_header_block_init(&frame->header_block, allocator);
 }
@@ -687,7 +687,7 @@ int aws_h2_frame_push_promise_encode(
     if (frame->end_headers) {
         flags |= AWS_H2_FRAME_F_END_HEADERS;
     }
-    if (s_frame_header_encode(&frame->header, length, flags, output)) {
+    if (s_frame_prefix_encode(&frame->base, length, flags, output)) {
         goto write_error;
     }
 
@@ -730,7 +730,7 @@ int aws_h2_frame_ping_init(struct aws_h2_frame_ping *frame, struct aws_allocator
     (void)allocator;
 
     AWS_ZERO_STRUCT(*frame);
-    frame->header.type = AWS_H2_FRAME_T_PING;
+    frame->base.type = AWS_H2_FRAME_T_PING;
 
     return AWS_OP_SUCCESS;
 }
@@ -750,7 +750,7 @@ int aws_h2_frame_ping_encode(
 
     (void)encoder;
 
-    if (frame->header.stream_id != 0) {
+    if (frame->base.stream_id != 0) {
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
@@ -762,7 +762,7 @@ int aws_h2_frame_ping_encode(
         flags |= AWS_H2_FRAME_F_ACK;
     }
 
-    if (s_frame_header_encode(&frame->header, AWS_H2_PING_DATA_SIZE, flags, output)) {
+    if (s_frame_prefix_encode(&frame->base, AWS_H2_PING_DATA_SIZE, flags, output)) {
         goto write_error;
     }
 
@@ -785,7 +785,7 @@ int aws_h2_frame_goaway_init(struct aws_h2_frame_goaway *frame, struct aws_alloc
     (void)allocator;
 
     AWS_ZERO_STRUCT(*frame);
-    frame->header.type = AWS_H2_FRAME_T_GOAWAY;
+    frame->base.type = AWS_H2_FRAME_T_GOAWAY;
 
     return AWS_OP_SUCCESS;
 }
@@ -805,7 +805,7 @@ int aws_h2_frame_goaway_encode(
 
     (void)encoder;
 
-    if (frame->header.stream_id != 0) {
+    if (frame->base.stream_id != 0) {
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
@@ -813,7 +813,7 @@ int aws_h2_frame_goaway_encode(
 
     /* Write the header data */
     size_t length = 8 + frame->debug_data.len;
-    if (s_frame_header_encode(&frame->header, length, 0, output)) {
+    if (s_frame_prefix_encode(&frame->base, length, 0, output)) {
         goto write_error;
     }
 
@@ -844,7 +844,7 @@ int aws_h2_frame_window_update_init(struct aws_h2_frame_window_update *frame, st
     (void)allocator;
 
     AWS_ZERO_STRUCT(*frame);
-    frame->header.type = AWS_H2_FRAME_T_WINDOW_UPDATE;
+    frame->base.type = AWS_H2_FRAME_T_WINDOW_UPDATE;
 
     return AWS_OP_SUCCESS;
 }
@@ -871,7 +871,7 @@ int aws_h2_frame_window_update_encode(
     }
 
     /* Write the header data */
-    if (s_frame_header_encode(&frame->header, s_frame_window_update_length, 0, output)) {
+    if (s_frame_prefix_encode(&frame->base, s_frame_window_update_length, 0, output)) {
         goto write_error;
     }
 
@@ -894,7 +894,7 @@ int aws_h2_frame_continuation_init(struct aws_h2_frame_continuation *frame, stru
     (void)allocator;
 
     AWS_ZERO_STRUCT(*frame);
-    frame->header.type = AWS_H2_FRAME_T_CONTINUATION;
+    frame->base.type = AWS_H2_FRAME_T_CONTINUATION;
 
     return aws_h2_frame_header_block_init(&frame->header_block, allocator);
 }
@@ -926,7 +926,7 @@ int aws_h2_frame_continuation_encode(
     }
 
     /* Write the header data */
-    if (s_frame_header_encode(&frame->header, length, flags, output)) {
+    if (s_frame_prefix_encode(&frame->base, length, flags, output)) {
         goto write_error;
     }
 
@@ -948,49 +948,47 @@ compression_error:
 
 int aws_h2_encode_frame(
     struct aws_h2_frame_encoder *encoder,
-    struct aws_h2_frame_header *frame_header,
+    struct aws_h2_frame_base *frame,
     struct aws_byte_buf *output) {
 
-    switch (frame_header->type) {
+    switch (frame->type) {
         case AWS_H2_FRAME_T_DATA:
-            return aws_h2_frame_data_encode(
-                AWS_CONTAINER_OF(frame_header, struct aws_h2_frame_data, header), encoder, output);
+            return aws_h2_frame_data_encode(AWS_CONTAINER_OF(frame, struct aws_h2_frame_data, base), encoder, output);
 
         case AWS_H2_FRAME_T_HEADERS:
             return aws_h2_frame_headers_encode(
-                AWS_CONTAINER_OF(frame_header, struct aws_h2_frame_headers, header), encoder, output);
+                AWS_CONTAINER_OF(frame, struct aws_h2_frame_headers, base), encoder, output);
 
         case AWS_H2_FRAME_T_PRIORITY:
             return aws_h2_frame_priority_encode(
-                AWS_CONTAINER_OF(frame_header, struct aws_h2_frame_priority, header), encoder, output);
+                AWS_CONTAINER_OF(frame, struct aws_h2_frame_priority, base), encoder, output);
 
         case AWS_H2_FRAME_T_RST_STREAM:
             return aws_h2_frame_rst_stream_encode(
-                AWS_CONTAINER_OF(frame_header, struct aws_h2_frame_rst_stream, header), encoder, output);
+                AWS_CONTAINER_OF(frame, struct aws_h2_frame_rst_stream, base), encoder, output);
 
         case AWS_H2_FRAME_T_SETTINGS:
             return aws_h2_frame_settings_encode(
-                AWS_CONTAINER_OF(frame_header, struct aws_h2_frame_settings, header), encoder, output);
+                AWS_CONTAINER_OF(frame, struct aws_h2_frame_settings, base), encoder, output);
 
         case AWS_H2_FRAME_T_PUSH_PROMISE:
             return aws_h2_frame_push_promise_encode(
-                AWS_CONTAINER_OF(frame_header, struct aws_h2_frame_push_promise, header), encoder, output);
+                AWS_CONTAINER_OF(frame, struct aws_h2_frame_push_promise, base), encoder, output);
 
         case AWS_H2_FRAME_T_PING:
-            return aws_h2_frame_ping_encode(
-                AWS_CONTAINER_OF(frame_header, struct aws_h2_frame_ping, header), encoder, output);
+            return aws_h2_frame_ping_encode(AWS_CONTAINER_OF(frame, struct aws_h2_frame_ping, base), encoder, output);
 
         case AWS_H2_FRAME_T_GOAWAY:
             return aws_h2_frame_goaway_encode(
-                AWS_CONTAINER_OF(frame_header, struct aws_h2_frame_goaway, header), encoder, output);
+                AWS_CONTAINER_OF(frame, struct aws_h2_frame_goaway, base), encoder, output);
 
         case AWS_H2_FRAME_T_WINDOW_UPDATE:
             return aws_h2_frame_window_update_encode(
-                AWS_CONTAINER_OF(frame_header, struct aws_h2_frame_window_update, header), encoder, output);
+                AWS_CONTAINER_OF(frame, struct aws_h2_frame_window_update, base), encoder, output);
 
         case AWS_H2_FRAME_T_CONTINUATION:
             return aws_h2_frame_continuation_encode(
-                AWS_CONTAINER_OF(frame_header, struct aws_h2_frame_continuation, header), encoder, output);
+                AWS_CONTAINER_OF(frame, struct aws_h2_frame_continuation, base), encoder, output);
 
         default:
             AWS_ASSERT(0);
