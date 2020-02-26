@@ -67,7 +67,7 @@ struct decoder_state {
 
 #define DEFINE_STATE(_name, _bytes_required)                                                                           \
     static state_fn s_state_fn_##_name;                                                                                \
-    static const uint32_t s_state_##_name##_requires_##_bytes_required##_bytes = _bytes_required;                      \
+    enum { s_state_##_name##_requires_##_bytes_required##_bytes = _bytes_required };                                   \
     static const struct decoder_state s_state_##_name = {                                                              \
         .fn = s_state_fn_##_name,                                                                                      \
         .bytes_required = s_state_##_name##_requires_##_bytes_required##_bytes,                                        \
