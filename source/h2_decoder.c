@@ -31,6 +31,10 @@ static const size_t s_scratch_space_size = 9;
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 
+/* First 24 bytes sent by client must be this string (RFC-7540 3.5) */
+static const struct aws_byte_cursor s_connection_preface_string =
+    AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+
 #define DECODER_LOGF(level, decoder, text, ...)                                                                        \
     AWS_LOGF_##level(AWS_LS_HTTP_DECODER, "id=%p " text, (decoder)->logging_id, __VA_ARGS__)
 #define DECODER_LOG(level, decoder, text) DECODER_LOGF(level, decoder, "%s", text)
@@ -100,6 +104,9 @@ DEFINE_STATE(frame_window_update, 4);
 DEFINE_STATE(frame_continuation, 0);
 DEFINE_STATE(frame_unknown, 0);
 
+/* States that have nothing to do with frames */
+DEFINE_STATE(connection_preface_string, 1); /* requires 1 byte but may consume more */
+
 /* Helper for states that need to transition to frame-type states */
 static const struct decoder_state *s_state_frames[] = {
     [AWS_H2_FRAME_T_DATA] = &s_state_frame_data,
@@ -124,9 +131,17 @@ struct aws_h2_decoder {
     struct aws_allocator *alloc;
     void *logging_id;
     struct aws_hpack_context *hpack;
-
+    bool is_server;
     struct aws_byte_buf scratch;
     const struct decoder_state *state;
+
+    /* HTTP/2 connection preface must be first thing received (RFC-7540 3.5):
+     * Server must receive (client must send): magic string, then SETTINGS frame.
+     * Client must receive (server must send): SETTINGS frame. */
+    bool connection_preface_complete;
+
+    /* Cursor over the canonical client connection preface string */
+    struct aws_byte_cursor connection_preface_cursor;
 
     /* Frame-in-progress */
     struct aws_frame_in_progress {
@@ -190,6 +205,8 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
     decoder->vtable = params->vtable;
     decoder->userdata = params->userdata;
     decoder->logging_id = params->logging_id;
+    decoder->is_server = params->is_server;
+    decoder->connection_preface_complete = params->skip_connection_preface;
 
     decoder->scratch = aws_byte_buf_from_empty_array(scratch_buf, s_scratch_space_size);
 
@@ -198,7 +215,12 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
         goto failed_new_hpack;
     }
 
-    decoder->state = &s_state_prefix;
+    if (decoder->is_server && !params->skip_connection_preface) {
+        decoder->state = &s_state_connection_preface_string;
+        decoder->connection_preface_cursor = s_connection_preface_string;
+    } else {
+        decoder->state = &s_state_prefix;
+    }
 
     return decoder;
 
@@ -430,18 +452,6 @@ static int s_state_fn_prefix(struct aws_h2_decoder *decoder, struct aws_byte_cur
     AWS_ASSERT(all_read);
     (void)all_read;
 
-    /* Validate payload length */
-    static const uint32_t MAX_FRAME_SIZE = 16384; /* #TODO handle the SETTINGS_MAX_FRAME_SIZE setting */
-    if (frame->payload_len > MAX_FRAME_SIZE) {
-        DECODER_LOGF(
-            ERROR,
-            decoder,
-            "Decoder's max frame size is %" PRIu32 ", but frame of size %" PRIu32 " was received.",
-            MAX_FRAME_SIZE,
-            frame->payload_len);
-        return aws_raise_error(AWS_ERROR_HTTP_INVALID_FRAME_SIZE);
-    }
-
     /* Validate frame type */
     frame->type = raw_type < AWS_H2_FRAME_T_UNKNOWN ? raw_type : AWS_H2_FRAME_T_UNKNOWN;
 
@@ -455,6 +465,19 @@ static int s_state_fn_prefix(struct aws_h2_decoder *decoder, struct aws_byte_cur
     decoder->frame_in_progress.flags.end_headers = flags & AWS_H2_FRAME_F_END_HEADERS;
     decoder->frame_in_progress.flags.priority =
         flags & AWS_H2_FRAME_F_PRIORITY || decoder->frame_in_progress.type == AWS_H2_FRAME_T_PRIORITY;
+
+    /* Connection preface requires that SETTINGS be sent first (RFC-7540 3.5).
+     * This should be the first error we check for, so that a connection sending
+     * total garbage data is likely to trigger this PROTOCOL_ERROR */
+    if (!decoder->connection_preface_complete) {
+        if (frame->type == AWS_H2_FRAME_T_SETTINGS && !frame->flags.ack) {
+            DECODER_LOG(TRACE, decoder, "Connection preface satisfied.");
+            decoder->connection_preface_complete = true;
+        } else {
+            DECODER_LOG(ERROR, decoder, "First frame must be SETTINGS");
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+        }
+    }
 
     /* Validate the frame's stream ID.
      * Frame types generally either require a stream-id, or require that it be zero. */
@@ -486,6 +509,18 @@ static int s_state_fn_prefix(struct aws_h2_decoder *decoder, struct aws_byte_cur
             DECODER_LOG(ERROR, decoder, "Expected CONTINUATION frame.");
             return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
         }
+    }
+
+    /* Validate payload length.  */
+    static const uint32_t MAX_FRAME_SIZE = 16384; /* #TODO handle the SETTINGS_MAX_FRAME_SIZE setting */
+    if (frame->payload_len > MAX_FRAME_SIZE) {
+        DECODER_LOGF(
+            ERROR,
+            decoder,
+            "Decoder's max frame size is %" PRIu32 ", but frame of size %" PRIu32 " was received.",
+            MAX_FRAME_SIZE,
+            frame->payload_len);
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_FRAME_SIZE);
     }
 
     DECODER_LOGF(
@@ -750,6 +785,12 @@ static int s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct 
     /* Remove top bit */
     promised_stream_id &= s_31_bit_mask;
 
+    /* Promised stream ID must not be 0, */
+    if (promised_stream_id == 0) {
+        DECODER_LOGF(ERROR, decoder, "PUSH_PROMISE is promising invalid stream ID %" PRIu32, promised_stream_id);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+
     /* Start header-block and alert the user. */
     decoder->header_block_in_progress.stream_id = decoder->frame_in_progress.stream_id;
     decoder->header_block_in_progress.is_push_promise = true;
@@ -1011,4 +1052,29 @@ static int s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct 
     }
 
     return s_decoder_switch_state(decoder, &s_state_header_block_loop);
+}
+
+/* The first thing a client sends on a connection is a 24 byte magic string (RFC-7540 3.5).
+ * Note that this state doesn't "require" the full 24 bytes, it runs as data arrives.
+ * This avoids hanging if < 24 bytes rolled in. */
+static int s_state_fn_connection_preface_string(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+    size_t remaining_len = decoder->connection_preface_cursor.len;
+    size_t consuming_len = input->len < remaining_len ? input->len : remaining_len;
+
+    struct aws_byte_cursor expected = aws_byte_cursor_advance(&decoder->connection_preface_cursor, consuming_len);
+
+    struct aws_byte_cursor received = aws_byte_cursor_advance(input, consuming_len);
+
+    if (!aws_byte_cursor_eq(&expected, &received)) {
+        DECODER_LOG(ERROR, decoder, "Client connection preface is invalid");
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+
+    if (decoder->connection_preface_cursor.len == 0) {
+        /* Done receiving connection preface string, proceed to decoding normal frames. */
+        return s_decoder_reset_state(decoder);
+    }
+
+    /* Remain in state until more data arrives */
+    return AWS_OP_SUCCESS;
 }

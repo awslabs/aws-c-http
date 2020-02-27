@@ -45,6 +45,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     struct aws_h2_decoder_params decoder_params = {
         .alloc = allocator,
         .vtable = &decoder_vtable,
+        .skip_connection_preface = true,
     };
     struct aws_h2_decoder *decoder = aws_h2_decoder_new(&decoder_params);
 
