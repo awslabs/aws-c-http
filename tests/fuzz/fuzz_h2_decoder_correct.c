@@ -139,7 +139,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 struct aws_h2_frame_data frame;
                 aws_h2_frame_data_init(&frame, allocator);
 
-                s_generate_stream_id(&input, &frame.header.stream_id);
+                s_generate_stream_id(&input, &frame.base.stream_id);
                 aws_byte_cursor_read_u8(&input, &frame.pad_length);
 
                 uint32_t payload_len = input.len;
@@ -157,7 +157,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 struct aws_h2_frame_headers frame;
                 aws_h2_frame_headers_init(&frame, allocator);
 
-                s_generate_stream_id(&input, &frame.header.stream_id);
+                s_generate_stream_id(&input, &frame.base.stream_id);
 
                 s_generate_header_block(&input, &frame.header_block);
 
@@ -169,7 +169,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 struct aws_h2_frame_priority frame;
                 aws_h2_frame_priority_init(&frame, allocator);
 
-                s_generate_stream_id(&input, &frame.header.stream_id);
+                s_generate_stream_id(&input, &frame.base.stream_id);
 
                 uint32_t stream_dependency = 0;
                 aws_byte_cursor_read_be32(&input, &stream_dependency);
@@ -187,7 +187,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 struct aws_h2_frame_rst_stream frame;
                 aws_h2_frame_rst_stream_init(&frame, allocator);
 
-                s_generate_stream_id(&input, &frame.header.stream_id);
+                s_generate_stream_id(&input, &frame.base.stream_id);
 
                 aws_byte_cursor_read_be32(&input, &frame.error_code);
 
@@ -216,7 +216,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 struct aws_h2_frame_push_promise frame;
                 aws_h2_frame_push_promise_init(&frame, allocator);
 
-                s_generate_stream_id(&input, &frame.header.stream_id);
+                s_generate_stream_id(&input, &frame.base.stream_id);
 
                 s_generate_header_block(&input, &frame.header_block);
 
@@ -262,7 +262,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 aws_h2_frame_window_update_init(&frame, allocator);
 
                 /* WINDOW_UPDATE's stream-id can be zero or non-zero */
-                aws_byte_cursor_read_be32(&input, &frame.header.stream_id);
+                aws_byte_cursor_read_be32(&input, &frame.base.stream_id);
 
                 aws_byte_cursor_read_be32(&input, &frame.window_size_increment);
 
@@ -278,7 +278,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 struct aws_h2_frame_headers headers_frame;
                 aws_h2_frame_headers_init(&headers_frame, allocator);
 
-                headers_frame.header.stream_id = stream_id;
+                headers_frame.base.stream_id = stream_id;
 
                 aws_h2_frame_headers_encode(&headers_frame, &encoder, &frame_data);
                 aws_h2_frame_headers_clean_up(&headers_frame);
@@ -287,7 +287,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 struct aws_h2_frame_continuation continuation_frame;
                 aws_h2_frame_continuation_init(&continuation_frame, allocator);
 
-                continuation_frame.header.stream_id = stream_id;
+                continuation_frame.base.stream_id = stream_id;
                 s_generate_header_block(&input, &continuation_frame.header_block);
 
                 aws_h2_frame_continuation_encode(&continuation_frame, &encoder, &frame_data);
