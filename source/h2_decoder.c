@@ -75,7 +75,7 @@ struct decoder_state {
     }
 
 /* Common states */
-DEFINE_STATE(header, 9);
+DEFINE_STATE(prefix, 9);
 DEFINE_STATE(padding_len, 1);
 DEFINE_STATE(padding, 0);
 
@@ -144,7 +144,7 @@ struct aws_h2_decoder {
     } frame_in_progress;
 
     /* A header-block starts with a HEADERS or PUSH_PROMISE frame, followed by 0 or more CONTINUATION frames.
-     * It's an error for any other frame-type or stream ID to arrive while a header block is in progress.
+     * It's an error for any other frame-type or stream ID to arrive while a header-block is in progress.
      * The header-block ends when a frame has the END_HEADERS flag set. (RFC-7540 4.3) */
     struct {
         /* If 0, then no header-block in progress */
@@ -198,7 +198,7 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
         goto failed_new_hpack;
     }
 
-    decoder->state = &s_state_header;
+    decoder->state = &s_state_prefix;
 
     return decoder;
 
@@ -335,7 +335,7 @@ static int s_decoder_reset_state(struct aws_h2_decoder *decoder) {
     }
 
     decoder->scratch.len = 0;
-    decoder->state = &s_state_header;
+    decoder->state = &s_state_prefix;
 
     DECODER_LOG(TRACE, decoder, "Resetting frame in progress");
     AWS_ZERO_STRUCT(decoder->frame_in_progress);
@@ -413,9 +413,9 @@ static const enum stream_id_rules s_stream_id_rules_for_frame[AWS_H2_FRAME_T_UNK
  *  |                   Frame Payload (0...)                      ...
  *  +---------------------------------------------------------------+
  */
-static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static int s_state_fn_prefix(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    AWS_ASSERT(input->len >= s_state_header_requires_9_bytes);
+    AWS_ASSERT(input->len >= s_state_prefix_requires_9_bytes);
 
     struct aws_frame_in_progress *frame = &decoder->frame_in_progress;
     uint8_t raw_type = 0;
@@ -474,7 +474,7 @@ static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cur
     }
 
     /* A header-block starts with a HEADERS or PUSH_PROMISE frame, followed by 0 or more CONTINUATION frames.
-     * It's an error for any other frame-type or stream ID to arrive while a header block is in progress.
+     * It's an error for any other frame-type or stream ID to arrive while a header-block is in progress.
      * (RFC-7540 4.3) */
     if (frame->type == AWS_H2_FRAME_T_CONTINUATION) {
         if (decoder->header_block_in_progress.stream_id != frame->stream_id) {
@@ -491,7 +491,7 @@ static int s_state_fn_header(struct aws_h2_decoder *decoder, struct aws_byte_cur
     DECODER_LOGF(
         TRACE,
         decoder,
-        "Done decoding frame header (type=%s stream-id=%" PRIu32 " payload-len=%" PRIu32 "), moving on to payload",
+        "Done decoding frame prefix (type=%s stream-id=%" PRIu32 " payload-len=%" PRIu32 "), moving on to payload",
         aws_h2_frame_type_to_str(frame->type),
         frame->stream_id,
         frame->payload_len);
@@ -610,7 +610,7 @@ static int s_state_fn_frame_headers(struct aws_h2_decoder *decoder, struct aws_b
 
     DECODER_CALL_VTABLE_STREAM(decoder, on_headers_begin);
 
-    /* Read the header block fragment */
+    /* Read the header-block fragment */
     return s_decoder_switch_state(decoder, &s_state_header_block_loop);
 }
 static int s_state_fn_frame_priority(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
@@ -757,7 +757,7 @@ static int s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct 
 
     DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_begin, promised_stream_id);
 
-    /* Read the header block fragment */
+    /* Read the header-block fragment */
     return s_decoder_switch_state(decoder, &s_state_header_block_loop);
 }
 
@@ -868,7 +868,7 @@ static int s_state_fn_frame_window_update(struct aws_h2_decoder *decoder, struct
 static int s_state_fn_frame_continuation(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
-    /* Read the header block fragment */
+    /* Read the header-block fragment */
     return s_decoder_switch_state(decoder, &s_state_header_block_loop);
 }
 
@@ -897,7 +897,7 @@ static int s_state_fn_header_block_loop(struct aws_h2_decoder *decoder, struct a
 
         /* If this is the end of the header-block, invoke callback and clear header_block_in_progress */
         if (decoder->frame_in_progress.flags.end_headers) {
-            DECODER_LOG(TRACE, decoder, "Done decoding header block");
+            DECODER_LOG(TRACE, decoder, "Done decoding header-block");
 
             if (decoder->header_block_in_progress.is_push_promise) {
                 DECODER_CALL_VTABLE_STREAM(decoder, on_push_promise_end);
@@ -913,7 +913,7 @@ static int s_state_fn_header_block_loop(struct aws_h2_decoder *decoder, struct a
             AWS_ZERO_STRUCT(decoder->header_block_in_progress);
 
         } else {
-            DECODER_LOG(TRACE, decoder, "Done decoding header block fragment, expecting CONTINUATION frames");
+            DECODER_LOG(TRACE, decoder, "Done decoding header-block fragment, expecting CONTINUATION frames");
         }
 
         /* Finish this frame */

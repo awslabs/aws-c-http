@@ -107,16 +107,15 @@ struct aws_h2_frame_header_block {
     struct aws_array_list header_fields;
 };
 
-/* The header present in every h2 frame */
-struct aws_h2_frame_header {
+/* Present in every h2 frame */
+struct aws_h2_frame_base {
     uint8_t type; /* aws_h2_frame_type */
     uint32_t stream_id;
 };
 
 /* Represents a DATA frame */
 struct aws_h2_frame_data {
-    /* Header */
-    struct aws_h2_frame_header header;
+    struct aws_h2_frame_base base;
 
     /* Flags */
     bool end_stream; /* AWS_H2_FRAME_F_END_STREAM */
@@ -128,8 +127,7 @@ struct aws_h2_frame_data {
 
 /* Represents a HEADERS frame */
 struct aws_h2_frame_headers {
-    /* Header */
-    struct aws_h2_frame_header header;
+    struct aws_h2_frame_base base;
 
     /* Flags */
     bool end_stream;   /* AWS_H2_FRAME_F_END_STREAM */
@@ -144,8 +142,7 @@ struct aws_h2_frame_headers {
 
 /* Represents a PRIORITY frame */
 struct aws_h2_frame_priority {
-    /* Header */
-    struct aws_h2_frame_header header;
+    struct aws_h2_frame_base base;
 
     /* Payload */
     struct aws_h2_frame_priority_settings priority;
@@ -153,8 +150,7 @@ struct aws_h2_frame_priority {
 
 /* Represents a RST_STREAM frame */
 struct aws_h2_frame_rst_stream {
-    /* Header */
-    struct aws_h2_frame_header header;
+    struct aws_h2_frame_base base;
 
     /* Payload */
     enum aws_h2_error_codes error_code;
@@ -168,8 +164,7 @@ struct aws_h2_frame_setting {
 
 /* Represents a SETTINGS frame */
 struct aws_h2_frame_settings {
-    /* Header */
-    struct aws_h2_frame_header header;
+    struct aws_h2_frame_base base;
 
     /* Flags */
     bool ack; /* AWS_H2_FRAME_F_ACK */
@@ -181,8 +176,7 @@ struct aws_h2_frame_settings {
 
 /* Represents a PUSH_PROMISE frame */
 struct aws_h2_frame_push_promise {
-    /* Header */
-    struct aws_h2_frame_header header;
+    struct aws_h2_frame_base base;
 
     /* Flags */
     bool end_headers; /* AWS_H2_FRAME_F_END_HEADERS */
@@ -197,8 +191,7 @@ struct aws_h2_frame_push_promise {
 
 /* Represents a PING frame */
 struct aws_h2_frame_ping {
-    /* Header */
-    struct aws_h2_frame_header header;
+    struct aws_h2_frame_base base;
 
     /* Flags */
     bool ack; /* AWS_H2_FRAME_F_ACK */
@@ -209,8 +202,7 @@ struct aws_h2_frame_ping {
 
 /* Represents a GOAWAY frame */
 struct aws_h2_frame_goaway {
-    /* Header */
-    struct aws_h2_frame_header header;
+    struct aws_h2_frame_base base;
 
     /* Payload */
     uint32_t last_stream_id;
@@ -220,8 +212,7 @@ struct aws_h2_frame_goaway {
 
 /* Represents a WINDOW_UPDATE frame */
 struct aws_h2_frame_window_update {
-    /* Header */
-    struct aws_h2_frame_header header;
+    struct aws_h2_frame_base base;
 
     /* Payload */
     uint32_t window_size_increment;
@@ -229,8 +220,7 @@ struct aws_h2_frame_window_update {
 
 /* Represents a CONTINUATION frame */
 struct aws_h2_frame_continuation {
-    /* Header */
-    struct aws_h2_frame_header header;
+    struct aws_h2_frame_base base;
 
     /* Flags */
     bool end_headers; /* AWS_H2_FRAME_F_END_HEADERS */
@@ -271,7 +261,7 @@ int aws_h2_frame_header_block_encode(
 /**
  * The process of encoding a frame looks like:
  * 1. Create a encoder object on the stack and initialize with aws_h2_frame_encoder_init
- * 2. Encode the header using aws_h2_frame_*_encode
+ * 2. Encode the frame using aws_h2_frame_*_encode
  */
 AWS_HTTP_API
 int aws_h2_frame_encoder_init(struct aws_h2_frame_encoder *encoder, struct aws_allocator *allocator);
@@ -282,7 +272,7 @@ void aws_h2_frame_encoder_clean_up(struct aws_h2_frame_encoder *encoder);
 AWS_HTTP_API
 int aws_h2_encode_frame(
     struct aws_h2_frame_encoder *encoder,
-    struct aws_h2_frame_header *frame_header,
+    struct aws_h2_frame_base *frame,
     struct aws_byte_buf *output);
 
 AWS_HTTP_API
