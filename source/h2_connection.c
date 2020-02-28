@@ -196,6 +196,7 @@ static struct aws_h2_connection *s_connection_new(
         .vtable = &s_h2_decoder_vtable,
         .userdata = connection,
         .logging_id = connection,
+        .is_server = server,
     };
     connection->thread_data.decoder = aws_h2_decoder_new(&params);
     if (!connection->thread_data.decoder) {

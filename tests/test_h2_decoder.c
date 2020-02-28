@@ -59,6 +59,9 @@ struct fixture {
     aws_test_run_fn *split_test_fn;
     size_t split_i;
     bool split_tests_complete;
+
+    bool is_server;
+    bool skip_connection_preface;
 };
 
 static int s_frame_init(
@@ -419,6 +422,8 @@ static int s_fixture_init(struct fixture *fixture, struct aws_allocator *allocat
         .alloc = allocator,
         .vtable = &s_decoder_vtable,
         .userdata = fixture,
+        .is_server = fixture->is_server,
+        .skip_connection_preface = fixture->skip_connection_preface,
     };
     fixture->decoder = aws_h2_decoder_new(&options);
     ASSERT_NOT_NULL(fixture->decoder);
@@ -483,17 +488,28 @@ static int s_test_splits(struct aws_allocator *allocator, void *ctx) {
  * 1) NAME runs the decoder over input all at once
  * 2) NAME_one_byte_at_a_time runs the decoder on one byte of input at a time.
  * 3) NAME_split_at_i runs the decoder on input, split into two chunks. And re-runs test over every possible split */
-#define H2_DECODER_TEST_CASE(NAME)                                                                                     \
-    static struct fixture s_fixture_##NAME;                                                                            \
+#define H2_DECODER_TEST_CASE_IMPL(NAME, IS_SERVER, SKIP_PREFACE)                                                       \
+    static struct fixture s_fixture_##NAME = {                                                                         \
+        .is_server = (IS_SERVER),                                                                                      \
+        .skip_connection_preface = (SKIP_PREFACE),                                                                     \
+    };                                                                                                                 \
     AWS_TEST_CASE_FIXTURE(NAME, s_fixture_test_setup, s_test_##NAME, s_fixture_test_teardown, &s_fixture_##NAME);      \
-    static struct fixture s_fixture_##NAME##_one_byte_at_a_time = {.one_byte_at_a_time = true};                        \
+    static struct fixture s_fixture_##NAME##_one_byte_at_a_time = {                                                    \
+        .one_byte_at_a_time = true,                                                                                    \
+        .is_server = (IS_SERVER),                                                                                      \
+        .skip_connection_preface = (SKIP_PREFACE),                                                                     \
+    };                                                                                                                 \
     AWS_TEST_CASE_FIXTURE(                                                                                             \
         NAME##_one_byte_at_a_time,                                                                                     \
         s_fixture_test_setup,                                                                                          \
         s_test_##NAME,                                                                                                 \
         s_fixture_test_teardown,                                                                                       \
         &s_fixture_##NAME##_one_byte_at_a_time);                                                                       \
-    static struct fixture s_fixture_##NAME##_split_at_i = {.split_test_fn = s_test_##NAME};                            \
+    static struct fixture s_fixture_##NAME##_split_at_i = {                                                            \
+        .split_test_fn = s_test_##NAME,                                                                                \
+        .is_server = (IS_SERVER),                                                                                      \
+        .skip_connection_preface = (SKIP_PREFACE),                                                                     \
+    };                                                                                                                 \
     AWS_TEST_CASE_FIXTURE(                                                                                             \
         NAME##_split_at_i,                                                                                             \
         s_fixture_test_setup,                                                                                          \
@@ -501,6 +517,10 @@ static int s_test_splits(struct aws_allocator *allocator, void *ctx) {
         s_fixture_test_teardown,                                                                                       \
         &s_fixture_##NAME##_split_at_i);                                                                               \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
+
+#define H2_DECODER_TEST_CASE(NAME) H2_DECODER_TEST_CASE_IMPL(NAME, false /*server*/, true /*skip_preface*/)
+#define H2_DECODER_ON_CLIENT_PREFACE_TEST(NAME) H2_DECODER_TEST_CASE_IMPL(NAME, false, false)
+#define H2_DECODER_ON_SERVER_PREFACE_TEST(NAME) H2_DECODER_TEST_CASE_IMPL(NAME, true, false)
 
 /* Make sure fixture works */
 TEST_CASE(h2_decoder_sanity_check) {
@@ -1859,7 +1879,7 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise_ignores_unknown_flags) {
         0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31) */
         /* PUSH_PROMISE */
         0x02,                       /* Pad Length (8)                           - F_PADDED */
-        0x80, 0x00, 0x00, 0x02,     /* Reserved (1) | Promised Stream ID (31) */
+        0x00, 0x00, 0x00, 0x02,     /* Reserved (1) | Promised Stream ID (31) */
         0x82,                       /* ":method: GET" - indexed header field */
         0x87,                       /* ":scheme: https" - indexed header field */
         0x85,                       /* ":path: /index.html" - indexed header field */
@@ -1895,7 +1915,7 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise_continuation) {
         0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31) */
         /* PAYLOAD */
         0x02,                       /* Pad Length (8)                           - F_PADDED */
-        0x80, 0x00, 0x00, 0x02,     /* Reserved (1) | Promised Stream ID (31) */
+        0x00, 0x00, 0x00, 0x02,     /* Reserved (1) | Promised Stream ID (31) */
         0x82,                       /* ":method: GET" - indexed header field */
         0x00, 0x00,                 /* Padding (*)                              - F_PADDED */
 
@@ -1947,7 +1967,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_push_promise_continuation_expected) {
         0x00,                       /* Flags (8) */
         0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31) */
         /* PAYLOAD */
-        0x80, 0x00, 0x00, 0x02,     /* Reserved (1) | Promised Stream ID (31) */
+        0x00, 0x00, 0x00, 0x02,     /* Reserved (1) | Promised Stream ID (31) */
         0x82,                       /* ":method: GET" - indexed header field */
         0x87,                       /* ":scheme: https" - indexed header field */
         0x85,                       /* ":path: /index.html" - indexed header field */
@@ -1980,7 +2000,33 @@ H2_DECODER_TEST_CASE(h2_decoder_err_push_promise_requires_stream_id) {
         AWS_H2_FRAME_F_END_HEADERS, /* Flags (8) */
         0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
         /* PUSH_PROMISE */
-        0x80, 0x00, 0x00, 0x02,     /* Reserved (1) | Promised Stream ID (31) */
+        0x00, 0x00, 0x00, 0x02,     /* Reserved (1) | Promised Stream ID (31) */
+        0x82,                       /* ":method: GET" - indexed header field */
+        0x87,                       /* ":scheme: https" - indexed header field */
+        0x85,                       /* ":path: /index.html" - indexed header field */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Promised stream ID must be valid */
+H2_DECODER_TEST_CASE(h2_decoder_err_push_promise_requires_promised_stream_id) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x07,           /* Length (24) */
+        AWS_H2_FRAME_T_PUSH_PROMISE,/* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS, /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31) */
+        /* PUSH_PROMISE */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Promised Stream ID (31) */
         0x82,                       /* ":method: GET" - indexed header field */
         0x87,                       /* ":scheme: https" - indexed header field */
         0x85,                       /* ":path: /index.html" - indexed header field */
@@ -2528,6 +2574,203 @@ H2_DECODER_TEST_CASE(h2_decoder_many_frames_in_a_row) {
 
     /* Ensure no further frames reported */
     ASSERT_UINT_EQUALS(frame_i, aws_array_list_length(&fixture->frames));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that client can decode a proper connection preface sent by the server.
+ * A server connection preface is just a settings frame */
+H2_DECODER_ON_CLIENT_PREFACE_TEST(h2_decoder_preface_from_server) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* SETTINGS FRAME - empty settings frame is acceptable in preface */
+        0x00, 0x00, 0x00,           /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+
+        /* PING FRAME - send another frame to be sure decoder is now functioning normally */
+        0x00, 0x00, 0x08,           /* Length (24) */
+        AWS_H2_FRAME_T_PING,        /* Type (8) */
+        0x0,                        /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        'p', 'i', 'n', 'g', 'p', 'o', 'n', 'g' /* Opaque Data (64) */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    ASSERT_UINT_EQUALS(2, aws_array_list_length(&fixture->frames));
+
+    struct frame *frame;
+    ASSERT_SUCCESS(s_get_finished_frame_i(fixture, 0, AWS_H2_FRAME_T_SETTINGS, 0 /*stream-id*/, &frame));
+    ASSERT_SUCCESS(s_get_finished_frame_i(fixture, 1, AWS_H2_FRAME_T_PING, 0 /*stream-id*/, &frame));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* The server must send a SETTINGS frame first.
+ * It's an error to send any other frame type */
+H2_DECODER_ON_CLIENT_PREFACE_TEST(h2_decoder_err_bad_preface_from_server_1) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* PING FRAME - but should be SETTINGS */
+        0x00, 0x00, 0x08,           /* Length (24) */
+        AWS_H2_FRAME_T_PING,        /* Type (8) */
+        0x0,                        /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        'p', 'i', 'n', 'g', 'p', 'o', 'n', 'g' /* Opaque Data (64) */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* The server must send a SETTINGS frame first.
+ * It's an error if SETTINGS frame is an ACK */
+H2_DECODER_ON_CLIENT_PREFACE_TEST(h2_decoder_err_bad_preface_from_server_2) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* SETTINGS FRAME */
+        0x00, 0x00, 0x00,           /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        AWS_H2_FRAME_F_ACK,         /* Flags (8) <-- Preface SETTINGS should not have ACK */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* The server mustn't send the "client connection preface string" */
+H2_DECODER_ON_CLIENT_PREFACE_TEST(h2_decoder_err_bad_preface_from_server_3) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    const struct aws_byte_cursor input = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+
+    /* Decode */
+    ASSERT_ERROR(AWS_ERROR_HTTP_PROTOCOL_ERROR, s_decode_all(fixture, input));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that client can decode a proper connection preface sent by the client. */
+H2_DECODER_ON_SERVER_PREFACE_TEST(h2_decoder_preface_from_client) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* Client connection preface string */
+        'P','R','I',' ','*',' ','H','T','T','P','/','2','.','0','\r','\n','\r','\n','S','M','\r','\n','\r','\n',
+
+        /* SETTINGS FRAME - empty settings frame is acceptable in preface */
+        0x00, 0x00, 0x00,           /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+
+        /* PING FRAME - send another frame to be sure decoder is now functioning normally */
+        0x00, 0x00, 0x08,           /* Length (24) */
+        AWS_H2_FRAME_T_PING,        /* Type (8) */
+        0x0,                        /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        'p', 'i', 'n', 'g', 'p', 'o', 'n', 'g' /* Opaque Data (64) */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    ASSERT_UINT_EQUALS(2, aws_array_list_length(&fixture->frames));
+
+    struct frame *frame;
+    ASSERT_SUCCESS(s_get_finished_frame_i(fixture, 0, AWS_H2_FRAME_T_SETTINGS, 0 /*stream-id*/, &frame));
+    ASSERT_SUCCESS(s_get_finished_frame_i(fixture, 1, AWS_H2_FRAME_T_PING, 0 /*stream-id*/, &frame));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Should fail because we're not sending the "client connection preface string" */
+H2_DECODER_ON_SERVER_PREFACE_TEST(h2_decoder_err_bad_preface_from_client_1) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* SETTINGS FRAME - empty settings frame is acceptable in preface */
+        0x00, 0x00, 0x00,           /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Should fail because we're sending something different from (and shorter than) "client connection preface string" */
+H2_DECODER_ON_SERVER_PREFACE_TEST(h2_decoder_err_bad_preface_from_client_2) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* This is the shortest valid HTTP query I can come up with */
+    struct aws_byte_cursor input = aws_byte_cursor_from_c_str("GET / HTTP/1.0\r\n\r\n");
+
+    /* Decode */
+    ASSERT_ERROR(AWS_ERROR_HTTP_PROTOCOL_ERROR, s_decode_all(fixture, input));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Should fail because we're not sending SETTINGS as the first frame */
+H2_DECODER_ON_SERVER_PREFACE_TEST(h2_decoder_err_bad_preface_from_client_3) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* Client connection preface string */
+        'P','R','I',' ','*',' ','H','T','T','P','/','2','.','0','\r','\n','\r','\n','S','M','\r','\n','\r','\n',
+
+        /* PING FRAME - but should be SETTINGS */
+        0x00, 0x00, 0x08,           /* Length (24) */
+        AWS_H2_FRAME_T_PING,        /* Type (8) */
+        0x0,                        /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* Payload */
+        'p', 'i', 'n', 'g', 'p', 'o', 'n', 'g' /* Opaque Data (64) */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
