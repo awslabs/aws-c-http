@@ -479,10 +479,12 @@ static int s_state_fn_prefix(struct aws_h2_decoder *decoder, struct aws_byte_cur
         }
     }
 
-    /* Validate the frame's stream ID.
-     * Frame types generally either require a stream-id, or require that it be zero. */
-    frame->stream_id &= s_31_bit_mask; /* Mask off reserved bit */
+    /* Validate the frame's stream ID. */
 
+    /* Reserved bit (1st bit) MUST be ignored when receiving (RFC-7540 4.1) */
+    frame->stream_id &= s_31_bit_mask;
+
+    /* Some frame types require a stream ID, some frame types require that stream ID be zero. */
     const enum stream_id_rules stream_id_rules = s_stream_id_rules_for_frame[frame->type];
     if (frame->stream_id) {
         if (stream_id_rules == STREAM_ID_FORBIDDEN) {
@@ -782,10 +784,10 @@ static int s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct 
 
     decoder->frame_in_progress.payload_len -= s_state_frame_push_promise_requires_4_bytes;
 
-    /* Remove top bit */
+    /* Reserved bit (top bit) must be ignored when receiving (RFC-7540 4.1) */
     promised_stream_id &= s_31_bit_mask;
 
-    /* Promised stream ID must not be 0, */
+    /* Promised stream ID must not be 0 (RFC-7540 6.6) */
     if (promised_stream_id == 0) {
         DECODER_LOGF(ERROR, decoder, "PUSH_PROMISE is promising invalid stream ID %" PRIu32, promised_stream_id);
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
