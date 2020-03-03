@@ -52,9 +52,9 @@ struct aws_h2_stream {
 
     /* Only the event-loop thread may touch this data */
     struct {
-        bool expects_continuation;
         enum aws_h2_stream_state state;
         uint64_t window_size; /* #TODO try to figure out how this actually works, and then implement it */
+        struct aws_http_message *outgoing_message;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
@@ -64,18 +64,15 @@ struct aws_h2_stream {
     } synced_data;
 };
 
-struct aws_h2_stream;
-
-AWS_EXTERN_C_BEGIN
-
-AWS_HTTP_API
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);
 
-AWS_HTTP_API
 struct aws_h2_stream *aws_h2_stream_new_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options);
 
-AWS_EXTERN_C_END
+enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *stream);
+
+/* Connection is ready to send frames from stream now */
+int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data);
 
 #endif /* AWS_HTTP_H2_STREAM_H */

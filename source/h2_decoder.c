@@ -1036,6 +1036,8 @@ static int s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct 
      * - can't have unrecognized/invalid pseudo-headers
      * These make the message "malformed", which is a STREAM error, not PROTOCOL error, not sure how to handle that */
 
+    /* #TODO Cookie headers must be concatenated into single delivery RFC-7540 8.1.2.5 */
+
     if (result.type == AWS_HPACK_DECODE_T_HEADER_FIELD) {
         const struct aws_hpack_decoded_header_field *field = &result.data.header_field;
 

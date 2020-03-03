@@ -30,7 +30,6 @@
 #endif
 
 enum {
-    MESSAGE_SIZE_HINT = 16 * 1024,
     DECODER_INITIAL_SCRATCH_SIZE = 256,
 };
 
@@ -823,21 +822,7 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         return;
     }
 
-    /* If outgoing_message_size_hint isn't set yet, calculate it */
-    size_t overhead = aws_channel_slot_upstream_message_overhead(connection->base.channel_slot);
-    if (overhead >= MESSAGE_SIZE_HINT) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Unexpected error while calculating message size, closing connection.",
-            (void *)&connection->base);
-
-        aws_raise_error(AWS_ERROR_INVALID_STATE);
-        goto error;
-    }
-
-    size_t outgoing_message_size_hint = MESSAGE_SIZE_HINT - overhead;
-
-    msg = aws_channel_acquire_message_from_pool(channel, AWS_IO_MESSAGE_APPLICATION_DATA, outgoing_message_size_hint);
+    msg = aws_channel_slot_acquire_max_message_for_write(connection->base.channel_slot);
     if (!msg) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,

@@ -144,6 +144,11 @@ static void s_stop(
     }
 }
 
+static void s_shutdown_due_to_write_err(struct aws_h2_connection *connection, int error_code) {
+    AWS_PRECONDITION(error_code);
+    s_stop(connection, false /*stop_reading*/, true /*stop_writing*/, true /*schedule_shutdown*/, error_code);
+}
+
 /* Common new() logic for server & client */
 static struct aws_h2_connection *s_connection_new(
     struct aws_allocator *alloc,
@@ -175,6 +180,9 @@ static struct aws_h2_connection *s_connection_new(
 
     connection->synced_data.is_open = true;
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
+
+    aws_linked_list_init(&connection->thread_data.outgoing_streams_list);
+    aws_linked_list_init(&connection->thread_data.outgoing_frames_queue);
 
     if (aws_mutex_init(&connection->synced_data.lock)) {
         CONNECTION_LOGF(
@@ -244,6 +252,8 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
 
     connection->base.client_data = &connection->base.client_or_server_data.client;
 
+    /* #TODO immediately send connection preface string and settings */
+
     return &connection->base;
 }
 
@@ -256,7 +266,15 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
         !aws_hash_table_is_valid(&connection->thread_data.active_streams_map) ||
         aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0);
 
+    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.outgoing_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
+
+    /* Clean up any unsent frames */
+    struct aws_linked_list *outgoing_frames_queue = &connection->thread_data.outgoing_frames_queue;
+    while (!aws_linked_list_empty(outgoing_frames_queue)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(outgoing_frames_queue);
+        aws_h2_frame_clean_up(AWS_CONTAINER_OF(node, struct aws_h2_frame_base, node));
+    }
 
     aws_h2_decoder_destroy(connection->thread_data.decoder);
     aws_h2_frame_encoder_clean_up(&connection->thread_data.encoder);
@@ -265,7 +283,214 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     aws_mem_release(connection->base.alloc, connection);
 }
 
-static void s_stream_complete(struct aws_h2_stream *stream, int error_code) {
+void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connection, struct aws_h2_frame_base *frame) {
+    /* DATA frames are not queued. We only send DATA frames when the frame queue is empty */
+    AWS_PRECONDITION(frame->type != AWS_H2_FRAME_T_DATA);
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
+    aws_linked_list_push_back(&connection->thread_data.outgoing_frames_queue, &frame->node);
+}
+
+static void s_on_channel_write_complete(
+    struct aws_channel *channel,
+    struct aws_io_message *message,
+    int err_code,
+    void *user_data) {
+
+    (void)message;
+    struct aws_h2_connection *connection = user_data;
+
+    if (err_code) {
+        CONNECTION_LOGF(ERROR, connection, "Message did not write to network, error %s", aws_error_name(err_code));
+        s_shutdown_due_to_write_err(connection, err_code);
+        return;
+    }
+
+    CONNECTION_LOG(TRACE, connection, "Message finished writing to network. Rescheduling outgoing frame task");
+
+    /* To avoid wasting memory, we only want ONE of our written aws_io_messages in the channel at a time.
+     * Therefore, we wait until it's written to the network before trying to send another
+     * by running the outgoing-frame-task again.
+     *
+     * We also want to share the network with other channels.
+     * Therefore, when the write completes, we SCHEDULE the outgoing-frame-task
+     * to run again instead of calling the function directly.
+     * This way, if the message completes synchronously,
+     * we're not hogging the network by writing message after message in a tight loop */
+    aws_channel_schedule_task_now(channel, &connection->outgoing_frames_task);
+}
+
+static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        return;
+    }
+
+    struct aws_h2_connection *connection = arg;
+    struct aws_channel_slot *channel_slot = connection->base.channel_slot;
+    struct aws_linked_list *outgoing_frames_queue = &connection->thread_data.outgoing_frames_queue;
+    struct aws_linked_list *outgoing_streams_list = &connection->thread_data.outgoing_streams_list;
+
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(channel_slot->channel));
+    AWS_PRECONDITION(connection->thread_data.is_outgoing_frames_task_active);
+
+    /* If there is nothing to send, then end the task immediately */
+    if (aws_linked_list_empty(outgoing_frames_queue) && aws_linked_list_empty(outgoing_streams_list)) {
+        CONNECTION_LOG(TRACE, connection, "Outgoing frames task stopped, nothing to send at this time");
+        connection->thread_data.is_outgoing_frames_task_active = false;
+        return;
+    }
+
+    /* Acquire aws_io_message, that we will attempt to fill up */
+    struct aws_io_message *msg = aws_channel_slot_acquire_max_message_for_write(channel_slot);
+    if (AWS_UNLIKELY(!msg)) {
+        CONNECTION_LOG(ERROR, connection, "Failed to acquire message from pool, closing connection.");
+        goto error;
+    }
+
+    /* Set up callback so we can send another message when this one completes */
+    msg->on_completion = s_on_channel_write_complete;
+    msg->user_data = connection;
+
+    CONNECTION_LOGF(
+        TRACE,
+        connection,
+        "Outgoing frames task acquired message with %zu bytes available",
+        msg->message_data.capacity - msg->message_data.len);
+
+    /* Track number of frames encoded, just used for logging */
+    size_t num_frames_encoded = 0;
+
+    /* Write as many frames from outgoing_frames_queue as possible. */
+    while (!aws_linked_list_empty(outgoing_frames_queue)) {
+        struct aws_linked_list_node *frame_node = aws_linked_list_front(outgoing_frames_queue);
+        struct aws_h2_frame_base *frame = AWS_CONTAINER_OF(frame_node, struct aws_h2_frame_base, node);
+
+        /* #TODO actual functionality to query min required space for a frame */
+        const size_t min_required_bytes = 1024;
+        const size_t available_bytes = msg->message_data.capacity - msg->message_data.len;
+        if (available_bytes < min_required_bytes) {
+            if (msg->message_data.len == 0) {
+                /* We're in trouble if an empty message isn't big enough for this frame to do any work with */
+                CONNECTION_LOGF(
+                    ERROR,
+                    connection,
+                    "Cannot encode %s frame requiring %zu bytes, max available space is %zu",
+                    aws_h2_frame_type_to_str(frame->type),
+                    min_required_bytes,
+                    available_bytes);
+                aws_raise_error(AWS_ERROR_INVALID_STATE);
+                goto error;
+            }
+
+            CONNECTION_LOG(TRACE, connection, "Outgoing frames task filled message, and has more frames to send later");
+            goto done_encoding;
+        }
+
+        /* #TODO some way for frame to say it's not done yet.
+         * Necessary for HEADERS that will split across CONTINUATION frames */
+        if (aws_h2_encode_frame(&connection->thread_data.encoder, frame, &msg->message_data)) {
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "Error encoding frame of type %s: %s",
+                aws_h2_frame_type_to_str(frame->type),
+                aws_error_name(aws_last_error()));
+            goto error;
+        }
+
+        /* Done encoding frame, pop from queue and cleanup*/
+        aws_linked_list_remove(frame_node);
+        aws_h2_frame_clean_up(frame);
+
+        num_frames_encoded++;
+    }
+
+    /* Write as many DATA frames from outgoing_streams_list as possible.
+     * We simply round-robin through available streams, instead of using stream priority.
+     *
+     * Respecting priority is not required (RFC-7540 5.3), so we're ignoring it for now. This also keeps use safe
+     * from priority DOS attacks: https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-9513
+     */
+    while (!aws_linked_list_empty(outgoing_streams_list)) {
+        num_frames_encoded++;
+
+        /* #TODO actually encode DATA frames.
+         * It will go something like:
+         * If there's not enough room in msg to bother encoding anything: goto done_encoding.
+         * Encode a DATA frame
+         * - It will write as much data as will fit in msg, and as much data as body_stream will give us
+         * - Encoder will go back and edit frame length to fit what we actually encoded.
+         * - Encoder will go back and edit END_STREAM flag if we reached the end of the body_stream.
+         *
+         * If stream has sent all data:
+         * - Remove stream from outgoing_streams_list
+         * - Stream is complete if it is also done receiving (weird edge case, but theoretically possible)
+         * Else stream has not sent all data:
+         * - Move stream to back of outgoing_streams_list ("round-robin" DATA frames from available streams)
+         */
+        CONNECTION_LOG(ERROR, connection, "DATA frames not supported yet");
+        aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+        goto error;
+    }
+
+done_encoding:
+    if (msg->message_data.len) {
+        /* Write message to channel.
+         * outgoing_frames_task will resume when message completes. */
+        CONNECTION_LOGF(
+            TRACE,
+            connection,
+            "Outgoing frames task sending message of size %zu containing ~%zu frames",
+            msg->message_data.len,
+            num_frames_encoded);
+
+        if (aws_channel_slot_send_message(channel_slot, msg, AWS_CHANNEL_DIR_WRITE)) {
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "Failed to send channel message: %s. Closing connection.",
+                aws_error_name(aws_last_error()));
+
+            goto error;
+        }
+    } else {
+        /* Message is empty, warn that no work is being done and reschedule the task to try again next tick.
+         * It's likely that body isn't ready, so body streaming function has no data to write yet.
+         * If this scenario turns out to be common we should implement a "pause" feature. */
+        CONNECTION_LOG(WARN, connection, "Outgoing frames task sent no data, will try again next tick.");
+
+        aws_mem_release(msg->allocator, msg);
+
+        aws_channel_schedule_task_now(channel_slot->channel, task);
+    }
+    return;
+
+error:;
+    int error_code = aws_last_error();
+
+    if (msg) {
+        aws_mem_release(msg->allocator, msg);
+    }
+
+    s_shutdown_due_to_write_err(connection, error_code);
+}
+
+/* If the outgoing-frames-task isn't scheduled, run it immediately. */
+static void s_try_write_outgoing_frames(struct aws_h2_connection *connection) {
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
+    if (connection->thread_data.is_outgoing_frames_task_active) {
+        return;
+    }
+
+    CONNECTION_LOG(TRACE, connection, "Starting outgoing frames task");
+    connection->thread_data.is_outgoing_frames_task_active = true;
+    s_outgoing_frames_task(&connection->outgoing_frames_task, connection, AWS_TASK_STATUS_RUN_READY);
+}
+
+static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h2_stream *stream, int error_code) {
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
     /* Nice logging */
     if (error_code) {
         AWS_H2_STREAM_LOGF(
@@ -278,6 +503,12 @@ static void s_stream_complete(struct aws_h2_stream *stream, int error_code) {
         AWS_H2_STREAM_LOG(DEBUG, stream, "Server stream complete");
     }
 
+    /* Remove stream from active_streams_map and outgoing_stream_list (if it was in them at all) */
+    aws_hash_table_remove(&connection->thread_data.active_streams_map, stream, NULL, NULL);
+    if (stream->node.next) {
+        aws_linked_list_remove(&stream->node);
+    }
+
     /* Invoke callback */
     if (stream->base.on_complete) {
         stream->base.on_complete(&stream->base, error_code, stream->base.user_data);
@@ -288,18 +519,29 @@ static void s_stream_complete(struct aws_h2_stream *stream, int error_code) {
 }
 
 static void s_activate_stream(struct aws_h2_connection *connection, struct aws_h2_stream *stream) {
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
     /* #TODO: don't exceed peer's max-concurrent-streams setting */
 
     if (aws_hash_table_put(
             &connection->thread_data.active_streams_map, (void *)(size_t)stream->base.id, stream, NULL)) {
+        AWS_H2_STREAM_LOG(ERROR, stream, "Failed inserting stream into map");
         goto error;
     }
 
-    /* #TODO: start encoding this stream's frames */
+    bool has_outgoing_data = false;
+    if (aws_h2_stream_on_activated(stream, &has_outgoing_data)) {
+        goto error;
+    }
+
+    if (has_outgoing_data) {
+        aws_linked_list_push_back(&connection->thread_data.outgoing_streams_list, &stream->node);
+    }
 
     return;
 error:
-    s_stream_complete(stream, aws_last_error());
+    /* If the stream got into any datastructures, s_stream_complete() will remove it */
+    s_stream_complete(connection, stream, aws_last_error());
 }
 
 /* Perform on-thread work that is triggered by calls to the connection/stream API */
@@ -331,6 +573,10 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
     }
 
     /* #TODO: process stuff from other API calls (ex: window-updates) */
+
+    /* It's likely that frames were queued while processing cross-thread work.
+     * If so, try writing them now */
+    s_try_write_outgoing_frames(connection);
 }
 
 static struct aws_http_stream *s_connection_make_request(
@@ -339,7 +585,8 @@ static struct aws_http_stream *s_connection_make_request(
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(client_connection, struct aws_h2_connection, base);
 
-    /* #TODO: http/2-ify the request (ex: add ":method" header). Should we mutate a copy or the original? */
+    /* #TODO: http/2-ify the request (ex: add ":method" header). Should we mutate a copy or the original? Validate?
+     *  Or just pass pointer to headers struct and let encoder transform it while encoding? */
 
     struct aws_h2_stream *stream = aws_h2_stream_new_request(client_connection, options);
     if (!stream) {
@@ -466,7 +713,7 @@ static int s_handler_shutdown(
             aws_hash_iter_delete(&stream_iter, true);
             aws_hash_iter_next(&stream_iter);
 
-            s_stream_complete(stream, AWS_ERROR_HTTP_CONNECTION_CLOSED);
+            s_stream_complete(connection, stream, AWS_ERROR_HTTP_CONNECTION_CLOSED);
         }
 
         /* It's OK to access synced_data.pending_stream_list without holding the lock because
@@ -474,7 +721,7 @@ static int s_handler_shutdown(
         while (!aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
             struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->synced_data.pending_stream_list);
             struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
-            s_stream_complete(stream, AWS_ERROR_HTTP_CONNECTION_CLOSED);
+            s_stream_complete(connection, stream, AWS_ERROR_HTTP_CONNECTION_CLOSED);
         }
     }
 

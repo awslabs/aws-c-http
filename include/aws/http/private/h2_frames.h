@@ -111,6 +111,7 @@ struct aws_h2_frame_header_block {
 struct aws_h2_frame_base {
     uint8_t type; /* aws_h2_frame_type */
     uint32_t stream_id;
+    struct aws_linked_list_node node;
 };
 
 /* Represents a DATA frame */
@@ -238,6 +239,10 @@ struct aws_h2_frame_encoder {
 };
 
 AWS_EXTERN_C_BEGIN
+
+/* #TODO: remove each frame type's specific clean_up() function from API */
+AWS_HTTP_API
+void aws_h2_frame_clean_up(struct aws_h2_frame_base *frame);
 
 AWS_HTTP_API
 const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type);
