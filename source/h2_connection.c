@@ -53,6 +53,7 @@ static int s_handler_shutdown(
 static size_t s_handler_initial_window_size(struct aws_channel_handler *handler);
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
+static void s_handler_installed(struct aws_channel_handler *handler, struct aws_channel_slot *slot);
 static struct aws_http_stream *s_connection_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options);
@@ -71,6 +72,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
             .destroy = s_handler_destroy,
         },
 
+    .on_channel_handler_installed = s_handler_installed,
     .make_request = s_connection_make_request,
     .new_server_request_handler_stream = NULL,
     .stream_send_response = NULL,
@@ -486,6 +488,98 @@ static void s_try_write_outgoing_frames(struct aws_h2_connection *connection) {
     CONNECTION_LOG(TRACE, connection, "Starting outgoing frames task");
     connection->thread_data.is_outgoing_frames_task_active = true;
     s_outgoing_frames_task(&connection->outgoing_frames_task, connection, AWS_TASK_STATUS_RUN_READY);
+}
+
+static int s_send_connection_preface_client_string(struct aws_h2_connection *connection) {
+
+    /* Just send the magic string on its own aws_io_message. */
+    struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
+        connection->base.channel_slot->channel,
+        AWS_IO_MESSAGE_APPLICATION_DATA,
+        aws_h2_connection_preface_client_string.len);
+    if (!msg) {
+        goto error;
+    }
+
+    if (!aws_byte_buf_write_from_whole_cursor(&msg->message_data, aws_h2_connection_preface_client_string)) {
+        aws_raise_error(AWS_ERROR_INVALID_STATE);
+        goto error;
+    }
+
+    if (aws_channel_slot_send_message(connection->base.channel_slot, msg, AWS_CHANNEL_DIR_WRITE)) {
+        goto error;
+    }
+
+    return AWS_OP_SUCCESS;
+
+error:
+    if (msg) {
+        aws_mem_release(msg->allocator, msg);
+    }
+    return AWS_OP_ERR;
+}
+
+/* #TODO actually fill with settings */
+/* #TODO track which SETTINGS frames have been ACK'd */
+static int s_enqueue_settings_frame(struct aws_h2_connection *connection) {
+    struct aws_allocator *alloc = connection->base.alloc;
+
+    struct aws_h2_frame_settings *settings_frame = aws_mem_calloc(alloc, 1, sizeof(struct aws_h2_frame_settings));
+    if (!settings_frame) {
+        goto error_alloc;
+    }
+
+    if (aws_h2_frame_settings_init(settings_frame, alloc)) {
+        goto error_init;
+    }
+
+    aws_h2_connection_enqueue_outgoing_frame(connection, &settings_frame->base);
+    return AWS_OP_SUCCESS;
+
+error_init:
+    aws_mem_release(alloc, settings_frame);
+error_alloc:
+    return AWS_OP_ERR;
+}
+
+static void s_handler_installed(struct aws_channel_handler *handler, struct aws_channel_slot *slot) {
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(slot->channel));
+    struct aws_h2_connection *connection = handler->impl;
+
+    connection->base.channel_slot = slot;
+
+    /* Acquire a hold on the channel to prevent its destruction until the user has
+     * given the go-ahead via aws_http_connection_release() */
+    aws_channel_acquire_hold(slot->channel);
+
+    /* Send HTTP/2 connection preface (RFC-7540 3.5)
+     * - clients must send magic string
+     * - both client and server must send SETTINGS frame */
+    if (connection->base.client_data) {
+        if (s_send_connection_preface_client_string(connection)) {
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "Failed to send client connection preface string, %s",
+                aws_error_name(aws_last_error()));
+            goto error;
+        }
+    }
+
+    if (s_enqueue_settings_frame(connection)) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Failed to send SETTINGS frame for connection preface, %s",
+            aws_error_name(aws_last_error()));
+        goto error;
+    }
+
+    s_try_write_outgoing_frames(connection);
+    return;
+
+error:
+    s_shutdown_due_to_write_err(connection, aws_last_error());
 }
 
 static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h2_stream *stream, int error_code) {

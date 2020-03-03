@@ -47,8 +47,7 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
         ASSERT_NOT_NULL(slot);
         ASSERT_SUCCESS(aws_channel_slot_insert_end(s_tester.testing_channel.channel, slot));
         ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &s_tester.connection->channel_handler));
-        s_tester.connection->channel_slot = slot;
-        aws_channel_acquire_hold(s_tester.testing_channel.channel);
+        s_tester.connection->vtable->on_channel_handler_installed(&s_tester.connection->channel_handler, slot);
     }
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);

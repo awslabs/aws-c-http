@@ -194,11 +194,8 @@ static struct aws_http_connection *s_connection_new(
         goto error;
     }
 
-    connection->channel_slot = connection_slot;
-
-    /* Success! Acquire a hold on the channel to prevent its destruction until the user has
-     * given the go-ahead via aws_http_connection_release() */
-    aws_channel_acquire_hold(channel);
+    /* Success! Inform connection that installation is complete */
+    connection->vtable->on_channel_handler_installed(&connection->channel_handler, connection_slot);
 
     return connection;
 

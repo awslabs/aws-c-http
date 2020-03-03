@@ -74,6 +74,10 @@ enum aws_h2_settings {
     AWS_H2_SETTINGS_END_RANGE, /* End of known values */
 };
 
+/* This magic string must be the very first thing a client sends to the server.
+ * See RFC-7540 3.5 - HTTP/2 Connection Preface */
+extern const struct aws_byte_cursor aws_h2_connection_preface_client_string;
+
 /* RFC-7541 2.4 */
 enum aws_h2_header_field_hpack_behavior {
     AWS_H2_HEADER_BEHAVIOR_SAVE,

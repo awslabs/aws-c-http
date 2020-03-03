@@ -27,6 +27,9 @@
  *        we send that code in the GOAWAY, or always treat encoder errors as AWS_H2_ERR_INTERNAL?
  *        Like, you're only supposed to inform peer of errors that were their fault, right? */
 
+const struct aws_byte_cursor aws_h2_connection_preface_client_string =
+    AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 static const uint32_t s_u32_top_bit_mask = UINT32_MAX << 31;

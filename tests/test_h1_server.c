@@ -203,11 +203,10 @@ static int s_tester_init(struct aws_allocator *alloc) {
 
     struct aws_channel_slot *slot = aws_channel_slot_new(s_tester.testing_channel.channel);
     ASSERT_NOT_NULL(slot);
-    s_tester.server_connection->channel_slot = slot;
     ASSERT_SUCCESS(aws_channel_slot_insert_end(s_tester.testing_channel.channel, slot));
     ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &s_tester.server_connection->channel_handler));
-
-    aws_channel_acquire_hold(s_tester.testing_channel.channel);
+    s_tester.server_connection->vtable->on_channel_handler_installed(
+        &s_tester.server_connection->channel_handler, slot);
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
@@ -1487,11 +1486,9 @@ static int s_error_tester_init(struct aws_allocator *alloc, struct error_from_ca
 
     struct aws_channel_slot *slot = aws_channel_slot_new(tester->testing_channel.channel);
     ASSERT_NOT_NULL(slot);
-    tester->server_connection->channel_slot = slot;
     ASSERT_SUCCESS(aws_channel_slot_insert_end(tester->testing_channel.channel, slot));
     ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &tester->server_connection->channel_handler));
-
-    aws_channel_acquire_hold(tester->testing_channel.channel);
+    tester->server_connection->vtable->on_channel_handler_installed(&tester->server_connection->channel_handler, slot);
 
     testing_channel_drain_queued_tasks(&tester->testing_channel);
 
