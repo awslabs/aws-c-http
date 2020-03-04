@@ -59,6 +59,7 @@ static struct aws_http_stream *s_connection_make_request(
     const struct aws_http_make_request_options *options);
 
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
+static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
@@ -177,6 +178,9 @@ static struct aws_h2_connection *s_connection_new(
     aws_channel_task_init(
         &connection->cross_thread_work_task, s_cross_thread_work_task, connection, "HTTP/2 cross-thread work");
 
+    aws_channel_task_init(
+        &connection->outgoing_frames_task, s_outgoing_frames_task, connection, "HTTP/2 outgoing frames");
+
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
 
@@ -275,7 +279,9 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     struct aws_linked_list *outgoing_frames_queue = &connection->thread_data.outgoing_frames_queue;
     while (!aws_linked_list_empty(outgoing_frames_queue)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(outgoing_frames_queue);
-        aws_h2_frame_clean_up(AWS_CONTAINER_OF(node, struct aws_h2_frame_base, node));
+        struct aws_h2_frame_base *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame_base, node);
+        aws_h2_frame_clean_up(frame);
+        aws_mem_release(connection->base.alloc, frame);
     }
 
     aws_h2_decoder_destroy(connection->thread_data.decoder);
@@ -403,6 +409,7 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
         /* Done encoding frame, pop from queue and cleanup*/
         aws_linked_list_remove(frame_node);
         aws_h2_frame_clean_up(frame);
+        aws_mem_release(connection->base.alloc, frame);
 
         num_frames_encoded++;
     }
