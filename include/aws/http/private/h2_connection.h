@@ -44,7 +44,7 @@ struct aws_h2_connection {
 
         /* Maps stream-id to aws_h2_stream*.
          * Contains all streams in the open, reserved, and half-closed states (terms from RFC-7540 5.1).
-         * Once a stream is closed, it is removed from this map. */
+         * Once a stream enters closed state, it is removed from this map. */
         struct aws_hash_table active_streams_map;
 
         /* List using aws_h2_stream.node.

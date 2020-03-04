@@ -54,10 +54,8 @@ static struct aws_h2_connection *s_get_h2_connection(const struct aws_h2_stream 
     return AWS_CONTAINER_OF(stream->base.owning_connection, struct aws_h2_connection, base);
 }
 
-static bool s_is_on_channel_thread(const struct aws_h2_stream *stream) {
-    const struct aws_h2_connection *connection = s_get_h2_connection(stream);
-    return aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel);
-}
+#define AWS_PRECONDITION_ON_CHANNEL_THREAD(STREAM)                                                                     \
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(s_get_h2_connection(STREAM)->base.channel_slot->channel))
 
 struct aws_h2_stream *aws_h2_stream_new_request(
     struct aws_http_connection *client_connection,
@@ -110,7 +108,7 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
 }
 
 enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *stream) {
-    AWS_PRECONDITION(s_is_on_channel_thread(stream));
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
     return stream->thread_data.state;
 }
 
@@ -157,7 +155,7 @@ error_alloc:
 }
 
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data) {
-    AWS_PRECONDITION(s_is_on_channel_thread(stream));
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
 
