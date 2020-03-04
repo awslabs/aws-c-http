@@ -39,6 +39,9 @@ struct aws_http_connection_system_vtable {
 struct aws_http_connection_vtable {
     struct aws_channel_handler_vtable channel_handler_vtable;
 
+    /* This is a callback I wish was in aws_channel_handler_vtable. */
+    void (*on_channel_handler_installed)(struct aws_channel_handler *handler, struct aws_channel_slot *slot);
+
     struct aws_http_stream *(*make_request)(
         struct aws_http_connection *client_connection,
         const struct aws_http_make_request_options *options);

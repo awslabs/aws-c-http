@@ -27,6 +27,9 @@
  *        we send that code in the GOAWAY, or always treat encoder errors as AWS_H2_ERR_INTERNAL?
  *        Like, you're only supposed to inform peer of errors that were their fault, right? */
 
+const struct aws_byte_cursor aws_h2_connection_preface_client_string =
+    AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 static const uint32_t s_u32_top_bit_mask = UINT32_MAX << 31;
@@ -944,6 +947,53 @@ write_error:
 compression_error:
     output->len = output_init_len;
     return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
+}
+
+void aws_h2_frame_clean_up(struct aws_h2_frame_base *frame) {
+    switch (frame->type) {
+        case AWS_H2_FRAME_T_DATA:
+            aws_h2_frame_data_clean_up(AWS_CONTAINER_OF(frame, struct aws_h2_frame_data, base));
+            break;
+
+        case AWS_H2_FRAME_T_HEADERS:
+            aws_h2_frame_headers_clean_up(AWS_CONTAINER_OF(frame, struct aws_h2_frame_headers, base));
+            break;
+
+        case AWS_H2_FRAME_T_PRIORITY:
+            aws_h2_frame_priority_clean_up(AWS_CONTAINER_OF(frame, struct aws_h2_frame_priority, base));
+            break;
+
+        case AWS_H2_FRAME_T_RST_STREAM:
+            aws_h2_frame_rst_stream_clean_up(AWS_CONTAINER_OF(frame, struct aws_h2_frame_rst_stream, base));
+            break;
+
+        case AWS_H2_FRAME_T_SETTINGS:
+            aws_h2_frame_settings_clean_up(AWS_CONTAINER_OF(frame, struct aws_h2_frame_settings, base));
+            break;
+
+        case AWS_H2_FRAME_T_PUSH_PROMISE:
+            aws_h2_frame_push_promise_clean_up(AWS_CONTAINER_OF(frame, struct aws_h2_frame_push_promise, base));
+            break;
+
+        case AWS_H2_FRAME_T_PING:
+            aws_h2_frame_ping_clean_up(AWS_CONTAINER_OF(frame, struct aws_h2_frame_ping, base));
+            break;
+
+        case AWS_H2_FRAME_T_GOAWAY:
+            aws_h2_frame_goaway_clean_up(AWS_CONTAINER_OF(frame, struct aws_h2_frame_goaway, base));
+            break;
+
+        case AWS_H2_FRAME_T_WINDOW_UPDATE:
+            aws_h2_frame_window_update_clean_up(AWS_CONTAINER_OF(frame, struct aws_h2_frame_window_update, base));
+            break;
+
+        case AWS_H2_FRAME_T_CONTINUATION:
+            aws_h2_frame_continuation_clean_up(AWS_CONTAINER_OF(frame, struct aws_h2_frame_continuation, base));
+            break;
+
+        default:
+            AWS_ASSERT(0);
+    }
 }
 
 int aws_h2_encode_frame(

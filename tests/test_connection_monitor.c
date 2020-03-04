@@ -123,11 +123,9 @@ static int s_init_monitor_test(struct aws_allocator *allocator, struct aws_crt_s
 
     struct aws_channel_slot *slot = aws_channel_slot_new(s_test_context.test_channel.channel);
     ASSERT_NOT_NULL(slot);
-    connection->channel_slot = slot;
     ASSERT_SUCCESS(aws_channel_slot_insert_end(s_test_context.test_channel.channel, slot));
     ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &connection->channel_handler));
-
-    aws_channel_acquire_hold(s_test_context.test_channel.channel);
+    connection->vtable->on_channel_handler_installed(&connection->channel_handler, slot);
 
     s_test_context.connection = connection;
     testing_channel_drain_queued_tasks(&s_test_context.test_channel);

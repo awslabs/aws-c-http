@@ -44,10 +44,6 @@
 
 /* TODO: stop using the HTTP_PARSE error, give websocket its own error */
 
-enum {
-    MESSAGE_SIZE_HINT = 16 * 1024,
-};
-
 struct outgoing_frame {
     struct aws_websocket_send_frame_options def;
     struct aws_linked_list_node node;
@@ -579,6 +575,7 @@ static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, voi
 
 static void s_try_write_outgoing_frames(struct aws_websocket *websocket) {
     AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+    int err;
 
     /* Check whether we should be writing data */
     if (!websocket->thread_data.current_outgoing_frame &&
@@ -602,24 +599,7 @@ static void s_try_write_outgoing_frames(struct aws_websocket *websocket) {
     }
 
     /* Acquire aws_io_message */
-    struct aws_io_message *io_msg = NULL;
-    int err;
-
-    size_t io_msg_hint = MESSAGE_SIZE_HINT;
-    size_t upstream_overhead = aws_channel_slot_upstream_message_overhead(websocket->channel_slot);
-    if (io_msg_hint <= upstream_overhead) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_WEBSOCKET,
-            "id=%p: Unexpected error while calculating message size, closing websocket.",
-            (void *)websocket);
-
-        aws_raise_error(AWS_ERROR_UNKNOWN);
-        goto error;
-    }
-    io_msg_hint -= upstream_overhead;
-
-    io_msg = aws_channel_acquire_message_from_pool(
-        websocket->channel_slot->channel, AWS_IO_MESSAGE_APPLICATION_DATA, io_msg_hint);
+    struct aws_io_message *io_msg = aws_channel_slot_acquire_max_message_for_write(websocket->channel_slot);
     if (!io_msg) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET,

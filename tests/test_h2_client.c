@@ -47,8 +47,7 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
         ASSERT_NOT_NULL(slot);
         ASSERT_SUCCESS(aws_channel_slot_insert_end(s_tester.testing_channel.channel, slot));
         ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &s_tester.connection->channel_handler));
-        s_tester.connection->channel_slot = slot;
-        aws_channel_acquire_hold(s_tester.testing_channel.channel);
+        s_tester.connection->vtable->on_channel_handler_installed(&s_tester.connection->channel_handler, slot);
     }
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -99,6 +98,34 @@ TEST_CASE(h2_client_request_create) {
     /* release request */
     aws_http_stream_release(stream);
     aws_http_message_release(request);
+
+    return s_tester_clean_up();
+}
+
+/* Test that client automatically sends the HTTP/2 Connection Preface */
+TEST_CASE(h2_client_connection_preface_sent) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    struct aws_byte_buf expected;
+    ASSERT_SUCCESS(aws_byte_buf_init(&expected, s_tester.alloc, 1024));
+
+    ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&expected, aws_h2_connection_preface_client_string));
+
+    /* clang-format off */
+    uint8_t expected_settings[] = {
+        0x00, 0x00, 0x00,           /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+    };
+    /* clang-format on */
+
+    ASSERT_TRUE(aws_byte_buf_write(&expected, expected_settings, sizeof(expected_settings)));
+
+    ASSERT_SUCCESS(testing_channel_check_written_messages(
+        &s_tester.testing_channel, s_tester.alloc, aws_byte_cursor_from_buf(&expected)));
+
+    aws_byte_buf_clean_up(&expected);
 
     return s_tester_clean_up();
 }

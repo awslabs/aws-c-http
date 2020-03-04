@@ -31,10 +31,6 @@ static const size_t s_scratch_space_size = 9;
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 
-/* First 24 bytes sent by client must be this string (RFC-7540 3.5) */
-static const struct aws_byte_cursor s_connection_preface_string =
-    AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
-
 #define DECODER_LOGF(level, decoder, text, ...)                                                                        \
     AWS_LOGF_##level(AWS_LS_HTTP_DECODER, "id=%p " text, (decoder)->logging_id, __VA_ARGS__)
 #define DECODER_LOG(level, decoder, text) DECODER_LOGF(level, decoder, "%s", text)
@@ -217,7 +213,7 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
 
     if (decoder->is_server && !params->skip_connection_preface) {
         decoder->state = &s_state_connection_preface_string;
-        decoder->connection_preface_cursor = s_connection_preface_string;
+        decoder->connection_preface_cursor = aws_h2_connection_preface_client_string;
     } else {
         decoder->state = &s_state_prefix;
     }
@@ -1035,6 +1031,8 @@ static int s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct 
      * - pseudo-headers must not appear in trailer
      * - can't have unrecognized/invalid pseudo-headers
      * These make the message "malformed", which is a STREAM error, not PROTOCOL error, not sure how to handle that */
+
+    /* #TODO Cookie headers must be concatenated into single delivery RFC-7540 8.1.2.5 */
 
     if (result.type == AWS_HPACK_DECODE_T_HEADER_FIELD) {
         const struct aws_hpack_decoded_header_field *field = &result.data.header_field;

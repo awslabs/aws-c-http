@@ -300,6 +300,7 @@ add_h2_decoder_test_set(h2_decoder_err_bad_preface_from_client_3)
 
 add_test_case(h2_client_sanity_check)
 add_test_case(h2_client_request_create)
+add_test_case(h2_client_connection_preface_sent)
 
 add_test_case(server_new_destroy)
 add_test_case(connection_setup_shutdown)

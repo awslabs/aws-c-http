@@ -74,6 +74,10 @@ enum aws_h2_settings {
     AWS_H2_SETTINGS_END_RANGE, /* End of known values */
 };
 
+/* This magic string must be the very first thing a client sends to the server.
+ * See RFC-7540 3.5 - HTTP/2 Connection Preface */
+extern const struct aws_byte_cursor aws_h2_connection_preface_client_string;
+
 /* RFC-7541 2.4 */
 enum aws_h2_header_field_hpack_behavior {
     AWS_H2_HEADER_BEHAVIOR_SAVE,
@@ -111,6 +115,7 @@ struct aws_h2_frame_header_block {
 struct aws_h2_frame_base {
     uint8_t type; /* aws_h2_frame_type */
     uint32_t stream_id;
+    struct aws_linked_list_node node;
 };
 
 /* Represents a DATA frame */
@@ -238,6 +243,10 @@ struct aws_h2_frame_encoder {
 };
 
 AWS_EXTERN_C_BEGIN
+
+/* #TODO: remove each frame type's specific clean_up() function from API */
+AWS_HTTP_API
+void aws_h2_frame_clean_up(struct aws_h2_frame_base *frame);
 
 AWS_HTTP_API
 const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type);

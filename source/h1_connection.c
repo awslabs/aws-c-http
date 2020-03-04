@@ -30,7 +30,6 @@
 #endif
 
 enum {
-    MESSAGE_SIZE_HINT = 16 * 1024,
     DECODER_INITIAL_SCRATCH_SIZE = 256,
 };
 
@@ -59,6 +58,7 @@ static int s_handler_shutdown(
 static size_t s_handler_initial_window_size(struct aws_channel_handler *handler);
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
+static void s_handler_installed(struct aws_channel_handler *handler, struct aws_channel_slot *slot);
 static struct aws_http_stream *s_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options);
@@ -93,7 +93,7 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
             .reset_statistics = s_reset_statistics,
             .gather_statistics = s_gather_statistics,
         },
-
+    .on_channel_handler_installed = s_handler_installed,
     .make_request = s_make_request,
     .new_server_request_handler_stream = s_new_server_request_handler_stream,
     .stream_send_response = s_stream_send_response,
@@ -823,21 +823,7 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         return;
     }
 
-    /* If outgoing_message_size_hint isn't set yet, calculate it */
-    size_t overhead = aws_channel_slot_upstream_message_overhead(connection->base.channel_slot);
-    if (overhead >= MESSAGE_SIZE_HINT) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Unexpected error while calculating message size, closing connection.",
-            (void *)&connection->base);
-
-        aws_raise_error(AWS_ERROR_INVALID_STATE);
-        goto error;
-    }
-
-    size_t outgoing_message_size_hint = MESSAGE_SIZE_HINT - overhead;
-
-    msg = aws_channel_acquire_message_from_pool(channel, AWS_IO_MESSAGE_APPLICATION_DATA, outgoing_message_size_hint);
+    msg = aws_channel_slot_acquire_max_message_for_write(connection->base.channel_slot);
     if (!msg) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
@@ -1326,6 +1312,15 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     aws_h1_encoder_clean_up(&connection->thread_data.encoder);
     aws_mutex_clean_up(&connection->synced_data.lock);
     aws_mem_release(connection->base.alloc, connection);
+}
+
+static void s_handler_installed(struct aws_channel_handler *handler, struct aws_channel_slot *slot) {
+    struct h1_connection *connection = handler->impl;
+    connection->base.channel_slot = slot;
+
+    /* Acquire a hold on the channel to prevent its destruction until the user has
+     * given the go-ahead via aws_http_connection_release() */
+    aws_channel_acquire_hold(slot->channel);
 }
 
 static void s_connection_try_send_read_messages(struct h1_connection *connection) {

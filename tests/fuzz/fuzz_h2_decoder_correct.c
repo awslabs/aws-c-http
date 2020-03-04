@@ -77,12 +77,25 @@ static void s_generate_header_block(struct aws_byte_cursor *input, struct aws_h2
     }
 }
 
-/* Generate non-zero stream id */
 static void s_generate_stream_id(struct aws_byte_cursor *input, uint32_t *stream_id) {
     aws_byte_cursor_read_be32(input, stream_id);
     /* Top bit of stream-id is ignored by decoder */
     if ((*stream_id & (UINT32_MAX >> 1)) == 0) {
         *stream_id = 1;
+    }
+}
+
+/* Server-initiated stream-IDs must be even */
+static void s_generate_even_stream_id(struct aws_byte_cursor *input, uint32_t *stream_id) {
+    aws_byte_cursor_read_be32(input, stream_id);
+
+    if (*stream_id % 2 != 0) {
+        *stream_id += 1;
+    }
+
+    /* Top bit of stream-id is ignored by decoder */
+    if ((*stream_id & (UINT32_MAX >> 1)) == 0) {
+        *stream_id = 2;
     }
 }
 
@@ -218,6 +231,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 aws_h2_frame_push_promise_init(&frame, allocator);
 
                 s_generate_stream_id(&input, &frame.base.stream_id);
+                s_generate_even_stream_id(&input, &frame.promised_stream_id);
 
                 s_generate_header_block(&input, &frame.header_block);
 
