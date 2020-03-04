@@ -77,6 +77,8 @@ struct aws_h2_connection {
     } synced_data;
 };
 
+/* Private functions called from tests... */
+
 AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API
@@ -89,15 +91,16 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
     size_t initial_window_size);
 
+AWS_EXTERN_C_END
+
+/* Private functions called from multiple .c files... */
+
 /**
  * Enqueue outgoing frame.
  * Connection takes ownership of frame.
  * Frames are sent into FIFO order.
  * Do not enqueue DATA frames, these are sent by other means when the frame queue is empty.
  */
-AWS_HTTP_API
 void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connection, struct aws_h2_frame_base *frame);
-
-AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_H2_CONNECTION_H */
