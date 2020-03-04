@@ -89,8 +89,12 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
     size_t initial_window_size);
 
-/* Enqueue outgoing frame
- * Connection takes ownership of frame. */
+/**
+ * Enqueue outgoing frame.
+ * Connection takes ownership of frame.
+ * Frames are sent into FIFO order.
+ * Do not enqueue DATA frames, these are sent by other means when the frame queue is empty.
+ */
 AWS_HTTP_API
 void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connection, struct aws_h2_frame_base *frame);
 

@@ -125,6 +125,7 @@ static struct aws_h2_frame_headers *s_new_headers_frame(
         goto error_init;
     }
 
+    /* #TODO headers frame needs to respect max frame size, and use CONTINUATION */
     const size_t num_headers = aws_http_message_get_header_count(message);
     for (size_t i = 0; i < num_headers; ++i) {
         struct aws_h2_frame_header_field header_field = {

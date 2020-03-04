@@ -292,7 +292,6 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
 }
 
 void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connection, struct aws_h2_frame_base *frame) {
-    /* DATA frames are not queued. We only send DATA frames when the frame queue is empty */
     AWS_PRECONDITION(frame->type != AWS_H2_FRAME_T_DATA);
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
