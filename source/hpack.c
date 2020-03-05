@@ -278,7 +278,7 @@ struct aws_hpack_context {
 
             struct hpack_progress_literal {
                 uint8_t prefix_size;
-                enum aws_h2_header_field_hpack_behavior hpack_behavior;
+                enum aws_http_header_compression compression;
                 uint64_t name_index;
                 size_t name_length;
             } literal;
@@ -990,7 +990,7 @@ int aws_hpack_decode(
 
                 } else if (first_byte & (1 << 6)) {
                     /* 01xxxxxx: Literal Header Field with Incremental Indexing */
-                    context->progress_entry.u.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE;
+                    context->progress_entry.u.literal.compression = AWS_HTTP_HEADER_COMPRESSION_USE_CACHE;
                     context->progress_entry.u.literal.prefix_size = 6;
                     context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
 
@@ -1000,12 +1000,12 @@ int aws_hpack_decode(
 
                 } else if (first_byte & (1 << 4)) {
                     /* 0001xxxx: Literal Header Field Never Indexed */
-                    context->progress_entry.u.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_FORWARD_SAVE;
+                    context->progress_entry.u.literal.compression = AWS_HTTP_HEADER_COMPRESSION_NO_FORWARD_CACHE;
                     context->progress_entry.u.literal.prefix_size = 4;
                     context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
                 } else {
                     /* 0000xxxx: Literal Header Field without Indexing */
-                    context->progress_entry.u.literal.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_SAVE;
+                    context->progress_entry.u.literal.compression = AWS_HTTP_HEADER_COMPRESSION_NO_CACHE;
                     context->progress_entry.u.literal.prefix_size = 4;
                     context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
                 }
@@ -1031,8 +1031,7 @@ int aws_hpack_decode(
                 }
 
                 result->type = AWS_HPACK_DECODE_T_HEADER_FIELD;
-                result->data.header_field.header = *header;
-                result->data.header_field.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE;
+                result->data.header_field = *header;
                 goto handle_complete;
             } break;
 
@@ -1117,17 +1116,17 @@ int aws_hpack_decode(
                 struct aws_http_header header;
                 header.value = aws_byte_cursor_from_buf(&context->progress_entry.scratch);
                 header.name = aws_byte_cursor_advance(&header.value, literal->name_length);
+                header.compression = literal->compression;
 
                 /* Save to table if necessary */
-                if (literal->hpack_behavior == AWS_H2_HEADER_BEHAVIOR_SAVE) {
+                if (literal->compression == AWS_HTTP_HEADER_COMPRESSION_USE_CACHE) {
                     if (aws_hpack_insert_header(context, &header)) {
                         return AWS_OP_ERR;
                     }
                 }
 
                 result->type = AWS_HPACK_DECODE_T_HEADER_FIELD;
-                result->data.header_field.header = header;
-                result->data.header_field.hpack_behavior = literal->hpack_behavior;
+                result->data.header_field = header;
                 goto handle_complete;
             } break;
 
@@ -1156,7 +1155,7 @@ int aws_hpack_decode(
                 }
 
                 result->type = AWS_HPACK_DECODE_T_DYNAMIC_TABLE_RESIZE;
-                result->data.dynamic_table_resize.size = size;
+                result->data.dynamic_table_resize = size;
                 goto handle_complete;
             } break;
 

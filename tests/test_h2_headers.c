@@ -37,17 +37,17 @@ static int s_header_block_eq(
     ASSERT_UINT_EQUALS(l_size, r_size);
 
     for (size_t i = 0; i < l_size; ++i) {
-        const struct aws_h2_frame_header_field *l_field = NULL;
+        const struct aws_http_header *l_field = NULL;
         aws_array_list_get_at_ptr(l_header_fields, (void **)&l_field, i);
         AWS_FATAL_ASSERT(l_field);
 
-        const struct aws_h2_frame_header_field *r_field = NULL;
+        const struct aws_http_header *r_field = NULL;
         aws_array_list_get_at_ptr(r_header_fields, (void **)&r_field, i);
         AWS_FATAL_ASSERT(r_field);
 
-        ASSERT_INT_EQUALS(l_field->hpack_behavior, r_field->hpack_behavior);
-        ASSERT_TRUE(aws_byte_cursor_eq(&l_field->header.name, &r_field->header.name));
-        ASSERT_TRUE(aws_byte_cursor_eq(&l_field->header.value, &r_field->header.value));
+        ASSERT_INT_EQUALS(l_field->compression, r_field->compression);
+        ASSERT_TRUE(aws_byte_cursor_eq(&l_field->name, &r_field->name));
+        ASSERT_TRUE(aws_byte_cursor_eq(&l_field->value, &r_field->value));
     }
 
     return AWS_OP_SUCCESS;
@@ -67,7 +67,7 @@ struct header_test_fixture {
 
     struct aws_h2_frame_headers headers_to_encode;
     struct aws_byte_buf expected_encoding_buf;
-    struct aws_array_list decoded_headers;   /* array_list of aws_h2_frame_header_field */
+    struct aws_array_list decoded_headers;   /* array_list of aws_http_header */
     struct aws_byte_buf decoder_storage_buf; /* string storage */
 };
 
@@ -87,7 +87,7 @@ static int s_header_test_before(struct aws_allocator *allocator, void *ctx) {
 
     ASSERT_SUCCESS(aws_byte_buf_init(&fixture->expected_encoding_buf, allocator, S_BUFFER_SIZE));
     ASSERT_SUCCESS(
-        aws_array_list_init_dynamic(&fixture->decoded_headers, allocator, 8, sizeof(struct aws_h2_frame_header_field)));
+        aws_array_list_init_dynamic(&fixture->decoded_headers, allocator, 8, sizeof(struct aws_http_header)));
     ASSERT_SUCCESS(aws_byte_buf_init(&fixture->decoder_storage_buf, allocator, S_BUFFER_SIZE));
 
     return AWS_OP_SUCCESS;
@@ -139,14 +139,11 @@ static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
         }
 
         if (result.type == AWS_HPACK_DECODE_T_HEADER_FIELD) {
-            struct aws_h2_frame_header_field header_field = {
-                .header = result.data.header_field.header,
-                .hpack_behavior = result.data.header_field.hpack_behavior,
-            };
+            struct aws_http_header header_field = result.data.header_field;
 
             /* Backup string values */
-            ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.header.name));
-            ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.header.value));
+            ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.name));
+            ASSERT_SUCCESS(aws_byte_buf_append_and_update(&fixture->decoder_storage_buf, &header_field.value));
 
             ASSERT_SUCCESS(aws_array_list_push_back(&fixture->decoded_headers, &header_field));
         }
@@ -204,13 +201,10 @@ static int s_header_test_after(struct aws_allocator *allocator, int setup_res, v
         &s_##t_name##_one_byte_at_a_time_fixture)
 
 #define DEFINE_STATIC_HEADER(_name, _key, _value, _behavior)                                                           \
-    static const struct aws_h2_frame_header_field _name = {                                                            \
-        .header =                                                                                                      \
-            {                                                                                                          \
-                .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_key),                                                   \
-                .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_value),                                                \
-            },                                                                                                         \
-        .hpack_behavior = AWS_H2_HEADER_BEHAVIOR_##_behavior,                                                          \
+    static const struct aws_http_header _name = {                                                                      \
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_key),                                                           \
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_value),                                                        \
+        .compression = AWS_HTTP_HEADER_COMPRESSION_##_behavior,                                                        \
     }
 
 /* Test HEADERS frame with empty payload */
@@ -223,7 +217,7 @@ HEADER_TEST(h2_header_empty_payload, s_test_empty_payload, NULL);
 /* RFC-7541 - Header Field Representation Examples - C.2.1. Literal Header Field with Indexing */
 static int s_test_ex_2_1_init(struct header_test_fixture *fixture) {
 
-    DEFINE_STATIC_HEADER(header, "custom-key", "custom-header", SAVE);
+    DEFINE_STATIC_HEADER(header, "custom-key", "custom-header", USE_CACHE);
     aws_array_list_push_back(&fixture->headers_to_encode.header_block.header_fields, &header);
 
     static const uint8_t encoded[] = {
@@ -239,7 +233,7 @@ HEADER_TEST(h2_header_ex_2_1, s_test_ex_2_1_init, NULL);
 /* RFC-7541 - Header Field Representation Examples - C.2.2. Literal Header Field without Indexing */
 static int s_test_ex_2_2_init(struct header_test_fixture *fixture) {
 
-    DEFINE_STATIC_HEADER(header, ":path", "/sample/path", NO_SAVE);
+    DEFINE_STATIC_HEADER(header, ":path", "/sample/path", NO_CACHE);
     aws_array_list_push_back(&fixture->headers_to_encode.header_block.header_fields, &header);
 
     static const uint8_t encoded[] = {
@@ -254,7 +248,7 @@ HEADER_TEST(h2_header_ex_2_2, s_test_ex_2_2_init, NULL);
 /* RFC-7541 - Header Field Representation Examples - C.2.3. Literal Header Field Never Indexed */
 static int s_test_ex_2_3_init(struct header_test_fixture *fixture) {
 
-    DEFINE_STATIC_HEADER(header, "password", "secret", NO_FORWARD_SAVE);
+    DEFINE_STATIC_HEADER(header, "password", "secret", NO_FORWARD_CACHE);
     aws_array_list_push_back(&fixture->headers_to_encode.header_block.header_fields, &header);
 
     static const uint8_t encoded[] = {
@@ -269,7 +263,7 @@ HEADER_TEST(h2_header_ex_2_3, s_test_ex_2_3_init, NULL);
 /* RFC-7541 - Header Field Representation Examples - C.2.3. Indexed Header Field */
 static int s_test_ex_2_4_init(struct header_test_fixture *fixture) {
 
-    DEFINE_STATIC_HEADER(header, ":method", "GET", SAVE);
+    DEFINE_STATIC_HEADER(header, ":method", "GET", USE_CACHE);
     aws_array_list_push_back(&fixture->headers_to_encode.header_block.header_fields, &header);
 
     static const uint8_t encoded[] = {
@@ -284,10 +278,10 @@ HEADER_TEST(h2_header_ex_2_4, s_test_ex_2_4_init, NULL);
 /* RFC-7541 - Request Examples without Huffman Coding - C.3.1. First Request */
 static int s_test_ex_3_1_init(struct header_test_fixture *fixture) {
 
-    DEFINE_STATIC_HEADER(header_method, ":method", "GET", SAVE);
-    DEFINE_STATIC_HEADER(header_scheme, ":scheme", "http", SAVE);
-    DEFINE_STATIC_HEADER(header_path, ":path", "/", SAVE);
-    DEFINE_STATIC_HEADER(header_authority, ":authority", "www.example.com", SAVE);
+    DEFINE_STATIC_HEADER(header_method, ":method", "GET", USE_CACHE);
+    DEFINE_STATIC_HEADER(header_scheme, ":scheme", "http", USE_CACHE);
+    DEFINE_STATIC_HEADER(header_path, ":path", "/", USE_CACHE);
+    DEFINE_STATIC_HEADER(header_authority, ":authority", "www.example.com", USE_CACHE);
 
     aws_array_list_push_back(&fixture->headers_to_encode.header_block.header_fields, &header_method);
     aws_array_list_push_back(&fixture->headers_to_encode.header_block.header_fields, &header_scheme);
@@ -309,10 +303,10 @@ static int s_test_ex_4_1_init(struct header_test_fixture *fixture) {
 
     fixture->encoder.use_huffman = true;
 
-    DEFINE_STATIC_HEADER(header_method, ":method", "GET", SAVE);
-    DEFINE_STATIC_HEADER(header_scheme, ":scheme", "http", SAVE);
-    DEFINE_STATIC_HEADER(header_path, ":path", "/", SAVE);
-    DEFINE_STATIC_HEADER(header_authority, ":authority", "www.example.com", SAVE);
+    DEFINE_STATIC_HEADER(header_method, ":method", "GET", USE_CACHE);
+    DEFINE_STATIC_HEADER(header_scheme, ":scheme", "http", USE_CACHE);
+    DEFINE_STATIC_HEADER(header_path, ":path", "/", USE_CACHE);
+    DEFINE_STATIC_HEADER(header_authority, ":authority", "www.example.com", USE_CACHE);
 
     aws_array_list_push_back(&fixture->headers_to_encode.header_block.header_fields, &header_method);
     aws_array_list_push_back(&fixture->headers_to_encode.header_block.header_fields, &header_scheme);
@@ -331,10 +325,10 @@ HEADER_TEST(h2_header_ex_4_1, s_test_ex_4_1_init, NULL);
 /* RFC-7541 - Response Examples without Huffman Coding - C.5.1. First Response */
 static int s_test_ex_5_1_init(struct header_test_fixture *fixture) {
 
-    DEFINE_STATIC_HEADER(header_status, ":status", "302", SAVE);
-    DEFINE_STATIC_HEADER(header_cache_control, "cache-control", "private", SAVE);
-    DEFINE_STATIC_HEADER(header_date, "date", "Mon, 21 Oct 2013 20:13:21 GMT", SAVE);
-    DEFINE_STATIC_HEADER(header_location, "location", "https://www.example.com", SAVE);
+    DEFINE_STATIC_HEADER(header_status, ":status", "302", USE_CACHE);
+    DEFINE_STATIC_HEADER(header_cache_control, "cache-control", "private", USE_CACHE);
+    DEFINE_STATIC_HEADER(header_date, "date", "Mon, 21 Oct 2013 20:13:21 GMT", USE_CACHE);
+    DEFINE_STATIC_HEADER(header_location, "location", "https://www.example.com", USE_CACHE);
 
     aws_array_list_push_back(&fixture->headers_to_encode.header_block.header_fields, &header_status);
     aws_array_list_push_back(&fixture->headers_to_encode.header_block.header_fields, &header_cache_control);
@@ -358,10 +352,10 @@ static int s_test_ex_6_1_init(struct header_test_fixture *fixture) {
 
     fixture->encoder.use_huffman = true;
 
-    DEFINE_STATIC_HEADER(header_status, ":status", "302", SAVE);
-    DEFINE_STATIC_HEADER(header_cache_control, "cache-control", "private", SAVE);
-    DEFINE_STATIC_HEADER(header_date, "date", "Mon, 21 Oct 2013 20:13:21 GMT", SAVE);
-    DEFINE_STATIC_HEADER(header_location, "location", "https://www.example.com", SAVE);
+    DEFINE_STATIC_HEADER(header_status, ":status", "302", USE_CACHE);
+    DEFINE_STATIC_HEADER(header_cache_control, "cache-control", "private", USE_CACHE);
+    DEFINE_STATIC_HEADER(header_date, "date", "Mon, 21 Oct 2013 20:13:21 GMT", USE_CACHE);
+    DEFINE_STATIC_HEADER(header_location, "location", "https://www.example.com", USE_CACHE);
 
     aws_array_list_push_back(&fixture->headers_to_encode.header_block.header_fields, &header_status);
     aws_array_list_push_back(&fixture->headers_to_encode.header_block.header_fields, &header_cache_control);

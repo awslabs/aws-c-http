@@ -1035,19 +1035,19 @@ static int s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct 
     /* #TODO Cookie headers must be concatenated into single delivery RFC-7540 8.1.2.5 */
 
     if (result.type == AWS_HPACK_DECODE_T_HEADER_FIELD) {
-        const struct aws_hpack_decoded_header_field *field = &result.data.header_field;
+        const struct aws_http_header *header_field = &result.data.header_field;
 
         DECODER_LOGF(
             TRACE,
             decoder,
             "Decoded header field: \"" PRInSTR ": " PRInSTR "\"",
-            AWS_BYTE_CURSOR_PRI(field->header.name),
-            AWS_BYTE_CURSOR_PRI(field->header.value));
+            AWS_BYTE_CURSOR_PRI(header_field->name),
+            AWS_BYTE_CURSOR_PRI(header_field->value));
 
         if (decoder->header_block_in_progress.is_push_promise) {
-            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, &field->header, field->hpack_behavior);
+            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, header_field);
         } else {
-            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, &field->header, field->hpack_behavior);
+            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, header_field);
         }
     }
 

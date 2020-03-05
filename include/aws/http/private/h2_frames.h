@@ -78,13 +78,6 @@ enum aws_h2_settings {
  * See RFC-7540 3.5 - HTTP/2 Connection Preface */
 extern const struct aws_byte_cursor aws_h2_connection_preface_client_string;
 
-/* RFC-7541 2.4 */
-enum aws_h2_header_field_hpack_behavior {
-    AWS_H2_HEADER_BEHAVIOR_SAVE,
-    AWS_H2_HEADER_BEHAVIOR_NO_SAVE,
-    AWS_H2_HEADER_BEHAVIOR_NO_FORWARD_SAVE,
-};
-
 /**
  * Present in all frames that may have set AWS_H2_FRAME_F_PRIORITY
  *
@@ -101,13 +94,8 @@ struct aws_h2_frame_priority_settings {
     uint8_t weight;
 };
 
-struct aws_h2_frame_header_field {
-    struct aws_http_header header;
-    enum aws_h2_header_field_hpack_behavior hpack_behavior;
-    const size_t index; /* DO NOT TOUCH unless you're pretty sure you know what you're doing */
-};
 struct aws_h2_frame_header_block {
-    /* array_list of aws_h2_frame_header_field */
+    /* array_list of aws_http_header */
     struct aws_array_list header_fields;
 };
 

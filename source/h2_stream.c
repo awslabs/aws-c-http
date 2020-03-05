@@ -128,12 +128,9 @@ static struct aws_h2_frame_headers *s_new_headers_frame(
     /* #TODO headers frame needs to respect max frame size, and use CONTINUATION */
     const size_t num_headers = aws_http_message_get_header_count(message);
     for (size_t i = 0; i < num_headers; ++i) {
-        struct aws_h2_frame_header_field header_field = {
-            /* #TODO: let user specify hpack behavior */
-            .hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE,
-        };
+        struct aws_http_header header_field;
 
-        aws_http_message_get_header(message, &header_field.header, i);
+        aws_http_message_get_header(message, &header_field, i);
         if (aws_array_list_push_back(&headers_frame->header_block.header_fields, &header_field)) {
             goto error_push_back;
         }

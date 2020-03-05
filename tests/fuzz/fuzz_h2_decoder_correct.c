@@ -30,20 +30,20 @@ static void s_generate_header_block(struct aws_byte_cursor *input, struct aws_h2
 
     /* Requires 4 bytes: type, size, and then 1 each for name & value */
     while (input->len >= 4) {
-        struct aws_h2_frame_header_field header;
+        struct aws_http_header header;
         AWS_ZERO_STRUCT(header);
 
         uint8_t type = 0;
         aws_byte_cursor_read_u8(input, &type);
         switch (type % 3) {
             case 0:
-                header.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_SAVE;
+                header.compression = AWS_HTTP_HEADER_COMPRESSION_USE_CACHE;
                 break;
             case 1:
-                header.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_SAVE;
+                header.compression = AWS_HTTP_HEADER_COMPRESSION_NO_CACHE;
                 break;
             case 2:
-                header.hpack_behavior = AWS_H2_HEADER_BEHAVIOR_NO_FORWARD_SAVE;
+                header.compression = AWS_HTTP_HEADER_COMPRESSION_NO_FORWARD_CACHE;
                 break;
         }
 
@@ -70,8 +70,8 @@ static void s_generate_header_block(struct aws_byte_cursor *input, struct aws_h2
             name_len = input->len / 2;
             value_len = input->len - name_len;
         }
-        header.header.name = aws_byte_cursor_advance(input, name_len);
-        header.header.value = aws_byte_cursor_advance(input, value_len);
+        header.name = aws_byte_cursor_advance(input, name_len);
+        header.value = aws_byte_cursor_advance(input, value_len);
 
         aws_array_list_push_back(&header_block->header_fields, &header);
     }

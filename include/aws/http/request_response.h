@@ -30,12 +30,47 @@ struct aws_input_stream;
 struct aws_http_stream;
 
 /**
+ * Controls whether a header's strings may be compressed by encoding the index of
+ * strings in a cache, rather than encoding the literal string.
+ *
+ * This setting has no effect on HTTP/1.x connections.
+ * On HTTP/2 connections this controls HPACK behavior.
+ * See RFC-7541 Section 7.1 for security considerations.
+ */
+enum aws_http_header_compression {
+    /**
+     * Compress header by encoding the cached index of its strings,
+     * or by updating the cache to contain these strings for future reference.
+     * Best for headers that are sent repeatedly.
+     * This is the default setting.
+     */
+    AWS_HTTP_HEADER_COMPRESSION_USE_CACHE,
+
+    /**
+     * Encode header strings literally.
+     * If an intermediary re-broadcasts the headers, it is permitted to use cache.
+     * Best for unique headers that are unlikely to repeat.
+     */
+    AWS_HTTP_HEADER_COMPRESSION_NO_CACHE,
+
+    /**
+     * Encode header strings literally and forbid all intermediaries from using
+     * cache when re-broadcasting.
+     * Best for header fields that are highly valuable or sensitive to recovery.
+     */
+    AWS_HTTP_HEADER_COMPRESSION_NO_FORWARD_CACHE,
+};
+
+/**
  * A lightweight HTTP header struct.
  * Note that the underlying strings are not owned by the byte cursors.
  */
 struct aws_http_header {
     struct aws_byte_cursor name;
     struct aws_byte_cursor value;
+
+    /* Controls whether the header's strings may be compressed via caching. */
+    enum aws_http_header_compression compression;
 };
 
 /**

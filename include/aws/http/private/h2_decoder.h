@@ -36,21 +36,13 @@ struct aws_h2_decoder_vtable {
     /* For HEADERS header-block: _begin() is called, then 0+ _i() calls, then _end().
      * No other decoder callbacks will occur in this time. */
     int (*on_headers_begin)(uint32_t stream_id, void *userdata);
-    int (*on_headers_i)(
-        uint32_t stream_id,
-        const struct aws_http_header *header,
-        enum aws_h2_header_field_hpack_behavior hpack_behavior,
-        void *userdata);
+    int (*on_headers_i)(uint32_t stream_id, const struct aws_http_header *header, void *userdata);
     int (*on_headers_end)(uint32_t stream_id, void *userdata);
 
     /* For PUSH_PROMISE header-block: _begin() is called, then 0+ _i() calls, then _end().
      * No other decoder callbacks will occur in this time. */
     int (*on_push_promise_begin)(uint32_t stream_id, uint32_t promised_stream_id, void *userdata);
-    int (*on_push_promise_i)(
-        uint32_t stream_id,
-        const struct aws_http_header *header,
-        enum aws_h2_header_field_hpack_behavior hpack_behavior,
-        void *userdata);
+    int (*on_push_promise_i)(uint32_t stream_id, const struct aws_http_header *header, void *userdata);
 
     int (*on_push_promise_end)(uint32_t stream_id, void *userdata);
 
