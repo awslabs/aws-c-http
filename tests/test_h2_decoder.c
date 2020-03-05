@@ -33,7 +33,7 @@ struct frame {
     /* If true, we expect no further callbacks regarding this frame */
     bool finished;
 
-    struct aws_array_list headers;  /* contains aws_h2_frame_header_field */
+    struct aws_array_list headers;  /* contains aws_http_header */
     struct aws_array_list settings; /* contains aws_h2_frame_setting */
     struct aws_byte_buf data;
 
@@ -72,8 +72,7 @@ static int s_frame_init(
     AWS_ZERO_STRUCT(*frame);
     frame->type = type;
     frame->stream_id = stream_id;
-    ASSERT_SUCCESS(
-        aws_array_list_init_dynamic(&frame->headers, allocator, 16, sizeof(struct aws_h2_frame_header_field)));
+    ASSERT_SUCCESS(aws_array_list_init_dynamic(&frame->headers, allocator, 16, sizeof(struct aws_http_header)));
     ASSERT_SUCCESS(aws_array_list_init_dynamic(&frame->settings, allocator, 16, sizeof(struct aws_h2_frame_setting)));
     ASSERT_SUCCESS(aws_byte_buf_init(&frame->data, allocator, 1024));
     return AWS_OP_SUCCESS;
@@ -134,12 +133,7 @@ static int s_end_current_frame(struct fixture *fixture, enum aws_h2_frame_type t
     return AWS_OP_SUCCESS;
 }
 
-static int s_on_header(
-    bool is_push_promise,
-    uint32_t stream_id,
-    const struct aws_http_header *header,
-    enum aws_h2_header_field_hpack_behavior hpack_behavior,
-    void *userdata) {
+static int s_on_header(bool is_push_promise, uint32_t stream_id, const struct aws_http_header *header, void *userdata) {
 
     struct fixture *fixture = userdata;
     struct frame *frame = s_latest_frame(fixture);
@@ -156,12 +150,9 @@ static int s_on_header(
 
     /* Stash header strings in frame->data.
      * DO NOT resize buffer or pointers will get messed up */
-    struct aws_h2_frame_header_field header_field = {
-        .header = *header,
-        .hpack_behavior = hpack_behavior,
-    };
-    ASSERT_SUCCESS(aws_byte_buf_append_and_update(&frame->data, &header_field.header.name));
-    ASSERT_SUCCESS(aws_byte_buf_append_and_update(&frame->data, &header_field.header.value));
+    struct aws_http_header header_field = *header;
+    ASSERT_SUCCESS(aws_byte_buf_append_and_update(&frame->data, &header_field.name));
+    ASSERT_SUCCESS(aws_byte_buf_append_and_update(&frame->data, &header_field.value));
 
     ASSERT_SUCCESS(aws_array_list_push_back(&frame->headers, &header_field));
 
@@ -176,13 +167,9 @@ static int s_decoder_on_headers_begin(uint32_t stream_id, void *userdata) {
     return AWS_OP_SUCCESS;
 }
 
-static int s_decoder_on_headers_i(
-    uint32_t stream_id,
-    const struct aws_http_header *header,
-    enum aws_h2_header_field_hpack_behavior hpack_behavior,
-    void *userdata) {
+static int s_decoder_on_headers_i(uint32_t stream_id, const struct aws_http_header *header, void *userdata) {
 
-    return s_on_header(false /* is_push_promise */, stream_id, header, hpack_behavior, userdata);
+    return s_on_header(false /* is_push_promise */, stream_id, header, userdata);
 }
 
 static int s_decoder_on_headers_end(uint32_t stream_id, void *userdata) {
@@ -201,13 +188,9 @@ static int s_decoder_on_push_promise_begin(uint32_t stream_id, uint32_t promised
     return AWS_OP_SUCCESS;
 }
 
-static int s_decoder_on_push_promise_i(
-    uint32_t stream_id,
-    const struct aws_http_header *header,
-    enum aws_h2_header_field_hpack_behavior hpack_behavior,
-    void *userdata) {
+static int s_decoder_on_push_promise_i(uint32_t stream_id, const struct aws_http_header *header, void *userdata) {
 
-    return s_on_header(true /* is_push_promise */, stream_id, header, hpack_behavior, userdata);
+    return s_on_header(true /* is_push_promise */, stream_id, header, userdata);
 }
 
 static int s_decoder_on_push_promise_end(uint32_t stream_id, void *userdata) {
@@ -833,15 +816,15 @@ static int s_check_header(
     size_t header_idx,
     const char *name,
     const char *value,
-    enum aws_h2_header_field_hpack_behavior hpack_behavior) {
+    enum aws_http_header_compression compression) {
     ASSERT_TRUE(header_idx < aws_array_list_length(&frame->headers));
 
-    struct aws_h2_frame_header_field *header_field;
+    struct aws_http_header *header_field;
     aws_array_list_get_at_ptr(&frame->headers, (void **)&header_field, header_idx);
 
-    ASSERT_BIN_ARRAYS_EQUALS(name, strlen(name), header_field->header.name.ptr, header_field->header.name.len);
-    ASSERT_BIN_ARRAYS_EQUALS(value, strlen(value), header_field->header.value.ptr, header_field->header.value.len);
-    ASSERT_INT_EQUALS(hpack_behavior, header_field->hpack_behavior);
+    ASSERT_BIN_ARRAYS_EQUALS(name, strlen(name), header_field->name.ptr, header_field->name.len);
+    ASSERT_BIN_ARRAYS_EQUALS(value, strlen(value), header_field->value.ptr, header_field->value.len);
+    ASSERT_INT_EQUALS(compression, header_field->compression);
     return AWS_OP_SUCCESS;
 }
 
@@ -869,7 +852,7 @@ H2_DECODER_TEST_CASE(h2_decoder_headers) {
     struct frame *frame = s_latest_frame(fixture);
     ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
     ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -899,7 +882,7 @@ H2_DECODER_TEST_CASE(h2_decoder_headers_padded) {
     struct frame *frame = s_latest_frame(fixture);
     ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
     ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     return AWS_OP_SUCCESS;
 }
 
@@ -930,7 +913,7 @@ H2_DECODER_TEST_CASE(h2_decoder_headers_priority) {
     struct frame *frame = s_latest_frame(fixture);
     ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
     ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     return AWS_OP_SUCCESS;
 }
 
@@ -962,7 +945,7 @@ H2_DECODER_TEST_CASE(h2_decoder_headers_ignores_unknown_flags) {
     struct frame *frame = s_latest_frame(fixture);
     ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
     ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -1075,8 +1058,8 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation) {
     struct frame *frame = s_latest_frame(fixture);
     ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
     ASSERT_UINT_EQUALS(2, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_H2_HEADER_BEHAVIOR_SAVE));
-    ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -1115,8 +1098,8 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_ignores_unknown_flags) {
     struct frame *frame = s_latest_frame(fixture);
     ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
     ASSERT_UINT_EQUALS(2, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_H2_HEADER_BEHAVIOR_SAVE));
-    ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     return AWS_OP_SUCCESS;
 }
 
@@ -1155,7 +1138,7 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_header_field_spans_frames) {
     struct frame *frame = s_latest_frame(fixture);
     ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
     ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_FALSE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -1200,9 +1183,9 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_many_frames) {
     struct frame *frame = s_latest_frame(fixture);
     ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
     ASSERT_UINT_EQUALS(3, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_H2_HEADER_BEHAVIOR_SAVE));
-    ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_H2_HEADER_BEHAVIOR_SAVE));
-    ASSERT_SUCCESS(s_check_header(frame, 2, "hi", "mom", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 2, "hi", "mom", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -1245,7 +1228,7 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_empty_payloads) {
     struct frame *frame = s_latest_frame(fixture);
     ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
     ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -1858,9 +1841,9 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise) {
     ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
     ASSERT_UINT_EQUALS(3, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_H2_HEADER_BEHAVIOR_SAVE));
-    ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_H2_HEADER_BEHAVIOR_SAVE));
-    ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_FALSE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -1895,9 +1878,9 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise_ignores_unknown_flags) {
     ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
     ASSERT_UINT_EQUALS(3, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_H2_HEADER_BEHAVIOR_SAVE));
-    ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_H2_HEADER_BEHAVIOR_SAVE));
-    ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_FALSE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -1946,9 +1929,9 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise_continuation) {
     ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
     ASSERT_UINT_EQUALS(3, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_H2_HEADER_BEHAVIOR_SAVE));
-    ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_H2_HEADER_BEHAVIOR_SAVE));
-    ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_FALSE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -2528,8 +2511,8 @@ H2_DECODER_TEST_CASE(h2_decoder_many_frames_in_a_row) {
     /* Validate HEADERS (and its CONTINUATION) */
     ASSERT_SUCCESS(s_get_finished_frame_i(fixture, frame_i++, AWS_H2_FRAME_T_HEADERS, 0x1 /*stream-id*/, &frame));
     ASSERT_UINT_EQUALS(2, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_H2_HEADER_BEHAVIOR_SAVE));
-    ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_FALSE(frame->end_stream);
 
     /* Validate SETTINGS ACK */
@@ -2540,9 +2523,9 @@ H2_DECODER_TEST_CASE(h2_decoder_many_frames_in_a_row) {
     ASSERT_SUCCESS(s_get_finished_frame_i(fixture, frame_i++, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream-id*/, &frame));
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
     ASSERT_UINT_EQUALS(3, aws_array_list_length(&frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_H2_HEADER_BEHAVIOR_SAVE));
-    ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_H2_HEADER_BEHAVIOR_SAVE));
-    ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_H2_HEADER_BEHAVIOR_SAVE));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_FALSE(frame->end_stream);
 
     /* PRIORITY frame is ignored by decoder */

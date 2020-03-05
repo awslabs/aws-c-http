@@ -36,15 +36,10 @@ struct aws_hpack_decode_result {
 
     union {
         /* If type is AWS_HPACK_DECODE_T_HEADER_FIELD */
-        struct aws_hpack_decoded_header_field {
-            struct aws_http_header header;
-            enum aws_h2_header_field_hpack_behavior hpack_behavior;
-        } header_field;
+        struct aws_http_header header_field;
 
         /* If type is AWS_HPACK_DECODE_T_DYNAMIC_TABLE_RESIZE */
-        struct aws_hpack_decoded_resize {
-            size_t size;
-        } dynamic_table_resize;
+        size_t dynamic_table_resize;
     } data;
 };
 

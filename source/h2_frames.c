@@ -101,8 +101,7 @@ int aws_h2_frame_header_block_init(struct aws_h2_frame_header_block *header_bloc
     AWS_PRECONDITION(header_block);
     AWS_PRECONDITION(allocator);
 
-    return aws_array_list_init_dynamic(
-        &header_block->header_fields, allocator, 0, sizeof(struct aws_h2_frame_header_field));
+    return aws_array_list_init_dynamic(&header_block->header_fields, allocator, 0, sizeof(struct aws_http_header));
 }
 void aws_h2_frame_header_block_clean_up(struct aws_h2_frame_header_block *header_block) {
     AWS_PRECONDITION(header_block);
@@ -126,12 +125,12 @@ int aws_h2_frame_header_block_get_encoded_length(
     const size_t num_headers = aws_array_list_length(&header_block->header_fields);
     for (size_t i = 0; i < num_headers; ++i) {
 
-        const struct aws_h2_frame_header_field *field = NULL;
+        const struct aws_http_header *field = NULL;
         aws_array_list_get_at_ptr(&header_block->header_fields, (void **)&field, i);
         AWS_ASSERT(field);
 
         bool found_value = false;
-        const size_t index = aws_hpack_find_index(encoder->hpack, &field->header, &found_value);
+        const size_t index = aws_hpack_find_index(encoder->hpack, field, &found_value);
 
         uint8_t prefix_size;
         /* If a value was found, this is an indexed header */
@@ -139,14 +138,14 @@ int aws_h2_frame_header_block_get_encoded_length(
             prefix_size = 7;
         } else {
             /* If not indexed, determine the appropriate flags and prefixes */
-            switch (field->hpack_behavior) {
-                case AWS_H2_HEADER_BEHAVIOR_SAVE:
+            switch (field->compression) {
+                case AWS_HTTP_HEADER_COMPRESSION_USE_CACHE:
                     prefix_size = 6;
                     break;
-                case AWS_H2_HEADER_BEHAVIOR_NO_SAVE:
+                case AWS_HTTP_HEADER_COMPRESSION_NO_CACHE:
                     prefix_size = 4;
                     break;
-                case AWS_H2_HEADER_BEHAVIOR_NO_FORWARD_SAVE:
+                case AWS_HTTP_HEADER_COMPRESSION_NO_FORWARD_CACHE:
                     prefix_size = 5;
                     break;
                 default:
@@ -161,12 +160,11 @@ int aws_h2_frame_header_block_get_encoded_length(
         if (!found_value) {
             /* If not an indexed header, check if the name needs to be written */
             if (!index) {
-                *length +=
-                    aws_hpack_get_encoded_length_string(encoder->hpack, field->header.name, encoder->use_huffman);
+                *length += aws_hpack_get_encoded_length_string(encoder->hpack, field->name, encoder->use_huffman);
             }
 
             /* Value must be written if the field isn't pure indexed */
-            *length += aws_hpack_get_encoded_length_string(encoder->hpack, field->header.value, encoder->use_huffman);
+            *length += aws_hpack_get_encoded_length_string(encoder->hpack, field->value, encoder->use_huffman);
         }
     }
 
@@ -186,12 +184,12 @@ int aws_h2_frame_header_block_encode(
 
     for (size_t i = 0; i < num_headers; ++i) {
 
-        const struct aws_h2_frame_header_field *field = NULL;
+        const struct aws_http_header *field = NULL;
         aws_array_list_get_at_ptr(&header_block->header_fields, (void **)&field, i);
         AWS_ASSERT(field);
 
         bool found_value = true;
-        const size_t index = aws_hpack_find_index(encoder->hpack, &field->header, &found_value);
+        const size_t index = aws_hpack_find_index(encoder->hpack, field, &found_value);
 
         uint8_t mask;
         uint8_t prefix_size;
@@ -201,16 +199,16 @@ int aws_h2_frame_header_block_encode(
             prefix_size = 7;
         } else {
             /* If not indexed, determine the appropriate flags and prefixes */
-            switch (field->hpack_behavior) {
-                case AWS_H2_HEADER_BEHAVIOR_SAVE:
+            switch (field->compression) {
+                case AWS_HTTP_HEADER_COMPRESSION_USE_CACHE:
                     mask = s_literal_save_field_mask;
                     prefix_size = 6;
                     break;
-                case AWS_H2_HEADER_BEHAVIOR_NO_SAVE:
+                case AWS_HTTP_HEADER_COMPRESSION_NO_CACHE:
                     mask = 0; /* No bits set, just 4 bit prefix */
                     prefix_size = 4;
                     break;
-                case AWS_H2_HEADER_BEHAVIOR_NO_FORWARD_SAVE:
+                case AWS_HTTP_HEADER_COMPRESSION_NO_FORWARD_CACHE:
                     mask = s_literal_no_forward_save_mask;
                     prefix_size = 4;
                     break;
@@ -236,7 +234,7 @@ int aws_h2_frame_header_block_encode(
         if (!found_value) {
             /* If not an indexed header, check if the name needs to be written */
             if (!index) {
-                scratch = field->header.name;
+                scratch = field->name;
                 if (aws_hpack_encode_string(encoder->hpack, &scratch, encoder->use_huffman, output)) {
                     return AWS_OP_ERR;
                 }
@@ -244,15 +242,15 @@ int aws_h2_frame_header_block_encode(
             }
 
             /* Value must be written if the field isn't pure indexed */
-            scratch = field->header.value;
+            scratch = field->value;
             if (aws_hpack_encode_string(encoder->hpack, &scratch, encoder->use_huffman, output)) {
                 return AWS_OP_ERR;
             }
             AWS_ASSERT(scratch.len == 0);
 
-            if (field->hpack_behavior == AWS_H2_HEADER_BEHAVIOR_SAVE) {
+            if (field->compression == AWS_HTTP_HEADER_COMPRESSION_USE_CACHE) {
                 /* Save for next time */
-                aws_hpack_insert_header(encoder->hpack, &field->header);
+                aws_hpack_insert_header(encoder->hpack, field);
             }
         }
 
