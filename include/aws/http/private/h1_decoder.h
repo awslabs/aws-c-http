@@ -19,6 +19,48 @@
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
 
+struct aws_h1_decoded_header {
+    /* Name of the header. If the type is `AWS_HTTP_HEADER_NAME_UNKNOWN` then `name_data` must be parsed manually. */
+    enum aws_http_header_name name;
+
+    /* Raw buffer storing the header's name. */
+    struct aws_byte_cursor name_data;
+
+    /* Raw buffer storing the header's value. */
+    struct aws_byte_cursor value_data;
+
+    /* Raw buffer storing the entire header. */
+    struct aws_byte_cursor data;
+};
+
+struct aws_h1_decoder_vtable {
+    /**
+     * Called from `aws_h*_decode` when an http header has been received.
+     * All pointers are strictly *read only*; any data that needs to persist must be copied out into user-owned memory.
+     */
+    int (*on_header)(const struct aws_h1_decoded_header *header, void *user_data);
+
+    /**
+     * Called from `aws_h1_decode` when a portion of the http body has been received.
+     * `finished` is true if this is the last section of the http body, and false if more body data is yet to be
+     * received. All pointers are strictly *read only*; any data that needs to persist must be copied out into
+     * user-owned memory.
+     */
+    int (*on_body)(const struct aws_byte_cursor *data, bool finished, void *user_data);
+
+    /* Only needed for requests, can be NULL for responses. */
+    int (*on_request)(
+        enum aws_http_method method_enum,
+        const struct aws_byte_cursor *method_str,
+        const struct aws_byte_cursor *uri,
+        void *user_data);
+
+    /* Only needed for responses, can be NULL for requests. */
+    int (*on_response)(int status_code, void *user_data);
+
+    int (*on_done)(void *user_data);
+};
+
 /**
  * Structure used to initialize an `aws_h1_decoder`.
  */
@@ -28,7 +70,7 @@ struct aws_h1_decoder_params {
     /* Set false if decoding responses */
     bool is_decoding_requests;
     void *user_data;
-    struct aws_http_decoder_vtable vtable;
+    struct aws_h1_decoder_vtable vtable;
 };
 
 struct aws_h1_decoder;
