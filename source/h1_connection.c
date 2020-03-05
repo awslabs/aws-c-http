@@ -74,7 +74,7 @@ static int s_decoder_on_request(
     const struct aws_byte_cursor *uri,
     void *user_data);
 static int s_decoder_on_response(int status_code, void *user_data);
-static int s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data);
+static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void *user_data);
 static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, void *user_data);
 static int s_decoder_on_done(void *user_data);
 static void s_reset_statistics(struct aws_channel_handler *handler);
@@ -102,7 +102,7 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .update_window = s_connection_update_window,
 };
 
-static const struct aws_http_decoder_vtable s_h1_decoder_vtable = {
+static const struct aws_h1_decoder_vtable s_h1_decoder_vtable = {
     .on_request = s_decoder_on_request,
     .on_response = s_decoder_on_response,
     .on_header = s_decoder_on_header,
@@ -966,7 +966,7 @@ static int s_decoder_on_response(int status_code, void *user_data) {
     return AWS_OP_SUCCESS;
 }
 
-static int s_decoder_on_header(const struct aws_http_decoded_header *header, void *user_data) {
+static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void *user_data) {
     struct h1_connection *connection = user_data;
     struct aws_h1_stream *incoming_stream = connection->thread_data.incoming_stream;
 

@@ -53,7 +53,7 @@ struct aws_h1_decoder {
     void *logging_id;
 
     /* User callbacks and settings. */
-    struct aws_http_decoder_vtable vtable;
+    struct aws_h1_decoder_vtable vtable;
     bool is_decoding_requests;
     void *user_data;
 };
@@ -445,7 +445,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
 
     struct aws_byte_cursor value = aws_strutil_trim_http_whitespace(splits[1]);
 
-    struct aws_http_decoded_header header;
+    struct aws_h1_decoded_header header;
     header.name = aws_http_str_to_header_name(name);
     header.name_data = name;
     header.value_data = value;

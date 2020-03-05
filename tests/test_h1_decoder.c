@@ -38,7 +38,7 @@ static const bool s_response = false;
 
 static struct aws_logger s_logger;
 
-static int s_on_header_stub(const struct aws_http_decoded_header *header, void *user_data) {
+static int s_on_header_stub(const struct aws_h1_decoded_header *header, void *user_data) {
     (void)header;
     (void)user_data;
     return AWS_OP_SUCCESS;
@@ -275,7 +275,7 @@ struct s_header_params {
     const char **header_names;
 };
 
-static int s_got_header(const struct aws_http_decoded_header *header, void *user_data) {
+static int s_got_header(const struct aws_h1_decoded_header *header, void *user_data) {
     struct s_header_params *params = (struct s_header_params *)user_data;
     if (params->index < params->max_index) {
         if (params->first_error == AWS_OP_SUCCESS) {
