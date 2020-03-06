@@ -64,6 +64,11 @@ struct aws_http_connection_manager_options {
      */
     void *shutdown_complete_user_data;
     aws_http_connection_manager_shutdown_complete_fn *shutdown_complete_callback;
+
+    /**
+     * If set to true, the read back pressure mechanism will be enabled.
+     */
+    bool enable_read_back_pressure;
 };
 
 AWS_EXTERN_C_BEGIN
