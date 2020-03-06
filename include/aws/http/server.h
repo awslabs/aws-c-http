@@ -103,6 +103,11 @@ struct aws_http_server_options {
      * Optional.
      */
     aws_http_server_on_destroy_fn *on_destroy_complete;
+
+    /**
+     * If set to true, read back pressure mechanism will be enabled.
+     */
+    bool enable_read_back_pressure;
 };
 
 /**
