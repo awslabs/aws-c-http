@@ -110,7 +110,7 @@ int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_curso
         return AWS_OP_ERR;
     }
 
-    struct aws_http_header header = {name, value};
+    struct aws_http_header header = {.name = name, .value = value};
 
     /* Store our own copy of the strings.
      * We put the name and value into the same allocation. */

@@ -208,6 +208,11 @@ struct aws_http_client_connection_options {
      * See `aws_http_on_client_connection_shutdown_fn`.
      */
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
+
+    /**
+     * If set to true, read back pressure mechanism will be enabled.
+     */
+    bool enable_read_back_pressure;
 };
 
 /**

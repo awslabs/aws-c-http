@@ -194,11 +194,8 @@ static struct aws_http_connection *s_connection_new(
         goto error;
     }
 
-    connection->channel_slot = connection_slot;
-
-    /* Success! Acquire a hold on the channel to prevent its destruction until the user has
-     * given the go-ahead via aws_http_connection_release() */
-    aws_channel_acquire_hold(channel);
+    /* Success! Inform connection that installation is complete */
+    connection->vtable->on_channel_handler_installed(&connection->channel_handler, connection_slot);
 
     return connection;
 
@@ -490,26 +487,23 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     s_server_lock_synced_data(server);
     if (options->tls_options) {
         server->is_using_tls = true;
-
-        server->socket = aws_server_bootstrap_new_tls_socket_listener(
-            options->bootstrap,
-            options->endpoint,
-            options->socket_options,
-            options->tls_options,
-            s_server_bootstrap_on_accept_channel_setup,
-            s_server_bootstrap_on_accept_channel_shutdown,
-            s_server_bootstrap_on_server_listener_destroy,
-            server);
-    } else {
-        server->socket = aws_server_bootstrap_new_socket_listener(
-            options->bootstrap,
-            options->endpoint,
-            options->socket_options,
-            s_server_bootstrap_on_accept_channel_setup,
-            s_server_bootstrap_on_accept_channel_shutdown,
-            s_server_bootstrap_on_server_listener_destroy,
-            server);
     }
+
+    struct aws_server_socket_channel_bootstrap_options bootstrap_options = {
+        .enable_read_back_pressure = options->enable_read_back_pressure,
+        .tls_options = options->tls_options,
+        .bootstrap = options->bootstrap,
+        .socket_options = options->socket_options,
+        .incoming_callback = s_server_bootstrap_on_accept_channel_setup,
+        .shutdown_callback = s_server_bootstrap_on_accept_channel_shutdown,
+        .destroy_callback = s_server_bootstrap_on_server_listener_destroy,
+        .host_name = options->endpoint->address,
+        .port = options->endpoint->port,
+        .user_data = server,
+    };
+
+    server->socket = aws_server_bootstrap_new_socket_listener(&bootstrap_options);
+
     s_server_unlock_synced_data(server);
 
     if (!server->socket) {
@@ -772,6 +766,7 @@ int aws_http_client_connect_internal(
         .tls_options = options->tls_options,
         .setup_callback = s_client_bootstrap_on_channel_setup,
         .shutdown_callback = s_client_bootstrap_on_channel_shutdown,
+        .enable_read_back_pressure = options->enable_read_back_pressure,
         .user_data = http_bootstrap,
     };
 

@@ -37,7 +37,7 @@ static int s_fixture_clean_up(struct aws_allocator *allocator, int setup_res, vo
 /* Run the given frame's encoder and check that it outputs the expected bytes */
 static int s_encode(
     struct aws_allocator *allocator,
-    struct aws_h2_frame_header *frame_header,
+    struct aws_h2_frame_base *frame,
     const uint8_t *expected,
     size_t expected_size) {
 
@@ -48,7 +48,7 @@ static int s_encode(
     /* Allocate more room than necessary, easier to debug the full output than a failed aws_h2_encode_frame() call */
     ASSERT_SUCCESS(aws_byte_buf_init(&buffer, allocator, expected_size * 2));
 
-    ASSERT_SUCCESS(aws_h2_encode_frame(&encoder, frame_header, &buffer));
+    ASSERT_SUCCESS(aws_h2_encode_frame(&encoder, frame, &buffer));
     ASSERT_BIN_ARRAYS_EQUALS(expected, expected_size, buffer.buffer, buffer.len);
 
     aws_byte_buf_clean_up(&buffer);
@@ -61,7 +61,7 @@ TEST_CASE(h2_encoder_data) {
 
     struct aws_h2_frame_data frame;
     ASSERT_SUCCESS(aws_h2_frame_data_init(&frame, allocator));
-    frame.header.stream_id = 0x76543210;
+    frame.base.stream_id = 0x76543210;
     frame.end_stream = true;
     frame.pad_length = 2;
     frame.data = aws_byte_cursor_from_c_str("hello");
@@ -79,7 +79,7 @@ TEST_CASE(h2_encoder_data) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.header, expected, sizeof(expected)));
+    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
     aws_h2_frame_data_clean_up(&frame);
     return AWS_OP_SUCCESS;
 }
@@ -89,7 +89,7 @@ TEST_CASE(h2_encoder_headers) {
 
     struct aws_h2_frame_headers frame;
     ASSERT_SUCCESS(aws_h2_frame_headers_init(&frame, allocator));
-    frame.header.stream_id = 0x76543210;
+    frame.base.stream_id = 0x76543210;
     frame.end_headers = true;
     frame.end_stream = true;
     frame.pad_length = 2;
@@ -115,7 +115,7 @@ TEST_CASE(h2_encoder_headers) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.header, expected, sizeof(expected)));
+    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
     aws_h2_frame_headers_clean_up(&frame);
     return AWS_OP_SUCCESS;
 }
@@ -125,7 +125,7 @@ TEST_CASE(h2_encoder_priority) {
 
     struct aws_h2_frame_priority frame;
     ASSERT_SUCCESS(aws_h2_frame_priority_init(&frame, allocator));
-    frame.header.stream_id = 0x76543210;
+    frame.base.stream_id = 0x76543210;
     frame.priority.stream_dependency_exclusive = true;
     frame.priority.stream_dependency = 0x01234567;
     frame.priority.weight = 9;
@@ -142,7 +142,7 @@ TEST_CASE(h2_encoder_priority) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.header, expected, sizeof(expected)));
+    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
 
     aws_h2_frame_priority_clean_up(&frame);
     return AWS_OP_SUCCESS;
@@ -153,7 +153,7 @@ TEST_CASE(h2_encoder_rst_stream) {
 
     struct aws_h2_frame_rst_stream frame;
     ASSERT_SUCCESS(aws_h2_frame_rst_stream_init(&frame, allocator));
-    frame.header.stream_id = 0x76543210;
+    frame.base.stream_id = 0x76543210;
     frame.error_code = 0xFEEDBEEF;
 
     /* clang-format off */
@@ -167,7 +167,7 @@ TEST_CASE(h2_encoder_rst_stream) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.header, expected, sizeof(expected)));
+    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
     aws_h2_frame_rst_stream_clean_up(&frame);
     return AWS_OP_SUCCESS;
 }
@@ -202,7 +202,7 @@ TEST_CASE(h2_encoder_settings) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.header, expected, sizeof(expected)));
+    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
     aws_h2_frame_settings_clean_up(&frame);
     return AWS_OP_SUCCESS;
 }
@@ -224,7 +224,7 @@ TEST_CASE(h2_encoder_settings_ack) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.header, expected, sizeof(expected)));
+    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
     aws_h2_frame_settings_clean_up(&frame);
     return AWS_OP_SUCCESS;
 }
@@ -234,7 +234,7 @@ TEST_CASE(h2_encoder_push_promise) {
 
     struct aws_h2_frame_push_promise frame;
     ASSERT_SUCCESS(aws_h2_frame_push_promise_init(&frame, allocator));
-    frame.header.stream_id = 0x00000001;
+    frame.base.stream_id = 0x00000001;
     frame.promised_stream_id = 0x76543210;
     frame.end_headers = true;
     frame.pad_length = 2;
@@ -255,7 +255,7 @@ TEST_CASE(h2_encoder_push_promise) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.header, expected, sizeof(expected)));
+    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
     aws_h2_frame_push_promise_clean_up(&frame);
     return AWS_OP_SUCCESS;
 }
@@ -281,7 +281,7 @@ TEST_CASE(h2_encoder_ping) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.header, expected, sizeof(expected)));
+    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
     aws_h2_frame_ping_clean_up(&frame);
     return AWS_OP_SUCCESS;
 }
@@ -308,7 +308,7 @@ TEST_CASE(h2_encoder_goaway) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.header, expected, sizeof(expected)));
+    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
     aws_h2_frame_goaway_clean_up(&frame);
     return AWS_OP_SUCCESS;
 }
@@ -318,7 +318,7 @@ TEST_CASE(h2_encoder_window_update) {
 
     struct aws_h2_frame_window_update frame;
     ASSERT_SUCCESS(aws_h2_frame_window_update_init(&frame, allocator));
-    frame.header.stream_id = 0x76543210;
+    frame.base.stream_id = 0x76543210;
     frame.window_size_increment = 0x7FFFFFFF;
 
     /* clang-format off */
@@ -332,7 +332,7 @@ TEST_CASE(h2_encoder_window_update) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.header, expected, sizeof(expected)));
+    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
     aws_h2_frame_window_update_clean_up(&frame);
     return AWS_OP_SUCCESS;
 }
@@ -342,7 +342,7 @@ TEST_CASE(h2_encoder_continuation) {
 
     struct aws_h2_frame_continuation frame;
     ASSERT_SUCCESS(aws_h2_frame_continuation_init(&frame, allocator));
-    frame.header.stream_id = 0x76543210;
+    frame.base.stream_id = 0x76543210;
     frame.end_headers = true;
 
     /* Intentionally leaving header block fragment empty. Header block encoding is tested elsewhere */
@@ -357,7 +357,7 @@ TEST_CASE(h2_encoder_continuation) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.header, expected, sizeof(expected)));
+    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
     aws_h2_frame_continuation_clean_up(&frame);
     return AWS_OP_SUCCESS;
 }

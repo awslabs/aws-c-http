@@ -207,6 +207,11 @@ struct aws_http_connection_manager {
      * a hybrid atomic/lock solution felt excessively complicated and delicate.
      */
     size_t external_ref_count;
+
+    /*
+     * if set to true, read back pressure mechanism will be enabled.
+     */
+    bool enable_read_back_pressure;
 };
 
 struct aws_http_connection_manager_snapshot {
@@ -560,12 +565,11 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     }
 
     struct aws_http_connection_manager *manager =
-        aws_mem_acquire(allocator, sizeof(struct aws_http_connection_manager));
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_connection_manager));
     if (manager == NULL) {
         return NULL;
     }
 
-    AWS_ZERO_STRUCT(*manager);
     manager->allocator = allocator;
 
     if (aws_mutex_init(&manager->lock)) {
@@ -612,6 +616,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->external_ref_count = 1;
     manager->shutdown_complete_callback = options->shutdown_complete_callback;
     manager->shutdown_complete_user_data = options->shutdown_complete_user_data;
+    manager->enable_read_back_pressure = options->enable_read_back_pressure;
 
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Successfully created", (void *)manager);
 
@@ -697,6 +702,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.socket_options = &manager->socket_options;
     options.on_setup = s_aws_http_connection_manager_on_connection_setup;
     options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
+    options.enable_read_back_pressure = manager->enable_read_back_pressure;
 
     if (aws_http_connection_monitoring_options_is_valid(&manager->monitoring_options)) {
         options.monitoring_options = &manager->monitoring_options;
@@ -855,13 +861,12 @@ void aws_http_connection_manager_acquire_connection(
     AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Acquire connection", (void *)manager);
 
     struct aws_http_connection_acquisition *request =
-        aws_mem_acquire(manager->allocator, sizeof(struct aws_http_connection_acquisition));
+        aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_http_connection_acquisition));
     if (request == NULL) {
         callback(NULL, aws_last_error(), user_data);
         return;
     }
 
-    AWS_ZERO_STRUCT(*request);
     request->callback = callback;
     request->user_data = user_data;
 
