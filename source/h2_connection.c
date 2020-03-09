@@ -279,9 +279,8 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     struct aws_linked_list *outgoing_frames_queue = &connection->thread_data.outgoing_frames_queue;
     while (!aws_linked_list_empty(outgoing_frames_queue)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(outgoing_frames_queue);
-        struct aws_h2_frame_base *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame_base, node);
-        aws_h2_frame_clean_up(frame);
-        aws_mem_release(connection->base.alloc, frame);
+        struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
+        aws_h2_frame_destroy(frame);
     }
 
     aws_h2_decoder_destroy(connection->thread_data.decoder);
@@ -291,7 +290,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     aws_mem_release(connection->base.alloc, connection);
 }
 
-void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connection, struct aws_h2_frame_base *frame) {
+void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connection, struct aws_h2_frame *frame) {
     AWS_PRECONDITION(frame->type != AWS_H2_FRAME_T_DATA);
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
@@ -370,22 +369,31 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
     /* Write as many frames from outgoing_frames_queue as possible. */
     while (!aws_linked_list_empty(outgoing_frames_queue)) {
         struct aws_linked_list_node *frame_node = aws_linked_list_front(outgoing_frames_queue);
-        struct aws_h2_frame_base *frame = AWS_CONTAINER_OF(frame_node, struct aws_h2_frame_base, node);
+        struct aws_h2_frame *frame = AWS_CONTAINER_OF(frame_node, struct aws_h2_frame, node);
 
-        /* #TODO actual functionality to query min required space for a frame */
-        const size_t min_required_bytes = 1024;
-        const size_t available_bytes = msg->message_data.capacity - msg->message_data.len;
-        if (available_bytes < min_required_bytes) {
+        bool frame_complete;
+        if (aws_h2_encode_frame(&connection->thread_data.encoder, frame, &msg->message_data, &frame_complete)) {
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "Error encoding frame: type=%s stream=%" PRIu32 " error=%s",
+                aws_h2_frame_type_to_str(frame->type),
+                frame->stream_id,
+                aws_error_name(aws_last_error()));
+            goto error;
+        }
+
+        if (!frame_complete) {
             if (msg->message_data.len == 0) {
                 /* We're in trouble if an empty message isn't big enough for this frame to do any work with */
                 CONNECTION_LOGF(
                     ERROR,
                     connection,
-                    "Cannot encode %s frame requiring %zu bytes, max available space is %zu",
+                    "Message is too small for encoder. frame-type=%s stream=%" PRIu32 " available-space=%zu",
                     aws_h2_frame_type_to_str(frame->type),
-                    min_required_bytes,
-                    available_bytes);
-                aws_raise_error(AWS_ERROR_INVALID_STATE);
+                    frame->stream_id,
+                    msg->message_data.capacity);
+                aws_raise_error(AWS_ERROR_SHORT_BUFFER);
                 goto error;
             }
 
@@ -393,22 +401,9 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
             goto done_encoding;
         }
 
-        /* #TODO some way for frame to say it's not done yet.
-         * Necessary for HEADERS that will split across CONTINUATION frames */
-        if (aws_h2_encode_frame(&connection->thread_data.encoder, frame, &msg->message_data)) {
-            CONNECTION_LOGF(
-                ERROR,
-                connection,
-                "Error encoding frame of type %s: %s",
-                aws_h2_frame_type_to_str(frame->type),
-                aws_error_name(aws_last_error()));
-            goto error;
-        }
-
         /* Done encoding frame, pop from queue and cleanup*/
         aws_linked_list_remove(frame_node);
-        aws_h2_frame_clean_up(frame);
-        aws_mem_release(connection->base.alloc, frame);
+        aws_h2_frame_destroy(frame);
 
         num_frames_encoded++;
     }
@@ -525,27 +520,18 @@ error:
     return AWS_OP_ERR;
 }
 
-/* #TODO actually fill with settings */
 /* #TODO track which SETTINGS frames have been ACK'd */
 static int s_enqueue_settings_frame(struct aws_h2_connection *connection) {
     struct aws_allocator *alloc = connection->base.alloc;
 
-    struct aws_h2_frame_settings *settings_frame = aws_mem_calloc(alloc, 1, sizeof(struct aws_h2_frame_settings));
+    /* #TODO actually fill with settings */
+    struct aws_h2_frame *settings_frame = aws_h2_frame_new_settings(alloc, NULL, 0, false /*ack*/);
     if (!settings_frame) {
-        goto error_alloc;
+        return AWS_OP_ERR;
     }
 
-    if (aws_h2_frame_settings_init(settings_frame, alloc)) {
-        goto error_init;
-    }
-
-    aws_h2_connection_enqueue_outgoing_frame(connection, &settings_frame->base);
+    aws_h2_connection_enqueue_outgoing_frame(connection, settings_frame);
     return AWS_OP_SUCCESS;
-
-error_init:
-    aws_mem_release(alloc, settings_frame);
-error_alloc:
-    return AWS_OP_ERR;
 }
 
 static void s_handler_installed(struct aws_channel_handler *handler, struct aws_channel_slot *slot) {
