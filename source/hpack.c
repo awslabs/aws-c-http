@@ -1180,7 +1180,7 @@ int aws_hpack_decode(
                     HPACK_LOG(ERROR, context, "Dynamic table update size is absurdly large");
                     return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
                 }
-                size_t size = *size64;
+                size_t size = (size_t)*size64;
 
                 HPACK_LOGF(TRACE, context, "Dynamic table size update %zu", size);
                 if (aws_hpack_resize_dynamic_table(context, size)) {
