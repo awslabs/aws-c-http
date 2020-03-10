@@ -650,7 +650,7 @@ static void s_client_update_incoming_stream_ptr(struct h1_connection *connection
  */
 static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *connection) {
     struct aws_h1_stream *current = connection->thread_data.outgoing_stream;
-    struct aws_h1_stream *prev = current;
+    bool current_changed = false;
     int err;
 
     /* If current stream is done sending data... */
@@ -683,6 +683,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
         }
 
         current = NULL;
+        current_changed = true;
     }
 
     /* If current stream is NULL, look for more work. */
@@ -720,6 +721,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
 
             /* We found a stream to work on! */
             current = stream;
+            current_changed = true;
             break;
         }
 
@@ -733,7 +735,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct h1_connection *
     }
 
     /* Update current incoming and outgoing streams. */
-    if (prev != current) {
+    if (current_changed) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Current outgoing stream is now %p.",
