@@ -204,6 +204,8 @@ int aws_h2_frame_header_block_encode(
         aws_array_list_get_at_ptr(&header_block->header_fields, (void **)&field, i);
         AWS_ASSERT(field);
 
+        /* #TODO don't use index unless header is USE_CACHE */
+        /* #TODO need to update hpack as we go or we'll be using wrong indices */
         bool found_value = true;
         const size_t index = aws_hpack_find_index(encoder->hpack, field, &found_value);
 

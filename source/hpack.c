@@ -25,6 +25,10 @@
 
 /* #TODO split hpack encoder/decoder into different types */
 
+/* #TODO logging pass */
+
+/* #TODO test empty strings */
+
 /* RFC-7540 6.5.2 */
 const size_t s_hpack_dynamic_table_initial_size = 4096;
 const size_t s_hpack_dynamic_table_initial_elements = 512;
@@ -611,6 +615,7 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
 
     /* If for whatever reason this new header is bigger than the total table size, burn everything to the ground. */
     if (AWS_UNLIKELY(header_size > context->dynamic_table.max_size)) {
+        /* #TODO handle this. It's not an error. It should simply result in an empty table RFC-7541 4.4 */
         goto error;
     }
 
@@ -782,80 +787,105 @@ handle_complete:
     return AWS_OP_SUCCESS;
 }
 
-size_t aws_hpack_get_encoded_length_string(
+int aws_hpack_pre_encode_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor to_encode,
-    bool huffman_encode) {
+    enum aws_hpack_huffman_mode huffman_mode,
+    size_t *out_str_length,
+    bool *out_use_huffman,
+    size_t *in_out_sum_total_length) {
 
     AWS_PRECONDITION(context);
-    AWS_PRECONDITION(to_encode.ptr && to_encode.len);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&to_encode));
+    AWS_PRECONDITION(out_str_length);
+    AWS_PRECONDITION(out_use_huffman);
+    AWS_PRECONDITION(in_out_sum_total_length);
 
-    size_t length = 0;
+    /* Get length of encoded string */
+    switch (huffman_mode) {
+        case AWS_HPACK_HUFFMAN_NEVER:
+            *out_str_length = to_encode.len;
+            *out_use_huffman = false;
+            break;
+        case AWS_HPACK_HUFFMAN_ALWAYS:
+            *out_str_length = aws_huffman_get_encoded_length(&context->encoder, to_encode);
+            *out_use_huffman = true;
+            break;
+        case AWS_HPACK_HUFFMAN_SMALLEST:
+            *out_str_length = aws_huffman_get_encoded_length(&context->encoder, to_encode);
+            if (*out_str_length < to_encode.len) {
+                *out_use_huffman = true;
+            } else {
+                *out_str_length = to_encode.len;
+                *out_use_huffman = false;
+            }
+            break;
 
-    /* Get the header length */
-    size_t encoded_length;
-    if (huffman_encode) {
-        encoded_length = aws_huffman_get_encoded_length(&context->encoder, to_encode);
-    } else {
-        encoded_length = to_encode.len;
+        default:
+            return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
-    length += aws_hpack_get_encoded_length_integer(encoded_length, 7);
 
-    /* Add the string length */
-    length += encoded_length;
+    /* Get length of encoded integer */
+    size_t int_length = aws_hpack_get_encoded_length_integer(*out_str_length, 7);
 
-    return length;
+    /* Sum */
+    size_t total_length;
+    if (aws_add_size_checked(int_length, *out_str_length, &total_length)) {
+        return AWS_OP_ERR;
+    }
+
+    if (aws_add_size_checked(total_length, *in_out_sum_total_length, in_out_sum_total_length)) {
+        return AWS_OP_ERR;
+    }
+
+    return AWS_OP_SUCCESS;
 }
 
 int aws_hpack_encode_string(
     struct aws_hpack_context *context,
-    struct aws_byte_cursor *to_encode,
+    struct aws_byte_cursor to_encode,
+    size_t encoded_str_length,
     bool huffman_encode,
     struct aws_byte_buf *output) {
 
     AWS_PRECONDITION(context);
-    AWS_PRECONDITION(to_encode);
     AWS_PRECONDITION(output);
 
     if (output->len == output->capacity) {
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
 
-    struct aws_byte_cursor to_encode_backup = *to_encode;
-
     /* Write the use_huffman bit */
     output->buffer[output->len] = huffman_encode << 7;
 
-    /* Write the header */
-    size_t encoded_length;
-    if (huffman_encode) {
-        encoded_length = aws_huffman_get_encoded_length(&context->encoder, *to_encode);
-    } else {
-        encoded_length = to_encode->len;
-    }
-    if (aws_hpack_encode_integer(encoded_length, 7, output)) {
-        goto error;
+    /* Write the length of the string */
+    if (aws_hpack_encode_integer(encoded_str_length, 7, output)) {
+        return AWS_OP_ERR;
     }
 
-    if (huffman_encode) {
-        aws_huffman_encoder_reset(&context->encoder);
-        int result = aws_huffman_encode(&context->encoder, to_encode, output);
-        if (result) {
-            goto error;
+    /* Write the string itself */
+    if (to_encode.len) {
+        if (huffman_encode) {
+            aws_huffman_encoder_reset(&context->encoder);
+            int result = aws_huffman_encode(&context->encoder, &to_encode, output);
+            if (result) {
+                return AWS_OP_ERR;
+            }
+
+            /* Huffman supports streaming encoding, but hpack only does whole-string encoding right now */
+            if (to_encode.len > 0) {
+                return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+            }
+        } else {
+            bool result = aws_byte_buf_write_from_whole_cursor(output, to_encode);
+            if (!result) {
+                aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+                return AWS_OP_ERR;
+            }
         }
-    } else {
-        bool result = aws_byte_buf_write_from_whole_cursor(output, *to_encode);
-        if (!result) {
-            aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-            goto error;
-        }
-        aws_byte_cursor_advance(to_encode, to_encode->len);
     }
+
     return AWS_OP_SUCCESS;
-
-error:
-    *to_encode = to_encode_backup;
-    return AWS_OP_ERR;
 }
 
 int aws_hpack_decode_string(
@@ -1172,5 +1202,224 @@ int aws_hpack_decode(
 handle_complete:
     AWS_ASSERT(result->type != AWS_HPACK_DECODE_T_ONGOING);
     context->progress_entry.state = HPACK_ENTRY_STATE_INIT;
+    return AWS_OP_SUCCESS;
+}
+
+/*
+ * 1xxxxxxx: Indexed Header Field Representation
+ * 01xxxxxx: Literal Header Field with Incremental Indexing
+ * 001xxxxx: Dynamic Table Size Update
+ * 0001xxxx: Literal Header Field Never Indexed
+ * 0000xxxx: Literal Header Field without Indexing */
+static const uint8_t s_hpack_entry_num_prefix_bits[AWS_HPACK_ENTRY_TYPE_COUNT] = {
+    [AWS_HPACK_ENTRY_INDEXED_HEADER_FIELD] = 7,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_INCREMENTAL_INDEXING_INDEXED_NAME] = 6,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_INCREMENTAL_INDEXING_NEW_NAME] = 6,
+    [AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE] = 5,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED_INDEXED_NAME] = 4,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED_NEW_NAME] = 4,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING_INDEXED_NAME] = 4,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING_NEW_NAME] = 4,
+};
+
+static const uint8_t s_hpack_entry_starting_bit_pattern[AWS_HPACK_ENTRY_TYPE_COUNT] = {
+    [AWS_HPACK_ENTRY_INDEXED_HEADER_FIELD] = 1 << 7,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_INCREMENTAL_INDEXING_INDEXED_NAME] = 1 << 6,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_INCREMENTAL_INDEXING_NEW_NAME] = 1 << 6,
+    [AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE] = 1 << 5,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED_INDEXED_NAME] = 1 << 4,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED_NEW_NAME] = 1 << 4,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING_INDEXED_NAME] = 0 << 4,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING_NEW_NAME] = 0 << 4,
+};
+
+static const bool s_hpack_entry_encodes_name_str[AWS_HPACK_ENTRY_TYPE_COUNT] = {
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_INCREMENTAL_INDEXING_NEW_NAME] = true,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING_NEW_NAME] = true,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED_NEW_NAME] = true,
+};
+
+static const bool s_hpack_entry_encodes_value_str[AWS_HPACK_ENTRY_TYPE_COUNT] = {
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_INCREMENTAL_INDEXING_INDEXED_NAME] = true,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_INCREMENTAL_INDEXING_NEW_NAME] = true,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING_INDEXED_NAME] = true,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING_NEW_NAME] = true,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED_INDEXED_NAME] = true,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED_NEW_NAME] = true,
+};
+
+int aws_hpack_pre_encode_header(
+    struct aws_hpack_context *context,
+    const struct aws_http_header *header,
+    enum aws_hpack_huffman_mode huffman_mode,
+    struct aws_hpack_encoder_cmd *cmd) {
+
+    AWS_PRECONDITION(cmd);
+    AWS_PRECONDITION(context);
+    AWS_PRECONDITION(header);
+
+    AWS_ZERO_STRUCT(*cmd);
+
+    /* Search for header-field in tables */
+    bool found_indexed_value;
+    cmd->data.header.index = aws_hpack_find_index(context, header, &found_indexed_value);
+
+    if (header->compression != AWS_HTTP_HEADER_COMPRESSION_USE_CACHE) {
+        /* If user doesn't want to use indexed value, then don't use it */
+        found_indexed_value = false;
+    }
+
+    if (cmd->data.header.index && found_indexed_value) {
+        /* Indexed header field - found header name and value together in a table */
+        cmd->type = AWS_HPACK_ENTRY_INDEXED_HEADER_FIELD;
+
+        /* will encode the one index, and DONE. */
+        const size_t num_prefix_bits = s_hpack_entry_num_prefix_bits[cmd->type];
+        cmd->encoded_length = aws_hpack_get_encoded_length_integer(cmd->data.header.index, num_prefix_bits);
+        return AWS_OP_SUCCESS;
+    }
+
+    /* Else, Literal header field... */
+
+    if (cmd->data.header.index) {
+        /* Literal header field, indexed name - found header name in a table, but not header value */
+        switch (header->compression) {
+            case AWS_HTTP_HEADER_COMPRESSION_USE_CACHE:
+                cmd->type = AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_INCREMENTAL_INDEXING_INDEXED_NAME;
+                break;
+            case AWS_HTTP_HEADER_COMPRESSION_NO_CACHE:
+                cmd->type = AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING_INDEXED_NAME;
+                break;
+            case AWS_HTTP_HEADER_COMPRESSION_NO_FORWARD_CACHE:
+                cmd->type = AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED_INDEXED_NAME;
+                break;
+            default:
+                return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        }
+
+        /* first encode index of name */
+        const size_t num_prefix_bits = s_hpack_entry_num_prefix_bits[cmd->type];
+        cmd->encoded_length = aws_hpack_get_encoded_length_integer(cmd->data.header.index, num_prefix_bits);
+
+    } else {
+        /* Literal header field, new name - did not find header name or value in table, need to send both */
+        switch (header->compression) {
+            case AWS_HTTP_HEADER_COMPRESSION_USE_CACHE:
+                cmd->type = AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_INCREMENTAL_INDEXING_NEW_NAME;
+                break;
+            case AWS_HTTP_HEADER_COMPRESSION_NO_CACHE:
+                cmd->type = AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING_NEW_NAME;
+                break;
+            case AWS_HTTP_HEADER_COMPRESSION_NO_FORWARD_CACHE:
+                cmd->type = AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED_NEW_NAME;
+                break;
+            default:
+                AWS_ASSERT(0);
+        }
+
+        /* first encode 0 to show that header-name is not indexed */
+        const size_t num_prefix_bits = s_hpack_entry_num_prefix_bits[cmd->type];
+        cmd->encoded_length = aws_hpack_get_encoded_length_integer(0, num_prefix_bits);
+
+        /* then encode header-name string */
+        cmd->data.header.name_cursor = header->name;
+        if (aws_hpack_pre_encode_string(
+                context,
+                header->name,
+                huffman_mode,
+                &cmd->data.header.name_encoded_str_length,
+                &cmd->data.header.name_uses_huffman,
+                &cmd->encoded_length)) {
+            return AWS_OP_ERR;
+        }
+    }
+
+    /* then encode header-value string */
+    cmd->data.header.value_cursor = header->value;
+    if (aws_hpack_pre_encode_string(
+            context,
+            header->value,
+            huffman_mode,
+            &cmd->data.header.value_encoded_str_length,
+            &cmd->data.header.value_uses_huffman,
+            &cmd->encoded_length)) {
+
+        return AWS_OP_ERR;
+    }
+
+    /* If using cache (aka incremental indexing), update dynamic table with this header */
+    if (header->compression == AWS_HTTP_HEADER_COMPRESSION_USE_CACHE) {
+        if (aws_hpack_insert_header(context, header)) {
+            return AWS_OP_ERR;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+void aws_hpack_pre_encode_dynamic_table_resize(
+    struct aws_hpack_context *context,
+    size_t size,
+    struct aws_hpack_encoder_cmd *cmd) {
+
+    AWS_PRECONDITION(context);
+    AWS_PRECONDITION(cmd);
+
+    AWS_ZERO_STRUCT(*cmd);
+
+    cmd->type = AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE;
+    cmd->encoded_length =
+        aws_hpack_get_encoded_length_integer(size, s_hpack_entry_num_prefix_bits[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE]);
+    cmd->data.dynamic_table_resize = size;
+}
+
+int aws_hpack_encode(
+    struct aws_hpack_context *context,
+    const struct aws_hpack_encoder_cmd *cmd,
+    struct aws_byte_buf *output) {
+
+    AWS_PRECONDITION(context);
+    AWS_PRECONDITION(cmd);
+    AWS_PRECONDITION(output);
+
+    const size_t space_available = output->capacity - output->len;
+    if (space_available < cmd->encoded_length) {
+        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+    }
+
+    /* Write starting bit pattern, along with first integer. */
+    const uint8_t starting_bit_pattern = s_hpack_entry_starting_bit_pattern[cmd->type];
+    const uint8_t num_prefix_bits = s_hpack_entry_num_prefix_bits[cmd->type];
+    const size_t first_integer =
+        cmd->type == AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE ? cmd->data.dynamic_table_resize : cmd->data.header.index;
+    output->buffer[output->len] = starting_bit_pattern;
+    if (aws_hpack_encode_integer(first_integer, num_prefix_bits, output)) {
+        return AWS_OP_ERR;
+    }
+
+    /* Write name string (if "new-name" type) */
+    if (s_hpack_entry_encodes_name_str[cmd->type]) {
+        if (aws_hpack_encode_string(
+                context,
+                cmd->data.header.name_cursor,
+                cmd->data.header.name_encoded_str_length,
+                cmd->data.header.name_uses_huffman,
+                output)) {
+            return AWS_OP_ERR;
+        }
+    }
+
+    /* Write value string (if "literal" type) */
+    if (s_hpack_entry_encodes_value_str[cmd->type]) {
+        if (aws_hpack_encode_string(
+                context,
+                cmd->data.header.value_cursor,
+                cmd->data.header.value_encoded_str_length,
+                cmd->data.header.value_uses_huffman,
+                output)) {
+            return AWS_OP_ERR;
+        }
+    }
+
     return AWS_OP_SUCCESS;
 }

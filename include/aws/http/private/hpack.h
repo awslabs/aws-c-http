@@ -43,6 +43,57 @@ struct aws_hpack_decode_result {
     } data;
 };
 
+enum aws_hpack_entry_type {
+    AWS_HPACK_ENTRY_INDEXED_HEADER_FIELD,                                   /* RFC-7541 6.1 */
+    AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_INCREMENTAL_INDEXING_INDEXED_NAME, /* RFC-7541 6.2.1 */
+    AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_INCREMENTAL_INDEXING_NEW_NAME,
+    AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING_INDEXED_NAME, /* RFC-7541 6.2.2 */
+    AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING_NEW_NAME,
+    AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED_INDEXED_NAME, /* RFC-7541 6.2.3 */
+    AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED_NEW_NAME,
+    AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE, /* RFC-7541 6.3 */
+    AWS_HPACK_ENTRY_TYPE_COUNT,
+};
+
+/**
+ * HPACK encoding is performed as a 2 step process.
+ * The first step how each entry will be encoded, and how long the entry will be.
+ * The second step actully encodes output to a buffer.
+ */
+struct aws_hpack_encoder_cmd {
+    size_t encoded_length;
+
+    union {
+        struct {
+            struct aws_byte_cursor name_cursor;  /* name to encode (if new-name type) */
+            struct aws_byte_cursor value_cursor; /* value to encode (if literal type) */
+            size_t index;                        /* index (if indexed type) */
+            size_t name_encoded_str_length;  /* length of encoded name string, excluding integer (if new-name type) */
+            size_t value_encoded_str_length; /* length of encoded value string, excluding integer (if literal type) */
+            bool name_uses_huffman;          /* encode new name with huffman (if new-name type) */
+            bool value_uses_huffman;         /* encode value with huffman (if literal type) */
+        } header;
+
+        size_t dynamic_table_resize;
+    } data;
+
+    uint8_t type; /* aws_hpack_entry_type */
+};
+
+/**
+ * Controls whether non-indexed strings will use Huffman encoding.
+ * In SMALLEST mode, strings will only be sent with Huffman encoding if it makes them smaller.
+ *
+ * Note: This does not control compression via "indexing",
+ * for that, see `aws_http_header_compression`.
+ * This only controls how string values are encoded when they're not already in a table.
+ */
+enum aws_hpack_huffman_mode {
+    AWS_HPACK_HUFFMAN_NEVER,
+    AWS_HPACK_HUFFMAN_ALWAYS,
+    AWS_HPACK_HUFFMAN_SMALLEST,
+};
+
 AWS_EXTERN_C_BEGIN
 
 /* Library-level init and shutdown */
@@ -74,6 +125,39 @@ int aws_hpack_decode(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_decode,
     struct aws_hpack_decode_result *result);
+
+/**
+ * Initialize cmd with details for encoding a header-field.
+ * This function will mutate the hpack context, so any error is unrecoverable.
+ * cmds must be fed to aws_hpack_encode() in the order they are initialized.
+ */
+AWS_HTTP_API
+int aws_hpack_pre_encode_header(
+    struct aws_hpack_context *context,
+    const struct aws_http_header *header,
+    enum aws_hpack_huffman_mode huffman_mode,
+    struct aws_hpack_encoder_cmd *cmd);
+
+/**
+ * Initialize cmd with details for encoding a Dynamic Table Size Update (RFC-7541 6.3).
+ * cmds must be fed to aws_hpack_encode() in the order they are initialized.
+ */
+AWS_HTTP_API
+void aws_hpack_pre_encode_dynamic_table_resize(
+    struct aws_hpack_context *context,
+    size_t size,
+    struct aws_hpack_encoder_cmd *cmd);
+
+/**
+ * Encode a cmd to the output buffer.
+ * At least cmd->encode_length must be available in the buffer.
+ * cmds must have been initialized in the order that they are passed to aws_hpack_encode().
+ */
+AWS_HTTP_API
+int aws_hpack_encode(
+    struct aws_hpack_context *context,
+    const struct aws_hpack_encoder_cmd *cmd,
+    struct aws_byte_buf *output);
 
 /* Returns the hpack size of a header (name.len + value.len + 32) [4.1] */
 AWS_HTTP_API
@@ -113,16 +197,21 @@ int aws_hpack_decode_integer(
     uint64_t *integer,
     bool *complete);
 
+/* #TODOD remove from public API? */
 AWS_HTTP_API
-size_t aws_hpack_get_encoded_length_string(
+int aws_hpack_pre_encode_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor to_encode,
-    bool huffman_encode);
+    enum aws_hpack_huffman_mode huffman_mode,
+    size_t *out_str_length,
+    bool *out_use_huffman,
+    size_t *in_out_sum_total_length);
 
 AWS_HTTP_API
 int aws_hpack_encode_string(
     struct aws_hpack_context *context,
-    struct aws_byte_cursor *to_encode,
+    struct aws_byte_cursor to_encode,
+    size_t encoded_str_length,
     bool huffman_encode,
     struct aws_byte_buf *output);
 
