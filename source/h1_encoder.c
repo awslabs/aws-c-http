@@ -131,6 +131,10 @@ int aws_h1_encoder_message_init_from_request(
         goto error;
     }
 
+    if (aws_byte_cursor_eq_c_str_ignore_case(&method, "connect")) {
+        message->ignore_response_connection_close_header = true;
+    }
+
     struct aws_byte_cursor uri;
     err = aws_http_message_get_request_path(request, &uri);
     if (err) {

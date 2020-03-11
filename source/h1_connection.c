@@ -182,6 +182,10 @@ struct h1_connection {
 
         /* If non-zero, then window_update_task is scheduled */
         size_t window_update_size;
+
+        /* for bug for bug compatibility with L7 proxies. They can send connection:close on successful connect
+         * responses. This should be ignored. */
+        bool ignore_response_connection_close_header;
     } synced_data;
 };
 
@@ -441,6 +445,9 @@ struct aws_http_stream *s_make_request(
 
     { /* BEGIN CRITICAL SECTION */
         s_h1_connection_lock_synced_data(connection);
+
+        connection->synced_data.ignore_response_connection_close_header =
+            stream->encoder_message.ignore_response_connection_close_header;
 
         if (connection->synced_data.new_stream_error_code) {
             new_stream_error_code = connection->synced_data.new_stream_error_code;
@@ -985,7 +992,16 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
     /* RFC-7230 section 6.1.
      * "Connection: close" header signals that a connection will not persist after the current request/response */
     if (header->name == AWS_HTTP_HEADER_CONNECTION) {
-        if (aws_byte_cursor_eq_c_str(&header->value_data, "close")) {
+        bool ignore_connection_close = false;
+        {
+            /*BEGIN CRITICAL SECTION*/
+            aws_mutex_lock(&connection->synced_data.lock);
+            ignore_connection_close = connection->synced_data.ignore_response_connection_close_header;
+            connection->synced_data.ignore_response_connection_close_header = false;
+            aws_mutex_unlock(&connection->synced_data.lock);
+            /*END CRITICAL SECTION*/
+        }
+        if (!ignore_connection_close && aws_byte_cursor_eq_c_str_ignore_case(&header->value_data, "close")) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Received 'Connection: close' header. This will be the final stream on this connection.",

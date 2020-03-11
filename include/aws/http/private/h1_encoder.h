@@ -28,6 +28,7 @@ struct aws_h1_encoder_message {
     struct aws_input_stream *body;
     uint64_t content_length;
     bool has_connection_close_header;
+    bool ignore_response_connection_close_header;
 };
 
 enum aws_h1_encoder_state {
