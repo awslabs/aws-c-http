@@ -13,7 +13,7 @@
     "downstream": [
         { "name": "aws-c-auth" }
     ],
-    "test": [
+    "test_steps": [
         ["ctest", "{build_dir}", "-v", "--output-on-failure"],
         ["{python}", "{project_dir}/integration-testing/http_client_test.py", "{install_dir}/bin/elasticurl{exe}"]
     ],
