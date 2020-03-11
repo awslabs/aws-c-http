@@ -17,6 +17,7 @@
  */
 
 #include <aws/http/request_response.h>
+#include <aws/http/private/hpack.h>
 
 #include <aws/common/byte_buf.h>
 
@@ -216,7 +217,7 @@ struct aws_h2_frame_encoder {
     struct aws_hpack_context *hpack;
     struct aws_h2_frame *current_frame;
     bool has_errored;
-    bool use_huffman; /* #TODO on string-by-string basis, use huffman if it makes the string smaller */
+    enum aws_hpack_huffman_mode huffman_mode;
 };
 
 typedef void aws_h2_frame_destroy_fn(struct aws_h2_frame *frame_base);
