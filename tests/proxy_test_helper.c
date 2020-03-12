@@ -313,7 +313,7 @@ int proxy_tester_send_connect_response(struct proxy_tester *tester) {
     } else {
         /* adding close here because it's an edge case we need to exercise. The desired behavior is that it has
          * absolutely no effect. */
-        response_string = "HTTP/1.0 200 Connection established\r\nconnection: close\r\n";
+        response_string = "HTTP/1.0 200 Connection established\r\nconnection: close\r\n\r\n";
     }
 
     /* send response */
