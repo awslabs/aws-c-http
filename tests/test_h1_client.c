@@ -71,6 +71,8 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
     struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
     ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc, &test_channel_options));
 
+    /* Use small window so that we can observe it opening in tests.
+     * Channel may wait until the window is small before issuing the increment command. */
     tester->connection = aws_http_connection_new_http1_1_client(alloc, 256);
     ASSERT_NOT_NULL(tester->connection);
 

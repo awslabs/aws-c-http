@@ -265,9 +265,9 @@ int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester) 
     ASSERT_NOT_NULL(slot);
     ASSERT_SUCCESS(aws_channel_slot_insert_end(tester->testing_channel->channel, slot));
     ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &connection->channel_handler));
+    connection->vtable->on_channel_handler_installed(&connection->channel_handler, slot);
     testing_channel_drain_queued_tasks(tester->testing_channel);
 
-    connection->vtable->on_channel_handler_installed(&connection->channel_handler, slot);
     tester->client_connection = connection;
 
     return AWS_OP_SUCCESS;
@@ -309,6 +309,8 @@ int proxy_tester_send_connect_response(struct proxy_tester *tester) {
     if (tester->failure_type == PTFT_CONNECT_REQUEST) {
         response_string = "HTTP/1.0 401 Unauthorized\r\n\r\n";
     } else {
+        /* adding close here because it's an edge case we need to exercise. The desired behavior is that it has
+         * absolutely no effect. */
         response_string = "HTTP/1.0 200 Connection established\r\nconnection: close\r\n";
     }
 

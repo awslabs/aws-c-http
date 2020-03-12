@@ -24,6 +24,8 @@
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
+/* Use small window so that we can observe it opening in tests.
+ * Channel may wait until the window is small before issuing the increment command. */
 static const size_t s_default_initial_window_size = 256;
 
 #define TEST_CASE(NAME)                                                                                                \
@@ -497,8 +499,8 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
         .manual_window_update = s_tester_options.manual_window_update,
     };
     tester->websocket = aws_websocket_handler_new(&ws_options);
-    testing_channel_drain_queued_tasks(&tester->testing_channel);
     ASSERT_NOT_NULL(tester->websocket);
+    testing_channel_drain_queued_tasks(&tester->testing_channel);
 
     aws_websocket_decoder_init(&tester->written_frame_decoder, s_on_written_frame, s_on_written_frame_payload, tester);
     aws_websocket_encoder_init(&tester->readpush_encoder, s_stream_readpush_payload, tester);

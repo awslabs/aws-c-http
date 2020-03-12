@@ -202,6 +202,7 @@ static struct aws_byte_cursor s_method_enum_to_str[AWS_HTTP_METHOD_COUNT]; /* fo
 static void s_methods_init(struct aws_allocator *alloc) {
     s_method_enum_to_str[AWS_HTTP_METHOD_GET] = aws_http_method_get;
     s_method_enum_to_str[AWS_HTTP_METHOD_HEAD] = aws_http_method_head;
+    s_method_enum_to_str[AWS_HTTP_METHOD_CONNECT] = aws_http_method_connect;
 
     s_init_str_to_enum_hash_table(
         &s_method_str_to_enum,
