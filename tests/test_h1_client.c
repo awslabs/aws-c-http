@@ -71,7 +71,9 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
     struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
     ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc, &test_channel_options));
 
-    tester->connection = aws_http_connection_new_http1_1_client(alloc, SIZE_MAX);
+    /* Use small window so that we can observe it opening in tests.
+     * Channel may wait until the window is small before issuing the increment command. */
+    tester->connection = aws_http_connection_new_http1_1_client(alloc, 256);
     ASSERT_NOT_NULL(tester->connection);
 
     struct aws_channel_slot *slot = aws_channel_slot_new(tester->testing_channel.channel);
@@ -1501,7 +1503,7 @@ H1_CLIENT_TEST_CASE(h1_client_window_shrinks_if_user_says_so) {
     /* check result */
     size_t window_update = testing_channel_last_window_update(&tester.testing_channel);
     size_t message_sans_body = strlen(response_str) - 9;
-    ASSERT_TRUE(window_update == message_sans_body);
+    ASSERT_UINT_EQUALS(message_sans_body, window_update);
 
     /* clean up */
     ASSERT_SUCCESS(s_response_tester_clean_up(&response));

@@ -254,7 +254,9 @@ int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester) 
     tester->testing_channel->channel_shutdown = s_testing_channel_shutdown_callback;
     tester->testing_channel->channel_shutdown_user_data = tester;
 
-    struct aws_http_connection *connection = aws_http_connection_new_http1_1_client(tester->alloc, SIZE_MAX);
+    /* Use small window so that we can observe it opening in tests.
+     * Channel may wait until the window is small before issuing the increment command. */
+    struct aws_http_connection *connection = aws_http_connection_new_http1_1_client(tester->alloc, 256);
     ASSERT_NOT_NULL(connection);
 
     connection->user_data = tester->http_bootstrap->user_data;
@@ -266,9 +268,9 @@ int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester) 
     ASSERT_SUCCESS(aws_channel_slot_insert_end(tester->testing_channel->channel, slot));
     ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &connection->channel_handler));
     connection->vtable->on_channel_handler_installed(&connection->channel_handler, slot);
+    testing_channel_drain_queued_tasks(tester->testing_channel);
 
     tester->client_connection = connection;
-    testing_channel_drain_queued_tasks(tester->testing_channel);
 
     return AWS_OP_SUCCESS;
 }
@@ -309,7 +311,9 @@ int proxy_tester_send_connect_response(struct proxy_tester *tester) {
     if (tester->failure_type == PTFT_CONNECT_REQUEST) {
         response_string = "HTTP/1.0 401 Unauthorized\r\n\r\n";
     } else {
-        response_string = "HTTP/1.0 200 Connection established\r\n\r\n";
+        /* adding close here because it's an edge case we need to exercise. The desired behavior is that it has
+         * absolutely no effect. */
+        response_string = "HTTP/1.0 200 Connection established\r\nconnection: close\r\n\r\n";
     }
 
     /* send response */

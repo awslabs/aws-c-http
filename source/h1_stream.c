@@ -15,6 +15,7 @@
 #include <aws/http/private/h1_stream.h>
 
 #include <aws/http/private/connection_impl.h>
+
 #include <aws/io/logging.h>
 
 static void s_stream_destroy(struct aws_http_stream *stream_base) {

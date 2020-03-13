@@ -24,6 +24,10 @@
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
+/* Use small window so that we can observe it opening in tests.
+ * Channel may wait until the window is small before issuing the increment command. */
+static const size_t s_default_initial_window_size = 256;
+
 #define TEST_CASE(NAME)                                                                                                \
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
@@ -487,7 +491,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
     struct aws_websocket_handler_options ws_options = {
         .allocator = alloc,
         .channel = tester->testing_channel.channel,
-        .initial_window_size = SIZE_MAX,
+        .initial_window_size = s_default_initial_window_size,
         .user_data = tester,
         .on_incoming_frame_begin = s_on_incoming_frame_begin,
         .on_incoming_frame_payload = s_on_incoming_frame_payload,
@@ -496,6 +500,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
     };
     tester->websocket = aws_websocket_handler_new(&ws_options);
     ASSERT_NOT_NULL(tester->websocket);
+    testing_channel_drain_queued_tasks(&tester->testing_channel);
 
     aws_websocket_decoder_init(&tester->written_frame_decoder, s_on_written_frame, s_on_written_frame_payload, tester);
     aws_websocket_encoder_init(&tester->readpush_encoder, s_stream_readpush_payload, tester);
@@ -530,6 +535,8 @@ static int s_install_downstream_handler(struct tester *tester, size_t initial_wi
     tester->is_midchannel_handler = true;
 
     ASSERT_SUCCESS(testing_channel_install_downstream_handler(&tester->testing_channel, initial_window));
+    testing_channel_drain_queued_tasks(&tester->testing_channel);
+
     return AWS_OP_SUCCESS;
 }
 
@@ -1693,6 +1700,7 @@ static int s_window_manual_increment_common(struct aws_allocator *allocator, boo
 
     /* Assert that window did not fully re-open*/
     uint64_t frame_minus_payload_size = aws_websocket_frame_encoded_size(&pushing.def) - pushing.def.payload_length;
+
     ASSERT_UINT_EQUALS(frame_minus_payload_size, testing_channel_last_window_update(&tester.testing_channel));
 
     /* Manually increment window */
@@ -1722,7 +1730,7 @@ TEST_CASE(websocket_midchannel_sanity_check) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-    ASSERT_SUCCESS(s_install_downstream_handler(&tester, SIZE_MAX));
+    ASSERT_SUCCESS(s_install_downstream_handler(&tester, s_default_initial_window_size));
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
@@ -1731,7 +1739,7 @@ TEST_CASE(websocket_midchannel_write_message) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-    ASSERT_SUCCESS(s_install_downstream_handler(&tester, SIZE_MAX));
+    ASSERT_SUCCESS(s_install_downstream_handler(&tester, s_default_initial_window_size));
 
     /* Write data */
     struct aws_byte_cursor writing = aws_byte_cursor_from_c_str("My hat it has three corners");
@@ -1749,7 +1757,7 @@ TEST_CASE(websocket_midchannel_write_multiple_messages) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-    ASSERT_SUCCESS(s_install_downstream_handler(&tester, SIZE_MAX));
+    ASSERT_SUCCESS(s_install_downstream_handler(&tester, s_default_initial_window_size));
 
     struct aws_byte_cursor writing[] = {
         aws_byte_cursor_from_c_str("My hat it has three corners."),
@@ -1774,7 +1782,7 @@ TEST_CASE(websocket_midchannel_write_huge_message) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-    ASSERT_SUCCESS(s_install_downstream_handler(&tester, SIZE_MAX));
+    ASSERT_SUCCESS(s_install_downstream_handler(&tester, s_default_initial_window_size));
 
     /* Fill big buffer with random data */
     struct aws_byte_buf writing;
@@ -1801,7 +1809,7 @@ TEST_CASE(websocket_midchannel_read_message) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-    ASSERT_SUCCESS(s_install_downstream_handler(&tester, SIZE_MAX));
+    ASSERT_SUCCESS(s_install_downstream_handler(&tester, s_default_initial_window_size));
 
     struct readpush_frame pushing = {
         .payload = aws_byte_cursor_from_c_str("Hello hello can you hear me Joe?"),
@@ -1822,7 +1830,7 @@ TEST_CASE(websocket_midchannel_read_multiple_messages) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-    ASSERT_SUCCESS(s_install_downstream_handler(&tester, SIZE_MAX));
+    ASSERT_SUCCESS(s_install_downstream_handler(&tester, s_default_initial_window_size));
 
     /* Read a mix of different frame types, most of which shouldn't get passed along to next handler. */
     struct readpush_frame pushing[] = {

@@ -326,8 +326,8 @@ static int s_test_https_proxy_connection_failure_tls(struct aws_allocator *alloc
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
-    ASSERT_TRUE(tester.client_connection == NULL);
-    ASSERT_TRUE(tester.wait_result != AWS_ERROR_SUCCESS);
+    ASSERT_NULL(tester.client_connection);
+    ASSERT_TRUE(AWS_ERROR_SUCCESS != tester.wait_result);
 
     ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
 

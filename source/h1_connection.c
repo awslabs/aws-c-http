@@ -985,7 +985,14 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
     /* RFC-7230 section 6.1.
      * "Connection: close" header signals that a connection will not persist after the current request/response */
     if (header->name == AWS_HTTP_HEADER_CONNECTION) {
-        if (aws_byte_cursor_eq_c_str(&header->value_data, "close")) {
+        /* Certain L7 proxies send a connection close header on a 200/OK response to a CONNECT request. This is nutty
+         * behavior, but the obviously desired behavior on a 200 CONNECT response is to leave the connection open
+         * for the tunneling. */
+        bool ignore_connection_close = incoming_stream->base.request_method == AWS_HTTP_METHOD_CONNECT &&
+                                       incoming_stream->base.client_data &&
+                                       incoming_stream->base.client_data->response_status == AWS_HTTP_STATUS_200_OK;
+
+        if (!ignore_connection_close && aws_byte_cursor_eq_c_str_ignore_case(&header->value_data, "close")) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Received 'Connection: close' header. This will be the final stream on this connection.",
