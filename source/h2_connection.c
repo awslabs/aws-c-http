@@ -430,6 +430,7 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
          * - Stream is complete if it is also done receiving (weird edge case, but theoretically possible)
          * Else stream has not sent all data:
          * - Move stream to back of outgoing_streams_list ("round-robin" DATA frames from available streams)
+         * - Beware getting into a loop, don't read from the same stream twice
          */
         CONNECTION_LOG(ERROR, connection, "DATA frames not supported yet");
         aws_raise_error(AWS_ERROR_UNIMPLEMENTED);

@@ -1352,7 +1352,7 @@ int aws_hpack_encode_header(
         goto error;
     }
 
-    /* if "incremental indexing" type, insert header into the dynamic table */
+    /* if "incremental indexing" type, insert header into the dynamic table. */
     if (AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITH_INCREMENTAL_INDEXING == literal_entry_type) {
         if (aws_hpack_insert_header(context, header)) {
             goto error;
@@ -1365,12 +1365,22 @@ error:
     return AWS_OP_ERR;
 }
 
-int aws_hpack_encode_dynamic_table_resize(struct aws_hpack_context *context, size_t size, struct aws_byte_buf *output) {
-
-    AWS_PRECONDITION(context);
-    AWS_PRECONDITION(output);
-
-    uint8_t starting_bit_pattern = s_hpack_entry_starting_bit_pattern[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
-    uint8_t num_prefix_bits = s_hpack_entry_num_prefix_bits[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
-    return aws_hpack_encode_integer(size, starting_bit_pattern, num_prefix_bits, output);
+int aws_hpack_encode_header_block_start(struct aws_hpack_context *context, struct aws_byte_buf *output) {
+#if 0 // #TODO finish hooking this up
+    if (context->dynamic_table_size_update.pending) {
+        if (s_encode_dynamic_table_resize(context, context->dynamic_table_size_update.value, output)) {
+            uint8_t starting_bit_pattern = s_hpack_entry_starting_bit_pattern[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
+            uint8_t num_prefix_bits = s_hpack_entry_num_prefix_bits[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
+            if (aws_hpack_encode_integer(size, starting_bit_pattern, num_prefix_bits, output)) {
+                return AWS_OP_ERR;
+            }
+        }
+        context->dynamic_table_size_update.pending = false;
+        context->dynamic_table_size_update.value = SIZE_MAX;
+    }
+#else
+    (void)context;
+    (void)output;
+#endif
+    return AWS_OP_SUCCESS;
 }

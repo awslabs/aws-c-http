@@ -16,8 +16,8 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/request_response.h>
 #include <aws/http/private/hpack.h>
+#include <aws/http/request_response.h>
 
 #include <aws/common/byte_buf.h>
 
@@ -79,6 +79,7 @@ enum aws_h2_settings {
 #define AWS_H2_PAYLOAD_MAX (0x00FFFFFF)
 
 #define AWS_H2_WINDOW_UPDATE_MAX (0x7FFFFFFF)
+#define AWS_H2_STREAM_ID_MAX (0x7FFFFFFF)
 
 /* This magic string must be the very first thing a client sends to the server.
  * See RFC-7540 3.5 - HTTP/2 Connection Preface */
@@ -101,8 +102,20 @@ struct aws_h2_frame_priority_settings {
 };
 
 struct aws_h2_frame_header_block {
-    /* array_list of aws_http_header */
-    struct aws_array_list header_fields;
+    const struct aws_http_headers *headers;
+
+    /* state */
+
+    enum {
+        AWS_H2_HEADER_BLOCK_STATE_INIT,
+        AWS_H2_HEADER_BLOCK_STATE_FIRST_FRAME,
+        AWS_H2_HEADER_BLOCK_STATE_CONTINUATION,
+        AWS_H2_HEADER_BLOCK_STATE_COMPLETE,
+        AWS_H2_HEADER_BLOCK_STATE_ERROR,
+    } state;
+
+    struct aws_byte_buf whole_encoded_block;     /* entire header block is encoded here */
+    struct aws_byte_cursor encoded_block_cursor; /* tracks progress sending encoded header-block in fragments */
 };
 
 /**
@@ -117,13 +130,13 @@ struct aws_h2_frame {
     struct aws_linked_list_node node;
 };
 
-/* Represents a HEADERS frame */
+/* Represents a HEADERS header-block.
+ * (HEADERS frame followed 0 or more CONTINUATION frames) */
 struct aws_h2_frame_headers {
     struct aws_h2_frame base;
 
     /* Flags */
     bool end_stream;   /* AWS_H2_FRAME_F_END_STREAM */
-    bool end_headers;  /* AWS_H2_FRAME_F_END_HEADERS */
     bool has_priority; /* AWS_H2_FRAME_F_PRIORITY */
 
     /* Payload */
@@ -166,12 +179,10 @@ struct aws_h2_frame_settings {
     size_t settings_count;
 };
 
-/* Represents a PUSH_PROMISE frame */
+/* Represents a PUSH_PROMISE header-block.
+ * (PUSH_PROMISE frame followed by 0 or more CONTINUATION frames) */
 struct aws_h2_frame_push_promise {
     struct aws_h2_frame base;
-
-    /* Flags */
-    bool end_headers; /* AWS_H2_FRAME_F_END_HEADERS */
 
     /* Payload */
     uint8_t pad_length; /* Set to 0 to disable AWS_H2_FRAME_F_PADDED */
@@ -237,6 +248,10 @@ AWS_EXTERN_C_BEGIN
 AWS_HTTP_API
 const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type);
 
+/* Raises AWS_ERROR_INVALID_ARGUMENT if stream_id is 0 or exceeds AWS_H2_MAX_STREAM_ID */
+AWS_HTTP_API
+int aws_h2_validate_stream_id(uint32_t stream_id);
+
 /**
  * The process of encoding a frame looks like:
  * 1. Create a encoder object on the stack and initialize with aws_h2_frame_encoder_init
@@ -277,8 +292,8 @@ int aws_h2_encode_data_frame(
     struct aws_h2_frame_encoder *encoder,
     uint32_t stream_id,
     struct aws_input_stream *body_stream,
-    bool end_stream,
-    uint8_t padding,
+    bool body_ends_stream,
+    uint8_t pad_length,
     struct aws_byte_buf *output,
     bool *body_complete);
 
@@ -295,7 +310,7 @@ struct aws_h2_frame *aws_h2_frame_new_headers(
     uint32_t stream_id,
     const struct aws_http_headers *headers,
     bool end_stream,
-    uint8_t padding,
+    uint8_t pad_length,
     const struct aws_h2_frame_priority_settings *optional_priority);
 
 AWS_HTTP_API
@@ -327,7 +342,7 @@ struct aws_h2_frame *aws_h2_frame_new_push_promise(
     uint32_t stream_id,
     uint32_t promised_stream_id,
     const struct aws_http_headers *headers,
-    uint8_t padding);
+    uint8_t pad_length);
 
 AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_ping(

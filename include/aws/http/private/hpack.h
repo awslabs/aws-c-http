@@ -15,7 +15,7 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-#include <aws/http/private/h2_frames.h>
+#include <aws/http/request_response.h>
 
 struct aws_byte_buf;
 struct aws_byte_cursor;
@@ -90,6 +90,15 @@ int aws_hpack_decode(
     struct aws_hpack_decode_result *result);
 
 /**
+ * Must be called at start of header-block.
+ * If the table has been resized, then a Dynamic Table Size Update (RFC-7541 6.3) is encoded.
+ * This behavior is described in RFC-7541 4.2.
+ * Note that output will be dynamically resized if it's too short.
+ */
+AWS_HTTP_API
+int aws_hpack_encode_header_block_start(struct aws_hpack_context *context, struct aws_byte_buf *output);
+
+/**
  * Encode a header-field into the output.
  * This function will mutate the hpack context, so any error is unrecoverable.
  * Note that output will be dynamically resized if it's too short.
@@ -99,16 +108,6 @@ int aws_hpack_encode_header(
     struct aws_hpack_context *context,
     const struct aws_http_header *header,
     enum aws_hpack_huffman_mode huffman_mode,
-    struct aws_byte_buf *output);
-
-/**
- * Encode a Dynamic Table Size Update (RFC-7541 6.3) into the output.
- * Note that output will be dynamically resized if it's too short.
- */
-AWS_HTTP_API
-int aws_hpack_encode_dynamic_table_resize(
-    struct aws_hpack_context *context,
-    size_t size,
     struct aws_byte_buf *output);
 
 /* Returns the hpack size of a header (name.len + value.len + 32) [4.1] */
