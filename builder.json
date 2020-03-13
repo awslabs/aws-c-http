@@ -13,11 +13,8 @@
     "downstream": [
         { "name": "aws-c-auth" }
     ],
-    "test": [
-        ["ctest", "{build_dir}", "-v", "--output-on-failure"],
+    "test_steps": [
+        "test",
         ["{python}", "{project_dir}/integration-testing/http_client_test.py", "{install_dir}/bin/elasticurl{exe}"]
-    ],
-    "cmake_args": [
-        "-DS2N_NO_PQ_ASM=ON"
     ]
 }

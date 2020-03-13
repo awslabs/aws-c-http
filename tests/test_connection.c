@@ -530,7 +530,7 @@ static bool s_tester_new_client_shutdown_pred(void *user_data) {
     return tester->new_client_shut_down;
 }
 
-/* when we shutdown the server, no more new connection will be accept */
+/* when we shutdown the server, no more new connection will be accepted */
 static int s_test_connection_server_shutting_down_new_connection_setup_fail(
     struct aws_allocator *allocator,
     void *ctx) {
@@ -591,9 +591,13 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
     ASSERT_FAILS(s_tester_wait(&tester, s_tester_connection_setup_pred));
     /* wait for the client side connection */
     s_tester_wait(&tester, s_tester_new_client_setup_pred);
-    if (tester.new_client_connection) {
+
+    if (tester.new_client_connection && !tester.client_connection_is_shutdown) {
         /* wait for it to shut down, we do not need to call shut down, the socket will know */
         ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_new_client_shutdown_pred));
+    }
+
+    if (tester.new_client_connection) {
         aws_http_connection_release(tester.new_client_connection);
     }
 
