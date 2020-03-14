@@ -37,6 +37,7 @@ static struct aws_channel *s_mock_http_connection_get_channel(struct aws_http_co
 static struct aws_http_stream *s_mock_http_connection_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options);
+static int s_mock_http_stream_activate(struct aws_http_stream *stream);
 static void s_mock_http_stream_release(struct aws_http_stream *stream);
 static struct aws_http_connection *s_mock_http_stream_get_connection(const struct aws_http_stream *stream);
 static int s_mock_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status);
@@ -48,6 +49,7 @@ static const struct aws_websocket_client_bootstrap_system_vtable s_mock_system_v
     .aws_http_connection_close = s_mock_http_connection_close,
     .aws_http_connection_get_channel = s_mock_http_connection_get_channel,
     .aws_http_connection_make_request = s_mock_http_connection_make_request,
+    .aws_http_stream_activate = s_mock_http_stream_activate,
     .aws_http_stream_release = s_mock_http_stream_release,
     .aws_http_stream_get_connection = s_mock_http_stream_get_connection,
     .aws_http_stream_get_incoming_response_status = s_mock_http_stream_get_incoming_response_status,
@@ -113,6 +115,7 @@ static struct tester {
     bool websocket_new_called_successfully;
 
     bool http_stream_release_called;
+    bool http_stream_activate_called;
 
     bool websocket_setup_invoked;
     int websocket_setup_error_code;
@@ -290,6 +293,15 @@ static struct aws_http_stream *s_mock_http_connection_make_request(
     s_tester.http_stream_on_complete = options->on_complete;
     s_tester.http_stream_user_data = options->user_data;
     return s_mock_stream;
+}
+
+static int s_mock_http_stream_activate(struct aws_http_stream *stream) {
+    AWS_FATAL_ASSERT(stream == s_mock_stream);
+    AWS_FATAL_ASSERT(!s_tester.http_connection_release_called);
+    AWS_FATAL_ASSERT(!s_tester.http_stream_release_called);
+    s_tester.http_stream_activate_called = true;
+
+    return AWS_OP_SUCCESS;
 }
 
 static void s_mock_http_stream_release(struct aws_http_stream *stream) {
@@ -522,6 +534,7 @@ finishing_checks:
 
     /* If request was created, it must be released eventually. */
     if (s_tester.http_stream_new_called_successfully) {
+        ASSERT_TRUE(s_tester.http_stream_activate_called);
         ASSERT_TRUE(s_tester.http_stream_release_called);
     }
 

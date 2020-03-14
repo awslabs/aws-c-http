@@ -504,6 +504,7 @@ static void s_on_signing_complete(struct aws_http_message *request, int error_co
         fprintf(stderr, "failed to create request.");
         exit(1);
     }
+    aws_http_stream_activate(stream);
 
     /* Connection will stay alive until stream completes */
     aws_http_connection_release(app_ctx->connection);

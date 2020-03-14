@@ -845,13 +845,16 @@ static const uint32_t MAX_STREAM_ID = UINT32_MAX >> 1;
 
 uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *connection) {
 
-    uint32_t next_id = (uint32_t)aws_atomic_fetch_add(&connection->next_stream_id, 2);
+    uint32_t next_id = connection->next_stream_id;
+
     /* If next fetch would overflow next_stream_id, set it to 0 */
     if (AWS_UNLIKELY(next_id > MAX_STREAM_ID)) {
         AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: All available stream ids are gone", (void *)connection);
 
         next_id = 0;
         aws_raise_error(AWS_ERROR_HTTP_STREAM_IDS_EXHAUSTED);
+    } else {
+        connection->next_stream_id += 2;
     }
 
     return next_id;

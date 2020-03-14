@@ -89,6 +89,7 @@ TEST_CASE(h2_client_request_create) {
 
     struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &options);
     ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
 
     /* shutdown channel so request can be released */
     aws_channel_shutdown(s_tester.testing_channel.channel, AWS_ERROR_SUCCESS);

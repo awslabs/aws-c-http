@@ -36,6 +36,7 @@ static const struct aws_websocket_client_bootstrap_system_vtable s_default_syste
     .aws_http_connection_close = aws_http_connection_close,
     .aws_http_connection_get_channel = aws_http_connection_get_channel,
     .aws_http_connection_make_request = aws_http_connection_make_request,
+    .aws_http_stream_activate = aws_http_stream_activate,
     .aws_http_stream_release = aws_http_stream_release,
     .aws_http_stream_get_connection = aws_http_stream_get_connection,
     .aws_http_stream_get_incoming_response_status = aws_http_stream_get_incoming_response_status,
@@ -317,7 +318,8 @@ static void s_ws_bootstrap_on_http_setup(struct aws_http_connection *http_connec
 
     struct aws_http_stream *handshake_stream =
         s_system_vtable->aws_http_connection_make_request(http_connection, &options);
-    if (!handshake_stream) {
+
+    if (!handshake_stream || s_system_vtable->aws_http_stream_activate(handshake_stream)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
             "id=%p: Failed to initiate websocket upgrade request, error %d (%s).",

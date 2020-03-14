@@ -119,7 +119,7 @@ static int s_init_monitor_test(struct aws_allocator *allocator, struct aws_crt_s
 
     struct aws_http_connection *connection = aws_http_connection_new_http1_1_client(allocator, SIZE_MAX);
     ASSERT_NOT_NULL(connection);
-    aws_atomic_init_int(&connection->next_stream_id, 1);
+    connection->next_stream_id = 1;
 
     struct aws_channel_slot *slot = aws_channel_slot_new(s_test_context.test_channel.channel);
     ASSERT_NOT_NULL(slot);
@@ -1102,6 +1102,7 @@ static void s_add_outgoing_stream(struct test_http_stats_event *event) {
     request_options.user_data = (void *)aws_array_list_length(&s_test_context.requests);
 
     request_info.stream = aws_http_connection_make_request(s_test_context.connection, &request_options);
+    aws_http_stream_activate(request_info.stream);
 
     aws_array_list_push_back(&s_test_context.requests, &request_info);
 }

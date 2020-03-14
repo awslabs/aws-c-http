@@ -624,6 +624,16 @@ struct aws_http_stream *aws_http_connection_make_request(
     return stream;
 }
 
+int aws_http_stream_activate(struct aws_http_stream *stream) {
+    AWS_PRECONDITION(stream);
+    AWS_PRECONDITION(stream->vtable);
+    AWS_PRECONDITION(stream->vtable->activate);
+    /* make sure it's actually a client calling us. This is always a programmer bug, so just assert and die. */
+    AWS_PRECONDITION(aws_http_connection_is_client(stream->owning_connection));
+
+    return stream->vtable->activate(stream);
+}
+
 struct aws_http_stream *aws_http_stream_new_server_request_handler(
     const struct aws_http_request_handler_options *options) {
     AWS_PRECONDITION(options);

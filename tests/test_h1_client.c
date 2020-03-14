@@ -118,6 +118,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_1liner) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -161,6 +162,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_headers) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -208,6 +210,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -251,6 +254,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_content_length_0_ok) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -268,6 +272,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_content_length_0_ok) {
 
     stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -323,6 +328,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
 
     /* check result */
     const char *expected_head_fmt = "PUT /large.txt HTTP/1.1\r\n"
@@ -398,6 +404,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_head) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
 
     /* check result */
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -431,6 +438,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_multiple) {
     for (size_t i = 0; i < num_streams; ++i) {
         streams[i] = aws_http_connection_make_request(tester.connection, &opt);
         ASSERT_NOT_NULL(streams[i]);
+        aws_http_stream_activate(streams[i]);
     }
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -604,6 +612,7 @@ static int s_response_tester_init_ex(
     if (!response->stream) {
         return AWS_OP_ERR;
     }
+    aws_http_stream_activate(response->stream);
 
     return AWS_OP_SUCCESS;
 }
@@ -1612,7 +1621,7 @@ static int s_test_content_length_mismatch_is_error(
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-
+    aws_http_stream_activate(stream);
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     /* check result */
@@ -1653,6 +1662,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_cancelled_by_channel_shutdown) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -1693,6 +1703,7 @@ H1_CLIENT_TEST_CASE(h1_client_multiple_requests_cancelled_by_channel_shutdown) {
         opt.user_data = &completion_error_codes[i];
         streams[i] = aws_http_connection_make_request(tester.connection, &opt);
         ASSERT_NOT_NULL(streams[i]);
+        aws_http_stream_activate(streams[i]);
     }
 
     /* 2 streams are now in-progress */
@@ -1702,6 +1713,7 @@ H1_CLIENT_TEST_CASE(h1_client_multiple_requests_cancelled_by_channel_shutdown) {
     opt.user_data = &completion_error_codes[2];
     streams[2] = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(streams[2]);
+    aws_http_stream_activate(streams[2]);
 
     /* shutdown channel */
     aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
@@ -1737,6 +1749,7 @@ H1_CLIENT_TEST_CASE(h1_client_new_request_fails_if_channel_shut_down) {
 
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NULL(stream);
+
     ASSERT_INT_EQUALS(aws_last_error(), AWS_ERROR_HTTP_CONNECTION_CLOSED);
 
     aws_http_message_destroy(opt.request);
@@ -1896,6 +1909,7 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
 
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -2066,6 +2080,7 @@ static int s_switch_protocols(struct protocol_switcher *switcher) {
     struct aws_http_stream *upgrade_stream =
         aws_http_connection_make_request(switcher->tester->connection, &upgrade_request);
     ASSERT_NOT_NULL(upgrade_stream);
+    aws_http_stream_activate(upgrade_stream);
     testing_channel_drain_queued_tasks(&switcher->tester->testing_channel);
 
     /* Ensure the request can be destroyed after request is sent */
