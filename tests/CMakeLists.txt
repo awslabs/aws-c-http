@@ -222,7 +222,6 @@ add_test_case(h2_encoder_push_promise)
 add_test_case(h2_encoder_ping)
 add_test_case(h2_encoder_goaway)
 add_test_case(h2_encoder_window_update)
-add_test_case(h2_encoder_continuation)
 
 add_test_case(h2_decoder_sanity_check)
 add_h2_decoder_test_set(h2_decoder_data)

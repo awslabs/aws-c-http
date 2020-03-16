@@ -143,8 +143,6 @@ static struct aws_log_subject_info s_log_subject_infos[] = {
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "connection-manager", "HTTP connection manager"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET, "websocket", "Websocket"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET_SETUP, "websocket-setup", "Websocket setup"),
-
-    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_FRAMES, "http-frames", "HTTP frame library"),
 };
 
 static struct aws_log_subject_info_list s_log_subject_list = {

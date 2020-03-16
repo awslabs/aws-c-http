@@ -52,9 +52,9 @@ struct aws_hpack_decode_result {
  * This only controls how string values are encoded when they're not already in a table.
  */
 enum aws_hpack_huffman_mode {
+    AWS_HPACK_HUFFMAN_SMALLEST,
     AWS_HPACK_HUFFMAN_NEVER,
     AWS_HPACK_HUFFMAN_ALWAYS,
-    AWS_HPACK_HUFFMAN_SMALLEST,
 };
 
 AWS_EXTERN_C_BEGIN
@@ -90,24 +90,13 @@ int aws_hpack_decode(
     struct aws_hpack_decode_result *result);
 
 /**
- * Must be called at start of header-block.
- * If the table has been resized, then a Dynamic Table Size Update (RFC-7541 6.3) is encoded.
- * This behavior is described in RFC-7541 4.2.
+ * Encode header-block into the output.
+ * This function will mutate the hpack context, so an error means the context can no longer be used.
  * Note that output will be dynamically resized if it's too short.
  */
-AWS_HTTP_API
-int aws_hpack_encode_header_block_start(struct aws_hpack_context *context, struct aws_byte_buf *output);
-
-/**
- * Encode a header-field into the output.
- * This function will mutate the hpack context, so any error is unrecoverable.
- * Note that output will be dynamically resized if it's too short.
- */
-AWS_HTTP_API
-int aws_hpack_encode_header(
+int aws_hpack_encode_header_block(
     struct aws_hpack_context *context,
-    const struct aws_http_header *header,
-    enum aws_hpack_huffman_mode huffman_mode,
+    const struct aws_http_headers *headers,
     struct aws_byte_buf *output);
 
 /* Returns the hpack size of a header (name.len + value.len + 32) [4.1] */
@@ -132,6 +121,9 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
 AWS_HTTP_API
 int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new_max_size);
 
+AWS_HTTP_API
+void aws_hpack_set_huffman_mode(struct aws_hpack_context *context, enum aws_hpack_huffman_mode mode);
+
 /* Public for testing purposes.
  * Output will be dynamically resized if it's too short */
 AWS_HTTP_API
@@ -152,7 +144,6 @@ AWS_HTTP_API
 int aws_hpack_encode_string(
     struct aws_hpack_context *context,
     struct aws_byte_cursor to_encode,
-    enum aws_hpack_huffman_mode huffman_mode,
     struct aws_byte_buf *output);
 
 /* Public for testing purposes */

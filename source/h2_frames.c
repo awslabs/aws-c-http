@@ -36,8 +36,48 @@
 
 /* #TODO: use add_checked and mul_checked */
 
+#define ENCODER_LOGF(level, encoder, text, ...)                                                                        \
+    AWS_LOGF_##level(AWS_LS_HTTP_ENCODER, "id=%p " text, (encoder)->logging_id, __VA_ARGS__)
+
+#define ENCODER_LOG(level, encoder, text) ENCODER_LOGF(level, encoder, "%s", text)
+
 const struct aws_byte_cursor aws_h2_connection_preface_client_string =
     AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+
+/* Initial values and bounds are from RFC-7540 6.5.2 */
+const uint32_t aws_h2_settings_initial[AWS_H2_SETTINGS_END_RANGE] = {
+    [AWS_H2_SETTINGS_HEADER_TABLE_SIZE] = 4096,
+    [AWS_H2_SETTINGS_ENABLE_PUSH] = 1,
+    [AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS] = UINT32_MAX, /* "Initially there is no limit to this value" */
+    [AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE] = 65535,
+    [AWS_H2_SETTINGS_MAX_FRAME_SIZE] = 16384,
+    [AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE] = UINT32_MAX, /* "The initial value of this setting is unlimited" */
+};
+
+const uint32_t aws_h2_settings_bounds[AWS_H2_SETTINGS_END_RANGE][2] = {
+    [AWS_H2_SETTINGS_HEADER_TABLE_SIZE][0] = 0,
+    [AWS_H2_SETTINGS_HEADER_TABLE_SIZE][1] = UINT32_MAX,
+
+    [AWS_H2_SETTINGS_ENABLE_PUSH][0] = 0,
+    [AWS_H2_SETTINGS_ENABLE_PUSH][1] = 1,
+
+    [AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS][0] = 0,
+    [AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS][1] = UINT32_MAX,
+
+    [AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE][0] = 0,
+    [AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE][1] = AWS_H2_WINDOW_UPDATE_MAX,
+
+    [AWS_H2_SETTINGS_MAX_FRAME_SIZE][0] = 16384,
+    [AWS_H2_SETTINGS_MAX_FRAME_SIZE][1] = AWS_H2_PAYLOAD_MAX,
+
+    [AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE][0] = 0,
+    [AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE][1] = UINT32_MAX,
+};
+
+/* Put constraints on frames that could get very large given crazy inputs.
+ * This isn't dictated by the spec, it's here to avoid edge cases where
+ * were never have a big enough output buffer to encode the frame. */
+static const size_t s_settings_and_goaway_payload_limit = 8192;
 
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
@@ -56,13 +96,6 @@ static const size_t s_encoded_header_block_reserve = 128; /* Value pulled from t
         .destroy = s_frame_##NAME##_destroy,                                                                           \
         .encode = s_frame_##NAME##_encode,                                                                             \
     }
-
-static int s_frame_prefix_encode(
-    enum aws_h2_frame_type type,
-    uint32_t stream_id,
-    size_t length,
-    uint8_t flags,
-    struct aws_byte_buf *output);
 
 const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type) {
     switch (type) {
@@ -104,7 +137,7 @@ int aws_h2_validate_stream_id(uint32_t stream_id) {
  * 2) obey encoders current MAX_FRAME_SIZE
  *
  * Assumes no part of the frame has been written yet to output.
- * The total length of the would be: returned-payload-len + s_frame_prefix_length
+ * The total length of the frame would be: returned-payload-len + s_frame_prefix_length
  *
  * Raises error if there is not enough space available for even a frame prefix.
  */
@@ -158,265 +191,6 @@ static int s_frame_priority_settings_encode(
 }
 
 /***********************************************************************************************************************
- * Header Block
- **********************************************************************************************************************/
-int aws_h2_frame_header_block_init(
-    struct aws_h2_frame_header_block *header_block,
-    struct aws_allocator *allocator,
-    const struct aws_http_headers *headers) {
-
-    AWS_PRECONDITION(header_block);
-    AWS_PRECONDITION(allocator);
-    AWS_PRECONDITION(headers);
-
-    AWS_ZERO_STRUCT(*header_block);
-    if (aws_byte_buf_init(&header_block->whole_encoded_block, allocator, s_encoded_header_block_reserve)) {
-        return AWS_OP_ERR;
-    }
-
-    aws_http_headers_acquire((struct aws_http_headers *)headers);
-    header_block->headers = headers;
-    return AWS_OP_SUCCESS;
-}
-
-void aws_h2_frame_header_block_clean_up(struct aws_h2_frame_header_block *header_block) {
-    AWS_PRECONDITION(header_block);
-    aws_http_headers_release((struct aws_http_headers *)header_block->headers);
-    aws_byte_buf_clean_up(&header_block->whole_encoded_block);
-    AWS_ZERO_STRUCT(*header_block);
-}
-
-/**
- * Encode whole entire header-block.
- * The output is intended to be copied into actual frames by something that cares about frame size.
- * Output will be dynamically resized if it's too short.
- */
-static int s_pre_encode_whole_header_block(
-    struct aws_h2_frame_encoder *encoder,
-    const struct aws_http_headers *headers,
-    struct aws_byte_buf *output) {
-
-    if (aws_hpack_encode_header_block_start(encoder->hpack, output)) {
-        return AWS_OP_ERR;
-    }
-
-    const size_t num_headers = aws_http_headers_count(headers);
-    for (size_t i = 0; i < num_headers; ++i) {
-        struct aws_http_header header;
-        aws_http_headers_get_index(headers, i, &header);
-        if (aws_hpack_encode_header(encoder->hpack, &header, encoder->huffman_mode, output)) {
-            return AWS_OP_ERR;
-        }
-    }
-
-    return AWS_OP_SUCCESS;
-}
-
-/* Encode the header-block's next frame (or encode nothing if output buffer is too small).
- * Pass in the details of the block's first frame (HEADERS or PUSH_PROMISE). */
-int s_encode_single_header_block_frame(
-    struct aws_h2_frame_header_block *header_block,
-    const struct aws_h2_frame *first_frame,
-    uint8_t first_frame_pad_length,
-    const struct aws_h2_frame_priority_settings *first_frame_priority_settings,
-    bool first_frame_end_stream,
-    const uint32_t *first_frame_promised_stream_id,
-    struct aws_h2_frame_encoder *encoder,
-    struct aws_byte_buf *output,
-    bool *waiting_for_more_space) {
-
-    AWS_ASSERT(first_frame->type == AWS_H2_FRAME_T_HEADERS || first_frame->type == AWS_H2_FRAME_T_PUSH_PROMISE);
-
-    /*
-     * Figure out the details of the next frame to encode.
-     * The first frame will be either HEADERS or PUSH_PROMISE.
-     * All subsequent frames will be CONTINUATION
-     */
-
-    uint32_t stream_id = first_frame->stream_id;
-    enum aws_h2_frame_type frame_type;
-    uint8_t flags = 0;
-    uint8_t pad_length = 0;
-    const struct aws_h2_frame_priority_settings *priority_settings = NULL;
-    const uint32_t *promised_stream_id = NULL;
-    uint32_t payload_overhead = 0; /* Amount of payload holding things other than header-block (padding, etc) */
-
-    if (header_block->state == AWS_H2_HEADER_BLOCK_STATE_FIRST_FRAME) {
-        frame_type = first_frame->type;
-
-        if (first_frame_pad_length > 0) {
-            flags |= AWS_H2_FRAME_F_PADDED;
-            pad_length = first_frame_pad_length;
-            payload_overhead += 1 + pad_length;
-        }
-
-        if (first_frame_priority_settings) {
-            priority_settings = first_frame_priority_settings;
-            flags |= AWS_H2_FRAME_F_PRIORITY;
-            payload_overhead += s_frame_priority_settings_size;
-        }
-
-        if (first_frame_end_stream) {
-            flags |= AWS_H2_FRAME_F_END_STREAM;
-        }
-
-        if (first_frame_promised_stream_id) {
-            promised_stream_id = first_frame_promised_stream_id;
-            payload_overhead += 4;
-        }
-
-    } else /* CONTINUATION */ {
-        frame_type = AWS_H2_FRAME_T_CONTINUATION;
-    }
-
-    /*
-     * Figure out what size header-block fragment should go in this frame.
-     */
-
-    size_t max_payload;
-    if (s_get_max_contiguous_payload_length(encoder, output, &max_payload)) {
-        goto handle_waiting_for_more_space;
-    }
-
-    size_t max_fragment;
-    if (aws_sub_size_checked(max_payload, payload_overhead, &max_fragment)) {
-        goto handle_waiting_for_more_space;
-    }
-
-    const size_t fragment_len = aws_min_size(max_fragment, header_block->encoded_block_cursor.len);
-    if (fragment_len == header_block->encoded_block_cursor.len) {
-        /* This will finish the header-block */
-        flags |= AWS_H2_FRAME_F_END_HEADERS;
-    } else {
-        /* If we're not finishing the header-block, is it even worth trying to send this frame now? */
-        const size_t even_worth_sending_threshold = s_frame_prefix_length + payload_overhead;
-        if (fragment_len < even_worth_sending_threshold) {
-            goto handle_waiting_for_more_space;
-        }
-    }
-
-    /*
-     * Ok, it fits! Write the frame
-     */
-
-    /* Write the frame prefix */
-    if (s_frame_prefix_encode(frame_type, stream_id, fragment_len + payload_overhead, flags, output)) {
-        goto error;
-    }
-
-    /* Write pad length */
-    if (flags & AWS_H2_FRAME_F_PADDED) {
-        AWS_ASSERT(frame_type != AWS_H2_FRAME_T_CONTINUATION);
-        if (!aws_byte_buf_write_u8(output, pad_length)) {
-            aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-            goto error;
-        }
-    }
-
-    /* Write priority */
-    if (flags & AWS_H2_FRAME_F_PRIORITY) {
-        AWS_ASSERT(frame_type == AWS_H2_FRAME_T_HEADERS);
-        if (s_frame_priority_settings_encode(priority_settings, output)) {
-            goto error;
-        }
-    }
-
-    /* Write promised stream ID */
-    if (promised_stream_id) {
-        AWS_ASSERT(frame_type == AWS_H2_FRAME_T_PUSH_PROMISE);
-        if (!aws_byte_buf_write_be32(output, *promised_stream_id & s_31_bit_mask)) {
-            aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-            goto error;
-        }
-    }
-
-    /* Write header-block fragment */
-    if (fragment_len > 0) {
-        struct aws_byte_cursor fragment = header_block->encoded_block_cursor;
-        fragment.len = fragment_len;
-        if (!aws_byte_buf_write_from_whole_cursor(output, fragment)) {
-            aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-            goto error;
-        }
-    }
-
-    /* Write padding */
-    if (flags & AWS_H2_FRAME_F_PADDED) {
-        if (!aws_byte_buf_write_u8_n(output, 0, pad_length)) {
-            aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-            goto error;
-        }
-    }
-
-    /* Success! Wrote entire frame. It's safe to change state now */
-    header_block->state = flags & AWS_H2_FRAME_F_END_HEADERS ? AWS_H2_HEADER_BLOCK_STATE_COMPLETE
-                                                             : AWS_H2_HEADER_BLOCK_STATE_CONTINUATION;
-    aws_byte_cursor_advance(&header_block->encoded_block_cursor, fragment_len);
-    *waiting_for_more_space = false;
-    return AWS_OP_SUCCESS;
-
-handle_waiting_for_more_space:
-    *waiting_for_more_space = true;
-    return AWS_OP_SUCCESS;
-
-error:
-    header_block->state = AWS_H2_HEADER_BLOCK_STATE_ERROR;
-    return AWS_OP_ERR;
-}
-
-int aws_h2_frame_header_block_encode(
-    struct aws_h2_frame_header_block *header_block,
-    const struct aws_h2_frame *first_frame,
-    uint8_t first_frame_pad_length,
-    const struct aws_h2_frame_priority_settings *first_frame_priority_settings,
-    bool first_frame_end_stream,
-    const uint32_t *first_frame_promised_stream_id,
-    struct aws_h2_frame_encoder *encoder,
-    struct aws_byte_buf *output,
-    bool *complete) {
-
-    *complete = false;
-
-    if (header_block->state < AWS_H2_HEADER_BLOCK_STATE_COMPLETE) {
-        aws_raise_error(AWS_ERROR_INVALID_STATE);
-        goto error;
-    }
-
-    /* Pre-encode the entire header-block the first time we're called. */
-    if (header_block->state == AWS_H2_HEADER_BLOCK_STATE_INIT) {
-        if (s_pre_encode_whole_header_block(encoder, header_block->headers, output)) {
-            goto error;
-        }
-        header_block->state = AWS_H2_HEADER_BLOCK_STATE_FIRST_FRAME;
-    }
-
-    /* Write frames (HEADER or PUSH_PROMISE, followed by N CONTINUATION frames)
-     * until we're done writing header-block or the buffer is too full to continue */
-    bool waiting_for_more_space = false;
-    while (header_block->state < AWS_H2_HEADER_BLOCK_STATE_COMPLETE && !waiting_for_more_space) {
-        if (s_encode_single_header_block_frame(
-                header_block,
-                first_frame,
-                first_frame_pad_length,
-                first_frame_priority_settings,
-                first_frame_end_stream,
-                first_frame_promised_stream_id,
-                encoder,
-                output,
-                &waiting_for_more_space)) {
-            goto error;
-        }
-    }
-
-    *complete = header_block->state == AWS_H2_HEADER_BLOCK_STATE_COMPLETE;
-    return AWS_OP_SUCCESS;
-
-error:
-    header_block->state = AWS_H2_HEADER_BLOCK_STATE_ERROR;
-    return AWS_OP_ERR;
-}
-
-/***********************************************************************************************************************
  * Common Frame Prefix
  **********************************************************************************************************************/
 static void s_init_frame_base(
@@ -433,26 +207,28 @@ static void s_init_frame_base(
 }
 
 static int s_frame_prefix_encode(
+    struct aws_h2_frame_encoder *encoder,
     enum aws_h2_frame_type type,
     uint32_t stream_id,
     size_t length,
     uint8_t flags,
     struct aws_byte_buf *output) {
+    AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(output);
     AWS_PRECONDITION(!(stream_id & s_u32_top_bit_mask), "Invalid stream ID");
 
-    AWS_LOGF(
-        AWS_LL_TRACE,
-        AWS_LS_HTTP_FRAMES,
-        "Beginning encode of frame %s: stream: %" PRIu32 " payload length: %zu flags: %" PRIu8,
+    ENCODER_LOGF(
+        TRACE,
+        encoder,
+        "Encoding frame: type=%s stream_id=%" PRIu32 " payload_length=%zu flags=0x%02X",
         aws_h2_frame_type_to_str(type),
         stream_id,
         length,
         flags);
 
     /* Length must fit in 24 bits */
-    /* #TODO Check against SETTINGS_MAX_FRAME_SIZE */
     if (length > AWS_H2_PAYLOAD_MAX) {
+        ENCODER_LOGF(ERROR, encoder, "Payload size %zu exceeds max for HTTP/2", length);
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
@@ -479,12 +255,14 @@ static int s_frame_prefix_encode(
 /***********************************************************************************************************************
  * Encoder
  **********************************************************************************************************************/
-int aws_h2_frame_encoder_init(struct aws_h2_frame_encoder *encoder, struct aws_allocator *allocator) {
+int aws_h2_frame_encoder_init(struct aws_h2_frame_encoder *encoder, struct aws_allocator *allocator, void *logging_id) {
+
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(allocator);
 
     AWS_ZERO_STRUCT(*encoder);
     encoder->allocator = allocator;
+    encoder->logging_id = logging_id;
 
     encoder->hpack = aws_hpack_context_new(allocator, AWS_LS_HTTP_ENCODER, encoder);
     if (!encoder->hpack) {
@@ -517,7 +295,6 @@ int aws_h2_encode_data_frame(
     AWS_PRECONDITION(body_complete);
 
     if (aws_h2_validate_stream_id(stream_id)) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_FRAMES, "Invalid body stream ID");
         return AWS_OP_ERR;
     }
 
@@ -525,7 +302,7 @@ int aws_h2_encode_data_frame(
     uint8_t flags = 0;
 
     /*
-     * The payload length must precede everything else, but we don't know how
+     * Payload-length is the first thing encoded in a frame, but we don't know how
      * much data we'll get from the body-stream until we actually read it.
      * Therefore, we determine the exact location that the body data should go,
      * then stream the body directly into that part of the output buffer.
@@ -587,7 +364,7 @@ int aws_h2_encode_data_frame(
 
     /* Write the frame prefix */
     const size_t payload_len = body_sub_buf.len + payload_overhead;
-    if (s_frame_prefix_encode(AWS_H2_FRAME_T_DATA, stream_id, payload_len, flags, output)) {
+    if (s_frame_prefix_encode(encoder, AWS_H2_FRAME_T_DATA, stream_id, payload_len, flags, output)) {
         goto error;
     }
 
@@ -614,9 +391,11 @@ int aws_h2_encode_data_frame(
     return AWS_OP_SUCCESS;
 
 handle_waiting_for_more_space:
+    ENCODER_LOGF(TRACE, encoder, "Insufficient space to encode DATA for stream %" PRIu32 " right now", stream_id);
     return AWS_OP_SUCCESS;
 
 handle_nothing_to_send_right_now:
+    ENCODER_LOGF(INFO, encoder, "Stream %" PRIu32 " produced 0 bytes of body data", stream_id);
     return AWS_OP_SUCCESS;
 
 error:
@@ -624,9 +403,77 @@ error:
 }
 
 /***********************************************************************************************************************
- * HEADERS
+ * HEADERS / PUSH_PROMISE
  **********************************************************************************************************************/
 DEFINE_FRAME_VTABLE(headers);
+DEFINE_FRAME_VTABLE(push_promise);
+
+static struct aws_h2_frame *s_frame_new_headers_or_push_promise(
+    struct aws_allocator *allocator,
+    enum aws_h2_frame_type frame_type,
+    uint32_t stream_id,
+    const struct aws_http_headers *headers,
+    uint8_t pad_length,
+    bool end_stream,
+    const struct aws_h2_frame_priority_settings *optional_priority,
+    uint32_t promised_stream_id) {
+
+    AWS_PRECONDITION(allocator);
+    AWS_PRECONDITION(frame_type == AWS_H2_FRAME_T_HEADERS || frame_type == AWS_H2_FRAME_T_PUSH_PROMISE);
+    AWS_PRECONDITION(headers);
+
+    /* Validate args */
+
+    if (aws_h2_validate_stream_id(stream_id)) {
+        return NULL;
+    }
+
+    if (frame_type == AWS_H2_FRAME_T_PUSH_PROMISE) {
+        if (aws_h2_validate_stream_id(promised_stream_id)) {
+            return NULL;
+        }
+    }
+
+    if (optional_priority && aws_h2_validate_stream_id(optional_priority->stream_dependency)) {
+        return NULL;
+    }
+
+    /* Create */
+
+    struct aws_h2_frame_headers *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_headers));
+    if (!frame) {
+        return NULL;
+    }
+
+    if (aws_byte_buf_init(&frame->whole_encoded_header_block, allocator, s_encoded_header_block_reserve)) {
+        goto error;
+    }
+
+    const struct aws_h2_frame_vtable *vtable;
+    if (frame_type == AWS_H2_FRAME_T_HEADERS) {
+        vtable = &s_frame_headers_vtable;
+        frame->end_stream = end_stream;
+        if (optional_priority) {
+            frame->has_priority = true;
+            frame->priority = *optional_priority;
+        }
+    } else {
+        vtable = &s_frame_push_promise_vtable;
+        frame->promised_stream_id = promised_stream_id;
+    }
+
+    s_init_frame_base(&frame->base, allocator, frame_type, vtable, stream_id);
+
+    aws_http_headers_acquire((struct aws_http_headers *)headers);
+    frame->headers = headers;
+    frame->pad_length = pad_length;
+
+    return &frame->base;
+
+error:
+    s_frame_headers_destroy(&frame->base);
+    return NULL;
+}
 
 struct aws_h2_frame *aws_h2_frame_new_headers(
     struct aws_allocator *allocator,
@@ -636,32 +483,192 @@ struct aws_h2_frame *aws_h2_frame_new_headers(
     uint8_t pad_length,
     const struct aws_h2_frame_priority_settings *optional_priority) {
 
-    struct aws_h2_frame_headers *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_headers));
-    if (!frame) {
-        return NULL;
+    return s_frame_new_headers_or_push_promise(
+        allocator,
+        AWS_H2_FRAME_T_HEADERS,
+        stream_id,
+        headers,
+        pad_length,
+        end_stream,
+        optional_priority,
+        0 /* HEADERS doesn't have promised_stream_id */);
+}
+
+struct aws_h2_frame *aws_h2_frame_new_push_promise(
+    struct aws_allocator *allocator,
+    uint32_t stream_id,
+    uint32_t promised_stream_id,
+    const struct aws_http_headers *headers,
+    uint8_t pad_length) {
+
+    return s_frame_new_headers_or_push_promise(
+        allocator,
+        AWS_H2_FRAME_T_PUSH_PROMISE,
+        stream_id,
+        headers,
+        pad_length,
+        false /* PUSH_PROMISE doesn't have end_stream flag */,
+        NULL /* PUSH_PROMISE doesn't have priority_settings */,
+        promised_stream_id);
+}
+
+static void s_frame_headers_destroy(struct aws_h2_frame *frame_base) {
+    struct aws_h2_frame_headers *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_headers, base);
+    aws_http_headers_release((struct aws_http_headers *)frame->headers);
+    aws_byte_buf_clean_up(&frame->whole_encoded_header_block);
+    aws_mem_release(frame->base.alloc, frame);
+}
+
+static void s_frame_push_promise_destroy(struct aws_h2_frame *frame_base) {
+    s_frame_headers_destroy(frame_base);
+}
+
+/* Encode the next frame for this header-block (or encode nothing if output buffer is too small). */
+int s_encode_single_header_block_frame(
+    struct aws_h2_frame_headers *frame,
+    struct aws_h2_frame_encoder *encoder,
+    struct aws_byte_buf *output,
+    bool *waiting_for_more_space) {
+
+    /*
+     * Figure out the details of the next frame to encode.
+     * The first frame will be either HEADERS or PUSH_PROMISE.
+     * All subsequent frames will be CONTINUATION
+     */
+
+    enum aws_h2_frame_type frame_type;
+    uint8_t flags = 0;
+    uint8_t pad_length = 0;
+    const struct aws_h2_frame_priority_settings *priority_settings = NULL;
+    const uint32_t *promised_stream_id = NULL;
+    uint32_t payload_overhead = 0; /* Amount of payload holding things other than header-block (padding, etc) */
+
+    if (frame->state == AWS_H2_HEADERS_STATE_FIRST_FRAME) {
+        frame_type = frame->base.type;
+
+        if (frame->pad_length > 0) {
+            flags |= AWS_H2_FRAME_F_PADDED;
+            pad_length = frame->pad_length;
+            payload_overhead += 1 + pad_length;
+        }
+
+        if (frame->has_priority) {
+            priority_settings = &frame->priority;
+            flags |= AWS_H2_FRAME_F_PRIORITY;
+            payload_overhead += s_frame_priority_settings_size;
+        }
+
+        if (frame->end_stream) {
+            flags |= AWS_H2_FRAME_F_END_STREAM;
+        }
+
+        if (frame_type == AWS_H2_FRAME_T_PUSH_PROMISE) {
+            promised_stream_id = &frame->promised_stream_id;
+            payload_overhead += 4;
+        }
+
+    } else /* CONTINUATION */ {
+        frame_type = AWS_H2_FRAME_T_CONTINUATION;
     }
 
-    s_init_frame_base(&frame->base, allocator, AWS_H2_FRAME_T_HEADERS, &s_frame_headers_vtable, stream_id);
-    frame->end_stream = end_stream;
-    frame->pad_length = pad_length;
-    if (optional_priority) {
-        frame->has_priority = true;
-        frame->priority = *optional_priority;
+    /*
+     * Figure out what size header-block fragment should go in this frame.
+     */
+
+    size_t max_payload;
+    if (s_get_max_contiguous_payload_length(encoder, output, &max_payload)) {
+        goto handle_waiting_for_more_space;
     }
 
-    if (aws_h2_frame_header_block_init(&frame->header_block, allocator, headers)) {
+    size_t max_fragment;
+    if (aws_sub_size_checked(max_payload, payload_overhead, &max_fragment)) {
+        goto handle_waiting_for_more_space;
+    }
+
+    const size_t fragment_len = aws_min_size(max_fragment, frame->header_block_cursor.len);
+    if (fragment_len == frame->header_block_cursor.len) {
+        /* This will finish the header-block */
+        flags |= AWS_H2_FRAME_F_END_HEADERS;
+    } else {
+        /* If we're not finishing the header-block, is it even worth trying to send this frame now? */
+        const size_t even_worth_sending_threshold = s_frame_prefix_length + payload_overhead;
+        if (fragment_len < even_worth_sending_threshold) {
+            goto handle_waiting_for_more_space;
+        }
+    }
+
+    /*
+     * Ok, it fits! Write the frame
+     */
+
+    /* Write the frame prefix */
+    const size_t payload_len = fragment_len + payload_overhead;
+    if (s_frame_prefix_encode(encoder, frame_type, frame->base.stream_id, payload_len, flags, output)) {
         goto error;
     }
 
-    return &frame->base;
+    /* Write pad length */
+    if (flags & AWS_H2_FRAME_F_PADDED) {
+        AWS_ASSERT(frame_type != AWS_H2_FRAME_T_CONTINUATION);
+        if (!aws_byte_buf_write_u8(output, pad_length)) {
+            aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+            goto error;
+        }
+    }
+
+    /* Write priority */
+    if (flags & AWS_H2_FRAME_F_PRIORITY) {
+        AWS_ASSERT(frame_type == AWS_H2_FRAME_T_HEADERS);
+        if (s_frame_priority_settings_encode(priority_settings, output)) {
+            goto error;
+        }
+    }
+
+    /* Write promised stream ID */
+    if (promised_stream_id) {
+        AWS_ASSERT(frame_type == AWS_H2_FRAME_T_PUSH_PROMISE);
+        if (!aws_byte_buf_write_be32(output, *promised_stream_id & s_31_bit_mask)) {
+            aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+            goto error;
+        }
+    }
+
+    /* Write header-block fragment */
+    if (fragment_len > 0) {
+        struct aws_byte_cursor fragment = aws_byte_cursor_advance(&frame->header_block_cursor, fragment_len);
+        if (!aws_byte_buf_write_from_whole_cursor(output, fragment)) {
+            aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+            goto error;
+        }
+    }
+
+    /* Write padding */
+    if (flags & AWS_H2_FRAME_F_PADDED) {
+        if (!aws_byte_buf_write_u8_n(output, 0, pad_length)) {
+            aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+            goto error;
+        }
+    }
+
+    /* Success! Wrote entire frame. It's safe to change state now */
+    frame->state =
+        flags & AWS_H2_FRAME_F_END_HEADERS ? AWS_H2_HEADERS_STATE_COMPLETE : AWS_H2_HEADERS_STATE_CONTINUATION;
+    *waiting_for_more_space = false;
+    return AWS_OP_SUCCESS;
+
+handle_waiting_for_more_space:
+    ENCODER_LOGF(
+        TRACE,
+        encoder,
+        "Insufficient space to encode %s for stream %" PRIu32 " right now",
+        aws_h2_frame_type_to_str(frame->base.type),
+        frame->base.stream_id);
+    *waiting_for_more_space = true;
+    return AWS_OP_SUCCESS;
+
 error:
-    aws_mem_release(allocator, frame);
-    return NULL;
-}
-static void s_frame_headers_destroy(struct aws_h2_frame *frame_base) {
-    struct aws_h2_frame_headers *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_headers, base);
-    aws_h2_frame_header_block_clean_up(&frame->header_block);
-    aws_mem_release(frame->base.alloc, frame);
+    frame->state = AWS_H2_HEADERS_STATE_ERROR;
+    return AWS_OP_ERR;
 }
 
 static int s_frame_headers_encode(
@@ -670,19 +677,64 @@ static int s_frame_headers_encode(
     struct aws_byte_buf *output,
     bool *complete) {
 
-    (void)encoder;
     struct aws_h2_frame_headers *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_headers, base);
 
-    return aws_h2_frame_header_block_encode(
-        &frame->header_block,
-        &frame->base,
-        frame->pad_length,
-        frame->has_priority ? &frame->priority : NULL,
-        frame->end_stream,
-        NULL /* HEADERS doesn't have promised_stream_id */,
-        encoder,
-        output,
-        complete);
+    if (frame->state >= AWS_H2_HEADERS_STATE_COMPLETE) {
+        aws_raise_error(AWS_ERROR_INVALID_STATE);
+        goto error;
+    }
+
+    /* Pre-encode the entire header-block into another buffer
+     * the first time we're called. */
+    if (frame->state == AWS_H2_HEADERS_STATE_INIT) {
+        if (aws_hpack_encode_header_block(encoder->hpack, frame->headers, &frame->whole_encoded_header_block)) {
+            ENCODER_LOGF(
+                ERROR,
+                encoder,
+                "Error doing HPACK encoding on %s of stream %" PRIu32 ": %s",
+                aws_h2_frame_type_to_str(frame->base.type),
+                frame->base.stream_id,
+                aws_error_name(aws_last_error()));
+            goto error;
+        }
+
+        frame->header_block_cursor = aws_byte_cursor_from_buf(&frame->whole_encoded_header_block);
+        frame->state = AWS_H2_HEADERS_STATE_FIRST_FRAME;
+    }
+
+    /* Write frames (HEADER or PUSH_PROMISE, followed by N CONTINUATION frames)
+     * until we're done writing header-block or the buffer is too full to continue */
+    bool waiting_for_more_space = false;
+    while (frame->state < AWS_H2_HEADERS_STATE_COMPLETE && !waiting_for_more_space) {
+        if (s_encode_single_header_block_frame(frame, encoder, output, &waiting_for_more_space)) {
+            goto error;
+        }
+    }
+
+    if (waiting_for_more_space) {
+        ENCODER_LOGF(
+            TRACE,
+            encoder,
+            "Insufficient space to finish encoding %s header-block for stream %" PRIu32 " right now",
+            aws_h2_frame_type_to_str(frame->base.type),
+            frame->base.stream_id);
+    }
+
+    *complete = frame->state == AWS_H2_HEADERS_STATE_COMPLETE;
+    return AWS_OP_SUCCESS;
+
+error:
+    frame->state = AWS_H2_HEADERS_STATE_ERROR;
+    return AWS_OP_ERR;
+}
+
+static int s_frame_push_promise_encode(
+    struct aws_h2_frame *frame_base,
+    struct aws_h2_frame_encoder *encoder,
+    struct aws_byte_buf *output,
+    bool *complete) {
+
+    return s_frame_headers_encode(frame_base, encoder, output, complete);
 }
 
 /***********************************************************************************************************************
@@ -695,6 +747,13 @@ struct aws_h2_frame *aws_h2_frame_new_priority(
     struct aws_allocator *allocator,
     uint32_t stream_id,
     const struct aws_h2_frame_priority_settings *priority) {
+
+    AWS_PRECONDITION(allocator);
+    AWS_PRECONDITION(priority);
+
+    if (aws_h2_validate_stream_id(stream_id) || aws_h2_validate_stream_id(priority->stream_dependency)) {
+        return NULL;
+    }
 
     struct aws_h2_frame_priority *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_priority));
     if (!frame) {
@@ -724,13 +783,19 @@ static int s_frame_priority_encode(
     const size_t space_available = output->capacity - output->len;
 
     /* If we can't encode the whole frame at once, try again later */
-    if (total_len < space_available) {
+    if (total_len > space_available) {
+        ENCODER_LOGF(
+            TRACE,
+            encoder,
+            "Insufficient space to encode PRIORITY for stream %" PRIu32 " right now",
+            frame->base.stream_id);
+
         *complete = false;
         return AWS_OP_SUCCESS;
     }
 
     /* Write the frame prefix */
-    if (s_frame_prefix_encode(frame->base.type, frame->base.stream_id, s_frame_priority_length, 0, output)) {
+    if (s_frame_prefix_encode(encoder, frame->base.type, frame->base.stream_id, s_frame_priority_length, 0, output)) {
         return AWS_OP_ERR;
     }
 
@@ -754,6 +819,10 @@ struct aws_h2_frame *aws_h2_frame_new_rst_stream(
     uint32_t stream_id,
     enum aws_h2_error_codes error_code) {
 
+    if (aws_h2_validate_stream_id(stream_id)) {
+        return NULL;
+    }
+
     struct aws_h2_frame_rst_stream *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_rst_stream));
     if (!frame) {
         return NULL;
@@ -762,7 +831,7 @@ struct aws_h2_frame *aws_h2_frame_new_rst_stream(
     s_init_frame_base(&frame->base, allocator, AWS_H2_FRAME_T_RST_STREAM, &s_frame_rst_stream_vtable, stream_id);
     frame->error_code = error_code;
 
-    return AWS_OP_SUCCESS;
+    return &frame->base;
 }
 
 static void s_frame_rst_stream_destroy(struct aws_h2_frame *frame_base) {
@@ -782,13 +851,18 @@ static int s_frame_rst_stream_encode(
     const size_t space_available = output->capacity - output->len;
 
     /* If we can't encode the whole frame at once, try again later */
-    if (total_len < space_available) {
+    if (total_len > space_available) {
+        ENCODER_LOGF(
+            TRACE,
+            encoder,
+            "Insufficient space to encode RST_STREAM for stream %" PRIu32 " right now",
+            frame->base.stream_id);
         *complete = false;
         return AWS_OP_SUCCESS;
     }
 
     /* Write the frame prefix */
-    if (s_frame_prefix_encode(frame->base.type, frame->base.stream_id, s_frame_rst_stream_length, 0, output)) {
+    if (s_frame_prefix_encode(encoder, frame->base.type, frame->base.stream_id, s_frame_rst_stream_length, 0, output)) {
         return AWS_OP_ERR;
     }
 
@@ -815,6 +889,14 @@ struct aws_h2_frame *aws_h2_frame_new_settings(
 
     AWS_PRECONDITION(!ack || num_settings == 0, "Settings ACK must be empty");
     AWS_PRECONDITION(settings_array || num_settings == 0);
+
+    /* Check against insane edge case of too many settings to fit in a frame.
+     * Arbitrarily choosing half the default payload size */
+    size_t max_settings = s_settings_and_goaway_payload_limit / s_frame_setting_length;
+    if (num_settings > max_settings) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
 
     struct aws_h2_frame_settings *frame;
     struct aws_h2_frame_setting *array_alloc;
@@ -849,11 +931,11 @@ static int s_frame_settings_encode(
     struct aws_h2_frame_settings *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_settings, base);
 
     const size_t payload_len = frame->settings_count * s_frame_setting_length;
-    const size_t total_len = s_frame_prefix_length + payload_len;
-    const size_t space_available = output->capacity - output->len;
 
     /* If we can't encode the whole frame at once, try again later */
-    if (total_len < space_available) {
+    size_t max_payload;
+    if (s_get_max_contiguous_payload_length(encoder, output, &max_payload) || max_payload < payload_len) {
+        ENCODER_LOG(TRACE, encoder, "Insufficient space to encode SETTINGS right now");
         *complete = false;
         return AWS_OP_SUCCESS;
     }
@@ -864,7 +946,7 @@ static int s_frame_settings_encode(
         flags |= AWS_H2_FRAME_F_ACK;
     }
 
-    if (s_frame_prefix_encode(frame->base.type, frame->base.stream_id, payload_len, flags, output)) {
+    if (s_frame_prefix_encode(encoder, frame->base.type, frame->base.stream_id, payload_len, flags, output)) {
         return AWS_OP_ERR;
     }
 
@@ -879,64 +961,6 @@ static int s_frame_settings_encode(
 
     *complete = true;
     return AWS_OP_SUCCESS;
-}
-
-/***********************************************************************************************************************
- * PUSH_PROMISE
- **********************************************************************************************************************/
-DEFINE_FRAME_VTABLE(push_promise);
-
-struct aws_h2_frame *aws_h2_frame_new_push_promise(
-    struct aws_allocator *allocator,
-    uint32_t stream_id,
-    uint32_t promised_stream_id,
-    const struct aws_http_headers *headers,
-    uint8_t pad_length) {
-
-    struct aws_h2_frame_push_promise *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_push_promise));
-    if (!frame) {
-        return NULL;
-    }
-
-    s_init_frame_base(&frame->base, allocator, AWS_H2_FRAME_T_PUSH_PROMISE, &s_frame_push_promise_vtable, stream_id);
-    frame->promised_stream_id = promised_stream_id;
-    frame->pad_length = pad_length;
-
-    if (aws_h2_frame_header_block_init(&frame->header_block, allocator, headers)) {
-        goto error;
-    }
-
-    return &frame->base;
-error:
-    aws_mem_release(allocator, frame);
-    return NULL;
-}
-
-static void s_frame_push_promise_destroy(struct aws_h2_frame *frame_base) {
-    struct aws_h2_frame_push_promise *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_push_promise, base);
-    aws_h2_frame_header_block_clean_up(&frame->header_block);
-    aws_mem_release(frame->base.alloc, frame);
-}
-
-static int s_frame_push_promise_encode(
-    struct aws_h2_frame *frame_base,
-    struct aws_h2_frame_encoder *encoder,
-    struct aws_byte_buf *output,
-    bool *complete) {
-
-    (void)encoder;
-    struct aws_h2_frame_push_promise *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_push_promise, base);
-
-    return aws_h2_frame_header_block_encode(
-        &frame->header_block,
-        &frame->base,
-        frame->pad_length,
-        NULL /* PUSH_PROMISE doesn't have priority_settings */,
-        false /* PUSH_PROMISE doesn't have end_stream flag */,
-        &frame->promised_stream_id,
-        encoder,
-        output,
-        complete);
 }
 
 /***********************************************************************************************************************
@@ -978,7 +1002,8 @@ static int s_frame_ping_encode(
     const size_t space_available = output->capacity - output->len;
 
     /* If we can't encode the whole frame at once, try again later */
-    if (total_len < space_available) {
+    if (total_len > space_available) {
+        ENCODER_LOG(TRACE, encoder, "Insufficient space to encode PING right now");
         *complete = false;
         return AWS_OP_SUCCESS;
     }
@@ -989,7 +1014,7 @@ static int s_frame_ping_encode(
         flags |= AWS_H2_FRAME_F_ACK;
     }
 
-    if (s_frame_prefix_encode(frame->base.type, frame->base.stream_id, AWS_H2_PING_DATA_SIZE, flags, output)) {
+    if (s_frame_prefix_encode(encoder, frame->base.type, frame->base.stream_id, AWS_H2_PING_DATA_SIZE, flags, output)) {
         return AWS_OP_ERR;
     }
 
@@ -1012,6 +1037,18 @@ struct aws_h2_frame *aws_h2_frame_new_goaway(
     uint32_t last_stream_id,
     enum aws_h2_error_codes error_code,
     struct aws_byte_cursor debug_data) {
+
+    /* If debug_data is too long, don't sent it.
+     * It's more important that the GOAWAY frame gets sent. */
+    if (debug_data.len > s_settings_and_goaway_payload_limit) {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_ENCODER,
+            "Sending GOAWAY without debug-data. Debug-data size %zu exceeds internal limit of %zu",
+            debug_data.len,
+            s_settings_and_goaway_payload_limit);
+
+        debug_data.len = 0;
+    }
 
     struct aws_h2_frame_goaway *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_goaway));
     if (!frame) {
@@ -1038,19 +1075,19 @@ static int s_frame_goaway_encode(
     (void)encoder;
     struct aws_h2_frame_goaway *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_goaway, base);
 
-    /* # TODO: handle max payload len. simply truncate debug data?  */
     const size_t payload_len = 8 + frame->debug_data.len;
     const size_t total_len = s_frame_prefix_length + payload_len;
     const size_t space_available = output->capacity - output->len;
 
     /* If we can't encode the whole frame at once, try again later */
-    if (total_len < space_available) {
+    if (total_len > space_available) {
+        ENCODER_LOG(TRACE, encoder, "Insufficient space to encode GOAWAY right now");
         *complete = false;
         return AWS_OP_SUCCESS;
     }
 
     /* Write the frame prefix */
-    if (s_frame_prefix_encode(frame->base.type, frame->base.stream_id, payload_len, 0, output)) {
+    if (s_frame_prefix_encode(encoder, frame->base.type, frame->base.stream_id, payload_len, 0, output)) {
         return AWS_OP_ERR;
     }
 
@@ -1076,6 +1113,12 @@ struct aws_h2_frame *aws_h2_frame_new_window_update(
     struct aws_allocator *allocator,
     uint32_t stream_id,
     uint32_t window_size_increment) {
+
+    /* Note: stream_id may be zero or non-zero */
+    if (stream_id > AWS_H2_STREAM_ID_MAX) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
 
     if (window_size_increment > AWS_H2_WINDOW_UPDATE_MAX) {
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -1110,13 +1153,15 @@ static int s_frame_window_update_encode(
     const size_t space_available = output->capacity - output->len;
 
     /* If we can't encode the whole frame at once, try again later */
-    if (total_len < space_available) {
+    if (total_len > space_available) {
+        ENCODER_LOG(TRACE, encoder, "Insufficient space to encode PING right now");
         *complete = false;
         return AWS_OP_SUCCESS;
     }
 
     /* Write the frame prefix */
-    if (s_frame_prefix_encode(frame->base.type, frame->base.stream_id, s_frame_window_update_length, 0, output)) {
+    if (s_frame_prefix_encode(
+            encoder, frame->base.type, frame->base.stream_id, s_frame_window_update_length, 0, output)) {
         return AWS_OP_ERR;
     }
 
@@ -1147,18 +1192,25 @@ int aws_h2_encode_frame(
     AWS_PRECONDITION(frame_complete);
 
     if (encoder->has_errored) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_FRAMES, "Encoder cannot be used again after an error");
+        ENCODER_LOG(ERROR, encoder, "Encoder cannot be used again after an error");
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
     if (encoder->current_frame && (encoder->current_frame != frame)) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_FRAMES, "Cannot encode new frame until previous frames completes");
+        ENCODER_LOG(ERROR, encoder, "Cannot encode new frame until previous frame completes");
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
     *frame_complete = false;
 
     if (frame->vtable->encode(frame, encoder, output, frame_complete)) {
+        ENCODER_LOGF(
+            ERROR,
+            encoder,
+            "Failed to encode frame type=%s stream_id=%" PRIu32 ", %s",
+            aws_h2_frame_type_to_str(frame->type),
+            frame->stream_id,
+            aws_error_name(aws_last_error()));
         encoder->has_errored = true;
         return AWS_OP_ERR;
     }

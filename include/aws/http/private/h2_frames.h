@@ -16,7 +16,6 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/private/hpack.h>
 #include <aws/http/request_response.h>
 
 #include <aws/common/byte_buf.h>
@@ -81,6 +80,12 @@ enum aws_h2_settings {
 #define AWS_H2_WINDOW_UPDATE_MAX (0x7FFFFFFF)
 #define AWS_H2_STREAM_ID_MAX (0x7FFFFFFF)
 
+/* Legal min(inclusive) and max(inclusive) for each setting */
+extern const uint32_t aws_h2_settings_bounds[AWS_H2_SETTINGS_END_RANGE][2];
+
+/* Initial values for settings RFC-7540 6.5.2 */
+extern const uint32_t aws_h2_settings_initial[AWS_H2_SETTINGS_END_RANGE];
+
 /* This magic string must be the very first thing a client sends to the server.
  * See RFC-7540 3.5 - HTTP/2 Connection Preface */
 extern const struct aws_byte_cursor aws_h2_connection_preface_client_string;
@@ -101,23 +106,6 @@ struct aws_h2_frame_priority_settings {
     uint8_t weight;
 };
 
-struct aws_h2_frame_header_block {
-    const struct aws_http_headers *headers;
-
-    /* state */
-
-    enum {
-        AWS_H2_HEADER_BLOCK_STATE_INIT,
-        AWS_H2_HEADER_BLOCK_STATE_FIRST_FRAME,
-        AWS_H2_HEADER_BLOCK_STATE_CONTINUATION,
-        AWS_H2_HEADER_BLOCK_STATE_COMPLETE,
-        AWS_H2_HEADER_BLOCK_STATE_ERROR,
-    } state;
-
-    struct aws_byte_buf whole_encoded_block;     /* entire header block is encoded here */
-    struct aws_byte_cursor encoded_block_cursor; /* tracks progress sending encoded header-block in fragments */
-};
-
 /**
  * A frame to be encoded.
  * (in the case of HEADERS and PUSH_PROMISE, it might turn into multiple frames due to CONTINUATION)
@@ -130,19 +118,33 @@ struct aws_h2_frame {
     struct aws_linked_list_node node;
 };
 
-/* Represents a HEADERS header-block.
- * (HEADERS frame followed 0 or more CONTINUATION frames) */
+/* Represents a HEADERS or PUSH_PROMISE frame (followed by zero or more CONTINUATION frames) */
 struct aws_h2_frame_headers {
     struct aws_h2_frame base;
 
-    /* Flags */
+    /* Common data */
+    const struct aws_http_headers *headers;
+    uint8_t pad_length; /* Set to 0 to disable AWS_H2_FRAME_F_PADDED */
+
+    /* HEADERS-only data */
     bool end_stream;   /* AWS_H2_FRAME_F_END_STREAM */
     bool has_priority; /* AWS_H2_FRAME_F_PRIORITY */
-
-    /* Payload */
-    uint8_t pad_length; /* Set to 0 to disable AWS_H2_FRAME_F_PADDED */
     struct aws_h2_frame_priority_settings priority;
-    struct aws_h2_frame_header_block header_block;
+
+    /* PUSH_PROMISE-only data */
+    uint32_t promised_stream_id;
+
+    /* State */
+    enum {
+        AWS_H2_HEADERS_STATE_INIT,
+        AWS_H2_HEADERS_STATE_FIRST_FRAME,
+        AWS_H2_HEADERS_STATE_CONTINUATION,
+        AWS_H2_HEADERS_STATE_COMPLETE,
+        AWS_H2_HEADERS_STATE_ERROR,
+    } state;
+
+    struct aws_byte_buf whole_encoded_header_block;
+    struct aws_byte_cursor header_block_cursor; /* tracks progress sending encoded header-block in fragments */
 };
 
 /* Represents a PRIORITY frame */
@@ -179,17 +181,6 @@ struct aws_h2_frame_settings {
     size_t settings_count;
 };
 
-/* Represents a PUSH_PROMISE header-block.
- * (PUSH_PROMISE frame followed by 0 or more CONTINUATION frames) */
-struct aws_h2_frame_push_promise {
-    struct aws_h2_frame base;
-
-    /* Payload */
-    uint8_t pad_length; /* Set to 0 to disable AWS_H2_FRAME_F_PADDED */
-    uint32_t promised_stream_id;
-    struct aws_h2_frame_header_block header_block;
-};
-
 #define AWS_H2_PING_DATA_SIZE (8)
 
 /* Represents a PING frame */
@@ -223,12 +214,11 @@ struct aws_h2_frame_window_update {
 
 /* Used to encode a frame */
 struct aws_h2_frame_encoder {
-    /* Larger state */
     struct aws_allocator *allocator;
+    const void *logging_id;
     struct aws_hpack_context *hpack;
     struct aws_h2_frame *current_frame;
     bool has_errored;
-    enum aws_hpack_huffman_mode huffman_mode;
 };
 
 typedef void aws_h2_frame_destroy_fn(struct aws_h2_frame *frame_base);
@@ -258,7 +248,8 @@ int aws_h2_validate_stream_id(uint32_t stream_id);
  * 2. Encode the frame using aws_h2_frame_*_encode
  */
 AWS_HTTP_API
-int aws_h2_frame_encoder_init(struct aws_h2_frame_encoder *encoder, struct aws_allocator *allocator);
+int aws_h2_frame_encoder_init(struct aws_h2_frame_encoder *encoder, struct aws_allocator *allocator, void *logging_id);
+
 AWS_HTTP_API
 void aws_h2_frame_encoder_clean_up(struct aws_h2_frame_encoder *encoder);
 

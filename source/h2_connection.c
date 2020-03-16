@@ -219,7 +219,7 @@ static struct aws_h2_connection *s_connection_new(
         goto error;
     }
 
-    if (aws_h2_frame_encoder_init(&connection->thread_data.encoder, alloc)) {
+    if (aws_h2_frame_encoder_init(&connection->thread_data.encoder, alloc, &connection->base)) {
         CONNECTION_LOGF(
             ERROR, connection, "Encoder init error %d (%s)", aws_last_error(), aws_error_name(aws_last_error()));
         goto error;

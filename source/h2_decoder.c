@@ -244,7 +244,8 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
     /* Run decoder state machine until we're no longer changing states.
      * We don't simply loop `while(data->len)` because some states consume no data,
      * and these states should run even when there is no data left. */
-    for (decoder->state_changed = false; decoder->state_changed; decoder->state_changed = false) {
+    do {
+        decoder->state_changed = false;
 
         const uint32_t bytes_required = decoder->state->bytes_required;
         AWS_ASSERT(bytes_required <= decoder->scratch.capacity);
@@ -302,7 +303,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                     decoder->scratch.len);
             }
         }
-    }
+    } while (decoder->state_changed);
 
     return AWS_OP_SUCCESS;
 
