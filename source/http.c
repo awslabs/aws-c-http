@@ -13,10 +13,10 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/common/hash_table.h>
 #include <aws/http/private/hpack.h>
 #include <aws/http/private/http_impl.h>
-
-#include <aws/common/hash_table.h>
+#include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 
 #include <ctype.h>
@@ -284,128 +284,156 @@ const char *aws_http_status_text(int status_code) {
      * https://www.iana.org/assignments/http-status-codes/http-status-codes.txt
      */
     switch (status_code) {
-        case 100:
+        case HTTP_STATUS_CODE_CONTINUE:
             return "Continue";
-        case 101:
+        case HTTP_STATUS_CODE_SWITCHING_PROTOCOLS:
             return "Switching Protocols";
-        case 102:
+        case HTTP_STATUS_CODE_PROCESSING:
             return "Processing";
-        case 103:
+        case HTTP_STATUS_CODE_EARLY_HINTS:
             return "Early Hints";
-        case 200:
+        case HTTP_STATUS_CODE_OK:
             return "OK";
-        case 201:
+        case HTTP_STATUS_CODE_CREATED:
             return "Created";
-        case 202:
+        case HTTP_STATUS_CODE_ACCEPTED:
             return "Accepted";
-        case 203:
+        case HTTP_STATUS_CODE_NON_AUTHORITATIVE_INFORMATION:
             return "Non-Authoritative Information";
-        case 204:
+        case HTTP_STATUS_CODE_NO_CONTENT:
             return "No Content";
-        case 205:
+        case HTTP_STATUS_CODE_RESET_CONTENT:
             return "Reset Content";
-        case 206:
+        case HTTP_STATUS_CODE_PARTIAL_CONTENT:
             return "Partial Content";
-        case 207:
+        case HTTP_STATUS_CODE_MULTI_STATUS:
             return "Multi-Status";
-        case 208:
+        case HTTP_STATUS_CODE_ALREADY_REPORTED:
             return "Already Reported";
-        case 226:
+        case HTTP_STATUS_CODE_IM_USED:
             return "IM Used";
-        case 300:
+        case HTTP_STATUS_CODE_MULTIPLE_CHOICES:
             return "Multiple Choices";
-        case 301:
+        case HTTP_STATUS_CODE_MOVED_PERMANENTLY:
             return "Moved Permanently";
-        case 302:
+        case HTTP_STATUS_CODE_FOUND:
             return "Found";
-        case 303:
+        case HTTP_STATUS_CODE_SEE_OTHER:
             return "See Other";
-        case 304:
+        case HTTP_STATUS_CODE_NOT_MODIFIED:
             return "Not Modified";
-        case 305:
+        case HTTP_STATUS_CODE_USE_PROXY:
             return "Use Proxy";
-        case 307:
+        case HTTP_STATUS_CODE_TEMPORARY_REDIRECT:
             return "Temporary Redirect";
-        case 308:
+        case HTTP_STATUS_CODE_PERMANENT_REDIRECT:
             return "Permanent Redirect";
-        case 400:
+        case HTTP_STATUS_CODE_BAD_REQUEST:
             return "Bad Request";
-        case 401:
+        case HTTP_STATUS_CODE_UNAUTHORIZED:
             return "Unauthorized";
-        case 402:
+        case HTTP_STATUS_CODE_PAYMENT_REQUIRED:
             return "Payment Required";
-        case 403:
+        case HTTP_STATUS_CODE_FORBIDDEN:
             return "Forbidden";
-        case 404:
+        case HTTP_STATUS_CODE_NOT_FOUND:
             return "Not Found";
-        case 405:
+        case HTTP_STATUS_CODE_METHOD_NOT_ALLOWED:
             return "Method Not Allowed";
-        case 406:
+        case HTTP_STATUS_CODE_NOT_ACCEPTABLE:
             return "Not Acceptable";
-        case 407:
+        case HTTP_STATUS_CODE_PROXY_AUTHENTICATION_REQUIRED:
             return "Proxy Authentication Required";
-        case 408:
+        case HTTP_STATUS_CODE_REQUEST_TIMEOUT:
             return "Request Timeout";
-        case 409:
+        case HTTP_STATUS_CODE_CONFLICT:
             return "Conflict";
-        case 410:
+        case HTTP_STATUS_CODE_GONE:
             return "Gone";
-        case 411:
+        case HTTP_STATUS_CODE_LENGTH_REQUIRED:
             return "Length Required";
-        case 412:
+        case HTTP_STATUS_CODE_PRECONDITION_FAILED:
             return "Precondition Failed";
-        case 413:
+        case HTTP_STATUS_CODE_REQUEST_ENTITY_TOO_LARGE:
             return "Payload Too Large";
-        case 414:
+        case HTTP_STATUS_CODE_REQUEST_URI_TOO_LONG:
             return "URI Too Long";
-        case 415:
+        case HTTP_STATUS_CODE_UNSUPPORTED_MEDIA_TYPE:
             return "Unsupported Media Type";
-        case 416:
+        case HTTP_STATUS_CODE_REQUESTED_RANGE_NOT_SATISFIABLE:
             return "Range Not Satisfiable";
-        case 417:
+        case HTTP_STATUS_CODE_EXPECTATION_FAILED:
             return "Expectation Failed";
-        case 421:
+        case HTTP_STATUS_CODE_AUTHENTICATION_TIMEOUT:
+            return "Authentication Timeout";
+        case HTTP_STATUS_CODE_METHOD_FAILURE:
+            return "Method Failed";
+        case HTTP_STATUS_CODE_MISDIRECTED_REQUEST:
             return "Misdirected Request";
-        case 422:
+        case HTTP_STATUS_CODE_UNPROCESSABLE_ENTITY:
             return "Unprocessable Entity";
-        case 423:
+        case HTTP_STATUS_CODE_LOCKED:
             return "Locked";
-        case 424:
+        case HTTP_STATUS_CODE_FAILED_DEPENDENCY:
             return "Failed Dependency";
-        case 425:
+        case HTTP_STATUS_CODE_TOO_EARLY:
             return "Too Early";
-        case 426:
+        case HTTP_STATUS_CODE_UPGRADE_REQUIRED:
             return "Upgrade Required";
-        case 428:
+        case HTTP_STATUS_CODE_PRECONDITION_REQUIRED:
             return "Precondition Required";
-        case 429:
+        case HTTP_STATUS_CODE_TOO_MANY_REQUESTS:
             return "Too Many Requests";
-        case 431:
+        case HTTP_STATUS_CODE_REQUEST_HEADER_FIELDS_TOO_LARGE:
             return "Request Header Fields Too Large";
-        case 451:
+        case HTTP_STATUS_CODE_LOGIN_TIMEOUT:
+            return "Login Timeout";
+        case HTTP_STATUS_CODE_NO_RESPONSE:
+            return "No Response";
+        case HTTP_STATUS_CODE_RETRY_WITH:
+            return "Retry With";
+        case HTTP_STATUS_CODE_BLOCKED:
+            return "Blocked";
+        case HTTP_STATUS_CODE_UNAVAILABLE_FOR_LEGAL_REASON:
             return "Unavailable For Legal Reasons";
-        case 500:
+        case HTTP_STATUS_CODE_REQUEST_HEADER_TOO_LARGE:
+            return "Request Header Too Large";
+        case HTTP_STATUS_CODE_CERT_ERROR:
+            return "Cert Error";
+        case HTTP_STATUS_CODE_NO_CERT:
+            return "No Cert";
+        case HTTP_STATUS_CODE_HTTP_TO_HTTPS:
+            return "Http To Https";
+        case HTTP_STATUS_CODE_CLIENT_CLOSED_TO_REQUEST:
+            return "Client Closed To Request";
+        case HTTP_STATUS_CODE_INTERNAL_SERVER_ERROR:
             return "Internal Server Error";
-        case 501:
+        case HTTP_STATUS_CODE_NOT_IMPLEMENTED:
             return "Not Implemented";
-        case 502:
+        case HTTP_STATUS_CODE_BAD_GATEWAY:
             return "Bad Gateway";
-        case 503:
+        case HTTP_STATUS_CODE_SERVICE_UNAVAILABLE:
             return "Service Unavailable";
-        case 504:
+        case HTTP_STATUS_CODE_GATEWAY_TIMEOUT:
             return "Gateway Timeout";
-        case 505:
+        case HTTP_STATUS_CODE_HTTP_VERSION_NOT_SUPPORTED:
             return "HTTP Version Not Supported";
-        case 506:
+        case HTTP_STATUS_CODE_VARIANT_ALSO_NEGOTIATES:
             return "Variant Also Negotiates";
-        case 507:
+        case HTTP_STATUS_CODE_INSUFFICIENT_STORAGE:
             return "Insufficient Storage";
-        case 508:
+        case HTTP_STATUS_CODE_LOOP_DETECTED:
             return "Loop Detected";
-        case 510:
+        case HTTP_STATUS_CODE_BANDWIDTH_LIMIT_EXCEEDED:
+            return "Bandwidth Limit Exceeded";
+        case HTTP_STATUS_CODE_NOT_EXTENDED:
             return "Not Extended";
-        case 511:
+        case HTTP_STATUS_CODE_NETWORK_AUTHENTICATION_REQUIRED:
             return "Network Authentication Required";
+        case HTTP_STATUS_CODE_NETWORK_READ_TIMEOUT:
+            return "Network Read Timeout";
+        case HTTP_STATUS_CODE_NETWORK_CONNECT_TIMEOUT:
+            return "Network Connect Timeout";
         default:
             return "";
     }

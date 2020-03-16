@@ -306,6 +306,15 @@ int aws_http_headers_get(
     return aws_raise_error(AWS_ERROR_HTTP_HEADER_NOT_FOUND);
 }
 
+bool aws_http_has_header_in_headers(const struct aws_http_headers *headers, struct aws_byte_cursor name) {
+
+    struct aws_byte_cursor out_value;
+    if (aws_http_headers_get(headers, name, &out_value)) {
+        return false;
+    }
+    return true;
+}
+
 struct aws_http_message {
     struct aws_allocator *allocator;
     struct aws_http_headers *headers;
@@ -560,6 +569,11 @@ struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_
 struct aws_http_headers *aws_http_message_get_headers(struct aws_http_message *message) {
     AWS_PRECONDITION(message);
     return message->headers;
+}
+
+bool aws_http_has_header_in_http_message(struct aws_http_message *message, struct aws_byte_cursor name) {
+    AWS_PRECONDITION(message);
+    return aws_http_has_header_in_headers(message->headers, name);
 }
 
 const struct aws_http_headers *aws_http_message_get_const_headers(const struct aws_http_message *message) {
