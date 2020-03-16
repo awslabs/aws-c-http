@@ -688,6 +688,13 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
     bool was_cross_thread_work_scheduled = false;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
+
+        if (stream->id) {
+            /* stream has already been activated. */
+            s_unlock_synced_data(connection);
+            return AWS_OP_SUCCESS;
+        }
+
         stream->id = aws_http_connection_get_next_stream_id(base_connection);
 
         if (stream->id) {

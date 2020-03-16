@@ -126,7 +126,7 @@ struct aws_h1_stream *aws_h1_stream_new_request_handler(const struct aws_http_re
         return NULL;
     }
 
-    /* big assumption, in server mode, the following code can only run from the event-loop thread so don't worry
+    /* This code is only executed in server mode and can only be invoked from the event-loop thread so don't worry
      * with the lock here. */
     stream->base.id = aws_http_connection_get_next_stream_id(options->server_connection);
 

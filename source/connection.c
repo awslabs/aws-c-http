@@ -847,7 +847,6 @@ uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *conn
 
     uint32_t next_id = connection->next_stream_id;
 
-    /* If next fetch would overflow next_stream_id, set it to 0 */
     if (AWS_UNLIKELY(next_id > MAX_STREAM_ID)) {
         AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: All available stream ids are gone", (void *)connection);
 
