@@ -13,9 +13,9 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/common/string.h>
 #include <aws/http/request_response.h>
 #include <aws/http/status_code.h>
-#include <aws/common/string.h>
 #include <aws/testing/aws_test_allocators.h>
 
 #define TEST_CASE(NAME)                                                                                                \
