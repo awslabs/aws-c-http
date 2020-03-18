@@ -13,8 +13,8 @@
  * permissions and limitations under the License.
  */
 #include <aws/http/private/h1_encoder.h>
-
 #include <aws/http/private/strutil.h>
+#include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
 
@@ -230,8 +230,8 @@ int aws_h1_encoder_message_init_from_response(
      * no body needed in the response
      * RFC-7230 section 3.3 Message Body
      */
-    body_headers_ignored |= status_int == AWS_HTTP_STATUS_304_NOT_MODIFIED;
-    bool body_headers_forbidden = status_int == AWS_HTTP_STATUS_204_NO_CONTENT || status_int / 100 == 1;
+    body_headers_ignored |= status_int == AWS_HTTP_STATUS_CODE_304_NOT_MODIFIED;
+    bool body_headers_forbidden = status_int == AWS_HTTP_STATUS_CODE_204_NO_CONTENT || status_int / 100 == 1;
     err = s_scan_outgoing_headers(message, response, &header_lines_len, body_headers_ignored, body_headers_forbidden);
     if (err) {
         goto error;

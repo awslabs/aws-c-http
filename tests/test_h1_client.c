@@ -13,10 +13,10 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/common/uuid.h>
 #include <aws/http/private/h1_connection.h>
 #include <aws/http/request_response.h>
-
-#include <aws/common/uuid.h>
+#include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
 #include <aws/testing/io_testing_channel.h>
@@ -2022,7 +2022,7 @@ static int s_switch_protocols_on_response_header_block_done(
 
     /* install downstream hander */
     if (switcher->install_downstream_handler &&
-        (switcher->upgrade_response_status == AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS)) {
+        (switcher->upgrade_response_status == AWS_HTTP_STATUS_CODE_101_SWITCHING_PROTOCOLS)) {
 
         int err = testing_channel_install_downstream_handler(
             &switcher->tester->testing_channel, switcher->downstream_handler_window_size);

@@ -415,6 +415,12 @@ int aws_http_headers_get(
     struct aws_byte_cursor *out_value);
 
 /**
+ * Test if header name exists or not in headers
+ */
+AWS_HTTP_API
+bool aws_http_headers_has(const struct aws_http_headers *headers, struct aws_byte_cursor name);
+
+/**
  * Remove all headers with this name.
  * AWS_ERROR_HTTP_HEADER_NOT_FOUND is raised if no headers with this name are found.
  */

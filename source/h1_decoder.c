@@ -13,10 +13,10 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/private/h1_decoder.h>
-
 #include <aws/common/string.h>
+#include <aws/http/private/h1_decoder.h>
 #include <aws/http/private/strutil.h>
+#include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 
 AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_chunked, "chunked");
@@ -686,8 +686,8 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
     int code_val = (int)code_val_u64;
 
     /* RFC-7230 section 3.3 Message Body */
-    decoder->body_headers_ignored |= code_val == AWS_HTTP_STATUS_304_NOT_MODIFIED;
-    decoder->body_headers_forbidden = code_val == AWS_HTTP_STATUS_204_NO_CONTENT || code_val / 100 == 1;
+    decoder->body_headers_ignored |= code_val == AWS_HTTP_STATUS_CODE_304_NOT_MODIFIED;
+    decoder->body_headers_forbidden = code_val == AWS_HTTP_STATUS_CODE_204_NO_CONTENT || code_val / 100 == 1;
 
     if (s_check_info_response_status_code(code_val)) {
         decoder->header_block = AWS_HTTP_HEADER_BLOCK_INFORMATIONAL;
