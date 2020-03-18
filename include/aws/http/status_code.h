@@ -21,7 +21,7 @@
  * https://www.iana.org/assignments/http-status-codes/http-status-codes.txt
  * This is NOT a definitive list of codes.
  */
-enum http_status_code {
+enum aws_http_status_code {
     /*
      * This is a special response code defined for convenience in error processing,
      * indicating processing of http request met error and didn't reach server.
