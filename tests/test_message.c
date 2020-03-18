@@ -101,14 +101,14 @@ TEST_CASE(message_response_status) {
     ASSERT_ERROR(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE, aws_http_message_get_response_status(response, &get));
 
     /* Test simple set/get */
-    ASSERT_SUCCESS(aws_http_message_set_response_status(response, HTTP_STATUS_CODE_OK));
+    ASSERT_SUCCESS(aws_http_message_set_response_status(response, AWS_HTTP_STATUS_CODE_200_OK));
     ASSERT_SUCCESS(aws_http_message_get_response_status(response, &get));
-    ASSERT_INT_EQUALS(HTTP_STATUS_CODE_OK, get);
+    ASSERT_INT_EQUALS(AWS_HTTP_STATUS_CODE_200_OK, get);
 
     /* Set a new status */
-    ASSERT_SUCCESS(aws_http_message_set_response_status(response, HTTP_STATUS_CODE_NOT_FOUND));
+    ASSERT_SUCCESS(aws_http_message_set_response_status(response, AWS_HTTP_STATUS_CODE_404_NOT_FOUND));
     ASSERT_SUCCESS(aws_http_message_get_response_status(response, &get));
-    ASSERT_INT_EQUALS(HTTP_STATUS_CODE_NOT_FOUND, get);
+    ASSERT_INT_EQUALS(AWS_HTTP_STATUS_CODE_404_NOT_FOUND, get);
 
     aws_http_message_destroy(response);
     return AWS_OP_SUCCESS;
@@ -348,10 +348,10 @@ TEST_CASE(message_refcounts) {
     /* keep headers alive after message is destroyed */
     aws_http_headers_acquire(headers);
     aws_http_message_release(message);
-    ASSERT_FALSE(aws_http_has_header_in_headers(headers, aws_byte_cursor_from_c_str("Host")));
+    ASSERT_FALSE(aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Host")));
     ASSERT_SUCCESS(
         aws_http_headers_add(headers, aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com")));
-    ASSERT_TRUE(aws_http_has_header_in_headers(headers, aws_byte_cursor_from_c_str("Host")));
+    ASSERT_TRUE(aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Host")));
 
     aws_http_headers_release(headers);
     return AWS_OP_SUCCESS;
@@ -370,13 +370,9 @@ TEST_CASE(message_with_existing_headers) {
     /* assert message has acquired hold on headers */
     aws_http_headers_release(headers);
 
-    ASSERT_FALSE(aws_http_has_header_in_http_message(message, aws_byte_cursor_from_c_str("Host")));
-
     /* still valid, right? */
     struct aws_http_header new_header = {aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com")};
     ASSERT_SUCCESS(aws_http_message_add_header(message, new_header));
-
-    ASSERT_TRUE(aws_http_has_header_in_http_message(message, aws_byte_cursor_from_c_str("Host")));
 
     /* clean up*/
     aws_http_message_release(message);

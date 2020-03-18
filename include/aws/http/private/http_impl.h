@@ -43,19 +43,6 @@ enum aws_http_header_name {
     AWS_HTTP_HEADER_COUNT, /* Number of enums */
 };
 
-/**
- * Status codes that affect internal processing.
- * This is NOT a definitive list of codes.
- */
-enum aws_http_status {
-    AWS_HTTP_STATUS_UNKNOWN = -1, /* Invalid status code. Not using 0 because it's technically a legal value */
-    AWS_HTTP_STATUS_100_CONTINUE = 100,
-    AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS = 101,
-    AWS_HTTP_STATUS_200_OK = 200,
-    AWS_HTTP_STATUS_204_NO_CONTENT = 204,
-    AWS_HTTP_STATUS_304_NOT_MODIFIED = 304,
-};
-
 AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API void aws_http_fatal_assert_library_initialized(void);

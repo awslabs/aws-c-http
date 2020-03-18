@@ -13,13 +13,13 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/private/request_response_impl.h>
-
 #include <aws/common/array_list.h>
 #include <aws/common/string.h>
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/private/request_response_impl.h>
 #include <aws/http/private/strutil.h>
 #include <aws/http/server.h>
+#include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 
 #if _MSC_VER
@@ -306,7 +306,7 @@ int aws_http_headers_get(
     return aws_raise_error(AWS_ERROR_HTTP_HEADER_NOT_FOUND);
 }
 
-bool aws_http_has_header_in_headers(const struct aws_http_headers *headers, struct aws_byte_cursor name) {
+bool aws_http_headers_has(const struct aws_http_headers *headers, struct aws_byte_cursor name) {
 
     struct aws_byte_cursor out_value;
     if (aws_http_headers_get(headers, name, &out_value)) {
@@ -420,7 +420,7 @@ struct aws_http_message *aws_http_message_new_response(struct aws_allocator *all
     struct aws_http_message *message = s_message_new_common(allocator, NULL);
     if (message) {
         message->response_data = &message->subclass_data.response;
-        message->response_data->status = AWS_HTTP_STATUS_UNKNOWN;
+        message->response_data->status = AWS_HTTP_STATUS_CODE_UNKNOWN;
     }
     return message;
 }
@@ -529,9 +529,9 @@ int aws_http_message_get_response_status(const struct aws_http_message *response
     AWS_PRECONDITION(out_status_code);
     AWS_PRECONDITION(response_message->response_data);
 
-    *out_status_code = AWS_HTTP_STATUS_UNKNOWN;
+    *out_status_code = AWS_HTTP_STATUS_CODE_UNKNOWN;
 
-    if (response_message->response_data && (response_message->response_data->status != AWS_HTTP_STATUS_UNKNOWN)) {
+    if (response_message->response_data && (response_message->response_data->status != AWS_HTTP_STATUS_CODE_UNKNOWN)) {
         *out_status_code = response_message->response_data->status;
         return AWS_OP_SUCCESS;
     }
@@ -569,11 +569,6 @@ struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_
 struct aws_http_headers *aws_http_message_get_headers(struct aws_http_message *message) {
     AWS_PRECONDITION(message);
     return message->headers;
-}
-
-bool aws_http_has_header_in_http_message(struct aws_http_message *message, struct aws_byte_cursor name) {
-    AWS_PRECONDITION(message);
-    return aws_http_has_header_in_headers(message->headers, name);
 }
 
 const struct aws_http_headers *aws_http_message_get_const_headers(const struct aws_http_message *message) {
@@ -691,7 +686,7 @@ struct aws_http_connection *aws_http_stream_get_connection(const struct aws_http
 int aws_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status) {
     AWS_ASSERT(stream && stream->client_data);
 
-    if (stream->client_data->response_status == (int)AWS_HTTP_STATUS_UNKNOWN) {
+    if (stream->client_data->response_status == (int)AWS_HTTP_STATUS_CODE_UNKNOWN) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Status code not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }

@@ -12,9 +12,9 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-#include <aws/http/private/h1_stream.h>
-
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/private/h1_stream.h>
+#include <aws/http/status_code.h>
 
 #include <aws/io/logging.h>
 
@@ -96,7 +96,7 @@ struct aws_h1_stream *aws_h1_stream_new_request(
     }
 
     stream->base.client_data = &stream->base.client_or_server_data.client;
-    stream->base.client_data->response_status = AWS_HTTP_STATUS_UNKNOWN;
+    stream->base.client_data->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
 
     /* Validate request and cache info that the encoder will eventually need */
     int err =

@@ -418,13 +418,7 @@ int aws_http_headers_get(
  * Test if header name exists or not in headers
  */
 AWS_HTTP_API
-bool aws_http_has_header_in_headers(const struct aws_http_headers *headers, struct aws_byte_cursor name);
-
-/**
- * Test if header name exists or not in http message
- */
-AWS_HTTP_API
-bool aws_http_has_header_in_http_message(struct aws_http_message *message, struct aws_byte_cursor name);
+bool aws_http_headers_has(const struct aws_http_headers *headers, struct aws_byte_cursor name);
 
 /**
  * Remove all headers with this name.
