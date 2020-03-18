@@ -61,8 +61,8 @@ static struct aws_h1_stream *s_stream_new_common(
     stream->base.on_incoming_body = on_incoming_body;
     stream->base.on_complete = on_complete;
 
-    /* Stream refcount starts at 2. 1 for user and 1 for connection to release it's done with the stream */
-    aws_atomic_init_int(&stream->base.refcount, 2);
+    /* Stream refcount starts at 1 for user  and is incremented upon activation for the connection */
+    aws_atomic_init_int(&stream->base.refcount, 1);
 
     return stream;
 }
@@ -132,6 +132,7 @@ struct aws_h1_stream *aws_h1_stream_new_request_handler(const struct aws_http_re
 
     stream->base.server_data = &stream->base.client_or_server_data.server;
     stream->base.server_data->on_request_done = options->on_request_done;
+    aws_atomic_fetch_add(&stream->base.refcount, 1);
 
     return stream;
 }

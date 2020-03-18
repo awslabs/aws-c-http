@@ -79,8 +79,8 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     stream->base.on_incoming_body = options->on_response_body;
     stream->base.on_complete = options->on_complete;
 
-    /* Stream refcount starts at 2. 1 for user and 1 for connection to release when it's done with the stream */
-    aws_atomic_init_int(&stream->base.refcount, 2);
+    /* Stream refcount starts at 1, and gets incremented again for the connection upon a call to activate() */
+    aws_atomic_init_int(&stream->base.refcount, 1);
 
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;

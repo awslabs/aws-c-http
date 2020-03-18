@@ -453,6 +453,9 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
         return AWS_OP_ERR;
     }
 
+    /* activate one more time now that the connection can actually run the stream. */
+    aws_atomic_fetch_add(&stream->refcount, 1);
+
     if (should_schedule_task) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling outgoing stream task.", (void *)&connection->base);
         aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
