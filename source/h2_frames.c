@@ -24,18 +24,6 @@
 
 #include <inttypes.h>
 
-/* #TODO: Don't raise AWS_H2_ERR_* enums, raise AWS_ERROR_* .
- *        Actually, maybe do NOT raise H2-specific errors, because those are for *receiving* bad data,
- *        and errors from the encoder are user error???
- *        Also, if encoder raises error corresponding to AWS_H2_ERR, should
- *        we send that code in the GOAWAY, or always treat encoder errors as AWS_H2_ERR_INTERNAL?
- *        Like, you're only supposed to inform peer of errors that were their fault, right? */
-
-/* #TODO: when is the right time to validate every possible input?
- *        while encoding? while making new frame? in actual user-facing API? */
-
-/* #TODO: use add_checked and mul_checked */
-
 #define ENCODER_LOGF(level, encoder, text, ...)                                                                        \
     AWS_LOGF_##level(AWS_LS_HTTP_ENCODER, "id=%p " text, (encoder)->logging_id, __VA_ARGS__)
 
@@ -331,7 +319,7 @@ int aws_h2_encode_data_frame(
         goto handle_waiting_for_more_space;
     }
 
-    /* Limit where body can go by making a sub-buffer */
+    /* Use a sub-buffer to limit where body can go */
     struct aws_byte_buf body_sub_buf =
         aws_byte_buf_from_empty_array(output->buffer + output->len + bytes_preceding_body, max_body);
 
@@ -541,7 +529,7 @@ int s_encode_single_header_block_frame(
     uint8_t pad_length = 0;
     const struct aws_h2_frame_priority_settings *priority_settings = NULL;
     const uint32_t *promised_stream_id = NULL;
-    uint32_t payload_overhead = 0; /* Amount of payload holding things other than header-block (padding, etc) */
+    size_t payload_overhead = 0; /* Amount of payload holding things other than header-block (padding, etc) */
 
     if (frame->state == AWS_H2_HEADERS_STATE_FIRST_FRAME) {
         frame_type = frame->base.type;
@@ -887,8 +875,13 @@ struct aws_h2_frame *aws_h2_frame_new_settings(
     size_t num_settings,
     bool ack) {
 
-    AWS_PRECONDITION(!ack || num_settings == 0, "Settings ACK must be empty");
     AWS_PRECONDITION(settings_array || num_settings == 0);
+
+    /* Cannot send settings in an ACK frame */
+    if (ack && num_settings > 0) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
 
     /* Check against insane edge case of too many settings to fit in a frame.
      * Arbitrarily choosing half the default payload size */

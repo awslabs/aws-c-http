@@ -74,11 +74,9 @@ enum aws_h2_settings {
     AWS_H2_SETTINGS_END_RANGE, /* End of known values */
 };
 
-/* Payload must fit in 3 bytes */
-#define AWS_H2_PAYLOAD_MAX (0x00FFFFFF)
-
-#define AWS_H2_WINDOW_UPDATE_MAX (0x7FFFFFFF)
-#define AWS_H2_STREAM_ID_MAX (0x7FFFFFFF)
+#define AWS_H2_PAYLOAD_MAX (0x00FFFFFF)       /* must fit in 3 bytes */
+#define AWS_H2_WINDOW_UPDATE_MAX (0x7FFFFFFF) /* cannot use high bit */
+#define AWS_H2_STREAM_ID_MAX (0x7FFFFFFF)     /* cannot use high bit */
 
 /* Legal min(inclusive) and max(inclusive) for each setting */
 extern const uint32_t aws_h2_settings_bounds[AWS_H2_SETTINGS_END_RANGE][2];
