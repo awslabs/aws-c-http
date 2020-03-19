@@ -13,10 +13,10 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/common/hash_table.h>
 #include <aws/http/private/hpack.h>
 #include <aws/http/private/http_impl.h>
-
-#include <aws/common/hash_table.h>
+#include <aws/http/status_code.h>
 #include <aws/compression/compression.h>
 #include <aws/io/logging.h>
 
@@ -283,127 +283,127 @@ const char *aws_http_status_text(int status_code) {
      * https://www.iana.org/assignments/http-status-codes/http-status-codes.txt
      */
     switch (status_code) {
-        case 100:
+        case AWS_HTTP_STATUS_CODE_100_CONTINUE:
             return "Continue";
-        case 101:
+        case AWS_HTTP_STATUS_CODE_101_SWITCHING_PROTOCOLS:
             return "Switching Protocols";
-        case 102:
+        case AWS_HTTP_STATUS_CODE_102_PROCESSING:
             return "Processing";
-        case 103:
+        case AWS_HTTP_STATUS_CODE_103_EARLY_HINTS:
             return "Early Hints";
-        case 200:
+        case AWS_HTTP_STATUS_CODE_200_OK:
             return "OK";
-        case 201:
+        case AWS_HTTP_STATUS_CODE_201_CREATED:
             return "Created";
-        case 202:
+        case AWS_HTTP_STATUS_CODE_202_ACCEPTED:
             return "Accepted";
-        case 203:
+        case AWS_HTTP_STATUS_CODE_203_NON_AUTHORITATIVE_INFORMATION:
             return "Non-Authoritative Information";
-        case 204:
+        case AWS_HTTP_STATUS_CODE_204_NO_CONTENT:
             return "No Content";
-        case 205:
+        case AWS_HTTP_STATUS_CODE_205_RESET_CONTENT:
             return "Reset Content";
-        case 206:
+        case AWS_HTTP_STATUS_CODE_206_PARTIAL_CONTENT:
             return "Partial Content";
-        case 207:
+        case AWS_HTTP_STATUS_CODE_207_MULTI_STATUS:
             return "Multi-Status";
-        case 208:
+        case AWS_HTTP_STATUS_CODE_208_ALREADY_REPORTED:
             return "Already Reported";
-        case 226:
+        case AWS_HTTP_STATUS_CODE_226_IM_USED:
             return "IM Used";
-        case 300:
+        case AWS_HTTP_STATUS_CODE_300_MULTIPLE_CHOICES:
             return "Multiple Choices";
-        case 301:
+        case AWS_HTTP_STATUS_CODE_301_MOVED_PERMANENTLY:
             return "Moved Permanently";
-        case 302:
+        case AWS_HTTP_STATUS_CODE_302_FOUND:
             return "Found";
-        case 303:
+        case AWS_HTTP_STATUS_CODE_303_SEE_OTHER:
             return "See Other";
-        case 304:
+        case AWS_HTTP_STATUS_CODE_304_NOT_MODIFIED:
             return "Not Modified";
-        case 305:
+        case AWS_HTTP_STATUS_CODE_305_USE_PROXY:
             return "Use Proxy";
-        case 307:
+        case AWS_HTTP_STATUS_CODE_307_TEMPORARY_REDIRECT:
             return "Temporary Redirect";
-        case 308:
+        case AWS_HTTP_STATUS_CODE_308_PERMANENT_REDIRECT:
             return "Permanent Redirect";
-        case 400:
+        case AWS_HTTP_STATUS_CODE_400_BAD_REQUEST:
             return "Bad Request";
-        case 401:
+        case AWS_HTTP_STATUS_CODE_401_UNAUTHORIZED:
             return "Unauthorized";
-        case 402:
+        case AWS_HTTP_STATUS_CODE_402_PAYMENT_REQUIRED:
             return "Payment Required";
-        case 403:
+        case AWS_HTTP_STATUS_CODE_403_FORBIDDEN:
             return "Forbidden";
-        case 404:
+        case AWS_HTTP_STATUS_CODE_404_NOT_FOUND:
             return "Not Found";
-        case 405:
+        case AWS_HTTP_STATUS_CODE_405_METHOD_NOT_ALLOWED:
             return "Method Not Allowed";
-        case 406:
+        case AWS_HTTP_STATUS_CODE_406_NOT_ACCEPTABLE:
             return "Not Acceptable";
-        case 407:
+        case AWS_HTTP_STATUS_CODE_407_PROXY_AUTHENTICATION_REQUIRED:
             return "Proxy Authentication Required";
-        case 408:
+        case AWS_HTTP_STATUS_CODE_408_REQUEST_TIMEOUT:
             return "Request Timeout";
-        case 409:
+        case AWS_HTTP_STATUS_CODE_409_CONFLICT:
             return "Conflict";
-        case 410:
+        case AWS_HTTP_STATUS_CODE_410_GONE:
             return "Gone";
-        case 411:
+        case AWS_HTTP_STATUS_CODE_411_LENGTH_REQUIRED:
             return "Length Required";
-        case 412:
+        case AWS_HTTP_STATUS_CODE_412_PRECONDITION_FAILED:
             return "Precondition Failed";
-        case 413:
+        case AWS_HTTP_STATUS_CODE_413_REQUEST_ENTITY_TOO_LARGE:
             return "Payload Too Large";
-        case 414:
+        case AWS_HTTP_STATUS_CODE_414_REQUEST_URI_TOO_LONG:
             return "URI Too Long";
-        case 415:
+        case AWS_HTTP_STATUS_CODE_415_UNSUPPORTED_MEDIA_TYPE:
             return "Unsupported Media Type";
-        case 416:
+        case AWS_HTTP_STATUS_CODE_416_REQUESTED_RANGE_NOT_SATISFIABLE:
             return "Range Not Satisfiable";
-        case 417:
+        case AWS_HTTP_STATUS_CODE_417_EXPECTATION_FAILED:
             return "Expectation Failed";
-        case 421:
+        case AWS_HTTP_STATUS_CODE_421_MISDIRECTED_REQUEST:
             return "Misdirected Request";
-        case 422:
+        case AWS_HTTP_STATUS_CODE_422_UNPROCESSABLE_ENTITY:
             return "Unprocessable Entity";
-        case 423:
+        case AWS_HTTP_STATUS_CODE_423_LOCKED:
             return "Locked";
-        case 424:
+        case AWS_HTTP_STATUS_CODE_424_FAILED_DEPENDENCY:
             return "Failed Dependency";
-        case 425:
+        case AWS_HTTP_STATUS_CODE_425_TOO_EARLY:
             return "Too Early";
-        case 426:
+        case AWS_HTTP_STATUS_CODE_426_UPGRADE_REQUIRED:
             return "Upgrade Required";
-        case 428:
+        case AWS_HTTP_STATUS_CODE_428_PRECONDITION_REQUIRED:
             return "Precondition Required";
-        case 429:
+        case AWS_HTTP_STATUS_CODE_429_TOO_MANY_REQUESTS:
             return "Too Many Requests";
-        case 431:
+        case AWS_HTTP_STATUS_CODE_431_REQUEST_HEADER_FIELDS_TOO_LARGE:
             return "Request Header Fields Too Large";
-        case 451:
+        case AWS_HTTP_STATUS_CODE_451_UNAVAILABLE_FOR_LEGAL_REASON:
             return "Unavailable For Legal Reasons";
-        case 500:
+        case AWS_HTTP_STATUS_CODE_500_INTERNAL_SERVER_ERROR:
             return "Internal Server Error";
-        case 501:
+        case AWS_HTTP_STATUS_CODE_501_NOT_IMPLEMENTED:
             return "Not Implemented";
-        case 502:
+        case AWS_HTTP_STATUS_CODE_502_BAD_GATEWAY:
             return "Bad Gateway";
-        case 503:
+        case AWS_HTTP_STATUS_CODE_503_SERVICE_UNAVAILABLE:
             return "Service Unavailable";
-        case 504:
+        case AWS_HTTP_STATUS_CODE_504_GATEWAY_TIMEOUT:
             return "Gateway Timeout";
-        case 505:
+        case AWS_HTTP_STATUS_CODE_505_HTTP_VERSION_NOT_SUPPORTED:
             return "HTTP Version Not Supported";
-        case 506:
+        case AWS_HTTP_STATUS_CODE_506_VARIANT_ALSO_NEGOTIATES:
             return "Variant Also Negotiates";
-        case 507:
+        case AWS_HTTP_STATUS_CODE_507_INSUFFICIENT_STORAGE:
             return "Insufficient Storage";
-        case 508:
+        case AWS_HTTP_STATUS_CODE_508_LOOP_DETECTED:
             return "Loop Detected";
-        case 510:
+        case AWS_HTTP_STATUS_CODE_510_NOT_EXTENDED:
             return "Not Extended";
-        case 511:
+        case AWS_HTTP_STATUS_CODE_511_NETWORK_AUTHENTICATION_REQUIRED:
             return "Network Authentication Required";
         default:
             return "";
