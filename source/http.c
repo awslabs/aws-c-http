@@ -14,10 +14,10 @@
  */
 
 #include <aws/common/hash_table.h>
+#include <aws/compression/compression.h>
 #include <aws/http/private/hpack.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/status_code.h>
-#include <aws/compression/compression.h>
 #include <aws/io/logging.h>
 
 #include <ctype.h>
@@ -122,7 +122,7 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_FRAME_SIZE,
         "Received frame with an illegal frame size"),
-    AWS_DEFINE_ERROR_INFO_HTTP(  
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_COMPRESSION,
         "Error compressing or decompressing HPACK headers"),
 };
