@@ -62,11 +62,6 @@ const uint32_t aws_h2_settings_bounds[AWS_H2_SETTINGS_END_RANGE][2] = {
     [AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE][1] = UINT32_MAX,
 };
 
-/* Put constraints on frames that could get very large given crazy inputs.
- * This isn't dictated by the spec, it's here to avoid edge cases where
- * we'd never have a big enough output buffer to encode the frame. */
-static const size_t s_settings_and_goaway_payload_limit = 8192;
-
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 static const uint32_t s_u32_top_bit_mask = UINT32_MAX << 31;
@@ -164,6 +159,14 @@ static int s_frame_priority_settings_encode(
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
+    /* PRIORITY is encoded as (RFC-7540 6.3):
+     * +-+-------------------------------------------------------------+
+     * |E|                  Stream Dependency (31)                     |
+     * +-+-------------+-----------------------------------------------+
+     * |   Weight (8)  |
+     * +-+-------------+
+     */
+
     /* Write the top 4 bytes */
     uint32_t top_bytes = priority->stream_dependency | ((uint32_t)priority->stream_dependency_exclusive << 31);
     if (!aws_byte_buf_write_be32(output, top_bytes)) {
@@ -195,28 +198,26 @@ static void s_init_frame_base(
 }
 
 static int s_frame_prefix_encode(
-    struct aws_h2_frame_encoder *encoder,
     enum aws_h2_frame_type type,
     uint32_t stream_id,
     size_t length,
     uint8_t flags,
     struct aws_byte_buf *output) {
-    AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(output);
     AWS_PRECONDITION(!(stream_id & s_u32_top_bit_mask), "Invalid stream ID");
 
-    ENCODER_LOGF(
-        TRACE,
-        encoder,
-        "Encoding frame: type=%s stream_id=%" PRIu32 " payload_length=%zu flags=0x%02X",
-        aws_h2_frame_type_to_str(type),
-        stream_id,
-        length,
-        flags);
+    /* Frame prefix is encoded like this (RFC-7540 4.1):
+     * +-----------------------------------------------+
+     * |                 Length (24)                   |
+     * +---------------+---------------+---------------+
+     * |   Type (8)    |   Flags (8)   |
+     * +-+-------------+---------------+-------------------------------+
+     * |R|                 Stream Identifier (31)                      |
+     * +=+=============================================================+
+     */
 
     /* Length must fit in 24 bits */
     if (length > AWS_H2_PAYLOAD_MAX) {
-        ENCODER_LOGF(ERROR, encoder, "Payload size %zu exceeds max for HTTP/2", length);
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
@@ -352,7 +353,7 @@ int aws_h2_encode_data_frame(
 
     /* Write the frame prefix */
     const size_t payload_len = body_sub_buf.len + payload_overhead;
-    if (s_frame_prefix_encode(encoder, AWS_H2_FRAME_T_DATA, stream_id, payload_len, flags, output)) {
+    if (s_frame_prefix_encode(AWS_H2_FRAME_T_DATA, stream_id, payload_len, flags, output)) {
         goto error;
     }
 
@@ -394,6 +395,35 @@ error:
  * HEADERS / PUSH_PROMISE
  **********************************************************************************************************************/
 DEFINE_FRAME_VTABLE(headers);
+
+/* Represents a HEADERS or PUSH_PROMISE frame (followed by zero or more CONTINUATION frames) */
+struct aws_h2_frame_headers {
+    struct aws_h2_frame base;
+
+    /* Common data */
+    const struct aws_http_headers *headers;
+    uint8_t pad_length; /* Set to 0 to disable AWS_H2_FRAME_F_PADDED */
+
+    /* HEADERS-only data */
+    bool end_stream;   /* AWS_H2_FRAME_F_END_STREAM */
+    bool has_priority; /* AWS_H2_FRAME_F_PRIORITY */
+    struct aws_h2_frame_priority_settings priority;
+
+    /* PUSH_PROMISE-only data */
+    uint32_t promised_stream_id;
+
+    /* State */
+    enum {
+        AWS_H2_HEADERS_STATE_INIT,
+        AWS_H2_HEADERS_STATE_FIRST_FRAME,  /* header-block pre-encoded, no frames written yet */
+        AWS_H2_HEADERS_STATE_CONTINUATION, /* first frame written, need to write CONTINUATION frames now */
+        AWS_H2_HEADERS_STATE_COMPLETE,
+        AWS_H2_HEADERS_STATE_ERROR,
+    } state;
+
+    struct aws_byte_buf whole_encoded_header_block;
+    struct aws_byte_cursor header_block_cursor; /* tracks progress sending encoded header-block in fragments */
+};
 
 static struct aws_h2_frame *s_frame_new_headers_or_push_promise(
     struct aws_allocator *allocator,
@@ -583,7 +613,7 @@ int s_encode_single_header_block_frame(
 
     /* Write the frame prefix */
     const size_t payload_len = fragment_len + payload_overhead;
-    if (s_frame_prefix_encode(encoder, frame_type, frame->base.stream_id, payload_len, flags, output)) {
+    if (s_frame_prefix_encode(frame_type, frame->base.stream_id, payload_len, flags, output)) {
         goto error;
     }
 
@@ -709,11 +739,100 @@ error:
 }
 
 /***********************************************************************************************************************
+ * aws_h2_frame_prebuilt - Used by small simple frame types that we can pre-encode at the time of creation.
+ * The pre-encoded buffer is then just copied bit-by-bit during the actual "encode()" function.
+ *
+ * It's safe to pre-encode a frame if it doesn't query/mutate any external state. So PING is totally great
+ * to pre-encode, but HEADERS (which queries MAX_FRAME_SIZE and mutates the HPACK table) would be a bad candidate.
+ **********************************************************************************************************************/
+struct aws_h2_frame_prebuilt {
+    struct aws_h2_frame base;
+    struct aws_byte_buf encoded_buf;      /* pre-encoded H2 frame */
+    struct aws_byte_cursor send_progress; /* tracks progress sending encoded buffer */
+};
+
+DEFINE_FRAME_VTABLE(prebuilt);
+
+/* Can't pre-encode a frame unless it's guaranteed to fit, regardless of current settings. */
+static size_t s_prebuilt_payload_max(void) {
+    return aws_h2_settings_bounds[AWS_H2_SETTINGS_MAX_FRAME_SIZE][0];
+}
+
+/* Create aws_h2_frame_prebuilt and encode frame prefix into frame->encoded_buf.
+ * Caller must encode the payload to fill the rest of the encoded_buf. */
+static struct aws_h2_frame_prebuilt *s_h2_frame_new_prebuilt(
+    struct aws_allocator *allocator,
+    enum aws_h2_frame_type type,
+    uint32_t stream_id,
+    size_t payload_len,
+    uint8_t flags) {
+
+    if (payload_len > s_prebuilt_payload_max()) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    const size_t encoded_frame_len = s_frame_prefix_length + payload_len;
+
+    /* Use single allocation for frame and buffer storage */
+    struct aws_h2_frame_prebuilt *frame;
+    void *storage;
+    if (!aws_mem_acquire_many(
+            allocator, 2, &frame, sizeof(struct aws_h2_frame_prebuilt), &storage, encoded_frame_len)) {
+        return NULL;
+    }
+
+    AWS_ZERO_STRUCT(*frame);
+    s_init_frame_base(&frame->base, allocator, type, &s_frame_prebuilt_vtable, stream_id);
+    frame->encoded_buf = aws_byte_buf_from_empty_array(storage, encoded_frame_len);
+    frame->send_progress = aws_byte_cursor_from_array(storage, encoded_frame_len);
+
+    if (s_frame_prefix_encode(type, stream_id, payload_len, flags, &frame->encoded_buf)) {
+        goto error;
+    }
+
+    return frame;
+
+error:
+    s_frame_prebuilt_destroy(&frame->base);
+    return NULL;
+}
+
+static void s_frame_prebuilt_destroy(struct aws_h2_frame *frame_base) {
+    aws_mem_release(frame_base->alloc, frame_base);
+}
+
+static int s_frame_prebuilt_encode(
+    struct aws_h2_frame *frame_base,
+    struct aws_h2_frame_encoder *encoder,
+    struct aws_byte_buf *output,
+    bool *complete) {
+
+    struct aws_h2_frame_prebuilt *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_prebuilt, base);
+
+    if (frame->send_progress.len == frame->encoded_buf.len) {
+        ENCODER_LOGF(
+            TRACE,
+            encoder,
+            "Encoding frame type=%s stream_id=%" PRIu32 " - begin",
+            aws_h2_frame_type_to_str(frame->base.type),
+            frame->base.stream_id);
+    }
+
+    /* Write as much of the pre-encoded frame as will fit */
+    size_t chunk_len = aws_min_size(frame->send_progress.len, output->capacity - output->len);
+    if (chunk_len) {
+        struct aws_byte_cursor chunk = aws_byte_cursor_advance(&frame->send_progress, chunk_len);
+        aws_byte_buf_write_from_whole_cursor(output, chunk);
+    }
+
+    *complete = frame->send_progress.len == 0;
+    return AWS_OP_SUCCESS;
+}
+
+/***********************************************************************************************************************
  * PRIORITY
  **********************************************************************************************************************/
-DEFINE_FRAME_VTABLE(priority);
-static const size_t s_frame_priority_length = 5;
-
 struct aws_h2_frame *aws_h2_frame_new_priority(
     struct aws_allocator *allocator,
     uint32_t stream_id,
@@ -726,63 +845,30 @@ struct aws_h2_frame *aws_h2_frame_new_priority(
         return NULL;
     }
 
-    struct aws_h2_frame_priority *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_priority));
+    /* PRIORITY can be pre-encoded */
+    const uint8_t flags = 0;
+    const size_t payload_len = s_frame_priority_settings_size;
+
+    struct aws_h2_frame_prebuilt *frame =
+        s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_PRIORITY, stream_id, payload_len, flags);
     if (!frame) {
         return NULL;
     }
 
-    s_init_frame_base(&frame->base, allocator, AWS_H2_FRAME_T_PRIORITY, &s_frame_priority_vtable, stream_id);
-    frame->priority = *priority;
+    /* Write the priority settings */
+    if (s_frame_priority_settings_encode(priority, &frame->encoded_buf)) {
+        goto error;
+    }
 
     return &frame->base;
-}
-
-static void s_frame_priority_destroy(struct aws_h2_frame *frame_base) {
-    aws_mem_release(frame_base->alloc, frame_base);
-}
-
-static int s_frame_priority_encode(
-    struct aws_h2_frame *frame_base,
-    struct aws_h2_frame_encoder *encoder,
-    struct aws_byte_buf *output,
-    bool *complete) {
-
-    (void)encoder;
-    struct aws_h2_frame_priority *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_priority, base);
-
-    const size_t total_len = s_frame_prefix_length + s_frame_priority_length;
-    const size_t space_available = output->capacity - output->len;
-
-    /* If we can't encode the whole frame at once, try again later */
-    if (total_len > space_available) {
-        ENCODER_LOGF(
-            TRACE,
-            encoder,
-            "Insufficient space to encode PRIORITY for stream %" PRIu32 " right now",
-            frame->base.stream_id);
-
-        *complete = false;
-        return AWS_OP_SUCCESS;
-    }
-
-    /* Write the frame prefix */
-    if (s_frame_prefix_encode(encoder, frame->base.type, frame->base.stream_id, s_frame_priority_length, 0, output)) {
-        return AWS_OP_ERR;
-    }
-
-    /* Write the priority settings */
-    if (s_frame_priority_settings_encode(&frame->priority, output)) {
-        return AWS_OP_ERR;
-    }
-
-    *complete = true;
-    return AWS_OP_SUCCESS;
+error:
+    aws_h2_frame_destroy(&frame->base);
+    return NULL;
 }
 
 /***********************************************************************************************************************
  * RST_STREAM
  **********************************************************************************************************************/
-DEFINE_FRAME_VTABLE(rst_stream);
 static const size_t s_frame_rst_stream_length = 4;
 
 struct aws_h2_frame *aws_h2_frame_new_rst_stream(
@@ -794,62 +880,36 @@ struct aws_h2_frame *aws_h2_frame_new_rst_stream(
         return NULL;
     }
 
-    struct aws_h2_frame_rst_stream *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_rst_stream));
+    /* RST_STREAM can be pre-encoded */
+    const uint8_t flags = 0;
+    const size_t payload_len = s_frame_rst_stream_length;
+
+    struct aws_h2_frame_prebuilt *frame =
+        s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_RST_STREAM, stream_id, payload_len, flags);
     if (!frame) {
         return NULL;
     }
 
-    s_init_frame_base(&frame->base, allocator, AWS_H2_FRAME_T_RST_STREAM, &s_frame_rst_stream_vtable, stream_id);
-    frame->error_code = error_code;
+    /* Write RST_STREAM payload (RFC-7540 6.4):
+     * +---------------------------------------------------------------+
+     * |                        Error Code (32)                        |
+     * +---------------------------------------------------------------+
+     */
+    if (!aws_byte_buf_write_be32(&frame->encoded_buf, error_code)) {
+        aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+        goto error;
+    }
 
     return &frame->base;
-}
 
-static void s_frame_rst_stream_destroy(struct aws_h2_frame *frame_base) {
-    aws_mem_release(frame_base->alloc, frame_base);
-}
-
-static int s_frame_rst_stream_encode(
-    struct aws_h2_frame *frame_base,
-    struct aws_h2_frame_encoder *encoder,
-    struct aws_byte_buf *output,
-    bool *complete) {
-
-    (void)encoder;
-    struct aws_h2_frame_rst_stream *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_rst_stream, base);
-
-    const size_t total_len = s_frame_prefix_length + s_frame_rst_stream_length;
-    const size_t space_available = output->capacity - output->len;
-
-    /* If we can't encode the whole frame at once, try again later */
-    if (total_len > space_available) {
-        ENCODER_LOGF(
-            TRACE,
-            encoder,
-            "Insufficient space to encode RST_STREAM for stream %" PRIu32 " right now",
-            frame->base.stream_id);
-        *complete = false;
-        return AWS_OP_SUCCESS;
-    }
-
-    /* Write the frame prefix */
-    if (s_frame_prefix_encode(encoder, frame->base.type, frame->base.stream_id, s_frame_rst_stream_length, 0, output)) {
-        return AWS_OP_ERR;
-    }
-
-    /* Write the error_code */
-    if (!aws_byte_buf_write_be32(output, frame->error_code)) {
-        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-    }
-
-    *complete = true;
-    return AWS_OP_SUCCESS;
+error:
+    aws_h2_frame_destroy(&frame->base);
+    return NULL;
 }
 
 /***********************************************************************************************************************
  * SETTINGS
  **********************************************************************************************************************/
-DEFINE_FRAME_VTABLE(settings);
 static const size_t s_frame_setting_length = 6;
 
 struct aws_h2_frame *aws_h2_frame_new_settings(
@@ -867,11 +927,11 @@ struct aws_h2_frame *aws_h2_frame_new_settings(
     }
 
     /* Check against insane edge case of too many settings to fit in a frame. */
-    size_t max_settings = s_settings_and_goaway_payload_limit / s_frame_setting_length;
+    const size_t max_settings = s_prebuilt_payload_max() / s_frame_setting_length;
     if (num_settings > max_settings) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_ENCODER,
-            "Cannot create SETTINGS frame with %zu settings, this exceeds internal limit of %zu",
+            "Cannot create SETTINGS frame with %zu settings, the limit is %zu.",
             num_settings,
             max_settings);
 
@@ -879,139 +939,82 @@ struct aws_h2_frame *aws_h2_frame_new_settings(
         return NULL;
     }
 
-    struct aws_h2_frame_settings *frame;
-    struct aws_h2_frame_setting *array_alloc;
-    const size_t sizeof_settings_array = sizeof(struct aws_h2_frame_setting) * num_settings;
-    if (!aws_mem_acquire_many(
-            allocator, 2, &frame, sizeof(struct aws_h2_frame_settings), &array_alloc, sizeof_settings_array)) {
+    /* SETTINGS can be pre-encoded */
+    const uint8_t flags = ack ? AWS_H2_FRAME_F_ACK : 0;
+    const size_t payload_len = num_settings * s_frame_setting_length;
+    const uint32_t stream_id = 0;
+
+    struct aws_h2_frame_prebuilt *frame =
+        s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_SETTINGS, stream_id, payload_len, flags);
+    if (!frame) {
         return NULL;
     }
 
-    AWS_ZERO_STRUCT(*frame);
-    s_init_frame_base(&frame->base, allocator, AWS_H2_FRAME_T_SETTINGS, &s_frame_settings_vtable, 0);
-    frame->ack = ack;
-    frame->settings_count = num_settings;
-    if (num_settings) {
-        frame->settings_array = memcpy(array_alloc, settings_array, sizeof_settings_array);
-    }
+    /* Write the settings, each one is encoded like (RFC-7540 6.5.1):
+     * +-------------------------------+
+     * |       Identifier (16)         |
+     * +-------------------------------+-------------------------------+
+     * |                        Value (32)                             |
+     * +---------------------------------------------------------------+
+     */
+    for (size_t i = 0; i < num_settings; ++i) {
+        if (!aws_byte_buf_write_be16(&frame->encoded_buf, settings_array[i].id) ||
+            !aws_byte_buf_write_be32(&frame->encoded_buf, settings_array[i].value)) {
 
-    return &frame->base;
-}
-
-static void s_frame_settings_destroy(struct aws_h2_frame *frame_base) {
-    aws_mem_release(frame_base->alloc, frame_base);
-}
-
-static int s_frame_settings_encode(
-    struct aws_h2_frame *frame_base,
-    struct aws_h2_frame_encoder *encoder,
-    struct aws_byte_buf *output,
-    bool *complete) {
-
-    (void)encoder;
-    struct aws_h2_frame_settings *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_settings, base);
-
-    const size_t payload_len = frame->settings_count * s_frame_setting_length;
-
-    /* If we can't encode the whole frame at once, try again later */
-    size_t max_payload;
-    if (s_get_max_contiguous_payload_length(encoder, output, &max_payload) || max_payload < payload_len) {
-        ENCODER_LOG(TRACE, encoder, "Insufficient space to encode SETTINGS right now");
-        *complete = false;
-        return AWS_OP_SUCCESS;
-    }
-
-    /* Write the frame prefix */
-    uint8_t flags = 0;
-    if (frame->ack) {
-        flags |= AWS_H2_FRAME_F_ACK;
-    }
-
-    if (s_frame_prefix_encode(encoder, frame->base.type, frame->base.stream_id, payload_len, flags, output)) {
-        return AWS_OP_ERR;
-    }
-
-    /* Write the payload */
-    for (size_t i = 0; i < frame->settings_count; ++i) {
-        if (!aws_byte_buf_write_be16(output, frame->settings_array[i].id) ||
-            !aws_byte_buf_write_be32(output, frame->settings_array[i].value)) {
-
-            return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+            aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+            goto error;
         }
     }
 
-    *complete = true;
-    return AWS_OP_SUCCESS;
+    return &frame->base;
+
+error:
+    aws_h2_frame_destroy(&frame->base);
+    return NULL;
 }
 
 /***********************************************************************************************************************
  * PING
  **********************************************************************************************************************/
-DEFINE_FRAME_VTABLE(ping);
-
 struct aws_h2_frame *aws_h2_frame_new_ping(
     struct aws_allocator *allocator,
     bool ack,
     const uint8_t opaque_data[AWS_H2_PING_DATA_SIZE]) {
 
-    struct aws_h2_frame_ping *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_ping));
+    /* PING can be pre-encoded */
+    const uint8_t flags = ack ? AWS_H2_FRAME_F_ACK : 0;
+    const size_t payload_len = AWS_H2_PING_DATA_SIZE;
+    const uint32_t stream_id = 0;
+
+    struct aws_h2_frame_prebuilt *frame =
+        s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_PING, stream_id, payload_len, flags);
     if (!frame) {
         return NULL;
     }
 
-    s_init_frame_base(&frame->base, allocator, AWS_H2_FRAME_T_PING, &s_frame_ping_vtable, 0);
-    frame->ack = ack;
-    memcpy(frame->opaque_data, opaque_data, AWS_H2_PING_DATA_SIZE);
+    /* Write the PING payload (RFC-7540 6.7):
+     * +---------------------------------------------------------------+
+     * |                                                               |
+     * |                      Opaque Data (64)                         |
+     * |                                                               |
+     * +---------------------------------------------------------------+
+     */
+    if (!aws_byte_buf_write(&frame->encoded_buf, opaque_data, AWS_H2_PING_DATA_SIZE)) {
+        aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+        goto error;
+    }
 
     return &frame->base;
-}
 
-static void s_frame_ping_destroy(struct aws_h2_frame *frame_base) {
-    aws_mem_release(frame_base->alloc, frame_base);
-}
-
-static int s_frame_ping_encode(
-    struct aws_h2_frame *frame_base,
-    struct aws_h2_frame_encoder *encoder,
-    struct aws_byte_buf *output,
-    bool *complete) {
-
-    (void)encoder;
-    struct aws_h2_frame_ping *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_ping, base);
-
-    const size_t total_len = s_frame_prefix_length + AWS_H2_PING_DATA_SIZE;
-    const size_t space_available = output->capacity - output->len;
-
-    /* If we can't encode the whole frame at once, try again later */
-    if (total_len > space_available) {
-        ENCODER_LOG(TRACE, encoder, "Insufficient space to encode PING right now");
-        *complete = false;
-        return AWS_OP_SUCCESS;
-    }
-
-    /* Write the frame prefix */
-    uint8_t flags = 0;
-    if (frame->ack) {
-        flags |= AWS_H2_FRAME_F_ACK;
-    }
-
-    if (s_frame_prefix_encode(encoder, frame->base.type, frame->base.stream_id, AWS_H2_PING_DATA_SIZE, flags, output)) {
-        return AWS_OP_ERR;
-    }
-
-    /* Write the opaque_data */
-    if (!aws_byte_buf_write(output, frame->opaque_data, AWS_H2_PING_DATA_SIZE)) {
-        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-    }
-
-    *complete = true;
-    return AWS_OP_SUCCESS;
+error:
+    aws_h2_frame_destroy(&frame->base);
+    return NULL;
 }
 
 /***********************************************************************************************************************
  * GOAWAY
  **********************************************************************************************************************/
-DEFINE_FRAME_VTABLE(goaway);
+static const size_t s_frame_goaway_length_min = 8;
 
 struct aws_h2_frame *aws_h2_frame_new_goaway(
     struct aws_allocator *allocator,
@@ -1021,74 +1024,54 @@ struct aws_h2_frame *aws_h2_frame_new_goaway(
 
     /* If debug_data is too long, don't sent it.
      * It's more important that the GOAWAY frame gets sent. */
-    if (debug_data.len > s_settings_and_goaway_payload_limit) {
+    const size_t debug_data_max = s_prebuilt_payload_max() - s_frame_goaway_length_min;
+    if (debug_data.len > debug_data_max) {
         AWS_LOGF_WARN(
             AWS_LS_HTTP_ENCODER,
             "Sending GOAWAY without debug-data. Debug-data size %zu exceeds internal limit of %zu",
             debug_data.len,
-            s_settings_and_goaway_payload_limit);
+            debug_data_max);
 
         debug_data.len = 0;
     }
 
-    struct aws_h2_frame_goaway *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_goaway));
+    /* GOAWAY can be pre-encoded */
+    const uint8_t flags = 0;
+    const uint8_t payload_len = debug_data.len + s_frame_goaway_length_min;
+    const uint32_t stream_id = 0;
+
+    struct aws_h2_frame_prebuilt *frame =
+        s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_GOAWAY, stream_id, payload_len, flags);
     if (!frame) {
         return NULL;
     }
 
-    s_init_frame_base(&frame->base, allocator, AWS_H2_FRAME_T_GOAWAY, &s_frame_goaway_vtable, 0);
-    frame->last_stream_id = last_stream_id;
-    frame->error_code = error_code;
-    frame->debug_data = debug_data;
+    /* Write the GOAWAY payload (RFC-7540 6.8):
+     * +-+-------------------------------------------------------------+
+     * |R|                  Last-Stream-ID (31)                        |
+     * +-+-------------------------------------------------------------+
+     * |                      Error Code (32)                          |
+     * +---------------------------------------------------------------+
+     * |                  Additional Debug Data (*)                    |
+     * +---------------------------------------------------------------+
+     */
+    if (!aws_byte_buf_write_be32(&frame->encoded_buf, last_stream_id & s_31_bit_mask) ||
+        !aws_byte_buf_write_be32(&frame->encoded_buf, error_code) ||
+        !aws_byte_buf_write_from_whole_cursor(&frame->encoded_buf, debug_data)) {
+
+        aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+        goto error;
+    }
 
     return &frame->base;
-}
-
-static void s_frame_goaway_destroy(struct aws_h2_frame *frame_base) {
-    aws_mem_release(frame_base->alloc, frame_base);
-}
-
-static int s_frame_goaway_encode(
-    struct aws_h2_frame *frame_base,
-    struct aws_h2_frame_encoder *encoder,
-    struct aws_byte_buf *output,
-    bool *complete) {
-
-    (void)encoder;
-    struct aws_h2_frame_goaway *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_goaway, base);
-
-    const size_t payload_len = 8 + frame->debug_data.len;
-    const size_t total_len = s_frame_prefix_length + payload_len;
-    const size_t space_available = output->capacity - output->len;
-
-    /* If we can't encode the whole frame at once, try again later */
-    if (total_len > space_available) {
-        ENCODER_LOG(TRACE, encoder, "Insufficient space to encode GOAWAY right now");
-        *complete = false;
-        return AWS_OP_SUCCESS;
-    }
-
-    /* Write the frame prefix */
-    if (s_frame_prefix_encode(encoder, frame->base.type, frame->base.stream_id, payload_len, 0, output)) {
-        return AWS_OP_ERR;
-    }
-
-    /* Write the payload */
-    if (!aws_byte_buf_write_be32(output, frame->last_stream_id & s_31_bit_mask) ||
-        !aws_byte_buf_write_be32(output, frame->error_code) ||
-        !aws_byte_buf_write_from_whole_cursor(output, frame->debug_data)) {
-
-        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-    }
-
-    *complete = true;
-    return AWS_OP_SUCCESS;
+error:
+    aws_h2_frame_destroy(&frame->base);
+    return NULL;
 }
 
 /***********************************************************************************************************************
  * WINDOW_UPDATE
  **********************************************************************************************************************/
-DEFINE_FRAME_VTABLE(window_update);
 static const size_t s_frame_window_update_length = 4;
 
 struct aws_h2_frame *aws_h2_frame_new_window_update(
@@ -1103,57 +1086,40 @@ struct aws_h2_frame *aws_h2_frame_new_window_update(
     }
 
     if (window_size_increment > AWS_H2_WINDOW_UPDATE_MAX) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_ENCODER,
+            "Window increment size %" PRIu32 " exceeds HTTP/2 max %" PRIu32,
+            window_size_increment,
+            AWS_H2_WINDOW_UPDATE_MAX);
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }
 
-    struct aws_h2_frame_window_update *frame = aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_frame_window_update));
+    /* WINDOW_UPDATE can be pre-encoded */
+    const uint8_t flags = 0;
+    const size_t payload_len = s_frame_window_update_length;
+
+    struct aws_h2_frame_prebuilt *frame =
+        s_h2_frame_new_prebuilt(allocator, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id, payload_len, flags);
     if (!frame) {
         return NULL;
     }
 
-    s_init_frame_base(&frame->base, allocator, AWS_H2_FRAME_T_WINDOW_UPDATE, &s_frame_window_update_vtable, stream_id);
-    frame->window_size_increment = window_size_increment;
+    /* Write the WINDOW_UPDATE payload (RFC-7540 6.9):
+     * +-+-------------------------------------------------------------+
+     * |R|              Window Size Increment (31)                     |
+     * +-+-------------------------------------------------------------+
+     */
+    if (!aws_byte_buf_write_be32(&frame->encoded_buf, window_size_increment)) {
+        aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+        goto error;
+    }
 
     return &frame->base;
-}
 
-static void s_frame_window_update_destroy(struct aws_h2_frame *frame_base) {
-    aws_mem_release(frame_base->alloc, frame_base);
-}
-
-static int s_frame_window_update_encode(
-    struct aws_h2_frame *frame_base,
-    struct aws_h2_frame_encoder *encoder,
-    struct aws_byte_buf *output,
-    bool *complete) {
-
-    (void)encoder;
-    struct aws_h2_frame_window_update *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_window_update, base);
-
-    const size_t total_len = s_frame_prefix_length + s_frame_window_update_length;
-    const size_t space_available = output->capacity - output->len;
-
-    /* If we can't encode the whole frame at once, try again later */
-    if (total_len > space_available) {
-        ENCODER_LOG(TRACE, encoder, "Insufficient space to encode WINDOW_UPDATE right now");
-        *complete = false;
-        return AWS_OP_SUCCESS;
-    }
-
-    /* Write the frame prefix */
-    if (s_frame_prefix_encode(
-            encoder, frame->base.type, frame->base.stream_id, s_frame_window_update_length, 0, output)) {
-        return AWS_OP_ERR;
-    }
-
-    /* Write the error_code */
-    if (!aws_byte_buf_write_be32(output, frame->window_size_increment)) {
-        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-    }
-
-    *complete = true;
-    return AWS_OP_SUCCESS;
+error:
+    aws_h2_frame_destroy(&frame->base);
+    return NULL;
 }
 
 void aws_h2_frame_destroy(struct aws_h2_frame *frame) {

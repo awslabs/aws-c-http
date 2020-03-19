@@ -266,10 +266,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             struct aws_h2_frame_setting *settings_array = NULL;
 
             if (!ack) {
-                /* There is an internal limit to the number of settings, but it's pretty high */
-                settings_count = aws_min_size(input.len / 6, 1024);
+                settings_count = aws_min_size(input.len / 6, MAX_PAYLOAD_SIZE);
                 if (settings_count > 0) {
-                    settings_array = aws_mem_calloc(allocator, settings_count, sizeof(struct aws_h2_frame_settings));
+                    settings_array = aws_mem_calloc(allocator, settings_count, sizeof(struct aws_h2_frame_setting));
                     for (size_t i = 0; i < settings_count; ++i) {
                         aws_byte_cursor_read_be16(&input, &settings_array[i].id);
                         aws_byte_cursor_read_be32(&input, &settings_array[i].value);
@@ -338,8 +337,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             uint32_t error_code = 0;
             aws_byte_cursor_read_be32(&input, &error_code);
 
-            uint32_t debug_data_size = aws_min_u32(input.len, MAX_PAYLOAD_SIZE - FRAME_PREFIX_SIZE);
-            struct aws_byte_cursor debug_data = aws_byte_cursor_advance(&input, debug_data_size);
+            /* Pass debug_data that might be too large (it will get truncated if necessary) */
+            struct aws_byte_cursor debug_data = aws_byte_cursor_advance(&input, input.len);
 
             struct aws_h2_frame *frame = aws_h2_frame_new_goaway(allocator, last_stream_id, error_code, debug_data);
             AWS_FATAL_ASSERT(frame);
