@@ -1037,7 +1037,7 @@ struct aws_h2_frame *aws_h2_frame_new_goaway(
 
     /* GOAWAY can be pre-encoded */
     const uint8_t flags = 0;
-    const uint8_t payload_len = debug_data.len + s_frame_goaway_length_min;
+    const size_t payload_len = debug_data.len + s_frame_goaway_length_min;
     const uint32_t stream_id = 0;
 
     struct aws_h2_frame_prebuilt *frame =
