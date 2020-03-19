@@ -160,7 +160,7 @@ struct aws_h2_frame_rst_stream {
     struct aws_h2_frame base;
 
     /* Payload */
-    enum aws_h2_error_codes error_code;
+    uint32_t error_code;
 };
 
 /* A h2 setting and its value, used in SETTINGS frame */
@@ -200,7 +200,7 @@ struct aws_h2_frame_goaway {
 
     /* Payload */
     uint32_t last_stream_id;
-    enum aws_h2_error_codes error_code;
+    uint32_t error_code;
     struct aws_byte_cursor debug_data;
 };
 
@@ -314,7 +314,7 @@ AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_rst_stream(
     struct aws_allocator *allocator,
     uint32_t stream_id,
-    enum aws_h2_error_codes error_code);
+    uint32_t error_code);
 
 AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_settings(
@@ -345,7 +345,7 @@ AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_goaway(
     struct aws_allocator *allocator,
     uint32_t last_stream_id,
-    enum aws_h2_error_codes error_code,
+    uint32_t error_code,
     struct aws_byte_cursor debug_data);
 
 AWS_HTTP_API

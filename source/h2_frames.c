@@ -264,7 +264,7 @@ int aws_h2_frame_encoder_init(struct aws_h2_frame_encoder *encoder, struct aws_a
     encoder->allocator = allocator;
     encoder->logging_id = logging_id;
 
-    encoder->hpack = aws_hpack_context_new(allocator, AWS_LS_HTTP_ENCODER, encoder);
+    encoder->hpack = aws_hpack_context_new(allocator, AWS_LS_HTTP_ENCODER, logging_id);
     if (!encoder->hpack) {
         return AWS_OP_ERR;
     }
@@ -817,7 +817,7 @@ static const size_t s_frame_rst_stream_length = 4;
 struct aws_h2_frame *aws_h2_frame_new_rst_stream(
     struct aws_allocator *allocator,
     uint32_t stream_id,
-    enum aws_h2_error_codes error_code) {
+    uint32_t error_code) {
 
     if (aws_h2_validate_stream_id(stream_id)) {
         return NULL;
@@ -1035,7 +1035,7 @@ DEFINE_FRAME_VTABLE(goaway);
 struct aws_h2_frame *aws_h2_frame_new_goaway(
     struct aws_allocator *allocator,
     uint32_t last_stream_id,
-    enum aws_h2_error_codes error_code,
+    uint32_t error_code,
     struct aws_byte_cursor debug_data) {
 
     /* If debug_data is too long, don't sent it.
@@ -1057,7 +1057,8 @@ struct aws_h2_frame *aws_h2_frame_new_goaway(
 
     s_init_frame_base(&frame->base, allocator, AWS_H2_FRAME_T_GOAWAY, &s_frame_goaway_vtable, 0);
     frame->last_stream_id = last_stream_id;
-    frame->error_code = error_code, frame->debug_data = debug_data;
+    frame->error_code = error_code;
+    frame->debug_data = debug_data;
 
     return &frame->base;
 }

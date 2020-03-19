@@ -861,6 +861,7 @@ int aws_hpack_encode_string(
     /* Encode string length */
     uint8_t starting_bits = use_huffman << 7;
     if (aws_hpack_encode_integer(str_length, starting_bits, 7, output)) {
+        HPACK_LOGF(ERROR, context, "Error encoding HPACK integer: %s", aws_error_name(aws_last_error()));
         goto error;
     }
 
@@ -873,6 +874,7 @@ int aws_hpack_encode_string(
             }
 
             if (aws_huffman_encode(&context->encoder, &to_encode, output)) {
+                HPACK_LOGF(ERROR, context, "Error from Huffman encoder: %s", aws_error_name(aws_last_error()));
                 goto error;
             }
 
