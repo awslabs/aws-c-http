@@ -25,8 +25,6 @@
 
 /* #TODO split hpack encoder/decoder into different types */
 
-/* #TODO logging pass */
-
 /* #TODO test empty strings */
 
 /* RFC-7540 6.5.2 */

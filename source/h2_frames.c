@@ -64,7 +64,7 @@ const uint32_t aws_h2_settings_bounds[AWS_H2_SETTINGS_END_RANGE][2] = {
 
 /* Put constraints on frames that could get very large given crazy inputs.
  * This isn't dictated by the spec, it's here to avoid edge cases where
- * were never have a big enough output buffer to encode the frame. */
+ * we'd never have a big enough output buffer to encode the frame. */
 static const size_t s_settings_and_goaway_payload_limit = 8192;
 
 /* Stream ids & dependencies should only write the bottom 31 bits */
@@ -394,7 +394,6 @@ error:
  * HEADERS / PUSH_PROMISE
  **********************************************************************************************************************/
 DEFINE_FRAME_VTABLE(headers);
-DEFINE_FRAME_VTABLE(push_promise);
 
 static struct aws_h2_frame *s_frame_new_headers_or_push_promise(
     struct aws_allocator *allocator,
@@ -437,20 +436,17 @@ static struct aws_h2_frame *s_frame_new_headers_or_push_promise(
         goto error;
     }
 
-    const struct aws_h2_frame_vtable *vtable;
     if (frame_type == AWS_H2_FRAME_T_HEADERS) {
-        vtable = &s_frame_headers_vtable;
         frame->end_stream = end_stream;
         if (optional_priority) {
             frame->has_priority = true;
             frame->priority = *optional_priority;
         }
     } else {
-        vtable = &s_frame_push_promise_vtable;
         frame->promised_stream_id = promised_stream_id;
     }
 
-    s_init_frame_base(&frame->base, allocator, frame_type, vtable, stream_id);
+    s_init_frame_base(&frame->base, allocator, frame_type, &s_frame_headers_vtable, stream_id);
 
     aws_http_headers_acquire((struct aws_http_headers *)headers);
     frame->headers = headers;
@@ -505,10 +501,6 @@ static void s_frame_headers_destroy(struct aws_h2_frame *frame_base) {
     aws_http_headers_release((struct aws_http_headers *)frame->headers);
     aws_byte_buf_clean_up(&frame->whole_encoded_header_block);
     aws_mem_release(frame->base.alloc, frame);
-}
-
-static void s_frame_push_promise_destroy(struct aws_h2_frame *frame_base) {
-    s_frame_headers_destroy(frame_base);
 }
 
 /* Encode the next frame for this header-block (or encode nothing if output buffer is too small). */
@@ -716,15 +708,6 @@ error:
     return AWS_OP_ERR;
 }
 
-static int s_frame_push_promise_encode(
-    struct aws_h2_frame *frame_base,
-    struct aws_h2_frame_encoder *encoder,
-    struct aws_byte_buf *output,
-    bool *complete) {
-
-    return s_frame_headers_encode(frame_base, encoder, output, complete);
-}
-
 /***********************************************************************************************************************
  * PRIORITY
  **********************************************************************************************************************/
@@ -883,10 +866,15 @@ struct aws_h2_frame *aws_h2_frame_new_settings(
         return NULL;
     }
 
-    /* Check against insane edge case of too many settings to fit in a frame.
-     * Arbitrarily choosing half the default payload size */
+    /* Check against insane edge case of too many settings to fit in a frame. */
     size_t max_settings = s_settings_and_goaway_payload_limit / s_frame_setting_length;
     if (num_settings > max_settings) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_ENCODER,
+            "Cannot create SETTINGS frame with %zu settings, this exceeds internal limit of %zu",
+            num_settings,
+            max_settings);
+
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }
@@ -1148,7 +1136,7 @@ static int s_frame_window_update_encode(
 
     /* If we can't encode the whole frame at once, try again later */
     if (total_len > space_available) {
-        ENCODER_LOG(TRACE, encoder, "Insufficient space to encode PING right now");
+        ENCODER_LOG(TRACE, encoder, "Insufficient space to encode WINDOW_UPDATE right now");
         *complete = false;
         return AWS_OP_SUCCESS;
     }

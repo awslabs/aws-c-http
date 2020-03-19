@@ -393,7 +393,7 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
                     aws_h2_frame_type_to_str(frame->type),
                     frame->stream_id,
                     msg->message_data.capacity);
-                aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+                aws_raise_error(AWS_ERROR_INVALID_STATE);
                 goto error;
             }
 
@@ -521,11 +521,11 @@ error:
     return AWS_OP_ERR;
 }
 
+/* #TODO actually fill with settings */
 /* #TODO track which SETTINGS frames have been ACK'd */
 static int s_enqueue_settings_frame(struct aws_h2_connection *connection) {
     struct aws_allocator *alloc = connection->base.alloc;
 
-    /* #TODO actually fill with settings */
     struct aws_h2_frame *settings_frame = aws_h2_frame_new_settings(alloc, NULL, 0, false /*ack*/);
     if (!settings_frame) {
         return AWS_OP_ERR;
