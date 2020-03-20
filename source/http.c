@@ -14,6 +14,7 @@
  */
 
 #include <aws/common/hash_table.h>
+#include <aws/compression/compression.h>
 #include <aws/http/private/hpack.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/status_code.h>
@@ -121,7 +122,7 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_FRAME_SIZE,
         "Received frame with an illegal frame size"),
-    AWS_DEFINE_ERROR_INFO_HTTP(  
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_COMPRESSION,
         "Error compressing or decompressing HPACK headers"),
 };
@@ -142,8 +143,6 @@ static struct aws_log_subject_info s_log_subject_infos[] = {
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "connection-manager", "HTTP connection manager"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET, "websocket", "Websocket"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET_SETUP, "websocket-setup", "Websocket setup"),
-
-    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_FRAMES, "http-frames", "HTTP frame library"),
 };
 
 static struct aws_log_subject_info_list s_log_subject_list = {
@@ -419,6 +418,7 @@ void aws_http_library_init(struct aws_allocator *alloc) {
     s_library_initialized = true;
 
     aws_io_library_init(alloc);
+    aws_compression_library_init(alloc);
     aws_register_error_info(&s_error_list);
     aws_register_log_subject_info_list(&s_log_subject_list);
     s_methods_init(alloc);
@@ -439,6 +439,7 @@ void aws_http_library_clean_up(void) {
     s_headers_clean_up();
     s_versions_clean_up();
     aws_hpack_static_table_clean_up();
+    aws_compression_library_clean_up();
     aws_io_library_clean_up();
 }
 

@@ -18,6 +18,8 @@
 
 #include <aws/http/request_response.h>
 
+/* #TODO test that buffer is resized if space is insufficient */
+
 AWS_TEST_CASE(hpack_encode_integer, test_hpack_encode_integer)
 static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx) {
     (void)allocator;
@@ -28,13 +30,12 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
     uint8_t zeros[4];
     AWS_ZERO_ARRAY(zeros);
 
-    uint8_t output_buffer[4];
-    struct aws_byte_buf output_buf;
+    struct aws_byte_buf output;
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, allocator, 4));
 
     /* Test 10 in 5 bits */
-    AWS_ZERO_ARRAY(output_buffer);
-    output_buf = aws_byte_buf_from_empty_array(output_buffer, AWS_ARRAY_SIZE(output_buffer));
-    ASSERT_SUCCESS(aws_hpack_encode_integer(10, 5, &output_buf));
+    aws_byte_buf_secure_zero(&output);
+    ASSERT_SUCCESS(aws_hpack_encode_integer(10, 0, 5, &output));
     /**
      * Expected:
      *   0   1   2   3   4   5   6   7
@@ -42,15 +43,13 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
      * | X | X | X | 0 | 1 | 0 | 1 | 0 |  10
      * +---+---+---+---+---+---+---+---+
      */
-    ASSERT_UINT_EQUALS(1, output_buf.len);
-    ASSERT_UINT_EQUALS(10, output_buffer[0]);
-    ASSERT_BIN_ARRAYS_EQUALS(zeros, 3, &output_buffer[1], 3);
-    ASSERT_UINT_EQUALS(1, aws_hpack_get_encoded_length_integer(10, 5));
+    ASSERT_UINT_EQUALS(1, output.len);
+    ASSERT_UINT_EQUALS(10, output.buffer[0]);
+    ASSERT_BIN_ARRAYS_EQUALS(zeros, 3, &output.buffer[1], 3);
 
     /* Test full first byte (6 bits) */
-    AWS_ZERO_ARRAY(output_buffer);
-    output_buf = aws_byte_buf_from_empty_array(output_buffer, AWS_ARRAY_SIZE(output_buffer));
-    ASSERT_SUCCESS(aws_hpack_encode_integer(63, 6, &output_buf));
+    aws_byte_buf_secure_zero(&output);
+    ASSERT_SUCCESS(aws_hpack_encode_integer(63, 0, 6, &output));
     /**
      * Expected:
      *   0   1   2   3   4   5   6   7
@@ -60,16 +59,14 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
      * | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |  0
      * +---+---+---+---+---+---+---+---+
      */
-    ASSERT_UINT_EQUALS(2, output_buf.len);
-    ASSERT_UINT_EQUALS(63, output_buffer[0]);
-    ASSERT_UINT_EQUALS(0, output_buffer[1]);
-    ASSERT_BIN_ARRAYS_EQUALS(zeros, 2, &output_buffer[2], 2);
-    ASSERT_UINT_EQUALS(2, aws_hpack_get_encoded_length_integer(63, 6));
+    ASSERT_UINT_EQUALS(2, output.len);
+    ASSERT_UINT_EQUALS(63, output.buffer[0]);
+    ASSERT_UINT_EQUALS(0, output.buffer[1]);
+    ASSERT_BIN_ARRAYS_EQUALS(zeros, 2, &output.buffer[2], 2);
 
     /* Test 42 in 8 bits */
-    AWS_ZERO_ARRAY(output_buffer);
-    output_buf = aws_byte_buf_from_empty_array(output_buffer, AWS_ARRAY_SIZE(output_buffer));
-    ASSERT_SUCCESS(aws_hpack_encode_integer(42, 8, &output_buf));
+    aws_byte_buf_secure_zero(&output);
+    ASSERT_SUCCESS(aws_hpack_encode_integer(42, 0, 8, &output));
     /**
      * Expected:
      *   0   1   2   3   4   5   6   7
@@ -77,15 +74,13 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
      * | 0 | 0 | 1 | 0 | 1 | 0 | 1 | 0 |  42
      * +---+---+---+---+---+---+---+---+
      */
-    ASSERT_UINT_EQUALS(1, output_buf.len);
-    ASSERT_UINT_EQUALS(42, output_buffer[0]);
-    ASSERT_BIN_ARRAYS_EQUALS(zeros, 3, &output_buffer[1], 3);
-    ASSERT_UINT_EQUALS(1, aws_hpack_get_encoded_length_integer(42, 8));
+    ASSERT_UINT_EQUALS(1, output.len);
+    ASSERT_UINT_EQUALS(42, output.buffer[0]);
+    ASSERT_BIN_ARRAYS_EQUALS(zeros, 3, &output.buffer[1], 3);
 
     /* Test 1337 with 5bit prefix */
-    AWS_ZERO_ARRAY(output_buffer);
-    output_buf = aws_byte_buf_from_empty_array(output_buffer, AWS_ARRAY_SIZE(output_buffer));
-    ASSERT_SUCCESS(aws_hpack_encode_integer(1337, 5, &output_buf));
+    aws_byte_buf_secure_zero(&output);
+    ASSERT_SUCCESS(aws_hpack_encode_integer(1337, 0, 5, &output));
     /**
      * Expected:
      *   0   1   2   3   4   5   6   7
@@ -95,19 +90,13 @@ static int test_hpack_encode_integer(struct aws_allocator *allocator, void *ctx)
      * | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 |  10
      * +---+---+---+---+---+---+---+---+
      */
-    ASSERT_UINT_EQUALS(3, output_buf.len);
-    ASSERT_UINT_EQUALS(UINT8_MAX >> 3, output_buffer[0]);
-    ASSERT_UINT_EQUALS(154, output_buffer[1]);
-    ASSERT_UINT_EQUALS(10, output_buffer[2]);
-    ASSERT_UINT_EQUALS(0, output_buffer[3]);
-    ASSERT_UINT_EQUALS(3, aws_hpack_get_encoded_length_integer(1337, 5));
+    ASSERT_UINT_EQUALS(3, output.len);
+    ASSERT_UINT_EQUALS(UINT8_MAX >> 3, output.buffer[0]);
+    ASSERT_UINT_EQUALS(154, output.buffer[1]);
+    ASSERT_UINT_EQUALS(10, output.buffer[2]);
+    ASSERT_UINT_EQUALS(0, output.buffer[3]);
 
-    /* Test 1337 with 5bit prefix and insufficient output space */
-    AWS_ZERO_ARRAY(output_buffer);
-    output_buf = aws_byte_buf_from_empty_array(output_buffer, 2);
-    ASSERT_FAILS(aws_hpack_encode_integer(1337, 5, &output_buf));
-    ASSERT_UINT_EQUALS(0, output_buf.len);
-
+    aws_byte_buf_clean_up(&output);
     return AWS_OP_SUCCESS;
 }
 
