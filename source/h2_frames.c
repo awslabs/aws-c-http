@@ -155,6 +155,7 @@ static void s_frame_priority_settings_encode(
     AWS_PRECONDITION(priority);
     AWS_PRECONDITION(output);
     AWS_PRECONDITION((priority->stream_dependency & s_u32_top_bit_mask) == 0);
+    (void)s_u32_top_bit_mask;
 
     /* PRIORITY is encoded as (RFC-7540 6.3):
      * +-+-------------------------------------------------------------+
