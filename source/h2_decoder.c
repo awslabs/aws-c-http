@@ -130,6 +130,7 @@ struct aws_h2_decoder {
     bool is_server;
     struct aws_byte_buf scratch;
     const struct decoder_state *state;
+    bool state_changed;
 
     /* HTTP/2 connection preface must be first thing received (RFC-7540 3.5):
      * Server must receive (client must send): magic string, then SETTINGS frame.
@@ -240,23 +241,17 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
 
     AWS_FATAL_ASSERT(!decoder->has_errored);
 
-    /* Run decoder state machine until we're no longer consuming data or changing states.
+    /* Run decoder state machine until we're no longer changing states.
      * We don't simply loop `while(data->len)` because some states consume no data,
      * and these states should run even when there is no data left. */
-    size_t prev_data_len = 0;
-    const struct decoder_state *prev_state = NULL;
-    while (prev_data_len != data->len || prev_state != decoder->state) {
+    do {
+        decoder->state_changed = false;
 
-        /* Stop if a state requires a minimum amount of data and there's nothing left to consume. */
         const uint32_t bytes_required = decoder->state->bytes_required;
         AWS_ASSERT(bytes_required <= decoder->scratch.capacity);
-        if (bytes_required > 0 && data->len == 0) {
-            break;
-        }
-
         const char *current_state_name = decoder->state->name;
-        prev_state = decoder->state;
-        prev_data_len = data->len;
+        const size_t prev_data_len = data->len;
+        (void)prev_data_len;
 
         if (!decoder->scratch.len && data->len >= bytes_required) {
             /* Easy case, there is no scratch and we have enough data, so just send it to the state */
@@ -308,7 +303,7 @@ int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) 
                     decoder->scratch.len);
             }
         }
-    }
+    } while (decoder->state_changed);
 
     return AWS_OP_SUCCESS;
 
@@ -334,6 +329,7 @@ static int s_decoder_switch_state(struct aws_h2_decoder *decoder, const struct d
     DECODER_LOGF(TRACE, decoder, "Moving from state '%s' to '%s'", decoder->state->name, state->name);
     decoder->scratch.len = 0;
     decoder->state = state;
+    decoder->state_changed = true;
     return AWS_OP_SUCCESS;
 }
 
@@ -352,10 +348,12 @@ static int s_decoder_reset_state(struct aws_h2_decoder *decoder) {
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_FRAME_SIZE);
     }
 
+    DECODER_LOGF(TRACE, decoder, "%s frame complete", aws_h2_frame_type_to_str(decoder->frame_in_progress.type));
+
     decoder->scratch.len = 0;
     decoder->state = &s_state_prefix;
+    decoder->state_changed = true;
 
-    DECODER_LOG(TRACE, decoder, "Resetting frame in progress");
     AWS_ZERO_STRUCT(decoder->frame_in_progress);
     return AWS_OP_SUCCESS;
 }
