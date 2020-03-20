@@ -708,8 +708,14 @@ error:
  **********************************************************************************************************************/
 struct aws_h2_frame_prebuilt {
     struct aws_h2_frame base;
-    struct aws_byte_buf encoded_buf; /* pre-encoded H2 frame */
-    struct aws_byte_cursor cursor;   /* tracks progress sending encoded buffer */
+
+    /* The whole entire frame is pre-encoded to this buffer during construction.
+     * The buffer has the exact capacity necessary to hold the frame */
+    struct aws_byte_buf encoded_buf;
+
+    /* After construction, this cursor points to the full contents of encoded_buf.
+     * As encode() is called, we copy the contents to output and advance the cursor.*/
+    struct aws_byte_cursor cursor;
 };
 
 DEFINE_FRAME_VTABLE(prebuilt);
@@ -742,7 +748,14 @@ static struct aws_h2_frame_prebuilt *s_h2_frame_new_prebuilt(
 
     AWS_ZERO_STRUCT(*frame);
     s_init_frame_base(&frame->base, allocator, type, &s_frame_prebuilt_vtable, stream_id);
+
+    /* encoded_buf has the exact amount of space necessary for the full encoded frame.
+     * The constructor of our subclass must finish filling up encoded_buf with the payload. */
     frame->encoded_buf = aws_byte_buf_from_empty_array(storage, encoded_frame_len);
+
+    /* cursor points to full capacity of encoded_buf.
+     * Our subclass's constructor will finish writing the payload and fill encoded_buf to capacity.
+     * When encode() is called, we'll copy cursor's contents into available output space and advance the cursor. */
     frame->cursor = aws_byte_cursor_from_array(storage, encoded_frame_len);
 
     /* Write frame prefix */
@@ -764,6 +777,11 @@ static int s_frame_prebuilt_encode(
     (void)encoder;
     struct aws_h2_frame_prebuilt *frame = AWS_CONTAINER_OF(frame_base, struct aws_h2_frame_prebuilt, base);
 
+    /* encoded_buf should have been filled to capacity during construction */
+    AWS_ASSERT(frame->encoded_buf.len == frame->encoded_buf.capacity);
+
+    /* After construction, cursor points to the full contents of encoded_buf.
+     * As encode() is called, we copy the contents to output and advance the cursor. */
     if (frame->cursor.len == frame->encoded_buf.len) {
         /* We haven't sent anything yet, announce start of frame */
         ENCODER_LOGF(
@@ -784,7 +802,8 @@ static int s_frame_prebuilt_encode(
 
     bool writes_ok = true;
 
-    /* Write as much of the pre-encoded frame as will fit */
+    /* Copy as much as we can from cursor (pre-encoded frame contents) to output.
+     * Advance the cursor to mark our progress. */
     size_t chunk_len = aws_min_size(frame->cursor.len, output->capacity - output->len);
     struct aws_byte_cursor chunk = aws_byte_cursor_advance(&frame->cursor, chunk_len);
     writes_ok &= aws_byte_buf_write_from_whole_cursor(output, chunk);
