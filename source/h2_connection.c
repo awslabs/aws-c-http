@@ -61,6 +61,8 @@ static struct aws_http_stream *s_connection_make_request(
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 
+static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
+
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
         {
@@ -84,6 +86,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
 
 static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
     .on_data = NULL,
+    .on_ping = s_decoder_on_ping,
 };
 
 static void s_lock_synced_data(struct aws_h2_connection *connection) {
@@ -297,7 +300,9 @@ void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connecti
     aws_linked_list_push_back(&connection->thread_data.outgoing_frames_queue, &frame->node);
 }
 
-void aws_h2_connection_enqueue_outgoing_frame_from_head(struct aws_h2_connection *connection, struct aws_h2_frame_base *frame) {
+void aws_h2_connection_enqueue_outgoing_frame_from_head(
+    struct aws_h2_connection *connection,
+    struct aws_h2_frame *frame) {
     AWS_PRECONDITION(frame->type != AWS_H2_FRAME_T_DATA);
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
@@ -499,6 +504,25 @@ static void s_try_write_outgoing_frames(struct aws_h2_connection *connection) {
     s_outgoing_frames_task(&connection->outgoing_frames_task, connection, AWS_TASK_STATUS_RUN_READY);
 }
 
+/* Decoder callbacks */
+static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
+    struct aws_h2_connection *connection = userdata;
+
+    /* send a PING frame with the ACK flag set in response, with an identical payload. */
+    struct aws_h2_frame *ping_ack_frame = aws_h2_frame_new_ping(connection->base.alloc, true, opaque_data);
+    if (!ping_ack_frame) {
+        goto error;
+    }
+    /* PING responses SHOULD be given higher priority than any other frame, so it will be inserted at the head of the
+     * queue */
+    aws_h2_connection_enqueue_outgoing_frame_from_head(connection, ping_ack_frame);
+    s_try_write_outgoing_frames(connection);
+    return AWS_OP_SUCCESS;
+error:
+    CONNECTION_LOGF(ERROR, connection, "Ping ACK frame failed to be sent, error %s", aws_error_name(aws_last_error()));
+    return AWS_OP_ERR;
+}
+
 static int s_send_connection_preface_client_string(struct aws_h2_connection *connection) {
 
     /* Just send the magic string on its own aws_io_message. */
@@ -539,19 +563,6 @@ static int s_enqueue_settings_frame(struct aws_h2_connection *connection) {
     }
 
     aws_h2_connection_enqueue_outgoing_frame(connection, settings_frame);
-    return AWS_OP_SUCCESS;
-}
-
-static int s_enqueue_ping_frame(struct aws_h2_connection *connection, struct aws_h2_frame_ping *ping_frame) {
-
-    if (ping_frame->ack) {
-        /* PING responses SHOULD be given higher priority than any other frame, so it will be inserted at the head of the
-         * queue */
-        aws_h2_connection_enqueue_outgoing_frame_from_head(connection, &ping_frame->base);
-    }
-    else {
-        aws_h2_connection_enqueue_outgoing_frame(connection, &ping_frame->base);
-    }
     return AWS_OP_SUCCESS;
 }
 
