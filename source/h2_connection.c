@@ -382,6 +382,7 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
     while (!aws_linked_list_empty(outgoing_frames_queue)) {
         struct aws_linked_list_node *frame_node = aws_linked_list_front(outgoing_frames_queue);
         struct aws_h2_frame *frame = AWS_CONTAINER_OF(frame_node, struct aws_h2_frame, node);
+<<<<<<< HEAD
 
         bool frame_complete;
         if (aws_h2_encode_frame(&connection->thread_data.encoder, frame, &msg->message_data, &frame_complete)) {
@@ -395,6 +396,21 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
             goto error;
         }
 
+=======
+
+        bool frame_complete;
+        if (aws_h2_encode_frame(&connection->thread_data.encoder, frame, &msg->message_data, &frame_complete)) {
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "Error encoding frame: type=%s stream=%" PRIu32 " error=%s",
+                aws_h2_frame_type_to_str(frame->type),
+                frame->stream_id,
+                aws_error_name(aws_last_error()));
+            goto error;
+        }
+
+>>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
         if (!frame_complete) {
             if (msg->message_data.len == 0) {
                 /* We're in trouble if an empty message isn't big enough for this frame to do any work with */
