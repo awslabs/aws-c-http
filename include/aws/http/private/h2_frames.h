@@ -112,9 +112,9 @@ struct aws_h2_frame_priority_settings {
 struct aws_h2_frame {
     const struct aws_h2_frame_vtable *vtable;
     struct aws_allocator *alloc;
+    struct aws_linked_list_node node;
     enum aws_h2_frame_type type;
     uint32_t stream_id;
-    struct aws_linked_list_node node;
 };
 
 /* A h2 setting and its value, used in SETTINGS frame */

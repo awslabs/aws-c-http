@@ -78,7 +78,7 @@ static struct aws_http_headers *s_generate_headers(struct aws_allocator *allocat
         header.name = aws_byte_cursor_advance(input, name_len);
         header.value = aws_byte_cursor_advance(input, value_len);
 
-        aws_http_headers_add_v2(headers, &header);
+        aws_http_headers_add_header(headers, &header);
     }
 
     return headers;

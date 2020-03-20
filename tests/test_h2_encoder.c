@@ -119,7 +119,7 @@ TEST_CASE(h2_encoder_headers) {
 
     struct aws_http_header h = DEFINE_STATIC_HEADER(":status", "302", USE_CACHE);
 
-    ASSERT_SUCCESS(aws_http_headers_add_v2(headers, &h));
+    ASSERT_SUCCESS(aws_http_headers_add_header(headers, &h));
 
     struct aws_h2_frame_priority_settings priority = {
         .stream_dependency_exclusive = true,
