@@ -298,6 +298,13 @@ void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connecti
     aws_linked_list_push_back(&connection->thread_data.outgoing_frames_queue, &frame->node);
 }
 
+void aws_h2_connection_enqueue_outgoing_frame_from_head(struct aws_h2_connection *connection, struct aws_h2_frame_base *frame) {
+    AWS_PRECONDITION(frame->type != AWS_H2_FRAME_T_DATA);
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
+    aws_linked_list_push_front(&connection->thread_data.outgoing_frames_queue, &frame->node);
+}
+
 static void s_on_channel_write_complete(
     struct aws_channel *channel,
     struct aws_io_message *message,
@@ -546,6 +553,19 @@ error_init:
     aws_mem_release(alloc, settings_frame);
 error_alloc:
     return AWS_OP_ERR;
+}
+
+static int s_enqueue_ping_frame(struct aws_h2_connection *connection, struct aws_h2_frame_ping *ping_frame) {
+
+    if (ping_frame->ack) {
+        /* PING responses SHOULD be given higher priority than any other frame, so it will be inserted at the head of the
+         * queue */
+        aws_h2_connection_enqueue_outgoing_frame_from_head(connection, &ping_frame->base);
+    }
+    else {
+        aws_h2_connection_enqueue_outgoing_frame(connection, &ping_frame->base);
+    }
+    return AWS_OP_SUCCESS;
 }
 
 static void s_handler_installed(struct aws_channel_handler *handler, struct aws_channel_slot *slot) {
