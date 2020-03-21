@@ -69,11 +69,7 @@ static int s_ensure_space(struct aws_byte_buf *output, size_t required_space) {
 
     /* Prefer to double capacity, but if that's not enough grow to exactly required_capacity */
     size_t double_capacity = aws_add_size_saturating(output->capacity, output->capacity);
-<<<<<<< HEAD
-    size_t reserve = required_capacity > double_capacity ? required_capacity : double_capacity;
-=======
     size_t reserve = aws_max_size(required_capacity, double_capacity);
->>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
     return aws_byte_buf_reserve(output, reserve);
 }
 
@@ -87,11 +83,7 @@ int aws_hpack_encode_integer(
     const uint8_t prefix_mask = s_masked_right_bits_u8(prefix_size);
     AWS_ASSERT((starting_bits & prefix_mask) == 0);
 
-<<<<<<< HEAD
-    const size_t output_len_backup = output->len;
-=======
     const size_t original_len = output->len;
->>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
 
     if (integer < prefix_mask) {
         /* If the integer fits inside the specified number of bits but won't be all 1's, just write it */
@@ -131,11 +123,7 @@ int aws_hpack_encode_integer(
 
     return AWS_OP_SUCCESS;
 error:
-<<<<<<< HEAD
-    output->len = output_len_backup;
-=======
     output->len = original_len;
->>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
     return AWS_OP_ERR;
 }
 
@@ -824,11 +812,7 @@ int aws_hpack_encode_string(
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&to_encode));
     AWS_PRECONDITION(output);
 
-<<<<<<< HEAD
-    const size_t output_len_backup = output->len;
-=======
     const size_t original_len = output->len;
->>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
 
     /* Determine length of encoded string (and whether or not to use huffman) */
     uint8_t use_huffman;
@@ -901,11 +885,7 @@ int aws_hpack_encode_string(
     return AWS_OP_SUCCESS;
 
 error:
-<<<<<<< HEAD
-    output->len = output_len_backup;
-=======
     output->len = original_len;
->>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
     aws_huffman_encoder_reset(&context->encoder);
     return AWS_OP_ERR;
 }
@@ -1290,11 +1270,7 @@ static int s_encode_header_field(
     AWS_PRECONDITION(header);
     AWS_PRECONDITION(output);
 
-<<<<<<< HEAD
-    size_t output_len_backup = output->len;
-=======
     size_t original_len = output->len;
->>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
 
     /* Search for header-field in tables */
     bool found_indexed_value;
@@ -1366,11 +1342,7 @@ static int s_encode_header_field(
 
     return AWS_OP_SUCCESS;
 error:
-<<<<<<< HEAD
-    output->len = output_len_backup;
-=======
     output->len = original_len;
->>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
     return AWS_OP_ERR;
 }
 

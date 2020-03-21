@@ -97,11 +97,7 @@ void aws_http_headers_acquire(struct aws_http_headers *headers) {
     aws_atomic_fetch_add(&headers->refcount, 1);
 }
 
-<<<<<<< HEAD
-int aws_http_headers_add_v2(struct aws_http_headers *headers, const struct aws_http_header *header) {
-=======
 int aws_http_headers_add_header(struct aws_http_headers *headers, const struct aws_http_header *header) {
->>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(header);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&header->name) && aws_byte_cursor_is_valid(&header->value));
@@ -140,11 +136,7 @@ error:
 
 int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value) {
     struct aws_http_header header = {.name = name, .value = value};
-<<<<<<< HEAD
-    return aws_http_headers_add_v2(headers, &header);
-=======
     return aws_http_headers_add_header(headers, &header);
->>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
 }
 
 void aws_http_headers_clear(struct aws_http_headers *headers) {
@@ -248,11 +240,7 @@ int aws_http_headers_add_array(struct aws_http_headers *headers, const struct aw
     const size_t orig_count = aws_http_headers_count(headers);
 
     for (size_t i = 0; i < count; ++i) {
-<<<<<<< HEAD
-        if (aws_http_headers_add_v2(headers, &array[i])) {
-=======
         if (aws_http_headers_add_header(headers, &array[i])) {
->>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
             goto error;
         }
     }

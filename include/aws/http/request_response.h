@@ -362,18 +362,11 @@ void aws_http_headers_release(struct aws_http_headers *headers);
  * The underlying strings are copied.
  */
 AWS_HTTP_API
-<<<<<<< HEAD
-int aws_http_headers_add_v2(struct aws_http_headers *headers, const struct aws_http_header *header);
-
-/**
- * Deprecated. Use aws_http_headers_add_v2().
-=======
 int aws_http_headers_add_header(struct aws_http_headers *headers, const struct aws_http_header *header);
 
 /**
  * Add a header.
  * The underlying strings are copied.
->>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
  */
 AWS_HTTP_API
 int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value);

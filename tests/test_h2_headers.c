@@ -126,11 +126,7 @@ static int s_header_test_run(struct aws_allocator *allocator, void *ctx) {
         }
 
         if (result.type == AWS_HPACK_DECODE_T_HEADER_FIELD) {
-<<<<<<< HEAD
-            ASSERT_SUCCESS(aws_http_headers_add_v2(fixture->decoded_headers, &result.data.header_field));
-=======
             ASSERT_SUCCESS(aws_http_headers_add_header(fixture->decoded_headers, &result.data.header_field));
->>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
         }
     }
 
