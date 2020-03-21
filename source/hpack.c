@@ -230,7 +230,7 @@ struct aws_hpack_context {
 
     enum aws_hpack_huffman_mode huffman_mode;
     enum aws_http_log_subject log_subject;
-    void *log_id;
+    const void *log_id;
 
     struct aws_huffman_encoder encoder;
     struct aws_huffman_decoder decoder;
@@ -316,7 +316,7 @@ struct aws_hpack_context {
 struct aws_hpack_context *aws_hpack_context_new(
     struct aws_allocator *allocator,
     enum aws_http_log_subject log_subject,
-    void *log_id) {
+    const void *log_id) {
 
     struct aws_hpack_context *context = aws_mem_calloc(allocator, 1, sizeof(struct aws_hpack_context));
     if (!context) {
