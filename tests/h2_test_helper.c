@@ -16,6 +16,7 @@
 #include "h2_test_helper.h"
 
 #include <aws/http/private/h2_decoder.h>
+#include <aws/testing/io_testing_channel.h>
 
 static const void *s_logging_id = (void *)0xAAAAAAAA;
 
@@ -457,4 +458,17 @@ void h2_fake_peer_clean_up(struct h2_fake_peer *peer) {
     aws_h2_frame_encoder_clean_up(&peer->encoder);
     h2_decode_tester_clean_up(&peer->decode);
     AWS_ZERO_STRUCT(peer);
+}
+
+int h2_fake_peer_decode_messages_from_testing_channel(struct h2_fake_peer *peer) {
+    struct aws_byte_buf msg_buf;
+    ASSERT_SUCCESS(aws_byte_buf_init(&msg_buf, peer->alloc, 128));
+    ASSERT_SUCCESS(testing_channel_drain_written_messages(peer->testing_channel, &msg_buf));
+
+    struct aws_byte_cursor msg_cursor = aws_byte_cursor_from_buf(&msg_buf);
+    ASSERT_SUCCESS(aws_h2_decode(peer->decode.decoder, &msg_cursor));
+    ASSERT_UINT_EQUALS(0, msg_cursor.len);
+
+    aws_byte_buf_clean_up(&msg_buf);
+    return AWS_OP_SUCCESS;
 }

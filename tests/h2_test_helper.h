@@ -129,4 +129,12 @@ struct h2_fake_peer_options {
 int h2_fake_peer_init(struct h2_fake_peer *peer, const struct h2_fake_peer_options *options);
 void h2_fake_peer_clean_up(struct h2_fake_peer *peer);
 
+/* Pop all written messages off the testing-channel and run them through the peer's decode-tester */
+int h2_fake_peer_decode_messages_from_testing_channel(struct h2_fake_peer *peer);
+
+int h2_fake_peer_send_frame(struct h2_fake_peer *peer, struct aws_h2_frame *frame);
+
+/* Peer sends the connection preface with default settings */
+int h2_fake_peer_send_connection_preface_default_settings(struct h2_fake_peer *peer);
+
 #endif /* AWS_HTTP_H2_TEST_HELPER_H */
