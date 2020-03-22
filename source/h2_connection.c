@@ -297,16 +297,22 @@ void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connecti
     AWS_PRECONDITION(frame->type != AWS_H2_FRAME_T_DATA);
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
-    aws_linked_list_push_back(&connection->thread_data.outgoing_frames_queue, &frame->node);
-}
-
-void aws_h2_connection_enqueue_outgoing_frame_from_head(
-    struct aws_h2_connection *connection,
-    struct aws_h2_frame *frame) {
-    AWS_PRECONDITION(frame->type != AWS_H2_FRAME_T_DATA);
-    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
-
-    aws_linked_list_push_front(&connection->thread_data.outgoing_frames_queue, &frame->node);
+    if (frame->high_priority) {
+        /* Check from the head of the queue, and find a node with normal priority, and insert before it */
+        struct aws_linked_list_node *iter = aws_linked_list_begin(&connection->thread_data.outgoing_frames_queue);
+        /* one past the last element */
+        const struct aws_linked_list_node *end = aws_linked_list_end(&connection->thread_data.outgoing_frames_queue);
+        while (iter != end) {
+            struct aws_h2_frame *frame_i = AWS_CONTAINER_OF(iter, struct aws_h2_frame, node);
+            if (!frame_i->high_priority) {
+                break;
+            }
+            iter = iter->next;
+        }
+        aws_linked_list_insert_before(iter, &frame->node);
+    } else {
+        aws_linked_list_push_back(&connection->thread_data.outgoing_frames_queue, &frame->node);
+    }
 }
 
 static void s_on_channel_write_complete(
@@ -382,7 +388,6 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
     while (!aws_linked_list_empty(outgoing_frames_queue)) {
         struct aws_linked_list_node *frame_node = aws_linked_list_front(outgoing_frames_queue);
         struct aws_h2_frame *frame = AWS_CONTAINER_OF(frame_node, struct aws_h2_frame, node);
-<<<<<<< HEAD
 
         bool frame_complete;
         if (aws_h2_encode_frame(&connection->thread_data.encoder, frame, &msg->message_data, &frame_complete)) {
@@ -396,21 +401,6 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
             goto error;
         }
 
-=======
-
-        bool frame_complete;
-        if (aws_h2_encode_frame(&connection->thread_data.encoder, frame, &msg->message_data, &frame_complete)) {
-            CONNECTION_LOGF(
-                ERROR,
-                connection,
-                "Error encoding frame: type=%s stream=%" PRIu32 " error=%s",
-                aws_h2_frame_type_to_str(frame->type),
-                frame->stream_id,
-                aws_error_name(aws_last_error()));
-            goto error;
-        }
-
->>>>>>> 64aa5fbc363f8a6c99abe4278720ff15fbe2f957
         if (!frame_complete) {
             if (msg->message_data.len == 0) {
                 /* We're in trouble if an empty message isn't big enough for this frame to do any work with */
@@ -531,7 +521,7 @@ static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *u
     }
     /* PING responses SHOULD be given higher priority than any other frame, so it will be inserted at the head of the
      * queue */
-    aws_h2_connection_enqueue_outgoing_frame_from_head(connection, ping_ack_frame);
+    aws_h2_connection_enqueue_outgoing_frame(connection, ping_ack_frame);
     s_try_write_outgoing_frames(connection);
     return AWS_OP_SUCCESS;
 error:
@@ -782,16 +772,39 @@ static int s_handler_process_read_message(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
     struct aws_io_message *message) {
-
-    (void)handler;
     (void)slot;
-    (void)message;
+    struct aws_h2_connection *connection = handler->impl;
+
+    CONNECTION_LOGF(
+        TRACE,
+        connection,
+        "id=%p: H2 connection Begin processing message of size %zu.",
+        (void *)&connection->base,
+        message->message_data.len);
 
     /* HTTP/2 protocol uses WINDOW_UPDATE frames to coordinate data rates with peer,
      * so we can just keep the aws_channel's read-window wide open */
-    /* #TODO update read window by however much we just read */
+    struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
+    if (connection->thread_data.is_reading_stopped) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "id=%p: Cannot process message because connection is shutting down.",
+            (void *)&connection->base);
 
-    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+        aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+        goto shutdown;
+    }
+    /* #TODO update read window by however much we just read */
+    aws_h2_decode(connection->thread_data.decoder, &message_cursor);
+
+    return AWS_OP_SUCCESS;
+shutdown:
+    if (message) {
+        aws_mem_release(message->allocator, message);
+    }
+    s_stop(connection, true, true, true, aws_last_error());
+    return AWS_OP_SUCCESS;
 }
 
 static int s_handler_process_write_message(
