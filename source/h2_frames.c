@@ -984,6 +984,8 @@ struct aws_h2_frame *aws_h2_frame_new_ping(
     bool writes_ok = true;
     writes_ok &= aws_byte_buf_write(&frame->encoded_buf, opaque_data, AWS_H2_PING_DATA_SIZE);
     AWS_ASSERT(writes_ok);
+
+    /* PING responses SHOULD be given higher priority than any other frame */
     frame->base.high_priority = ack;
     return &frame->base;
 }

@@ -519,8 +519,7 @@ static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *u
     if (!ping_ack_frame) {
         goto error;
     }
-    /* PING responses SHOULD be given higher priority than any other frame, so it will be inserted at the head of the
-     * queue */
+
     aws_h2_connection_enqueue_outgoing_frame(connection, ping_ack_frame);
     s_try_write_outgoing_frames(connection);
     return AWS_OP_SUCCESS;
