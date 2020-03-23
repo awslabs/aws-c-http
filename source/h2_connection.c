@@ -809,8 +809,8 @@ shutdown:
     if (message) {
         aws_mem_release(message->allocator, message);
     }
-    /* stop reading, stop writing, schedule sutdown */
-    s_stop(connection, true, true, true, aws_last_error());
+    /* Stop reading, because the reading error happans here */
+    s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, aws_last_error());
     return AWS_OP_SUCCESS;
 }
 
