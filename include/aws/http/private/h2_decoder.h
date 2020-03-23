@@ -89,7 +89,7 @@ struct aws_h2_decoder_params {
     struct aws_allocator *alloc;
     const struct aws_h2_decoder_vtable *vtable;
     void *userdata;
-    void *logging_id;
+    const void *logging_id;
     bool is_server;
 
     /* If true, do not expect the connection preface and immediately accept any frame type.

@@ -12,45 +12,13 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-#include <aws/testing/aws_test_harness.h>
+#include "h2_test_helper.h"
 
 #include <aws/http/private/h2_decoder.h>
 
-/* Information gathered about a given frame from decoder callbacks.
- * These aren't 1:1 with literal H2 frames:
- * - The decoder hides the existence of CONTINUATION frames,
- *   their data continues the preceding HEADERS or PUSH_PROMISE frame.
- *
- * - A DATA frame could appear as N on_data callbacks.
- *
- * - The on_end_stream callback fires after all other callbacks for that frame,
- *   so we count it as part of the preceding "finished" frame.
- */
-struct frame {
-    enum aws_h2_frame_type type;
-    uint32_t stream_id;
-
-    /* If true, we expect no further callbacks regarding this frame */
-    bool finished;
-
-    struct aws_array_list headers;  /* contains aws_http_header */
-    struct aws_array_list settings; /* contains aws_h2_frame_setting */
-    struct aws_byte_buf data;
-
-    bool end_stream;
-    uint32_t error_code;
-    uint32_t promised_stream_id;
-    bool ack;
-    uint32_t goaway_last_stream_id;
-    uint32_t goaway_debug_data_remaining;
-    uint8_t ping_opaque_data[AWS_H2_PING_DATA_SIZE];
-    uint32_t window_size_increment;
-};
-
 struct fixture {
     struct aws_allocator *allocator;
-    struct aws_h2_decoder *decoder;
-    struct aws_array_list frames; /* contains frame */
+    struct h2_decode_tester decode;
 
     /* If true, run decoder over input one byte at a time */
     bool one_byte_at_a_time;
@@ -64,363 +32,23 @@ struct fixture {
     bool skip_connection_preface;
 };
 
-static int s_frame_init(
-    struct frame *frame,
-    struct aws_allocator *allocator,
-    enum aws_h2_frame_type type,
-    uint32_t stream_id) {
-    AWS_ZERO_STRUCT(*frame);
-    frame->type = type;
-    frame->stream_id = stream_id;
-    ASSERT_SUCCESS(aws_array_list_init_dynamic(&frame->headers, allocator, 16, sizeof(struct aws_http_header)));
-    ASSERT_SUCCESS(aws_array_list_init_dynamic(&frame->settings, allocator, 16, sizeof(struct aws_h2_frame_setting)));
-    ASSERT_SUCCESS(aws_byte_buf_init(&frame->data, allocator, 1024));
-    return AWS_OP_SUCCESS;
-}
-
-static void s_frame_clean_up(struct frame *frame) {
-    aws_array_list_clean_up(&frame->headers);
-    aws_array_list_clean_up(&frame->settings);
-    aws_byte_buf_clean_up(&frame->data);
-}
-
-static int s_validate_finished_frame(struct frame *frame, enum aws_h2_frame_type type, uint32_t stream_id) {
-    ASSERT_INT_EQUALS(type, frame->type);
-    ASSERT_UINT_EQUALS(stream_id, frame->stream_id);
-    ASSERT_TRUE(frame->finished);
-    return AWS_OP_SUCCESS;
-}
-
-static struct frame *s_latest_frame(struct fixture *fixture) {
-    AWS_FATAL_ASSERT(aws_array_list_length(&fixture->frames) > 0);
-    struct frame *frame = NULL;
-    aws_array_list_get_at_ptr(&fixture->frames, (void **)&frame, aws_array_list_length(&fixture->frames) - 1);
-    return frame;
-}
-
-/* fixture begins recording a new frame's data */
-static int s_begin_new_frame(
-    struct fixture *fixture,
-    enum aws_h2_frame_type type,
-    uint32_t stream_id,
-    struct frame **out_frame) {
-
-    /* If there's a previous frame, assert that we know it was finished.
-     * If this fails, some on_X_begin(), on_X_i(), on_X_end() loop didn't fire correctly.
-     * It should be impossible for an unrelated callback to fire during these loops */
-    if (aws_array_list_length(&fixture->frames) > 0) {
-        struct frame *prev_frame = s_latest_frame(fixture);
-        ASSERT_TRUE(prev_frame->finished);
-    }
-
-    /* Create new frame */
-    struct frame new_frame;
-    ASSERT_SUCCESS(s_frame_init(&new_frame, fixture->allocator, type, stream_id));
-    ASSERT_SUCCESS(aws_array_list_push_back(&fixture->frames, &new_frame));
-
-    if (out_frame) {
-        aws_array_list_get_at_ptr(&fixture->frames, (void **)out_frame, aws_array_list_length(&fixture->frames) - 1);
-    }
-    return AWS_OP_SUCCESS;
-}
-
-/* fixture stops recording the latest frame's data */
-static int s_end_current_frame(struct fixture *fixture, enum aws_h2_frame_type type, uint32_t stream_id) {
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_FALSE(frame->finished);
-    frame->finished = true;
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, type, stream_id));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_on_header(bool is_push_promise, uint32_t stream_id, const struct aws_http_header *header, void *userdata) {
-
-    struct fixture *fixture = userdata;
-    struct frame *frame = s_latest_frame(fixture);
-
-    /* validate */
-    if (is_push_promise) {
-        ASSERT_INT_EQUALS(AWS_H2_FRAME_T_PUSH_PROMISE, frame->type);
-    } else {
-        ASSERT_INT_EQUALS(AWS_H2_FRAME_T_HEADERS, frame->type);
-    }
-
-    ASSERT_FALSE(frame->finished);
-    ASSERT_UINT_EQUALS(frame->stream_id, stream_id);
-
-    /* Stash header strings in frame->data.
-     * DO NOT resize buffer or pointers will get messed up */
-    struct aws_http_header header_field = *header;
-    ASSERT_SUCCESS(aws_byte_buf_append_and_update(&frame->data, &header_field.name));
-    ASSERT_SUCCESS(aws_byte_buf_append_and_update(&frame->data, &header_field.value));
-
-    ASSERT_SUCCESS(aws_array_list_push_back(&frame->headers, &header_field));
-
-    return AWS_OP_SUCCESS;
-}
-
-/**************************** DECODER CALLBACKS *******************************/
-
-static int s_decoder_on_headers_begin(uint32_t stream_id, void *userdata) {
-    struct fixture *fixture = userdata;
-    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_HEADERS, stream_id, NULL /*out_frame*/));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_headers_i(uint32_t stream_id, const struct aws_http_header *header, void *userdata) {
-
-    return s_on_header(false /* is_push_promise */, stream_id, header, userdata);
-}
-
-static int s_decoder_on_headers_end(uint32_t stream_id, void *userdata) {
-    struct fixture *fixture = userdata;
-    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_HEADERS, stream_id));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_push_promise_begin(uint32_t stream_id, uint32_t promised_stream_id, void *userdata) {
-    struct fixture *fixture = userdata;
-    struct frame *frame;
-    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_PUSH_PROMISE, stream_id, &frame /*out_frame*/));
-
-    frame->promised_stream_id = promised_stream_id;
-
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_push_promise_i(uint32_t stream_id, const struct aws_http_header *header, void *userdata) {
-
-    return s_on_header(true /* is_push_promise */, stream_id, header, userdata);
-}
-
-static int s_decoder_on_push_promise_end(uint32_t stream_id, void *userdata) {
-    struct fixture *fixture = userdata;
-    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_PUSH_PROMISE, stream_id));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_data(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
-    struct fixture *fixture = userdata;
-    struct frame *frame;
-
-    /* Pretend each on_data callback is a full DATA frame for the purposes of these tests */
-    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_DATA, stream_id, &frame));
-
-    /* Stash data*/
-    ASSERT_SUCCESS(aws_byte_buf_append_dynamic(&frame->data, &data));
-
-    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_DATA, stream_id));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_end_stream(uint32_t stream_id, void *userdata) {
-    struct fixture *fixture = userdata;
-    struct frame *frame = s_latest_frame(fixture);
-
-    /* Validate */
-
-    /* on_end_stream should fire IMMEDIATELY after on_data OR after on_headers_end.
-     * This timing lets the user close the stream from this callback without waiting for any trailing data/headers
-     */
-    ASSERT_TRUE(frame->finished);
-    ASSERT_TRUE(frame->type == AWS_H2_FRAME_T_HEADERS || frame->type == AWS_H2_FRAME_T_DATA);
-    ASSERT_UINT_EQUALS(frame->stream_id, stream_id);
-
-    ASSERT_FALSE(frame->end_stream);
-
-    /* Stash */
-    frame->end_stream = true;
-
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_rst_stream(uint32_t stream_id, uint32_t error_code, void *userdata) {
-    struct fixture *fixture = userdata;
-    struct frame *frame;
-
-    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_RST_STREAM, stream_id, &frame));
-
-    /* Stash data*/
-    frame->error_code = error_code;
-
-    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_RST_STREAM, stream_id));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_settings_begin(void *userdata) {
-    struct fixture *fixture = userdata;
-    struct frame *frame;
-    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_SETTINGS, 0, &frame));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_settings_i(uint16_t setting_id, uint32_t value, void *userdata) {
-    struct fixture *fixture = userdata;
-    struct frame *frame = s_latest_frame(fixture);
-
-    /* Validate */
-    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_SETTINGS, frame->type);
-    ASSERT_FALSE(frame->finished);
-
-    /* Stash setting */
-    struct aws_h2_frame_setting setting = {setting_id, value};
-    ASSERT_SUCCESS(aws_array_list_push_back(&frame->settings, &setting));
-
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_settings_end(void *userdata) {
-    struct fixture *fixture = userdata;
-    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_SETTINGS, 0));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_settings_ack(void *userdata) {
-    struct fixture *fixture = userdata;
-    struct frame *frame;
-
-    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/, &frame));
-
-    /* Stash data*/
-    frame->ack = true;
-
-    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
-    struct fixture *fixture = userdata;
-    struct frame *frame;
-
-    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_PING, 0 /*stream_id*/, &frame));
-
-    /* Stash data*/
-    memcpy(frame->ping_opaque_data, opaque_data, AWS_H2_PING_DATA_SIZE);
-
-    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_PING, 0 /*stream_id*/));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_ping_ack(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
-    struct fixture *fixture = userdata;
-    struct frame *frame;
-
-    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_PING, 0 /*stream_id*/, &frame));
-
-    /* Stash data*/
-    memcpy(frame->ping_opaque_data, opaque_data, AWS_H2_PING_DATA_SIZE);
-    frame->ack = true;
-
-    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_PING, 0 /*stream_id*/));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_goaway_begin(
-    uint32_t last_stream,
-    uint32_t error_code,
-    uint32_t debug_data_length,
-    void *userdata) {
-
-    struct fixture *fixture = userdata;
-    struct frame *frame;
-    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_GOAWAY, 0, &frame));
-
-    frame->goaway_last_stream_id = last_stream;
-    frame->error_code = error_code;
-    frame->goaway_debug_data_remaining = debug_data_length;
-
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_goaway_i(struct aws_byte_cursor debug_data, void *userdata) {
-    struct fixture *fixture = userdata;
-    struct frame *frame = s_latest_frame(fixture);
-
-    /* Validate */
-    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_GOAWAY, frame->type);
-    ASSERT_FALSE(frame->finished);
-    ASSERT_TRUE(frame->goaway_debug_data_remaining >= debug_data.len);
-
-    frame->goaway_debug_data_remaining -= (uint32_t)debug_data.len;
-
-    /* Stash data */
-    ASSERT_SUCCESS(aws_byte_buf_append_dynamic(&frame->data, &debug_data));
-
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_goaway_end(void *userdata) {
-    struct fixture *fixture = userdata;
-    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_GOAWAY, 0));
-
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_UINT_EQUALS(0, frame->goaway_debug_data_remaining);
-
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_increment, void *userdata) {
-    struct fixture *fixture = userdata;
-    struct frame *frame;
-    ASSERT_SUCCESS(s_begin_new_frame(fixture, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id, &frame));
-
-    frame->window_size_increment = window_size_increment;
-
-    ASSERT_SUCCESS(s_end_current_frame(fixture, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id));
-
-    return AWS_OP_SUCCESS;
-}
-
-static struct aws_h2_decoder_vtable s_decoder_vtable = {
-    .on_headers_begin = s_decoder_on_headers_begin,
-    .on_headers_i = s_decoder_on_headers_i,
-    .on_headers_end = s_decoder_on_headers_end,
-    .on_push_promise_begin = s_decoder_on_push_promise_begin,
-    .on_push_promise_i = s_decoder_on_push_promise_i,
-    .on_push_promise_end = s_decoder_on_push_promise_end,
-    .on_data = s_decoder_on_data,
-    .on_end_stream = s_decoder_on_end_stream,
-    .on_rst_stream = s_decoder_on_rst_stream,
-    .on_settings_begin = s_decoder_on_settings_begin,
-    .on_settings_i = s_decoder_on_settings_i,
-    .on_settings_end = s_decoder_on_settings_end,
-    .on_settings_ack = s_decoder_on_settings_ack,
-    .on_ping = s_decoder_on_ping,
-    .on_ping_ack = s_decoder_on_ping_ack,
-    .on_goaway_begin = s_decoder_on_goaway_begin,
-    .on_goaway_i = s_decoder_on_goaway_i,
-    .on_goaway_end = s_decoder_on_goaway_end,
-    .on_window_update = s_decoder_on_window_update,
-};
-
-/************************** END DECODER CALLBACKS *****************************/
-
 /* Note that init() and clean_up() are called multiple times in "split tests",
  * which re-runs the test at each possible split point */
 static int s_fixture_init(struct fixture *fixture, struct aws_allocator *allocator) {
     fixture->allocator = allocator;
-    ASSERT_SUCCESS(aws_array_list_init_dynamic(&fixture->frames, allocator, 2, sizeof(struct frame)));
 
-    struct aws_h2_decoder_params options = {
+    struct h2_decode_tester_options options = {
         .alloc = allocator,
-        .vtable = &s_decoder_vtable,
-        .userdata = fixture,
         .is_server = fixture->is_server,
         .skip_connection_preface = fixture->skip_connection_preface,
     };
-    fixture->decoder = aws_h2_decoder_new(&options);
-    ASSERT_NOT_NULL(fixture->decoder);
+    ASSERT_SUCCESS(h2_decode_tester_init(&fixture->decode, &options));
+
     return AWS_OP_SUCCESS;
 }
 
 static void s_fixture_clean_up(struct fixture *fixture) {
-    for (size_t i = 0; i < aws_array_list_length(&fixture->frames); ++i) {
-        struct frame *frame;
-        aws_array_list_get_at_ptr(&fixture->frames, (void **)&frame, i);
-        s_frame_clean_up(frame);
-    }
-    aws_array_list_clean_up(&fixture->frames);
-    aws_h2_decoder_destroy(fixture->decoder);
+    h2_decode_tester_clean_up(&fixture->decode);
 }
 
 static int s_fixture_test_setup(struct aws_allocator *allocator, void *ctx) {
@@ -519,7 +147,7 @@ static int s_decode_all(struct fixture *fixture, struct aws_byte_cursor input) {
         /* Decode input one byte at a time */
         while (input.len) {
             struct aws_byte_cursor one_byte = aws_byte_cursor_advance(&input, 1);
-            if (aws_h2_decode(fixture->decoder, &one_byte)) {
+            if (aws_h2_decode(fixture->decode.decoder, &one_byte)) {
                 return AWS_OP_ERR;
             }
             ASSERT_UINT_EQUALS(0, one_byte.len);
@@ -534,55 +162,24 @@ static int s_decode_all(struct fixture *fixture, struct aws_byte_cursor input) {
         }
 
         struct aws_byte_cursor first_chunk = aws_byte_cursor_advance(&input, fixture->split_i);
-        if (aws_h2_decode(fixture->decoder, &first_chunk)) {
+        if (aws_h2_decode(fixture->decode.decoder, &first_chunk)) {
             return AWS_OP_ERR;
         }
         ASSERT_UINT_EQUALS(0, first_chunk.len);
 
-        if (aws_h2_decode(fixture->decoder, &input)) {
+        if (aws_h2_decode(fixture->decode.decoder, &input)) {
             return AWS_OP_ERR;
         }
         ASSERT_UINT_EQUALS(0, input.len);
 
     } else {
         /* Decode buffer all at once */
-        if (aws_h2_decode(fixture->decoder, &input)) {
+        if (aws_h2_decode(fixture->decode.decoder, &input)) {
             return AWS_OP_ERR;
         }
         ASSERT_UINT_EQUALS(0, input.len);
     }
 
-    return AWS_OP_SUCCESS;
-}
-
-/* Compare data (which might be split across N frames) to expected string */
-static int s_check_data_across_frames(
-    struct fixture *fixture,
-    uint32_t stream_id,
-    const char *expected,
-    bool expect_end_stream) {
-
-    struct aws_byte_buf data;
-    ASSERT_SUCCESS(aws_byte_buf_init(&data, fixture->allocator, 128));
-
-    bool found_end_stream = false;
-
-    for (size_t frame_i = 0; frame_i < aws_array_list_length(&fixture->frames); ++frame_i) {
-        struct frame *frame;
-        aws_array_list_get_at_ptr(&fixture->frames, (void **)&frame, frame_i);
-
-        if (frame->type == AWS_H2_FRAME_T_DATA && frame->stream_id == stream_id) {
-            struct aws_byte_cursor frame_data = aws_byte_cursor_from_buf(&frame->data);
-            ASSERT_SUCCESS(aws_byte_buf_append_dynamic(&data, &frame_data));
-
-            found_end_stream = frame->end_stream;
-        }
-    }
-
-    ASSERT_BIN_ARRAYS_EQUALS(expected, strlen(expected), data.buffer, data.len);
-    ASSERT_UINT_EQUALS(expect_end_stream, found_end_stream);
-
-    aws_byte_buf_clean_up(&data);
     return AWS_OP_SUCCESS;
 }
 
@@ -605,9 +202,10 @@ H2_DECODER_TEST_CASE(h2_decoder_data) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
-    ASSERT_SUCCESS(s_check_data_across_frames(fixture, 0x76543210 /*stream_id*/, "hello", true /*end_stream*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
+    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
+        &fixture->decode, 0x76543210 /*stream_id*/, "hello", true /*end_stream*/));
     return AWS_OP_SUCCESS;
 }
 
@@ -632,9 +230,10 @@ H2_DECODER_TEST_CASE(h2_decoder_data_padded) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
-    ASSERT_SUCCESS(s_check_data_across_frames(fixture, 0x76543210 /*stream_id*/, "hello", false /*end_stream*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
+    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
+        &fixture->decode, 0x76543210 /*stream_id*/, "hello", false /*end_stream*/));
     return AWS_OP_SUCCESS;
 }
 
@@ -659,9 +258,10 @@ H2_DECODER_TEST_CASE(h2_decoder_data_pad_length_zero) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
-    ASSERT_SUCCESS(s_check_data_across_frames(fixture, 0x76543210 /*stream_id*/, "hello", true /*end_stream*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
+    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
+        &fixture->decode, 0x76543210 /*stream_id*/, "hello", true /*end_stream*/));
     return AWS_OP_SUCCESS;
 }
 
@@ -684,7 +284,8 @@ H2_DECODER_TEST_CASE(h2_decoder_data_empty) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    ASSERT_SUCCESS(s_check_data_across_frames(fixture, 0x76543210 /*stream_id*/, "", false /*end_stream*/));
+    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
+        &fixture->decode, 0x76543210 /*stream_id*/, "", false /*end_stream*/));
     return AWS_OP_SUCCESS;
 }
 
@@ -709,7 +310,8 @@ H2_DECODER_TEST_CASE(h2_decoder_data_empty_padded) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    ASSERT_SUCCESS(s_check_data_across_frames(fixture, 0x76543210 /*stream_id*/, "", false /*end_stream*/));
+    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
+        &fixture->decode, 0x76543210 /*stream_id*/, "", false /*end_stream*/));
     return AWS_OP_SUCCESS;
 }
 
@@ -735,9 +337,10 @@ H2_DECODER_TEST_CASE(h2_decoder_data_ignores_unknown_flags) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
-    ASSERT_SUCCESS(s_check_data_across_frames(fixture, 0x76543210 /*stream_id*/, "hello", true /*end_stream*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
+    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
+        &fixture->decode, 0x76543210 /*stream_id*/, "hello", true /*end_stream*/));
     return AWS_OP_SUCCESS;
 }
 
@@ -805,26 +408,26 @@ H2_DECODER_TEST_CASE(h2_decoder_stream_id_ignores_reserved_bit) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_DATA, 0x7FFFFFFF /*stream_id*/));
-    ASSERT_SUCCESS(s_check_data_across_frames(fixture, 0x7FFFFFFF /*stream_id*/, "hello", true /*end_stream*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x7FFFFFFF /*stream_id*/));
+    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
+        &fixture->decode, 0x7FFFFFFF /*stream_id*/, "hello", true /*end_stream*/));
     return AWS_OP_SUCCESS;
 }
 
 static int s_check_header(
-    struct frame *frame,
+    struct h2_decoded_frame *frame,
     size_t header_idx,
     const char *name,
     const char *value,
     enum aws_http_header_compression compression) {
-    ASSERT_TRUE(header_idx < aws_array_list_length(&frame->headers));
 
-    struct aws_http_header *header_field;
-    aws_array_list_get_at_ptr(&frame->headers, (void **)&header_field, header_idx);
+    struct aws_http_header header_field;
+    ASSERT_SUCCESS(aws_http_headers_get_index(frame->headers, header_idx, &header_field));
 
-    ASSERT_BIN_ARRAYS_EQUALS(name, strlen(name), header_field->name.ptr, header_field->name.len);
-    ASSERT_BIN_ARRAYS_EQUALS(value, strlen(value), header_field->value.ptr, header_field->value.len);
-    ASSERT_INT_EQUALS(compression, header_field->compression);
+    ASSERT_BIN_ARRAYS_EQUALS(name, strlen(name), header_field.name.ptr, header_field.name.len);
+    ASSERT_BIN_ARRAYS_EQUALS(value, strlen(value), header_field.value.ptr, header_field.value.len);
+    ASSERT_INT_EQUALS(compression, header_field.compression);
     return AWS_OP_SUCCESS;
 }
 
@@ -849,9 +452,9 @@ H2_DECODER_TEST_CASE(h2_decoder_headers) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
-    ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->headers));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
@@ -879,9 +482,9 @@ H2_DECODER_TEST_CASE(h2_decoder_headers_padded) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
-    ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->headers));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     return AWS_OP_SUCCESS;
 }
@@ -910,9 +513,9 @@ H2_DECODER_TEST_CASE(h2_decoder_headers_priority) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
-    ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->headers));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     return AWS_OP_SUCCESS;
 }
@@ -942,9 +545,9 @@ H2_DECODER_TEST_CASE(h2_decoder_headers_ignores_unknown_flags) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
-    ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->headers));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
@@ -1055,9 +658,9 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
-    ASSERT_UINT_EQUALS(2, aws_array_list_length(&frame->headers));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(2, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_TRUE(frame->end_stream);
@@ -1095,9 +698,9 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_ignores_unknown_flags) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
-    ASSERT_UINT_EQUALS(2, aws_array_list_length(&frame->headers));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(2, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     return AWS_OP_SUCCESS;
@@ -1135,9 +738,9 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_header_field_spans_frames) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
-    ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->headers));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_FALSE(frame->end_stream);
     return AWS_OP_SUCCESS;
@@ -1180,9 +783,9 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_many_frames) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
-    ASSERT_UINT_EQUALS(3, aws_array_list_length(&frame->headers));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 2, "hi", "mom", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -1225,9 +828,9 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_empty_payloads) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
-    ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->headers));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
@@ -1368,7 +971,7 @@ H2_DECODER_TEST_CASE(h2_decoder_priority) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Our implementation currently chooses to ignore PRIORITY frames, so no callbacks should have fired */
-    ASSERT_UINT_EQUALS(0, aws_array_list_length(&fixture->frames));
+    ASSERT_UINT_EQUALS(0, h2_decode_tester_frame_count(&fixture->decode));
     return AWS_OP_SUCCESS;
 }
 
@@ -1392,7 +995,7 @@ H2_DECODER_TEST_CASE(h2_decoder_priority_ignores_unknown_flags) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Our implementation currently chooses to ignore PRIORITY frames, so no callbacks should have fired */
-    ASSERT_UINT_EQUALS(0, aws_array_list_length(&fixture->frames));
+    ASSERT_UINT_EQUALS(0, h2_decode_tester_frame_count(&fixture->decode));
     return AWS_OP_SUCCESS;
 }
 
@@ -1484,9 +1087,9 @@ H2_DECODER_TEST_CASE(h2_decoder_rst_stream) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_RST_STREAM, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(1, h2_decode_tester_frame_count(&fixture->decode));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_RST_STREAM, 0x76543210 /*stream_id*/));
     ASSERT_UINT_EQUALS(0xFFEEDDCC, frame->error_code);
     return AWS_OP_SUCCESS;
 }
@@ -1510,9 +1113,9 @@ H2_DECODER_TEST_CASE(h2_decoder_rst_stream_ignores_unknown_flags) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_RST_STREAM, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(1, h2_decode_tester_frame_count(&fixture->decode));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_RST_STREAM, 0x76543210 /*stream_id*/));
     ASSERT_UINT_EQUALS(0xFFEEDDCC, frame->error_code);
     return AWS_OP_SUCCESS;
 }
@@ -1605,9 +1208,9 @@ H2_DECODER_TEST_CASE(h2_decoder_settings) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
+    ASSERT_UINT_EQUALS(1, h2_decode_tester_frame_count(&fixture->decode));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
     ASSERT_FALSE(frame->ack);
     ASSERT_UINT_EQUALS(2, aws_array_list_length(&frame->settings));
 
@@ -1641,9 +1244,9 @@ H2_DECODER_TEST_CASE(h2_decoder_settings_empty) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
+    ASSERT_UINT_EQUALS(1, h2_decode_tester_frame_count(&fixture->decode));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
     ASSERT_FALSE(frame->ack);
     ASSERT_UINT_EQUALS(0, aws_array_list_length(&frame->settings));
 
@@ -1668,9 +1271,9 @@ H2_DECODER_TEST_CASE(h2_decoder_settings_ack) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
+    ASSERT_UINT_EQUALS(1, h2_decode_tester_frame_count(&fixture->decode));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
     ASSERT_TRUE(frame->ack);
     ASSERT_UINT_EQUALS(0, aws_array_list_length(&frame->settings));
 
@@ -1701,9 +1304,9 @@ H2_DECODER_TEST_CASE(h2_decoder_settings_ignores_unknown_ids) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
+    ASSERT_UINT_EQUALS(1, h2_decode_tester_frame_count(&fixture->decode));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
     ASSERT_FALSE(frame->ack);
     ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->settings));
 
@@ -1734,9 +1337,9 @@ H2_DECODER_TEST_CASE(h2_decoder_settings_ignores_unknown_flags) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    ASSERT_UINT_EQUALS(1, aws_array_list_length(&fixture->frames));
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
+    ASSERT_UINT_EQUALS(1, h2_decode_tester_frame_count(&fixture->decode));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/));
     ASSERT_TRUE(frame->ack);
     ASSERT_UINT_EQUALS(0, aws_array_list_length(&frame->settings));
 
@@ -1837,10 +1440,10 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
-    ASSERT_UINT_EQUALS(3, aws_array_list_length(&frame->headers));
+    ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -1874,10 +1477,10 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise_ignores_unknown_flags) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
-    ASSERT_UINT_EQUALS(3, aws_array_list_length(&frame->headers));
+    ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -1925,10 +1528,10 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise_continuation) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
-    ASSERT_UINT_EQUALS(3, aws_array_list_length(&frame->headers));
+    ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -2042,8 +1645,8 @@ H2_DECODER_TEST_CASE(h2_decoder_ping) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_PING, 0x0 /*stream_id*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PING, 0x0 /*stream_id*/));
     ASSERT_BIN_ARRAYS_EQUALS("pingpong", AWS_H2_PING_DATA_SIZE, frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
     ASSERT_FALSE(frame->ack);
     return AWS_OP_SUCCESS;
@@ -2068,8 +1671,8 @@ H2_DECODER_TEST_CASE(h2_decoder_ping_ack) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_PING, 0x0 /*stream_id*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PING, 0x0 /*stream_id*/));
     ASSERT_BIN_ARRAYS_EQUALS("pingpong", AWS_H2_PING_DATA_SIZE, frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
     ASSERT_TRUE(frame->ack);
     return AWS_OP_SUCCESS;
@@ -2161,8 +1764,8 @@ H2_DECODER_TEST_CASE(h2_decoder_goaway) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_GOAWAY, 0x0 /*stream_id*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_GOAWAY, 0x0 /*stream_id*/));
     ASSERT_UINT_EQUALS(0x7F000001, frame->goaway_last_stream_id);
     ASSERT_UINT_EQUALS(0xFEEDBEEF, frame->error_code);
     ASSERT_BIN_ARRAYS_EQUALS("bye", 3, frame->data.buffer, frame->data.len);
@@ -2191,8 +1794,8 @@ H2_DECODER_TEST_CASE(h2_decoder_goaway_empty) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_GOAWAY, 0x0 /*stream_id*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_GOAWAY, 0x0 /*stream_id*/));
     ASSERT_UINT_EQUALS(0x7F000001, frame->goaway_last_stream_id);
     ASSERT_UINT_EQUALS(0xFEEDBEEF, frame->error_code);
     ASSERT_BIN_ARRAYS_EQUALS("", 0, frame->data.buffer, frame->data.len);
@@ -2265,8 +1868,8 @@ H2_DECODER_TEST_CASE(h2_decoder_window_update_connection) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_WINDOW_UPDATE, 0x0 /*stream_id*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_WINDOW_UPDATE, 0x0 /*stream_id*/));
     ASSERT_UINT_EQUALS(0x7F000001, frame->window_size_increment);
 
     return AWS_OP_SUCCESS;
@@ -2292,8 +1895,8 @@ H2_DECODER_TEST_CASE(h2_decoder_window_update_stream) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    struct frame *frame = s_latest_frame(fixture);
-    ASSERT_SUCCESS(s_validate_finished_frame(frame, AWS_H2_FRAME_T_WINDOW_UPDATE, 0x1 /*stream_id*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_WINDOW_UPDATE, 0x1 /*stream_id*/));
     ASSERT_UINT_EQUALS(0x7F000001, frame->window_size_increment);
 
     return AWS_OP_SUCCESS;
@@ -2377,7 +1980,7 @@ H2_DECODER_TEST_CASE(h2_decoder_unknown_frame_type_ignored) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* No callbacks should have fired about any of these frames */
-    ASSERT_UINT_EQUALS(0, aws_array_list_length(&fixture->frames));
+    ASSERT_UINT_EQUALS(0, h2_decode_tester_frame_count(&fixture->decode));
     return AWS_OP_SUCCESS;
 }
 
@@ -2386,11 +1989,11 @@ static int s_get_finished_frame_i(
     size_t i,
     enum aws_h2_frame_type type,
     uint32_t stream_id,
-    struct frame **out_frame) {
+    struct h2_decoded_frame **out_frame) {
 
-    ASSERT_TRUE(i < aws_array_list_length(&fixture->frames));
-    aws_array_list_get_at_ptr(&fixture->frames, (void **)out_frame, i);
-    ASSERT_SUCCESS(s_validate_finished_frame(*out_frame, type, stream_id));
+    ASSERT_TRUE(i < h2_decode_tester_frame_count(&fixture->decode));
+    *out_frame = h2_decode_tester_get_frame(&fixture->decode, i);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(*out_frame, type, stream_id));
     return AWS_OP_SUCCESS;
 }
 
@@ -2506,11 +2109,11 @@ H2_DECODER_TEST_CASE(h2_decoder_many_frames_in_a_row) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     size_t frame_i = 0;
-    struct frame *frame;
+    struct h2_decoded_frame *frame;
 
     /* Validate HEADERS (and its CONTINUATION) */
     ASSERT_SUCCESS(s_get_finished_frame_i(fixture, frame_i++, AWS_H2_FRAME_T_HEADERS, 0x1 /*stream-id*/, &frame));
-    ASSERT_UINT_EQUALS(2, aws_array_list_length(&frame->headers));
+    ASSERT_UINT_EQUALS(2, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_FALSE(frame->end_stream);
@@ -2522,7 +2125,7 @@ H2_DECODER_TEST_CASE(h2_decoder_many_frames_in_a_row) {
     /* Validate PUSH_PROMISE (and its CONTINUATION) */
     ASSERT_SUCCESS(s_get_finished_frame_i(fixture, frame_i++, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream-id*/, &frame));
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
-    ASSERT_UINT_EQUALS(3, aws_array_list_length(&frame->headers));
+    ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 2, ":path", "/index.html", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -2556,7 +2159,7 @@ H2_DECODER_TEST_CASE(h2_decoder_many_frames_in_a_row) {
     ASSERT_TRUE(frame->ack);
 
     /* Ensure no further frames reported */
-    ASSERT_UINT_EQUALS(frame_i, aws_array_list_length(&fixture->frames));
+    ASSERT_UINT_EQUALS(frame_i, h2_decode_tester_frame_count(&fixture->decode));
 
     return AWS_OP_SUCCESS;
 }
@@ -2588,9 +2191,9 @@ H2_DECODER_ON_CLIENT_PREFACE_TEST(h2_decoder_preface_from_server) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    ASSERT_UINT_EQUALS(2, aws_array_list_length(&fixture->frames));
+    ASSERT_UINT_EQUALS(2, h2_decode_tester_frame_count(&fixture->decode));
 
-    struct frame *frame;
+    struct h2_decoded_frame *frame;
     ASSERT_SUCCESS(s_get_finished_frame_i(fixture, 0, AWS_H2_FRAME_T_SETTINGS, 0 /*stream-id*/, &frame));
     ASSERT_SUCCESS(s_get_finished_frame_i(fixture, 1, AWS_H2_FRAME_T_PING, 0 /*stream-id*/, &frame));
 
@@ -2686,9 +2289,9 @@ H2_DECODER_ON_SERVER_PREFACE_TEST(h2_decoder_preface_from_client) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate */
-    ASSERT_UINT_EQUALS(2, aws_array_list_length(&fixture->frames));
+    ASSERT_UINT_EQUALS(2, h2_decode_tester_frame_count(&fixture->decode));
 
-    struct frame *frame;
+    struct h2_decoded_frame *frame;
     ASSERT_SUCCESS(s_get_finished_frame_i(fixture, 0, AWS_H2_FRAME_T_SETTINGS, 0 /*stream-id*/, &frame));
     ASSERT_SUCCESS(s_get_finished_frame_i(fixture, 1, AWS_H2_FRAME_T_PING, 0 /*stream-id*/, &frame));
 

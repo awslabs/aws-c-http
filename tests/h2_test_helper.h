@@ -1,0 +1,159 @@
+#ifndef AWS_HTTP_H2_TEST_HELPER_H
+#define AWS_HTTP_H2_TEST_HELPER_H
+/*
+ * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License").
+ * You may not use this file except in compliance with the License.
+ * A copy of the License is located at
+ *
+ *  http://aws.amazon.com/apache2.0
+ *
+ * or in the "license" file accompanying this file. This file is distributed
+ * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+ * express or implied. See the License for the specific language governing
+ * permissions and limitations under the License.
+ */
+
+#include <aws/common/array_list.h>
+#include <aws/http/private/h2_frames.h>
+#include <aws/http/request_response.h>
+#include <aws/testing/aws_test_harness.h>
+
+/**
+ * Information gathered about a given frame from decoder callbacks.
+ * These aren't 1:1 with literal H2 frames:
+ * - The decoder hides the existence of CONTINUATION frames,
+ *   their data continues the preceding HEADERS or PUSH_PROMISE frame.
+ *
+ * - A DATA frame could appear as N on_data callbacks.
+ *
+ * - The on_end_stream callback fires after all other callbacks for that frame,
+ *   so we count it as part of the preceding "finished" frame.
+ */
+struct h2_decoded_frame {
+    /* If true, we expect no further callbacks regarding this frame */
+    bool finished;
+
+    enum aws_h2_frame_type type; /* All frame types have this */
+    uint32_t stream_id;          /* All frame types have this */
+
+    /*
+     * Everything else is only found in certain frame types
+     */
+
+    bool end_stream; /* HEADERS and DATA might have this */
+    bool ack;        /* PING and SETTINGS might have this */
+
+    uint32_t error_code;                             /* RST_STREAM and GOAWAY have this */
+    uint32_t promised_stream_id;                     /* PUSH_PROMISE has this */
+    uint32_t goaway_last_stream_id;                  /* GOAWAY has this */
+    uint32_t goaway_debug_data_remaining;            /* GOAWAY has this*/
+    uint8_t ping_opaque_data[AWS_H2_PING_DATA_SIZE]; /* PING has this */
+    uint32_t window_size_increment;                  /* WINDOW_UPDATE has this */
+
+    struct aws_http_headers *headers; /* HEADERS and PUSH_PROMISE have this */
+    struct aws_array_list settings;   /* contains aws_h2_frame_setting, SETTINGS has this */
+    struct aws_byte_buf data /* DATA has this */;
+};
+
+/**
+ * Check that:
+ * - frame finished (ex: if HEADERS frame, then on_headers_end() fired)
+ * - frame was in fact using the expected type and stream_id.
+ */
+int h2_decoded_frame_check_finished(
+    const struct h2_decoded_frame *frame,
+    enum aws_h2_frame_type expected_type,
+    uint32_t expected_stream_id);
+
+/******************************************************************************/
+
+/**
+ * Translates decoder callbacks into an array-list of h2_decoded_frames.
+ */
+struct h2_decode_tester {
+    struct aws_allocator *alloc;
+    struct aws_h2_decoder *decoder;
+    struct aws_array_list frames; /* contains h2_decoded_frame */
+};
+
+struct h2_decode_tester_options {
+    struct aws_allocator *alloc;
+    bool is_server;
+    bool skip_connection_preface;
+};
+
+int h2_decode_tester_init(struct h2_decode_tester *decode_tester, const struct h2_decode_tester_options *options);
+void h2_decode_tester_clean_up(struct h2_decode_tester *decode_tester);
+
+size_t h2_decode_tester_frame_count(const struct h2_decode_tester *decode_tester);
+struct h2_decoded_frame *h2_decode_tester_get_frame(const struct h2_decode_tester *decode_tester, size_t i);
+struct h2_decoded_frame *h2_decode_tester_latest_frame(const struct h2_decode_tester *decode_tester);
+
+/**
+ * Compare data (which may be split across N frames) against expected
+ */
+int h2_decode_tester_check_data_across_frames(
+    const struct h2_decode_tester *decode_tester,
+    uint32_t stream_id,
+    struct aws_byte_cursor expected,
+    bool expect_end_stream);
+
+/**
+ * Compare data (which may be split across N frames) against expected
+ */
+int h2_decode_tester_check_data_str_across_frames(
+    const struct h2_decode_tester *decode_tester,
+    uint32_t stream_id,
+    const char *expected,
+    bool expect_end_stream);
+
+/******************************************************************************/
+
+/**
+ * Fake HTTP/2 peer.
+ * Can decode H2 frames that are are written to the testing channel.
+ * Can encode H2 frames and push it into the channel in the read direction.
+ */
+struct h2_fake_peer {
+    struct aws_allocator *alloc;
+    struct testing_channel *testing_channel;
+
+    struct aws_h2_frame_encoder encoder;
+    struct h2_decode_tester decode;
+    bool is_server;
+};
+
+struct h2_fake_peer_options {
+    struct aws_allocator *alloc;
+    struct testing_channel *testing_channel;
+    bool is_server;
+};
+
+int h2_fake_peer_init(struct h2_fake_peer *peer, const struct h2_fake_peer_options *options);
+void h2_fake_peer_clean_up(struct h2_fake_peer *peer);
+
+/**
+ * Pop all written messages off the testing-channel and run them through the peer's decode-tester
+ */
+int h2_fake_peer_decode_messages_from_testing_channel(struct h2_fake_peer *peer);
+
+/**
+ * Encode frame and push it into the testing-channel in the read-direction.
+ * Takes ownership of frame and destroys after sending.
+ */
+int h2_fake_peer_send_frame(struct h2_fake_peer *peer, struct aws_h2_frame *frame);
+
+/**
+ * Peer sends the connection preface with specified settings.
+ * Takes ownership of frame and destroys after sending
+ */
+int h2_fake_peer_send_connection_preface(struct h2_fake_peer *peer, struct aws_h2_frame *settings);
+
+/**
+ * Peer sends the connection preface with default settings.
+ */
+int h2_fake_peer_send_connection_preface_default_settings(struct h2_fake_peer *peer);
+
+#endif /* AWS_HTTP_H2_TEST_HELPER_H */

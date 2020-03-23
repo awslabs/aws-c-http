@@ -81,7 +81,7 @@ AWS_HTTP_API struct aws_h1_decoder *aws_h1_decoder_new(struct aws_h1_decoder_par
 AWS_HTTP_API void aws_h1_decoder_destroy(struct aws_h1_decoder *decoder);
 AWS_HTTP_API int aws_h1_decode(struct aws_h1_decoder *decoder, struct aws_byte_cursor *data);
 
-AWS_HTTP_API void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, void *id);
+AWS_HTTP_API void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, const void *id);
 AWS_HTTP_API void aws_h1_decoder_set_body_headers_ignored(struct aws_h1_decoder *decoder, bool body_headers_ignored);
 
 /* RFC-7230 section 4.2 Message Format */

@@ -231,7 +231,10 @@ static void s_frame_prefix_encode(
 /***********************************************************************************************************************
  * Encoder
  **********************************************************************************************************************/
-int aws_h2_frame_encoder_init(struct aws_h2_frame_encoder *encoder, struct aws_allocator *allocator, void *logging_id) {
+int aws_h2_frame_encoder_init(
+    struct aws_h2_frame_encoder *encoder,
+    struct aws_allocator *allocator,
+    const void *logging_id) {
 
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(allocator);
