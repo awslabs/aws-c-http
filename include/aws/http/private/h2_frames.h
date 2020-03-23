@@ -163,7 +163,10 @@ int aws_h2_validate_stream_id(uint32_t stream_id);
  * 2. Encode the frame using aws_h2_encode_frame()
  */
 AWS_HTTP_API
-int aws_h2_frame_encoder_init(struct aws_h2_frame_encoder *encoder, struct aws_allocator *allocator, void *logging_id);
+int aws_h2_frame_encoder_init(
+    struct aws_h2_frame_encoder *encoder,
+    struct aws_allocator *allocator,
+    const void *logging_id);
 
 AWS_HTTP_API
 void aws_h2_frame_encoder_clean_up(struct aws_h2_frame_encoder *encoder);

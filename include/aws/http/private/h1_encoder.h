@@ -43,7 +43,7 @@ struct aws_h1_encoder {
     enum aws_h1_encoder_state state;
     struct aws_h1_encoder_message *message;
     uint64_t progress_bytes;
-    void *logging_id;
+    const void *logging_id;
 };
 
 AWS_EXTERN_C_BEGIN

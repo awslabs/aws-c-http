@@ -125,7 +125,7 @@ static const struct decoder_state *s_state_frames[] = {
 struct aws_h2_decoder {
     /* Implementation data. */
     struct aws_allocator *alloc;
-    void *logging_id;
+    const void *logging_id;
     struct aws_hpack_context *hpack;
     bool is_server;
     struct aws_byte_buf scratch;

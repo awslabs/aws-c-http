@@ -50,7 +50,7 @@ struct aws_h1_decoder {
     bool body_headers_ignored;
     bool body_headers_forbidden;
     enum aws_http_header_block header_block;
-    void *logging_id;
+    const void *logging_id;
 
     /* User callbacks and settings. */
     struct aws_h1_decoder_vtable vtable;
@@ -766,7 +766,7 @@ enum aws_http_header_block aws_h1_decoder_get_header_block(const struct aws_h1_d
     return decoder->header_block;
 }
 
-void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, void *id) {
+void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, const void *id) {
     decoder->logging_id = id;
 }
 

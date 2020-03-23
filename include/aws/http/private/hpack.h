@@ -71,7 +71,7 @@ AWS_HTTP_API
 struct aws_hpack_context *aws_hpack_context_new(
     struct aws_allocator *allocator,
     enum aws_http_log_subject log_subject,
-    void *log_id);
+    const void *log_id);
 
 AWS_HTTP_API
 void aws_hpack_context_destroy(struct aws_hpack_context *context);
