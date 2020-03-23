@@ -22,8 +22,6 @@
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
-#define MAX_FRAME_SIZE 16384
-
 /* Singleton used by tests in this file */
 struct tester {
     struct aws_allocator *alloc;
@@ -156,3 +154,4 @@ TEST_CASE(h2_client_ping_ack) {
 
     return s_tester_clean_up();
 }
+/* TODO: test that ping response is sent with higher priority than any other frame */

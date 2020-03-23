@@ -774,6 +774,7 @@ static int s_handler_process_read_message(
     struct aws_io_message *message) {
     (void)slot;
     struct aws_h2_connection *connection = handler->impl;
+    int err;
 
     CONNECTION_LOGF(
         TRACE,
@@ -792,12 +793,31 @@ static int s_handler_process_read_message(
         aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
         goto shutdown;
     }
+
+    struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
+    err = aws_h2_decode(connection->thread_data.decoder, &message_cursor);
+    if (err) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "id=%p: Decoding message failed, error %d (%s). Closing connection",
+            (void *)&connection->base,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+    }
+
     /* HTTP/2 protocol uses WINDOW_UPDATE frames to coordinate data rates with peer,
      * so we can just keep the aws_channel's read-window wide open */
-    struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
-
-    /* #TODO update read window by however much we just read */
-    aws_h2_decode(connection->thread_data.decoder, &message_cursor);
+    err = aws_channel_slot_increment_read_window(slot, message->message_data.len);
+    if (err) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "id=%p: Incrementing read window failed, error %d (%s). Closing connection",
+            (void *)&connection->base,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+    }
 
     /* release message */
     if (message) {
