@@ -88,7 +88,7 @@ static int s_send_frame(struct aws_h2_frame *frame) {
     return AWS_OP_SUCCESS;
 }
 
-static int s_tester_send_default_setting() {
+static int s_tester_send_default_setting(void) {
     struct aws_h2_frame_setting settings[] = {
         {.id = AWS_H2_SETTINGS_ENABLE_PUSH, .value = 1}, /* real world value */
         {.id = 0x0000, .value = 0x00000000},             /* min value */
@@ -186,7 +186,7 @@ TEST_CASE(h2_client_ping_ack) {
     ASSERT_SUCCESS(s_send_frame(frame));
     struct aws_byte_buf expected;
     ASSERT_SUCCESS(aws_byte_buf_init(&expected, s_tester.alloc, 1024));
-    
+
     /* The channel will receive the preface and the ping ACK frame */
     ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&expected, aws_h2_connection_preface_client_string));
     /* clang-format off */
@@ -209,7 +209,7 @@ TEST_CASE(h2_client_ping_ack) {
     ASSERT_TRUE(aws_byte_buf_write(&expected, expected_settings, sizeof(expected_settings)));
     ASSERT_SUCCESS(testing_channel_check_written_messages(
         &s_tester.testing_channel, s_tester.alloc, aws_byte_cursor_from_buf(&expected)));
-        
+
     aws_byte_buf_clean_up(&expected);
     return s_tester_clean_up();
 }
