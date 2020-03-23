@@ -782,9 +782,6 @@ static int s_handler_process_read_message(
         (void *)&connection->base,
         message->message_data.len);
 
-    /* HTTP/2 protocol uses WINDOW_UPDATE frames to coordinate data rates with peer,
-     * so we can just keep the aws_channel's read-window wide open */
-    struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
     if (connection->thread_data.is_reading_stopped) {
         CONNECTION_LOGF(
             ERROR,
@@ -795,6 +792,10 @@ static int s_handler_process_read_message(
         aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
         goto shutdown;
     }
+    /* HTTP/2 protocol uses WINDOW_UPDATE frames to coordinate data rates with peer,
+     * so we can just keep the aws_channel's read-window wide open */
+    struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
+
     /* #TODO update read window by however much we just read */
     aws_h2_decode(connection->thread_data.decoder, &message_cursor);
 
@@ -808,6 +809,7 @@ shutdown:
     if (message) {
         aws_mem_release(message->allocator, message);
     }
+    /* stop reading, stop writing, schedule sutdown */
     s_stop(connection, true, true, true, aws_last_error());
     return AWS_OP_SUCCESS;
 }

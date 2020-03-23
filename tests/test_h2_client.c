@@ -147,13 +147,13 @@ TEST_CASE(h2_client_ping_ack) {
      * The decoder will raise an error if it doesn't receive the "client connection preface string" first. */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
-    /* Now check that client sent PING ACK frame, it should be the last frame received by peer
+    /* Now check that client sent PING ACK frame, it should be the latest frame received by peer
      * The last frame should be a ping type with ack on, and identical payload */
-    struct h2_decoded_frame *last_written_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
-    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_PING, last_written_frame->type);
-    ASSERT_TRUE(last_written_frame->ack);
+    struct h2_decoded_frame *latest_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
+    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_PING, latest_frame->type);
+    ASSERT_TRUE(latest_frame->ack);
     ASSERT_BIN_ARRAYS_EQUALS(
-        opaque_data, AWS_H2_PING_DATA_SIZE, last_written_frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+        opaque_data, AWS_H2_PING_DATA_SIZE, latest_frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
 
     return s_tester_clean_up();
 }
