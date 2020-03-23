@@ -18,8 +18,6 @@
 #include <aws/http/private/h2_decoder.h>
 #include <aws/testing/io_testing_channel.h>
 
-static const void *s_logging_id = (void *)0xAAAAAAAA;
-
 /*******************************************************************************
  * h2_decoded_frame
  ******************************************************************************/
@@ -413,7 +411,6 @@ int h2_decode_tester_init(struct h2_decode_tester *decode_tester, const struct h
         .alloc = options->alloc,
         .vtable = &s_decoder_vtable,
         .userdata = decode_tester,
-        .logging_id = s_logging_id,
         .is_server = options->is_server,
         .skip_connection_preface = options->skip_connection_preface,
     };
@@ -448,7 +445,7 @@ int h2_fake_peer_init(struct h2_fake_peer *peer, const struct h2_fake_peer_optio
     peer->testing_channel = options->testing_channel;
     peer->is_server = options->is_server;
 
-    ASSERT_SUCCESS(aws_h2_frame_encoder_init(&peer->encoder, peer->alloc, s_logging_id));
+    ASSERT_SUCCESS(aws_h2_frame_encoder_init(&peer->encoder, peer->alloc, NULL /*logging_id*/));
 
     struct h2_decode_tester_options decode_options = {.alloc = options->alloc, .is_server = options->is_server};
     ASSERT_SUCCESS(h2_decode_tester_init(&peer->decode, &decode_options));
