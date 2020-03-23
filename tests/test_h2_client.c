@@ -152,8 +152,7 @@ TEST_CASE(h2_client_ping_ack) {
     struct h2_decoded_frame *latest_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
     ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_PING, latest_frame->type);
     ASSERT_TRUE(latest_frame->ack);
-    ASSERT_BIN_ARRAYS_EQUALS(
-        opaque_data, AWS_H2_PING_DATA_SIZE, latest_frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+    ASSERT_BIN_ARRAYS_EQUALS(opaque_data, AWS_H2_PING_DATA_SIZE, latest_frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
 
     return s_tester_clean_up();
 }
