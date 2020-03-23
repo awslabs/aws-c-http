@@ -446,6 +446,7 @@ int h2_fake_peer_init(struct h2_fake_peer *peer, const struct h2_fake_peer_optio
     AWS_ZERO_STRUCT(*peer);
     peer->alloc = options->alloc;
     peer->testing_channel = options->testing_channel;
+    peer->is_server = options->is_server;
 
     ASSERT_SUCCESS(aws_h2_frame_encoder_init(&peer->encoder, peer->alloc, s_logging_id));
 
@@ -470,5 +471,43 @@ int h2_fake_peer_decode_messages_from_testing_channel(struct h2_fake_peer *peer)
     ASSERT_UINT_EQUALS(0, msg_cursor.len);
 
     aws_byte_buf_clean_up(&msg_buf);
+    return AWS_OP_SUCCESS;
+}
+
+int h2_fake_peer_send_frame(struct h2_fake_peer *peer, struct aws_h2_frame *frame) {
+    bool frame_complete = false;
+    while (!frame_complete) {
+        struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
+            peer->testing_channel->channel, AWS_IO_MESSAGE_APPLICATION_DATA, g_aws_channel_max_fragment_size);
+        ASSERT_NOT_NULL(msg);
+
+        ASSERT_SUCCESS(aws_h2_encode_frame(&peer->encoder, frame, &msg->message_data, &frame_complete));
+        ASSERT_TRUE(msg->message_data.len != 0);
+
+        ASSERT_SUCCESS(testing_channel_push_read_message(peer->testing_channel, msg));
+    }
+
+    aws_h2_frame_destroy(frame);
+    return AWS_OP_SUCCESS;
+}
+
+int h2_fake_peer_send_connection_preface(struct h2_fake_peer *peer, struct aws_h2_frame *settings) {
+    if (!peer->is_server) {
+        /* Client must first send magic string */
+        ASSERT_SUCCESS(testing_channel_push_read_data(peer->testing_channel, aws_h2_connection_preface_client_string));
+    }
+
+    /* Both server and client send SETTINGS as first proper frame */
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(peer, settings));
+
+    return AWS_OP_SUCCESS;
+}
+
+int h2_fake_peer_send_connection_preface_default_settings(struct h2_fake_peer *peer) {
+    /* Empty SETTINGS frame means "everything default" */
+    struct aws_h2_frame *settings = aws_h2_frame_new_settings(peer->alloc, NULL, 0, false /*ack*/);
+    ASSERT_NOT_NULL(settings);
+
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface(peer, settings));
     return AWS_OP_SUCCESS;
 }

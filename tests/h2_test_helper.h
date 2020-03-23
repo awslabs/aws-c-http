@@ -67,6 +67,8 @@ int h2_decoded_frame_check_finished(
     enum aws_h2_frame_type expected_type,
     uint32_t expected_stream_id);
 
+/******************************************************************************/
+
 /**
  * Translates decoder callbacks into an array-list of h2_decoded_frames.
  */
@@ -107,6 +109,8 @@ int h2_decode_tester_check_data_str_across_frames(
     const char *expected,
     bool expect_end_stream);
 
+/******************************************************************************/
+
 /**
  * Fake HTTP/2 peer.
  * Can decode H2 frames that are are written to the testing channel.
@@ -118,6 +122,7 @@ struct h2_fake_peer {
 
     struct aws_h2_frame_encoder encoder;
     struct h2_decode_tester decode;
+    bool is_server;
 };
 
 struct h2_fake_peer_options {
@@ -129,12 +134,26 @@ struct h2_fake_peer_options {
 int h2_fake_peer_init(struct h2_fake_peer *peer, const struct h2_fake_peer_options *options);
 void h2_fake_peer_clean_up(struct h2_fake_peer *peer);
 
-/* Pop all written messages off the testing-channel and run them through the peer's decode-tester */
+/**
+ * Pop all written messages off the testing-channel and run them through the peer's decode-tester
+ */
 int h2_fake_peer_decode_messages_from_testing_channel(struct h2_fake_peer *peer);
 
+/**
+ * Encode frame and push it into the testing-channel in the read-direction.
+ * Takes ownership of frame and destroys after sending.
+ */
 int h2_fake_peer_send_frame(struct h2_fake_peer *peer, struct aws_h2_frame *frame);
 
-/* Peer sends the connection preface with default settings */
+/**
+ * Peer sends the connection preface with specified settings.
+ * Takes ownership of frame and destroys after sending
+ */
+int h2_fake_peer_send_connection_preface(struct h2_fake_peer *peer, struct aws_h2_frame *settings);
+
+/**
+ * Peer sends the connection preface with default settings.
+ */
 int h2_fake_peer_send_connection_preface_default_settings(struct h2_fake_peer *peer);
 
 #endif /* AWS_HTTP_H2_TEST_HELPER_H */
