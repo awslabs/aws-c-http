@@ -183,6 +183,12 @@ TEST_CASE(h2_client_ping_ack) {
     struct aws_h2_frame *frame = aws_h2_frame_new_ping(allocator, false /*ack*/, opaque_data);
     ASSERT_NOT_NULL(frame);
 
+    ASSERT_SUCCESS(s_send_frame(frame));
+    struct aws_byte_buf expected;
+    ASSERT_SUCCESS(aws_byte_buf_init(&expected, s_tester.alloc, 1024));
+    
+    /* The channel will receive the preface and the ping ACK frame */
+    ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&expected, aws_h2_connection_preface_client_string));
     /* clang-format off */
     uint8_t expected_settings[] = {
         /* SETTINGS FRAME - empty settings frame is acceptable in preface */
@@ -194,18 +200,12 @@ TEST_CASE(h2_client_ping_ack) {
         /* PING FRAME - send another frame to be sure decoder is now functioning normally */
         0x00, 0x00, 0x08,           /* Length (24) */
         AWS_H2_FRAME_T_PING,        /* Type (8) */
-        0x1,                        /* Flags (8) */
+        0x1,                        /* Flags (8) ACK */
         0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
         /* PING */
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, /* Opaque Data (64) */
     };
     /* clang-format on */
-
-    ASSERT_SUCCESS(s_send_frame(frame));
-    struct aws_byte_buf expected;
-    ASSERT_SUCCESS(aws_byte_buf_init(&expected, s_tester.alloc, 1024));
-    
-    ASSERT_TRUE(aws_byte_buf_write_from_whole_cursor(&expected, aws_h2_connection_preface_client_string));
     ASSERT_TRUE(aws_byte_buf_write(&expected, expected_settings, sizeof(expected_settings)));
     ASSERT_SUCCESS(testing_channel_check_written_messages(
         &s_tester.testing_channel, s_tester.alloc, aws_byte_cursor_from_buf(&expected)));

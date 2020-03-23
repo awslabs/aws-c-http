@@ -798,6 +798,11 @@ static int s_handler_process_read_message(
     /* #TODO update read window by however much we just read */
     aws_h2_decode(connection->thread_data.decoder, &message_cursor);
 
+    /* release message */
+    if (message) {
+        aws_mem_release(message->allocator, message);
+        message = NULL;
+    }
     return AWS_OP_SUCCESS;
 shutdown:
     if (message) {
