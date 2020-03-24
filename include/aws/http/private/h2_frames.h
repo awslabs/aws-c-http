@@ -115,6 +115,10 @@ struct aws_h2_frame {
     struct aws_linked_list_node node;
     enum aws_h2_frame_type type;
     uint32_t stream_id;
+
+    /* If true, frame will be sent before those with normal priority.
+     * Useful for frames like PING ACK where low latency is important. */
+    bool high_priority;
 };
 
 /* A h2 setting and its value, used in SETTINGS frame */

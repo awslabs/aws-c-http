@@ -61,6 +61,8 @@ static struct aws_http_stream *s_connection_make_request(
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 
+static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
+
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
         {
@@ -84,6 +86,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
 
 static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
     .on_data = NULL,
+    .on_ping = s_decoder_on_ping,
 };
 
 static void s_lock_synced_data(struct aws_h2_connection *connection) {
@@ -294,7 +297,22 @@ void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connecti
     AWS_PRECONDITION(frame->type != AWS_H2_FRAME_T_DATA);
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
-    aws_linked_list_push_back(&connection->thread_data.outgoing_frames_queue, &frame->node);
+    if (frame->high_priority) {
+        /* Check from the head of the queue, and find a node with normal priority, and insert before it */
+        struct aws_linked_list_node *iter = aws_linked_list_begin(&connection->thread_data.outgoing_frames_queue);
+        /* one past the last element */
+        const struct aws_linked_list_node *end = aws_linked_list_end(&connection->thread_data.outgoing_frames_queue);
+        while (iter != end) {
+            struct aws_h2_frame *frame_i = AWS_CONTAINER_OF(iter, struct aws_h2_frame, node);
+            if (!frame_i->high_priority) {
+                break;
+            }
+            iter = iter->next;
+        }
+        aws_linked_list_insert_before(iter, &frame->node);
+    } else {
+        aws_linked_list_push_back(&connection->thread_data.outgoing_frames_queue, &frame->node);
+    }
 }
 
 static void s_on_channel_write_complete(
@@ -490,6 +508,24 @@ static void s_try_write_outgoing_frames(struct aws_h2_connection *connection) {
     CONNECTION_LOG(TRACE, connection, "Starting outgoing frames task");
     connection->thread_data.is_outgoing_frames_task_active = true;
     s_outgoing_frames_task(&connection->outgoing_frames_task, connection, AWS_TASK_STATUS_RUN_READY);
+}
+
+/* Decoder callbacks */
+static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
+    struct aws_h2_connection *connection = userdata;
+
+    /* send a PING frame with the ACK flag set in response, with an identical payload. */
+    struct aws_h2_frame *ping_ack_frame = aws_h2_frame_new_ping(connection->base.alloc, true, opaque_data);
+    if (!ping_ack_frame) {
+        goto error;
+    }
+
+    aws_h2_connection_enqueue_outgoing_frame(connection, ping_ack_frame);
+    s_try_write_outgoing_frames(connection);
+    return AWS_OP_SUCCESS;
+error:
+    CONNECTION_LOGF(ERROR, connection, "Ping ACK frame failed to be sent, error %s", aws_error_name(aws_last_error()));
+    return AWS_OP_ERR;
 }
 
 static int s_send_connection_preface_client_string(struct aws_h2_connection *connection) {
@@ -735,16 +771,51 @@ static int s_handler_process_read_message(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
     struct aws_io_message *message) {
-
-    (void)handler;
     (void)slot;
-    (void)message;
+    struct aws_h2_connection *connection = handler->impl;
+
+    CONNECTION_LOGF(TRACE, connection, "Begin processing message of size %zu.", message->message_data.len);
+
+    if (connection->thread_data.is_reading_stopped) {
+        CONNECTION_LOG(ERROR, connection, "Cannot process message because connection is shutting down.");
+        aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
+        goto shutdown;
+    }
+
+    struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
+    if (aws_h2_decode(connection->thread_data.decoder, &message_cursor)) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Decoding message failed, error %d (%s). Closing connection",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+    }
 
     /* HTTP/2 protocol uses WINDOW_UPDATE frames to coordinate data rates with peer,
      * so we can just keep the aws_channel's read-window wide open */
-    /* #TODO update read window by however much we just read */
+    if (aws_channel_slot_increment_read_window(slot, message->message_data.len)) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Incrementing read window failed, error %d (%s). Closing connection",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+    }
 
-    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+    /* release message */
+    if (message) {
+        aws_mem_release(message->allocator, message);
+        message = NULL;
+    }
+    return AWS_OP_SUCCESS;
+shutdown:
+    if (message) {
+        aws_mem_release(message->allocator, message);
+    }
+    /* Stop reading, because the reading error happans here */
+    s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, aws_last_error());
+    return AWS_OP_SUCCESS;
 }
 
 static int s_handler_process_write_message(
