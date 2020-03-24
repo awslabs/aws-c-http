@@ -12,17 +12,17 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-#include <aws/http/private/h1_connection.h>
-
 #include <aws/common/clock.h>
 #include <aws/common/math.h>
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
+#include <aws/http/private/h1_connection.h>
 #include <aws/http/private/h1_decoder.h>
 #include <aws/http/private/h1_encoder.h>
 #include <aws/http/private/h1_stream.h>
 #include <aws/http/private/request_response_impl.h>
 #include <aws/http/statistics.h>
+#include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 
 #if _MSC_VER
@@ -1020,9 +1020,9 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
         /* Certain L7 proxies send a connection close header on a 200/OK response to a CONNECT request. This is nutty
          * behavior, but the obviously desired behavior on a 200 CONNECT response is to leave the connection open
          * for the tunneling. */
-        bool ignore_connection_close = incoming_stream->base.request_method == AWS_HTTP_METHOD_CONNECT &&
-                                       incoming_stream->base.client_data &&
-                                       incoming_stream->base.client_data->response_status == AWS_HTTP_STATUS_200_OK;
+        bool ignore_connection_close =
+            incoming_stream->base.request_method == AWS_HTTP_METHOD_CONNECT && incoming_stream->base.client_data &&
+            incoming_stream->base.client_data->response_status == AWS_HTTP_STATUS_CODE_200_OK;
 
         if (!ignore_connection_close && aws_byte_cursor_eq_c_str_ignore_case(&header->value_data, "close")) {
             AWS_LOGF_TRACE(
@@ -1079,7 +1079,7 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
 
         /* Only clients can receive informational headers.
          * Check whether we're switching protocols */
-        if (incoming_stream->base.client_data->response_status == AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS) {
+        if (incoming_stream->base.client_data->response_status == AWS_HTTP_STATUS_CODE_101_SWITCHING_PROTOCOLS) {
 
             /* Switching protocols while there are multiple streams is too complex to deal with.
              * Ensure stream_list has exactly this 1 stream in it. */

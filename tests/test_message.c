@@ -13,9 +13,9 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/request_response.h>
-
 #include <aws/common/string.h>
+#include <aws/http/request_response.h>
+#include <aws/http/status_code.h>
 #include <aws/testing/aws_test_allocators.h>
 
 #define TEST_CASE(NAME)                                                                                                \
@@ -101,14 +101,14 @@ TEST_CASE(message_response_status) {
     ASSERT_ERROR(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE, aws_http_message_get_response_status(response, &get));
 
     /* Test simple set/get */
-    ASSERT_SUCCESS(aws_http_message_set_response_status(response, 200));
+    ASSERT_SUCCESS(aws_http_message_set_response_status(response, AWS_HTTP_STATUS_CODE_200_OK));
     ASSERT_SUCCESS(aws_http_message_get_response_status(response, &get));
-    ASSERT_INT_EQUALS(200, get);
+    ASSERT_INT_EQUALS(AWS_HTTP_STATUS_CODE_200_OK, get);
 
     /* Set a new status */
-    ASSERT_SUCCESS(aws_http_message_set_response_status(response, 404));
+    ASSERT_SUCCESS(aws_http_message_set_response_status(response, AWS_HTTP_STATUS_CODE_404_NOT_FOUND));
     ASSERT_SUCCESS(aws_http_message_get_response_status(response, &get));
-    ASSERT_INT_EQUALS(404, get);
+    ASSERT_INT_EQUALS(AWS_HTTP_STATUS_CODE_404_NOT_FOUND, get);
 
     aws_http_message_destroy(response);
     return AWS_OP_SUCCESS;
@@ -348,8 +348,10 @@ TEST_CASE(message_refcounts) {
     /* keep headers alive after message is destroyed */
     aws_http_headers_acquire(headers);
     aws_http_message_release(message);
+    ASSERT_FALSE(aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Host")));
     ASSERT_SUCCESS(
         aws_http_headers_add(headers, aws_byte_cursor_from_c_str("Host"), aws_byte_cursor_from_c_str("example.com")));
+    ASSERT_TRUE(aws_http_headers_has(headers, aws_byte_cursor_from_c_str("Host")));
 
     aws_http_headers_release(headers);
     return AWS_OP_SUCCESS;

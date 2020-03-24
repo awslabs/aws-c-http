@@ -13,12 +13,12 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/private/websocket_impl.h>
-
 #include <aws/common/logging.h>
 #include <aws/http/connection.h>
 #include <aws/http/private/http_impl.h>
+#include <aws/http/private/websocket_impl.h>
 #include <aws/http/request_response.h>
+#include <aws/http/status_code.h>
 #include <aws/io/uri.h>
 
 #include <inttypes.h>
@@ -166,7 +166,7 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     ws_bootstrap->websocket_frame_payload_callback = options->on_incoming_frame_payload;
     ws_bootstrap->websocket_frame_complete_callback = options->on_incoming_frame_complete;
     ws_bootstrap->handshake_request = options->handshake_request;
-    ws_bootstrap->response_status = AWS_HTTP_STATUS_UNKNOWN;
+    ws_bootstrap->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
 
     /* Pre-allocate space for response headers */
     /* Values are just guesses */
@@ -296,7 +296,7 @@ static void s_ws_bootstrap_on_http_setup(struct aws_http_connection *http_connec
             aws_error_name(error_code));
 
         ws_bootstrap->websocket_setup_callback(
-            NULL, error_code, AWS_HTTP_STATUS_UNKNOWN, NULL, 0, ws_bootstrap->user_data);
+            NULL, error_code, AWS_HTTP_STATUS_CODE_UNKNOWN, NULL, 0, ws_bootstrap->user_data);
 
         s_ws_bootstrap_destroy(ws_bootstrap);
         return;
@@ -475,7 +475,7 @@ static int s_ws_bootstrap_on_handshake_response_header_block_done(
     s_system_vtable->aws_http_stream_get_incoming_response_status(stream, &ws_bootstrap->response_status);
 
     /* Verify handshake response. RFC-6455 Section 1.3 */
-    if (ws_bootstrap->response_status != AWS_HTTP_STATUS_101_SWITCHING_PROTOCOLS) {
+    if (ws_bootstrap->response_status != AWS_HTTP_STATUS_CODE_101_SWITCHING_PROTOCOLS) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_WEBSOCKET_SETUP,
             "id=%p: Server refused websocket upgrade, responded with status code %d",

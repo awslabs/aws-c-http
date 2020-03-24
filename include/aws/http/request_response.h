@@ -340,6 +340,13 @@ void aws_http_headers_release(struct aws_http_headers *headers);
  * The underlying strings are copied.
  */
 AWS_HTTP_API
+int aws_http_headers_add_header(struct aws_http_headers *headers, const struct aws_http_header *header);
+
+/**
+ * Add a header.
+ * The underlying strings are copied.
+ */
+AWS_HTTP_API
 int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value);
 
 /**
@@ -391,6 +398,12 @@ int aws_http_headers_get(
     const struct aws_http_headers *headers,
     struct aws_byte_cursor name,
     struct aws_byte_cursor *out_value);
+
+/**
+ * Test if header name exists or not in headers
+ */
+AWS_HTTP_API
+bool aws_http_headers_has(const struct aws_http_headers *headers, struct aws_byte_cursor name);
 
 /**
  * Remove all headers with this name.

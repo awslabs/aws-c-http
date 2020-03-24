@@ -15,7 +15,7 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
-#include <aws/http/private/h2_frames.h>
+#include <aws/http/request_response.h>
 
 struct aws_byte_buf;
 struct aws_byte_cursor;
@@ -43,6 +43,20 @@ struct aws_hpack_decode_result {
     } data;
 };
 
+/**
+ * Controls whether non-indexed strings will use Huffman encoding.
+ * In SMALLEST mode, strings will only be sent with Huffman encoding if it makes them smaller.
+ *
+ * Note: This does not control compression via "indexing",
+ * for that, see `aws_http_header_compression`.
+ * This only controls how string values are encoded when they're not already in a table.
+ */
+enum aws_hpack_huffman_mode {
+    AWS_HPACK_HUFFMAN_SMALLEST,
+    AWS_HPACK_HUFFMAN_NEVER,
+    AWS_HPACK_HUFFMAN_ALWAYS,
+};
+
 AWS_EXTERN_C_BEGIN
 
 /* Library-level init and shutdown */
@@ -57,7 +71,7 @@ AWS_HTTP_API
 struct aws_hpack_context *aws_hpack_context_new(
     struct aws_allocator *allocator,
     enum aws_http_log_subject log_subject,
-    void *log_id);
+    const void *log_id);
 
 AWS_HTTP_API
 void aws_hpack_context_destroy(struct aws_hpack_context *context);
@@ -74,6 +88,16 @@ int aws_hpack_decode(
     struct aws_hpack_context *context,
     struct aws_byte_cursor *to_decode,
     struct aws_hpack_decode_result *result);
+
+/**
+ * Encode header-block into the output.
+ * This function will mutate the hpack context, so an error means the context can no longer be used.
+ * Note that output will be dynamically resized if it's too short.
+ */
+int aws_hpack_encode_header_block(
+    struct aws_hpack_context *context,
+    const struct aws_http_headers *headers,
+    struct aws_byte_buf *output);
 
 /* Returns the hpack size of a header (name.len + value.len + 32) [4.1] */
 AWS_HTTP_API
@@ -97,12 +121,13 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
 AWS_HTTP_API
 int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new_max_size);
 
-/* Public for testing purposes */
 AWS_HTTP_API
-size_t aws_hpack_get_encoded_length_integer(uint64_t integer, uint8_t prefix_size);
+void aws_hpack_set_huffman_mode(struct aws_hpack_context *context, enum aws_hpack_huffman_mode mode);
 
+/* Public for testing purposes.
+ * Output will be dynamically resized if it's too short */
 AWS_HTTP_API
-int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_byte_buf *output);
+int aws_hpack_encode_integer(uint64_t integer, uint8_t starting_bits, uint8_t prefix_size, struct aws_byte_buf *output);
 
 /* Public for testing purposes */
 AWS_HTTP_API
@@ -113,17 +138,12 @@ int aws_hpack_decode_integer(
     uint64_t *integer,
     bool *complete);
 
-AWS_HTTP_API
-size_t aws_hpack_get_encoded_length_string(
-    struct aws_hpack_context *context,
-    struct aws_byte_cursor to_encode,
-    bool huffman_encode);
-
+/* Public for testing purposes.
+ * Output will be dynamically resized if it's too short */
 AWS_HTTP_API
 int aws_hpack_encode_string(
     struct aws_hpack_context *context,
-    struct aws_byte_cursor *to_encode,
-    bool huffman_encode,
+    struct aws_byte_cursor to_encode,
     struct aws_byte_buf *output);
 
 /* Public for testing purposes */

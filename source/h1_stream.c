@@ -17,6 +17,7 @@
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/h1_connection.h>
 
+#include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
@@ -91,7 +92,7 @@ struct aws_h1_stream *aws_h1_stream_new_request(
     }
 
     stream->base.client_data = &stream->base.client_or_server_data.client;
-    stream->base.client_data->response_status = AWS_HTTP_STATUS_UNKNOWN;
+    stream->base.client_data->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
 
     /* Validate request and cache info that the encoder will eventually need */
     int err =

@@ -52,7 +52,7 @@ struct aws_h2_connection {
          * Any stream in this list is also in the active_streams_map. */
         struct aws_linked_list outgoing_streams_list;
 
-        /* List using aws_h2_frame_base.node.
+        /* List using aws_h2_frame.node.
          * Queues all frames (except DATA frames) for connection to send.
          * When queue is empty, then we send DATA frames from the outgoing_streams_list */
         struct aws_linked_list outgoing_frames_queue;
@@ -103,6 +103,6 @@ AWS_EXTERN_C_END
  * Frames are sent into FIFO order.
  * Do not enqueue DATA frames, these are sent by other means when the frame queue is empty.
  */
-void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connection, struct aws_h2_frame_base *frame);
+void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connection, struct aws_h2_frame *frame);
 
 #endif /* AWS_HTTP_H2_CONNECTION_H */

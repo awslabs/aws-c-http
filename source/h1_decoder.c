@@ -13,10 +13,10 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/private/h1_decoder.h>
-
 #include <aws/common/string.h>
+#include <aws/http/private/h1_decoder.h>
 #include <aws/http/private/strutil.h>
+#include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 
 AWS_STATIC_STRING_FROM_LITERAL(s_transfer_coding_chunked, "chunked");
@@ -50,7 +50,7 @@ struct aws_h1_decoder {
     bool body_headers_ignored;
     bool body_headers_forbidden;
     enum aws_http_header_block header_block;
-    void *logging_id;
+    const void *logging_id;
 
     /* User callbacks and settings. */
     struct aws_h1_decoder_vtable vtable;
@@ -686,8 +686,8 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
     int code_val = (int)code_val_u64;
 
     /* RFC-7230 section 3.3 Message Body */
-    decoder->body_headers_ignored |= code_val == AWS_HTTP_STATUS_304_NOT_MODIFIED;
-    decoder->body_headers_forbidden = code_val == AWS_HTTP_STATUS_204_NO_CONTENT || code_val / 100 == 1;
+    decoder->body_headers_ignored |= code_val == AWS_HTTP_STATUS_CODE_304_NOT_MODIFIED;
+    decoder->body_headers_forbidden = code_val == AWS_HTTP_STATUS_CODE_204_NO_CONTENT || code_val / 100 == 1;
 
     if (s_check_info_response_status_code(code_val)) {
         decoder->header_block = AWS_HTTP_HEADER_BLOCK_INFORMATIONAL;
@@ -766,7 +766,7 @@ enum aws_http_header_block aws_h1_decoder_get_header_block(const struct aws_h1_d
     return decoder->header_block;
 }
 
-void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, void *id) {
+void aws_h1_decoder_set_logging_id(struct aws_h1_decoder *decoder, const void *id) {
     decoder->logging_id = id;
 }
 

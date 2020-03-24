@@ -15,6 +15,7 @@
 #include <aws/testing/aws_test_harness.h>
 
 #include <aws/http/private/h2_frames.h>
+#include <aws/io/stream.h>
 
 static int s_fixture_init(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -34,22 +35,31 @@ static int s_fixture_clean_up(struct aws_allocator *allocator, int setup_res, vo
     AWS_TEST_CASE_FIXTURE(NAME, s_fixture_init, s_test_##NAME, s_fixture_clean_up, NULL);                              \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
+#define DEFINE_STATIC_HEADER(_key, _value, _behavior)                                                                  \
+    {                                                                                                                  \
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_key), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(_value),   \
+        .compression = AWS_HTTP_HEADER_COMPRESSION_##_behavior,                                                        \
+    }
+
 /* Run the given frame's encoder and check that it outputs the expected bytes */
-static int s_encode(
+static int s_encode_frame(
     struct aws_allocator *allocator,
-    struct aws_h2_frame_base *frame,
+    struct aws_h2_frame *frame,
     const uint8_t *expected,
     size_t expected_size) {
 
     struct aws_h2_frame_encoder encoder;
-    ASSERT_SUCCESS(aws_h2_frame_encoder_init(&encoder, allocator));
+    ASSERT_SUCCESS(aws_h2_frame_encoder_init(&encoder, allocator, NULL /*logging_id*/));
 
     struct aws_byte_buf buffer;
+
     /* Allocate more room than necessary, easier to debug the full output than a failed aws_h2_encode_frame() call */
     ASSERT_SUCCESS(aws_byte_buf_init(&buffer, allocator, expected_size * 2));
 
-    ASSERT_SUCCESS(aws_h2_encode_frame(&encoder, frame, &buffer));
+    bool frame_complete;
+    ASSERT_SUCCESS(aws_h2_encode_frame(&encoder, frame, &buffer, &frame_complete));
     ASSERT_BIN_ARRAYS_EQUALS(expected, expected_size, buffer.buffer, buffer.len);
+    ASSERT_UINT_EQUALS(true, frame_complete);
 
     aws_byte_buf_clean_up(&buffer);
     aws_h2_frame_encoder_clean_up(&encoder);
@@ -59,12 +69,15 @@ static int s_encode(
 TEST_CASE(h2_encoder_data) {
     (void)ctx;
 
-    struct aws_h2_frame_data frame;
-    ASSERT_SUCCESS(aws_h2_frame_data_init(&frame, allocator));
-    frame.base.stream_id = 0x76543210;
-    frame.end_stream = true;
-    frame.pad_length = 2;
-    frame.data = aws_byte_cursor_from_c_str("hello");
+    struct aws_h2_frame_encoder encoder;
+    ASSERT_SUCCESS(aws_h2_frame_encoder_init(&encoder, allocator, NULL /*logging_id*/));
+
+    struct aws_byte_buf output;
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, allocator, 1024));
+
+    struct aws_byte_cursor body_src = aws_byte_cursor_from_c_str("hello");
+    struct aws_input_stream *body = aws_input_stream_new_from_cursor(allocator, &body_src);
+    ASSERT_NOT_NULL(body);
 
     /* clang-format off */
     uint8_t expected[] = {
@@ -79,30 +92,48 @@ TEST_CASE(h2_encoder_data) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
-    aws_h2_frame_data_clean_up(&frame);
+    bool body_complete;
+    ASSERT_SUCCESS(aws_h2_encode_data_frame(
+        &encoder,
+        0x76543210 /*stream_id*/,
+        body,
+        true /*body_ends_stream*/,
+        2 /*pad_length*/,
+        &output,
+        &body_complete));
+
+    ASSERT_BIN_ARRAYS_EQUALS(expected, sizeof(expected), output.buffer, output.len);
+    ASSERT_UINT_EQUALS(true, body_complete);
+
+    aws_byte_buf_clean_up(&output);
+    aws_input_stream_destroy(body);
+    aws_h2_frame_encoder_clean_up(&encoder);
     return AWS_OP_SUCCESS;
 }
 
 TEST_CASE(h2_encoder_headers) {
     (void)ctx;
 
-    struct aws_h2_frame_headers frame;
-    ASSERT_SUCCESS(aws_h2_frame_headers_init(&frame, allocator));
-    frame.base.stream_id = 0x76543210;
-    frame.end_headers = true;
-    frame.end_stream = true;
-    frame.pad_length = 2;
-    frame.has_priority = true;
-    frame.priority.stream_dependency_exclusive = true;
-    frame.priority.stream_dependency = 0x01234567;
-    frame.priority.weight = 9;
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
 
-    /* Intentionally leaving header block fragment empty. Header block encoding is tested elsewhere */
+    struct aws_http_header h = DEFINE_STATIC_HEADER(":status", "302", USE_CACHE);
+
+    ASSERT_SUCCESS(aws_http_headers_add_header(headers, &h));
+
+    struct aws_h2_frame_priority_settings priority = {
+        .stream_dependency_exclusive = true,
+        .stream_dependency = 0x01234567,
+        .weight = 9,
+    };
+
+    struct aws_h2_frame *frame = aws_h2_frame_new_headers(
+        allocator, 0x76543210 /*stream_id*/, headers, true /*end_stream*/, 2 /*pad_length*/, &priority);
+    ASSERT_NOT_NULL(frame);
 
     /* clang-format off */
     uint8_t expected[] = {
-        0x00, 0x00, 0x08,           /* Length (24) */
+        0x00, 0x00, 12,             /* Length (24) */
         AWS_H2_FRAME_T_HEADERS,     /* Type (8) */
         AWS_H2_FRAME_F_END_STREAM | AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_PADDED | AWS_H2_FRAME_F_PRIORITY, /* Flags (8) */
         0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
@@ -110,25 +141,28 @@ TEST_CASE(h2_encoder_headers) {
         0x02,                       /* Pad Length (8)                           - F_PADDED */
         0x81, 0x23, 0x45, 0x67,     /* Exclusive (1) | Stream Dependency (31)   - F_PRIORITY*/
         0x09,                       /* Weight (8)                               - F_PRIORITY */
-                                    /* Header Block Fragment (*) */
+        0x48, 0x82, 0x64, 0x02,     /* ":status: 302" - indexed name, huffman-compressed value */
         0x00, 0x00                  /* Padding (*)                              - F_PADDED */
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
-    aws_h2_frame_headers_clean_up(&frame);
+    ASSERT_SUCCESS(s_encode_frame(allocator, frame, expected, sizeof(expected)));
+    aws_h2_frame_destroy(frame);
+    aws_http_headers_release(headers);
     return AWS_OP_SUCCESS;
 }
 
 TEST_CASE(h2_encoder_priority) {
     (void)ctx;
 
-    struct aws_h2_frame_priority frame;
-    ASSERT_SUCCESS(aws_h2_frame_priority_init(&frame, allocator));
-    frame.base.stream_id = 0x76543210;
-    frame.priority.stream_dependency_exclusive = true;
-    frame.priority.stream_dependency = 0x01234567;
-    frame.priority.weight = 9;
+    struct aws_h2_frame_priority_settings priority = {
+        .stream_dependency_exclusive = true,
+        .stream_dependency = 0x01234567,
+        .weight = 9,
+    };
+
+    struct aws_h2_frame *frame = aws_h2_frame_new_priority(allocator, 0x76543210 /*stream_id*/, &priority);
+    ASSERT_NOT_NULL(frame);
 
     /* clang-format off */
     uint8_t expected[] = {
@@ -142,19 +176,17 @@ TEST_CASE(h2_encoder_priority) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
-
-    aws_h2_frame_priority_clean_up(&frame);
+    ASSERT_SUCCESS(s_encode_frame(allocator, frame, expected, sizeof(expected)));
+    aws_h2_frame_destroy(frame);
     return AWS_OP_SUCCESS;
 }
 
 TEST_CASE(h2_encoder_rst_stream) {
     (void)ctx;
 
-    struct aws_h2_frame_rst_stream frame;
-    ASSERT_SUCCESS(aws_h2_frame_rst_stream_init(&frame, allocator));
-    frame.base.stream_id = 0x76543210;
-    frame.error_code = 0xFEEDBEEF;
+    struct aws_h2_frame *frame =
+        aws_h2_frame_new_rst_stream(allocator, 0x76543210 /*stream_id*/, 0xFEEDBEEF /*error_code*/);
+    ASSERT_NOT_NULL(frame);
 
     /* clang-format off */
     uint8_t expected[] = {
@@ -167,8 +199,8 @@ TEST_CASE(h2_encoder_rst_stream) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
-    aws_h2_frame_rst_stream_clean_up(&frame);
+    ASSERT_SUCCESS(s_encode_frame(allocator, frame, expected, sizeof(expected)));
+    aws_h2_frame_destroy(frame);
     return AWS_OP_SUCCESS;
 }
 
@@ -181,10 +213,9 @@ TEST_CASE(h2_encoder_settings) {
         {.id = 0xFFFF, .value = 0xFFFFFFFF},             /* max value */
     };
 
-    struct aws_h2_frame_settings frame;
-    ASSERT_SUCCESS(aws_h2_frame_settings_init(&frame, allocator));
-    frame.settings_array = settings;
-    frame.settings_count = AWS_ARRAY_SIZE(settings);
+    struct aws_h2_frame *frame =
+        aws_h2_frame_new_settings(allocator, settings, AWS_ARRAY_SIZE(settings), false /*ack*/);
+    ASSERT_NOT_NULL(frame);
 
     /* clang-format off */
     uint8_t expected[] = {
@@ -202,17 +233,17 @@ TEST_CASE(h2_encoder_settings) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
-    aws_h2_frame_settings_clean_up(&frame);
+    ASSERT_SUCCESS(s_encode_frame(allocator, frame, expected, sizeof(expected)));
+    aws_h2_frame_destroy(frame);
     return AWS_OP_SUCCESS;
 }
 
 TEST_CASE(h2_encoder_settings_ack) {
     (void)ctx;
 
-    struct aws_h2_frame_settings frame;
-    ASSERT_SUCCESS(aws_h2_frame_settings_init(&frame, allocator));
-    frame.ack = true;
+    struct aws_h2_frame *frame =
+        aws_h2_frame_new_settings(allocator, NULL /*settings_array*/, 0 /*num_settings*/, true /*ack*/);
+    ASSERT_NOT_NULL(frame);
 
     /* clang-format off */
     uint8_t expected[] = {
@@ -224,51 +255,58 @@ TEST_CASE(h2_encoder_settings_ack) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
-    aws_h2_frame_settings_clean_up(&frame);
+    ASSERT_SUCCESS(s_encode_frame(allocator, frame, expected, sizeof(expected)));
+    aws_h2_frame_destroy(frame);
     return AWS_OP_SUCCESS;
 }
 
 TEST_CASE(h2_encoder_push_promise) {
     (void)ctx;
 
-    struct aws_h2_frame_push_promise frame;
-    ASSERT_SUCCESS(aws_h2_frame_push_promise_init(&frame, allocator));
-    frame.base.stream_id = 0x00000001;
-    frame.promised_stream_id = 0x76543210;
-    frame.end_headers = true;
-    frame.pad_length = 2;
+    struct aws_http_header headers_array[] = {
+        DEFINE_STATIC_HEADER(":method", "GET", USE_CACHE),
+        DEFINE_STATIC_HEADER(":scheme", "http", USE_CACHE),
+        DEFINE_STATIC_HEADER(":path", "/", USE_CACHE),
+        DEFINE_STATIC_HEADER(":authority", "www.example.com", USE_CACHE),
+    };
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
+    ASSERT_SUCCESS(aws_http_headers_add_array(headers, headers_array, AWS_ARRAY_SIZE(headers_array)));
 
-    /* Intentionally leaving header block fragment empty. Header block encoding is tested elsewhere */
+    struct aws_h2_frame *frame = aws_h2_frame_new_push_promise(
+        allocator, 0x00000001 /*stream_id*/, 0x76543210 /*promised_stream_id*/, headers, 2 /*pad_length*/);
+    ASSERT_NOT_NULL(frame);
 
     /* clang-format off */
     uint8_t expected[] = {
-        0x00, 0x00, 0x07,           /* Length (24) */
+        0x00, 0x00, 24,             /* Length (24) */
         AWS_H2_FRAME_T_PUSH_PROMISE,/* Type (8) */
         AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_PADDED, /* Flags (8) */
         0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31) */
         /* PUSH_PROMISE */
         0x02,                       /* Pad Length (8)                           | F_PADDED */
         0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Promised Stream ID (31) */
-                                    /* Header Block Fragment (*) */
+
+        /* Header Block Fragment (*) (values from RFC-7541 example C.4.1) */
+        0x82, 0x86, 0x84, 0x41, 0x8c, 0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a, 0x6b, 0xa0, 0xab, 0x90, 0xf4, 0xff,
+
         0x00, 0x00,                 /* Padding (*)                              | F_PADDED*/
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
-    aws_h2_frame_push_promise_clean_up(&frame);
+    ASSERT_SUCCESS(s_encode_frame(allocator, frame, expected, sizeof(expected)));
+    aws_h2_frame_destroy(frame);
+    aws_http_headers_release(headers);
     return AWS_OP_SUCCESS;
 }
 
 TEST_CASE(h2_encoder_ping) {
     (void)ctx;
 
-    struct aws_h2_frame_ping frame;
-    ASSERT_SUCCESS(aws_h2_frame_ping_init(&frame, allocator));
-    frame.ack = true;
-    for (uint8_t i = 0; i < AWS_H2_PING_DATA_SIZE; ++i) {
-        frame.opaque_data[i] = i;
-    }
+    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE] = {0, 1, 2, 3, 4, 5, 6, 7};
+
+    struct aws_h2_frame *frame = aws_h2_frame_new_ping(allocator, true /*ack*/, opaque_data);
+    ASSERT_NOT_NULL(frame);
 
     /* clang-format off */
     uint8_t expected[] = {
@@ -281,19 +319,20 @@ TEST_CASE(h2_encoder_ping) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
-    aws_h2_frame_ping_clean_up(&frame);
+    ASSERT_SUCCESS(s_encode_frame(allocator, frame, expected, sizeof(expected)));
+    aws_h2_frame_destroy(frame);
     return AWS_OP_SUCCESS;
 }
 
 TEST_CASE(h2_encoder_goaway) {
     (void)ctx;
 
-    struct aws_h2_frame_goaway frame;
-    ASSERT_SUCCESS(aws_h2_frame_goaway_init(&frame, allocator));
-    frame.last_stream_id = 0x77665544;
-    frame.error_code = 0xFFEEDDCC;
-    frame.debug_data = aws_byte_cursor_from_c_str("goodbye");
+    struct aws_h2_frame *frame = aws_h2_frame_new_goaway(
+        allocator,
+        0x77665544 /*last_stream_id*/,
+        0xFFEEDDCC /*error_code*/,
+        aws_byte_cursor_from_c_str("goodbye") /*debug_data*/);
+    ASSERT_NOT_NULL(frame);
 
     /* clang-format off */
     uint8_t expected[] = {
@@ -308,18 +347,17 @@ TEST_CASE(h2_encoder_goaway) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
-    aws_h2_frame_goaway_clean_up(&frame);
+    ASSERT_SUCCESS(s_encode_frame(allocator, frame, expected, sizeof(expected)));
+    aws_h2_frame_destroy(frame);
     return AWS_OP_SUCCESS;
 }
 
 TEST_CASE(h2_encoder_window_update) {
     (void)ctx;
 
-    struct aws_h2_frame_window_update frame;
-    ASSERT_SUCCESS(aws_h2_frame_window_update_init(&frame, allocator));
-    frame.base.stream_id = 0x76543210;
-    frame.window_size_increment = 0x7FFFFFFF;
+    struct aws_h2_frame *frame =
+        aws_h2_frame_new_window_update(allocator, 0x76543210 /*stream_id*/, 0x7FFFFFFF /*window_size_increment*/);
+    ASSERT_NOT_NULL(frame);
 
     /* clang-format off */
     uint8_t expected[] = {
@@ -332,32 +370,7 @@ TEST_CASE(h2_encoder_window_update) {
     };
     /* clang-format on */
 
-    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
-    aws_h2_frame_window_update_clean_up(&frame);
-    return AWS_OP_SUCCESS;
-}
-
-TEST_CASE(h2_encoder_continuation) {
-    (void)ctx;
-
-    struct aws_h2_frame_continuation frame;
-    ASSERT_SUCCESS(aws_h2_frame_continuation_init(&frame, allocator));
-    frame.base.stream_id = 0x76543210;
-    frame.end_headers = true;
-
-    /* Intentionally leaving header block fragment empty. Header block encoding is tested elsewhere */
-
-    /* clang-format off */
-    uint8_t expected[] = {
-        0x00, 0x00, 0x00,           /* Length (24) */
-        AWS_H2_FRAME_T_CONTINUATION,/* Type (8) */
-        AWS_H2_FRAME_F_END_HEADERS, /* Flags (8) */
-        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
-        /* CONTINUATION */
-    };
-    /* clang-format on */
-
-    ASSERT_SUCCESS(s_encode(allocator, &frame.base, expected, sizeof(expected)));
-    aws_h2_frame_continuation_clean_up(&frame);
+    ASSERT_SUCCESS(s_encode_frame(allocator, frame, expected, sizeof(expected)));
+    aws_h2_frame_destroy(frame);
     return AWS_OP_SUCCESS;
 }

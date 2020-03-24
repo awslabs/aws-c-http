@@ -13,13 +13,13 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/http/private/request_response_impl.h>
-
 #include <aws/common/array_list.h>
 #include <aws/common/string.h>
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/private/request_response_impl.h>
 #include <aws/http/private/strutil.h>
 #include <aws/http/server.h>
+#include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 
 #if _MSC_VER
@@ -97,21 +97,21 @@ void aws_http_headers_acquire(struct aws_http_headers *headers) {
     aws_atomic_fetch_add(&headers->refcount, 1);
 }
 
-int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value) {
+int aws_http_headers_add_header(struct aws_http_headers *headers, const struct aws_http_header *header) {
     AWS_PRECONDITION(headers);
-    AWS_PRECONDITION(aws_byte_cursor_is_valid(&name) && aws_byte_cursor_is_valid(&value));
+    AWS_PRECONDITION(header);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&header->name) && aws_byte_cursor_is_valid(&header->value));
 
-    if (name.len == 0) {
+    if (header->name.len == 0) {
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_NAME);
     }
 
     size_t total_len;
-    if (aws_add_size_checked(name.len, value.len, &total_len)) {
+    if (aws_add_size_checked(header->name.len, header->value.len, &total_len)) {
         return AWS_OP_ERR;
     }
 
-    struct aws_http_header header = {.name = name, .value = value};
-
+    struct aws_http_header header_copy = *header;
     /* Store our own copy of the strings.
      * We put the name and value into the same allocation. */
     uint8_t *strmem = aws_mem_acquire(headers->alloc, total_len);
@@ -120,10 +120,10 @@ int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_curso
     }
 
     struct aws_byte_buf strbuf = aws_byte_buf_from_empty_array(strmem, total_len);
-    aws_byte_buf_append_and_update(&strbuf, &header.name);
-    aws_byte_buf_append_and_update(&strbuf, &header.value);
+    aws_byte_buf_append_and_update(&strbuf, &header_copy.name);
+    aws_byte_buf_append_and_update(&strbuf, &header_copy.value);
 
-    if (aws_array_list_push_back(&headers->array_list, &header)) {
+    if (aws_array_list_push_back(&headers->array_list, &header_copy)) {
         goto error;
     }
 
@@ -132,6 +132,11 @@ int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_curso
 error:
     aws_mem_release(headers->alloc, strmem);
     return AWS_OP_ERR;
+}
+
+int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value) {
+    struct aws_http_header header = {.name = name, .value = value};
+    return aws_http_headers_add_header(headers, &header);
 }
 
 void aws_http_headers_clear(struct aws_http_headers *headers) {
@@ -235,7 +240,7 @@ int aws_http_headers_add_array(struct aws_http_headers *headers, const struct aw
     const size_t orig_count = aws_http_headers_count(headers);
 
     for (size_t i = 0; i < count; ++i) {
-        if (aws_http_headers_add(headers, array[i].name, array[i].value)) {
+        if (aws_http_headers_add_header(headers, &array[i])) {
             goto error;
         }
     }
@@ -304,6 +309,15 @@ int aws_http_headers_get(
     }
 
     return aws_raise_error(AWS_ERROR_HTTP_HEADER_NOT_FOUND);
+}
+
+bool aws_http_headers_has(const struct aws_http_headers *headers, struct aws_byte_cursor name) {
+
+    struct aws_byte_cursor out_value;
+    if (aws_http_headers_get(headers, name, &out_value)) {
+        return false;
+    }
+    return true;
 }
 
 struct aws_http_message {
@@ -411,7 +425,7 @@ struct aws_http_message *aws_http_message_new_response(struct aws_allocator *all
     struct aws_http_message *message = s_message_new_common(allocator, NULL);
     if (message) {
         message->response_data = &message->subclass_data.response;
-        message->response_data->status = AWS_HTTP_STATUS_UNKNOWN;
+        message->response_data->status = AWS_HTTP_STATUS_CODE_UNKNOWN;
     }
     return message;
 }
@@ -520,9 +534,9 @@ int aws_http_message_get_response_status(const struct aws_http_message *response
     AWS_PRECONDITION(out_status_code);
     AWS_PRECONDITION(response_message->response_data);
 
-    *out_status_code = AWS_HTTP_STATUS_UNKNOWN;
+    *out_status_code = AWS_HTTP_STATUS_CODE_UNKNOWN;
 
-    if (response_message->response_data && (response_message->response_data->status != AWS_HTTP_STATUS_UNKNOWN)) {
+    if (response_message->response_data && (response_message->response_data->status != AWS_HTTP_STATUS_CODE_UNKNOWN)) {
         *out_status_code = response_message->response_data->status;
         return AWS_OP_SUCCESS;
     }
@@ -687,7 +701,7 @@ struct aws_http_connection *aws_http_stream_get_connection(const struct aws_http
 int aws_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status) {
     AWS_ASSERT(stream && stream->client_data);
 
-    if (stream->client_data->response_status == (int)AWS_HTTP_STATUS_UNKNOWN) {
+    if (stream->client_data->response_status == (int)AWS_HTTP_STATUS_CODE_UNKNOWN) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Status code not yet received.", (void *)stream);
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }

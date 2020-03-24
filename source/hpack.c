@@ -25,6 +25,8 @@
 
 /* #TODO split hpack encoder/decoder into different types */
 
+/* #TODO test empty strings */
+
 /* RFC-7540 6.5.2 */
 const size_t s_hpack_dynamic_table_initial_size = 4096;
 const size_t s_hpack_dynamic_table_initial_elements = 512;
@@ -47,56 +49,62 @@ static uint8_t s_masked_right_bits_u8(uint8_t num_masked_bits) {
     return UINT8_MAX >> cut_bits;
 }
 
-size_t aws_hpack_get_encoded_length_integer(uint64_t integer, uint8_t prefix_size) {
-    const uint8_t prefix_mask = s_masked_right_bits_u8(prefix_size);
-
-    if (integer < prefix_mask) {
-        /* If the integer fits inside the specified number of bits but won't be all 1's, then that's all she wrote */
-
-        return 1;
-    } else {
-        integer -= prefix_mask;
-
-        size_t num_bytes = 1;
-        do {
-            ++num_bytes;
-            integer >>= 7;
-        } while (integer);
-        return num_bytes;
-    }
+static int s_append_u8_dynamic(struct aws_byte_buf *output, uint8_t u8) {
+    struct aws_byte_cursor cursor = aws_byte_cursor_from_array(&u8, 1);
+    return aws_byte_buf_append_dynamic(output, &cursor);
 }
 
-int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_byte_buf *output) {
+/* If buffer isn't big enough, grow it intelligently */
+static int s_ensure_space(struct aws_byte_buf *output, size_t required_space) {
+    size_t available_space = output->capacity - output->len;
+    if (required_space <= available_space) {
+        return AWS_OP_SUCCESS;
+    }
+
+    /* Capacity must grow to at least this size */
+    size_t required_capacity;
+    if (aws_add_size_checked(output->len, required_space, &required_capacity)) {
+        return AWS_OP_ERR;
+    }
+
+    /* Prefer to double capacity, but if that's not enough grow to exactly required_capacity */
+    size_t double_capacity = aws_add_size_saturating(output->capacity, output->capacity);
+    size_t reserve = aws_max_size(required_capacity, double_capacity);
+    return aws_byte_buf_reserve(output, reserve);
+}
+
+int aws_hpack_encode_integer(
+    uint64_t integer,
+    uint8_t starting_bits,
+    uint8_t prefix_size,
+    struct aws_byte_buf *output) {
     AWS_ASSERT(prefix_size <= 8);
 
-    const struct aws_byte_buf output_backup = *output;
-
-    if (output->len == output->capacity) {
-        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-    }
     const uint8_t prefix_mask = s_masked_right_bits_u8(prefix_size);
+    AWS_ASSERT((starting_bits & prefix_mask) == 0);
+
+    const size_t original_len = output->len;
 
     if (integer < prefix_mask) {
         /* If the integer fits inside the specified number of bits but won't be all 1's, just write it */
 
         /* Just write out the bits we care about */
-        output->buffer[output->len] = (output->buffer[output->len] & ~prefix_mask) | (uint8_t)integer;
-        ++output->len;
+        uint8_t first_byte = starting_bits | (uint8_t)integer;
+        if (s_append_u8_dynamic(output, first_byte)) {
+            goto error;
+        }
     } else {
         /* Set all of the bits in the first octet to 1 */
-        output->buffer[output->len] = (output->buffer[output->len] & ~prefix_mask) | prefix_mask;
-        ++output->len;
+        uint8_t first_byte = starting_bits | prefix_mask;
+        if (s_append_u8_dynamic(output, first_byte)) {
+            goto error;
+        }
 
         integer -= prefix_mask;
 
         const uint64_t hi_57bit_mask = UINT64_MAX - (UINT8_MAX >> 1);
 
         do {
-            if (output->len == output->capacity) {
-                *output = output_backup;
-                return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-            }
-
             /* Take top 7 bits from the integer */
             uint8_t this_octet = integer % 128;
             if (integer & hi_57bit_mask) {
@@ -104,7 +112,9 @@ int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_b
                 this_octet += 128;
             }
 
-            aws_byte_buf_write_u8(output, this_octet);
+            if (s_append_u8_dynamic(output, this_octet)) {
+                goto error;
+            }
 
             /* Remove the written bits */
             integer >>= 7;
@@ -112,6 +122,9 @@ int aws_hpack_encode_integer(uint64_t integer, uint8_t prefix_size, struct aws_b
     }
 
     return AWS_OP_SUCCESS;
+error:
+    output->len = original_len;
+    return AWS_OP_ERR;
 }
 
 struct aws_http_header s_static_header_table[] = {
@@ -215,8 +228,9 @@ void aws_hpack_static_table_clean_up() {
 struct aws_hpack_context {
     struct aws_allocator *allocator;
 
+    enum aws_hpack_huffman_mode huffman_mode;
     enum aws_http_log_subject log_subject;
-    void *log_id;
+    const void *log_id;
 
     struct aws_huffman_encoder encoder;
     struct aws_huffman_decoder decoder;
@@ -302,13 +316,14 @@ struct aws_hpack_context {
 struct aws_hpack_context *aws_hpack_context_new(
     struct aws_allocator *allocator,
     enum aws_http_log_subject log_subject,
-    void *log_id) {
+    const void *log_id) {
 
     struct aws_hpack_context *context = aws_mem_calloc(allocator, 1, sizeof(struct aws_hpack_context));
     if (!context) {
         return NULL;
     }
     context->allocator = allocator;
+    context->huffman_mode = AWS_HPACK_HUFFMAN_SMALLEST;
     context->log_subject = log_subject;
     context->log_id = log_id;
 
@@ -388,6 +403,10 @@ void aws_hpack_context_destroy(struct aws_hpack_context *context) {
     aws_mem_release(context->allocator, context);
 }
 
+void aws_hpack_set_huffman_mode(struct aws_hpack_context *context, enum aws_hpack_huffman_mode mode) {
+    context->huffman_mode = mode;
+}
+
 size_t aws_hpack_get_header_size(const struct aws_http_header *header) {
     return header->name.len + header->value.len + 32;
 }
@@ -429,6 +448,8 @@ static const struct aws_http_header *s_get_header_u64(const struct aws_hpack_con
     return aws_hpack_get_header(context, (size_t)index);
 }
 
+/* #TODO pass option whether or not to search for values
+ * #TODO I suspect we're not 100% doing the right thing with empty values */
 size_t aws_hpack_find_index(
     const struct aws_hpack_context *context,
     const struct aws_http_header *header,
@@ -568,8 +589,7 @@ static int s_dynamic_table_resize_buffer(struct aws_hpack_context *context, size
     /* Copy as much of below block as possible */
     const size_t free_blocks_available = new_max_elements - above_block_size;
     const size_t old_blocks_to_copy = context->dynamic_table.buffer_capacity - above_block_size;
-    const size_t below_block_size =
-        free_blocks_available > old_blocks_to_copy ? old_blocks_to_copy : free_blocks_available;
+    const size_t below_block_size = aws_min_size(free_blocks_available, old_blocks_to_copy);
     if (below_block_size) {
         memcpy(
             new_buffer + above_block_size,
@@ -611,6 +631,7 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
 
     /* If for whatever reason this new header is bigger than the total table size, burn everything to the ground. */
     if (AWS_UNLIKELY(header_size > context->dynamic_table.max_size)) {
+        /* #TODO handle this. It's not an error. It should simply result in an empty table RFC-7541 4.4 */
         goto error;
     }
 
@@ -782,79 +803,90 @@ handle_complete:
     return AWS_OP_SUCCESS;
 }
 
-size_t aws_hpack_get_encoded_length_string(
-    struct aws_hpack_context *context,
-    struct aws_byte_cursor to_encode,
-    bool huffman_encode) {
-
-    AWS_PRECONDITION(context);
-    AWS_PRECONDITION(to_encode.ptr && to_encode.len);
-
-    size_t length = 0;
-
-    /* Get the header length */
-    size_t encoded_length;
-    if (huffman_encode) {
-        encoded_length = aws_huffman_get_encoded_length(&context->encoder, to_encode);
-    } else {
-        encoded_length = to_encode.len;
-    }
-    length += aws_hpack_get_encoded_length_integer(encoded_length, 7);
-
-    /* Add the string length */
-    length += encoded_length;
-
-    return length;
-}
-
 int aws_hpack_encode_string(
     struct aws_hpack_context *context,
-    struct aws_byte_cursor *to_encode,
-    bool huffman_encode,
+    struct aws_byte_cursor to_encode,
     struct aws_byte_buf *output) {
 
     AWS_PRECONDITION(context);
-    AWS_PRECONDITION(to_encode);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&to_encode));
     AWS_PRECONDITION(output);
 
-    if (output->len == output->capacity) {
-        return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
+    const size_t original_len = output->len;
+
+    /* Determine length of encoded string (and whether or not to use huffman) */
+    uint8_t use_huffman;
+    size_t str_length;
+    switch (context->huffman_mode) {
+        case AWS_HPACK_HUFFMAN_NEVER:
+            use_huffman = 0;
+            str_length = to_encode.len;
+            break;
+
+        case AWS_HPACK_HUFFMAN_ALWAYS:
+            use_huffman = 1;
+            str_length = aws_huffman_get_encoded_length(&context->encoder, to_encode);
+            break;
+
+        case AWS_HPACK_HUFFMAN_SMALLEST:
+            str_length = aws_huffman_get_encoded_length(&context->encoder, to_encode);
+            if (str_length < to_encode.len) {
+                use_huffman = 1;
+            } else {
+                str_length = to_encode.len;
+                use_huffman = 0;
+            }
+            break;
+
+        default:
+            aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+            goto error;
     }
 
-    struct aws_byte_cursor to_encode_backup = *to_encode;
+    /*
+     * String literals are encoded like so (RFC-7541 5.2):
+     * H is whether or not data is huffman-encoded.
+     *
+     *   0   1   2   3   4   5   6   7
+     * +---+---+---+---+---+---+---+---+
+     * | H |    String Length (7+)     |
+     * +---+---------------------------+
+     * |  String Data (Length octets)  |
+     * +-------------------------------+
+     */
 
-    /* Write the use_huffman bit */
-    output->buffer[output->len] = huffman_encode << 7;
-
-    /* Write the header */
-    size_t encoded_length;
-    if (huffman_encode) {
-        encoded_length = aws_huffman_get_encoded_length(&context->encoder, *to_encode);
-    } else {
-        encoded_length = to_encode->len;
-    }
-    if (aws_hpack_encode_integer(encoded_length, 7, output)) {
+    /* Encode string length */
+    uint8_t starting_bits = use_huffman << 7;
+    if (aws_hpack_encode_integer(str_length, starting_bits, 7, output)) {
+        HPACK_LOGF(ERROR, context, "Error encoding HPACK integer: %s", aws_error_name(aws_last_error()));
         goto error;
     }
 
-    if (huffman_encode) {
-        aws_huffman_encoder_reset(&context->encoder);
-        int result = aws_huffman_encode(&context->encoder, to_encode, output);
-        if (result) {
-            goto error;
+    /* Encode string data */
+    if (str_length > 0) {
+        if (use_huffman) {
+            /* Huffman encoder doesn't grow buffer, so we ensure it's big enough here */
+            if (s_ensure_space(output, str_length)) {
+                goto error;
+            }
+
+            if (aws_huffman_encode(&context->encoder, &to_encode, output)) {
+                HPACK_LOGF(ERROR, context, "Error from Huffman encoder: %s", aws_error_name(aws_last_error()));
+                goto error;
+            }
+
+        } else {
+            if (aws_byte_buf_append_dynamic(output, &to_encode)) {
+                goto error;
+            }
         }
-    } else {
-        bool result = aws_byte_buf_write_from_whole_cursor(output, *to_encode);
-        if (!result) {
-            aws_raise_error(AWS_ERROR_SHORT_BUFFER);
-            goto error;
-        }
-        aws_byte_cursor_advance(to_encode, to_encode->len);
     }
+
     return AWS_OP_SUCCESS;
 
 error:
-    *to_encode = to_encode_backup;
+    output->len = original_len;
+    aws_huffman_encoder_reset(&context->encoder);
     return AWS_OP_ERR;
 }
 
@@ -904,10 +936,7 @@ int aws_hpack_decode_string(
 
             case HPACK_STRING_STATE_VALUE: {
                 /* Take either as much data as we need, or as much as we can */
-                size_t to_process = (size_t)progress->length;
-                if (to_process > to_decode->len) {
-                    to_process = to_decode->len;
-                }
+                size_t to_process = aws_min_size((size_t)progress->length, to_decode->len);
                 progress->length -= to_process;
 
                 struct aws_byte_cursor chunk = aws_byte_cursor_advance(to_decode, to_process);
@@ -1172,5 +1201,180 @@ int aws_hpack_decode(
 handle_complete:
     AWS_ASSERT(result->type != AWS_HPACK_DECODE_T_ONGOING);
     context->progress_entry.state = HPACK_ENTRY_STATE_INIT;
+    return AWS_OP_SUCCESS;
+}
+
+/* All types that HPACK might encode/decode (RFC-7541 6 - Binary Format) */
+enum aws_hpack_entry_type {
+    AWS_HPACK_ENTRY_INDEXED_HEADER_FIELD,                           /* RFC-7541 6.1 */
+    AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITH_INCREMENTAL_INDEXING, /* RFC-7541 6.2.1 */
+    AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING,          /* RFC-7541 6.2.2 */
+    AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED,             /* RFC-7541 6.2.3 */
+    AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE,                           /* RFC-7541 6.3 */
+    AWS_HPACK_ENTRY_TYPE_COUNT,
+};
+
+/**
+ * First byte each entry type looks like this (RFC-7541 6):
+ * The "xxxxx" part is the "N-bit prefix" of the entry's first encoded integer.
+ *
+ * 1xxxxxxx: Indexed Header Field Representation
+ * 01xxxxxx: Literal Header Field with Incremental Indexing
+ * 001xxxxx: Dynamic Table Size Update
+ * 0001xxxx: Literal Header Field Never Indexed
+ * 0000xxxx: Literal Header Field without Indexing
+ */
+static const uint8_t s_hpack_entry_starting_bit_pattern[AWS_HPACK_ENTRY_TYPE_COUNT] = {
+    [AWS_HPACK_ENTRY_INDEXED_HEADER_FIELD] = 1 << 7,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITH_INCREMENTAL_INDEXING] = 1 << 6,
+    [AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE] = 1 << 5,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED] = 1 << 4,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING] = 0 << 4,
+};
+
+static const uint8_t s_hpack_entry_num_prefix_bits[AWS_HPACK_ENTRY_TYPE_COUNT] = {
+    [AWS_HPACK_ENTRY_INDEXED_HEADER_FIELD] = 7,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITH_INCREMENTAL_INDEXING] = 6,
+    [AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE] = 5,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED] = 4,
+    [AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING] = 4,
+};
+
+static int s_convert_http_compression_to_literal_entry_type(
+    enum aws_http_header_compression compression,
+    enum aws_hpack_entry_type *out_entry_type) {
+
+    switch (compression) {
+        case AWS_HTTP_HEADER_COMPRESSION_USE_CACHE:
+            *out_entry_type = AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITH_INCREMENTAL_INDEXING;
+            return AWS_OP_SUCCESS;
+
+        case AWS_HTTP_HEADER_COMPRESSION_NO_CACHE:
+            *out_entry_type = AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITHOUT_INDEXING;
+            return AWS_OP_SUCCESS;
+
+        case AWS_HTTP_HEADER_COMPRESSION_NO_FORWARD_CACHE:
+            *out_entry_type = AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_NEVER_INDEXED;
+            return AWS_OP_SUCCESS;
+    }
+
+    return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+}
+
+static int s_encode_header_field(
+    struct aws_hpack_context *context,
+    const struct aws_http_header *header,
+    struct aws_byte_buf *output) {
+
+    AWS_PRECONDITION(context);
+    AWS_PRECONDITION(header);
+    AWS_PRECONDITION(output);
+
+    size_t original_len = output->len;
+
+    /* Search for header-field in tables */
+    bool found_indexed_value;
+    size_t header_index = aws_hpack_find_index(context, header, &found_indexed_value);
+
+    if (header->compression != AWS_HTTP_HEADER_COMPRESSION_USE_CACHE) {
+        /* If user doesn't want to use indexed value, then don't use it */
+        found_indexed_value = false;
+    }
+
+    if (header_index && found_indexed_value) {
+        /* Indexed header field */
+        const enum aws_hpack_entry_type entry_type = AWS_HPACK_ENTRY_INDEXED_HEADER_FIELD;
+
+        /* encode the one index (along with the entry type), and we're done! */
+        uint8_t starting_bit_pattern = s_hpack_entry_starting_bit_pattern[entry_type];
+        uint8_t num_prefix_bits = s_hpack_entry_num_prefix_bits[entry_type];
+        if (aws_hpack_encode_integer(header_index, starting_bit_pattern, num_prefix_bits, output)) {
+            goto error;
+        }
+
+        return AWS_OP_SUCCESS;
+    }
+
+    /* Else, Literal header field... */
+
+    /* determine exactly which type of literal header-field to encode. */
+    enum aws_hpack_entry_type literal_entry_type;
+    if (s_convert_http_compression_to_literal_entry_type(header->compression, &literal_entry_type)) {
+        goto error;
+    }
+
+    /* the entry type makes up the first few bits of the next integer we encode */
+    uint8_t starting_bit_pattern = s_hpack_entry_starting_bit_pattern[literal_entry_type];
+    uint8_t num_prefix_bits = s_hpack_entry_num_prefix_bits[literal_entry_type];
+
+    if (header_index) {
+        /* Literal header field, indexed name */
+
+        /* first encode the index of name */
+        if (aws_hpack_encode_integer(header_index, starting_bit_pattern, num_prefix_bits, output)) {
+            goto error;
+        }
+    } else {
+        /* Literal header field, new name */
+
+        /* first encode index of 0 to indicate that header-name is not indexed */
+        if (aws_hpack_encode_integer(0, starting_bit_pattern, num_prefix_bits, output)) {
+            goto error;
+        }
+
+        /* next encode header-name string */
+        if (aws_hpack_encode_string(context, header->name, output)) {
+            goto error;
+        }
+    }
+
+    /* then encode header-value string, and we're done encoding! */
+    if (aws_hpack_encode_string(context, header->value, output)) {
+        goto error;
+    }
+
+    /* if "incremental indexing" type, insert header into the dynamic table. */
+    if (AWS_HPACK_ENTRY_LITERAL_HEADER_FIELD_WITH_INCREMENTAL_INDEXING == literal_entry_type) {
+        if (aws_hpack_insert_header(context, header)) {
+            goto error;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+error:
+    output->len = original_len;
+    return AWS_OP_ERR;
+}
+
+int aws_hpack_encode_header_block(
+    struct aws_hpack_context *context,
+    const struct aws_http_headers *headers,
+    struct aws_byte_buf *output) {
+
+#if 0 // #TODO finish hooking this up
+    /* Encode a dynamic table size update at the beginning of the first header-block
+     * following the change to the dynamic table size RFC-7541 4.2 */
+    if (context->dynamic_table_size_update.pending) {
+        if (s_encode_dynamic_table_resize(context, context->dynamic_table_size_update.value, output)) {
+            uint8_t starting_bit_pattern = s_hpack_entry_starting_bit_pattern[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
+            uint8_t num_prefix_bits = s_hpack_entry_num_prefix_bits[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
+            if (aws_hpack_encode_integer(size, starting_bit_pattern, num_prefix_bits, output)) {
+                return AWS_OP_ERR;
+            }
+        }
+        context->dynamic_table_size_update.pending = false;
+        context->dynamic_table_size_update.value = SIZE_MAX;
+    }
+#endif
+
+    const size_t num_headers = aws_http_headers_count(headers);
+    for (size_t i = 0; i < num_headers; ++i) {
+        struct aws_http_header header;
+        aws_http_headers_get_index(headers, i, &header);
+        if (s_encode_header_field(context, &header, output)) {
+            return AWS_OP_ERR;
+        }
+    }
+
     return AWS_OP_SUCCESS;
 }
