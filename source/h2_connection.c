@@ -777,7 +777,7 @@ static int s_handler_process_read_message(
     CONNECTION_LOGF(TRACE, connection, "Begin processing message of size %zu.", message->message_data.len);
 
     if (connection->thread_data.is_reading_stopped) {
-        CONNECTION_LOGF(ERROR, connection, "Cannot process message because connection is shutting down.");
+        CONNECTION_LOG(ERROR, connection, "Cannot process message because connection is shutting down.");
         aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
         goto shutdown;
     }
