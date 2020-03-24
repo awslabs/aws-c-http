@@ -84,11 +84,13 @@ AWS_EXTERN_C_BEGIN
 AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http2_server(
     struct aws_allocator *allocator,
+    bool manual_window_management,
     size_t initial_window_size);
 
 AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
+    bool manual_window_management,
     size_t initial_window_size);
 
 AWS_EXTERN_C_END

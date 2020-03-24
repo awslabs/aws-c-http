@@ -155,6 +155,7 @@ static void s_shutdown_due_to_write_err(struct aws_h2_connection *connection, in
 /* Common new() logic for server & client */
 static struct aws_h2_connection *s_connection_new(
     struct aws_allocator *alloc,
+    bool manual_window_management,
     size_t initial_window_size,
     bool server) {
 
@@ -174,6 +175,7 @@ static struct aws_h2_connection *s_connection_new(
     connection->base.initial_window_size = initial_window_size;
     /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
     connection->base.next_stream_id = (server ? 2 : 1);
+    connection->base.manual_window_management = manual_window_management;
 
     aws_channel_task_init(
         &connection->cross_thread_work_task, s_cross_thread_work_task, connection, "HTTP/2 cross-thread work");
@@ -235,9 +237,11 @@ error:
 
 struct aws_http_connection *aws_http_connection_new_http2_server(
     struct aws_allocator *allocator,
+    bool manual_window_management,
     size_t initial_window_size) {
 
-    struct aws_h2_connection *connection = s_connection_new(allocator, initial_window_size, true);
+    struct aws_h2_connection *connection =
+        s_connection_new(allocator, manual_window_management, initial_window_size, true);
     if (!connection) {
         return NULL;
     }
@@ -249,9 +253,11 @@ struct aws_http_connection *aws_http_connection_new_http2_server(
 
 struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
+    bool manual_window_management,
     size_t initial_window_size) {
 
-    struct aws_h2_connection *connection = s_connection_new(allocator, initial_window_size, false);
+    struct aws_h2_connection *connection =
+        s_connection_new(allocator, manual_window_management, initial_window_size, false);
     if (!connection) {
         return NULL;
     }
@@ -633,6 +639,8 @@ static void s_activate_stream(struct aws_h2_connection *connection, struct aws_h
     if (aws_h2_stream_on_activated(stream, &has_outgoing_data)) {
         goto error;
     }
+
+    aws_atomic_fetch_add(&stream->base.refcount, 1);
 
     if (has_outgoing_data) {
         aws_linked_list_push_back(&connection->thread_data.outgoing_streams_list, &stream->node);

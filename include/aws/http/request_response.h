@@ -171,7 +171,7 @@ typedef int(aws_http_on_incoming_header_block_done_fn)(
  * The data must be copied immediately if you wish to preserve it.
  * This is always invoked on the HTTP connection's event-loop thread.
  *
- * Note that, if the stream is using manual_window_management then the window
+ * Note that, if the connection is using manual_window_management then the window
  * size has shrunk by the amount of body data received. If the window size
  * reaches 0 no further data will be received. Increment the window size with
  * aws_http_stream_update_window().
@@ -243,17 +243,6 @@ struct aws_http_make_request_options {
      * See `aws_http_on_stream_complete_fn`.
      */
     aws_http_on_stream_complete_fn *on_complete;
-
-    /**
-     * Set to true to manually manage the read window size.
-     *
-     * If this is false, the connection will maintain a constant window size.
-     *
-     * If this is true, the caller must manually increment the window size using aws_http_stream_update_window().
-     * If the window is not incremented, it will shrink by the amount of body data received. If the window size
-     * reaches 0, no further data will be received.
-     */
-    bool manual_window_management;
 };
 
 struct aws_http_request_handler_options {
@@ -305,17 +294,6 @@ struct aws_http_request_handler_options {
      * See `aws_http_on_stream_complete_fn`.
      */
     aws_http_on_stream_complete_fn *on_complete;
-
-    /**
-     * Set to true to manually manage the read window size.
-     *
-     * If this is false, the connection will maintain a constant window size.
-     *
-     * If this is true, the caller must manually increment the window size using aws_http_stream_update_window().
-     * If the window is not incremented, it will shrink by the amount of body data received. If the window size
-     * reaches 0, no further data will be received.
-     */
-    bool manual_window_management;
 };
 
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \

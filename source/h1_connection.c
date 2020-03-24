@@ -1240,7 +1240,11 @@ static int s_decoder_on_done(void *user_data) {
 }
 
 /* Common new() logic for server & client */
-static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_t initial_window_size, bool server) {
+static struct h1_connection *s_connection_new(
+    struct aws_allocator *alloc,
+    bool manual_window_management,
+    size_t initial_window_size,
+    bool server) {
 
     struct h1_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct h1_connection));
     if (!connection) {
@@ -1254,6 +1258,7 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     connection->base.channel_handler.impl = connection;
     connection->base.http_version = AWS_HTTP_VERSION_1_1;
     connection->base.initial_window_size = initial_window_size;
+    connection->base.manual_window_management = manual_window_management;
 
     /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
     connection->base.next_stream_id = server ? 2 : 1;
@@ -1314,9 +1319,10 @@ error_connection_alloc:
 
 struct aws_http_connection *aws_http_connection_new_http1_1_server(
     struct aws_allocator *allocator,
+    bool manual_window_management,
     size_t initial_window_size) {
 
-    struct h1_connection *connection = s_connection_new(allocator, initial_window_size, true);
+    struct h1_connection *connection = s_connection_new(allocator, manual_window_management, initial_window_size, true);
     if (!connection) {
         return NULL;
     }
@@ -1328,9 +1334,11 @@ struct aws_http_connection *aws_http_connection_new_http1_1_server(
 
 struct aws_http_connection *aws_http_connection_new_http1_1_client(
     struct aws_allocator *allocator,
+    bool manual_window_management,
     size_t initial_window_size) {
 
-    struct h1_connection *connection = s_connection_new(allocator, initial_window_size, false);
+    struct h1_connection *connection =
+        s_connection_new(allocator, manual_window_management, initial_window_size, false);
     if (!connection) {
         return NULL;
     }

@@ -61,7 +61,7 @@ static struct aws_h1_stream *s_stream_new_common(
     stream->base.on_incoming_body = on_incoming_body;
     stream->base.on_complete = on_complete;
 
-    /* Stream refcount starts at 1 for user  and is incremented upon activation for the connection */
+    /* Stream refcount starts at 1 for user and is incremented upon activation for the connection */
     aws_atomic_init_int(&stream->base.refcount, 1);
 
     return stream;
@@ -73,7 +73,7 @@ struct aws_h1_stream *aws_h1_stream_new_request(
 
     struct aws_h1_stream *stream = s_stream_new_common(
         client_connection,
-        options->manual_window_management,
+        client_connection->manual_window_management,
         options->user_data,
         options->on_response_headers,
         options->on_response_header_block_done,
@@ -116,7 +116,7 @@ error:
 struct aws_h1_stream *aws_h1_stream_new_request_handler(const struct aws_http_request_handler_options *options) {
     struct aws_h1_stream *stream = s_stream_new_common(
         options->server_connection,
-        options->manual_window_management,
+        options->server_connection->manual_window_management,
         options->user_data,
         options->on_request_headers,
         options->on_request_header_block_done,

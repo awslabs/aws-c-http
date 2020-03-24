@@ -52,6 +52,7 @@ struct tester {
     struct testing_channel testing_channel;
     struct aws_http_connection *connection;
     struct aws_logger logger;
+    bool manual_window_management;
 };
 
 static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
@@ -73,7 +74,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *alloc) {
 
     /* Use small window so that we can observe it opening in tests.
      * Channel may wait until the window is small before issuing the increment command. */
-    tester->connection = aws_http_connection_new_http1_1_client(alloc, 256);
+    tester->connection = aws_http_connection_new_http1_1_client(alloc, true, 256);
     ASSERT_NOT_NULL(tester->connection);
 
     struct aws_channel_slot *slot = aws_channel_slot_new(tester->testing_channel.channel);
@@ -1445,42 +1446,6 @@ H1_CLIENT_TEST_CASE(h1_client_request_close_header_with_pipelining) {
     return AWS_OP_SUCCESS;
 }
 
-/* By default, after reading an aws_io_message of N bytes, the connection should issue window update of N bytes */
-H1_CLIENT_TEST_CASE(h1_client_window_reopens_by_default) {
-    (void)ctx;
-    struct tester tester;
-    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-
-    /* send request */
-    struct aws_http_message *request = s_new_default_get_request(allocator);
-
-    struct response_tester response;
-    ASSERT_SUCCESS(s_response_tester_init(&response, &tester, request));
-
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    /* Ensure the request can be destroyed after request is sent */
-    aws_http_message_destroy(request);
-
-    /* send response */
-    const char *response_str = "HTTP/1.1 200 OK\r\n"
-                               "Content-Length: 9\r\n"
-                               "\r\n"
-                               "Call Momo";
-    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, response_str));
-
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    /* check result */
-    size_t window_update = testing_channel_last_window_update(&tester.testing_channel);
-    ASSERT_TRUE(window_update == strlen(response_str));
-
-    /* clean up */
-    ASSERT_SUCCESS(s_response_tester_clean_up(&response));
-    ASSERT_SUCCESS(s_tester_clean_up(&tester));
-    return AWS_OP_SUCCESS;
-}
-
 /* The user's body reading callback can prevent the window from fully re-opening. */
 H1_CLIENT_TEST_CASE(h1_client_window_shrinks_if_user_says_so) {
     (void)ctx;
@@ -1489,10 +1454,9 @@ H1_CLIENT_TEST_CASE(h1_client_window_shrinks_if_user_says_so) {
 
     /* send request */
     struct aws_http_message *request = s_new_default_get_request(allocator);
-    struct aws_http_make_request_options opt_override = {.manual_window_management = true};
 
     struct response_tester response;
-    ASSERT_SUCCESS(s_response_tester_init_ex(&response, &tester, request, &opt_override, NULL));
+    ASSERT_SUCCESS(s_response_tester_init_ex(&response, &tester, request, NULL, NULL));
     response.stop_auto_window_update = true;
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -2009,6 +1973,36 @@ H1_CLIENT_TEST_CASE(h1_client_close_from_on_thread_makes_not_open) {
 
     testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
 
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_unactivated_stream_cleans_up) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+    ASSERT_TRUE(aws_http_connection_is_open(tester.connection));
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
+
+    struct aws_http_make_request_options options = {
+        .self_size = sizeof(struct aws_http_make_request_options),
+        .on_complete = s_on_complete,
+        .user_data = &tester,
+        .on_response_body = s_response_tester_on_body,
+        .on_response_header_block_done = s_response_tester_on_header_block_done,
+        .on_response_headers = s_response_tester_on_headers,
+        .request = request,
+    };
+
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &options);
+    aws_http_message_release(request);
+    ASSERT_NOT_NULL(stream);
+    /* we do not activate, that is the test. */
+    aws_http_stream_release(stream);
+    aws_http_connection_close(tester.connection);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
