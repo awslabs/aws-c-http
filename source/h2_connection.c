@@ -773,47 +773,32 @@ static int s_handler_process_read_message(
     struct aws_io_message *message) {
     (void)slot;
     struct aws_h2_connection *connection = handler->impl;
-    int err;
 
-    CONNECTION_LOGF(
-        TRACE,
-        connection,
-        "id=%p: H2 connection Begin processing message of size %zu.",
-        (void *)&connection->base,
-        message->message_data.len);
+    CONNECTION_LOGF(TRACE, connection, "Begin processing message of size %zu.", message->message_data.len);
 
     if (connection->thread_data.is_reading_stopped) {
-        CONNECTION_LOGF(
-            ERROR,
-            connection,
-            "id=%p: Cannot process message because connection is shutting down.",
-            (void *)&connection->base);
-
+        CONNECTION_LOGF(ERROR, connection, "Cannot process message because connection is shutting down.");
         aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
         goto shutdown;
     }
 
     struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
-    err = aws_h2_decode(connection->thread_data.decoder, &message_cursor);
-    if (err) {
+    if (aws_h2_decode(connection->thread_data.decoder, &message_cursor)) {
         CONNECTION_LOGF(
             ERROR,
             connection,
-            "id=%p: Decoding message failed, error %d (%s). Closing connection",
-            (void *)&connection->base,
+            "Decoding message failed, error %d (%s). Closing connection",
             aws_last_error(),
             aws_error_name(aws_last_error()));
     }
 
     /* HTTP/2 protocol uses WINDOW_UPDATE frames to coordinate data rates with peer,
      * so we can just keep the aws_channel's read-window wide open */
-    err = aws_channel_slot_increment_read_window(slot, message->message_data.len);
-    if (err) {
+    if (aws_channel_slot_increment_read_window(slot, message->message_data.len)) {
         CONNECTION_LOGF(
             ERROR,
             connection,
-            "id=%p: Incrementing read window failed, error %d (%s). Closing connection",
-            (void *)&connection->base,
+            "Incrementing read window failed, error %d (%s). Closing connection",
             aws_last_error(),
             aws_error_name(aws_last_error()));
     }
