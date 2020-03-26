@@ -171,6 +171,18 @@ struct aws_h2_decoder {
         bool ends_stream;
     } header_block_in_progress;
 
+    /* Settings for decoder, which is based on the settings sent to the peer and ACKed by peer */
+    struct {
+        /* the maximum size of the header compression table used to decode header blocks */
+        uint32_t header_table_size;
+        /* enable/disable server push */
+        uint32_t enable_push;
+        /*  the size of the largest frame payload */
+        uint32_t max_frame_size;
+        /* the maximum size of header list prepared to accept */
+        uint32_t max_header_list_size;
+    } aws_h2_decoder_settings;
+
     /* User callbacks and settings. */
     const struct aws_h2_decoder_vtable *vtable;
     void *userdata;
@@ -218,6 +230,12 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
     } else {
         decoder->state = &s_state_prefix;
     }
+
+    decoder->aws_h2_decoder_settings.header_table_size = aws_h2_settings_initial[AWS_H2_SETTINGS_HEADER_TABLE_SIZE];
+    decoder->aws_h2_decoder_settings.enable_push = aws_h2_settings_initial[AWS_H2_SETTINGS_ENABLE_PUSH];
+    decoder->aws_h2_decoder_settings.max_frame_size = aws_h2_settings_initial[AWS_H2_SETTINGS_MAX_FRAME_SIZE];
+    decoder->aws_h2_decoder_settings.max_header_list_size =
+        aws_h2_settings_initial[AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE];
 
     return decoder;
 
@@ -508,13 +526,13 @@ static int s_state_fn_prefix(struct aws_h2_decoder *decoder, struct aws_byte_cur
     }
 
     /* Validate payload length.  */
-    static const uint32_t MAX_FRAME_SIZE = 16384; /* #TODO handle the SETTINGS_MAX_FRAME_SIZE setting */
-    if (frame->payload_len > MAX_FRAME_SIZE) {
+    uint32_t max_frame_size = decoder->aws_h2_decoder_settings.max_frame_size;
+    if (frame->payload_len > max_frame_size) {
         DECODER_LOGF(
             ERROR,
             decoder,
             "Decoder's max frame size is %" PRIu32 ", but frame of size %" PRIu32 " was received.",
-            MAX_FRAME_SIZE,
+            max_frame_size,
             frame->payload_len);
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_FRAME_SIZE);
     }
@@ -777,6 +795,12 @@ static int s_state_fn_frame_settings_i(struct aws_h2_decoder *decoder, struct aw
  *  +-+-----------------------------+-------------------------------+
  */
 static int s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+
+    if (decoder->aws_h2_decoder_settings.enable_push == 0) {
+        /* treat the receipt of a PUSH_PROMISE frame as a connection error of type PROTOCOL_ERROR.(RFC-7540 6.5.2) */
+        DECODER_LOG(ERROR, decoder, "PUSH_PROMISE is invalid, the seeting for enable push is 0");
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
 
     AWS_ASSERT(input->len >= s_state_frame_push_promise_requires_4_bytes);
 
@@ -1084,4 +1108,20 @@ static int s_state_fn_connection_preface_string(struct aws_h2_decoder *decoder, 
 
     /* Remain in state until more data arrives */
     return AWS_OP_SUCCESS;
+}
+
+void aws_h2_decoder_set_setting_header_table_size(struct aws_h2_decoder *decoder, uint32_t data) {
+    decoder->aws_h2_decoder_settings.header_table_size = data;
+}
+
+void aws_h2_decoder_set_setting_enable_push(struct aws_h2_decoder *decoder, uint32_t data) {
+    decoder->aws_h2_decoder_settings.enable_push = data;
+}
+
+void aws_h2_decoder_set_setting_max_frame_size(struct aws_h2_decoder *decoder, uint32_t data) {
+    decoder->aws_h2_decoder_settings.max_frame_size = data;
+}
+
+void aws_h2_decoder_set_setting_max_header_list_size(struct aws_h2_decoder *decoder, uint32_t data) {
+    decoder->aws_h2_decoder_settings.max_header_list_size = data;
 }
