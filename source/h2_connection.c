@@ -62,6 +62,9 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 
 static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
+static int s_decoder_on_setting_begin(void *userdata);
+static int s_decoder_on_settings_i(uint16_t setting_id, uint32_t value, void *userdata);
+static int s_decoder_on_settings_end(void *userdata);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
@@ -602,8 +605,7 @@ error:
 static int s_enqueue_settings_frame(struct aws_h2_connection *connection) {
     struct aws_allocator *alloc = connection->base.alloc;
 
-    struct aws_h2_frame *settings_frame = aws_h2_frame_new_settings(
-        alloc, connection->thread_data.aws_h2_settings_self, AWS_H2_SETTINGS_END_RANGE, false /*ack*/);
+    struct aws_h2_frame *settings_frame = aws_h2_frame_new_settings(alloc, NULL, 0, false /*ack*/);
     if (!settings_frame) {
         return AWS_OP_ERR;
     }
