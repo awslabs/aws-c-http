@@ -213,8 +213,8 @@ static struct aws_h2_connection *s_connection_new(
 
     /* JUST FOR REVIEW: Do we have a aws way? */
     /* Initialize the value of settings */
-    memcpy(connection->thread_data.aws_h2_settings_peer, aws_h2_settings_initial, AWS_H2_SETTINGS_END_RANGE);
-    memcpy(connection->thread_data.aws_h2_settings_self, aws_h2_settings_initial, AWS_H2_SETTINGS_END_RANGE);
+    memcpy(connection->thread_data.aws_h2_settings_peer, aws_h2_settings_initial, AWS_H2_SETTINGS_END_RANGE*sizeof(uint32_t));
+    memcpy(connection->thread_data.aws_h2_settings_self, aws_h2_settings_initial, AWS_H2_SETTINGS_END_RANGE*sizeof(uint32_t));
 
     /* Create a new decoder */
     struct aws_h2_decoder_params params = {
@@ -601,11 +601,23 @@ error:
     return AWS_OP_ERR;
 }
 
+/* tranfer from uint32_t array to aws_h2_frame_setting array for encoding */
+static void s_transfer_to_frame_setting(uint32_t *from, struct aws_h2_frame_setting *to) {
+    for (uint16_t i = 0; i < AWS_H2_SETTINGS_END_RANGE; i++) {
+        to[i].id = i;
+        to[i].value = from[i];
+    }
+}
+
 /* #TODO track which SETTINGS frames have been ACK'd */
 static int s_enqueue_settings_frame(struct aws_h2_connection *connection) {
     struct aws_allocator *alloc = connection->base.alloc;
 
-    struct aws_h2_frame *settings_frame = aws_h2_frame_new_settings(alloc, NULL, 0, false /*ack*/);
+    struct aws_h2_frame_setting settings_array[AWS_H2_SETTINGS_END_RANGE];
+    s_transfer_to_frame_setting(connection->thread_data.aws_h2_settings_self, settings_array);
+    struct aws_h2_frame *settings_frame =
+        aws_h2_frame_new_settings(alloc, settings_array, AWS_H2_SETTINGS_END_RANGE, false /*ack*/);
+
     if (!settings_frame) {
         return AWS_OP_ERR;
     }
