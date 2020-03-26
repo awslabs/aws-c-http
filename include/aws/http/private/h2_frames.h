@@ -133,6 +133,15 @@ struct aws_h2_frame_encoder {
     const void *logging_id;
     struct aws_hpack_context *hpack;
     struct aws_h2_frame *current_frame;
+
+    /* Settings for frame encoder, which is based on the settings received from peer */
+    struct {
+        /* the maximum size of the header compression table used to decode header blocks */
+        uint32_t header_table_size;
+        /*  the size of the largest frame payload */
+        uint32_t max_frame_size;
+    } aws_h2_frame_encoder_settings;
+
     bool has_errored;
 };
 
@@ -271,6 +280,11 @@ struct aws_h2_frame *aws_h2_frame_new_window_update(
     struct aws_allocator *allocator,
     uint32_t stream_id,
     uint32_t window_size_increment);
+
+AWS_HTTP_API void aws_h2_frame_encoder_set_setting_header_table_size(
+    struct aws_h2_frame_encoder *encoder,
+    uint32_t data);
+AWS_HTTP_API void aws_h2_frame_encoder_set_setting_max_frame_size(struct aws_h2_frame_encoder *encoder, uint32_t data);
 
 AWS_EXTERN_C_END
 

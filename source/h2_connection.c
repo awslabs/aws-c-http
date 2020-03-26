@@ -569,6 +569,14 @@ static void aws_h2_decoder_change_settings(struct aws_h2_connection *connection)
         decoder, aws_h2_settings_self[AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE]);
 }
 
+static void aws_h2_frame_encoder_change_settings(struct aws_h2_connection *connection) {
+    struct aws_h2_frame_encoder *encoder = &connection->thread_data.encoder;
+    uint32_t *aws_h2_settings_peer = connection->thread_data.aws_h2_settings_peer;
+    aws_h2_frame_encoder_set_setting_header_table_size(
+        encoder, aws_h2_settings_peer[AWS_H2_SETTINGS_HEADER_TABLE_SIZE]);
+    aws_h2_frame_encoder_set_setting_max_frame_size(encoder, aws_h2_settings_peer[AWS_H2_SETTINGS_MAX_FRAME_SIZE]);
+}
+
 static int s_decoder_on_settings_end(void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
@@ -581,7 +589,7 @@ static int s_decoder_on_settings_end(void *userdata) {
     }
     aws_h2_connection_enqueue_outgoing_frame(connection, settings_ack_frame);
     /* inform encoder about the settings after enqueue the setting ACK frame */
-
+    aws_h2_frame_encoder_change_settings(connection);
     s_try_write_outgoing_frames(connection);
     return AWS_OP_SUCCESS;
 error:
