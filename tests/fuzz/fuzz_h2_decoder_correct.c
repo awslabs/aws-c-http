@@ -272,7 +272,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                     for (size_t i = 0; i < settings_count; ++i) {
                         uint16_t id;
                         uint32_t value;
-                        uint32_t offset = 1;
                         aws_byte_cursor_read_be16(&input, &id);
                         aws_byte_cursor_read_be32(&input, &value);
                         if (id == AWS_H2_SETTINGS_ENABLE_PUSH) {
