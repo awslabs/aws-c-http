@@ -279,8 +279,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                             value = value % 2; /* value range from 0-1 */
                         }
                         if (id == AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE) {
-                            value = value % (AWS_H2_WINDOW_UPDATE_MAX +
-                                             offset); /* value range from 0-AWS_H2_WINDOW_UPDATE_MAX */
+                            value = aws_min_u32(value, aws_h2_settings_bounds[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE][1]);
                         }
                         if (id == AWS_H2_SETTINGS_MAX_FRAME_SIZE) {
                             value = aws_min_u32(value, aws_h2_settings_bounds[AWS_H2_SETTINGS_MAX_FRAME_SIZE][1]);
