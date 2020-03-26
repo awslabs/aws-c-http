@@ -1437,10 +1437,9 @@ H2_DECODER_TEST_CASE(h2_decoder_err_settings_invalid_values_enable_push) {
     };
     /* clang-format on */
 
-    ASSERT_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+    ASSERT_ERROR(AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
-        return AWS_OP_SUCCESS;
+    return AWS_OP_SUCCESS;
 }
 
 H2_DECODER_TEST_CASE(h2_decoder_err_settings_invalid_values_initial_window_size) {
@@ -1485,8 +1484,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_settings_invalid_values_max_frame_size) {
     };
     /* clang-format on */
 
-    ASSERT_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+    ASSERT_ERROR(AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
