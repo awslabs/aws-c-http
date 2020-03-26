@@ -84,10 +84,11 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .update_window = NULL,
 };
 
-static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
-    .on_data = NULL,
-    .on_ping = s_decoder_on_ping,
-};
+static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {.on_data = NULL,
+                                                                 .on_ping = s_decoder_on_ping,
+                                                                 .on_settings_begin = s_decoder_on_setting_begin,
+                                                                 .on_settings_i = s_decoder_on_settings_i,
+                                                                 .on_settings_end = s_decoder_on_settings_end};
 
 static void s_lock_synced_data(struct aws_h2_connection *connection) {
     int err = aws_mutex_lock(&connection->synced_data.lock);
@@ -206,6 +207,11 @@ static struct aws_h2_connection *s_connection_new(
             ERROR, connection, "Hashtable init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
         goto error;
     }
+
+    /* JUST FOR REVIEW: Do we have a aws way? */
+    /* Initialize the value of settings */
+    memcpy(connection->thread_data.aws_h2_settings_peer, aws_h2_settings_initial, AWS_H2_SETTINGS_END_RANGE);
+    memcpy(connection->thread_data.aws_h2_settings_self, aws_h2_settings_initial, AWS_H2_SETTINGS_END_RANGE);
 
     /* Create a new decoder */
     struct aws_h2_decoder_params params = {
@@ -528,6 +534,41 @@ error:
     return AWS_OP_ERR;
 }
 
+static int s_decoder_on_setting_begin(void *userdata) {
+    struct aws_h2_connection *connection = userdata;
+    CONNECTION_LOG(TRACE, connection, "Setting frame processsing begins");
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_settings_i(uint16_t setting_id, uint32_t value, void *userdata) {
+    struct aws_h2_connection *connection = userdata;
+
+    connection->thread_data.aws_h2_settings_peer[setting_id] = value;
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_settings_end(void *userdata) {
+    struct aws_h2_connection *connection = userdata;
+
+    /* Once all values have been processed, the recipient MUST immediately emit a SETTINGS frame with the ACK flag
+     * set.(RFC-7540 6.5.3) */
+    CONNECTION_LOG(TRACE, connection, "Setting frame processsing ends");
+    struct aws_h2_frame *settings_ack_frame = aws_h2_frame_new_settings(connection->base.alloc, NULL, 0, true);
+    if (!settings_ack_frame) {
+        goto error;
+    }
+    aws_h2_connection_enqueue_outgoing_frame(connection, settings_ack_frame);
+    s_try_write_outgoing_frames(connection);
+    return AWS_OP_SUCCESS;
+error:
+    CONNECTION_LOGF(
+        ERROR, connection, "Settings ACK frame failed to be sent, error %s", aws_error_name(aws_last_error()));
+    return AWS_OP_ERR;
+}
+
+/* End decoder callbacks */
+
 static int s_send_connection_preface_client_string(struct aws_h2_connection *connection) {
 
     /* Just send the magic string on its own aws_io_message. */
@@ -557,12 +598,12 @@ error:
     return AWS_OP_ERR;
 }
 
-/* #TODO actually fill with settings */
 /* #TODO track which SETTINGS frames have been ACK'd */
 static int s_enqueue_settings_frame(struct aws_h2_connection *connection) {
     struct aws_allocator *alloc = connection->base.alloc;
 
-    struct aws_h2_frame *settings_frame = aws_h2_frame_new_settings(alloc, NULL, 0, false /*ack*/);
+    struct aws_h2_frame *settings_frame = aws_h2_frame_new_settings(
+        alloc, connection->thread_data.aws_h2_settings_self, AWS_H2_SETTINGS_END_RANGE, false /*ack*/);
     if (!settings_frame) {
         return AWS_OP_ERR;
     }
@@ -644,7 +685,12 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
 static void s_activate_stream(struct aws_h2_connection *connection, struct aws_h2_stream *stream) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
-    /* #TODO: don't exceed peer's max-concurrent-streams setting */
+    uint32_t max_concurrent_streams =
+        connection->thread_data.aws_h2_settings_peer[AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS];
+    if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) >= max_concurrent_streams) {
+        AWS_H2_STREAM_LOG(ERROR, stream, "Failed activating stream, max concurrent streams are reached");
+        goto error;
+    }
 
     if (aws_hash_table_put(
             &connection->thread_data.active_streams_map, (void *)(size_t)stream->base.id, stream, NULL)) {
