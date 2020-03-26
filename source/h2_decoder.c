@@ -772,7 +772,7 @@ static int s_state_fn_frame_settings_i(struct aws_h2_decoder *decoder, struct aw
     if (id >= AWS_H2_SETTINGS_BEGIN_RANGE && id < AWS_H2_SETTINGS_END_RANGE) {
         /* check the value meets the settings bounds */
         if (value < aws_h2_settings_bounds[id][0] || value > aws_h2_settings_bounds[id][1]) {
-            DECODER_LOGF(ERROR, decoder, "The %d Value of SETTING frame is invalid", id);
+            DECODER_LOGF(ERROR, decoder, "The %dth value of SETTING frame is invalid", id);
             if (id == AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE)
                 return aws_raise_error(AWS_H2_ERR_FLOW_CONTROL_ERROR);
             if (id == AWS_H2_SETTINGS_ENABLE_PUSH || id == AWS_H2_SETTINGS_MAX_FRAME_SIZE)

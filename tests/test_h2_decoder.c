@@ -1418,6 +1418,79 @@ H2_DECODER_TEST_CASE(h2_decoder_err_settings_payload_size) {
     return AWS_OP_SUCCESS;
 }
 
+/* Error if SETTINGS has invalid values */
+H2_DECODER_TEST_CASE(h2_decoder_err_settings_invalid_values_enable_push) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 12,           /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* SETTINGS */
+        0x00, 0x05,                 /* Identifier (16) */
+        0x00, 0xFF, 0xFF, 0xFF,     /* Value (32) */
+        0x00, 0x02,                 /* Identifier (16) */
+        0x00, 0xFF, 0xFF, 0xFF,     /* Value (32) <-- INVALID value FOR ENABLE_PUSH */
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+        return AWS_OP_SUCCESS;
+}
+
+H2_DECODER_TEST_CASE(h2_decoder_err_settings_invalid_values_initial_window_size) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 12,           /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* SETTINGS */
+        0x00, 0x05,                 /* Identifier (16) */
+        0x00, 0xFF, 0xFF, 0xFF,     /* Value (32) */
+        0x00, 0x04,                 /* Identifier (16) */
+        0x80, 0xFF, 0xFF, 0xFF,     /* Value (32) <-- INVALID value FOR INITIAL_WINDOW_SIZE */
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_H2_ERR_FLOW_CONTROL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+H2_DECODER_TEST_CASE(h2_decoder_err_settings_invalid_values_max_frame_size) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 12,           /* Length (24) */
+        AWS_H2_FRAME_T_SETTINGS,    /* Type (8) */
+        0x00,                       /* Flags (8) */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Stream Identifier (31) */
+        /* SETTINGS */
+        0x00, 0x05,                 /* Identifier (16) */
+        0x00, 0xFF, 0xFF, 0xFF,     /* Value (32) */
+        0x00, 0x05,                 /* Identifier (16) */
+        0x00, 0x00, 0x00, 0x00,     /* Value (32) <-- INVALID value FOR MAX_FRAME_SIZE */
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
 H2_DECODER_TEST_CASE(h2_decoder_push_promise) {
     (void)allocator;
     struct fixture *fixture = ctx;
@@ -1619,6 +1692,32 @@ H2_DECODER_TEST_CASE(h2_decoder_err_push_promise_requires_promised_stream_id) {
     };
     /* clang-format on */
 
+    /* Decode */
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Promised stream will be invalid, if enable_push is set to 0 */
+H2_DECODER_TEST_CASE(h2_decoder_err_push_promise_with_enable_push_0) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x07,           /* Length (24) */
+        AWS_H2_FRAME_T_PUSH_PROMISE,/* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS, /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,     /* Reserved (1) | Stream Identifier (31) */
+        /* PUSH_PROMISE */
+        0x00, 0x00, 0x00, 0x00,     /* Reserved (1) | Promised Stream ID (31) */
+        0x82,                       /* ":method: GET" - indexed header field */
+        0x87,                       /* ":scheme: https" - indexed header field */
+        0x85,                       /* ":path: /index.html" - indexed header field */
+    };
+    /* clang-format on */
+    aws_h2_decoder_set_setting_enable_push(fixture->decode.decoder, (uint32_t)0);
     /* Decode */
     ASSERT_ERROR(
         AWS_ERROR_HTTP_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));

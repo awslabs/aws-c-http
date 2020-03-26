@@ -1146,5 +1146,5 @@ void aws_h2_frame_encoder_set_setting_header_table_size(struct aws_h2_frame_enco
 }
 
 void aws_h2_frame_encoder_set_setting_max_frame_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {
-    encoder->aws_h2_frame_encoder_settings.max_frame_size = data;    
+    encoder->aws_h2_frame_encoder_settings.max_frame_size = data;
 }

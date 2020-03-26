@@ -270,8 +270,24 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 if (settings_count > 0) {
                     settings_array = aws_mem_calloc(allocator, settings_count, sizeof(struct aws_h2_frame_setting));
                     for (size_t i = 0; i < settings_count; ++i) {
-                        aws_byte_cursor_read_be16(&input, &settings_array[i].id);
-                        aws_byte_cursor_read_be32(&input, &settings_array[i].value);
+                        uint16_t id;
+                        uint32_t value;
+                        uint32_t offset = 1;
+                        aws_byte_cursor_read_be16(&input, &id);
+                        aws_byte_cursor_read_be32(&input, &value);
+                        if (id == AWS_H2_SETTINGS_ENABLE_PUSH) {
+                            value = value % 2; /* value range from 0-1 */
+                        }
+                        if (id == AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE) {
+                            value = value % (AWS_H2_WINDOW_UPDATE_MAX +
+                                             offset); /* value range from 0-AWS_H2_WINDOW_UPDATE_MAX */
+                        }
+                        if (id == AWS_H2_SETTINGS_MAX_FRAME_SIZE) {
+                            value = aws_min_u32(value, aws_h2_settings_bounds[AWS_H2_SETTINGS_MAX_FRAME_SIZE][1]);
+                            value = aws_max_u32(value, aws_h2_settings_bounds[AWS_H2_SETTINGS_MAX_FRAME_SIZE][0]);
+                        }
+                        settings_array[i].id = id;
+                        settings_array[i].value = value;
                     }
                 }
             }
