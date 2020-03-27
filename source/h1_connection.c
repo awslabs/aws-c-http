@@ -418,6 +418,52 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
     }
 }
 
+int aws_h1_stream_activate(struct aws_http_stream *stream) {
+    struct aws_h1_stream *h1_stream = AWS_CONTAINER_OF(stream, struct aws_h1_stream, base);
+
+    struct aws_http_connection *base_connection = stream->owning_connection;
+    struct h1_connection *connection = AWS_CONTAINER_OF(base_connection, struct h1_connection, base);
+
+    bool should_schedule_task = false;
+
+    { /* BEGIN CRITICAL SECTION */
+        s_h1_connection_lock_synced_data(connection);
+
+        if (stream->id) {
+            /* stream has already been activated. */
+            s_h1_connection_unlock_synced_data(connection);
+            return AWS_OP_SUCCESS;
+        }
+
+        stream->id = aws_http_connection_get_next_stream_id(base_connection);
+
+        if (stream->id) {
+            aws_linked_list_push_back(&connection->synced_data.new_client_stream_list, &h1_stream->node);
+            if (!connection->synced_data.is_outgoing_stream_task_active) {
+                connection->synced_data.is_outgoing_stream_task_active = true;
+                should_schedule_task = true;
+            }
+        }
+
+        s_h1_connection_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+
+    if (!stream->id) {
+        /* aws_http_connection_get_next_stream_id() raises its own error. */
+        return AWS_OP_ERR;
+    }
+
+    /* activate one more time now that the connection can actually run the stream. */
+    aws_atomic_fetch_add(&stream->refcount, 1);
+
+    if (should_schedule_task) {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling outgoing stream task.", (void *)&connection->base);
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 struct aws_http_stream *s_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options) {
@@ -437,21 +483,12 @@ struct aws_http_stream *s_make_request(
 
     /* Insert new stream into pending list, and schedule outgoing_stream_task if it's not already running. */
     int new_stream_error_code = AWS_ERROR_SUCCESS;
-    bool should_schedule_task = false;
 
     { /* BEGIN CRITICAL SECTION */
         s_h1_connection_lock_synced_data(connection);
-
         if (connection->synced_data.new_stream_error_code) {
             new_stream_error_code = connection->synced_data.new_stream_error_code;
-        } else {
-            aws_linked_list_push_back(&connection->synced_data.new_client_stream_list, &stream->node);
-            if (!connection->synced_data.is_outgoing_stream_task_active) {
-                connection->synced_data.is_outgoing_stream_task_active = true;
-                should_schedule_task = true;
-            }
         }
-
         s_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
@@ -481,11 +518,6 @@ struct aws_http_stream *s_make_request(
         AWS_BYTE_CURSOR_PRI(method),
         AWS_BYTE_CURSOR_PRI(path),
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->base.http_version)));
-
-    if (should_schedule_task) {
-        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling outgoing stream task.", (void *)&connection->base);
-        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
-    }
 
     return &stream->base;
 
@@ -1208,7 +1240,11 @@ static int s_decoder_on_done(void *user_data) {
 }
 
 /* Common new() logic for server & client */
-static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_t initial_window_size, bool server) {
+static struct h1_connection *s_connection_new(
+    struct aws_allocator *alloc,
+    bool manual_window_management,
+    size_t initial_window_size,
+    bool server) {
 
     struct h1_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct h1_connection));
     if (!connection) {
@@ -1222,9 +1258,10 @@ static struct h1_connection *s_connection_new(struct aws_allocator *alloc, size_
     connection->base.channel_handler.impl = connection;
     connection->base.http_version = AWS_HTTP_VERSION_1_1;
     connection->base.initial_window_size = initial_window_size;
+    connection->base.manual_window_management = manual_window_management;
 
     /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
-    aws_atomic_init_int(&connection->base.next_stream_id, (server ? 2 : 1));
+    connection->base.next_stream_id = server ? 2 : 1;
 
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
@@ -1282,9 +1319,10 @@ error_connection_alloc:
 
 struct aws_http_connection *aws_http_connection_new_http1_1_server(
     struct aws_allocator *allocator,
+    bool manual_window_management,
     size_t initial_window_size) {
 
-    struct h1_connection *connection = s_connection_new(allocator, initial_window_size, true);
+    struct h1_connection *connection = s_connection_new(allocator, manual_window_management, initial_window_size, true);
     if (!connection) {
         return NULL;
     }
@@ -1296,9 +1334,11 @@ struct aws_http_connection *aws_http_connection_new_http1_1_server(
 
 struct aws_http_connection *aws_http_connection_new_http1_1_client(
     struct aws_allocator *allocator,
+    bool manual_window_management,
     size_t initial_window_size) {
 
-    struct h1_connection *connection = s_connection_new(allocator, initial_window_size, false);
+    struct h1_connection *connection =
+        s_connection_new(allocator, manual_window_management, initial_window_size, false);
     if (!connection) {
         return NULL;
     }

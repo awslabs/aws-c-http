@@ -256,7 +256,7 @@ int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester) 
 
     /* Use small window so that we can observe it opening in tests.
      * Channel may wait until the window is small before issuing the increment command. */
-    struct aws_http_connection *connection = aws_http_connection_new_http1_1_client(tester->alloc, 256);
+    struct aws_http_connection *connection = aws_http_connection_new_http1_1_client(tester->alloc, true, 256);
     ASSERT_NOT_NULL(connection);
 
     connection->user_data = tester->http_bootstrap->user_data;

@@ -75,4 +75,6 @@ enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *str
 /* Connection is ready to send frames from stream now */
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data);
 
+int aws_h2_stream_activate(struct aws_http_stream *stream);
+
 #endif /* AWS_HTTP_H2_STREAM_H */

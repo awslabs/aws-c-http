@@ -40,7 +40,7 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
 
     ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc, &options));
 
-    s_tester.connection = aws_http_connection_new_http2_client(alloc, SIZE_MAX);
+    s_tester.connection = aws_http_connection_new_http2_client(alloc, true, SIZE_MAX);
     ASSERT_NOT_NULL(s_tester.connection);
 
     { /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
@@ -98,6 +98,7 @@ TEST_CASE(h2_client_request_create) {
 
     struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &options);
     ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
 
     /* shutdown channel so request can be released */
     aws_channel_shutdown(s_tester.testing_channel.channel, AWS_ERROR_SUCCESS);
@@ -105,6 +106,41 @@ TEST_CASE(h2_client_request_create) {
     ASSERT_TRUE(testing_channel_is_shutdown_completed(&s_tester.testing_channel));
 
     /* release request */
+    aws_http_stream_release(stream);
+
+    aws_http_message_release(request);
+
+    return s_tester_clean_up();
+}
+
+TEST_CASE(h2_client_unactivated_stream_cleans_up) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* create request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header headers[] = {
+        {aws_byte_cursor_from_c_str(":method"), aws_byte_cursor_from_c_str("GET")},
+        {aws_byte_cursor_from_c_str(":scheme"), aws_byte_cursor_from_c_str("https")},
+        {aws_byte_cursor_from_c_str(":path"), aws_byte_cursor_from_c_str("/")},
+    };
+    ASSERT_SUCCESS(aws_http_headers_add_array(aws_http_message_get_headers(request), headers, AWS_ARRAY_SIZE(headers)));
+
+    struct aws_http_make_request_options options = {
+        .self_size = sizeof(options),
+        .request = request,
+    };
+
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &options);
+    ASSERT_NOT_NULL(stream);
+    /* do not activate the stream, that's the test. */
+
+    /* shutdown channel so request can be released */
+    aws_channel_shutdown(s_tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&s_tester.testing_channel));
+
     aws_http_stream_release(stream);
     aws_http_message_release(request);
 

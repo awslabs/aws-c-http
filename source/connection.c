@@ -51,6 +51,7 @@ struct aws_http_server {
     struct aws_allocator *alloc;
     struct aws_server_bootstrap *bootstrap;
     bool is_using_tls;
+    bool manual_window_management;
     size_t initial_window_size;
     void *user_data;
     aws_http_server_on_incoming_connection_fn *on_incoming_connection;
@@ -83,6 +84,7 @@ static struct aws_http_connection *s_connection_new(
     struct aws_channel *channel,
     bool is_server,
     bool is_using_tls,
+    bool manual_window_management,
     size_t initial_window_size) {
 
     struct aws_channel_slot *connection_slot = NULL;
@@ -146,17 +148,19 @@ static struct aws_http_connection *s_connection_new(
     switch (version) {
         case AWS_HTTP_VERSION_1_1:
             if (is_server) {
-                connection = aws_http_connection_new_http1_1_server(alloc, initial_window_size);
+                connection =
+                    aws_http_connection_new_http1_1_server(alloc, manual_window_management, initial_window_size);
             } else {
-                connection = aws_http_connection_new_http1_1_client(alloc, initial_window_size);
+                connection =
+                    aws_http_connection_new_http1_1_client(alloc, manual_window_management, initial_window_size);
             }
             break;
         case AWS_HTTP_VERSION_2:
             AWS_FATAL_ASSERT(false && "H2 is not currently supported"); /* lol nice try */
             if (is_server) {
-                connection = aws_http_connection_new_http2_server(alloc, initial_window_size);
+                connection = aws_http_connection_new_http2_server(alloc, manual_window_management, initial_window_size);
             } else {
-                connection = aws_http_connection_new_http2_client(alloc, initial_window_size);
+                connection = aws_http_connection_new_http2_client(alloc, manual_window_management, initial_window_size);
             }
             break;
         default:
@@ -293,7 +297,13 @@ static void s_server_bootstrap_on_accept_channel_setup(
         goto error;
     }
     /* Create connection */
-    connection = s_connection_new(server->alloc, channel, true, server->is_using_tls, server->initial_window_size);
+    connection = s_connection_new(
+        server->alloc,
+        channel,
+        true,
+        server->is_using_tls,
+        server->manual_window_management,
+        server->initial_window_size);
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
@@ -466,6 +476,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     server->user_data = options->server_user_data;
     server->on_incoming_connection = options->on_incoming_connection;
     server->on_destroy_complete = options->on_destroy_complete;
+    server->manual_window_management = options->manual_window_management;
 
     int err = aws_mutex_init(&server->synced_data.lock);
     if (err) {
@@ -490,7 +501,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     }
 
     struct aws_server_socket_channel_bootstrap_options bootstrap_options = {
-        .enable_read_back_pressure = options->enable_read_back_pressure,
+        .enable_read_back_pressure = options->manual_window_management,
         .tls_options = options->tls_options,
         .bootstrap = options->bootstrap,
         .socket_options = options->socket_options,
@@ -613,7 +624,12 @@ static void s_client_bootstrap_on_channel_setup(
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "static: Socket connected, creating client connection object.");
 
     http_bootstrap->connection = s_connection_new(
-        http_bootstrap->alloc, channel, false, http_bootstrap->is_using_tls, http_bootstrap->initial_window_size);
+        http_bootstrap->alloc,
+        channel,
+        false,
+        http_bootstrap->is_using_tls,
+        http_bootstrap->manual_window_management,
+        http_bootstrap->initial_window_size);
     if (!http_bootstrap->connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
@@ -743,6 +759,7 @@ int aws_http_client_connect_internal(
 
     http_bootstrap->alloc = options->allocator;
     http_bootstrap->is_using_tls = options->tls_options != NULL;
+    http_bootstrap->manual_window_management = options->manual_window_management;
     http_bootstrap->initial_window_size = options->initial_window_size;
     http_bootstrap->user_data = options->user_data;
     http_bootstrap->on_setup = options->on_setup;
@@ -766,7 +783,7 @@ int aws_http_client_connect_internal(
         .tls_options = options->tls_options,
         .setup_callback = s_client_bootstrap_on_channel_setup,
         .shutdown_callback = s_client_bootstrap_on_channel_shutdown,
-        .enable_read_back_pressure = options->enable_read_back_pressure,
+        .enable_read_back_pressure = options->manual_window_management,
         .user_data = http_bootstrap,
     };
 
@@ -845,13 +862,15 @@ static const uint32_t MAX_STREAM_ID = UINT32_MAX >> 1;
 
 uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *connection) {
 
-    uint32_t next_id = (uint32_t)aws_atomic_fetch_add(&connection->next_stream_id, 2);
-    /* If next fetch would overflow next_stream_id, set it to 0 */
+    uint32_t next_id = connection->next_stream_id;
+
     if (AWS_UNLIKELY(next_id > MAX_STREAM_ID)) {
         AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "id=%p: All available stream ids are gone", (void *)connection);
 
         next_id = 0;
         aws_raise_error(AWS_ERROR_HTTP_STREAM_IDS_EXHAUSTED);
+    } else {
+        connection->next_stream_id += 2;
     }
 
     return next_id;
