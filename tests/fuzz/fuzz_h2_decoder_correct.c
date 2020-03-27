@@ -29,12 +29,45 @@
 static const uint32_t FRAME_PREFIX_SIZE = 3 + 1 + 1 + 4;
 static const uint32_t MAX_PAYLOAD_SIZE = 16384;
 
-static struct aws_http_headers *s_generate_headers(struct aws_allocator *allocator, struct aws_byte_cursor *input) {
+enum header_style {
+    HEADER_STYLE_REQUEST,
+    HEADER_STYLE_RESPONSE,
+    HEADER_STYLE_TRAILER,
+};
+
+static struct aws_http_headers *s_generate_headers(
+    struct aws_allocator *allocator,
+    struct aws_byte_cursor *input,
+    enum header_style header_style) {
 
     struct aws_http_headers *headers = aws_http_headers_new(allocator);
 
-    /* Requires 4 bytes: type, size, and then 1 each for name & value */
-    while (input->len >= 4) {
+    /* There are pretty strict requirements about pseudo-headers, no randomness for now */
+    if (header_style == HEADER_STYLE_REQUEST) {
+        struct aws_http_header method = {.name = aws_http_header_method, .value = aws_http_method_get};
+        aws_http_headers_add_header(headers, &method);
+
+        struct aws_http_header scheme = {.name = aws_http_header_scheme, .value = aws_http_scheme_https};
+        aws_http_headers_add_header(headers, &scheme);
+
+        struct aws_http_header path = {.name = aws_http_header_path, .value = aws_byte_cursor_from_c_str("/")};
+        aws_http_headers_add_header(headers, &path);
+
+        struct aws_http_header authority = {.name = aws_http_header_authority,
+                                            .value = aws_byte_cursor_from_c_str("example.com")};
+        aws_http_headers_add_header(headers, &authority);
+
+    } else if (header_style == HEADER_STYLE_RESPONSE) {
+        struct aws_http_header status = {.name = aws_http_header_status, .value = aws_byte_cursor_from_c_str("200")};
+        aws_http_headers_add_header(headers, &status);
+    }
+
+    struct aws_byte_buf buf;
+    aws_byte_buf_init(&buf, allocator, 1024);
+
+    while (input->len) {
+        buf.len = 0;
+
         struct aws_http_header header;
         AWS_ZERO_STRUCT(header);
 
@@ -52,35 +85,39 @@ static struct aws_http_headers *s_generate_headers(struct aws_allocator *allocat
                 break;
         }
 
-        uint8_t lengths = 0;
-        aws_byte_cursor_read_u8(input, &lengths);
+        /* Start name with "x-" so we don't violate some rule for an official header.
+         * Then add some more valid characters. */
+        struct aws_byte_cursor header_name_prefix = aws_byte_cursor_from_c_str("x-");
+        aws_byte_buf_append(&buf, &header_name_prefix);
 
-        /* Pull a byte, split it in half, and use the top for name length, and bottom for value length */
-        uint8_t name_len = lengths >> 4;
-        uint8_t value_len = lengths & (UINT8_MAX >> 4);
-
-        /* Handle the 0 length cases */
-        if ((name_len == 0 && value_len == 0) || (name_len + value_len < 2)) {
-            continue;
-        } else if (name_len == 0) {
-            name_len = value_len / 2;
-            value_len -= name_len;
-        } else if (value_len == 0) {
-            value_len = name_len / 2;
-            name_len -= value_len;
+        uint8_t name_suffix_len = 0;
+        aws_byte_cursor_read_u8(input, &name_suffix_len);
+        for (size_t i = 0; i < name_suffix_len; ++i) {
+            uint8_t c = 0;
+            aws_byte_cursor_read_u8(input, &c);
+            c = 'a' + (c % 26); /* a-z */
+            aws_byte_buf_write_u8(&buf, c);
         }
 
-        /* If there's less than enough bytes left, just split the data in half */
-        if (input->len < name_len + value_len) {
-            name_len = input->len / 2;
-            value_len = input->len - name_len;
+        header.name = aws_byte_cursor_from_buf(&buf);
+
+        /* Fill header.value with valid characters */
+        uint8_t value_len = 0;
+        aws_byte_cursor_read_u8(input, &value_len);
+        for (size_t i = 0; i < value_len; ++i) {
+            uint8_t c = 0;
+            aws_byte_cursor_read_u8(input, &c);
+            c = 'a' + (c % 26); /* a-z */
+            aws_byte_buf_write_u8(&buf, c);
         }
-        header.name = aws_byte_cursor_advance(input, name_len);
-        header.value = aws_byte_cursor_advance(input, value_len);
+
+        header.value = aws_byte_cursor_from_buf(&buf);
+        aws_byte_cursor_advance(&header.value, header.name.len);
 
         aws_http_headers_add_header(headers, &header);
     }
 
+    aws_byte_buf_clean_up(&buf);
     return headers;
 }
 
@@ -98,6 +135,19 @@ static uint32_t s_generate_even_stream_id(struct aws_byte_cursor *input) {
 
     if (stream_id % 2 != 0) {
         stream_id -= 1;
+    }
+
+    return stream_id;
+}
+
+/* Client-initiated stream-IDs must be odd */
+static uint32_t s_generate_odd_stream_id(struct aws_byte_cursor *input) {
+    uint32_t stream_id = 0;
+    aws_byte_cursor_read_be32(input, &stream_id);
+    stream_id = aws_min_u32(AWS_H2_STREAM_ID_MAX, aws_max_u32(1, stream_id));
+
+    if (stream_id % 2 == 0) {
+        stream_id += 1;
     }
 
     return stream_id;
@@ -147,11 +197,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     aws_h2_frame_encoder_init(&encoder, allocator, NULL /*logging_id*/);
 
     /* Create the decoder */
+    uint8_t decoder_is_server = 0;
+    aws_byte_cursor_read_u8(&input, &decoder_is_server);
     const struct aws_h2_decoder_vtable decoder_vtable = {0};
     struct aws_h2_decoder_params decoder_params = {
         .alloc = allocator,
         .vtable = &decoder_vtable,
         .skip_connection_preface = true,
+        .is_server = decoder_is_server,
     };
     struct aws_h2_decoder *decoder = aws_h2_decoder_new(&decoder_params);
 
@@ -165,13 +218,18 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     uint8_t frame_type = 0;
     aws_byte_cursor_read_u8(&input, &frame_type);
+    frame_type = frame_type % (AWS_H2_FRAME_T_UNKNOWN + 1);
+    if (decoder_is_server && frame_type == AWS_H2_FRAME_T_PUSH_PROMISE) {
+        /* Client can't send push-promise to server */
+        frame_type = AWS_H2_FRAME_T_HEADERS;
+    }
 
     /* figure out if we should use huffman encoding */
     uint8_t huffman_choice = 0;
     aws_byte_cursor_read_u8(&input, &huffman_choice);
     aws_hpack_set_huffman_mode(encoder.hpack, huffman_choice % 3);
 
-    switch (frame_type % (AWS_H2_FRAME_T_UNKNOWN + 1)) {
+    switch (frame_type) {
         case AWS_H2_FRAME_T_DATA: {
             uint32_t stream_id = s_generate_stream_id(&input);
 
@@ -198,7 +256,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             break;
         }
         case AWS_H2_FRAME_T_HEADERS: {
-            uint32_t stream_id = s_generate_stream_id(&input);
+            /* If decoder is server, headers can only arrive on client-initiated streams
+             * If decoder is client, header might arrive on server-initiated or client-initiated streams */
+            uint32_t stream_id = decoder_is_server ? s_generate_odd_stream_id(&input) : s_generate_stream_id(&input);
 
             uint8_t flags = 0;
             aws_byte_cursor_read_u8(&input, &flags);
@@ -211,8 +271,24 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             struct aws_h2_frame_priority_settings priority = s_generate_priority(&input);
             struct aws_h2_frame_priority_settings *priority_ptr = use_priority ? &priority : NULL;
 
+            /* Server can only receive request-style HEADERS, client can only receive respone-style HEADERS.
+             * But either side can receive trailer-style HEADERS */
+            uint8_t is_normal_header = 0;
+            aws_byte_cursor_read_u8(&input, &is_normal_header);
+            enum header_style header_style;
+            if (is_normal_header) {
+                if (decoder_is_server) {
+                    header_style = HEADER_STYLE_REQUEST;
+                } else {
+                    header_style = HEADER_STYLE_RESPONSE;
+                }
+            } else {
+                header_style = HEADER_STYLE_TRAILER;
+                end_stream = true; /* Trailer must END_STREAM */
+            }
+
             /* generate headers last since it uses up the rest of input */
-            struct aws_http_headers *headers = s_generate_headers(allocator, &input);
+            struct aws_http_headers *headers = s_generate_headers(allocator, &input, header_style);
 
             struct aws_h2_frame *frame =
                 aws_h2_frame_new_headers(allocator, stream_id, headers, end_stream, pad_length, priority_ptr);
@@ -288,14 +364,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             break;
         }
         case AWS_H2_FRAME_T_PUSH_PROMISE: {
-            uint32_t stream_id = s_generate_stream_id(&input);
+            uint32_t stream_id = s_generate_odd_stream_id(&input);
             uint32_t promised_stream_id = s_generate_even_stream_id(&input);
 
             uint8_t pad_length = 0;
             aws_byte_cursor_read_u8(&input, &pad_length);
 
             /* generate headers last since it uses up the rest of input */
-            struct aws_http_headers *headers = s_generate_headers(allocator, &input);
+            struct aws_http_headers *headers = s_generate_headers(allocator, &input, HEADER_STYLE_REQUEST);
 
             struct aws_h2_frame *frame =
                 aws_h2_frame_new_push_promise(allocator, stream_id, promised_stream_id, headers, pad_length);
