@@ -1811,8 +1811,8 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_push_promise) {
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
-    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -1849,8 +1849,8 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_push_promise_ignores_unknown_flags) {
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
-    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -1901,8 +1901,8 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_push_promise_continuation) {
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
-    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -2005,11 +2005,12 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_push_promise_must_be_request_1) {
 
     /* clang-format off */
     uint8_t input[] = {
-        0x00, 0x00, 0x05,               /* Length (24) */
+        0x00, 0x00, 0x09,               /* Length (24) */
         AWS_H2_FRAME_T_PUSH_PROMISE,    /* Type (8) */
         AWS_H2_FRAME_F_END_HEADERS,     /* Flags (8) */
-        0x00, 0x00, 0x00, 0x02,         /* Reserved (1) | Stream Identifier (31) */
-        /* HEADERS */
+        0x00, 0x00, 0x00, 0x01,         /* Reserved (1) | Stream Identifier (31) */
+        /* PUSH_PROMISE */
+        0x00, 0x00, 0x00, 0x02,         /* Reserved (1) | Promised Stream ID (31) */
         0x48, 0x03, '3', '0', '2',      /* ":status: 302" - RESPONSE pseudo-header is incorrect */
     };
     /* clang-format on */
@@ -2019,7 +2020,8 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_push_promise_must_be_request_1) {
 
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
-    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 2 /*stream_id*/));
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 1 /*stream_id*/));
+    ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
     ASSERT_TRUE(frame->headers_malformed);
     return AWS_OP_SUCCESS;
 }
@@ -2031,11 +2033,13 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_push_promise_must_be_request_2) {
 
     /* clang-format off */
     uint8_t input[] = {
-        0x00, 0x00, 0x00,               /* Length (24) */
+        0x00, 0x00, 0x04,               /* Length (24) */
         AWS_H2_FRAME_T_PUSH_PROMISE,    /* Type (8) */
         AWS_H2_FRAME_F_END_HEADERS,     /* Flags (8) */
-        0x00, 0x00, 0x00, 0x02,         /* Reserved (1) | Stream Identifier (31) */
-        /* HEADERS - empty but should have request psuedo-headers */
+        0x00, 0x00, 0x00, 0x01,         /* Reserved (1) | Stream Identifier (31) */
+        /* PUSH_PROMISE  */
+        0x00, 0x00, 0x00, 0x02,         /* Reserved (1) | Promised Stream ID (31) */
+                                        /* No headers */
     };
     /* clang-format on */
 
@@ -2044,7 +2048,8 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_push_promise_must_be_request_2) {
 
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
-    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 2 /*stream_id*/));
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 1 /*stream_id*/));
+    ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
     ASSERT_TRUE(frame->headers_malformed);
     return AWS_OP_SUCCESS;
 }
