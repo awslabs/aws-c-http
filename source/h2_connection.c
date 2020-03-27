@@ -62,9 +62,7 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 
 static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
-static int s_decoder_on_setting_begin(void *userdata);
-static int s_decoder_on_settings_i(uint16_t setting_id, uint32_t value, void *userdata);
-static int s_decoder_on_settings_end(void *userdata);
+static int s_decoder_on_settings(struct aws_array_list *settings_array, size_t num_settings, void *userdata);
 static int s_decoder_on_settings_ack(void *userdata);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
@@ -88,12 +86,12 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .update_window = NULL,
 };
 
-static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {.on_data = NULL,
-                                                                 .on_ping = s_decoder_on_ping,
-                                                                 .on_settings_begin = s_decoder_on_setting_begin,
-                                                                 .on_settings_i = s_decoder_on_settings_i,
-                                                                 .on_settings_end = s_decoder_on_settings_end,
-                                                                 .on_settings_ack = s_decoder_on_settings_ack};
+static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
+    .on_data = NULL,
+    .on_ping = s_decoder_on_ping,
+    .on_settings = s_decoder_on_settings,
+    .on_settings_ack = s_decoder_on_settings_ack,
+};
 
 static void s_lock_synced_data(struct aws_h2_connection *connection) {
     int err = aws_mutex_lock(&connection->synced_data.lock);
@@ -213,16 +211,9 @@ static struct aws_h2_connection *s_connection_new(
         goto error;
     }
 
-    /* JUST FOR REVIEW: Do we have a aws way? */
     /* Initialize the value of settings */
-    memcpy(
-        connection->thread_data.aws_h2_settings_peer,
-        aws_h2_settings_initial,
-        AWS_H2_SETTINGS_END_RANGE * sizeof(uint32_t));
-    memcpy(
-        connection->thread_data.aws_h2_settings_self,
-        aws_h2_settings_initial,
-        AWS_H2_SETTINGS_END_RANGE * sizeof(uint32_t));
+    memcpy(connection->thread_data.settings_peer, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
+    memcpy(connection->thread_data.settings_self, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
 
     /* Create a new decoder */
     struct aws_h2_decoder_params params = {
@@ -538,63 +529,63 @@ static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *u
     }
 
     aws_h2_connection_enqueue_outgoing_frame(connection, ping_ack_frame);
-    s_try_write_outgoing_frames(connection);
     return AWS_OP_SUCCESS;
 error:
     CONNECTION_LOGF(ERROR, connection, "Ping ACK frame failed to be sent, error %s", aws_error_name(aws_last_error()));
     return AWS_OP_ERR;
 }
 
-static int s_decoder_on_setting_begin(void *userdata) {
-    struct aws_h2_connection *connection = userdata;
-    CONNECTION_LOG(TRACE, connection, "Setting frame processsing begins");
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_settings_i(uint16_t setting_id, uint32_t value, void *userdata) {
-    struct aws_h2_connection *connection = userdata;
-
-    connection->thread_data.aws_h2_settings_peer[setting_id] = value;
-
-    return AWS_OP_SUCCESS;
-}
-
-static void aws_h2_decoder_change_settings(struct aws_h2_connection *connection) {
+static void s_aws_h2_decoder_change_settings(struct aws_h2_connection *connection) {
     struct aws_h2_decoder *decoder = connection->thread_data.decoder;
-    uint32_t *aws_h2_settings_self = connection->thread_data.aws_h2_settings_self;
-    aws_h2_decoder_set_setting_header_table_size(decoder, aws_h2_settings_self[AWS_H2_SETTINGS_HEADER_TABLE_SIZE]);
-    aws_h2_decoder_set_setting_enable_push(decoder, aws_h2_settings_self[AWS_H2_SETTINGS_ENABLE_PUSH]);
-    aws_h2_decoder_set_setting_max_frame_size(decoder, aws_h2_settings_self[AWS_H2_SETTINGS_MAX_FRAME_SIZE]);
-    aws_h2_decoder_set_setting_max_header_list_size(
-        decoder, aws_h2_settings_self[AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE]);
+    uint32_t *settings_self = connection->thread_data.settings_self;
+    aws_h2_decoder_set_setting_header_table_size(decoder, settings_self[AWS_H2_SETTINGS_HEADER_TABLE_SIZE]);
+    aws_h2_decoder_set_setting_enable_push(decoder, settings_self[AWS_H2_SETTINGS_ENABLE_PUSH]);
+    aws_h2_decoder_set_setting_max_frame_size(decoder, settings_self[AWS_H2_SETTINGS_MAX_FRAME_SIZE]);
 }
 
-static void aws_h2_frame_encoder_change_settings(struct aws_h2_connection *connection) {
-    struct aws_h2_frame_encoder *encoder = &connection->thread_data.encoder;
-    uint32_t *aws_h2_settings_peer = connection->thread_data.aws_h2_settings_peer;
-    aws_h2_frame_encoder_set_setting_header_table_size(
-        encoder, aws_h2_settings_peer[AWS_H2_SETTINGS_HEADER_TABLE_SIZE]);
-    aws_h2_frame_encoder_set_setting_max_frame_size(encoder, aws_h2_settings_peer[AWS_H2_SETTINGS_MAX_FRAME_SIZE]);
+static void s_aws_h2_connection_change_peer_settings(
+    struct aws_h2_connection *connection,
+    struct aws_h2_frame_setting setting) {
+    uint32_t *settings_peer = connection->thread_data.settings_peer;
+    settings_peer[setting.id] = setting.value;
 }
 
-static int s_decoder_on_settings_end(void *userdata) {
+static int s_decoder_on_settings(struct aws_array_list *settings_array, size_t num_settings, void *userdata) {
     struct aws_h2_connection *connection = userdata;
-
     /* Once all values have been processed, the recipient MUST immediately emit a SETTINGS frame with the ACK flag
      * set.(RFC-7540 6.5.3) */
-    CONNECTION_LOG(TRACE, connection, "Setting frame processsing ends");
+    CONNECTION_LOG(TRACE, connection, "Setting frame processing ends");
     struct aws_h2_frame *settings_ack_frame = aws_h2_frame_new_settings(connection->base.alloc, NULL, 0, true);
     if (!settings_ack_frame) {
+        CONNECTION_LOGF(
+            ERROR, connection, "Settings ACK frame failed to be sent, error %s", aws_error_name(aws_last_error()));
         goto error;
     }
     aws_h2_connection_enqueue_outgoing_frame(connection, settings_ack_frame);
-    /* inform encoder about the settings after enqueue the setting ACK frame */
-    aws_h2_frame_encoder_change_settings(connection);
-    s_try_write_outgoing_frames(connection);
+    /* Store the change to encoder and connection after enqueue the setting ACK frame */
+    struct aws_h2_frame_setting setting;
+    struct aws_h2_frame_encoder *encoder = &connection->thread_data.encoder;
+    for (size_t i = 0; i < num_settings; i++) {
+        if (aws_array_list_get_at(settings_array, &setting, i)) {
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "Getting setting form array list failed, error %s",
+                aws_error_name(aws_last_error()));
+            goto error;
+        }
+        if (setting.id == AWS_H2_SETTINGS_HEADER_TABLE_SIZE) {
+            aws_h2_frame_encoder_set_setting_header_table_size(encoder, setting.value);
+        }
+        if (setting.id == AWS_H2_SETTINGS_MAX_FRAME_SIZE) {
+            aws_h2_frame_encoder_set_setting_max_frame_size(encoder, setting.value);
+        }
+        s_aws_h2_connection_change_peer_settings(connection, setting);
+    }
     return AWS_OP_SUCCESS;
+
 error:
-    CONNECTION_LOGF(
-        ERROR, connection, "Settings ACK frame failed to be sent, error %s", aws_error_name(aws_last_error()));
+
     return AWS_OP_ERR;
 }
 
@@ -603,7 +594,7 @@ static int s_decoder_on_settings_ack(void *userdata) {
     /* #TODO track which SETTINGS frames is ACKed by this */
 
     /* inform decoder about the settings */
-    aws_h2_decoder_change_settings(connection);
+    s_aws_h2_decoder_change_settings(connection);
     return AWS_OP_SUCCESS;
 }
 
@@ -651,7 +642,7 @@ static int s_enqueue_settings_frame(struct aws_h2_connection *connection) {
     struct aws_allocator *alloc = connection->base.alloc;
 
     struct aws_h2_frame_setting settings_array[AWS_H2_SETTINGS_END_RANGE];
-    s_transfer_to_frame_setting(connection->thread_data.aws_h2_settings_self, settings_array);
+    s_transfer_to_frame_setting(connection->thread_data.settings_self, settings_array);
     struct aws_h2_frame *settings_frame =
         aws_h2_frame_new_settings(alloc, settings_array, AWS_H2_SETTINGS_END_RANGE, false /*ack*/);
 
@@ -736,8 +727,7 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
 static void s_activate_stream(struct aws_h2_connection *connection, struct aws_h2_stream *stream) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
-    uint32_t max_concurrent_streams =
-        connection->thread_data.aws_h2_settings_peer[AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS];
+    uint32_t max_concurrent_streams = connection->thread_data.settings_peer[AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS];
     if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) >= max_concurrent_streams) {
         AWS_H2_STREAM_LOG(ERROR, stream, "Failed activating stream, max concurrent streams are reached");
         goto error;
@@ -905,6 +895,8 @@ static int s_handler_process_read_message(
         aws_mem_release(message->allocator, message);
         message = NULL;
     }
+    /* Flush any outgoing frames that might have been queued as a result of decoder callbacks. */
+    s_try_write_outgoing_frames(connection);
     return AWS_OP_SUCCESS;
 shutdown:
     if (message) {

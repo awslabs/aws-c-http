@@ -140,7 +140,7 @@ struct aws_h2_frame_encoder {
         uint32_t header_table_size;
         /*  the size of the largest frame payload */
         uint32_t max_frame_size;
-    } aws_h2_frame_encoder_settings;
+    } settings;
 
     bool has_errored;
 };

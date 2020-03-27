@@ -270,19 +270,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 if (settings_count > 0) {
                     settings_array = aws_mem_calloc(allocator, settings_count, sizeof(struct aws_h2_frame_setting));
                     for (size_t i = 0; i < settings_count; ++i) {
-                        uint16_t id;
-                        uint32_t value;
+                        uint16_t id = 0;
+                        uint32_t value = 0;
                         aws_byte_cursor_read_be16(&input, &id);
                         aws_byte_cursor_read_be32(&input, &value);
-                        if (id == AWS_H2_SETTINGS_ENABLE_PUSH) {
-                            value = value % 2; /* value range from 0-1 */
-                        }
-                        if (id == AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE) {
-                            value = aws_min_u32(value, aws_h2_settings_bounds[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE][1]);
-                        }
-                        if (id == AWS_H2_SETTINGS_MAX_FRAME_SIZE) {
-                            value = aws_min_u32(value, aws_h2_settings_bounds[AWS_H2_SETTINGS_MAX_FRAME_SIZE][1]);
-                            value = aws_max_u32(value, aws_h2_settings_bounds[AWS_H2_SETTINGS_MAX_FRAME_SIZE][0]);
+                        if (id >= SETTINGS_BEGIN_RANGE && id < SETTINGS_END_RANGE) {
+                            value = max(value, aws_h2_settings_bounds[id][0]);
+                            value = min(value, aws_h2_settings_bounds[id][1]);
                         }
                         settings_array[i].id = id;
                         settings_array[i].value = value;
@@ -412,9 +406,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             aws_byte_buf_write_from_whole_cursor(&frame_data, aws_byte_cursor_advance(&input, payload_length));
             break;
         }
-        default: {
-            AWS_FATAL_ASSERT(false);
-        }
+        default: { AWS_FATAL_ASSERT(false); }
     }
 
     /* Decode whatever we got */

@@ -179,9 +179,9 @@ struct aws_h2_decoder {
         uint32_t enable_push;
         /*  the size of the largest frame payload */
         uint32_t max_frame_size;
-        /* the maximum size of header list prepared to accept */
-        uint32_t max_header_list_size;
-    } aws_h2_decoder_settings;
+    } settings;
+
+    struct aws_array_list settings_buffer_list;
 
     /* User callbacks and settings. */
     const struct aws_h2_decoder_vtable *vtable;
@@ -231,15 +231,19 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
         decoder->state = &s_state_prefix;
     }
 
-    decoder->aws_h2_decoder_settings.header_table_size = aws_h2_settings_initial[AWS_H2_SETTINGS_HEADER_TABLE_SIZE];
-    decoder->aws_h2_decoder_settings.enable_push = aws_h2_settings_initial[AWS_H2_SETTINGS_ENABLE_PUSH];
-    decoder->aws_h2_decoder_settings.max_frame_size = aws_h2_settings_initial[AWS_H2_SETTINGS_MAX_FRAME_SIZE];
-    decoder->aws_h2_decoder_settings.max_header_list_size =
-        aws_h2_settings_initial[AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE];
+    decoder->settings.header_table_size = aws_h2_settings_initial[AWS_H2_SETTINGS_HEADER_TABLE_SIZE];
+    decoder->settings.enable_push = aws_h2_settings_initial[AWS_H2_SETTINGS_ENABLE_PUSH];
+    decoder->settings.max_frame_size = aws_h2_settings_initial[AWS_H2_SETTINGS_MAX_FRAME_SIZE];
+
+    if (aws_array_list_init_dynamic(
+            &decoder->settings_buffer_list, decoder->alloc, 0, sizeof(struct aws_h2_frame_setting))) {
+        goto array_list_failed;
+    }
 
     return decoder;
 
 failed_new_hpack:
+array_list_failed:
     aws_mem_release(params->alloc, allocation);
 failed_alloc:
     return NULL;
@@ -526,7 +530,7 @@ static int s_state_fn_prefix(struct aws_h2_decoder *decoder, struct aws_byte_cur
     }
 
     /* Validate payload length.  */
-    uint32_t max_frame_size = decoder->aws_h2_decoder_settings.max_frame_size;
+    uint32_t max_frame_size = decoder->settings.max_frame_size;
     if (frame->payload_len > max_frame_size) {
         DECODER_LOGF(
             ERROR,
@@ -724,9 +728,6 @@ static int s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struc
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_FRAME_SIZE);
     }
 
-    /* Report start of non-ACK settings frame */
-    DECODER_CALL_VTABLE(decoder, on_settings_begin);
-
     /* Enter looping states until all entries are consumed. */
     return s_decoder_switch_state(decoder, &s_state_frame_settings_loop);
 }
@@ -736,8 +737,11 @@ static int s_state_fn_frame_settings_loop(struct aws_h2_decoder *decoder, struct
     (void)input;
 
     if (decoder->frame_in_progress.payload_len == 0) {
-        /* Huzzah, done with the frame */
-        DECODER_CALL_VTABLE(decoder, on_settings_end);
+        /* Huzzah, done with the frame, fire the callback */
+        struct aws_array_list *buffer = &decoder->settings_buffer_list;
+        DECODER_CALL_VTABLE_ARGS(decoder, on_settings, buffer, aws_array_list_length(&decoder->settings_buffer_list));
+        /* clean up the buffer */
+        aws_array_list_clean_up(&decoder->settings_buffer_list);
         return s_decoder_reset_state(decoder);
     }
 
@@ -772,14 +776,23 @@ static int s_state_fn_frame_settings_i(struct aws_h2_decoder *decoder, struct aw
     if (id >= AWS_H2_SETTINGS_BEGIN_RANGE && id < AWS_H2_SETTINGS_END_RANGE) {
         /* check the value meets the settings bounds */
         if (value < aws_h2_settings_bounds[id][0] || value > aws_h2_settings_bounds[id][1]) {
-            DECODER_LOGF(ERROR, decoder, "The %dth value of SETTING frame is invalid", id);
+            DECODER_LOGF(
+                ERROR, decoder, "A value of SETTING frame is invalid, id: %" PRIu16 ", value: %" PRIu32, id, value);
+            aws_array_list_clean_up(&decoder->settings_buffer_list);
             if (id == AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE)
                 return aws_raise_error(AWS_H2_ERR_FLOW_CONTROL_ERROR);
-            if (id == AWS_H2_SETTINGS_ENABLE_PUSH || id == AWS_H2_SETTINGS_MAX_FRAME_SIZE)
+            else
                 return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
-            return AWS_OP_ERR;
         }
-        DECODER_CALL_VTABLE_ARGS(decoder, on_settings_i, id, value);
+        struct aws_h2_frame_setting setting;
+        setting.id = id;
+        setting.value = value;
+        /* array_list will keep a copy of setting, it is fine to be a local variable */
+        if (aws_array_list_push_back(&decoder->settings_buffer_list, &setting)) {
+            DECODER_LOGF(ERROR, decoder, "Writing setting to buffer failed, %s", aws_error_name(aws_last_error()));
+            aws_array_list_clean_up(&decoder->settings_buffer_list);
+            return aws_raise_error(aws_last_error());
+        }
     }
 
     /* Update payload len */
@@ -796,9 +809,9 @@ static int s_state_fn_frame_settings_i(struct aws_h2_decoder *decoder, struct aw
  */
 static int s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
-    if (decoder->aws_h2_decoder_settings.enable_push == 0) {
+    if (decoder->settings.enable_push == 0) {
         /* treat the receipt of a PUSH_PROMISE frame as a connection error of type PROTOCOL_ERROR.(RFC-7540 6.5.2) */
-        DECODER_LOG(ERROR, decoder, "PUSH_PROMISE is invalid, the seeting for enable push is 0");
+        DECODER_LOG(ERROR, decoder, "PUSH_PROMISE is invalid, the seting for enable push is 0");
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
@@ -1111,17 +1124,13 @@ static int s_state_fn_connection_preface_string(struct aws_h2_decoder *decoder, 
 }
 
 void aws_h2_decoder_set_setting_header_table_size(struct aws_h2_decoder *decoder, uint32_t data) {
-    decoder->aws_h2_decoder_settings.header_table_size = data;
+    decoder->settings.header_table_size = data;
 }
 
 void aws_h2_decoder_set_setting_enable_push(struct aws_h2_decoder *decoder, uint32_t data) {
-    decoder->aws_h2_decoder_settings.enable_push = data;
+    decoder->settings.enable_push = data;
 }
 
 void aws_h2_decoder_set_setting_max_frame_size(struct aws_h2_decoder *decoder, uint32_t data) {
-    decoder->aws_h2_decoder_settings.max_frame_size = data;
-}
-
-void aws_h2_decoder_set_setting_max_header_list_size(struct aws_h2_decoder *decoder, uint32_t data) {
-    decoder->aws_h2_decoder_settings.max_header_list_size = data;
+    decoder->settings.max_frame_size = data;
 }

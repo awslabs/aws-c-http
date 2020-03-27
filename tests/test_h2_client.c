@@ -163,8 +163,7 @@ TEST_CASE(h2_client_setting_ack) {
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
-    /* Have the fake peer to run its decoder on what the client has written.
-     * The decoder will raise an error if it doesn't receive the "client connection preface string" first. */
+    /* Have the fake peer to run its decoder on what the client has written. */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     /* The Setting ACK frame should be sent back */
