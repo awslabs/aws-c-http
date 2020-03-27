@@ -189,6 +189,7 @@ static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void
     };
 
     ASSERT_NOT_NULL(test.stream = aws_http_connection_make_request(test.client_connection, &req_options));
+    aws_http_stream_activate(test.stream);
 
     /* wait for the request to complete */
     s_test_wait(&test, s_stream_wait_pred);

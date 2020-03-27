@@ -146,7 +146,8 @@ static int s_do_proxy_request_test(
     };
 
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.client_connection, &request_options);
-    (void)stream;
+    ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
 
     ASSERT_SUCCESS(proxy_tester_wait(&tester, proxy_tester_request_complete_pred_fn));
     ASSERT_TRUE(tester.wait_result == AWS_ERROR_SUCCESS);

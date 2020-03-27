@@ -58,4 +58,8 @@ struct aws_h1_stream *aws_h1_stream_new_request_handler(const struct aws_http_re
 
 AWS_EXTERN_C_END
 
+/* we don't want this exported. We just want it to have external linkage between h1_stream and h1_connection compilation
+ * units. it is defined in h1_connection.c */
+int aws_h1_stream_activate(struct aws_http_stream *stream);
+
 #endif /* AWS_HTTP_H1_STREAM_H */
