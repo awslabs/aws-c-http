@@ -61,13 +61,22 @@ AWS_HTTP_API void aws_http_fatal_assert_library_initialized(void);
 
 AWS_HTTP_API struct aws_byte_cursor aws_http_version_to_str(enum aws_http_version version);
 
-/* case-sensitive */
+/**
+ * Returns appropriate enum, or AWS_HTTP_METHOD_UNKNOWN if no match found.
+ * Case-sensitive
+ */
 AWS_HTTP_API enum aws_http_method aws_http_str_to_method(struct aws_byte_cursor cursor);
 
-/* case-insensitive */
+/**
+ * Returns appropriate enum, or AWS_HTTP_HEADER_UNKNOWN if no match found.
+ * Not case-sensitive
+ */
 AWS_HTTP_API enum aws_http_header_name aws_http_str_to_header_name(struct aws_byte_cursor cursor);
 
-/* case-sensitive */
+/**
+ * Returns appropriate enum, or AWS_HTTP_HEADER_UNKNOWN if no match found.
+ * Case-sensitive (ex: "Connection" -> AWS_HTTP_HEADER_UNKNOWN because we looked for "connection").
+ */
 AWS_HTTP_API enum aws_http_header_name aws_http_lowercase_str_to_header_name(struct aws_byte_cursor cursor);
 
 AWS_EXTERN_C_END

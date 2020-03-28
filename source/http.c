@@ -122,12 +122,6 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_FRAME_SIZE,
         "Received frame with an illegal frame size"),
-    AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_COMPRESSION,
-        "Error compressing or decompressing HPACK headers"),
-    AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_FLOW_CONTROL,
-        "Error involving flow-control window"),
 };
 /* clang-format on */
 

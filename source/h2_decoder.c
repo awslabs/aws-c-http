@@ -73,10 +73,28 @@ enum pseudoheader_name {
     /* Response pseudo-headers */
     PSEUDOHEADER_STATUS,
 
-    PSEUDOHEADER_COUNT, /* Number of enums */
+    PSEUDOHEADER_COUNT, /* Number of valid enums */
+};
+
+static const struct aws_byte_cursor *s_pseudoheader_name_to_cursor[PSEUDOHEADER_COUNT] = {
+    [PSEUDOHEADER_METHOD] = &aws_http_header_method,
+    [PSEUDOHEADER_SCHEME] = &aws_http_header_scheme,
+    [PSEUDOHEADER_AUTHORITY] = &aws_http_header_authority,
+    [PSEUDOHEADER_PATH] = &aws_http_header_path,
+    [PSEUDOHEADER_STATUS] = &aws_http_header_status,
+};
+
+static const enum aws_http_header_name s_pseudoheader_to_header_name[PSEUDOHEADER_COUNT] = {
+    [PSEUDOHEADER_METHOD] = AWS_HTTP_HEADER_METHOD,
+    [PSEUDOHEADER_SCHEME] = AWS_HTTP_HEADER_SCHEME,
+    [PSEUDOHEADER_AUTHORITY] = AWS_HTTP_HEADER_AUTHORITY,
+    [PSEUDOHEADER_PATH] = AWS_HTTP_HEADER_PATH,
+    [PSEUDOHEADER_STATUS] = AWS_HTTP_HEADER_STATUS,
 };
 
 static enum pseudoheader_name s_header_to_pseudoheader_name(enum aws_http_header_name name) {
+    /* The compiled switch statement is actually faster than array lookup with bounds-checking.
+     * (the lookup arrays above don't need to do bounds-checking) */
     switch (name) {
         case AWS_HTTP_HEADER_METHOD:
             return PSEUDOHEADER_METHOD;
@@ -201,6 +219,13 @@ struct aws_h2_decoder {
         /* If 0, then no header-block in progress */
         uint32_t stream_id;
 
+        /* Buffer up pseudo-headers and deliver them once they're all validated */
+        struct aws_string *pseudoheader_values[PSEUDOHEADER_COUNT];
+        enum aws_http_header_compression pseudoheader_compression[PSEUDOHEADER_COUNT];
+
+        /* All pseudo-header fields MUST appear in the header block before regular header fields. */
+        bool pseudoheaders_done;
+
         /* T: PUSH_PROMISE header-block
          * F: HEADERS header-block */
         bool is_push_promise;
@@ -213,11 +238,6 @@ struct aws_h2_decoder {
          * A malformed header-block is not a connection error, it's a Stream Error (RFC-7540 5.4.2).
          * We continue decoding and report that it's malformed in on_headers_end(). */
         bool malformed;
-
-        /* All pseudo-header fields MUST appear in the header block before regular header fields. */
-        bool pseudoheaders_done;
-
-        bool pseudoheader_received[PSEUDOHEADER_COUNT];
     } header_block_in_progress;
 
     /* User callbacks and settings. */
@@ -228,9 +248,7 @@ struct aws_h2_decoder {
     bool has_errored;
 };
 
-/***********************************************************************************************************************
- * Public API
- **********************************************************************************************************************/
+/***********************************************************************************************************************/
 
 struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) {
     AWS_PRECONDITION(params);
@@ -276,11 +294,19 @@ failed_alloc:
     return NULL;
 }
 
+static void s_reset_header_block_in_progress(struct aws_h2_decoder *decoder) {
+    for (size_t i = 0; i < PSEUDOHEADER_COUNT; ++i) {
+        aws_string_destroy(decoder->header_block_in_progress.pseudoheader_values[i]);
+    }
+    AWS_ZERO_STRUCT(decoder->header_block_in_progress);
+}
+
 void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder) {
     if (!decoder) {
         return;
     }
     aws_hpack_context_destroy(decoder->hpack);
+    s_reset_header_block_in_progress(decoder);
     aws_mem_release(decoder->alloc, decoder);
 }
 
@@ -979,12 +1005,13 @@ static int s_state_fn_frame_unknown(struct aws_h2_decoder *decoder, struct aws_b
     return AWS_OP_SUCCESS;
 }
 
-/* Perform analysis that can't be done until all pseudo-headers are received */
+/* Perform analysis that can't be done until all pseudo-headers are received.
+ * Then deliver buffered pseudoheaders via callback */
 static int s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
     struct aws_header_block_in_progress *current_block = &decoder->header_block_in_progress;
 
     if (current_block->malformed) {
-        goto malformed;
+        goto already_malformed;
     }
 
     if (current_block->pseudoheaders_done) {
@@ -995,17 +1022,17 @@ static int s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
     /* s_process_header_field() already checked that we're not mixing request & response pseudoheaders */
     bool has_request_pseudoheaders = false;
     for (int i = PSEUDOHEADER_METHOD; i <= PSEUDOHEADER_PATH; ++i) {
-        if (current_block->pseudoheader_received[i]) {
+        if (current_block->pseudoheader_values[i] != NULL) {
             has_request_pseudoheaders = true;
             break;
         }
     }
 
-    bool has_response_pseudoheaders = current_block->pseudoheader_received[PSEUDOHEADER_STATUS];
+    bool has_response_pseudoheaders = current_block->pseudoheader_values[PSEUDOHEADER_STATUS] != NULL;
     bool is_trailer = !has_response_pseudoheaders && !has_request_pseudoheaders;
 
     if (current_block->is_push_promise && !has_request_pseudoheaders) {
-        DECODER_LOG(ERROR, decoder, "PUSH_PROMISE is missing request pseudo-headers");
+        DECODER_LOG(ERROR, decoder, "PUSH_PROMISE is missing :method");
         goto malformed;
     }
 
@@ -1019,12 +1046,35 @@ static int s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
     /* #TODO RFC-7540 8.1.2.3 & 8.3 Validate request has correct pseudoheaders. Note different rules for CONNECT */
     /* #TODO validate pseudoheader values. each one has its own special rules */
 
+    /* Finally, deliver header-fields via callback */
+    for (size_t i = 0; i < PSEUDOHEADER_COUNT; ++i) {
+        const struct aws_string *value_string = current_block->pseudoheader_values[i];
+        if (value_string) {
+
+            struct aws_http_header header_field = {
+                .name = *s_pseudoheader_name_to_cursor[i],
+                .value = aws_byte_cursor_from_string(value_string),
+                .compression = current_block->pseudoheader_compression[i],
+            };
+
+            enum aws_http_header_name name_enum = s_pseudoheader_to_header_name[i];
+
+            if (current_block->is_push_promise) {
+                DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, &header_field, name_enum);
+            } else {
+                DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, &header_field, name_enum);
+            }
+        }
+    }
+
     return AWS_OP_SUCCESS;
 
 malformed:
     /* A malformed header-block is not a connection error, it's a Stream Error (RFC-7540 5.4.2).
      * We continue decoding and report that it's malformed in on_headers_end(). */
     current_block->malformed = true;
+    return AWS_OP_SUCCESS;
+already_malformed:
     return AWS_OP_SUCCESS;
 }
 
@@ -1034,25 +1084,30 @@ malformed:
 static int s_process_header_field(struct aws_h2_decoder *decoder, const struct aws_http_header *header_field) {
     struct aws_header_block_in_progress *current_block = &decoder->header_block_in_progress;
     if (current_block->malformed) {
+        goto already_malformed;
+    }
+
+    const struct aws_byte_cursor name = header_field->name;
+    if (name.len == 0) {
+        DECODER_LOG(ERROR, decoder, "Header name is blank");
         goto malformed;
     }
 
-    if (header_field->name.len == 0) {
-        goto malformed;
-    }
+    enum aws_http_header_name name_enum = aws_http_lowercase_str_to_header_name(name);
 
-    enum aws_http_header_name name_enum = aws_http_lowercase_str_to_header_name(header_field->name);
-
-    bool is_pseudoheader = header_field->name.ptr[0] == ':';
+    bool is_pseudoheader = name.ptr[0] == ':';
     if (is_pseudoheader) {
         if (current_block->pseudoheaders_done) {
+            /* Note: being careful not to leak possibly sensitive data except at DEBUG level and lower */
             DECODER_LOG(ERROR, decoder, "Pseudo-headers must appear before regular fields.");
+            DECODER_LOGF(DEBUG, decoder, "Misplaced pseudo-header is '" PRInSTR "'", AWS_BYTE_CURSOR_PRI(name));
             goto malformed;
         }
 
         enum pseudoheader_name pseudoheader_enum = s_header_to_pseudoheader_name(name_enum);
         if (pseudoheader_enum == PSEUDOHEADER_UNKNOWN) {
             DECODER_LOG(ERROR, decoder, "Unrecognized pseudo-header");
+            DECODER_LOGF(DEBUG, decoder, "Unrecognized pseudo-header is '" PRInSTR "'", AWS_BYTE_CURSOR_PRI(name));
             goto malformed;
         }
 
@@ -1061,18 +1116,31 @@ static int s_process_header_field(struct aws_h2_decoder *decoder, const struct a
         bool expect_request_pseudoheader = decoder->is_server || current_block->is_push_promise;
         bool is_request_pseudoheader = pseudoheader_enum != PSEUDOHEADER_STATUS;
         if (expect_request_pseudoheader != is_request_pseudoheader) {
-            DECODER_LOG(ERROR, decoder, "Received wrong type of pseudo-header");
+            DECODER_LOGF(
+                ERROR, /* ok to log name of recognized pseudo-header at ERROR level */
+                decoder,
+                "'" PRInSTR "' pseudo-header cannot be in %s header-block to %s",
+                AWS_BYTE_CURSOR_PRI(name),
+                current_block->is_push_promise ? "PUSH_PROMISE" : "HEADERS",
+                decoder->is_server ? "server" : "client");
             goto malformed;
         }
 
         /* Protect against duplicates. */
-        if (current_block->pseudoheader_received[pseudoheader_enum]) {
-            DECODER_LOG(ERROR, decoder, "Pseudoheader occurred multiple times");
+        if (current_block->pseudoheader_values[pseudoheader_enum] != NULL) {
+            /* ok to log name of recognized pseudo-header at ERROR level */
+            DECODER_LOGF(
+                ERROR, decoder, "'" PRInSTR "' pseudo-header occurred multiple times", AWS_BYTE_CURSOR_PRI(name));
             goto malformed;
         }
-        current_block->pseudoheader_received[pseudoheader_enum] = true;
 
-        /* NOTE: We validate pseudo-headers collectively, after they all arrive, in s_flush_pseudoheaders */
+        /* Buffer up pseudo-headers, we'll deliver them later once they're all validated. */
+        current_block->pseudoheader_compression[pseudoheader_enum] = header_field->compression;
+        current_block->pseudoheader_values[pseudoheader_enum] =
+            aws_string_new_from_array(decoder->alloc, header_field->value.ptr, header_field->value.len);
+        if (!current_block->pseudoheader_values[pseudoheader_enum]) {
+            return AWS_OP_ERR;
+        }
 
     } else { /* Else regular header-field. */
 
@@ -1084,30 +1152,27 @@ static int s_process_header_field(struct aws_h2_decoder *decoder, const struct a
 
             /* might have realized that header-block is malformed during flush */
             if (current_block->malformed) {
-                goto malformed;
+                goto already_malformed;
             }
         }
 
         /* Validate header name (not necessary if string already matched against a known enum) */
         if (name_enum == AWS_HTTP_HEADER_UNKNOWN) {
-            if (!aws_strutil_is_lowercase_http_token(header_field->name)) {
+            if (!aws_strutil_is_lowercase_http_token(name)) {
                 DECODER_LOG(ERROR, decoder, "Header name contains invalid characters");
+                DECODER_LOGF(DEBUG, decoder, "Bad header name is '" PRInSTR "'", AWS_BYTE_CURSOR_PRI(name));
                 goto malformed;
             }
         }
 
         /* #TODO Validate characters used in header_field->value */
-    }
 
-    /* #TODO should we hold back pseudo-headers until s_flush_pseudoheaders() is called?
-     * - PRO: will never deliver pseudo-header that we later determine is invalid.
-     * - CON: buffering */
-
-    /* Deliver header-field via callback */
-    if (current_block->is_push_promise) {
-        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, header_field, name_enum);
-    } else {
-        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, header_field, name_enum);
+        /* Deliver header-field via callback */
+        if (current_block->is_push_promise) {
+            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, header_field, name_enum);
+        } else {
+            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, header_field, name_enum);
+        }
     }
 
     return AWS_OP_SUCCESS;
@@ -1116,6 +1181,8 @@ malformed:
     /* A malformed header-block is not a connection error, it's a Stream Error (RFC-7540 5.4.2).
      * We continue decoding and report that it's malformed in on_headers_end(). */
     current_block->malformed = true;
+    return AWS_OP_SUCCESS;
+already_malformed:
     return AWS_OP_SUCCESS;
 }
 
@@ -1149,7 +1216,7 @@ static int s_state_fn_header_block_loop(struct aws_h2_decoder *decoder, struct a
                 DECODER_CALL_VTABLE_STREAM(decoder, on_end_stream);
             }
 
-            AWS_ZERO_STRUCT(decoder->header_block_in_progress);
+            s_reset_header_block_in_progress(decoder);
 
         } else {
             DECODER_LOG(TRACE, decoder, "Done decoding header-block fragment, expecting CONTINUATION frames");

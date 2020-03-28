@@ -271,7 +271,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             struct aws_h2_frame_priority_settings priority = s_generate_priority(&input);
             struct aws_h2_frame_priority_settings *priority_ptr = use_priority ? &priority : NULL;
 
-            /* Server can only receive request-style HEADERS, client can only receive respone-style HEADERS.
+            /* Server can only receive request-style HEADERS, client can only receive response-style HEADERS.
              * But either side can receive trailer-style HEADERS */
             uint8_t is_normal_header = 0;
             aws_byte_cursor_read_u8(&input, &is_normal_header);
