@@ -257,16 +257,17 @@ static int s_decoder_on_rst_stream(uint32_t stream_id, uint32_t error_code, void
     return AWS_OP_SUCCESS;
 }
 
-static int s_decoder_on_settings(struct aws_array_list *settings_array, size_t num_settings, void *userdata) {
+static int s_decoder_on_settings(
+    const struct aws_h2_frame_setting *settings_array,
+    size_t num_settings,
+    void *userdata) {
     struct h2_decode_tester *decode_tester = userdata;
     struct h2_decoded_frame *frame;
     ASSERT_SUCCESS(s_begin_new_frame(decode_tester, AWS_H2_FRAME_T_SETTINGS, 0, &frame));
 
     /* Stash setting */
-    struct aws_h2_frame_setting setting;
     for (size_t i = 0; i < num_settings; i++) {
-        ASSERT_SUCCESS(aws_array_list_get_at(settings_array, &setting, i));
-        ASSERT_SUCCESS(aws_array_list_push_back(&frame->settings, &setting));
+        ASSERT_SUCCESS(aws_array_list_push_back(&frame->settings, &settings_array[i]));
     }
 
     ASSERT_SUCCESS(s_end_current_frame(decode_tester, AWS_H2_FRAME_T_SETTINGS, 0));

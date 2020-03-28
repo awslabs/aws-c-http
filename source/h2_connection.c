@@ -62,7 +62,10 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 
 static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
-static int s_decoder_on_settings(struct aws_array_list *settings_array, size_t num_settings, void *userdata);
+static int s_decoder_on_settings(
+    const struct aws_h2_frame_setting *settings_array,
+    size_t num_settings,
+    void *userdata);
 static int s_decoder_on_settings_ack(void *userdata);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
@@ -543,14 +546,10 @@ static void s_aws_h2_decoder_change_settings(struct aws_h2_connection *connectio
     aws_h2_decoder_set_setting_max_frame_size(decoder, settings_self[AWS_H2_SETTINGS_MAX_FRAME_SIZE]);
 }
 
-static void s_aws_h2_connection_change_peer_settings(
-    struct aws_h2_connection *connection,
-    struct aws_h2_frame_setting setting) {
-    uint32_t *settings_peer = connection->thread_data.settings_peer;
-    settings_peer[setting.id] = setting.value;
-}
-
-static int s_decoder_on_settings(struct aws_array_list *settings_array, size_t num_settings, void *userdata) {
+static int s_decoder_on_settings(
+    const struct aws_h2_frame_setting *settings_array,
+    size_t num_settings,
+    void *userdata) {
     struct aws_h2_connection *connection = userdata;
     /* Once all values have been processed, the recipient MUST immediately emit a SETTINGS frame with the ACK flag
      * set.(RFC-7540 6.5.3) */
@@ -563,24 +562,21 @@ static int s_decoder_on_settings(struct aws_array_list *settings_array, size_t n
     }
     aws_h2_connection_enqueue_outgoing_frame(connection, settings_ack_frame);
     /* Store the change to encoder and connection after enqueue the setting ACK frame */
-    struct aws_h2_frame_setting setting;
     struct aws_h2_frame_encoder *encoder = &connection->thread_data.encoder;
     for (size_t i = 0; i < num_settings; i++) {
-        if (aws_array_list_get_at(settings_array, &setting, i)) {
-            CONNECTION_LOGF(
-                ERROR,
-                connection,
-                "Getting setting form array list failed, error %s",
-                aws_error_name(aws_last_error()));
-            goto error;
+        if (connection->thread_data.settings_peer[settings_array[i].id] == settings_array[i].value) {
+            /* No change, don't do any work */
+            continue;
         }
-        if (setting.id == AWS_H2_SETTINGS_HEADER_TABLE_SIZE) {
-            aws_h2_frame_encoder_set_setting_header_table_size(encoder, setting.value);
+        switch (settings_array[i].id) {
+            case AWS_H2_SETTINGS_HEADER_TABLE_SIZE:
+                aws_h2_frame_encoder_set_setting_header_table_size(encoder, settings_array[i].value);
+                break;
+            case AWS_H2_SETTINGS_MAX_FRAME_SIZE:
+                aws_h2_frame_encoder_set_setting_max_frame_size(encoder, settings_array[i].value);
+                break;
         }
-        if (setting.id == AWS_H2_SETTINGS_MAX_FRAME_SIZE) {
-            aws_h2_frame_encoder_set_setting_max_frame_size(encoder, setting.value);
-        }
-        s_aws_h2_connection_change_peer_settings(connection, setting);
+        connection->thread_data.settings_peer[settings_array[i].id] = settings_array[i].value;
     }
     return AWS_OP_SUCCESS;
 
@@ -629,23 +625,12 @@ error:
     return AWS_OP_ERR;
 }
 
-/* tranfer from uint32_t array to aws_h2_frame_setting array for encoding */
-static void s_transfer_to_frame_setting(uint32_t *from, struct aws_h2_frame_setting *to) {
-    for (uint16_t i = 0; i < AWS_H2_SETTINGS_END_RANGE; i++) {
-        to[i].id = i;
-        to[i].value = from[i];
-    }
-}
-
+/* #TODO actually fill with initial settings */
 /* #TODO track which SETTINGS frames have been ACK'd */
 static int s_enqueue_settings_frame(struct aws_h2_connection *connection) {
     struct aws_allocator *alloc = connection->base.alloc;
 
-    struct aws_h2_frame_setting settings_array[AWS_H2_SETTINGS_END_RANGE];
-    s_transfer_to_frame_setting(connection->thread_data.settings_self, settings_array);
-    struct aws_h2_frame *settings_frame =
-        aws_h2_frame_new_settings(alloc, settings_array, AWS_H2_SETTINGS_END_RANGE, false /*ack*/);
-
+    struct aws_h2_frame *settings_frame = aws_h2_frame_new_settings(alloc, NULL, 0, false /*ack*/);
     if (!settings_frame) {
         return AWS_OP_ERR;
     }

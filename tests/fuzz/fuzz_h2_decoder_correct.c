@@ -274,7 +274,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                         uint32_t value = 0;
                         aws_byte_cursor_read_be16(&input, &id);
                         aws_byte_cursor_read_be32(&input, &value);
-                        if (id >= SETTINGS_BEGIN_RANGE && id < SETTINGS_END_RANGE) {
+                        if (id >= AWS_H2_SETTINGS_END_RANGE && id < AWS_H2_SETTINGS_END_RANGE) {
                             value = max(value, aws_h2_settings_bounds[id][0]);
                             value = min(value, aws_h2_settings_bounds[id][1]);
                         }

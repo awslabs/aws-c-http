@@ -253,6 +253,7 @@ void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder) {
     if (!decoder) {
         return;
     }
+    aws_array_list_clean_up(&decoder->settings_buffer_list);
     aws_hpack_context_destroy(decoder->hpack);
     aws_mem_release(decoder->alloc, decoder);
 }
@@ -739,9 +740,10 @@ static int s_state_fn_frame_settings_loop(struct aws_h2_decoder *decoder, struct
     if (decoder->frame_in_progress.payload_len == 0) {
         /* Huzzah, done with the frame, fire the callback */
         struct aws_array_list *buffer = &decoder->settings_buffer_list;
-        DECODER_CALL_VTABLE_ARGS(decoder, on_settings, buffer, aws_array_list_length(&decoder->settings_buffer_list));
+        DECODER_CALL_VTABLE_ARGS(
+            decoder, on_settings, buffer->data, aws_array_list_length(&decoder->settings_buffer_list));
         /* clean up the buffer */
-        aws_array_list_clean_up(&decoder->settings_buffer_list);
+        aws_array_list_clear(&decoder->settings_buffer_list);
         return s_decoder_reset_state(decoder);
     }
 
@@ -778,11 +780,12 @@ static int s_state_fn_frame_settings_i(struct aws_h2_decoder *decoder, struct aw
         if (value < aws_h2_settings_bounds[id][0] || value > aws_h2_settings_bounds[id][1]) {
             DECODER_LOGF(
                 ERROR, decoder, "A value of SETTING frame is invalid, id: %" PRIu16 ", value: %" PRIu32, id, value);
-            aws_array_list_clean_up(&decoder->settings_buffer_list);
-            if (id == AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE)
+            if (id == AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE) {
                 return aws_raise_error(AWS_H2_ERR_FLOW_CONTROL_ERROR);
-            else
-                return aws_raise_error(AWS_H2_ERR_PROTOCOL_ERROR);
+            } else {
+                /* TODO: translates errors from AWS_ERROR_HTTP_XYZ into AWS_H2_ERR_XYZ */
+                return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+            }
         }
         struct aws_h2_frame_setting setting;
         setting.id = id;
@@ -790,8 +793,7 @@ static int s_state_fn_frame_settings_i(struct aws_h2_decoder *decoder, struct aw
         /* array_list will keep a copy of setting, it is fine to be a local variable */
         if (aws_array_list_push_back(&decoder->settings_buffer_list, &setting)) {
             DECODER_LOGF(ERROR, decoder, "Writing setting to buffer failed, %s", aws_error_name(aws_last_error()));
-            aws_array_list_clean_up(&decoder->settings_buffer_list);
-            return aws_raise_error(aws_last_error());
+            return AWS_OP_ERR;
         }
     }
 
