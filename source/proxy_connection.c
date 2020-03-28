@@ -502,6 +502,8 @@ static int s_make_proxy_connect_request(
     user_data->connect_stream = stream;
     user_data->connect_request = request;
 
+    aws_http_stream_activate(stream);
+
     return AWS_OP_SUCCESS;
 
 on_error:

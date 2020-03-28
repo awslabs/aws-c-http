@@ -105,9 +105,15 @@ struct aws_http_server_options {
     aws_http_server_on_destroy_fn *on_destroy_complete;
 
     /**
-     * If set to true, read back pressure mechanism will be enabled.
-     */
-    bool enable_read_back_pressure;
+     * Set to true to manually manage the read window size.
+     *
+     * If this is false, the connection will maintain a constant window size.
+     *
+     * If this is true, the caller must manually increment the window size using aws_http_stream_update_window().
+     * If the window is not incremented, it will shrink by the amount of body data received. If the window size
+     * reaches 0, no further data will be received.
+     **/
+    bool manual_window_management;
 };
 
 /**

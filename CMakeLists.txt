@@ -99,4 +99,6 @@ if (BUILD_TESTING)
     add_subdirectory(tests)
 endif()
 
-add_subdirectory(bin/elasticurl)
+if (NOT CMAKE_CROSSCOMPILING)
+    add_subdirectory(bin/elasticurl)
+endif()

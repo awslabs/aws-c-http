@@ -165,6 +165,7 @@ static void s_shutdown_due_to_write_err(struct aws_h2_connection *connection, in
 /* Common new() logic for server & client */
 static struct aws_h2_connection *s_connection_new(
     struct aws_allocator *alloc,
+    bool manual_window_management,
     size_t initial_window_size,
     bool server) {
 
@@ -183,7 +184,8 @@ static struct aws_h2_connection *s_connection_new(
     connection->base.http_version = AWS_HTTP_VERSION_2;
     connection->base.initial_window_size = initial_window_size;
     /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
-    aws_atomic_init_int(&connection->base.next_stream_id, (server ? 2 : 1));
+    connection->base.next_stream_id = (server ? 2 : 1);
+    connection->base.manual_window_management = manual_window_management;
 
     aws_channel_task_init(
         &connection->cross_thread_work_task, s_cross_thread_work_task, connection, "HTTP/2 cross-thread work");
@@ -249,9 +251,11 @@ error:
 
 struct aws_http_connection *aws_http_connection_new_http2_server(
     struct aws_allocator *allocator,
+    bool manual_window_management,
     size_t initial_window_size) {
 
-    struct aws_h2_connection *connection = s_connection_new(allocator, initial_window_size, true);
+    struct aws_h2_connection *connection =
+        s_connection_new(allocator, manual_window_management, initial_window_size, true);
     if (!connection) {
         return NULL;
     }
@@ -263,9 +267,11 @@ struct aws_http_connection *aws_http_connection_new_http2_server(
 
 struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
+    bool manual_window_management,
     size_t initial_window_size) {
 
-    struct aws_h2_connection *connection = s_connection_new(allocator, initial_window_size, false);
+    struct aws_h2_connection *connection =
+        s_connection_new(allocator, manual_window_management, initial_window_size, false);
     if (!connection) {
         return NULL;
     }
@@ -729,6 +735,8 @@ static void s_activate_stream(struct aws_h2_connection *connection, struct aws_h
         goto error;
     }
 
+    aws_atomic_fetch_add(&stream->base.refcount, 1);
+
     if (has_outgoing_data) {
         aws_linked_list_push_back(&connection->thread_data.outgoing_streams_list, &stream->node);
     }
@@ -774,6 +782,46 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
     s_try_write_outgoing_frames(connection);
 }
 
+int aws_h2_stream_activate(struct aws_http_stream *stream) {
+    struct aws_h2_stream *h2_stream = AWS_CONTAINER_OF(stream, struct aws_h2_stream, base);
+
+    struct aws_http_connection *base_connection = stream->owning_connection;
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(base_connection, struct aws_h2_connection, base);
+
+    bool was_cross_thread_work_scheduled = false;
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+
+        if (stream->id) {
+            /* stream has already been activated. */
+            s_unlock_synced_data(connection);
+            return AWS_OP_SUCCESS;
+        }
+
+        stream->id = aws_http_connection_get_next_stream_id(base_connection);
+
+        if (stream->id) {
+            was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
+            connection->synced_data.is_cross_thread_work_task_scheduled = true;
+
+            aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &h2_stream->node);
+        }
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+
+    if (!stream->id) {
+        /* aws_http_connection_get_next_stream_id() raises its own error. */
+        return AWS_OP_ERR;
+    }
+
+    if (!was_cross_thread_work_scheduled) {
+        CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 static struct aws_http_stream *s_connection_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options) {
@@ -795,22 +843,13 @@ static struct aws_http_stream *s_connection_make_request(
     }
 
     int new_stream_error_code = AWS_ERROR_SUCCESS;
-    bool was_cross_thread_work_scheduled = false;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
 
         if (connection->synced_data.new_stream_error_code) {
             new_stream_error_code = connection->synced_data.new_stream_error_code;
-            goto unlock;
         }
 
-        /* success */
-        was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
-        connection->synced_data.is_cross_thread_work_task_scheduled = true;
-
-        aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &stream->node);
-
-    unlock:
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
@@ -823,11 +862,6 @@ static struct aws_http_stream *s_connection_make_request(
             aws_last_error(),
             aws_error_name(aws_last_error()));
         goto error;
-    }
-
-    if (!was_cross_thread_work_scheduled) {
-        CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
-        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
     }
 
     AWS_H2_STREAM_LOG(DEBUG, stream, "Created HTTP/2 request stream"); /* #TODO: print method & path */

@@ -408,6 +408,9 @@ static int s_do_http_proxy_request_transform_test(struct aws_allocator *allocato
     };
 
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.client_connection, &request_options);
+    ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
+
     testing_channel_run_currently_queued_tasks(tester.testing_channel);
 
     s_verify_transformed_request(untransformed_request, request, use_basic_auth, allocator);

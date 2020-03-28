@@ -193,7 +193,7 @@ static int s_tester_init(struct aws_allocator *alloc) {
     struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
     ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc, &test_channel_options));
 
-    s_tester.server_connection = aws_http_connection_new_http1_1_server(alloc, SIZE_MAX);
+    s_tester.server_connection = aws_http_connection_new_http1_1_server(alloc, true, SIZE_MAX);
     ASSERT_NOT_NULL(s_tester.server_connection);
     struct aws_http_server_connection_options options = AWS_HTTP_SERVER_CONNECTION_OPTIONS_INIT;
     options.connection_user_data = &s_tester;
@@ -1476,7 +1476,7 @@ static int s_error_tester_init(struct aws_allocator *alloc, struct error_from_ca
     struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
     ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc, &test_channel_options));
 
-    tester->server_connection = aws_http_connection_new_http1_1_server(alloc, SIZE_MAX);
+    tester->server_connection = aws_http_connection_new_http1_1_server(alloc, true, SIZE_MAX);
     ASSERT_NOT_NULL(tester->server_connection);
     struct aws_http_server_connection_options options = AWS_HTTP_SERVER_CONNECTION_OPTIONS_INIT;
     options.connection_user_data = tester;

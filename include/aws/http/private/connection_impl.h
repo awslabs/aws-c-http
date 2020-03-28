@@ -76,7 +76,7 @@ struct aws_http_connection {
     struct aws_atomic_var refcount;
 
     /* Starts at either 1 or 2, increments by two with each new stream */
-    struct aws_atomic_var next_stream_id;
+    uint32_t next_stream_id;
 
     union {
         struct aws_http_connection_client_data {
@@ -93,6 +93,8 @@ struct aws_http_connection {
      * Opposite is true on server connections */
     struct aws_http_connection_client_data *client_data;
     struct aws_http_connection_server_data *server_data;
+
+    bool manual_window_management;
 };
 
 /* Gets a client connection up and running.
@@ -100,6 +102,7 @@ struct aws_http_connection {
 struct aws_http_client_bootstrap {
     struct aws_allocator *alloc;
     bool is_using_tls;
+    bool manual_window_management;
     size_t initial_window_size;
     struct aws_http_connection_monitoring_options monitoring_options;
     void *user_data;
@@ -134,6 +137,8 @@ struct aws_crt_statistics_http1_channel *aws_h1_connection_get_statistics(struct
 
 /**
  * Gets the next available stream id within the connection.  Valid for creating both h1 and h2 streams.
+ *
+ * This function is not thread-safe.
  *
  * Returns 0 if there was an error.
  */

@@ -85,6 +85,7 @@ struct aws_websocket_client_bootstrap_system_vtable {
     struct aws_http_stream *(*aws_http_connection_make_request)(
         struct aws_http_connection *client_connection,
         const struct aws_http_make_request_options *options);
+    int (*aws_http_stream_activate)(struct aws_http_stream *stream);
     void (*aws_http_stream_release)(struct aws_http_stream *stream);
     struct aws_http_connection *(*aws_http_stream_get_connection)(const struct aws_http_stream *stream);
     int (*aws_http_stream_get_incoming_response_status)(const struct aws_http_stream *stream, int *out_status);
