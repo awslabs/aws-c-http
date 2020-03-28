@@ -274,9 +274,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                         uint32_t value = 0;
                         aws_byte_cursor_read_be16(&input, &id);
                         aws_byte_cursor_read_be32(&input, &value);
-                        if (id >= AWS_H2_SETTINGS_END_RANGE && id < AWS_H2_SETTINGS_END_RANGE) {
-                            value = max(value, aws_h2_settings_bounds[id][0]);
-                            value = min(value, aws_h2_settings_bounds[id][1]);
+                        if (id >= AWS_H2_SETTINGS_BEGIN_RANGE && id < AWS_H2_SETTINGS_END_RANGE) {
+                            value = aws_max_u32(value, aws_h2_settings_bounds[id][0]);
+                            value = aws_min_u32(value, aws_h2_settings_bounds[id][1]);
                         }
                         settings_array[i].id = id;
                         settings_array[i].value = value;
@@ -406,7 +406,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             aws_byte_buf_write_from_whole_cursor(&frame_data, aws_byte_cursor_advance(&input, payload_length));
             break;
         }
-        default: { AWS_FATAL_ASSERT(false); }
+        default: {
+            AWS_FATAL_ASSERT(false);
+        }
     }
 
     /* Decode whatever we got */
