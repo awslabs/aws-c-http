@@ -147,3 +147,61 @@ static int s_strutil_trim_http_whitespace(struct aws_allocator *allocator, void 
 
     return 0;
 }
+
+AWS_TEST_CASE(strutil_is_http_token, s_strutil_is_http_token);
+static int s_strutil_is_http_token(struct aws_allocator *allocator, void *ctx) {
+    (void)allocator;
+    (void)ctx;
+
+    /* sanity check */
+    ASSERT_TRUE(aws_strutil_is_http_token(aws_byte_cursor_from_c_str("A")));
+    ASSERT_TRUE(aws_strutil_is_http_token(aws_byte_cursor_from_c_str("Host")));
+
+    /* must be at least 1 character long*/
+    ASSERT_FALSE(aws_strutil_is_http_token(aws_byte_cursor_from_c_str("")));
+
+    /* all acceptable characters (RFC-7230 3.2.6 - tchar)*/
+    const char *all_acceptable = "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    const size_t all_acceptable_strlen = strlen(all_acceptable);
+    ASSERT_TRUE(aws_strutil_is_http_token(aws_byte_cursor_from_c_str(all_acceptable)));
+
+    /* brute force over every character, and be sure it fails if it's not in the acceptable list */
+    for (size_t i = 0; i < 256; ++i) {
+        uint8_t c = (uint8_t)i;
+        bool is_acceptable = memchr(all_acceptable, c, all_acceptable_strlen) != NULL;
+        ASSERT_UINT_EQUALS(is_acceptable, aws_strutil_is_http_token(aws_byte_cursor_from_array(&c, 1)));
+    }
+
+    return 0;
+}
+
+AWS_TEST_CASE(strutil_is_lowercase_http_token, s_strutil_is_lowercase_http_token);
+static int s_strutil_is_lowercase_http_token(struct aws_allocator *allocator, void *ctx) {
+    (void)allocator;
+    (void)ctx;
+
+    /* sanity check */
+    ASSERT_TRUE(aws_strutil_is_lowercase_http_token(aws_byte_cursor_from_c_str("a")));
+    ASSERT_TRUE(aws_strutil_is_lowercase_http_token(aws_byte_cursor_from_c_str("host")));
+
+    /* must be at least 1 character long*/
+    ASSERT_FALSE(aws_strutil_is_lowercase_http_token(aws_byte_cursor_from_c_str("")));
+
+    /* forbidden characters */
+    ASSERT_FALSE(aws_strutil_is_lowercase_http_token(aws_byte_cursor_from_c_str("Host")));
+    ASSERT_FALSE(aws_strutil_is_lowercase_http_token(aws_byte_cursor_from_c_str(":\"")));
+
+    /* all acceptable characters (RFC-7230 3.2.6 - tchar, but with uppercase removed) */
+    const char *all_acceptable = "!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyz";
+    const size_t all_acceptable_strlen = strlen(all_acceptable);
+    ASSERT_TRUE(aws_strutil_is_lowercase_http_token(aws_byte_cursor_from_c_str(all_acceptable)));
+
+    /* brute force over every character, and be sure it fails if it's not in the acceptable list */
+    for (size_t i = 0; i < 256; ++i) {
+        uint8_t c = (uint8_t)i;
+        bool is_acceptable = memchr(all_acceptable, c, all_acceptable_strlen) != NULL;
+        ASSERT_UINT_EQUALS(is_acceptable, aws_strutil_is_lowercase_http_token(aws_byte_cursor_from_array(&c, 1)));
+    }
+
+    return 0;
+}

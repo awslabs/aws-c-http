@@ -436,8 +436,8 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
     }
 
     struct aws_byte_cursor name = splits[0];
-    if (name.len == 0) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Invalid incoming header, name is empty.", decoder->logging_id);
+    if (name.len == 0 || !aws_strutil_is_http_token(name)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Invalid incoming header, bad name.", decoder->logging_id);
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_STREAM, "id=%p: Bad header is: '" PRInSTR "'", decoder->logging_id, AWS_BYTE_CURSOR_PRI(input));
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);

@@ -122,9 +122,6 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_FRAME_SIZE,
         "Received frame with an illegal frame size"),
-    AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_COMPRESSION,
-        "Error compressing or decompressing HPACK headers"),
 };
 /* clang-format on */
 
@@ -246,10 +243,16 @@ struct aws_byte_cursor aws_http_version_to_str(enum aws_http_version version) {
 }
 
 /* HEADERS */
-static struct aws_hash_table s_header_str_to_enum;                         /* for string -> enum lookup */
+static struct aws_hash_table s_header_str_to_enum;           /* for case-insensitive string -> enum lookup */
+static struct aws_hash_table s_lowercase_header_str_to_enum; /* for case-sensitive string -> enum lookup */
 static struct aws_byte_cursor s_header_enum_to_str[AWS_HTTP_HEADER_COUNT]; /* for enum -> string lookup */
 
 static void s_headers_init(struct aws_allocator *alloc) {
+    s_header_enum_to_str[AWS_HTTP_HEADER_METHOD] = aws_byte_cursor_from_c_str(":method");
+    s_header_enum_to_str[AWS_HTTP_HEADER_SCHEME] = aws_byte_cursor_from_c_str(":scheme");
+    s_header_enum_to_str[AWS_HTTP_HEADER_AUTHORITY] = aws_byte_cursor_from_c_str(":authority");
+    s_header_enum_to_str[AWS_HTTP_HEADER_PATH] = aws_byte_cursor_from_c_str(":path");
+    s_header_enum_to_str[AWS_HTTP_HEADER_STATUS] = aws_byte_cursor_from_c_str(":status");
     s_header_enum_to_str[AWS_HTTP_HEADER_CONNECTION] = aws_byte_cursor_from_c_str("connection");
     s_header_enum_to_str[AWS_HTTP_HEADER_CONTENT_LENGTH] = aws_byte_cursor_from_c_str("content-length");
     s_header_enum_to_str[AWS_HTTP_HEADER_EXPECT] = aws_byte_cursor_from_c_str("expect");
@@ -262,13 +265,30 @@ static void s_headers_init(struct aws_allocator *alloc) {
         AWS_HTTP_HEADER_UNKNOWN + 1,
         AWS_HTTP_HEADER_COUNT,
         true /* ignore case */);
+
+    s_init_str_to_enum_hash_table(
+        &s_lowercase_header_str_to_enum,
+        alloc,
+        s_header_enum_to_str,
+        AWS_HTTP_HEADER_UNKNOWN + 1,
+        AWS_HTTP_HEADER_COUNT,
+        false /* ignore case */);
 }
 
 static void s_headers_clean_up(void) {
     aws_hash_table_clean_up(&s_header_str_to_enum);
+    aws_hash_table_clean_up(&s_lowercase_header_str_to_enum);
 }
 
 enum aws_http_header_name aws_http_str_to_header_name(struct aws_byte_cursor cursor) {
+    int header = s_find_in_str_to_enum_hash_table(&s_header_str_to_enum, &cursor);
+    if (header >= 0) {
+        return (enum aws_http_header_name)header;
+    }
+    return AWS_HTTP_HEADER_UNKNOWN;
+}
+
+enum aws_http_header_name aws_http_lowercase_str_to_header_name(struct aws_byte_cursor cursor) {
     int header = s_find_in_str_to_enum_hash_table(&s_header_str_to_enum, &cursor);
     if (header >= 0) {
         return (enum aws_http_header_name)header;
@@ -460,3 +480,12 @@ const struct aws_byte_cursor aws_http_method_put = AWS_BYTE_CUR_INIT_FROM_STRING
 const struct aws_byte_cursor aws_http_method_delete = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("DELETE");
 const struct aws_byte_cursor aws_http_method_connect = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("CONNECT");
 const struct aws_byte_cursor aws_http_method_options = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("OPTIONS");
+
+const struct aws_byte_cursor aws_http_header_method = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(":method");
+const struct aws_byte_cursor aws_http_header_scheme = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(":scheme");
+const struct aws_byte_cursor aws_http_header_authority = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(":authority");
+const struct aws_byte_cursor aws_http_header_path = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(":path");
+const struct aws_byte_cursor aws_http_header_status = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(":status");
+
+const struct aws_byte_cursor aws_http_scheme_http = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("http");
+const struct aws_byte_cursor aws_http_scheme_https = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https");

@@ -69,5 +69,21 @@ int aws_strutil_read_unsigned_hex(struct aws_byte_cursor cursor, uint64_t *dst);
 AWS_HTTP_API
 struct aws_byte_cursor aws_strutil_trim_http_whitespace(struct aws_byte_cursor cursor);
 
+/**
+ * Return whether this is a valid token, as defined by RFC7230 section 3.2.6:
+ *  token          = 1*tchar
+ *  tchar          = "!" / "#" / "$" / "%" / "&" / "'" / "*"
+ *                 / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~"
+ *                 / DIGIT / ALPHA
+ */
+AWS_HTTP_API
+bool aws_strutil_is_http_token(struct aws_byte_cursor token);
+
+/**
+ * Same as aws_strutil_is_http_token_valid(), but uppercase letters are forbidden.
+ */
+AWS_HTTP_API
+bool aws_strutil_is_lowercase_http_token(struct aws_byte_cursor token);
+
 AWS_EXTERN_C_END
 #endif /* AWS_HTTP_STRUTIL_H */

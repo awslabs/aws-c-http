@@ -53,6 +53,7 @@ struct h2_decoded_frame {
     uint32_t window_size_increment;                  /* WINDOW_UPDATE has this */
 
     struct aws_http_headers *headers; /* HEADERS and PUSH_PROMISE have this */
+    bool headers_malformed;           /* HEADERS and PUSH_PROMISE have this */
     struct aws_array_list settings;   /* contains aws_h2_frame_setting, SETTINGS has this */
     struct aws_byte_buf data /* DATA has this */;
 };

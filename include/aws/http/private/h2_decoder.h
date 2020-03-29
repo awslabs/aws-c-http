@@ -34,17 +34,26 @@
 
 struct aws_h2_decoder_vtable {
     /* For HEADERS header-block: _begin() is called, then 0+ _i() calls, then _end().
-     * No other decoder callbacks will occur in this time. */
+     * No other decoder callbacks will occur in this time.
+     * If something is malformed, no further _i() calls occur, and it is reported in _end() */
     int (*on_headers_begin)(uint32_t stream_id, void *userdata);
-    int (*on_headers_i)(uint32_t stream_id, const struct aws_http_header *header, void *userdata);
-    int (*on_headers_end)(uint32_t stream_id, void *userdata);
+    int (*on_headers_i)(
+        uint32_t stream_id,
+        const struct aws_http_header *header,
+        enum aws_http_header_name name_enum,
+        void *userdata);
+    int (*on_headers_end)(uint32_t stream_id, bool malformed, void *userdata);
 
     /* For PUSH_PROMISE header-block: _begin() is called, then 0+ _i() calls, then _end().
-     * No other decoder callbacks will occur in this time. */
+     * No other decoder callbacks will occur in this time.
+     * If something is malformed, no further _i() calls occur, and it is reported in _end() */
     int (*on_push_promise_begin)(uint32_t stream_id, uint32_t promised_stream_id, void *userdata);
-    int (*on_push_promise_i)(uint32_t stream_id, const struct aws_http_header *header, void *userdata);
-
-    int (*on_push_promise_end)(uint32_t stream_id, void *userdata);
+    int (*on_push_promise_i)(
+        uint32_t stream_id,
+        const struct aws_http_header *header,
+        enum aws_http_header_name name_enum,
+        void *userdata);
+    int (*on_push_promise_end)(uint32_t stream_id, bool malformed, void *userdata);
 
     /* Called repeatedly as DATA frames are processed.
      * This may fire multiple times per actual DATA frame. */

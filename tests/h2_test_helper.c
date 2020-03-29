@@ -158,8 +158,12 @@ static int s_decoder_on_headers_begin(uint32_t stream_id, void *userdata) {
     return AWS_OP_SUCCESS;
 }
 
-static int s_on_header(bool is_push_promise, uint32_t stream_id, const struct aws_http_header *header, void *userdata) {
-
+static int s_on_header(
+    bool is_push_promise,
+    uint32_t stream_id,
+    const struct aws_http_header *header,
+    enum aws_http_header_name name_enum,
+    void *userdata) {
     struct h2_decode_tester *decode_tester = userdata;
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(decode_tester);
 
@@ -172,6 +176,7 @@ static int s_on_header(bool is_push_promise, uint32_t stream_id, const struct aw
 
     ASSERT_FALSE(frame->finished);
     ASSERT_UINT_EQUALS(frame->stream_id, stream_id);
+    ASSERT_INT_EQUALS(aws_http_lowercase_str_to_header_name(header->name), name_enum);
 
     /* Stash header */
     ASSERT_SUCCESS(aws_http_headers_add_header(frame->headers, header));
@@ -179,14 +184,25 @@ static int s_on_header(bool is_push_promise, uint32_t stream_id, const struct aw
     return AWS_OP_SUCCESS;
 }
 
-static int s_decoder_on_headers_i(uint32_t stream_id, const struct aws_http_header *header, void *userdata) {
-    return s_on_header(false /* is_push_promise */, stream_id, header, userdata);
+static int s_decoder_on_headers_i(
+    uint32_t stream_id,
+    const struct aws_http_header *header,
+    enum aws_http_header_name name_enum,
+    void *userdata) {
+    return s_on_header(false /* is_push_promise */, stream_id, header, name_enum, userdata);
 }
 
-static int s_decoder_on_headers_end(uint32_t stream_id, void *userdata) {
+static int s_on_headers_end(bool is_push_promise, uint32_t stream_id, bool malformed, void *userdata) {
     struct h2_decode_tester *decode_tester = userdata;
-    ASSERT_SUCCESS(s_end_current_frame(decode_tester, AWS_H2_FRAME_T_HEADERS, stream_id));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(decode_tester);
+    frame->headers_malformed = malformed;
+    ASSERT_SUCCESS(s_end_current_frame(
+        decode_tester, is_push_promise ? AWS_H2_FRAME_T_PUSH_PROMISE : AWS_H2_FRAME_T_HEADERS, stream_id));
     return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_headers_end(uint32_t stream_id, bool malformed, void *userdata) {
+    return s_on_headers_end(false /*is_push_promise*/, stream_id, malformed, userdata);
 }
 
 static int s_decoder_on_push_promise_begin(uint32_t stream_id, uint32_t promised_stream_id, void *userdata) {
@@ -199,14 +215,16 @@ static int s_decoder_on_push_promise_begin(uint32_t stream_id, uint32_t promised
     return AWS_OP_SUCCESS;
 }
 
-static int s_decoder_on_push_promise_i(uint32_t stream_id, const struct aws_http_header *header, void *userdata) {
-    return s_on_header(true /* is_push_promise */, stream_id, header, userdata);
+static int s_decoder_on_push_promise_i(
+    uint32_t stream_id,
+    const struct aws_http_header *header,
+    enum aws_http_header_name name_enum,
+    void *userdata) {
+    return s_on_header(true /* is_push_promise */, stream_id, header, name_enum, userdata);
 }
 
-static int s_decoder_on_push_promise_end(uint32_t stream_id, void *userdata) {
-    struct h2_decode_tester *decode_tester = userdata;
-    ASSERT_SUCCESS(s_end_current_frame(decode_tester, AWS_H2_FRAME_T_PUSH_PROMISE, stream_id));
-    return AWS_OP_SUCCESS;
+static int s_decoder_on_push_promise_end(uint32_t stream_id, bool malformed, void *userdata) {
+    return s_on_headers_end(true /*is_push_promise*/, stream_id, malformed, userdata);
 }
 
 static int s_decoder_on_data(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
