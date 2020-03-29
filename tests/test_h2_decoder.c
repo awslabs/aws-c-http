@@ -2152,8 +2152,6 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_push_promise_with_enable_push_0) {
     return AWS_OP_SUCCESS;
 }
 
-
-
 /* Test PING frame */
 H2_DECODER_ON_CLIENT_TEST(h2_decoder_ping) {
     (void)allocator;
