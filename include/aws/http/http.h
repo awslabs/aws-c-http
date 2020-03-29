@@ -120,6 +120,15 @@ extern const struct aws_byte_cursor aws_http_method_connect;
 AWS_HTTP_API
 extern const struct aws_byte_cursor aws_http_method_options;
 
+AWS_HTTP_API extern const struct aws_byte_cursor aws_http_header_method;
+AWS_HTTP_API extern const struct aws_byte_cursor aws_http_header_scheme;
+AWS_HTTP_API extern const struct aws_byte_cursor aws_http_header_authority;
+AWS_HTTP_API extern const struct aws_byte_cursor aws_http_header_path;
+AWS_HTTP_API extern const struct aws_byte_cursor aws_http_header_status;
+
+AWS_HTTP_API extern const struct aws_byte_cursor aws_http_scheme_http;
+AWS_HTTP_API extern const struct aws_byte_cursor aws_http_scheme_https;
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_H */

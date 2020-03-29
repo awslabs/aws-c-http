@@ -129,7 +129,8 @@ static int s_test_splits(struct aws_allocator *allocator, void *ctx) {
         &s_fixture_##NAME##_split_at_i);                                                                               \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
-#define H2_DECODER_TEST_CASE(NAME) H2_DECODER_TEST_CASE_IMPL(NAME, false /*server*/, true /*skip_preface*/)
+#define H2_DECODER_ON_CLIENT_TEST(NAME) H2_DECODER_TEST_CASE_IMPL(NAME, false /*server*/, true /*skip_preface*/)
+#define H2_DECODER_ON_SERVER_TEST(NAME) H2_DECODER_TEST_CASE_IMPL(NAME, true /*server*/, true /*skip_preface*/)
 #define H2_DECODER_ON_CLIENT_PREFACE_TEST(NAME) H2_DECODER_TEST_CASE_IMPL(NAME, false, false)
 #define H2_DECODER_ON_SERVER_PREFACE_TEST(NAME) H2_DECODER_TEST_CASE_IMPL(NAME, true, false)
 
@@ -184,7 +185,7 @@ static int s_decode_all(struct fixture *fixture, struct aws_byte_cursor input) {
 }
 
 /* Test DATA frame */
-H2_DECODER_TEST_CASE(h2_decoder_data) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_data) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -210,7 +211,7 @@ H2_DECODER_TEST_CASE(h2_decoder_data) {
 }
 
 /* Test padded DATA frame */
-H2_DECODER_TEST_CASE(h2_decoder_data_padded) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_padded) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -238,7 +239,7 @@ H2_DECODER_TEST_CASE(h2_decoder_data_padded) {
 }
 
 /* OK for PADDED frame to have pad length of zero */
-H2_DECODER_TEST_CASE(h2_decoder_data_pad_length_zero) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_pad_length_zero) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -266,7 +267,7 @@ H2_DECODER_TEST_CASE(h2_decoder_data_pad_length_zero) {
 }
 
 /* OK for DATA frame to have no data */
-H2_DECODER_TEST_CASE(h2_decoder_data_empty) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_empty) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -290,7 +291,7 @@ H2_DECODER_TEST_CASE(h2_decoder_data_empty) {
 }
 
 /* OK for padded DATA frame to have no data */
-H2_DECODER_TEST_CASE(h2_decoder_data_empty_padded) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_empty_padded) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -317,7 +318,7 @@ H2_DECODER_TEST_CASE(h2_decoder_data_empty_padded) {
 
 /* Unexpected flags should be ignored.
  * DATA frames only support END_STREAM and PADDED*/
-H2_DECODER_TEST_CASE(h2_decoder_data_ignores_unknown_flags) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -345,7 +346,7 @@ H2_DECODER_TEST_CASE(h2_decoder_data_ignores_unknown_flags) {
 }
 
 /* DATA frames MUST specify a stream-id */
-H2_DECODER_TEST_CASE(h2_decoder_err_data_requires_stream_id) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_data_requires_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -367,7 +368,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_data_requires_stream_id) {
 }
 
 /* Error if frame is padded, but not big enough to contain the padding length */
-H2_DECODER_TEST_CASE(h2_decoder_err_payload_too_small_for_pad_length) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_payload_too_small_for_pad_length) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -390,7 +391,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_payload_too_small_for_pad_length) {
 }
 
 /* The most-significant-bit of the encoded stream ID is reserved, and should be ignored when decoding */
-H2_DECODER_TEST_CASE(h2_decoder_stream_id_ignores_reserved_bit) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_stream_id_ignores_reserved_bit) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -433,18 +434,19 @@ static int s_check_header(
 
 /* Test a simple HEADERS frame
  * Note that we're not stressing the HPACK decoder here, that's done in other test files */
-H2_DECODER_TEST_CASE(h2_decoder_headers) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
     /* clang-format off */
     uint8_t input[] = {
-        0x00, 0x00, 0x05,           /* Length (24) */
-        AWS_H2_FRAME_T_HEADERS,     /* Type (8) */
+        0x00, 0x00, 11,                 /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
         AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
-        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        0x76, 0x54, 0x32, 0x10,         /* Reserved (1) | Stream Identifier (31) */
         /* HEADERS */
-        0x48, 0x03, '3', '0', '2'   /* ":status: 302" - indexed name, uncompressed value */
+        0x48, 0x03, '3', '0', '2',      /* ":status: 302" - indexed name, uncompressed value */
+        0x7a, 0x04, 't', 'e', 's', 't'  /* "user-agent: test" - indexed name, uncompressed value */
     };
     /* clang-format on */
 
@@ -454,14 +456,16 @@ H2_DECODER_TEST_CASE(h2_decoder_headers) {
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
-    ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
+    ASSERT_FALSE(frame->headers_malformed);
+    ASSERT_UINT_EQUALS(2, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, "user-agent", "test", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
 
 /* Test a HEADERS frame with padding */
-H2_DECODER_TEST_CASE(h2_decoder_headers_padded) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_padded) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -484,6 +488,7 @@ H2_DECODER_TEST_CASE(h2_decoder_headers_padded) {
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     return AWS_OP_SUCCESS;
@@ -492,7 +497,7 @@ H2_DECODER_TEST_CASE(h2_decoder_headers_padded) {
 /* Test a HEADERS frame with priority information
  * Note that priority information is ignored for now.
  * We're not testing that it was reported properly, just that decoder can properly consume it */
-H2_DECODER_TEST_CASE(h2_decoder_headers_priority) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_priority) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -515,6 +520,7 @@ H2_DECODER_TEST_CASE(h2_decoder_headers_priority) {
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     return AWS_OP_SUCCESS;
@@ -522,7 +528,7 @@ H2_DECODER_TEST_CASE(h2_decoder_headers_priority) {
 
 /* Test a HEADERS frame with ALL flags set.
  * Unexpected flags should be ignored, but HEADERS supports: priority and padding and end-headers and end-stream */
-H2_DECODER_TEST_CASE(h2_decoder_headers_ignores_unknown_flags) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -547,14 +553,108 @@ H2_DECODER_TEST_CASE(h2_decoder_headers_ignores_unknown_flags) {
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
 
+/* Test decoding a request frame (Note: must use decoder on server) */
+H2_DECODER_ON_SERVER_TEST(h2_decoder_headers_request) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 21,                 /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x82,                           /* ":method: GET" - indexed */
+        0x86,                           /* ":scheme: http" - indexed */
+        0x41, 10, 'a', 'm', 'a', 'z', 'o', 'n', '.', 'c', 'o', 'm', /* ":authority: amazon.com" - indexed name */
+        0x84,                           /* ":path: /" - indexed */
+        0x7a, 0x04, 't', 'e', 's', 't'  /* "user-agent: test" - indexed name, uncompressed value */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 1 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
+    ASSERT_UINT_EQUALS(5, aws_http_headers_count(frame->headers));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "http", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 2, ":authority", "amazon.com", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 3, ":path", "/", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 4, "user-agent", "test", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+/* A trailing header has no psuedo-headers, and always ends the stream */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_trailer) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x06,               /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x7a, 0x04, 't', 'e', 's', 't'  /* "user-agent: test" - indexed name, uncompressed value */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
+    ASSERT_SUCCESS(s_check_header(frame, 0, "user-agent", "test", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+/* A trailing header can be empty */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_empty_trailer) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x00,               /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS - none */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
+    ASSERT_UINT_EQUALS(0, aws_http_headers_count(frame->headers));
+    ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
 /* HEADERS must specify a valid stream-id */
-H2_DECODER_TEST_CASE(h2_decoder_err_headers_requires_stream_id) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_headers_requires_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -576,7 +676,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_headers_requires_stream_id) {
     return AWS_OP_SUCCESS;
 }
 
-H2_DECODER_TEST_CASE(h2_decoder_err_headers_payload_too_small_for_padding) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_headers_payload_too_small_for_padding) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -602,7 +702,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_headers_payload_too_small_for_padding) {
     return AWS_OP_SUCCESS;
 }
 
-H2_DECODER_TEST_CASE(h2_decoder_err_headers_payload_too_small_for_priority) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_headers_payload_too_small_for_priority) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -628,9 +728,273 @@ H2_DECODER_TEST_CASE(h2_decoder_err_headers_payload_too_small_for_priority) {
     return AWS_OP_SUCCESS;
 }
 
+/* Message is malformed if a header-name is blank.
+ * A malformed message is a Stream Error, not a Connection Error, so the decoder should continue */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_headers_blank_name) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x09,               /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x48, 0x03, '3', '0', '2',      /* ":status: 302" - indexed name, uncompressed value */
+        0x40, 0x00, 0x01, 'a',          /* ": a" - literal blank name, uncompressed value */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_TRUE(frame->headers_malformed);
+
+    ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+/* Message is malformed if a header-name has illegal characters.
+ * A malformed message is a Stream Error, not a Connection Error, so the decoder should continue */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_headers_illegal_name) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 10,                 /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x48, 0x03, '3', '0', '2',      /* ":status: 302" - indexed name, uncompressed value */
+        0x40, 0x01, ',', 0x01, 'a',     /* ",: a" - literal name with illegal character */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_TRUE(frame->headers_malformed);
+
+    ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+/* Message is malformed if server receives a response.
+ * A malformed message is a Stream Error, not a Connection Error, so the decoder should continue */
+H2_DECODER_ON_SERVER_TEST(h2_decoder_malformed_headers_response_to_server) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x05,               /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x48, 0x03, '3', '0', '2',      /* ":status: 302" - indexed name, uncompressed value */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_TRUE(frame->headers_malformed);
+
+    ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+/* Message is malformed if client cannot receive requests in HEADERS
+ * (though they can get requests in PUSH_PROMISE frames).
+ * A malformed message is a Stream Error, not a Connection Error, so the decoder should continue */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_headers_request_to_client) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x03,               /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x82,                           /* ":method: GET" - indexed */
+        0x86,                           /* ":scheme: http" - indexed */
+        0x84,                           /* ":path: /" - indexed */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 1 /*stream_id*/));
+    ASSERT_TRUE(frame->headers_malformed);
+
+    ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+/* Message is malformed if it contains both request and response pseudo-headers.
+ * A malformed message is a Stream Error, not a Connection Error, so the decoder should continue */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_headers_mixed_pseudoheaders) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x06,               /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x82,                           /* ":method: GET" - REQUEST PSEUDO-HEADER */
+        0x48, 0x03, '3', '0', '2',      /* ":status: 302" - RESPONSE PSEUDO-HEADER */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 1 /*stream_id*/));
+    ASSERT_TRUE(frame->headers_malformed);
+
+    ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+/* Message is malformed if pseudo-headers come after regular headers.
+ * A malformed message is a Stream Error, not a Connection Error, so the decoder should continue */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_headers_late_pseudoheaders) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 11,                 /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS | AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x7a, 0x04, 't', 'e', 's', 't', /* "user-agent: test" - REGULAR HEADER */
+        0x48, 0x03, '3', '0', '2',      /* ":status: 302" - PSEUDO-HEADER after regular header*/
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 1 /*stream_id*/));
+    ASSERT_TRUE(frame->headers_malformed);
+
+    ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+/* Message is malformed if trailing header does not end stream. */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_headers_trailer_must_end_stream) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x00,               /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS,     /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS - blank*/
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_TRUE(frame->headers_malformed);
+    ASSERT_FALSE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+/* Even if a header-block is malformed, we still process its fields, which may mutate the hpack tables. */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_header_continues_hpack_parsing) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* FRAME 1 - malformed HEADERS */
+        0x00, 0x00, 15,                 /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS,     /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x48, 0x03, '3', '0', '2',      /* ":status: 302" - stored to dynamic table */
+        0x40, 0x01, ',', 0x01, 'a',     /* ",: a" - INVALID character - stored to dynamic table */
+        0x40, 0x01, 'b', 0x01, 'c',     /* "b: c" - stored to dynamic table */
+
+        /* So at this point dynamic table should look like:
+         *  INDEX   NAME    VALUE
+         *  62      b       c
+         *  63      ,       a
+         *  64      :status 302
+         */
+
+        /* FRAME 2 - valid HEADERS referencing entry from malformed HEADERS */
+        0x00, 0x00, 2,                  /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS,     /* Flags (8) */
+        0x00, 0x00, 0x00, 0x03,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0xc0,                           /* ":status: 302" - indexed from dynamic table */
+        0xbe,                           /* "b: c" - indexed from dynamic table */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    ASSERT_UINT_EQUALS(2, h2_decode_tester_frame_count(&fixture->decode));
+
+    /* frame 1 should be malformed */
+    struct h2_decoded_frame *frame = h2_decode_tester_get_frame(&fixture->decode, 0);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 1 /*stream_id*/));
+    ASSERT_TRUE(frame->headers_malformed);
+
+    /* frame 2 should be able to index fields stored by previous malformed frame */
+    frame = h2_decode_tester_get_frame(&fixture->decode, 1);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 3 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
+    ASSERT_UINT_EQUALS(2, aws_http_headers_count(frame->headers));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, "b", "c", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+
+    return AWS_OP_SUCCESS;
+}
+
 /* Test CONTINUATION frame.
  * Decoder requires that a HEADERS or PUSH_PROMISE frame be sent first */
-H2_DECODER_TEST_CASE(h2_decoder_continuation) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_continuation) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -660,6 +1024,7 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation) {
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(2, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -670,7 +1035,7 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation) {
 /* Try setting ALL the flags on CONTINUATION frame.
  * Only END_HEADERS and should trigger.
  * Continuation doesn't support PRIORITY and PADDING like HEADERS does, so they should just be ignored */
-H2_DECODER_TEST_CASE(h2_decoder_continuation_ignores_unknown_flags) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_continuation_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -700,6 +1065,7 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_ignores_unknown_flags) {
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(2, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -708,7 +1074,7 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_ignores_unknown_flags) {
 
 /* Test that we an handle a header-field whose encoding is spread across multiple frames.
  * Throw some padding in to make it extra complicated */
-H2_DECODER_TEST_CASE(h2_decoder_continuation_header_field_spans_frames) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_continuation_header_field_spans_frames) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -740,6 +1106,7 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_header_field_spans_frames) {
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_FALSE(frame->end_stream);
@@ -747,7 +1114,7 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_header_field_spans_frames) {
 }
 
 /* Test having multiple CONTINUATION frames in a row */
-H2_DECODER_TEST_CASE(h2_decoder_continuation_many_frames) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_continuation_many_frames) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -785,6 +1152,7 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_many_frames) {
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -794,7 +1162,7 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_many_frames) {
 }
 
 /* Test having HEADERS and CONTINUATION frames with empty header-block-fragments */
-H2_DECODER_TEST_CASE(h2_decoder_continuation_empty_payloads) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_continuation_empty_payloads) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -830,6 +1198,7 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_empty_payloads) {
     /* Validate */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_TRUE(frame->end_stream);
@@ -838,7 +1207,7 @@ H2_DECODER_TEST_CASE(h2_decoder_continuation_empty_payloads) {
 
 /* Once a header-block starts, it's illegal for any frame but a CONTINUATION on that same stream to arrive.
  * This test sends a different frame type next */
-H2_DECODER_TEST_CASE(h2_decoder_err_continuation_frame_expected) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_continuation_frame_expected) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -871,7 +1240,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_continuation_frame_expected) {
 
 /* Once a header-block starts, it's illegal for any frame but a CONTINUATION on that same stream to arrive.
  * This test sends a different stream-id next */
-H2_DECODER_TEST_CASE(h2_decoder_err_continuation_frame_same_stream_expected) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_continuation_frame_same_stream_expected) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -903,7 +1272,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_continuation_frame_same_stream_expected) {
 }
 
 /* It's an error for a header-block to end with a partially decoded header-field */
-H2_DECODER_TEST_CASE(h2_decoder_err_partial_header) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_partial_header) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -926,7 +1295,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_partial_header) {
 }
 
 /* Ensure that random HPACK decoding errors are reported as ERROR_COMPRESSION */
-H2_DECODER_TEST_CASE(h2_decoder_err_bad_hpack_data) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_bad_hpack_data) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -952,7 +1321,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_bad_hpack_data) {
 }
 
 /* Test PRIORITY frame */
-H2_DECODER_TEST_CASE(h2_decoder_priority) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_priority) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -976,7 +1345,7 @@ H2_DECODER_TEST_CASE(h2_decoder_priority) {
 }
 
 /* Unknown flags should be ignored. PRIORITY frames don't have any flags. */
-H2_DECODER_TEST_CASE(h2_decoder_priority_ignores_unknown_flags) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_priority_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -999,7 +1368,7 @@ H2_DECODER_TEST_CASE(h2_decoder_priority_ignores_unknown_flags) {
     return AWS_OP_SUCCESS;
 }
 
-H2_DECODER_TEST_CASE(h2_decoder_err_priority_requires_stream_id) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_priority_requires_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1022,7 +1391,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_priority_requires_stream_id) {
 }
 
 /* Test PRIORITY frame */
-H2_DECODER_TEST_CASE(h2_decoder_err_priority_payload_too_small) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_priority_payload_too_small) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1045,7 +1414,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_priority_payload_too_small) {
 }
 
 /* Test PRIORITY frame */
-H2_DECODER_TEST_CASE(h2_decoder_err_priority_payload_too_large) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_priority_payload_too_large) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1069,7 +1438,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_priority_payload_too_large) {
 }
 
 /* Test RST_STREAM frame */
-H2_DECODER_TEST_CASE(h2_decoder_rst_stream) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_rst_stream) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1095,7 +1464,7 @@ H2_DECODER_TEST_CASE(h2_decoder_rst_stream) {
 }
 
 /* Unknown flags should be ignored. RST_STREAM frame doesn't support any flags */
-H2_DECODER_TEST_CASE(h2_decoder_rst_stream_ignores_unknown_flags) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_rst_stream_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1120,7 +1489,7 @@ H2_DECODER_TEST_CASE(h2_decoder_rst_stream_ignores_unknown_flags) {
     return AWS_OP_SUCCESS;
 }
 
-H2_DECODER_TEST_CASE(h2_decoder_err_rst_stream_requires_stream_id) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_rst_stream_requires_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1142,7 +1511,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_rst_stream_requires_stream_id) {
 }
 
 /* Payload must be 4 bytes exactly */
-H2_DECODER_TEST_CASE(h2_decoder_err_rst_stream_payload_too_small) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_rst_stream_payload_too_small) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1164,7 +1533,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_rst_stream_payload_too_small) {
 }
 
 /* Payload must be 4 bytes exactly */
-H2_DECODER_TEST_CASE(h2_decoder_err_rst_stream_payload_too_large) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_rst_stream_payload_too_large) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1187,7 +1556,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_rst_stream_payload_too_large) {
 }
 
 /* Test SETTINGS frame */
-H2_DECODER_TEST_CASE(h2_decoder_settings) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_settings) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1227,7 +1596,7 @@ H2_DECODER_TEST_CASE(h2_decoder_settings) {
 }
 
 /* Test SETTINGS frame */
-H2_DECODER_TEST_CASE(h2_decoder_settings_empty) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_settings_empty) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1254,7 +1623,7 @@ H2_DECODER_TEST_CASE(h2_decoder_settings_empty) {
 }
 
 /* SETTINGS frame with ACK flag set */
-H2_DECODER_TEST_CASE(h2_decoder_settings_ack) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_settings_ack) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1281,7 +1650,7 @@ H2_DECODER_TEST_CASE(h2_decoder_settings_ack) {
 }
 
 /* Decoder must ignore settings with unknown IDs */
-H2_DECODER_TEST_CASE(h2_decoder_settings_ignores_unknown_ids) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_settings_ignores_unknown_ids) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1320,7 +1689,7 @@ H2_DECODER_TEST_CASE(h2_decoder_settings_ignores_unknown_ids) {
 
 /* Unexpected flags should be ignored.
  * SETTINGS frames only support ACK */
-H2_DECODER_TEST_CASE(h2_decoder_settings_ignores_unknown_flags) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_settings_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1347,7 +1716,7 @@ H2_DECODER_TEST_CASE(h2_decoder_settings_ignores_unknown_flags) {
 }
 
 /* Error if SETTINGS ACK frame has any individual settings in it */
-H2_DECODER_TEST_CASE(h2_decoder_err_settings_ack_with_data) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_settings_ack_with_data) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1369,7 +1738,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_settings_ack_with_data) {
     return AWS_OP_SUCCESS;
 }
 
-H2_DECODER_TEST_CASE(h2_decoder_err_settings_forbids_stream_id) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_settings_forbids_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1394,7 +1763,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_settings_forbids_stream_id) {
 }
 
 /* Error if SETTINGS payload is not a multiple of 6 */
-H2_DECODER_TEST_CASE(h2_decoder_err_settings_payload_size) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_settings_payload_size) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1418,7 +1787,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_settings_payload_size) {
     return AWS_OP_SUCCESS;
 }
 
-H2_DECODER_TEST_CASE(h2_decoder_push_promise) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_push_promise) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1443,6 +1812,7 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise) {
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -1453,7 +1823,7 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise) {
 
 /* Unknown flags should be ignored.
  * PUSH_PROMISE supports END_HEADERS and PADDED */
-H2_DECODER_TEST_CASE(h2_decoder_push_promise_ignores_unknown_flags) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_push_promise_ignores_unknown_flags) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1480,6 +1850,7 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise_ignores_unknown_flags) {
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -1488,7 +1859,7 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise_ignores_unknown_flags) {
     return AWS_OP_SUCCESS;
 }
 
-H2_DECODER_TEST_CASE(h2_decoder_push_promise_continuation) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_push_promise_continuation) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1531,6 +1902,7 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise_continuation) {
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 0x1 /*stream_id*/));
     ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
+    ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, ":scheme", "https", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
@@ -1541,7 +1913,7 @@ H2_DECODER_TEST_CASE(h2_decoder_push_promise_continuation) {
 
 /* Once a header-block starts, it's illegal for any frame but a CONTINUATION on that same stream to arrive.
  * This test sends a different frame type next */
-H2_DECODER_TEST_CASE(h2_decoder_err_push_promise_continuation_expected) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_push_promise_continuation_expected) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1575,7 +1947,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_push_promise_continuation_expected) {
     return AWS_OP_SUCCESS;
 }
 
-H2_DECODER_TEST_CASE(h2_decoder_err_push_promise_requires_stream_id) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_push_promise_requires_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1601,7 +1973,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_push_promise_requires_stream_id) {
 }
 
 /* Promised stream ID must be valid */
-H2_DECODER_TEST_CASE(h2_decoder_err_push_promise_requires_promised_stream_id) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_push_promise_requires_promised_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1626,8 +1998,64 @@ H2_DECODER_TEST_CASE(h2_decoder_err_push_promise_requires_promised_stream_id) {
     return AWS_OP_SUCCESS;
 }
 
+/* Malformed if PUSH_PROMISE has response pseudo-headers */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_push_promise_must_be_request_1) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x09,               /* Length (24) */
+        AWS_H2_FRAME_T_PUSH_PROMISE,    /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS,     /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,         /* Reserved (1) | Stream Identifier (31) */
+        /* PUSH_PROMISE */
+        0x00, 0x00, 0x00, 0x02,         /* Reserved (1) | Promised Stream ID (31) */
+        0x48, 0x03, '3', '0', '2',      /* ":status: 302" - RESPONSE pseudo-header is incorrect */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 1 /*stream_id*/));
+    ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
+    ASSERT_TRUE(frame->headers_malformed);
+    return AWS_OP_SUCCESS;
+}
+
+/* Malformed if PUSH_PROMISE missing request pseudo-headers */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_push_promise_must_be_request_2) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x04,               /* Length (24) */
+        AWS_H2_FRAME_T_PUSH_PROMISE,    /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS,     /* Flags (8) */
+        0x00, 0x00, 0x00, 0x01,         /* Reserved (1) | Stream Identifier (31) */
+        /* PUSH_PROMISE  */
+        0x00, 0x00, 0x00, 0x02,         /* Reserved (1) | Promised Stream ID (31) */
+                                        /* No headers */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PUSH_PROMISE, 1 /*stream_id*/));
+    ASSERT_UINT_EQUALS(2, frame->promised_stream_id);
+    ASSERT_TRUE(frame->headers_malformed);
+    return AWS_OP_SUCCESS;
+}
+
 /* Test PING frame */
-H2_DECODER_TEST_CASE(h2_decoder_ping) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_ping) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1653,7 +2081,7 @@ H2_DECODER_TEST_CASE(h2_decoder_ping) {
 }
 
 /* Test PING frame with ALL flags set (ACK is only supported flag) */
-H2_DECODER_TEST_CASE(h2_decoder_ping_ack) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_ping_ack) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1678,7 +2106,7 @@ H2_DECODER_TEST_CASE(h2_decoder_ping_ack) {
     return AWS_OP_SUCCESS;
 }
 
-H2_DECODER_TEST_CASE(h2_decoder_err_ping_forbids_stream_id) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_ping_forbids_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1700,7 +2128,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_ping_forbids_stream_id) {
 }
 
 /* PING payload MUST be 8 bytes */
-H2_DECODER_TEST_CASE(h2_decoder_err_ping_payload_too_small) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_ping_payload_too_small) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1722,7 +2150,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_ping_payload_too_small) {
 }
 
 /* PING payload MUST be 8 bytes */
-H2_DECODER_TEST_CASE(h2_decoder_err_ping_payload_too_large) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_ping_payload_too_large) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1744,7 +2172,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_ping_payload_too_large) {
 }
 
 /* Test GOAWAY frame */
-H2_DECODER_TEST_CASE(h2_decoder_goaway) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_goaway) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1774,7 +2202,7 @@ H2_DECODER_TEST_CASE(h2_decoder_goaway) {
 }
 
 /* Test GOAWAY frame with no debug data */
-H2_DECODER_TEST_CASE(h2_decoder_goaway_empty) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_goaway_empty) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1803,7 +2231,7 @@ H2_DECODER_TEST_CASE(h2_decoder_goaway_empty) {
     return AWS_OP_SUCCESS;
 }
 
-H2_DECODER_TEST_CASE(h2_decoder_err_goaway_forbids_stream_id) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_goaway_forbids_stream_id) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1826,7 +2254,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_goaway_forbids_stream_id) {
     return AWS_OP_SUCCESS;
 }
 
-H2_DECODER_TEST_CASE(h2_decoder_err_goaway_payload_too_small) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_goaway_payload_too_small) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1850,7 +2278,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_goaway_payload_too_small) {
 }
 
 /* Test WINDOW_UPDATE frame on stream 0 */
-H2_DECODER_TEST_CASE(h2_decoder_window_update_connection) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_window_update_connection) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1877,7 +2305,7 @@ H2_DECODER_TEST_CASE(h2_decoder_window_update_connection) {
 
 /* Test WINDOW_UPDATE frame on a specific stream.
  * This the only frame type whose stream-id can be zero OR non-zero*/
-H2_DECODER_TEST_CASE(h2_decoder_window_update_stream) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_window_update_stream) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1903,7 +2331,7 @@ H2_DECODER_TEST_CASE(h2_decoder_window_update_stream) {
 }
 
 /* WINDOW_UPDATE payload must always be 4 bytes */
-H2_DECODER_TEST_CASE(h2_decoder_err_window_update_payload_too_small) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_window_update_payload_too_small) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1925,7 +2353,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_window_update_payload_too_small) {
 }
 
 /* WINDOW_UPDATE payload must always be 4 bytes */
-H2_DECODER_TEST_CASE(h2_decoder_err_window_update_payload_too_large) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_window_update_payload_too_large) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1948,7 +2376,7 @@ H2_DECODER_TEST_CASE(h2_decoder_err_window_update_payload_too_large) {
 }
 
 /* Frames of unknown type must be ignored */
-H2_DECODER_TEST_CASE(h2_decoder_unknown_frame_type_ignored) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_unknown_frame_type_ignored) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
@@ -1999,7 +2427,7 @@ static int s_get_finished_frame_i(
 
 /* Test processing many different frame types in a row.
  * (most other tests just operate on 1 frame) */
-H2_DECODER_TEST_CASE(h2_decoder_many_frames_in_a_row) {
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_many_frames_in_a_row) {
     (void)allocator;
     struct fixture *fixture = ctx;
 
