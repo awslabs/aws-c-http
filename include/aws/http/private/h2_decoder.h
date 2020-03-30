@@ -75,11 +75,8 @@ struct aws_h2_decoder_vtable {
     /* Called once for SETTINGS frame with ACK flag */
     int (*on_settings_ack)(void *userdata);
 
-    /* For SETTINGS frame (no ACK flag set): _begin() is called, then 0+ _i() calls, then _end().
-     * No other decoder callbacks will occur in this time. */
-    int (*on_settings_begin)(void *userdata);
-    int (*on_settings_i)(uint16_t setting_id, uint32_t value, void *userdata);
-    int (*on_settings_end)(void *userdata);
+    /* Called once for SETTINGS frame, without ACK flag */
+    int (*on_settings)(const struct aws_h2_frame_setting *settings_array, size_t num_settings, void *userdata);
 
     /* For GOAWAY frame: _begin() is called, then 0+ _i() calls, then _end().
      * No other decoder callbacks will occur in this time. */
@@ -113,6 +110,10 @@ AWS_EXTERN_C_BEGIN
 AWS_HTTP_API struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params);
 AWS_HTTP_API void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder);
 AWS_HTTP_API int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data);
+
+AWS_HTTP_API void aws_h2_decoder_set_setting_header_table_size(struct aws_h2_decoder *decoder, uint32_t data);
+AWS_HTTP_API void aws_h2_decoder_set_setting_enable_push(struct aws_h2_decoder *decoder, uint32_t data);
+AWS_HTTP_API void aws_h2_decoder_set_setting_max_frame_size(struct aws_h2_decoder *decoder, uint32_t data);
 
 AWS_EXTERN_C_END
 

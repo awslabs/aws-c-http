@@ -169,14 +169,14 @@ TEST_CASE(h2_client_ping_ack) {
 
     /* Connection preface requires that SETTINGS be sent first (RFC-7540 3.5). */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
-
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     uint8_t opaque_data[AWS_H2_PING_DATA_SIZE] = {0, 1, 2, 3, 4, 5, 6, 7};
 
     struct aws_h2_frame *frame = aws_h2_frame_new_ping(allocator, false /*ack*/, opaque_data);
     ASSERT_NOT_NULL(frame);
 
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, frame));
-
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* Have the fake peer to run its decoder on what the client has written.
      * The decoder will raise an error if it doesn't receive the "client connection preface string" first. */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
@@ -191,3 +191,21 @@ TEST_CASE(h2_client_ping_ack) {
     return s_tester_clean_up();
 }
 /* TODO: test that ping response is sent with higher priority than any other frame */
+
+TEST_CASE(h2_client_setting_ack) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* Connection preface requires that SETTINGS be sent first (RFC-7540 3.5). */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* Have the fake peer to run its decoder on what the client has written. */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    /* The Setting ACK frame should be sent back */
+    struct h2_decoded_frame *latest_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
+    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, latest_frame->type);
+    ASSERT_TRUE(latest_frame->ack);
+
+    return s_tester_clean_up();
+}

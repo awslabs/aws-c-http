@@ -275,30 +275,19 @@ static int s_decoder_on_rst_stream(uint32_t stream_id, uint32_t error_code, void
     return AWS_OP_SUCCESS;
 }
 
-static int s_decoder_on_settings_begin(void *userdata) {
+static int s_decoder_on_settings(
+    const struct aws_h2_frame_setting *settings_array,
+    size_t num_settings,
+    void *userdata) {
     struct h2_decode_tester *decode_tester = userdata;
     struct h2_decoded_frame *frame;
     ASSERT_SUCCESS(s_begin_new_frame(decode_tester, AWS_H2_FRAME_T_SETTINGS, 0, &frame));
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_settings_i(uint16_t setting_id, uint32_t value, void *userdata) {
-    struct h2_decode_tester *decode_tester = userdata;
-    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(decode_tester);
-
-    /* Validate */
-    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_SETTINGS, frame->type);
-    ASSERT_FALSE(frame->finished);
 
     /* Stash setting */
-    struct aws_h2_frame_setting setting = {setting_id, value};
-    ASSERT_SUCCESS(aws_array_list_push_back(&frame->settings, &setting));
+    for (size_t i = 0; i < num_settings; i++) {
+        ASSERT_SUCCESS(aws_array_list_push_back(&frame->settings, &settings_array[i]));
+    }
 
-    return AWS_OP_SUCCESS;
-}
-
-static int s_decoder_on_settings_end(void *userdata) {
-    struct h2_decode_tester *decode_tester = userdata;
     ASSERT_SUCCESS(s_end_current_frame(decode_tester, AWS_H2_FRAME_T_SETTINGS, 0));
     return AWS_OP_SUCCESS;
 }
@@ -409,9 +398,7 @@ static struct aws_h2_decoder_vtable s_decoder_vtable = {
     .on_data = s_decoder_on_data,
     .on_end_stream = s_decoder_on_end_stream,
     .on_rst_stream = s_decoder_on_rst_stream,
-    .on_settings_begin = s_decoder_on_settings_begin,
-    .on_settings_i = s_decoder_on_settings_i,
-    .on_settings_end = s_decoder_on_settings_end,
+    .on_settings = s_decoder_on_settings,
     .on_settings_ack = s_decoder_on_settings_ack,
     .on_ping = s_decoder_on_ping,
     .on_ping_ack = s_decoder_on_ping_ack,

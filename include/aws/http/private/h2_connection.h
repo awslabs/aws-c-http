@@ -42,6 +42,11 @@ struct aws_h2_connection {
 
         bool is_outgoing_frames_task_active;
 
+        /* Settings received from peer, which restricts the message to send */
+        uint32_t settings_peer[AWS_H2_SETTINGS_END_RANGE];
+        /* My settings to send/sent to peer, which affects the decoding */
+        uint32_t settings_self[AWS_H2_SETTINGS_END_RANGE];
+
         /* Maps stream-id to aws_h2_stream*.
          * Contains all streams in the open, reserved, and half-closed states (terms from RFC-7540 5.1).
          * Once a stream enters closed state, it is removed from this map. */

@@ -136,9 +136,7 @@ static int s_get_max_contiguous_payload_length(
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
 
-    /* #TODO actually check against encoder's current MAX_FRAME_SIZE */
-    (void)encoder;
-    const size_t max_payload_given_settings = AWS_H2_PAYLOAD_MAX;
+    size_t max_payload_given_settings = encoder->settings.max_frame_size;
 
     *max_payload_length = aws_min_size(max_payload_given_space_available, max_payload_given_settings);
     return AWS_OP_SUCCESS;
@@ -247,6 +245,9 @@ int aws_h2_frame_encoder_init(
     if (!encoder->hpack) {
         return AWS_OP_ERR;
     }
+
+    encoder->settings.header_table_size = aws_h2_settings_initial[AWS_H2_SETTINGS_HEADER_TABLE_SIZE];
+    encoder->settings.max_frame_size = aws_h2_settings_initial[AWS_H2_SETTINGS_MAX_FRAME_SIZE];
 
     return AWS_OP_SUCCESS;
 }
@@ -1137,4 +1138,13 @@ int aws_h2_encode_frame(
 
     encoder->current_frame = *frame_complete ? NULL : frame;
     return AWS_OP_SUCCESS;
+}
+
+void aws_h2_frame_encoder_set_setting_header_table_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {
+    /* TODO:: pass down to the HPACK context aws_hpack_resize_dynamic_table() */
+    encoder->settings.header_table_size = data;
+}
+
+void aws_h2_frame_encoder_set_setting_max_frame_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {
+    encoder->settings.max_frame_size = data;
 }
