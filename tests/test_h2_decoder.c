@@ -460,6 +460,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers) {
     ASSERT_UINT_EQUALS(2, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, "user-agent", "test", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -491,6 +492,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_padded) {
     ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
     return AWS_OP_SUCCESS;
 }
 
@@ -523,6 +525,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_priority) {
     ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
     return AWS_OP_SUCCESS;
 }
 
@@ -556,7 +559,37 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_ignores_unknown_flags) {
     ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
     ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_response_informational) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x00, 0x00, 0x05,               /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,         /* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS,     /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,         /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x48, 0x03, '1', '0', '0',      /* ":status: 100" - indexed name, uncompressed value */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "100", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_INFORMATIONAL, frame->header_block_type);
+    ASSERT_FALSE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
 
@@ -593,6 +626,7 @@ H2_DECODER_ON_SERVER_TEST(h2_decoder_headers_request) {
     ASSERT_SUCCESS(s_check_header(frame, 2, ":authority", "amazon.com", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 3, ":path", "/", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 4, "user-agent", "test", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -622,6 +656,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_trailer) {
     ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, "user-agent", "test", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_TRAILING, frame->header_block_type);
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -649,6 +684,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_empty_trailer) {
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
     ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(0, aws_http_headers_count(frame->headers));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_TRAILING, frame->header_block_type);
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -988,6 +1024,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_malformed_header_continues_hpack_parsing) {
     ASSERT_UINT_EQUALS(2, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, "b", "c", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
 
     return AWS_OP_SUCCESS;
 }
@@ -1028,6 +1065,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_continuation) {
     ASSERT_UINT_EQUALS(2, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -1069,6 +1107,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_continuation_ignores_unknown_flags) {
     ASSERT_UINT_EQUALS(2, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
     return AWS_OP_SUCCESS;
 }
 
@@ -1109,6 +1148,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_continuation_header_field_spans_frames) {
     ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
     ASSERT_FALSE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -1157,6 +1197,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_continuation_many_frames) {
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 1, "cache-control", "private", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_SUCCESS(s_check_header(frame, 2, "hi", "mom", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
@@ -1201,6 +1242,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_continuation_empty_payloads) {
     ASSERT_FALSE(frame->headers_malformed);
     ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
     ASSERT_SUCCESS(s_check_header(frame, 0, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
     ASSERT_TRUE(frame->end_stream);
     return AWS_OP_SUCCESS;
 }
