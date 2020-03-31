@@ -204,6 +204,7 @@ add_test_case(hpack_static_table_get)
 add_test_case(hpack_dynamic_table_find)
 add_test_case(hpack_dynamic_table_get)
 add_test_case(hpack_decode_indexed_from_dynamic_table)
+add_test_case(hpack_decode_empty_value)
 
 add_test_case(h2_header_empty_payload)
 add_one_byte_at_a_time_test_set(h2_header_ex_2_1)
