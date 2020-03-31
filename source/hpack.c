@@ -236,6 +236,7 @@ struct aws_hpack_context {
     struct aws_huffman_decoder decoder;
 
     struct {
+        /* headers are the byte cursors, and they point to the scratch */
         struct aws_http_header *buffer;
         size_t buffer_capacity; /* Number of http_headers that can fit in buffer */
 
@@ -390,12 +391,24 @@ dynamic_table_buffer_failed:
     return NULL;
 }
 
+static struct aws_http_header *s_dynamic_table_get(const struct aws_hpack_context *context, size_t index);
+
+static void s_clean_up_dynamic_table_buffer(struct aws_hpack_context *context) {
+    while (context->dynamic_table.num_elements > 0) {
+        struct aws_http_header *back = s_dynamic_table_get(context, context->dynamic_table.num_elements - 1);
+        context->dynamic_table.num_elements -= 1;
+        /* clean-up the memory we allocate for it */
+        aws_mem_release(context->allocator, back->name.ptr);
+    }
+    aws_mem_release(context->allocator, context->dynamic_table.buffer);
+}
+
 void aws_hpack_context_destroy(struct aws_hpack_context *context) {
     if (!context) {
         return;
     }
     if (context->dynamic_table.buffer) {
-        aws_mem_release(context->allocator, context->dynamic_table.buffer);
+        s_clean_up_dynamic_table_buffer(context);
     }
     aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup);
     aws_hash_table_clean_up(&context->dynamic_table.reverse_lookup_name_only);
@@ -523,6 +536,9 @@ static int s_dynamic_table_shrink(struct aws_hpack_context *context, size_t max_
                 goto error;
             }
         }
+
+        /* clean-up the memory we allocate for it */
+        aws_mem_release(context->allocator, back->name.ptr);
     }
 
     return AWS_OP_SUCCESS;
@@ -534,6 +550,7 @@ error:
 /*
  * Resizes the dynamic table storage buffer to new_max_elements.
  * Useful when inserting over capacity, or when downsizing.
+ * Do shrink first, if you want to remove elements, or memory leak will happen.
  */
 static int s_dynamic_table_resize_buffer(struct aws_hpack_context *context, size_t new_max_elements) {
 
@@ -604,6 +621,7 @@ cleanup_old_buffer:
     /* Reset state */
 reset_dyn_table_state:
     if (context->dynamic_table.num_elements > new_max_elements) {
+        /* This will never hit? */
         context->dynamic_table.num_elements = new_max_elements;
     }
     context->dynamic_table.buffer_capacity = new_max_elements;
@@ -668,7 +686,20 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
 
     /* Put the header at the "front" of the table */
     struct aws_http_header *table_header = s_dynamic_table_get(context, 0);
-    *table_header = *header;
+
+    /* TODO:: We could optimize this with ring buffer. */
+    /* allocate memory for the name and value, which will be deallocated whenever the entry is evicted from the table or
+     * the table is cleaned up. We keep the pointer in the name pointer of each entry */
+    uint8_t *memory_buffer = aws_mem_calloc(context->allocator, header->name.len + header->value.len, sizeof(uint8_t));
+    memcpy(memory_buffer, header->name.ptr, header->name.len);
+    table_header->name.ptr = memory_buffer;
+    table_header->name.len = header->name.len;
+
+    memcpy(memory_buffer + header->name.len, header->value.ptr, header->value.len);
+    table_header->value.ptr = memory_buffer + header->name.len;
+    table_header->value.len = header->value.len;
+
+    table_header->compression = header->compression;
 
     /* Write the new header to the look up tables */
     if (aws_hash_table_put(
@@ -1188,9 +1219,7 @@ int aws_hpack_decode(
                 goto handle_complete;
             } break;
 
-            default: {
-                AWS_ASSERT(0 && "invalid state");
-            } break;
+            default: { AWS_ASSERT(0 && "invalid state"); } break;
         }
     }
 
