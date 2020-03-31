@@ -52,9 +52,10 @@ struct h2_decoded_frame {
     uint8_t ping_opaque_data[AWS_H2_PING_DATA_SIZE]; /* PING has this */
     uint32_t window_size_increment;                  /* WINDOW_UPDATE has this */
 
-    struct aws_http_headers *headers; /* HEADERS and PUSH_PROMISE have this */
-    bool headers_malformed;           /* HEADERS and PUSH_PROMISE have this */
-    struct aws_array_list settings;   /* contains aws_h2_frame_setting, SETTINGS has this */
+    struct aws_http_headers *headers;             /* HEADERS and PUSH_PROMISE have this */
+    bool headers_malformed;                       /* HEADERS and PUSH_PROMISE have this */
+    enum aws_http_header_block header_block_type; /* HEADERS have this */
+    struct aws_array_list settings;               /* contains aws_h2_frame_setting, SETTINGS has this */
     struct aws_byte_buf data /* DATA has this */;
 };
 
