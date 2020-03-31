@@ -236,7 +236,8 @@ struct aws_hpack_context {
     struct aws_huffman_decoder decoder;
 
     struct {
-        /* Array of headers, pointers to memory we alloced, which needs to be clean up whenever we move an entry out */
+        /* Array of headers, pointers to memory we alloced, which needs to be cleaned up whenever we move an entry out
+         */
         struct aws_http_header *buffer;
         size_t buffer_capacity; /* Number of http_headers that can fit in buffer */
 
@@ -690,6 +691,10 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     /* allocate memory for the name and value, which will be deallocated whenever the entry is evicted from the table or
      * the table is cleaned up. We keep the pointer in the name pointer of each entry */
     uint8_t *memory_buffer = aws_mem_calloc(context->allocator, header->name.len + header->value.len, sizeof(uint8_t));
+    if (!memory_buffer) {
+        goto error;
+    }
+
     memcpy(memory_buffer, header->name.ptr, header->name.len);
     table_header->name.ptr = memory_buffer;
     table_header->name.len = header->name.len;
