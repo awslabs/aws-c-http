@@ -26,6 +26,7 @@ static int s_on_headers(
     size_t num_headers,
     void *user_data) {
 
+    (void)stream;
     struct client_stream_tester *tester = user_data;
     ASSERT_FALSE(tester->complete);
 
@@ -117,6 +118,7 @@ static int s_on_header_block_done(
 }
 
 static int s_on_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
+    (void)stream;
     struct client_stream_tester *tester = user_data;
     ASSERT_FALSE(tester->complete);
     ASSERT_SUCCESS(aws_byte_buf_append_dynamic(&tester->response_body, data));
