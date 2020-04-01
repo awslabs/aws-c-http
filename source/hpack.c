@@ -164,7 +164,7 @@ static struct aws_hash_table s_static_header_reverse_lookup_name_only;
 static uint64_t s_header_hash(const void *key) {
     const struct aws_http_header *header = key;
 
-    return aws_hash_byte_cursor_ptr(&header->name);
+    return aws_hash_byte_cursor_ptr(&header->name) ^ aws_hash_byte_cursor_ptr(&header->value);
 }
 
 static bool s_header_eq(const void *a, const void *b) {
@@ -176,7 +176,7 @@ static bool s_header_eq(const void *a, const void *b) {
     }
 
     /* If the header stored in the table doesn't have a value, then it's a match */
-    return !right->value.ptr || aws_byte_cursor_eq(&left->value, &right->value);
+    return aws_byte_cursor_eq(&left->value, &right->value);
 }
 
 void aws_hpack_static_table_init(struct aws_allocator *allocator) {
@@ -425,6 +425,10 @@ size_t aws_hpack_get_header_size(const struct aws_http_header *header) {
     return header->name.len + header->value.len + 32;
 }
 
+size_t aws_hpack_get_dynamic_table_num_elements(const struct aws_hpack_context *context) {
+    return context->dynamic_table.num_elements;
+}
+
 /*
  * Gets the header from the dynamic table.
  * NOTE: This function only bounds checks on the buffer size, not the number of elements.
@@ -462,41 +466,42 @@ static const struct aws_http_header *s_get_header_u64(const struct aws_hpack_con
     return aws_hpack_get_header(context, (size_t)index);
 }
 
-/* #TODO pass option whether or not to search for values
- * #TODO I suspect we're not 100% doing the right thing with empty values */
 size_t aws_hpack_find_index(
     const struct aws_hpack_context *context,
     const struct aws_http_header *header,
+    bool search_value,
     bool *found_value) {
 
     *found_value = false;
 
     /* Check static table */
     struct aws_hash_element *elem = NULL;
-    aws_hash_table_find(&s_static_header_reverse_lookup, header, &elem);
-    if (elem) {
-        *found_value = ((const struct aws_http_header *)elem->key)->value.len;
-        return (size_t)elem->value;
+    if (search_value) {
+        aws_hash_table_find(&s_static_header_reverse_lookup, header, &elem);
+        if (elem) {
+            *found_value = ((const struct aws_http_header *)elem->key)->value.len;
+            return (size_t)elem->value;
+        }
+    } else {
+        /* If not found, check name only table. Don't set found_value, it will be false */
+        aws_hash_table_find(&s_static_header_reverse_lookup_name_only, &header->name, &elem);
+        if (elem) {
+            return (size_t)elem->value;
+        }
     }
-    /* If not found, check name only table. Don't set found_value, it will be false */
-    aws_hash_table_find(&s_static_header_reverse_lookup_name_only, &header->name, &elem);
-    if (elem) {
-        return (size_t)elem->value;
-    }
-
     /* Check dynamic table */
-    aws_hash_table_find(&context->dynamic_table.reverse_lookup, header, &elem);
-    if (elem) {
-        /* If an element was found, check if it has a value */
-        *found_value = ((const struct aws_http_header *)elem->key)->value.len;
+    if (search_value) {
+        aws_hash_table_find(&context->dynamic_table.reverse_lookup, header, &elem);
+        if (elem) {
+            /* If an element was found, check if it has a value */
+            *found_value = ((const struct aws_http_header *)elem->key)->value.len;
+        }
     } else {
         /* If not found, check name only table. Don't set found_value, it will be false */
         aws_hash_table_find(&context->dynamic_table.reverse_lookup_name_only, &header->name, &elem);
     }
 
     if (elem) {
-        /* DO NOT SET found_value HERE! We only found the name, not the value! */
-
         size_t index;
         const size_t absolute_index = (size_t)elem->value;
         if (absolute_index >= context->dynamic_table.index_0) {
@@ -507,6 +512,10 @@ size_t aws_hpack_find_index(
         /* Need to add the static table size to re-base indicies */
         index += s_static_header_table_size;
         return index;
+    }
+    if (search_value & !elem) {
+        /* search for value failed in both static and dynamic table, let's try to only search for name */
+        return aws_hpack_find_index(context, header, false, found_value);
     }
 
     return 0;
@@ -538,7 +547,7 @@ static int s_dynamic_table_shrink(struct aws_hpack_context *context, size_t max_
             }
         }
 
-        /* clean-up the memory we allocate for it */
+        /* clean up the memory we allocated to hold the name and value string*/
         aws_mem_release(context->allocator, back->name.ptr);
     }
 
@@ -690,20 +699,16 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     /* TODO:: We can optimize this with ring buffer. */
     /* allocate memory for the name and value, which will be deallocated whenever the entry is evicted from the table or
      * the table is cleaned up. We keep the pointer in the name pointer of each entry */
-    uint8_t *memory_buffer = aws_mem_calloc(context->allocator, header->name.len + header->value.len, sizeof(uint8_t));
-    if (!memory_buffer) {
-        goto error;
+    const size_t buf_memory_size = header->name.len + header->value.len;
+    uint8_t *buf_memory = aws_mem_acquire(context->allocator, buf_memory_size);
+    if (!buf_memory) {
+        return AWS_OP_ERR;
     }
-
-    memcpy(memory_buffer, header->name.ptr, header->name.len);
-    table_header->name.ptr = memory_buffer;
-    table_header->name.len = header->name.len;
-
-    memcpy(memory_buffer + header->name.len, header->value.ptr, header->value.len);
-    table_header->value.ptr = memory_buffer + header->name.len;
-    table_header->value.len = header->value.len;
-
-    table_header->compression = header->compression;
+    struct aws_byte_buf buf = aws_byte_buf_from_empty_array(buf_memory, buf_memory_size);
+    /* Copy header, then backup strings into our own allocation */
+    *table_header = *header;
+    aws_byte_buf_append_and_update(&buf, &table_header->name);
+    aws_byte_buf_append_and_update(&buf, &table_header->value);
 
     /* Write the new header to the look up tables */
     if (aws_hash_table_put(
@@ -1309,7 +1314,7 @@ static int s_encode_header_field(
 
     /* Search for header-field in tables */
     bool found_indexed_value;
-    size_t header_index = aws_hpack_find_index(context, header, &found_indexed_value);
+    size_t header_index = aws_hpack_find_index(context, header, true, &found_indexed_value);
 
     if (header->compression != AWS_HTTP_HEADER_COMPRESSION_USE_CACHE) {
         /* If user doesn't want to use indexed value, then don't use it */
