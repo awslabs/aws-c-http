@@ -281,7 +281,7 @@ struct aws_h2_frame *aws_h2_frame_new_window_update(
     uint32_t stream_id,
     uint32_t window_size_increment);
 
-AWS_HTTP_API void aws_h2_frame_encoder_set_setting_header_table_size(
+AWS_HTTP_API int aws_h2_frame_encoder_set_setting_header_table_size(
     struct aws_h2_frame_encoder *encoder,
     uint32_t data);
 AWS_HTTP_API void aws_h2_frame_encoder_set_setting_max_frame_size(struct aws_h2_frame_encoder *encoder, uint32_t data);

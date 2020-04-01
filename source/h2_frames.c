@@ -1140,9 +1140,17 @@ int aws_h2_encode_frame(
     return AWS_OP_SUCCESS;
 }
 
-void aws_h2_frame_encoder_set_setting_header_table_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {
-    /* TODO:: pass down to the HPACK context aws_hpack_resize_dynamic_table() */
+int aws_h2_frame_encoder_set_setting_header_table_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {
+    if (aws_hpack_resize_dynamic_table(encoder->hpack, data, true)) {
+        ENCODER_LOGF(
+            ERROR,
+            encoder,
+            "Failed to resize the hpack dynamic table, %s",
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
     encoder->settings.header_table_size = data;
+    return AWS_OP_SUCCESS;
 }
 
 void aws_h2_frame_encoder_set_setting_max_frame_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {
