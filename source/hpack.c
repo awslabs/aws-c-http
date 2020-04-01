@@ -235,6 +235,12 @@ struct aws_hpack_context {
     struct aws_huffman_encoder encoder;
     struct aws_huffman_decoder decoder;
 
+    struct hpack {
+        size_t last_value;
+        size_t smallest_value;
+        bool pending;
+    } dynamic_table_size_update;
+
     struct {
         /* Array of headers, pointers to memory we alloced, which needs to be cleaned up whenever we move an entry out
          */
@@ -722,11 +728,27 @@ error:
     return AWS_OP_ERR;
 }
 
-int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new_max_size) {
+int aws_hpack_resize_dynamic_table(
+    struct aws_hpack_context *context,
+    size_t new_max_size,
+    bool called_from_encoder_setting) {
 
     /* Nothing to see here! */
     if (new_max_size == context->dynamic_table.max_size) {
         return AWS_OP_SUCCESS;
+    }
+
+    if (called_from_encoder_setting) {
+        /* We need to memorize the change of max_size, as we will signal the update when we send the next header block
+         */
+        if (!context->dynamic_table_size_update.pending) {
+            context->dynamic_table_size_update.pending = true;
+            context->dynamic_table_size_update.smallest_value = new_max_size;
+        } else {
+            context->dynamic_table_size_update.smallest_value =
+                aws_min_size(new_max_size, context->dynamic_table_size_update.smallest_value);
+        }
+        context->dynamic_table_size_update.last_value = new_max_size;
     }
 
     if (new_max_size > s_hpack_dynamic_table_max_size) {
@@ -1210,7 +1232,7 @@ int aws_hpack_decode(
                 size_t size = (size_t)*size64;
 
                 HPACK_LOGF(TRACE, context, "Dynamic table size update %zu", size);
-                if (aws_hpack_resize_dynamic_table(context, size)) {
+                if (aws_hpack_resize_dynamic_table(context, size, false)) {
                     return AWS_OP_ERR;
                 }
 
@@ -1382,21 +1404,28 @@ int aws_hpack_encode_header_block(
     const struct aws_http_headers *headers,
     struct aws_byte_buf *output) {
 
-#if 0 // #TODO finish hooking this up
     /* Encode a dynamic table size update at the beginning of the first header-block
      * following the change to the dynamic table size RFC-7541 4.2 */
     if (context->dynamic_table_size_update.pending) {
-        if (s_encode_dynamic_table_resize(context, context->dynamic_table_size_update.value, output)) {
+        if (context->dynamic_table_size_update.smallest_value != context->dynamic_table_size_update.last_value) {
             uint8_t starting_bit_pattern = s_hpack_entry_starting_bit_pattern[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
             uint8_t num_prefix_bits = s_hpack_entry_num_prefix_bits[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
-            if (aws_hpack_encode_integer(size, starting_bit_pattern, num_prefix_bits, output)) {
+            if (aws_hpack_encode_integer(
+                    context->dynamic_table_size_update.smallest_value, starting_bit_pattern, num_prefix_bits, output)) {
                 return AWS_OP_ERR;
             }
         }
+        uint8_t starting_bit_pattern = s_hpack_entry_starting_bit_pattern[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
+        uint8_t num_prefix_bits = s_hpack_entry_num_prefix_bits[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
+        if (aws_hpack_encode_integer(
+                context->dynamic_table_size_update.last_value, starting_bit_pattern, num_prefix_bits, output)) {
+            return AWS_OP_ERR;
+        }
+
         context->dynamic_table_size_update.pending = false;
-        context->dynamic_table_size_update.value = SIZE_MAX;
+        context->dynamic_table_size_update.last_value = SIZE_MAX;
+        context->dynamic_table_size_update.smallest_value = SIZE_MAX;
     }
-#endif
 
     const size_t num_headers = aws_http_headers_count(headers);
     for (size_t i = 0; i < num_headers; ++i) {
