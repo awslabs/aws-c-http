@@ -223,6 +223,9 @@ struct aws_h2_decoder {
         /* If 0, then no header-block in progress */
         uint32_t stream_id;
 
+        /* Whether these are informational (1xx), normal, or trailing headers */
+        enum aws_http_header_block block_type;
+
         /* Buffer up pseudo-headers and deliver them once they're all validated */
         struct aws_string *pseudoheader_values[PSEUDOHEADER_COUNT];
         enum aws_http_header_compression pseudoheader_compression[PSEUDOHEADER_COUNT];
@@ -1081,18 +1084,49 @@ static int s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
     }
 
     bool has_response_pseudoheaders = current_block->pseudoheader_values[PSEUDOHEADER_STATUS] != NULL;
-    bool is_trailer = !has_response_pseudoheaders && !has_request_pseudoheaders;
 
     if (current_block->is_push_promise && !has_request_pseudoheaders) {
         DECODER_LOG(ERROR, decoder, "PUSH_PROMISE is missing :method");
         goto malformed;
     }
 
-    if (is_trailer) {
+    if (has_request_pseudoheaders) {
+        /* Request header-block. */
+        current_block->block_type = AWS_HTTP_HEADER_BLOCK_MAIN;
+
+    } else if (has_response_pseudoheaders) {
+        /* Response header block. */
+
+        /* Determine whether this is an Informational (1xx) response */
+        struct aws_byte_cursor status_value =
+            aws_byte_cursor_from_string(current_block->pseudoheader_values[PSEUDOHEADER_STATUS]);
+        uint64_t status_code;
+        if (status_value.len != 3 || aws_strutil_read_unsigned_num(status_value, &status_code)) {
+            DECODER_LOG(ERROR, decoder, ":status header has invalid value");
+            DECODER_LOGF(DEBUG, decoder, "Bad :status value is '" PRInSTR "'", AWS_BYTE_CURSOR_PRI(status_value));
+            goto malformed;
+        }
+
+        if (status_code / 100 == 1) {
+            current_block->block_type = AWS_HTTP_HEADER_BLOCK_INFORMATIONAL;
+
+            if (current_block->ends_stream) {
+                /* Informational headers do not constitute a full response (RFC-7541 8.1) */
+                DECODER_LOG(ERROR, decoder, "Informational (1xx) response cannot END_STREAM");
+                goto malformed;
+            }
+        } else {
+            current_block->block_type = AWS_HTTP_HEADER_BLOCK_MAIN;
+        }
+
+    } else {
+        /* Trailing header block. */
         if (!current_block->ends_stream) {
             DECODER_LOG(ERROR, decoder, "HEADERS appear to be trailer, but lack END_STREAM");
             goto malformed;
         }
+
+        current_block->block_type = AWS_HTTP_HEADER_BLOCK_TRAILING;
     }
 
     /* #TODO RFC-7540 8.1.2.3 & 8.3 Validate request has correct pseudoheaders. Note different rules for CONNECT */
@@ -1114,7 +1148,8 @@ static int s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
             if (current_block->is_push_promise) {
                 DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, &header_field, name_enum);
             } else {
-                DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, &header_field, name_enum);
+                DECODER_CALL_VTABLE_STREAM_ARGS(
+                    decoder, on_headers_i, &header_field, name_enum, current_block->block_type);
             }
         }
     }
@@ -1223,7 +1258,7 @@ static int s_process_header_field(struct aws_h2_decoder *decoder, const struct a
         if (current_block->is_push_promise) {
             DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, header_field, name_enum);
         } else {
-            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, header_field, name_enum);
+            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, header_field, name_enum, current_block->block_type);
         }
     }
 
@@ -1260,7 +1295,8 @@ static int s_state_fn_header_block_loop(struct aws_h2_decoder *decoder, struct a
             if (decoder->header_block_in_progress.is_push_promise) {
                 DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_end, malformed);
             } else {
-                DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_end, malformed);
+                DECODER_CALL_VTABLE_STREAM_ARGS(
+                    decoder, on_headers_end, malformed, decoder->header_block_in_progress.block_type);
             }
 
             /* If header-block began with END_STREAM flag, alert user now */
