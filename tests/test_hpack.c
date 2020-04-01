@@ -701,3 +701,104 @@ static int test_hpack_dynamic_table_get(struct aws_allocator *allocator, void *c
     aws_http_library_clean_up();
     return AWS_OP_SUCCESS;
 }
+
+static int s_check_header(
+    const struct aws_http_header *header_field,
+    const char *name,
+    const char *value,
+    enum aws_http_header_compression compression) {
+
+    ASSERT_BIN_ARRAYS_EQUALS(name, strlen(name), header_field->name.ptr, header_field->name.len);
+    ASSERT_BIN_ARRAYS_EQUALS(value, strlen(value), header_field->value.ptr, header_field->value.len);
+    ASSERT_INT_EQUALS(compression, header_field->compression);
+    return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(hpack_decode_indexed_from_dynamic_table, test_hpack_decode_indexed_from_dynamic_table)
+static int test_hpack_decode_indexed_from_dynamic_table(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    aws_http_library_init(allocator);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
+    ASSERT_NOT_NULL(context);
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x48, 0x03, '3', '0', '2',      /* ":status: 302" - stored to dynamic table */
+        0x40, 0x01, 'a', 0x01, 'b',     /* "a: b" - stored to dynamic table */
+        /* So at this point dynamic table should look like:
+         *  INDEX   NAME    VALUE
+         *  62      a       b
+         *  63      :status 302
+         */
+        0xbf,                           /* ":status: 302" - indexed from dynamic table */
+    };
+    /* clang-format on */
+    struct aws_hpack_decode_result result;
+    struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
+    /* Three entries in total, decode them all, and check the result */
+    /* First entry */
+    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
+    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
+    ASSERT_SUCCESS(s_check_header(&result.data.header_field, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    /* Second entry */
+    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
+    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
+    ASSERT_SUCCESS(s_check_header(&result.data.header_field, "a", "b", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    /* Third entry */
+    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
+    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
+    ASSERT_SUCCESS(s_check_header(&result.data.header_field, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+
+    /* Check the input is fully consumed */
+    ASSERT_TRUE(input_cursor.len == 0);
+
+    /* Clean up */
+    aws_hpack_context_destroy(context);
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(hpack_decode_empty_value, test_hpack_decode_empty_value)
+static int test_hpack_decode_empty_value(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    aws_http_library_init(allocator);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
+    ASSERT_NOT_NULL(context);
+
+    /* clang-format off */
+    uint8_t input[] = {
+        0x48, 0x03, '3', '0', '2',      /* ":status: 302" - stored to dynamic table */
+        0x40, 0x01, 'a', 0x00,          /* "a" - stored to dynamic table */
+        /* So at this point dynamic table should look like:
+         *  INDEX   NAME    VALUE
+         *  62      a
+         *  63      :status 302
+         */
+        0xbe,                           /* "a" - indexed from dynamic table */
+    };
+    /* clang-format on */
+    struct aws_hpack_decode_result result;
+    struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
+    /* Three entries in total, decode them all, and check the result */
+    /* First entry */
+    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
+    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
+    ASSERT_SUCCESS(s_check_header(&result.data.header_field, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    /* Second entry */
+    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
+    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
+    ASSERT_SUCCESS(s_check_header(&result.data.header_field, "a", "", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    /* Third entry */
+    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
+    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
+    ASSERT_SUCCESS(s_check_header(&result.data.header_field, "a", "", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    /* Check the input is fully consumed */
+    ASSERT_TRUE(input_cursor.len == 0);
+
+    /* Clean up */
+    aws_hpack_context_destroy(context);
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
