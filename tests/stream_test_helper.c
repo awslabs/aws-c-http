@@ -19,6 +19,8 @@
 #include <aws/http/status_code.h>
 #include <aws/testing/aws_test_harness.h>
 
+#define UNKNOWN_HEADER_BLOCK ((enum aws_http_header_block) - 1)
+
 static int s_on_headers(
     struct aws_http_stream *stream,
     enum aws_http_header_block header_block,
@@ -30,7 +32,7 @@ static int s_on_headers(
     struct client_stream_tester *tester = user_data;
     ASSERT_FALSE(tester->complete);
 
-    if (tester->current_header_block == -1) {
+    if (tester->current_header_block == UNKNOWN_HEADER_BLOCK) {
         tester->current_header_block = header_block;
     } else {
         ASSERT_INT_EQUALS(tester->current_header_block, header_block);
@@ -65,10 +67,10 @@ static int s_on_header_block_done(
     struct client_stream_tester *tester = user_data;
     ASSERT_FALSE(tester->complete);
 
-    if (tester->current_header_block != -1) {
+    if (tester->current_header_block != UNKNOWN_HEADER_BLOCK) {
         ASSERT_INT_EQUALS(tester->current_header_block, header_block);
     }
-    tester->current_header_block = -1;
+    tester->current_header_block = UNKNOWN_HEADER_BLOCK;
 
     /* Response consists of:
      * - 0+ informational (1xx) header-blocks
@@ -131,7 +133,7 @@ static void s_on_complete(struct aws_http_stream *stream, int error_code, void *
     /* Validate things are firing properly */
     AWS_FATAL_ASSERT(!tester->complete);
     if (error_code == AWS_ERROR_SUCCESS) {
-        AWS_FATAL_ASSERT(tester->current_header_block == -1);
+        AWS_FATAL_ASSERT(tester->current_header_block == UNKNOWN_HEADER_BLOCK);
         AWS_FATAL_ASSERT(aws_http_headers_count(tester->current_info_headers) == 0); /* is cleared when block done */
         AWS_FATAL_ASSERT(tester->response_headers_done || aws_http_headers_count(tester->response_headers) == 0);
         AWS_FATAL_ASSERT(tester->response_trailer_done || aws_http_headers_count(tester->response_trailer) == 0);
@@ -153,7 +155,7 @@ int client_stream_tester_init(
 
     tester->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
 
-    tester->current_header_block = -1;
+    tester->current_header_block = UNKNOWN_HEADER_BLOCK;
 
     tester->current_info_headers = aws_http_headers_new(alloc);
     ASSERT_NOT_NULL(tester->current_info_headers);
