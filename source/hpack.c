@@ -176,7 +176,7 @@ static bool s_header_eq(const void *a, const void *b) {
     }
 
     /* If the header stored in the table doesn't have a value, then it's a match */
-    return !right->value.ptr || aws_byte_cursor_eq(&left->value, &right->value);
+    return aws_byte_cursor_eq(&left->value, &right->value);
 }
 
 void aws_hpack_static_table_init(struct aws_allocator *allocator) {
@@ -538,7 +538,7 @@ static int s_dynamic_table_shrink(struct aws_hpack_context *context, size_t max_
             }
         }
 
-        /* clean-up the memory we allocate for it */
+        /* clean up the memory we allocated to hold the name and value string*/
         aws_mem_release(context->allocator, back->name.ptr);
     }
 
@@ -690,20 +690,16 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     /* TODO:: We can optimize this with ring buffer. */
     /* allocate memory for the name and value, which will be deallocated whenever the entry is evicted from the table or
      * the table is cleaned up. We keep the pointer in the name pointer of each entry */
-    uint8_t *memory_buffer = aws_mem_calloc(context->allocator, header->name.len + header->value.len, sizeof(uint8_t));
-    if (!memory_buffer) {
-        goto error;
+    const size_t buf_memory_size = header->name.len + header->value.len;
+    uint8_t *buf_memory = aws_mem_acquire(context->allocator, buf_memory_size);
+    if (!buf_memory) {
+        return AWS_OP_ERR;
     }
-
-    memcpy(memory_buffer, header->name.ptr, header->name.len);
-    table_header->name.ptr = memory_buffer;
-    table_header->name.len = header->name.len;
-
-    memcpy(memory_buffer + header->name.len, header->value.ptr, header->value.len);
-    table_header->value.ptr = memory_buffer + header->name.len;
-    table_header->value.len = header->value.len;
-
-    table_header->compression = header->compression;
+    struct aws_byte_buf buf = aws_byte_buf_from_empty_array(buf_memory, buf_memory_size);
+    /* Copy header, then backup strings into our own allocation */
+    *table_header = *header;
+    aws_byte_buf_append_and_update(&buf, &table_header->name);
+    aws_byte_buf_append_and_update(&buf, &table_header->value);
 
     /* Write the new header to the look up tables */
     if (aws_hash_table_put(
