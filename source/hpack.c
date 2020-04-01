@@ -700,16 +700,18 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     /* allocate memory for the name and value, which will be deallocated whenever the entry is evicted from the table or
      * the table is cleaned up. We keep the pointer in the name pointer of each entry */
     const size_t buf_memory_size = header->name.len + header->value.len;
-    uint8_t *buf_memory = aws_mem_acquire(context->allocator, buf_memory_size);
-    if (!buf_memory) {
-        return AWS_OP_ERR;
+    /* if buf_memory_size is 0, no memory needed, the pointer will keep being NULL */
+    if (buf_memory_size) {
+        uint8_t *buf_memory = aws_mem_acquire(context->allocator, buf_memory_size);
+        if (!buf_memory) {
+            return AWS_OP_ERR;
+        }
+        struct aws_byte_buf buf = aws_byte_buf_from_empty_array(buf_memory, buf_memory_size);
+        /* Copy header, then backup strings into our own allocation */
+        *table_header = *header;
+        aws_byte_buf_append_and_update(&buf, &table_header->name);
+        aws_byte_buf_append_and_update(&buf, &table_header->value);
     }
-    struct aws_byte_buf buf = aws_byte_buf_from_empty_array(buf_memory, buf_memory_size);
-    /* Copy header, then backup strings into our own allocation */
-    *table_header = *header;
-    aws_byte_buf_append_and_update(&buf, &table_header->name);
-    aws_byte_buf_append_and_update(&buf, &table_header->value);
-
     /* Write the new header to the look up tables */
     if (aws_hash_table_put(
             &context->dynamic_table.reverse_lookup, table_header, (void *)context->dynamic_table.index_0, NULL)) {

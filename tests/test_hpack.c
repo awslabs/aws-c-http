@@ -816,13 +816,13 @@ static int test_hpack_decode_empty_header(struct aws_allocator *allocator, void 
     /* clang-format off */
     uint8_t input[] = {
         0x48, 0x03, '3', '0', '2',      /* ":status: 302" - stored to dynamic table */
-        0x40, 0x00, 0x00,          /* "a" - stored to dynamic table */
+        0x40, 0x00, 0x00,               /* "" - stored to dynamic table */
         /* So at this point dynamic table should look like:
          *  INDEX   NAME    VALUE
          *  62      a
          *  63      :status 302
          */
-        0xbe,                           /* "a" - indexed from dynamic table */
+        0xbe,                           /* "" - indexed from dynamic table */
     };
     /* clang-format on */
     struct aws_hpack_decode_result result;
