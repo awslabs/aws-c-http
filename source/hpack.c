@@ -164,7 +164,7 @@ static struct aws_hash_table s_static_header_reverse_lookup_name_only;
 static uint64_t s_header_hash(const void *key) {
     const struct aws_http_header *header = key;
 
-    return aws_hash_byte_cursor_ptr(&header->name) ^ aws_hash_byte_cursor_ptr(&header->value);
+    return aws_hash_combine(aws_hash_byte_cursor_ptr(&header->name), aws_hash_byte_cursor_ptr(&header->value));
 }
 
 static bool s_header_eq(const void *a, const void *b) {
