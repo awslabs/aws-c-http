@@ -202,19 +202,16 @@ void aws_hpack_static_table_init(struct aws_allocator *allocator) {
     AWS_FATAL_ASSERT(AWS_OP_SUCCESS == result);
 
     /* Process in reverse so that name_only prefers lower indices */
-    for (size_t i = s_static_header_table_size; i > 0; --i) {
-        /* Thanks, 1-based indexing. Thanks. */
-        const size_t static_index = i - 1;
-
-        result = aws_hash_table_put(
-            &s_static_header_reverse_lookup, &s_static_header_table[static_index], (void *)static_index, NULL);
+    for (size_t i = s_static_header_table_size - 1; i > 0; --i) {
+        /* the table is 1 based indexing */
+        if (s_static_header_table[i].name.len == 0 || s_static_header_table_name_only[i].len == 0) {
+            printf("stop!");
+        }
+        result = aws_hash_table_put(&s_static_header_reverse_lookup, &s_static_header_table[i], (void *)i, NULL);
         AWS_FATAL_ASSERT(AWS_OP_SUCCESS == result);
 
         result = aws_hash_table_put(
-            &s_static_header_reverse_lookup_name_only,
-            &s_static_header_table_name_only[static_index],
-            (void *)(static_index),
-            NULL);
+            &s_static_header_reverse_lookup_name_only, &s_static_header_table_name_only[i], (void *)(i), NULL);
         AWS_FATAL_ASSERT(AWS_OP_SUCCESS == result);
     }
 }
@@ -474,51 +471,45 @@ size_t aws_hpack_find_index(
 
     *found_value = false;
 
-    /* Check static table */
     struct aws_hash_element *elem = NULL;
     if (search_value) {
+        /* Check name-and-value first in static table */
         aws_hash_table_find(&s_static_header_reverse_lookup, header, &elem);
-        if (elem) {
-            *found_value = ((const struct aws_http_header *)elem->key)->value.len;
-            return (size_t)elem->value;
-        }
-    } else {
-        /* If not found, check name only table. Don't set found_value, it will be false */
-        aws_hash_table_find(&s_static_header_reverse_lookup_name_only, &header->name, &elem);
-        if (elem) {
-            return (size_t)elem->value;
-        }
-    }
-    /* Check dynamic table */
-    if (search_value) {
-        aws_hash_table_find(&context->dynamic_table.reverse_lookup, header, &elem);
         if (elem) {
             /* If an element was found, check if it has a value */
             *found_value = ((const struct aws_http_header *)elem->key)->value.len;
+            return (size_t)elem->value;
         }
-    } else {
-        /* If not found, check name only table. Don't set found_value, it will be false */
-        aws_hash_table_find(&context->dynamic_table.reverse_lookup_name_only, &header->name, &elem);
+        /* Check name-and-value in dynamic table */
+        aws_hash_table_find(&context->dynamic_table.reverse_lookup, header, &elem);
+        if (elem) {
+            *found_value = ((const struct aws_http_header *)elem->key)->value.len;
+            goto trans_index_from_dynamic_table;
+        }
     }
-
+    /* Check the name-only table. Note, even if we search for value, when we fail in searching for name-and-value, we
+     * should also check the name only table */
+    aws_hash_table_find(&s_static_header_reverse_lookup_name_only, &header->name, &elem);
     if (elem) {
-        size_t index;
-        const size_t absolute_index = (size_t)elem->value;
-        if (absolute_index >= context->dynamic_table.index_0) {
-            index = absolute_index - context->dynamic_table.index_0;
-        } else {
-            index = (context->dynamic_table.buffer_capacity - context->dynamic_table.index_0) + absolute_index;
-        }
-        /* Need to add the static table size to re-base indicies */
-        index += s_static_header_table_size;
-        return index;
+        return (size_t)elem->value;
     }
-    if (search_value) {
-        /* search for value failed in both static and dynamic table, let's try to only search for name */
-        return aws_hpack_find_index(context, header, false, found_value);
+    aws_hash_table_find(&context->dynamic_table.reverse_lookup_name_only, &header->name, &elem);
+    if (elem) {
+        goto trans_index_from_dynamic_table;
     }
-
     return 0;
+
+trans_index_from_dynamic_table:
+    size_t index;
+    const size_t absolute_index = (size_t)elem->value;
+    if (absolute_index >= context->dynamic_table.index_0) {
+        index = absolute_index - context->dynamic_table.index_0;
+    } else {
+        index = (context->dynamic_table.buffer_capacity - context->dynamic_table.index_0) + absolute_index;
+    }
+    /* Need to add the static table size to re-base indicies */
+    index += s_static_header_table_size;
+    return index;
 }
 
 /* Remove elements from the dynamic table until it fits in max_size bytes */
@@ -700,7 +691,7 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     /* allocate memory for the name and value, which will be deallocated whenever the entry is evicted from the table or
      * the table is cleaned up. We keep the pointer in the name pointer of each entry */
     const size_t buf_memory_size = header->name.len + header->value.len;
-    /* if buf_memory_size is 0, no memory needed, we will insert the empty header into dynamic table */
+
     if (buf_memory_size) {
         uint8_t *buf_memory = aws_mem_acquire(context->allocator, buf_memory_size);
         if (!buf_memory) {
@@ -711,6 +702,11 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
         *table_header = *header;
         aws_byte_buf_append_and_update(&buf, &table_header->name);
         aws_byte_buf_append_and_update(&buf, &table_header->value);
+    } else {
+        /* if buf_memory_size is 0, no memory needed, we will insert the empty header into dynamic table */
+        *table_header = *header;
+        table_header->name.ptr = NULL;
+        table_header->value.ptr = NULL;
     }
     /* Write the new header to the look up tables */
     if (aws_hash_table_put(

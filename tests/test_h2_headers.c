@@ -424,7 +424,7 @@ static int s_header_request_response_test_after(struct aws_allocator *allocator,
     return AWS_OP_SUCCESS;
 }
 
-#define HEADER_REQUST_RESPONSE_TEST(t_name, i, t)                                                                      \
+#define HEADER_REQUEST_RESPONSE_TEST(t_name, i, t)                                                                      \
     static struct header_request_response_test_fixture s_##t_name##_fixture = {                                        \
         .init = (i),                                                                                                   \
         .teardown = (t),                                                                                               \
@@ -513,7 +513,7 @@ static int s_test_ex_3_init(struct header_request_response_test_fixture *fixture
 
     return AWS_OP_SUCCESS;
 }
-HEADER_REQUST_RESPONSE_TEST(h2_header_ex_3, s_test_ex_3_init, NULL);
+HEADER_REQUEST_RESPONSE_TEST(h2_header_ex_3, s_test_ex_3_init, NULL);
 
 /* RFC-7541 - Request Examples with Huffman Coding - C.4 */
 static int s_test_ex_4_init(struct header_request_response_test_fixture *fixture) {
@@ -579,7 +579,7 @@ static int s_test_ex_4_init(struct header_request_response_test_fixture *fixture
 
     return AWS_OP_SUCCESS;
 }
-HEADER_REQUST_RESPONSE_TEST(h2_header_ex_4, s_test_ex_4_init, NULL);
+HEADER_REQUEST_RESPONSE_TEST(h2_header_ex_4, s_test_ex_4_init, NULL);
 
 /* RFC-7541 - Response Examples without Huffman Coding - C.5 */
 static int s_test_ex_5_init(struct header_request_response_test_fixture *fixture) {
@@ -655,7 +655,7 @@ static int s_test_ex_5_init(struct header_request_response_test_fixture *fixture
     fixture->dynamic_table_len[index] = 3;
     return AWS_OP_SUCCESS;
 }
-HEADER_REQUST_RESPONSE_TEST(h2_header_ex_5, s_test_ex_5_init, NULL);
+HEADER_REQUEST_RESPONSE_TEST(h2_header_ex_5, s_test_ex_5_init, NULL);
 
 /* RFC-7541 - Response Examples with Huffman Coding - C.6 */
 static int s_test_ex_6_init(struct header_request_response_test_fixture *fixture) {
@@ -730,4 +730,4 @@ static int s_test_ex_6_init(struct header_request_response_test_fixture *fixture
 
     return AWS_OP_SUCCESS;
 }
-HEADER_REQUST_RESPONSE_TEST(h2_header_ex_6, s_test_ex_6_init, NULL);
+HEADER_REQUEST_RESPONSE_TEST(h2_header_ex_6, s_test_ex_6_init, NULL);

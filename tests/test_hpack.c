@@ -760,43 +760,32 @@ static int test_hpack_decode_indexed_from_dynamic_table(struct aws_allocator *al
 }
 
 /* Test header with empty value */
-AWS_TEST_CASE(hpack_decode_empty_value, test_hpack_decode_empty_value)
-static int test_hpack_decode_empty_value(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(hpack_dynamic_table_empty_value, test_hpack_dynamic_table_empty_value)
+static int test_hpack_dynamic_table_empty_value(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
     aws_http_library_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
 
-    /* clang-format off */
-    uint8_t input[] = {
-        0x48, 0x03, '3', '0', '2',      /* ":status: 302" - stored to dynamic table */
-        0x40, 0x01, 'a', 0x00,          /* "a" - stored to dynamic table */
-        /* So at this point dynamic table should look like:
-         *  INDEX   NAME    VALUE
-         *  62      a
-         *  63      :status 302
-         */
-        0xbe,                           /* "a" - indexed from dynamic table */
-    };
-    /* clang-format on */
-    struct aws_hpack_decode_result result;
-    struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
-    /* Three entries in total, decode them all, and check the result */
-    /* First entry */
-    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
-    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
-    ASSERT_SUCCESS(s_check_header(&result.data.header_field, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
-    /* Second entry */
-    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
-    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
-    ASSERT_SUCCESS(s_check_header(&result.data.header_field, "a", "", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
-    /* Third entry */
-    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
-    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
-    ASSERT_SUCCESS(s_check_header(&result.data.header_field, "a", "", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
-    /* Check the input is fully consumed */
-    ASSERT_TRUE(input_cursor.len == 0);
+    DEFINE_STATIC_HEADER(header1, ":status", "302");
+    DEFINE_STATIC_HEADER(empty_value_header, "c", "");
+    DEFINE_STATIC_HEADER(header2, "a", "b");
+
+    ASSERT_SUCCESS(aws_hpack_insert_header(context, &header1));
+    ASSERT_SUCCESS(aws_hpack_insert_header(context, &empty_value_header));
+    ASSERT_SUCCESS(aws_hpack_insert_header(context, &header2));
+    /*
+    So at this point dynamic table should look like:
+        *  INDEX   NAME    VALUE
+        *  62       a        b
+        *  63       "c"       ""
+        *  64      :status 302
+    */
+    bool found_value = false;
+    ASSERT_TRUE(aws_hpack_find_index(context, &header1, true, &found_value) == 64);
+    ASSERT_TRUE(aws_hpack_find_index(context, &empty_value_header, true, &found_value) == 63);
+    ASSERT_TRUE(aws_hpack_find_index(context, &header2, true, &found_value) == 62);
 
     /* Clean up */
     aws_hpack_context_destroy(context);
@@ -805,43 +794,31 @@ static int test_hpack_decode_empty_value(struct aws_allocator *allocator, void *
 }
 
 /* Test header with empty name and value */
-AWS_TEST_CASE(hpack_decode_empty_header, test_hpack_decode_empty_header)
-static int test_hpack_decode_empty_header(struct aws_allocator *allocator, void *ctx) {
+AWS_TEST_CASE(hpack_dynamic_table_with_empty_header, test_hpack_dynamic_table_with_empty_header)
+static int test_hpack_dynamic_table_with_empty_header(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
     aws_http_library_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
+    DEFINE_STATIC_HEADER(header1, ":status", "302");
+    DEFINE_STATIC_HEADER(empty_header, "", "");
+    DEFINE_STATIC_HEADER(header2, "a", "b");
 
-    /* clang-format off */
-    uint8_t input[] = {
-        0x48, 0x03, '3', '0', '2',      /* ":status: 302" - stored to dynamic table */
-        0x40, 0x00, 0x00,               /* "" - stored to dynamic table */
-        /* So at this point dynamic table should look like:
-         *  INDEX   NAME    VALUE
-         *  62       ""       ""
-         *  63      :status 302
-         */
-        0xbe,                           /* "" - indexed from dynamic table */
-    };
-    /* clang-format on */
-    struct aws_hpack_decode_result result;
-    struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
-    /* Three entries in total, decode them all, and check the result */
-    /* First entry */
-    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
-    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
-    ASSERT_SUCCESS(s_check_header(&result.data.header_field, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
-    /* Second entry */
-    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
-    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
-    ASSERT_SUCCESS(s_check_header(&result.data.header_field, "", "", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
-    /* Third entry */
-    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
-    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
-    ASSERT_SUCCESS(s_check_header(&result.data.header_field, "", "", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
-    /* Check the input is fully consumed */
-    ASSERT_TRUE(input_cursor.len == 0);
+    ASSERT_SUCCESS(aws_hpack_insert_header(context, &header1));
+    ASSERT_SUCCESS(aws_hpack_insert_header(context, &empty_header));
+    ASSERT_SUCCESS(aws_hpack_insert_header(context, &header2));
+    /*
+    So at this point dynamic table should look like:
+        *  INDEX   NAME    VALUE
+        *  62       a        b
+        *  63       ""       ""
+        *  64      :status 302
+    */
+    bool found_value = false;
+    ASSERT_TRUE(aws_hpack_find_index(context, &header1, true, &found_value) == 64);
+    ASSERT_TRUE(aws_hpack_find_index(context, &empty_header, true, &found_value) == 63);
+    ASSERT_TRUE(aws_hpack_find_index(context, &header2, true, &found_value) == 62);
 
     /* Clean up */
     aws_hpack_context_destroy(context);
