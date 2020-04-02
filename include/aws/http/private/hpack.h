@@ -119,10 +119,13 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
  * Set the max size of the dynamic table (in octets). The size of each header is name.len + value.len + 32 [4.1].
  */
 AWS_HTTP_API
-int aws_hpack_resize_dynamic_table(
-    struct aws_hpack_context *context,
-    size_t new_max_size,
-    bool called_from_encoder_setting);
+int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new_max_size);
+
+/* When setting for table size changes, call this function to memorize all the updates occur between the transmission of
+ * two header blocks. The dynamic table resize and the dynamic table size update entry will be handled properly when we
+ * encode the next header block  */
+AWS_HTTP_API
+void aws_hpack_set_max_table_size(struct aws_hpack_context *context, size_t new_max_size);
 
 AWS_HTTP_API
 void aws_hpack_set_huffman_mode(struct aws_hpack_context *context, enum aws_hpack_huffman_mode mode);

@@ -576,14 +576,7 @@ static int s_decoder_on_settings(
         }
         switch (settings_array[i].id) {
             case AWS_H2_SETTINGS_HEADER_TABLE_SIZE:
-                if (aws_h2_frame_encoder_set_setting_header_table_size(encoder, settings_array[i].value)) {
-                    CONNECTION_LOGF(
-                        ERROR,
-                        connection,
-                        "HEADER_TABLE_SIZE setting is failed to be set in encoder, error %s",
-                        aws_error_name(aws_last_error()));
-                    goto error;
-                }
+                aws_h2_frame_encoder_set_setting_header_table_size(encoder, settings_array[i].value);
                 break;
             case AWS_H2_SETTINGS_MAX_FRAME_SIZE:
                 aws_h2_frame_encoder_set_setting_max_frame_size(encoder, settings_array[i].value);

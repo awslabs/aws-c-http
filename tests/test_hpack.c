@@ -530,7 +530,7 @@ static int test_hpack_static_table_find(struct aws_allocator *allocator, void *c
     aws_http_library_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0, false));
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0));
 
     bool found_value = false;
 
@@ -564,7 +564,7 @@ static int test_hpack_static_table_get(struct aws_allocator *allocator, void *ct
     aws_http_library_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0, false));
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 0));
 
     const struct aws_http_header *found = NULL;
 
@@ -621,14 +621,14 @@ static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *
     ASSERT_FALSE(found_value);
 
     /* Test resizing up doesn't break anything */
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 8 * 1024 * 1024, false));
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, 8 * 1024 * 1024));
 
     /* Check invalid header */
     DEFINE_STATIC_HEADER(s_garbage, "colden's mother's maiden name", "nice try mr hacker");
     ASSERT_UINT_EQUALS(0, aws_hpack_find_index(context, &s_garbage, &found_value));
 
     /* Test resizing so only the first element stays */
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, aws_hpack_get_header_size(&s_fizz), false));
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, aws_hpack_get_header_size(&s_fizz)));
 
     ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &s_fizz, &found_value));
     ASSERT_TRUE(found_value);
@@ -656,7 +656,7 @@ static int test_hpack_dynamic_table_get(struct aws_allocator *allocator, void *c
 
     /* Make the dynamic table only big enough for 2 headers */
     ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(
-        context, aws_hpack_get_header_size(&s_fizz) + aws_hpack_get_header_size(&s_status), false));
+        context, aws_hpack_get_header_size(&s_fizz) + aws_hpack_get_header_size(&s_status)));
 
     ASSERT_SUCCESS(aws_hpack_insert_header(context, &s_herp));
     found = aws_hpack_get_header(context, 62);
@@ -688,7 +688,7 @@ static int test_hpack_dynamic_table_get(struct aws_allocator *allocator, void *c
     ASSERT_NULL(found);
 
     /* Test resizing to evict entries */
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, aws_hpack_get_header_size(&s_status), false));
+    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, aws_hpack_get_header_size(&s_status)));
 
     found = aws_hpack_get_header(context, 62);
     ASSERT_NOT_NULL(found);
@@ -812,8 +812,9 @@ static int test_hpack_dynamic_table_size_update_from_setting(struct aws_allocato
     ASSERT_NOT_NULL(context);
 
     /* let's pretent multiple times max size update happened from encoder setting */
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, (size_t)0, true));
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, (size_t)1337, true));
+    aws_hpack_set_max_table_size(context, 10);
+    aws_hpack_set_max_table_size(context, 0);
+    aws_hpack_set_max_table_size(context, 1337);
 
     /* encode a header block */
     struct aws_http_headers *headers = aws_http_headers_new(allocator);
@@ -827,12 +828,14 @@ static int test_hpack_dynamic_table_size_update_from_setting(struct aws_allocato
     /* Check the output result, it should contain two dynamic table size updates, besides the header */
     /**
      * Expected first table size update (0 0 1) for dynamic table size update, rest is the integer with 5-bit Prefix:
+     * size is 0
      *   0   1   2   3   4   5   6   7
      * +---+---+---+---+---+---+---+---+
      * | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |  32
      * +---+---+---+---+---+---+---+---+
      *
      * Expected second table size update:
+     * size is 1337
      *   0   1   2   3   4   5   6   7
      * +---+---+---+---+---+---+---+---+
      * | 0 | 0 | 1 | 1 | 1 | 1 | 1 | 1 |  63
