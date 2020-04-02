@@ -1142,11 +1142,7 @@ int aws_h2_encode_frame(
 
 int aws_h2_frame_encoder_set_setting_header_table_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {
     if (aws_hpack_resize_dynamic_table(encoder->hpack, data, true)) {
-        ENCODER_LOGF(
-            ERROR,
-            encoder,
-            "Failed to resize the hpack dynamic table, %s",
-            aws_error_name(aws_last_error()));
+        ENCODER_LOGF(ERROR, encoder, "Failed to resize the hpack dynamic table, %s", aws_error_name(aws_last_error()));
         return AWS_OP_ERR;
     }
     encoder->settings.header_table_size = data;
