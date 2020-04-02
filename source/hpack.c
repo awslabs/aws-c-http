@@ -203,10 +203,7 @@ void aws_hpack_static_table_init(struct aws_allocator *allocator) {
 
     /* Process in reverse so that name_only prefers lower indices */
     for (size_t i = s_static_header_table_size - 1; i > 0; --i) {
-        /* the table is 1 based indexing */
-        if (s_static_header_table[i].name.len == 0 || s_static_header_table_name_only[i].len == 0) {
-            printf("stop!");
-        }
+        /* the tables are created as 1-based indexing */
         result = aws_hash_table_put(&s_static_header_reverse_lookup, &s_static_header_table[i], (void *)i, NULL);
         AWS_FATAL_ASSERT(AWS_OP_SUCCESS == result);
 
