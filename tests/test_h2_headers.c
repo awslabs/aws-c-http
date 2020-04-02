@@ -424,7 +424,7 @@ static int s_header_request_response_test_after(struct aws_allocator *allocator,
     return AWS_OP_SUCCESS;
 }
 
-#define HEADER_REQUEST_RESPONSE_TEST(t_name, i, t)                                                                      \
+#define HEADER_REQUEST_RESPONSE_TEST(t_name, i, t)                                                                     \
     static struct header_request_response_test_fixture s_##t_name##_fixture = {                                        \
         .init = (i),                                                                                                   \
         .teardown = (t),                                                                                               \
