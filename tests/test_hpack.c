@@ -825,3 +825,64 @@ static int test_hpack_dynamic_table_with_empty_header(struct aws_allocator *allo
     aws_http_library_clean_up();
     return AWS_OP_SUCCESS;
 }
+
+AWS_TEST_CASE(hpack_dynamic_table_size_update_from_setting, test_hpack_dynamic_table_size_update_from_setting)
+static int test_hpack_dynamic_table_size_update_from_setting(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    aws_http_library_init(allocator);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
+    ASSERT_NOT_NULL(context);
+
+    /* let's pretent multiple times max size update happened from encoder setting */
+    aws_hpack_set_max_table_size(context, 10);
+    aws_hpack_set_max_table_size(context, 0);
+    aws_hpack_set_max_table_size(context, 1337);
+
+    /* encode a header block */
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    /* the 2 entry of static table */
+    DEFINE_STATIC_HEADER(header, ":method", "GET");
+    ASSERT_SUCCESS(aws_http_headers_add_header(headers, &header));
+    struct aws_byte_buf output;
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, allocator, 5));
+    ASSERT_SUCCESS(aws_hpack_encode_header_block(context, headers, &output));
+
+    /* Check the output result, it should contain two dynamic table size updates, besides the header */
+    /**
+     * Expected first table size update (0 0 1) for dynamic table size update, rest is the integer with 5-bit Prefix:
+     * size is 0
+     *   0   1   2   3   4   5   6   7
+     * +---+---+---+---+---+---+---+---+
+     * | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |  32
+     * +---+---+---+---+---+---+---+---+
+     *
+     * Expected second table size update:
+     * size is 1337
+     *   0   1   2   3   4   5   6   7
+     * +---+---+---+---+---+---+---+---+
+     * | 0 | 0 | 1 | 1 | 1 | 1 | 1 | 1 |  63
+     * | 1 | 0 | 0 | 1 | 1 | 0 | 1 | 0 | 154
+     * | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 |  10
+     * +---+---+---+---+---+---+---+---+
+     *
+     * Expected header block: (1) for indexed header field, rest is the index, which is 2
+     *   0   1   2   3   4   5   6   7
+     * +---+---+---+---+---+---+---+---+
+     * | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |  130
+     * +---+---+---+---+---+---+---+---+
+     */
+    ASSERT_UINT_EQUALS(5, output.len);
+    ASSERT_UINT_EQUALS(32, output.buffer[0]);
+    ASSERT_UINT_EQUALS(63, output.buffer[1]);
+    ASSERT_UINT_EQUALS(154, output.buffer[2]);
+    ASSERT_UINT_EQUALS(10, output.buffer[3]);
+    ASSERT_UINT_EQUALS(130, output.buffer[4]);
+
+    /* clean up */
+    aws_byte_buf_clean_up(&output);
+    aws_http_headers_release(headers);
+    aws_hpack_context_destroy(context);
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
