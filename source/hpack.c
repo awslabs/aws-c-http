@@ -235,7 +235,7 @@ struct aws_hpack_context {
     struct aws_huffman_encoder encoder;
     struct aws_huffman_decoder decoder;
 
-    struct hpack {
+    struct {
         size_t last_value;
         size_t smallest_value;
         bool pending;
@@ -776,7 +776,6 @@ void aws_hpack_set_max_table_size(struct aws_hpack_context *context, size_t new_
     }
     context->dynamic_table_size_update.smallest_value =
         aws_min_size(new_max_size, context->dynamic_table_size_update.smallest_value);
-
     context->dynamic_table_size_update.last_value = new_max_size;
 }
 
@@ -1407,50 +1406,35 @@ int aws_hpack_encode_header_block(
      * following the change to the dynamic table size RFC-7541 4.2 */
     if (context->dynamic_table_size_update.pending) {
         if (context->dynamic_table_size_update.smallest_value != context->dynamic_table_size_update.last_value) {
+            size_t smallest_update_value = context->dynamic_table_size_update.smallest_value;
             HPACK_LOGF(
-                TRACE,
-                context,
-                "Encoding smallest dynamic table size update entry size:%zu",
-                context->dynamic_table_size_update.smallest_value);
-            if (aws_hpack_resize_dynamic_table(context, context->dynamic_table_size_update.smallest_value)) {
-                HPACK_LOGF(
-                    ERROR,
-                    context,
-                    "Dynamic table resize failed, size:%zu",
-                    context->dynamic_table_size_update.smallest_value);
+                TRACE, context, "Encoding smallest dynamic table size update entry size:%zu", smallest_update_value);
+            if (aws_hpack_resize_dynamic_table(context, smallest_update_value)) {
+                HPACK_LOGF(ERROR, context, "Dynamic table resize failed, size:%zu", smallest_update_value);
                 return AWS_OP_ERR;
             }
             uint8_t starting_bit_pattern = s_hpack_entry_starting_bit_pattern[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
             uint8_t num_prefix_bits = s_hpack_entry_num_prefix_bits[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
-            if (aws_hpack_encode_integer(
-                    context->dynamic_table_size_update.smallest_value, starting_bit_pattern, num_prefix_bits, output)) {
+            if (aws_hpack_encode_integer(smallest_update_value, starting_bit_pattern, num_prefix_bits, output)) {
                 HPACK_LOGF(
                     ERROR,
                     context,
                     "Integer encoding failed for table size update entry, integer:%zu",
-                    context->dynamic_table_size_update.smallest_value)
+                    smallest_update_value)
                 return AWS_OP_ERR;
             }
         }
-        HPACK_LOGF(
-            TRACE,
-            context,
-            "Encoding last dynamic table size update entry size:%zu",
-            context->dynamic_table_size_update.last_value);
-        if (aws_hpack_resize_dynamic_table(context, context->dynamic_table_size_update.last_value)) {
-            HPACK_LOGF(
-                ERROR, context, "Dynamic table resize failed, size:%zu", context->dynamic_table_size_update.last_value);
+        size_t last_update_value = context->dynamic_table_size_update.last_value;
+        HPACK_LOGF(TRACE, context, "Encoding last dynamic table size update entry size:%zu", last_update_value);
+        if (aws_hpack_resize_dynamic_table(context, last_update_value)) {
+            HPACK_LOGF(ERROR, context, "Dynamic table resize failed, size:%zu", last_update_value);
             return AWS_OP_ERR;
         }
         uint8_t starting_bit_pattern = s_hpack_entry_starting_bit_pattern[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
         uint8_t num_prefix_bits = s_hpack_entry_num_prefix_bits[AWS_HPACK_ENTRY_DYNAMIC_TABLE_RESIZE];
-        if (aws_hpack_encode_integer(
-                context->dynamic_table_size_update.last_value, starting_bit_pattern, num_prefix_bits, output)) {
+        if (aws_hpack_encode_integer(last_update_value, starting_bit_pattern, num_prefix_bits, output)) {
             HPACK_LOGF(
-                ERROR,
-                context,
-                "Integer encoding failed for table size update entry, integer:%zu",
-                context->dynamic_table_size_update.last_value)
+                ERROR, context, "Integer encoding failed for table size update entry, integer:%zu", last_update_value)
             return AWS_OP_ERR;
         }
 
