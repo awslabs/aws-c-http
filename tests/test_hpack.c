@@ -540,17 +540,17 @@ static int test_hpack_static_table_find(struct aws_allocator *allocator, void *c
     DEFINE_STATIC_HEADER(s_garbage, "colden's favorite ice cream flavor", "cookie dough");
 
     /* Test header without value */
-    ASSERT_UINT_EQUALS(1, aws_hpack_find_index(context, &s_authority, &found_value));
+    ASSERT_UINT_EQUALS(1, aws_hpack_find_index(context, &s_authority, false, &found_value));
     ASSERT_FALSE(found_value);
 
     /* Test header with value */
-    ASSERT_UINT_EQUALS(2, aws_hpack_find_index(context, &s_get, &found_value));
+    ASSERT_UINT_EQUALS(2, aws_hpack_find_index(context, &s_get, true, &found_value));
     ASSERT_TRUE(found_value);
-    ASSERT_UINT_EQUALS(2, aws_hpack_find_index(context, &s_other_method, &found_value));
+    ASSERT_UINT_EQUALS(2, aws_hpack_find_index(context, &s_other_method, true, &found_value));
     ASSERT_FALSE(found_value);
 
     /* Check invalid header */
-    ASSERT_UINT_EQUALS(0, aws_hpack_find_index(context, &s_garbage, &found_value));
+    ASSERT_UINT_EQUALS(0, aws_hpack_find_index(context, &s_garbage, true, &found_value));
 
     aws_hpack_context_destroy(context);
     aws_http_library_clean_up();
@@ -606,18 +606,18 @@ static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *
 
     /* Test single header */
     ASSERT_SUCCESS(aws_hpack_insert_header(context, &s_herp));
-    ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &s_herp, &found_value));
+    ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &s_herp, true, &found_value));
     ASSERT_TRUE(found_value);
-    ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &s_herp2, &found_value));
+    ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &s_herp2, true, &found_value));
     ASSERT_FALSE(found_value);
 
     /* Test 2 headers */
     ASSERT_SUCCESS(aws_hpack_insert_header(context, &s_fizz));
-    ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &s_fizz, &found_value));
+    ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &s_fizz, true, &found_value));
     ASSERT_TRUE(found_value);
-    ASSERT_UINT_EQUALS(63, aws_hpack_find_index(context, &s_herp, &found_value));
+    ASSERT_UINT_EQUALS(63, aws_hpack_find_index(context, &s_herp, true, &found_value));
     ASSERT_TRUE(found_value);
-    ASSERT_UINT_EQUALS(63, aws_hpack_find_index(context, &s_herp2, &found_value));
+    ASSERT_UINT_EQUALS(63, aws_hpack_find_index(context, &s_herp2, true, &found_value));
     ASSERT_FALSE(found_value);
 
     /* Test resizing up doesn't break anything */
@@ -625,14 +625,14 @@ static int test_hpack_dynamic_table_find(struct aws_allocator *allocator, void *
 
     /* Check invalid header */
     DEFINE_STATIC_HEADER(s_garbage, "colden's mother's maiden name", "nice try mr hacker");
-    ASSERT_UINT_EQUALS(0, aws_hpack_find_index(context, &s_garbage, &found_value));
+    ASSERT_UINT_EQUALS(0, aws_hpack_find_index(context, &s_garbage, true, &found_value));
 
     /* Test resizing so only the first element stays */
     ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(context, aws_hpack_get_header_size(&s_fizz)));
 
-    ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &s_fizz, &found_value));
+    ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &s_fizz, true, &found_value));
     ASSERT_TRUE(found_value);
-    ASSERT_UINT_EQUALS(0, aws_hpack_find_index(context, &s_herp, &found_value));
+    ASSERT_UINT_EQUALS(0, aws_hpack_find_index(context, &s_herp, true, &found_value));
     ASSERT_FALSE(found_value);
 
     aws_hpack_context_destroy(context);
@@ -759,43 +759,66 @@ static int test_hpack_decode_indexed_from_dynamic_table(struct aws_allocator *al
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(hpack_decode_empty_value, test_hpack_decode_empty_value)
-static int test_hpack_decode_empty_value(struct aws_allocator *allocator, void *ctx) {
+/* Test header with empty value */
+AWS_TEST_CASE(hpack_dynamic_table_empty_value, test_hpack_dynamic_table_empty_value)
+static int test_hpack_dynamic_table_empty_value(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
     aws_http_library_init(allocator);
     struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
     ASSERT_NOT_NULL(context);
 
-    /* clang-format off */
-    uint8_t input[] = {
-        0x48, 0x03, '3', '0', '2',      /* ":status: 302" - stored to dynamic table */
-        0x40, 0x01, 'a', 0x00,          /* "a" - stored to dynamic table */
-        /* So at this point dynamic table should look like:
-         *  INDEX   NAME    VALUE
-         *  62      a
-         *  63      :status 302
-         */
-        0xbe,                           /* "a" - indexed from dynamic table */
-    };
-    /* clang-format on */
-    struct aws_hpack_decode_result result;
-    struct aws_byte_cursor input_cursor = aws_byte_cursor_from_array(input, sizeof(input));
-    /* Three entries in total, decode them all, and check the result */
-    /* First entry */
-    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
-    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
-    ASSERT_SUCCESS(s_check_header(&result.data.header_field, ":status", "302", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
-    /* Second entry */
-    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
-    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
-    ASSERT_SUCCESS(s_check_header(&result.data.header_field, "a", "", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
-    /* Third entry */
-    ASSERT_SUCCESS(aws_hpack_decode(context, &input_cursor, &result));
-    ASSERT_TRUE(result.type == AWS_HPACK_DECODE_T_HEADER_FIELD);
-    ASSERT_SUCCESS(s_check_header(&result.data.header_field, "a", "", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
-    /* Check the input is fully consumed */
-    ASSERT_TRUE(input_cursor.len == 0);
+    DEFINE_STATIC_HEADER(header1, ":status", "302");
+    DEFINE_STATIC_HEADER(empty_value_header, "c", "");
+    DEFINE_STATIC_HEADER(header2, "a", "b");
+
+    ASSERT_SUCCESS(aws_hpack_insert_header(context, &header1));
+    ASSERT_SUCCESS(aws_hpack_insert_header(context, &empty_value_header));
+    ASSERT_SUCCESS(aws_hpack_insert_header(context, &header2));
+    /*
+    So at this point dynamic table should look like:
+        *  INDEX   NAME    VALUE
+        *  62       a        b
+        *  63       "c"       ""
+        *  64      :status 302
+    */
+    bool found_value = false;
+    ASSERT_UINT_EQUALS(64, aws_hpack_find_index(context, &header1, true, &found_value));
+    ASSERT_UINT_EQUALS(63, aws_hpack_find_index(context, &empty_value_header, true, &found_value));
+    ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &header2, true, &found_value));
+
+    /* Clean up */
+    aws_hpack_context_destroy(context);
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+/* Test header with empty name and value */
+AWS_TEST_CASE(hpack_dynamic_table_with_empty_header, test_hpack_dynamic_table_with_empty_header)
+static int test_hpack_dynamic_table_with_empty_header(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    aws_http_library_init(allocator);
+    struct aws_hpack_context *context = aws_hpack_context_new(allocator, AWS_LS_HTTP_GENERAL, NULL);
+    ASSERT_NOT_NULL(context);
+    DEFINE_STATIC_HEADER(header1, ":status", "302");
+    DEFINE_STATIC_HEADER(empty_header, "", "");
+    DEFINE_STATIC_HEADER(header2, "a", "b");
+
+    ASSERT_SUCCESS(aws_hpack_insert_header(context, &header1));
+    ASSERT_SUCCESS(aws_hpack_insert_header(context, &empty_header));
+    ASSERT_SUCCESS(aws_hpack_insert_header(context, &header2));
+    /*
+    So at this point dynamic table should look like:
+        *  INDEX   NAME    VALUE
+        *  62       a        b
+        *  63       ""       ""
+        *  64      :status 302
+    */
+    bool found_value = false;
+    ASSERT_UINT_EQUALS(64, aws_hpack_find_index(context, &header1, true, &found_value));
+    ASSERT_UINT_EQUALS(63, aws_hpack_find_index(context, &empty_header, true, &found_value));
+    ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &header2, true, &found_value));
 
     /* Clean up */
     aws_hpack_context_destroy(context);
