@@ -783,9 +783,9 @@ static int test_hpack_dynamic_table_empty_value(struct aws_allocator *allocator,
         *  64      :status 302
     */
     bool found_value = false;
-    ASSERT_TRUE(aws_hpack_find_index(context, &header1, true, &found_value) == 64);
-    ASSERT_TRUE(aws_hpack_find_index(context, &empty_value_header, true, &found_value) == 63);
-    ASSERT_TRUE(aws_hpack_find_index(context, &header2, true, &found_value) == 62);
+    ASSERT_UINT_EQUALS(64, aws_hpack_find_index(context, &header1, true, &found_value));
+    ASSERT_UINT_EQUALS(63, aws_hpack_find_index(context, &empty_value_header, true, &found_value));
+    ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &header2, true, &found_value));
 
     /* Clean up */
     aws_hpack_context_destroy(context);
@@ -816,9 +816,9 @@ static int test_hpack_dynamic_table_with_empty_header(struct aws_allocator *allo
         *  64      :status 302
     */
     bool found_value = false;
-    ASSERT_TRUE(aws_hpack_find_index(context, &header1, true, &found_value) == 64);
-    ASSERT_TRUE(aws_hpack_find_index(context, &empty_header, true, &found_value) == 63);
-    ASSERT_TRUE(aws_hpack_find_index(context, &header2, true, &found_value) == 62);
+    ASSERT_UINT_EQUALS(64, aws_hpack_find_index(context, &header1, true, &found_value));
+    ASSERT_UINT_EQUALS(63, aws_hpack_find_index(context, &empty_header, true, &found_value));
+    ASSERT_UINT_EQUALS(62, aws_hpack_find_index(context, &header2, true, &found_value));
 
     /* Clean up */
     aws_hpack_context_destroy(context);
