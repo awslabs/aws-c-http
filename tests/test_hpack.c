@@ -819,7 +819,7 @@ static int test_hpack_decode_empty_header(struct aws_allocator *allocator, void 
         0x40, 0x00, 0x00,               /* "" - stored to dynamic table */
         /* So at this point dynamic table should look like:
          *  INDEX   NAME    VALUE
-         *  62      a
+         *  62       ""       ""
          *  63      :status 302
          */
         0xbe,                           /* "" - indexed from dynamic table */

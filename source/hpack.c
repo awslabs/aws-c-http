@@ -513,7 +513,7 @@ size_t aws_hpack_find_index(
         index += s_static_header_table_size;
         return index;
     }
-    if (search_value & !elem) {
+    if (search_value) {
         /* search for value failed in both static and dynamic table, let's try to only search for name */
         return aws_hpack_find_index(context, header, false, found_value);
     }
@@ -700,7 +700,7 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     /* allocate memory for the name and value, which will be deallocated whenever the entry is evicted from the table or
      * the table is cleaned up. We keep the pointer in the name pointer of each entry */
     const size_t buf_memory_size = header->name.len + header->value.len;
-    /* if buf_memory_size is 0, no memory needed, the pointer will keep being NULL */
+    /* if buf_memory_size is 0, no memory needed, we will insert the empty header into dynamic table */
     if (buf_memory_size) {
         uint8_t *buf_memory = aws_mem_acquire(context->allocator, buf_memory_size);
         if (!buf_memory) {
