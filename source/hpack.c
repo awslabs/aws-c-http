@@ -497,16 +497,19 @@ size_t aws_hpack_find_index(
     return 0;
 
 trans_index_from_dynamic_table:
-    size_t index;
-    const size_t absolute_index = (size_t)elem->value;
-    if (absolute_index >= context->dynamic_table.index_0) {
-        index = absolute_index - context->dynamic_table.index_0;
-    } else {
-        index = (context->dynamic_table.buffer_capacity - context->dynamic_table.index_0) + absolute_index;
+    if (elem) {
+        size_t index;
+        const size_t absolute_index = (size_t)elem->value;
+        if (absolute_index >= context->dynamic_table.index_0) {
+            index = absolute_index - context->dynamic_table.index_0;
+        } else {
+            index = (context->dynamic_table.buffer_capacity - context->dynamic_table.index_0) + absolute_index;
+        }
+        /* Need to add the static table size to re-base indicies */
+        index += s_static_header_table_size;
+        return index;
     }
-    /* Need to add the static table size to re-base indicies */
-    index += s_static_header_table_size;
-    return index;
+    return 0;
 }
 
 /* Remove elements from the dynamic table until it fits in max_size bytes */
