@@ -71,20 +71,20 @@ struct aws_h2_connection {
 
     } thread_data;
 
-    /* Any thread may touch this data, but the lock must be held */
+    /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
     struct {
+        /* For checking status from outside the event-loop thread. */
+        struct aws_atomic_var is_open;
+
+        /* If non-zero, reason to immediately reject new streams. (ex: closing) */
+        struct aws_atomic_var new_stream_error_code;
+
         struct aws_mutex lock;
 
         /* New `aws_h2_stream *` that haven't moved to `thread_data` yet */
         struct aws_linked_list pending_stream_list;
 
-        /* If non-zero, reason to immediately reject new streams. (ex: closing) */
-        int new_stream_error_code;
-
         bool is_cross_thread_work_task_scheduled;
-
-        /* For checking status from outside the event-loop thread. */
-        bool is_open;
 
     } synced_data;
 };

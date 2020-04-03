@@ -151,16 +151,11 @@ static void s_stop(
         AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
         connection->thread_data.is_writing_stopped = true;
     }
-    { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(connection);
 
-        /* Even if we're not scheduling shutdown just yet (ex: sent final request but waiting to read final response)
-         * we don't consider the connection "open" anymore so user can't create more streams */
-        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
-        connection->synced_data.is_open = false;
-
-        s_unlock_synced_data(connection);
-    } /* END CRITICAL SECTION */
+    /* Even if we're not scheduling shutdown just yet (ex: sent final request but waiting to read final response)
+     * we don't consider the connection "open" anymore so user can't create more streams */
+    aws_atomic_store_int(&connection->synced_data.new_stream_error_code, AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    aws_atomic_store_int(&connection->synced_data.is_open, 0);
 
     if (schedule_shutdown) {
         AWS_LOGF_INFO(
@@ -218,7 +213,8 @@ static struct aws_h2_connection *s_connection_new(
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
 
-    connection->synced_data.is_open = true;
+    aws_atomic_init_int(&connection->synced_data.is_open, 1);
+    aws_atomic_init_int(&connection->synced_data.new_stream_error_code, 0);
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
 
     aws_linked_list_init(&connection->thread_data.outgoing_streams_list);
@@ -635,6 +631,9 @@ int s_get_active_stream_for_incoming_frame(
             }
         }
     }
+
+    /* #TODO An endpoint that receives any frame other than PRIORITY after receiving a RST_STREAM
+     * MUST treat that as a stream error (Section 5.4.2) of type STREAM_CLOSED */
 
     /* Stream was closed long ago, or didn't fit criteria for being ignored */
     CONNECTION_LOGF(
@@ -1085,17 +1084,7 @@ static struct aws_http_stream *s_connection_make_request(
         return NULL;
     }
 
-    int new_stream_error_code = AWS_ERROR_SUCCESS;
-    { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(connection);
-
-        if (connection->synced_data.new_stream_error_code) {
-            new_stream_error_code = connection->synced_data.new_stream_error_code;
-        }
-
-        s_unlock_synced_data(connection);
-    } /* END CRITICAL SECTION */
-
+    int new_stream_error_code = aws_atomic_load_int(&connection->synced_data.new_stream_error_code);
     if (new_stream_error_code) {
         aws_raise_error(new_stream_error_code);
         CONNECTION_LOGF(
@@ -1118,14 +1107,7 @@ error:
 
 static bool s_connection_is_open(const struct aws_http_connection *connection_base) {
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
-    bool is_open;
-
-    { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(connection);
-        is_open = connection->synced_data.is_open;
-        s_unlock_synced_data(connection);
-    } /* END CRITICAL SECTION */
-
+    bool is_open = aws_atomic_load_int(&connection->synced_data.is_open);
     return is_open;
 }
 
