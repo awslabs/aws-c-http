@@ -687,7 +687,7 @@ void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increm
  * as http/2) for easier tracking purposes. For client streams, this will only be non-zero after a successful call
  * to aws_http_stream_activate()
  */
-uint32_t aws_http_stream_get_id(struct aws_http_stream *stream);
+uint32_t aws_http_stream_get_id(const struct aws_http_stream *stream);
 
 AWS_EXTERN_C_END
 

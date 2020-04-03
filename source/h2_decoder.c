@@ -168,7 +168,7 @@ DEFINE_STATE(frame_unknown, 0);
 DEFINE_STATE(connection_preface_string, 1); /* requires 1 byte but may consume more */
 
 /* Helper for states that need to transition to frame-type states */
-static const struct decoder_state *s_state_frames[] = {
+static const struct decoder_state *s_state_frames[AWS_H2_FRAME_TYPE_COUNT] = {
     [AWS_H2_FRAME_T_DATA] = &s_state_frame_data,
     [AWS_H2_FRAME_T_HEADERS] = &s_state_frame_headers,
     [AWS_H2_FRAME_T_PRIORITY] = &s_state_frame_priority,
@@ -456,7 +456,7 @@ static int s_decoder_switch_state(struct aws_h2_decoder *decoder, const struct d
 }
 
 static int s_decoder_switch_to_frame_state(struct aws_h2_decoder *decoder) {
-    AWS_ASSERT(decoder->frame_in_progress.type <= AWS_H2_FRAME_T_UNKNOWN);
+    AWS_ASSERT(decoder->frame_in_progress.type < AWS_H2_FRAME_TYPE_COUNT);
     return s_decoder_switch_state(decoder, s_state_frames[decoder->frame_in_progress.type]);
 }
 
@@ -502,7 +502,7 @@ static struct aws_byte_cursor s_decoder_get_payload(struct aws_h2_decoder *decod
 
 /* Mask of flags supported by each frame type.
  * Frames not listed have mask of 0, which means all flags will be ignored. */
-static const uint8_t s_acceptable_flags_for_frame[AWS_H2_FRAME_T_UNKNOWN + 1] = {
+static const uint8_t s_acceptable_flags_for_frame[AWS_H2_FRAME_TYPE_COUNT] = {
     [AWS_H2_FRAME_T_DATA]           = AWS_H2_FRAME_F_END_STREAM | AWS_H2_FRAME_F_PADDED,
     [AWS_H2_FRAME_T_HEADERS]        = AWS_H2_FRAME_F_END_STREAM | AWS_H2_FRAME_F_END_HEADERS |
                                       AWS_H2_FRAME_F_PADDED | AWS_H2_FRAME_F_PRIORITY,
@@ -524,7 +524,7 @@ enum stream_id_rules {
 };
 
 /* Frame-types generally either require a stream-id, or require that it be zero. */
-static const enum stream_id_rules s_stream_id_rules_for_frame[AWS_H2_FRAME_T_UNKNOWN + 1] = {
+static const enum stream_id_rules s_stream_id_rules_for_frame[AWS_H2_FRAME_TYPE_COUNT] = {
     [AWS_H2_FRAME_T_DATA]           = STREAM_ID_REQUIRED,
     [AWS_H2_FRAME_T_HEADERS]        = STREAM_ID_REQUIRED,
     [AWS_H2_FRAME_T_PRIORITY]       = STREAM_ID_REQUIRED,
@@ -737,11 +737,20 @@ static int s_state_fn_priority_block(struct aws_h2_decoder *decoder, struct aws_
 static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     const struct aws_byte_cursor body_data = s_decoder_get_payload(decoder, input);
+
+    bool on_data_invoked = false;
     if (body_data.len) {
+        on_data_invoked = true;
         DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data, body_data);
     }
 
     if (decoder->frame_in_progress.payload_len == 0) {
+        /* Even if DATA frame had no payload, we still want to invoke the callback at least once.
+         * This lets the stream check whether its current state allows a DATA frame */
+        if (!on_data_invoked) {
+            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data, body_data);
+        }
+
         /* If frame had END_STREAM flag, alert user now */
         if (decoder->frame_in_progress.flags.end_stream) {
             DECODER_CALL_VTABLE_STREAM(decoder, on_end_stream);
@@ -1128,7 +1137,7 @@ static int s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
             current_block->block_type = AWS_HTTP_HEADER_BLOCK_INFORMATIONAL;
 
             if (current_block->ends_stream) {
-                /* Informational headers do not constitute a full response (RFC-7541 8.1) */
+                /* Informational headers do not constitute a full response (RFC-7540 8.1) */
                 DECODER_LOG(ERROR, decoder, "Informational (1xx) response cannot END_STREAM");
                 goto malformed;
             }
