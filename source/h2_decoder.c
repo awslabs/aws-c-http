@@ -165,7 +165,7 @@ DEFINE_STATE(frame_unknown, 0);
 DEFINE_STATE(connection_preface_string, 1); /* requires 1 byte but may consume more */
 
 /* Helper for states that need to transition to frame-type states */
-static const struct decoder_state *s_state_frames[] = {
+static const struct decoder_state *s_state_frames[AWS_H2_FRAME_TYPE_COUNT] = {
     [AWS_H2_FRAME_T_DATA] = &s_state_frame_data,
     [AWS_H2_FRAME_T_HEADERS] = &s_state_frame_headers,
     [AWS_H2_FRAME_T_PRIORITY] = &s_state_frame_priority,
@@ -439,7 +439,7 @@ static int s_decoder_switch_state(struct aws_h2_decoder *decoder, const struct d
 }
 
 static int s_decoder_switch_to_frame_state(struct aws_h2_decoder *decoder) {
-    AWS_ASSERT(decoder->frame_in_progress.type <= AWS_H2_FRAME_T_UNKNOWN);
+    AWS_ASSERT(decoder->frame_in_progress.type < AWS_H2_FRAME_TYPE_COUNT);
     return s_decoder_switch_state(decoder, s_state_frames[decoder->frame_in_progress.type]);
 }
 
@@ -485,7 +485,7 @@ static struct aws_byte_cursor s_decoder_get_payload(struct aws_h2_decoder *decod
 
 /* Mask of flags supported by each frame type.
  * Frames not listed have mask of 0, which means all flags will be ignored. */
-static const uint8_t s_acceptable_flags_for_frame[AWS_H2_FRAME_T_UNKNOWN + 1] = {
+static const uint8_t s_acceptable_flags_for_frame[AWS_H2_FRAME_TYPE_COUNT] = {
     [AWS_H2_FRAME_T_DATA]           = AWS_H2_FRAME_F_END_STREAM | AWS_H2_FRAME_F_PADDED,
     [AWS_H2_FRAME_T_HEADERS]        = AWS_H2_FRAME_F_END_STREAM | AWS_H2_FRAME_F_END_HEADERS |
                                       AWS_H2_FRAME_F_PADDED | AWS_H2_FRAME_F_PRIORITY,
@@ -507,7 +507,7 @@ enum stream_id_rules {
 };
 
 /* Frame-types generally either require a stream-id, or require that it be zero. */
-static const enum stream_id_rules s_stream_id_rules_for_frame[AWS_H2_FRAME_T_UNKNOWN + 1] = {
+static const enum stream_id_rules s_stream_id_rules_for_frame[AWS_H2_FRAME_TYPE_COUNT] = {
     [AWS_H2_FRAME_T_DATA]           = STREAM_ID_REQUIRED,
     [AWS_H2_FRAME_T_HEADERS]        = STREAM_ID_REQUIRED,
     [AWS_H2_FRAME_T_PRIORITY]       = STREAM_ID_REQUIRED,

@@ -59,7 +59,7 @@ static struct aws_h2_connection *s_get_h2_connection(const struct aws_h2_stream 
 #define AWS_PRECONDITION_ON_CHANNEL_THREAD(STREAM)                                                                     \
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(s_get_h2_connection(STREAM)->base.channel_slot->channel))
 
-static bool s_client_state_allows_frame_type[AWS_H2_STREAM_STATE_COUNT][AWS_H2_FRAME_T_UNKNOWN] = {
+static bool s_client_state_allows_frame_type[AWS_H2_STREAM_STATE_COUNT][AWS_H2_FRAME_TYPE_COUNT] = {
     /* State before anything is sent or received */
     [AWS_H2_STREAM_STATE_IDLE] = {0},
     /* Client streams are never in reserved (local) state */
@@ -100,7 +100,7 @@ static bool s_client_state_allows_frame_type[AWS_H2_STREAM_STATE_COUNT][AWS_H2_F
     [AWS_H2_STREAM_STATE_CLOSED] = {0},
 };
 
-static bool s_server_state_allows_frame_type[AWS_H2_STREAM_STATE_COUNT][AWS_H2_FRAME_T_UNKNOWN] = {
+static bool s_server_state_allows_frame_type[AWS_H2_STREAM_STATE_COUNT][AWS_H2_FRAME_TYPE_COUNT] = {
     /* State before anything is sent or received, waiting for request headers to arrives and start things off */
     [AWS_H2_STREAM_STATE_IDLE] =
         {

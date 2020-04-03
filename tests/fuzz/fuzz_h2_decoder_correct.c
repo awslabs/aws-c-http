@@ -218,7 +218,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     uint8_t frame_type = 0;
     aws_byte_cursor_read_u8(&input, &frame_type);
-    frame_type = frame_type % (AWS_H2_FRAME_T_UNKNOWN + 1);
+    frame_type = frame_type % (AWS_H2_FRAME_TYPE_COUNT);
     if (decoder_is_server && frame_type == AWS_H2_FRAME_T_PUSH_PROMISE) {
         /* Client can't send push-promise to server */
         frame_type = AWS_H2_FRAME_T_HEADERS;
