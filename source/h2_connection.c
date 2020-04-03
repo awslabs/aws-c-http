@@ -1084,7 +1084,7 @@ static struct aws_http_stream *s_connection_make_request(
         return NULL;
     }
 
-    int new_stream_error_code = aws_atomic_load_int(&connection->synced_data.new_stream_error_code);
+    int new_stream_error_code = (int)aws_atomic_load_int(&connection->synced_data.new_stream_error_code);
     if (new_stream_error_code) {
         aws_raise_error(new_stream_error_code);
         CONNECTION_LOGF(
