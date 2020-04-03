@@ -367,7 +367,7 @@ int aws_h2_stream_on_decoder_headers_i(
             AWS_ASSERT(!err && "Invalid :status value. Decoder should have already validated this");
             (void)err;
 
-            stream->base.client_data->response_status = status_code;
+            stream->base.client_data->response_status = (int)status_code;
         }
     }
 

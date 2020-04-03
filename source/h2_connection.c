@@ -605,7 +605,7 @@ int s_get_active_stream_for_incoming_frame(
     /* Stream is closed, check whether it's legal for a few more frames to trickle in */
     aws_hash_table_find(&connection->thread_data.closed_streams_where_frames_might_trickle_in, stream_id_key, &found);
     if (found) {
-        enum aws_h2_stream_closed_when closed_when = (enum aws_h2_stream_closed_when)found->value;
+        enum aws_h2_stream_closed_when closed_when = (enum aws_h2_stream_closed_when)(size_t)found->value;
         if (closed_when == AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT) {
             /* An endpoint MUST ignore frames that it receives on closed streams after it has sent a RST_STREAM frame */
             CONNECTION_LOGF(
