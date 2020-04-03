@@ -16,7 +16,6 @@ endmacro()
 macro(add_h2_decoder_test_set NAME)
     add_test_case("${NAME}")
     add_test_case("${NAME}_one_byte_at_a_time")
-    add_test_case("${NAME}_split_at_i")
 endmacro()
 
 add_test_case(headers_add)
