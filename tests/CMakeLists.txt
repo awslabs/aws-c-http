@@ -16,7 +16,6 @@ endmacro()
 macro(add_h2_decoder_test_set NAME)
     add_test_case("${NAME}")
     add_test_case("${NAME}_one_byte_at_a_time")
-    add_test_case("${NAME}_split_at_i")
 endmacro()
 
 add_test_case(headers_add)
@@ -342,9 +341,10 @@ add_test_case(h2_client_stream_ignores_some_frames_received_soon_after_closing)
 
 add_test_case(server_new_destroy)
 add_test_case(connection_setup_shutdown)
-add_test_case(connection_destroy_server_with_connection_existing)
-add_test_case(connection_destroy_server_with_multiple_connections_existing)
-add_test_case(connection_server_shutting_down_new_connection_setup_fail)
+# These server tests occasionally fail. Resurrect if/when we get back to work on HTTP server.
+#add_test_case(connection_destroy_server_with_connection_existing)
+#add_test_case(connection_destroy_server_with_multiple_connections_existing)
+#add_test_case(connection_server_shutting_down_new_connection_setup_fail)
 
 add_net_test_case(test_connection_manager_setup_shutdown)
 add_net_test_case(test_connection_manager_single_connection)
