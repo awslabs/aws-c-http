@@ -413,45 +413,6 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers) {
     return AWS_OP_SUCCESS;
 }
 
-H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_cookies) {
-    (void)allocator;
-    struct fixture *fixture = ctx;
-
-    /* clang-format off */
-    uint8_t input[] = {
-        /* HEADERS FRAME*/
-        0x00, 0x00, 0x05,           /* Length (24) */
-        AWS_H2_FRAME_T_HEADERS,     /* Type (8) */
-        AWS_H2_FRAME_F_END_STREAM, /* Flags (8) */
-        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
-        /* PAYLOAD */
-        0x60, 0x03, 'a', '=', 'b', /* "cache: a=b" - indexed name, uncompressed value */
-
-        /* CONTINUATION FRAME*/
-        0x00, 0x00, 0x05,           /* Length (24) */
-        AWS_H2_FRAME_T_CONTINUATION,/* Type (8) */
-        AWS_H2_FRAME_F_END_HEADERS, /* Flags (8) */
-        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
-        /* PAYLOAD */
-        0x60, 0x03, 'c', '=', 'd', /* "cache: c=d" - indexed name, uncompressed value */
-    };
-    /* clang-format on */
-
-    /* Decode */
-    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
-
-    /* Validate */
-    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
-    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
-    ASSERT_FALSE(frame->headers_malformed);
-    ASSERT_UINT_EQUALS(1, aws_http_headers_count(frame->headers));
-    ASSERT_SUCCESS(s_check_header(frame, 0, "cookie", "a=b; c=d", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
-    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_TRAILING, frame->header_block_type);
-    ASSERT_TRUE(frame->end_stream);
-
-    return AWS_OP_SUCCESS;
-}
-
 /* Test a HEADERS frame with padding */
 H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_padded) {
     (void)allocator;
@@ -615,6 +576,52 @@ H2_DECODER_ON_SERVER_TEST(h2_decoder_headers_request) {
     ASSERT_SUCCESS(s_check_header(frame, 4, "user-agent", "test", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
     ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+
+H2_DECODER_ON_SERVER_TEST(h2_decoder_headers_cookies) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* HEADERS FRAME*/
+        0x00, 0x00, 0x06,           /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,     /* Type (8) */
+        AWS_H2_FRAME_F_END_STREAM,  /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x82,                       /* ":method: GET" - indexed */
+        0x60, 0x03, 'a', '=', 'b',  /* "cache: a=b" - indexed name, uncompressed value */
+
+        /* CONTINUATION FRAME*/
+        0x00, 0x00, 16,             /* Length (24) */
+        AWS_H2_FRAME_T_CONTINUATION,/* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS, /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* PAYLOAD */
+        0x7a, 0x04, 't', 'e', 's', 't',  /* "user-agent: test" - indexed name, uncompressed value */
+        0x60, 0x03, 'c', '=', 'd',  /* "cache: c=d" - indexed name, uncompressed value */
+        0x60, 0x03, 'e', '=', 'f',  /* "cache: e=f" - indexed name, uncompressed value */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
+    /* two sepaprate cookie headers are concatenated and moved as the last header*/
+    ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, "user-agent", "test", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 2, "cookie", "a=b; c=d; e=f", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
+    ASSERT_TRUE(frame->end_stream);
+
     return AWS_OP_SUCCESS;
 }
 
