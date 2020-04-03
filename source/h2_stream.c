@@ -143,6 +143,7 @@ static bool s_server_state_allows_frame_type[AWS_H2_STREAM_STATE_COUNT][AWS_H2_F
 };
 
 static int s_check_state_allows_frame_type(const struct aws_h2_stream *stream, enum aws_h2_frame_type frame_type) {
+    AWS_PRECONDITION(frame_type < AWS_H2_FRAME_T_UNKNOWN); /* Decoder won't invoke callbacks for unknown frame types */
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
     const enum aws_h2_stream_state state = stream->thread_data.state;
