@@ -740,6 +740,6 @@ void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increm
     stream->vtable->update_window(stream, increment_size);
 }
 
-uint32_t aws_http_stream_get_id(struct aws_http_stream *stream) {
+uint32_t aws_http_stream_get_id(const struct aws_http_stream *stream) {
     return stream->id;
 }

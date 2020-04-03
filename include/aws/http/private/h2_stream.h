@@ -34,12 +34,22 @@
 #define AWS_H2_STREAM_LOG(level, stream, text) AWS_H2_STREAM_LOGF(level, (stream), "%s", (text))
 
 enum aws_h2_stream_state {
+    /* Initial state, before anything sent or received. */
     AWS_H2_STREAM_STATE_IDLE,
+    /* (server-only) stream-id was reserved via PUSH_PROMISE on another stream,
+     * but HEADERS for this stream have not been sent yet */
     AWS_H2_STREAM_STATE_RESERVED_LOCAL,
+    /* (client-only) stream-id was reserved via PUSH_PROMISE on another stream,
+     * but HEADERS for this stream have not been received yet */
     AWS_H2_STREAM_STATE_RESERVED_REMOTE,
+    /* Neither side is done sending their message. */
     AWS_H2_STREAM_STATE_OPEN,
+    /* This side is done sending message (END_STREAM), but peer is not done. */
     AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL,
+    /* Peer is done sending message (END_STREAM), but this side is not done */
     AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE,
+    /* Both sides done sending message (END_STREAM),
+     * or either side has sent RST_STREAM */
     AWS_H2_STREAM_STATE_CLOSED,
 
     AWS_H2_STREAM_STATE_COUNT,
@@ -55,13 +65,8 @@ struct aws_h2_stream {
         enum aws_h2_stream_state state;
         uint64_t window_size; /* #TODO try to figure out how this actually works, and then implement it */
         struct aws_http_message *outgoing_message;
+        bool received_main_headers;
     } thread_data;
-
-    /* Any thread may touch this data, but the lock must be held */
-    struct {
-        struct aws_mutex lock;
-
-    } synced_data;
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);
@@ -74,6 +79,21 @@ enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *str
 
 /* Connection is ready to send frames from stream now */
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data);
+
+int aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *stream);
+
+int aws_h2_stream_on_decoder_headers_i(
+    struct aws_h2_stream *stream,
+    const struct aws_http_header *header,
+    enum aws_http_header_name name_enum,
+    enum aws_http_header_block block_type);
+
+int aws_h2_stream_on_decoder_headers_end(
+    struct aws_h2_stream *stream,
+    bool malformed,
+    enum aws_http_header_block block_type);
+
+int aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stream);
 
 int aws_h2_stream_activate(struct aws_http_stream *stream);
 

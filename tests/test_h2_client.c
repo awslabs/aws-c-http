@@ -14,6 +14,7 @@
  */
 
 #include "h2_test_helper.h"
+#include "stream_test_helper.h"
 #include <aws/http/private/h2_connection.h>
 #include <aws/http/request_response.h>
 #include <aws/testing/io_testing_channel.h>
@@ -21,6 +22,9 @@
 #define TEST_CASE(NAME)                                                                                                \
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
+
+#define DEFINE_HEADER(NAME, VALUE)                                                                                     \
+    { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
 
 /* Singleton used by tests in this file */
 struct tester {
@@ -77,7 +81,7 @@ TEST_CASE(h2_client_sanity_check) {
 }
 
 /* Test that a stream can be created and destroyed. */
-TEST_CASE(h2_client_request_create) {
+TEST_CASE(h2_client_stream_create) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* create request */
@@ -85,11 +89,11 @@ TEST_CASE(h2_client_request_create) {
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header headers[] = {
-        {aws_byte_cursor_from_c_str(":method"), aws_byte_cursor_from_c_str("GET")},
-        {aws_byte_cursor_from_c_str(":scheme"), aws_byte_cursor_from_c_str("https")},
-        {aws_byte_cursor_from_c_str(":path"), aws_byte_cursor_from_c_str("/")},
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
     };
-    ASSERT_SUCCESS(aws_http_headers_add_array(aws_http_message_get_headers(request), headers, AWS_ARRAY_SIZE(headers)));
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
 
     struct aws_http_make_request_options options = {
         .self_size = sizeof(options),
@@ -121,11 +125,11 @@ TEST_CASE(h2_client_unactivated_stream_cleans_up) {
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header headers[] = {
-        {aws_byte_cursor_from_c_str(":method"), aws_byte_cursor_from_c_str("GET")},
-        {aws_byte_cursor_from_c_str(":scheme"), aws_byte_cursor_from_c_str("https")},
-        {aws_byte_cursor_from_c_str(":path"), aws_byte_cursor_from_c_str("/")},
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
     };
-    ASSERT_SUCCESS(aws_http_headers_add_array(aws_http_message_get_headers(request), headers, AWS_ARRAY_SIZE(headers)));
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
 
     struct aws_http_make_request_options options = {
         .self_size = sizeof(options),
@@ -207,5 +211,243 @@ TEST_CASE(h2_client_setting_ack) {
     ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, latest_frame->type);
     ASSERT_TRUE(latest_frame->ack);
 
+    return s_tester_clean_up();
+}
+
+static int s_stream_tester_init(struct client_stream_tester *stream_tester, struct aws_http_message *request) {
+    struct client_stream_tester_options options = {
+        .request = request,
+        .connection = s_tester.connection,
+    };
+    return client_stream_tester_init(stream_tester, s_tester.alloc, &options);
+}
+
+static int s_compare_headers(const struct aws_http_headers *expected, const struct aws_http_headers *got) {
+
+    ASSERT_UINT_EQUALS(aws_http_headers_count(expected), aws_http_headers_count(got));
+    for (size_t i = 0; i < aws_http_headers_count(expected); ++i) {
+        struct aws_http_header expected_field;
+        aws_http_headers_get_index(expected, i, &expected_field);
+
+        struct aws_http_header got_field;
+        aws_http_headers_get_index(got, i, &got_field);
+
+        ASSERT_TRUE(aws_byte_cursor_eq(&expected_field.name, &got_field.name));
+        ASSERT_TRUE(aws_byte_cursor_eq(&expected_field.value, &got_field.value));
+        ASSERT_INT_EQUALS(expected_field.compression, got_field.compression);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that a simple request/response can be carried to completion.
+ * The request consists of a single HEADERS frame and the response consists of a single HEADERS frame. */
+TEST_CASE(h2_client_stream_complete) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+
+    /* validate sent request, */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct h2_decoded_frame *sent_headers_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
+    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_HEADERS, sent_headers_frame->type);
+    ASSERT_TRUE(sent_headers_frame->end_stream);
+    ASSERT_SUCCESS(s_compare_headers(aws_http_message_get_headers(request), sent_headers_frame->headers));
+
+    /* fake peer sends response  */
+    struct aws_http_header response_headers_src[] = {
+        DEFINE_HEADER(":status", "404"),
+        DEFINE_HEADER("date", "Wed, 01 Apr 2020 23:02:49 GMT"),
+    };
+
+    struct aws_http_headers *response_headers = aws_http_headers_new(allocator);
+    aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
+
+    struct aws_h2_frame *response_frame = aws_h2_frame_new_headers(
+        allocator, aws_http_stream_get_id(stream_tester.stream), response_headers, true /*end_stream*/, 0, NULL);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
+
+    /* validate that client received complete response */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(404, stream_tester.response_status);
+    ASSERT_SUCCESS(s_compare_headers(response_headers, stream_tester.response_headers));
+
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* clean up */
+    aws_http_headers_release(response_headers);
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
+/* Receiving malformed headers should result in a "Stream Error", not a "Connection Error". */
+TEST_CASE(h2_client_stream_err_malformed_header) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* fake peer sends response with malformed header */
+    struct aws_http_header response_headers_src[] = {
+        DEFINE_HEADER(":STATUS", "404"), /* uppercase name forbidden in h2 */
+    };
+
+    struct aws_http_headers *response_headers = aws_http_headers_new(allocator);
+    aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
+
+    struct aws_h2_frame *response_frame = aws_h2_frame_new_headers(
+        allocator, aws_http_stream_get_id(stream_tester.stream), response_headers, true /*end_stream*/, 0, NULL);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
+
+    /* validate that stream completed with error */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, stream_tester.on_complete_error_code);
+
+    /* a stream error should not affect the connection */
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* validate that stream sent RST_STREAM */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *rst_stream_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
+    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
+    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
+
+    /* clean up */
+    aws_http_headers_release(response_headers);
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
+TEST_CASE(h2_client_conn_err_stream_frames_received_for_idle_stream) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* fake peer sends response to "idle" (aka doesn't exist yet) stream 99 */
+    struct aws_http_header response_headers_src[] = {
+        DEFINE_HEADER(":status", "200"),
+    };
+
+    struct aws_http_headers *response_headers = aws_http_headers_new(allocator);
+    aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
+
+    struct aws_h2_frame *response_frame =
+        aws_h2_frame_new_headers(allocator, 99 /*stream_id*/, response_headers, true /* end_stream */, 0, NULL);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
+
+    /* validate that connection has closed due to PROTOCOL_ERROR */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_INT_EQUALS(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+
+    /* #TODO client should send GOAWAY */
+
+    /* clean up */
+    aws_http_headers_release(response_headers);
+    return s_tester_clean_up();
+}
+
+/* Peer may have sent certain frames (WINDOW_UPDATE and RST_STREAM) before realizing
+ * that we have closed the stream. These frames should be ignored. */
+TEST_CASE(h2_client_stream_ignores_some_frames_received_soon_after_closing) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* fake peer sends complete response */
+    struct aws_http_header response_headers_src[] = {
+        DEFINE_HEADER(":status", "404"),
+        DEFINE_HEADER("date", "Wed, 01 Apr 2020 23:02:49 GMT"),
+    };
+
+    struct aws_http_headers *response_headers = aws_http_headers_new(allocator);
+    aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
+
+    struct aws_h2_frame *peer_frame =
+        aws_h2_frame_new_headers(allocator, stream_id, response_headers, true /*end_stream*/, 0, NULL);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+
+    /* fake peer sends WINDOW_UPDATE */
+    peer_frame = aws_h2_frame_new_window_update(allocator, stream_id, 99);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+
+    /* fake peer sends RST_STREAM */
+    peer_frame = aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_H2_ERR_ENHANCE_YOUR_CALM);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+
+    /* validate that stream completed successfully.
+     * the WINDOW_UPDATE and RST_STREAM should be ignored because
+     * they arrived soon after the client had sent END_STREAM */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
+
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* clean up */
+    aws_http_headers_release(response_headers);
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
     return s_tester_clean_up();
 }
