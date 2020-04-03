@@ -49,7 +49,7 @@ enum aws_h2_stream_state {
     /* Peer is done sending message (END_STREAM), but this side is not done */
     AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE,
     /* Both sides done sending message (END_STREAM),
-     * or either side has sent RST_STREAM) */
+     * or either side has sent RST_STREAM */
     AWS_H2_STREAM_STATE_CLOSED,
 
     AWS_H2_STREAM_STATE_COUNT,
