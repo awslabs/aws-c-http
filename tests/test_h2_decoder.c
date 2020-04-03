@@ -361,9 +361,9 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_payload_max_size_update) {
     /* clang-format on */
     /* set the data and expected to 16500 'a' */
     char expected[16501];
-    for(int i = 9; i < 16509 ; i++){
+    for (int i = 9; i < 16509; i++) {
         input[i] = 'a';
-        expected[i-9] = 'a';
+        expected[i - 9] = 'a';
     }
     /* EOS */
     expected[16500] = '\0';
