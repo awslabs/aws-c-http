@@ -251,7 +251,9 @@ struct aws_h2_decoder {
 
         /* Buffer up cookie header fields to concatenate separate ones */
         struct aws_byte_buf cookies;
-
+        /* Compression type for the concatenated cookie header. Let's say if any separate one is not cached, the last
+         * one will not be cached */
+        enum aws_http_header_compression cookie_header_compression_type;
     } header_block_in_progress;
 
     /* Settings for decoder, which is based on the settings sent to the peer and ACKed by peer */
@@ -343,7 +345,7 @@ static void s_reset_header_block_in_progress(struct aws_h2_decoder *decoder) {
     struct aws_byte_buf cookie_backup = decoder->header_block_in_progress.cookies;
     AWS_ZERO_STRUCT(decoder->header_block_in_progress);
     decoder->header_block_in_progress.cookies = cookie_backup;
-    aws_byte_buf_reset(&decoder->header_block_in_progress.cookies);
+    aws_byte_buf_reset(&decoder->header_block_in_progress.cookies, false);
 }
 
 void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder) {
@@ -1283,6 +1285,10 @@ static int s_process_header_field(struct aws_h2_decoder *decoder, const struct a
         if (name_enum == AWS_HTTP_HEADER_COOKIE) {
             /* for a header cookie, we will not fire callback until we concatenate them all, let's store it at the
              * buffer */
+            if (header_field->compression > current_block->cookie_header_compression_type) {
+                current_block->cookie_header_compression_type = header_field->compression;
+            }
+
             if (current_block->cookies.len) {
                 /* add a delimiter */
                 struct aws_byte_cursor delimiter = aws_byte_cursor_from_c_str("; ");
@@ -1342,6 +1348,7 @@ static int s_state_fn_header_block_loop(struct aws_h2_decoder *decoder, struct a
                 concatenated_cookie.name = aws_byte_cursor_from_c_str("cookie");
                 concatenated_cookie.value = aws_byte_cursor_from_buf(&decoder->header_block_in_progress.cookies);
                 struct aws_header_block_in_progress *current_block = &decoder->header_block_in_progress;
+                concatenated_cookie.compression = current_block->cookie_header_compression_type;
                 if (current_block->is_push_promise) {
                     DECODER_CALL_VTABLE_STREAM_ARGS(
                         decoder, on_push_promise_i, &concatenated_cookie, AWS_HTTP_HEADER_COOKIE);
