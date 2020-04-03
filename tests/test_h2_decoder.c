@@ -345,6 +345,61 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_ignores_unknown_flags) {
     return AWS_OP_SUCCESS;
 }
 
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_payload_max_size_update) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+    /* the initial max size is set as 16384, let's create a data frame with 16500 bytes data */
+    aws_h2_decoder_set_setting_max_frame_size(fixture->decode.decoder, 16500);
+    /* clang-format off */
+    uint8_t input[16509] = {
+        0x00, 0x40, 0x74,           /* Length (24) */
+        AWS_H2_FRAME_T_DATA,        /* Type (8) */
+        AWS_H2_FRAME_F_END_STREAM,  /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* DATA */
+    };
+    /* clang-format on */
+    /* set the data and expected to 16500 'a' */
+    char expected[16501];
+    for(int i = 9; i < 16509 ; i++){
+        input[i] = 'a';
+        expected[i-9] = 'a';
+    }
+    /* EOS */
+    expected[16500] = '\0';
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate. */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
+    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
+        &fixture->decode, 0x76543210 /*stream_id*/, expected, true /*end_stream*/));
+    return AWS_OP_SUCCESS;
+}
+
+/* The size of a frame payload is limited by the maximum size. An endpoint MUST send an error code of FRAME_SIZE_ERROR
+ * if a frame exceeds the size */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_data_payload_exceed_max_size) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+    /* the initial max size is set as 16384, let's create a data frame with 16500 bytes data */
+    /* clang-format off */
+    uint8_t input[16509] = {
+        0x00, 0x40, 0x74,           /* Length (24) */
+        AWS_H2_FRAME_T_DATA,        /* Type (8) */
+        AWS_H2_FRAME_F_END_STREAM,  /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* DATA */
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
 /* DATA frames MUST specify a stream-id */
 H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_data_requires_stream_id) {
     (void)allocator;
