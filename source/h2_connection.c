@@ -57,10 +57,24 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
 static struct aws_http_stream *s_connection_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options);
+static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 
+static int s_decoder_on_headers_begin(uint32_t stream_id, void *userdata);
+static int s_decoder_on_headers_i(
+    uint32_t stream_id,
+    const struct aws_http_header *header,
+    enum aws_http_header_name name_enum,
+    enum aws_http_header_block block_type,
+    void *userdata);
+static int s_decoder_on_headers_end(
+    uint32_t stream_id,
+    bool malformed,
+    enum aws_http_header_block block_type,
+    void *userdata);
+static int s_decoder_on_end_stream(uint32_t stream_id, void *userdata);
 static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
 static int s_decoder_on_settings(
     const struct aws_h2_frame_setting *settings_array,
@@ -85,12 +99,15 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .new_server_request_handler_stream = NULL,
     .stream_send_response = NULL,
     .close = NULL,
-    .is_open = NULL,
+    .is_open = s_connection_is_open,
     .update_window = NULL,
 };
 
 static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
-    .on_data = NULL,
+    .on_headers_begin = s_decoder_on_headers_begin,
+    .on_headers_i = s_decoder_on_headers_i,
+    .on_headers_end = s_decoder_on_headers_end,
+    .on_end_stream = s_decoder_on_end_stream,
     .on_ping = s_decoder_on_ping,
     .on_settings = s_decoder_on_settings,
     .on_settings_ack = s_decoder_on_settings_ack,
@@ -157,6 +174,11 @@ static void s_stop(
     }
 }
 
+static void s_shutdown_due_to_read_err(struct aws_h2_connection *connection, int error_code) {
+    AWS_PRECONDITION(error_code);
+    s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, error_code);
+}
+
 static void s_shutdown_due_to_write_err(struct aws_h2_connection *connection, int error_code) {
     AWS_PRECONDITION(error_code);
     s_stop(connection, false /*stop_reading*/, true /*stop_writing*/, true /*schedule_shutdown*/, error_code);
@@ -210,6 +232,20 @@ static struct aws_h2_connection *s_connection_new(
 
     if (aws_hash_table_init(
             &connection->thread_data.active_streams_map, alloc, 8, aws_hash_ptr, aws_ptr_eq, NULL, NULL)) {
+
+        CONNECTION_LOGF(
+            ERROR, connection, "Hashtable init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
+        goto error;
+    }
+
+    if (aws_hash_table_init(
+            &connection->thread_data.closed_streams_where_frames_might_trickle_in,
+            alloc,
+            8,
+            aws_hash_ptr,
+            aws_ptr_eq,
+            NULL,
+            NULL)) {
 
         CONNECTION_LOGF(
             ERROR, connection, "Hashtable init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
@@ -306,6 +342,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     aws_h2_decoder_destroy(connection->thread_data.decoder);
     aws_h2_frame_encoder_clean_up(&connection->thread_data.encoder);
     aws_hash_table_clean_up(&connection->thread_data.active_streams_map);
+    aws_hash_table_clean_up(&connection->thread_data.closed_streams_where_frames_might_trickle_in);
     aws_mutex_clean_up(&connection->synced_data.lock);
     aws_mem_release(connection->base.alloc, connection);
 }
@@ -527,7 +564,175 @@ static void s_try_write_outgoing_frames(struct aws_h2_connection *connection) {
     s_outgoing_frames_task(&connection->outgoing_frames_task, connection, AWS_TASK_STATUS_RUN_READY);
 }
 
+/**
+ * Returns AWS_OP_SUCCESS and sets `out_stream` if stream is currently active.
+ * Returns AWS_OP_SUCCESS and sets `out_stream` to NULL if the frame should be ignored.
+ * Returns AWS_OP_ERR if it is a connection error to receive this frame.
+ */
+int s_get_active_stream_for_incoming_frame(
+    struct aws_h2_connection *connection,
+    uint32_t stream_id,
+    enum aws_h2_frame_type frame_type,
+    struct aws_h2_stream **out_stream) {
+
+    *out_stream = NULL;
+
+    /* Check active streams */
+    struct aws_hash_element *found = NULL;
+    const void *stream_id_key = (void *)(size_t)stream_id;
+    aws_hash_table_find(&connection->thread_data.active_streams_map, stream_id_key, &found);
+    if (found) {
+        /* Found it! return */
+        *out_stream = found->value;
+        return AWS_OP_SUCCESS;
+    }
+
+    /* #TODO account for odd-numbered vs even-numbered stream-ids when we handle PUSH_PROMISE frames */
+
+    /* Stream isn't active, check whether it's idle (doesn't exist yet) or closed. */
+    if (stream_id >= connection->base.next_stream_id) {
+        /* Illegal to receive frames for a stream in the idle state (stream doesn't exist yet)
+         * (except server receiving HEADERS to start a stream, but that's handled elsewhere) */
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Illegal to receive %s frame on stream id=%" PRIu32 " state=IDLE",
+            aws_h2_frame_type_to_str(frame_type),
+            stream_id);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+
+    /* Stream is closed, check whether it's legal for a few more frames to trickle in */
+    aws_hash_table_find(&connection->thread_data.closed_streams_where_frames_might_trickle_in, stream_id_key, &found);
+    if (found) {
+        enum aws_h2_stream_closed_when closed_when = (enum aws_h2_stream_closed_when)found->value;
+        if (closed_when == AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT) {
+            /* An endpoint MUST ignore frames that it receives on closed streams after it has sent a RST_STREAM frame */
+            CONNECTION_LOGF(
+                TRACE,
+                connection,
+                "Ignoring %s frame on stream id=%" PRIu32 " because RST_STREAM was recently sent.",
+                aws_h2_frame_type_to_str(frame_type),
+                stream_id);
+
+            return AWS_OP_SUCCESS;
+
+        } else {
+            AWS_ASSERT(closed_when == AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM);
+
+            /* WINDOW_UPDATE or RST_STREAM frames can be received ... for a short period after
+             * a DATA or HEADERS frame containing an END_STREAM flag is sent.
+             * Endpoints MUST ignore WINDOW_UPDATE or RST_STREAM frames received in this state */
+            if (frame_type == AWS_H2_FRAME_T_WINDOW_UPDATE || frame_type == AWS_H2_FRAME_T_RST_STREAM) {
+                CONNECTION_LOGF(
+                    TRACE,
+                    connection,
+                    "Ignoring %s frame on stream id=%" PRIu32 " because END_STREAM flag was recently sent.",
+                    aws_h2_frame_type_to_str(frame_type),
+                    stream_id);
+
+                return AWS_OP_SUCCESS;
+            }
+        }
+    }
+
+    /* Stream was closed long ago, or didn't fit criteria for being ignored */
+    CONNECTION_LOGF(
+        ERROR,
+        connection,
+        "Illegal to receive %s frame on stream id=%" PRIu32 " state=closed",
+        aws_h2_frame_type_to_str(frame_type),
+        stream_id);
+
+    return aws_raise_error(AWS_ERROR_HTTP_STREAM_CLOSED);
+}
+
 /* Decoder callbacks */
+
+int s_decoder_on_headers_begin(uint32_t stream_id, void *userdata) {
+    struct aws_h2_connection *connection = userdata;
+
+    if (connection->base.server_data) {
+        /* Server would create new request-handler stream... */
+        return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+    }
+
+    struct aws_h2_stream *stream;
+    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_HEADERS, &stream)) {
+        return AWS_OP_ERR;
+    }
+
+    if (stream) {
+        if (aws_h2_stream_on_decoder_headers_begin(stream)) {
+            return AWS_OP_ERR;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+int s_decoder_on_headers_i(
+    uint32_t stream_id,
+    const struct aws_http_header *header,
+    enum aws_http_header_name name_enum,
+    enum aws_http_header_block block_type,
+    void *userdata) {
+
+    struct aws_h2_connection *connection = userdata;
+    struct aws_h2_stream *stream;
+    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_HEADERS, &stream)) {
+        return AWS_OP_ERR;
+    }
+
+    if (stream) {
+        if (aws_h2_stream_on_decoder_headers_i(stream, header, name_enum, block_type)) {
+            return AWS_OP_ERR;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+int s_decoder_on_headers_end(
+    uint32_t stream_id,
+    bool malformed,
+    enum aws_http_header_block block_type,
+    void *userdata) {
+
+    struct aws_h2_connection *connection = userdata;
+    struct aws_h2_stream *stream;
+    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_HEADERS, &stream)) {
+        return AWS_OP_ERR;
+    }
+
+    if (stream) {
+        if (aws_h2_stream_on_decoder_headers_end(stream, malformed, block_type)) {
+            return AWS_OP_ERR;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+int s_decoder_on_end_stream(uint32_t stream_id, void *userdata) {
+    struct aws_h2_connection *connection = userdata;
+
+    /* Not calling s_get_active_stream_for_incoming_frame() here because END_STREAM
+     * isn't an actual frame type. It's a flag on DATA or HEADERS frames, and we
+     * already checked the legality of those frames in their respective callbacks. */
+
+    struct aws_hash_element *found = NULL;
+    aws_hash_table_find(&connection->thread_data.active_streams_map, (void *)(size_t)stream_id, &found);
+    if (found) {
+        struct aws_h2_stream *stream = found->value;
+        if (aws_h2_stream_on_decoder_end_stream(stream)) {
+            return AWS_OP_ERR;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
@@ -701,7 +906,7 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
     }
 
     /* Remove stream from active_streams_map and outgoing_stream_list (if it was in them at all) */
-    aws_hash_table_remove(&connection->thread_data.active_streams_map, stream, NULL, NULL);
+    aws_hash_table_remove(&connection->thread_data.active_streams_map, (void *)(size_t)stream->base.id, NULL, NULL);
     if (stream->node.next) {
         aws_linked_list_remove(&stream->node);
     }
@@ -715,6 +920,44 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
     aws_http_stream_release(&stream->base);
 }
 
+int aws_h2_connection_on_stream_closed(
+    struct aws_h2_connection *connection,
+    struct aws_h2_stream *stream,
+    enum aws_h2_stream_closed_when closed_when,
+    int aws_error_code) {
+
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+    AWS_PRECONDITION(stream->thread_data.state == AWS_H2_STREAM_STATE_CLOSED);
+    AWS_PRECONDITION(stream->base.id != 0);
+
+    uint32_t stream_id = stream->base.id;
+
+    /* Mark stream complete. This removes the stream from any "active" datastructures,
+     * invokes its completion callback, and releases its refcount. */
+    s_stream_complete(connection, stream, aws_error_code);
+    stream = NULL; /* Reference released, do not touch again */
+
+    /* Peer might have already sent/queued frames for this stream before learning that we closed it.
+     * But if peer was the one to close the stream via RST_STREAM, they know better than to send more frames. */
+    bool frames_might_trickle_in = closed_when != AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED;
+    if (frames_might_trickle_in) {
+        if (aws_hash_table_put(
+                &connection->thread_data.closed_streams_where_frames_might_trickle_in,
+                (void *)(size_t)stream_id,
+                (void *)(size_t)closed_when,
+                NULL)) {
+
+            AWS_H2_STREAM_LOG(ERROR, stream, "Failed inserting ID into map of recently closed streams");
+            return AWS_OP_ERR;
+        }
+
+        /* #TODO remove entries from closed_streams_where_frames_might_trickle_in after some period of time */
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Move stream into "active" datastructures and notify stream that it can send frames now */
 static void s_activate_stream(struct aws_h2_connection *connection, struct aws_h2_stream *stream) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
@@ -873,6 +1116,19 @@ error:
     return NULL;
 }
 
+static bool s_connection_is_open(const struct aws_http_connection *connection_base) {
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
+    bool is_open;
+
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+        is_open = connection->synced_data.is_open;
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+
+    return is_open;
+}
+
 static int s_handler_process_read_message(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
@@ -896,6 +1152,7 @@ static int s_handler_process_read_message(
             "Decoding message failed, error %d (%s). Closing connection",
             aws_last_error(),
             aws_error_name(aws_last_error()));
+        goto shutdown;
     }
 
     /* HTTP/2 protocol uses WINDOW_UPDATE frames to coordinate data rates with peer,
@@ -907,6 +1164,7 @@ static int s_handler_process_read_message(
             "Incrementing read window failed, error %d (%s). Closing connection",
             aws_last_error(),
             aws_error_name(aws_last_error()));
+        goto shutdown;
     }
 
     /* release message */
@@ -914,15 +1172,17 @@ static int s_handler_process_read_message(
         aws_mem_release(message->allocator, message);
         message = NULL;
     }
+
     /* Flush any outgoing frames that might have been queued as a result of decoder callbacks. */
     s_try_write_outgoing_frames(connection);
     return AWS_OP_SUCCESS;
+
 shutdown:
     if (message) {
         aws_mem_release(message->allocator, message);
     }
-    /* Stop reading, because the reading error happans here */
-    s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, aws_last_error());
+
+    s_shutdown_due_to_read_err(connection, aws_last_error());
     return AWS_OP_SUCCESS;
 }
 

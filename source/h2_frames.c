@@ -107,6 +107,56 @@ const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type) {
     }
 }
 
+const char *aws_h2_error_code_to_str(enum aws_h2_error_code h2_error_code) {
+    switch (h2_error_code) {
+        case AWS_H2_ERR_NO_ERROR:
+            return "NO_ERROR";
+        case AWS_H2_ERR_PROTOCOL_ERROR:
+            return "PROTOCOL_ERROR";
+        case AWS_H2_ERR_INTERNAL_ERROR:
+            return "INTERNAL_ERROR";
+        case AWS_H2_ERR_FLOW_CONTROL_ERROR:
+            return "FLOW_CONTROL_ERROR";
+        case AWS_H2_ERR_SETTINGS_TIMEOUT:
+            return "SETTINGS_TIMEOUT";
+        case AWS_H2_ERR_STREAM_CLOSED:
+            return "STREAM_CLOSED";
+        case AWS_H2_ERR_FRAME_SIZE_ERROR:
+            return "FRAME_SIZE_ERROR";
+        case AWS_H2_ERR_REFUSED_STREAM:
+            return "REFUSED_STREAM";
+        case AWS_H2_ERR_CANCEL:
+            return "CANCEL";
+        case AWS_H2_ERR_COMPRESSION_ERROR:
+            return "COMPRESSION_ERROR";
+        case AWS_H2_ERR_CONNECT_ERROR:
+            return "CONNECT_ERROR";
+        case AWS_H2_ERR_ENHANCE_YOUR_CALM:
+            return "ENHANCE_YOUR_CALM";
+        case AWS_H2_ERR_INADEQUATE_SECURITY:
+            return "INADEQUATE_SECURITY";
+        case AWS_H2_ERR_HTTP_1_1_REQUIRED:
+            return "HTTP_1_1_REQUIRED";
+        default:
+            return "UNKNOWN_ERROR";
+    }
+}
+
+enum aws_h2_error_code aws_error_to_h2_error_code(int aws_error_code) {
+    switch (aws_error_code) {
+        case AWS_ERROR_HTTP_PROTOCOL_ERROR:
+            return AWS_H2_ERR_PROTOCOL_ERROR;
+        case AWS_ERROR_HTTP_STREAM_CLOSED:
+            return AWS_H2_ERR_STREAM_CLOSED;
+        case AWS_ERROR_HTTP_INVALID_FRAME_SIZE:
+            return AWS_H2_ERR_FRAME_SIZE_ERROR;
+        case AWS_ERROR_HTTP_COMPRESSION:
+            return AWS_H2_ERR_COMPRESSION_ERROR;
+        default:
+            return AWS_H2_ERR_INTERNAL_ERROR;
+    }
+}
+
 int aws_h2_validate_stream_id(uint32_t stream_id) {
     if (stream_id == 0 || stream_id > AWS_H2_STREAM_ID_MAX) {
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);

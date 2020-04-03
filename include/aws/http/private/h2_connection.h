@@ -24,6 +24,7 @@
 #include <aws/http/private/h2_frames.h>
 
 struct aws_h2_decoder;
+struct aws_h2_stream;
 
 struct aws_h2_connection {
     struct aws_http_connection base;
@@ -62,6 +63,12 @@ struct aws_h2_connection {
          * When queue is empty, then we send DATA frames from the outgoing_streams_list */
         struct aws_linked_list outgoing_frames_queue;
 
+        /* Maps stream-id to aws_h2_stream_closed_when.
+         * Contains data about streams that were recently closed by this end (sent RST_STREAM frame or END_STREAM flag),
+         * but might still receive frames that remote peer sent before learning that the stream was closed.
+         * Entries are removed after a period of time. */
+        struct aws_hash_table closed_streams_where_frames_might_trickle_in;
+
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
@@ -80,6 +87,15 @@ struct aws_h2_connection {
         bool is_open;
 
     } synced_data;
+};
+
+/**
+ * The action which caused the stream to close.
+ */
+enum aws_h2_stream_closed_when {
+    AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM,
+    AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED,
+    AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT,
 };
 
 /* Private functions called from tests... */
@@ -109,5 +125,20 @@ AWS_EXTERN_C_END
  * Do not enqueue DATA frames, these are sent by other means when the frame queue is empty.
  */
 void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connection, struct aws_h2_frame *frame);
+
+/**
+ * Invoked immediately after a stream enters the CLOSED state.
+ * The connection will remove the stream from its "active" datastructures,
+ * guaranteeing that no further decoder callbacks are invoked on the stream.
+ *
+ * This should NOT be invoked in the case of a "Connection Error",
+ * though a "Stream Error", in which a RST_STREAM is sent and the stream
+ * is closed early, would invoke this.
+ */
+int aws_h2_connection_on_stream_closed(
+    struct aws_h2_connection *connection,
+    struct aws_h2_stream *stream,
+    enum aws_h2_stream_closed_when closed_when,
+    int aws_error_code);
 
 #endif /* AWS_HTTP_H2_CONNECTION_H */

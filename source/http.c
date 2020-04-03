@@ -289,7 +289,7 @@ enum aws_http_header_name aws_http_str_to_header_name(struct aws_byte_cursor cur
 }
 
 enum aws_http_header_name aws_http_lowercase_str_to_header_name(struct aws_byte_cursor cursor) {
-    int header = s_find_in_str_to_enum_hash_table(&s_header_str_to_enum, &cursor);
+    int header = s_find_in_str_to_enum_hash_table(&s_lowercase_header_str_to_enum, &cursor);
     if (header >= 0) {
         return (enum aws_http_header_name)header;
     }

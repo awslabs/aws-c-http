@@ -504,6 +504,8 @@ int h2_fake_peer_decode_messages_from_testing_channel(struct h2_fake_peer *peer)
 }
 
 int h2_fake_peer_send_frame(struct h2_fake_peer *peer, struct aws_h2_frame *frame) {
+    ASSERT_NOT_NULL(frame);
+
     bool frame_complete = false;
     while (!frame_complete) {
         struct aws_io_message *msg = aws_channel_acquire_message_from_pool(

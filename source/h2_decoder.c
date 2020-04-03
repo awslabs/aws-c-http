@@ -720,11 +720,20 @@ static int s_state_fn_priority_block(struct aws_h2_decoder *decoder, struct aws_
 static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     const struct aws_byte_cursor body_data = s_decoder_get_payload(decoder, input);
+
+    bool on_data_invoked = false;
     if (body_data.len) {
+        on_data_invoked = true;
         DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data, body_data);
     }
 
     if (decoder->frame_in_progress.payload_len == 0) {
+        /* Even if DATA frame had no payload, we still want to invoke the callback at least once.
+         * This lets the stream check whether its current state allows a DATA frame */
+        if (!on_data_invoked) {
+            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data, body_data);
+        }
+
         /* If frame had END_STREAM flag, alert user now */
         if (decoder->frame_in_progress.flags.end_stream) {
             DECODER_CALL_VTABLE_STREAM(decoder, on_end_stream);
@@ -1111,7 +1120,7 @@ static int s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
             current_block->block_type = AWS_HTTP_HEADER_BLOCK_INFORMATIONAL;
 
             if (current_block->ends_stream) {
-                /* Informational headers do not constitute a full response (RFC-7541 8.1) */
+                /* Informational headers do not constitute a full response (RFC-7540 8.1) */
                 DECODER_LOG(ERROR, decoder, "Informational (1xx) response cannot END_STREAM");
                 goto malformed;
             }

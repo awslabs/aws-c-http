@@ -275,7 +275,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_empty) {
     uint8_t input[] = {
         0x00, 0x00, 0x00,           /* Length (24) */
         AWS_H2_FRAME_T_DATA,        /* Type (8) */
-        0x0,                        /* Flags (8) */
+        AWS_H2_FRAME_F_END_STREAM,  /* Flags (8) */
         0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
         /* DATA */
                                     /* Data (*) */
@@ -285,8 +285,12 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_empty) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
-        &fixture->decode, 0x76543210 /*stream_id*/, "", false /*end_stream*/));
+    ASSERT_UINT_EQUALS(1, h2_decode_tester_frame_count(&fixture->decode));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
+    ASSERT_TRUE(frame->data.len == 0);
+    ASSERT_TRUE(frame->end_stream);
+
     return AWS_OP_SUCCESS;
 }
 
