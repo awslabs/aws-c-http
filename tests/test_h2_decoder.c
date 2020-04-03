@@ -579,7 +579,6 @@ H2_DECODER_ON_SERVER_TEST(h2_decoder_headers_request) {
     return AWS_OP_SUCCESS;
 }
 
-
 H2_DECODER_ON_SERVER_TEST(h2_decoder_headers_cookies) {
     (void)allocator;
     struct fixture *fixture = ctx;
