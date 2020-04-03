@@ -33,6 +33,7 @@ enum aws_h2_frame_type {
     AWS_H2_FRAME_T_WINDOW_UPDATE = 0x08,
     AWS_H2_FRAME_T_CONTINUATION = 0x09,
     AWS_H2_FRAME_T_UNKNOWN,
+    AWS_H2_FRAME_TYPE_COUNT,
 };
 
 /* Represents flags that may be set on a frame (RFC-7540 6) */
@@ -45,7 +46,7 @@ enum aws_h2_frame_flag {
 };
 
 /* Error codes that may be present in RST_STREAM and GOAWAY frames (RFC-7540 7). */
-enum aws_h2_error_codes {
+enum aws_h2_error_code {
     AWS_H2_ERR_NO_ERROR = 0x00,
     AWS_H2_ERR_PROTOCOL_ERROR = 0x01, /* corresponds to AWS_ERROR_HTTP_PROTOCOL_ERROR */
     AWS_H2_ERR_INTERNAL_ERROR = 0x02,
@@ -161,6 +162,25 @@ AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API
 const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type);
+
+AWS_HTTP_API
+const char *aws_h2_error_code_to_str(enum aws_h2_error_code h2_error_code);
+
+/**
+ * Translate an AWS_ERROR_* into the appropriate HTTP/2 error-code to sending in a RST_STREAM or GOAWAY frame.
+ *
+ * Ex: AWS_ERROR_HTTP_PROTOCOL_ERROR -> AWS_H2_ERR_PROTOCOL_ERROR (0x1)
+ *
+ * AWS_H2_ERR_INTERNAL_ERROR is returned if nothing else matches.
+ *
+ * #TODO - is this really how we want to handle things? It seems weird to tell OUR user
+ *         about the specific rule that the peer violated. Also, if a bunch of AWS_ERROR_*
+ *         magically result in the peer being told that THEY did something wrong,
+ *         we are for sure going to accidentally re-use those AWS_ERROR_* codes for
+ *         errors-on-our-side when we should only be using them for errors-from-their-side.
+ */
+AWS_HTTP_API
+enum aws_h2_error_code aws_error_to_h2_error_code(int aws_error_code);
 
 /* Raises AWS_ERROR_INVALID_ARGUMENT if stream_id is 0 or exceeds AWS_H2_MAX_STREAM_ID */
 AWS_HTTP_API

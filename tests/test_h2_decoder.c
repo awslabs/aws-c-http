@@ -23,17 +23,10 @@ struct fixture {
     /* If true, run decoder over input one byte at a time */
     bool one_byte_at_a_time;
 
-    /* If set, run decoder over input in two chunks, divided at the split, and we test every possible split */
-    aws_test_run_fn *split_test_fn;
-    size_t split_i;
-    bool split_tests_complete;
-
     bool is_server;
     bool skip_connection_preface;
 };
 
-/* Note that init() and clean_up() are called multiple times in "split tests",
- * which re-runs the test at each possible split point */
 static int s_fixture_init(struct fixture *fixture, struct aws_allocator *allocator) {
     fixture->allocator = allocator;
 
@@ -71,34 +64,15 @@ static int s_fixture_test_teardown(struct aws_allocator *allocator, int setup_re
     return AWS_OP_SUCCESS;
 }
 
-/* Runs all "split_at_i" tests */
-static int s_test_splits(struct aws_allocator *allocator, void *ctx) {
-    struct fixture *fixture = ctx;
-
-    /* Run the named test, with a split at each possible byte, until s_decode_all() tells us that we're done */
-    for (size_t i = 1; !fixture->split_tests_complete; ++i) {
-        fixture->split_i = i;
-        AWS_LOGF_INFO(AWS_LS_COMMON_GENERAL, "Running split test at byte %zu", i);
-        ASSERT_SUCCESS(fixture->split_test_fn(fixture->allocator, fixture));
-
-        /* Reset state */
-        s_fixture_clean_up(fixture);
-        ASSERT_SUCCESS(s_fixture_init(fixture, allocator));
-    }
-
-    return AWS_OP_SUCCESS;
-}
-
 /* declare 1 test using the fixture */
 #define TEST_CASE(NAME)                                                                                                \
     static struct fixture s_fixture_##NAME;                                                                            \
     AWS_TEST_CASE_FIXTURE(NAME, s_fixture_test_setup, s_test_##NAME, s_fixture_test_teardown, &s_fixture_##NAME);      \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
-/* declare 3 tests, where:
+/* declare 2 tests, where:
  * 1) NAME runs the decoder over input all at once
- * 2) NAME_one_byte_at_a_time runs the decoder on one byte of input at a time.
- * 3) NAME_split_at_i runs the decoder on input, split into two chunks. And re-runs test over every possible split */
+ * 2) NAME_one_byte_at_a_time runs the decoder on one byte of input at a time. */
 #define H2_DECODER_TEST_CASE_IMPL(NAME, IS_SERVER, SKIP_PREFACE)                                                       \
     static struct fixture s_fixture_##NAME = {                                                                         \
         .is_server = (IS_SERVER),                                                                                      \
@@ -115,18 +89,7 @@ static int s_test_splits(struct aws_allocator *allocator, void *ctx) {
         s_fixture_test_setup,                                                                                          \
         s_test_##NAME,                                                                                                 \
         s_fixture_test_teardown,                                                                                       \
-        &s_fixture_##NAME##_one_byte_at_a_time);                                                                       \
-    static struct fixture s_fixture_##NAME##_split_at_i = {                                                            \
-        .split_test_fn = s_test_##NAME,                                                                                \
-        .is_server = (IS_SERVER),                                                                                      \
-        .skip_connection_preface = (SKIP_PREFACE),                                                                     \
-    };                                                                                                                 \
-    AWS_TEST_CASE_FIXTURE(                                                                                             \
-        NAME##_split_at_i,                                                                                             \
-        s_fixture_test_setup,                                                                                          \
-        s_test_splits,                                                                                                 \
-        s_fixture_test_teardown,                                                                                       \
-        &s_fixture_##NAME##_split_at_i);                                                                               \
+        &s_fixture_##NAME##_one_byte_at_a_time)                                                                        \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
 #define H2_DECODER_ON_CLIENT_TEST(NAME) H2_DECODER_TEST_CASE_IMPL(NAME, false /*server*/, true /*skip_preface*/)
@@ -153,25 +116,6 @@ static int s_decode_all(struct fixture *fixture, struct aws_byte_cursor input) {
             }
             ASSERT_UINT_EQUALS(0, one_byte.len);
         }
-
-    } else if (fixture->split_i) {
-        /* Decode input in 2 chunks, divided at the split */
-        ASSERT_TRUE(fixture->split_i < input.len);
-        if (fixture->split_i == input.len - 1) {
-            /* Inform the fixture that we've done every possible split */
-            fixture->split_tests_complete = true;
-        }
-
-        struct aws_byte_cursor first_chunk = aws_byte_cursor_advance(&input, fixture->split_i);
-        if (aws_h2_decode(fixture->decode.decoder, &first_chunk)) {
-            return AWS_OP_ERR;
-        }
-        ASSERT_UINT_EQUALS(0, first_chunk.len);
-
-        if (aws_h2_decode(fixture->decode.decoder, &input)) {
-            return AWS_OP_ERR;
-        }
-        ASSERT_UINT_EQUALS(0, input.len);
 
     } else {
         /* Decode buffer all at once */
@@ -275,7 +219,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_empty) {
     uint8_t input[] = {
         0x00, 0x00, 0x00,           /* Length (24) */
         AWS_H2_FRAME_T_DATA,        /* Type (8) */
-        0x0,                        /* Flags (8) */
+        AWS_H2_FRAME_F_END_STREAM,  /* Flags (8) */
         0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
         /* DATA */
                                     /* Data (*) */
@@ -285,8 +229,12 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_empty) {
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
-        &fixture->decode, 0x76543210 /*stream_id*/, "", false /*end_stream*/));
+    ASSERT_UINT_EQUALS(1, h2_decode_tester_frame_count(&fixture->decode));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
+    ASSERT_TRUE(frame->data.len == 0);
+    ASSERT_TRUE(frame->end_stream);
+
     return AWS_OP_SUCCESS;
 }
 
