@@ -46,14 +46,12 @@ enum aws_http_header_name {
     /* Response pseudo-headers */
     AWS_HTTP_HEADER_STATUS,
 
-    /* Cookie header */
-    AWS_HTTP_HEADER_COOKIE,
-
     /* Regular headers */
     AWS_HTTP_HEADER_CONNECTION,
     AWS_HTTP_HEADER_CONTENT_LENGTH,
     AWS_HTTP_HEADER_EXPECT,
     AWS_HTTP_HEADER_TRANSFER_ENCODING,
+    AWS_HTTP_HEADER_COOKIE,
 
     AWS_HTTP_HEADER_COUNT, /* Number of enums */
 };
