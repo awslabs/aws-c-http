@@ -74,6 +74,7 @@ static int s_decoder_on_headers_end(
     bool malformed,
     enum aws_http_header_block block_type,
     void *userdata);
+static int s_decoder_on_data(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
 static int s_decoder_on_end_stream(uint32_t stream_id, void *userdata);
 static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
 static int s_decoder_on_settings(
@@ -107,6 +108,7 @@ static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
     .on_headers_begin = s_decoder_on_headers_begin,
     .on_headers_i = s_decoder_on_headers_i,
     .on_headers_end = s_decoder_on_headers_end,
+    .on_data = s_decoder_on_data,
     .on_end_stream = s_decoder_on_end_stream,
     .on_ping = s_decoder_on_ping,
     .on_settings = s_decoder_on_settings,
@@ -187,6 +189,7 @@ static struct aws_h2_connection *s_connection_new(
     bool server) {
 
     (void)server;
+    (void)initial_window_size; /* #TODO use this for our initial settings */
 
     struct aws_h2_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct aws_h2_connection));
     if (!connection) {
@@ -199,7 +202,6 @@ static struct aws_h2_connection *s_connection_new(
     connection->base.channel_handler.alloc = alloc;
     connection->base.channel_handler.impl = connection;
     connection->base.http_version = AWS_HTTP_VERSION_2;
-    connection->base.initial_window_size = initial_window_size;
     /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
     connection->base.next_stream_id = (server ? 2 : 1);
     connection->base.manual_window_management = manual_window_management;
@@ -706,6 +708,26 @@ int s_decoder_on_headers_end(
 
     if (stream) {
         if (aws_h2_stream_on_decoder_headers_end(stream, malformed, block_type)) {
+            return AWS_OP_ERR;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+int s_decoder_on_data(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
+    struct aws_h2_connection *connection = userdata;
+
+    /* #TODO Update connection's flow-control window */
+
+    /* Pass data to stream */
+    struct aws_h2_stream *stream;
+    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_DATA, &stream)) {
+        return AWS_OP_ERR;
+    }
+
+    if (stream) {
+        if (aws_h2_stream_on_decoder_data(stream, data)) {
             return AWS_OP_ERR;
         }
     }
