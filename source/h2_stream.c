@@ -443,7 +443,7 @@ int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_
         return s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 
-    /* #TODO Update connection's flow-control window */
+    /* #TODO Update stream's flow-control window */
 
     if (stream->base.on_incoming_body) {
         if (stream->base.on_incoming_body(&stream->base, &data, stream->base.user_data)) {
