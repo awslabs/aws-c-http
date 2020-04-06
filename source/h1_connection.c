@@ -113,6 +113,8 @@ static const struct aws_h1_decoder_vtable s_h1_decoder_vtable = {
 struct h1_connection {
     struct aws_http_connection base;
 
+    size_t initial_window_size;
+
     /* Single task used repeatedly for sending data from streams. */
     struct aws_channel_task outgoing_stream_task;
 
@@ -1257,7 +1259,6 @@ static struct h1_connection *s_connection_new(
     connection->base.channel_handler.alloc = alloc;
     connection->base.channel_handler.impl = connection;
     connection->base.http_version = AWS_HTTP_VERSION_1_1;
-    connection->base.initial_window_size = initial_window_size;
     connection->base.manual_window_management = manual_window_management;
 
     /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
@@ -1265,6 +1266,8 @@ static struct h1_connection *s_connection_new(
 
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
+
+    connection->initial_window_size = initial_window_size;
 
     aws_h1_encoder_init(&connection->thread_data.encoder, alloc);
 
@@ -1825,7 +1828,7 @@ static int s_handler_shutdown(
 
 static size_t s_handler_initial_window_size(struct aws_channel_handler *handler) {
     struct h1_connection *connection = handler->impl;
-    return connection->base.initial_window_size;
+    return connection->initial_window_size;
 }
 
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler) {

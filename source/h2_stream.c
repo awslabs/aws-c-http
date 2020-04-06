@@ -430,6 +430,32 @@ int aws_h2_stream_on_decoder_headers_end(
     return AWS_OP_SUCCESS;
 }
 
+int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_cursor data) {
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+
+    if (s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_DATA)) {
+        return s_send_rst_and_close_stream(stream, aws_last_error());
+    }
+
+    if (!stream->thread_data.received_main_headers) {
+        /* #TODO Not 100% sure whether this is Stream Error or Connection Error. */
+        AWS_H2_STREAM_LOG(ERROR, stream, "Malformed message, received DATA before main HEADERS");
+        return s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+
+    /* #TODO Update stream's flow-control window */
+
+    if (stream->base.on_incoming_body) {
+        if (stream->base.on_incoming_body(&stream->base, &data, stream->base.user_data)) {
+            AWS_H2_STREAM_LOGF(
+                ERROR, stream, "Incoming body callback raised error, %s", aws_error_name(aws_last_error()));
+            return AWS_OP_ERR;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 int aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stream) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
