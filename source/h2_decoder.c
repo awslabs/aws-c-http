@@ -1095,6 +1095,10 @@ static int s_state_fn_frame_unknown(struct aws_h2_decoder *decoder, struct aws_b
 static int s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
     struct aws_header_block_in_progress *current_block = &decoder->header_block_in_progress;
 
+    if (current_block->malformed) {
+        goto already_malformed;
+    }
+
     if (current_block->pseudoheaders_done) {
         return AWS_OP_SUCCESS;
     }
@@ -1186,6 +1190,8 @@ malformed:
     /* A malformed header-block is not a connection error, it's a Stream Error (RFC-7540 5.4.2).
      * We continue decoding and report that it's malformed in on_headers_end(). */
     current_block->malformed = true;
+    return AWS_OP_SUCCESS;
+already_malformed:
     return AWS_OP_SUCCESS;
 }
 
@@ -1321,6 +1327,28 @@ already_malformed:
     return AWS_OP_SUCCESS;
 }
 
+static int s_flush_cookie_header(struct aws_h2_decoder *decoder) {
+    struct aws_header_block_in_progress *current_block = &decoder->header_block_in_progress;
+    if (current_block->malformed) {
+        return AWS_OP_SUCCESS;
+    }
+    if (current_block->cookies.len == 0) {
+        /* Nothing to flush */
+        return AWS_OP_SUCCESS;
+    }
+    struct aws_http_header concatenated_cookie;
+    concatenated_cookie.name = aws_byte_cursor_from_c_str("cookie");
+    concatenated_cookie.value = aws_byte_cursor_from_buf(&current_block->cookies);
+    concatenated_cookie.compression = current_block->cookie_header_compression_type;
+    if (current_block->is_push_promise) {
+        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, &concatenated_cookie, AWS_HTTP_HEADER_COOKIE);
+    } else {
+        DECODER_CALL_VTABLE_STREAM_ARGS(
+            decoder, on_headers_i, &concatenated_cookie, AWS_HTTP_HEADER_COOKIE, current_block->block_type);
+    }
+    return AWS_OP_SUCCESS;
+}
+
 /* This state checks whether we've consumed the current frame's entire header-block fragment.
  * We revisit this state after each entry is decoded.
  * This state consumes no data. */
@@ -1332,38 +1360,16 @@ static int s_state_fn_header_block_loop(struct aws_h2_decoder *decoder, struct a
 
         /* If this is the end of the header-block, invoke callback and clear header_block_in_progress */
         if (decoder->frame_in_progress.flags.end_headers) {
-
-            bool malformed = decoder->header_block_in_progress.malformed;
-            if (malformed) {
-                goto already_malformed;
-            }
             /* Ensure pseudo-headers have been flushed */
             if (s_flush_pseudoheaders(decoder)) {
                 return AWS_OP_ERR;
             }
-            malformed = decoder->header_block_in_progress.malformed;
-            /* might have realized that header-block is malformed during flush */
-            if (malformed) {
-                goto already_malformed;
-            }
-            if (decoder->header_block_in_progress.cookies.len) {
-                /* Flush the cookie header */
-                struct aws_http_header concatenated_cookie;
-                concatenated_cookie.name = aws_byte_cursor_from_c_str("cookie");
-                concatenated_cookie.value = aws_byte_cursor_from_buf(&decoder->header_block_in_progress.cookies);
-                struct aws_header_block_in_progress *current_block = &decoder->header_block_in_progress;
-                concatenated_cookie.compression = current_block->cookie_header_compression_type;
-                if (current_block->is_push_promise) {
-                    DECODER_CALL_VTABLE_STREAM_ARGS(
-                        decoder, on_push_promise_i, &concatenated_cookie, AWS_HTTP_HEADER_COOKIE);
-                } else {
-                    DECODER_CALL_VTABLE_STREAM_ARGS(
-                        decoder, on_headers_i, &concatenated_cookie, AWS_HTTP_HEADER_COOKIE, current_block->block_type);
-                }
+            /* flush the concatenated cookie header */
+            if(s_flush_cookie_header(decoder)) {
+                return AWS_OP_ERR;
             }
 
-        /* if the headers are malformed, we skip flushing the cookie and pseudoheaders */
-        already_malformed:
+            bool malformed = decoder->header_block_in_progress.malformed;
             DECODER_LOGF(TRACE, decoder, "Done decoding header-block, malformed=%d", malformed);
 
             if (decoder->header_block_in_progress.is_push_promise) {
