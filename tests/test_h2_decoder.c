@@ -308,21 +308,19 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_payload_max_size_update) {
     };
     /* clang-format on */
     /* set the data and expected to 16500 'a' */
-    char expected[16501];
+    char expected[16500];
     for (int i = 9; i < 16509; i++) {
         input[i] = 'a';
         expected[i - 9] = 'a';
     }
-    /* EOS */
-    expected[16500] = '\0';
 
     ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
-    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
-        &fixture->decode, 0x76543210 /*stream_id*/, expected, true /*end_stream*/));
+    ASSERT_SUCCESS(h2_decode_tester_check_data_across_frames(
+        &fixture->decode, 0x76543210 /*stream_id*/, aws_byte_cursor_from_array(expected, 16500), true /*end_stream*/));
     return AWS_OP_SUCCESS;
 }
 
