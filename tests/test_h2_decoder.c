@@ -296,7 +296,8 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_ignores_unknown_flags) {
 H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_payload_max_size_update) {
     (void)allocator;
     struct fixture *fixture = ctx;
-    /* the initial max size is set as 16384, let's create a data frame with 16500 bytes data */
+    /* The initial max size is set as 16384. Let's create a data frame with 16500 bytes data, and update the setting to
+     * make it valid */
     aws_h2_decoder_set_setting_max_frame_size(fixture->decode.decoder, 16500);
     /* clang-format off */
     uint8_t input[16509] = {
@@ -329,7 +330,8 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_payload_max_size_update) {
 H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_data_payload_exceed_max_size) {
     (void)allocator;
     struct fixture *fixture = ctx;
-    /* the initial max size is set as 16384, let's create a data frame with 16500 bytes data */
+    /* The initial max size is set as 16384. Let's create a data frame with 16500 bytes data, which will be invalid in
+     * this case */
     /* clang-format off */
     uint8_t input[16509] = {
         0x00, 0x40, 0x74,           /* Length (24) */
