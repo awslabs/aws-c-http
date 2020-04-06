@@ -16,6 +16,7 @@
 #include "h2_test_helper.h"
 
 #include <aws/http/private/h2_decoder.h>
+#include <aws/io/stream.h>
 #include <aws/testing/io_testing_channel.h>
 
 /*******************************************************************************
@@ -520,6 +521,35 @@ int h2_fake_peer_send_frame(struct h2_fake_peer *peer, struct aws_h2_frame *fram
 
     aws_h2_frame_destroy(frame);
     return AWS_OP_SUCCESS;
+}
+
+int h2_fake_peer_send_data_frame(
+    struct h2_fake_peer *peer,
+    uint32_t stream_id,
+    struct aws_byte_cursor data,
+    bool end_stream) {
+
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(peer->alloc, &data);
+    ASSERT_NOT_NULL(body_stream);
+
+    struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
+        peer->testing_channel->channel, AWS_IO_MESSAGE_APPLICATION_DATA, g_aws_channel_max_fragment_size);
+    ASSERT_NOT_NULL(msg);
+
+    bool body_complete;
+    ASSERT_SUCCESS(aws_h2_encode_data_frame(
+        &peer->encoder, stream_id, body_stream, end_stream, 0, &msg->message_data, &body_complete));
+
+    ASSERT_TRUE(body_complete);
+    ASSERT_TRUE(msg->message_data.len != 0);
+
+    ASSERT_SUCCESS(testing_channel_push_read_message(peer->testing_channel, msg));
+    aws_input_stream_destroy(body_stream);
+    return AWS_OP_SUCCESS;
+}
+
+int h2_fake_peer_send_data_frame_str(struct h2_fake_peer *peer, uint32_t stream_id, const char *data, bool end_stream) {
+    return h2_fake_peer_send_data_frame(peer, stream_id, aws_byte_cursor_from_c_str(data), end_stream);
 }
 
 int h2_fake_peer_send_connection_preface(struct h2_fake_peer *peer, struct aws_h2_frame *settings) {

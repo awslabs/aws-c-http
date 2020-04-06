@@ -337,6 +337,8 @@ add_test_case(h2_client_stream_ignores_some_frames_received_soon_after_closing)
 #TODO add_test_case(h2_client_stream_err_receive_info_headers_after_main)
 #TODO add_test_case(h2_client_stream_receive_trailing_headers)
 #TODO add_test_case(h2_client_stream_err_receive_trailing_before_main)
+add_test_case(h2_client_stream_receive_data)
+add_test_case(h2_client_stream_err_receive_data_before_headers)
 
 
 add_test_case(server_new_destroy)
