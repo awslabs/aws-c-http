@@ -1365,7 +1365,7 @@ static int s_state_fn_header_block_loop(struct aws_h2_decoder *decoder, struct a
                 return AWS_OP_ERR;
             }
             /* flush the concatenated cookie header */
-            if(s_flush_cookie_header(decoder)) {
+            if (s_flush_cookie_header(decoder)) {
                 return AWS_OP_ERR;
             }
 
