@@ -36,6 +36,9 @@ static const size_t s_scratch_space_size = 9;
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_31_bit_mask = UINT32_MAX >> 1;
 
+/* initial size for cookie buffer, buffer will grow if needed */
+static const size_t s_decoder_cookie_buffer_initial_size = 512;
+
 #define DECODER_LOGF(level, decoder, text, ...)                                                                        \
     AWS_LOGF_##level(AWS_LS_HTTP_DECODER, "id=%p " text, (decoder)->logging_id, __VA_ARGS__)
 #define DECODER_LOG(level, decoder, text) DECODER_LOGF(level, decoder, "%s", text)
@@ -245,6 +248,12 @@ struct aws_h2_decoder {
          * A malformed header-block is not a connection error, it's a Stream Error (RFC-7540 5.4.2).
          * We continue decoding and report that it's malformed in on_headers_end(). */
         bool malformed;
+
+        /* Buffer up cookie header fields to concatenate separate ones */
+        struct aws_byte_buf cookies;
+        /* If separate cookie fields have different compression types, the concatenated cookie uses the strictest type.
+         */
+        enum aws_http_header_compression cookie_header_compression_type;
     } header_block_in_progress;
 
     /* Settings for decoder, which is based on the settings sent to the peer and ACKed by peer */
@@ -280,7 +289,7 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
     void *allocation = aws_mem_acquire_many(
         params->alloc, 2, &decoder, sizeof(struct aws_h2_decoder), &scratch_buf, s_scratch_space_size);
     if (!allocation) {
-        goto failed_alloc;
+        goto error;
     }
 
     AWS_ZERO_STRUCT(*decoder);
@@ -295,7 +304,7 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
 
     decoder->hpack = aws_hpack_context_new(params->alloc, AWS_LS_HTTP_DECODER, decoder);
     if (!decoder->hpack) {
-        goto failed_new_hpack;
+        goto error;
     }
 
     if (decoder->is_server && !params->skip_connection_preface) {
@@ -311,15 +320,23 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
 
     if (aws_array_list_init_dynamic(
             &decoder->settings_buffer_list, decoder->alloc, 0, sizeof(struct aws_h2_frame_setting))) {
-        goto array_list_failed;
+        goto error;
+    }
+
+    if (aws_byte_buf_init(
+            &decoder->header_block_in_progress.cookies, decoder->alloc, s_decoder_cookie_buffer_initial_size)) {
+        goto error;
     }
 
     return decoder;
 
-failed_new_hpack:
-array_list_failed:
+error:
+    if (decoder) {
+        aws_hpack_context_destroy(decoder->hpack);
+        aws_array_list_clean_up(&decoder->settings_buffer_list);
+        aws_byte_buf_clean_up(&decoder->header_block_in_progress.cookies);
+    }
     aws_mem_release(params->alloc, allocation);
-failed_alloc:
     return NULL;
 }
 
@@ -327,7 +344,10 @@ static void s_reset_header_block_in_progress(struct aws_h2_decoder *decoder) {
     for (size_t i = 0; i < PSEUDOHEADER_COUNT; ++i) {
         aws_string_destroy(decoder->header_block_in_progress.pseudoheader_values[i]);
     }
+    struct aws_byte_buf cookie_backup = decoder->header_block_in_progress.cookies;
     AWS_ZERO_STRUCT(decoder->header_block_in_progress);
+    decoder->header_block_in_progress.cookies = cookie_backup;
+    aws_byte_buf_reset(&decoder->header_block_in_progress.cookies, false);
 }
 
 void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder) {
@@ -337,6 +357,7 @@ void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder) {
     aws_array_list_clean_up(&decoder->settings_buffer_list);
     aws_hpack_context_destroy(decoder->hpack);
     s_reset_header_block_in_progress(decoder);
+    aws_byte_buf_clean_up(&decoder->header_block_in_progress.cookies);
     aws_mem_release(decoder->alloc, decoder);
 }
 
@@ -1263,11 +1284,35 @@ static int s_process_header_field(struct aws_h2_decoder *decoder, const struct a
 
         /* #TODO Validate characters used in header_field->value */
 
-        /* Deliver header-field via callback */
-        if (current_block->is_push_promise) {
-            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, header_field, name_enum);
-        } else {
-            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, header_field, name_enum, current_block->block_type);
+        switch (name_enum) {
+            case AWS_HTTP_HEADER_COOKIE:
+                /* for a header cookie, we will not fire callback until we concatenate them all, let's store it at the
+                 * buffer */
+                if (header_field->compression > current_block->cookie_header_compression_type) {
+                    current_block->cookie_header_compression_type = header_field->compression;
+                }
+
+                if (current_block->cookies.len) {
+                    /* add a delimiter */
+                    struct aws_byte_cursor delimiter = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("; ");
+                    if (aws_byte_buf_append_dynamic(&current_block->cookies, &delimiter)) {
+                        return AWS_OP_ERR;
+                    }
+                }
+                if (aws_byte_buf_append_dynamic(&current_block->cookies, &header_field->value)) {
+                    return AWS_OP_ERR;
+                }
+                break;
+
+            default:
+                /* Deliver header-field via callback */
+                if (current_block->is_push_promise) {
+                    DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, header_field, name_enum);
+                } else {
+                    DECODER_CALL_VTABLE_STREAM_ARGS(
+                        decoder, on_headers_i, header_field, name_enum, current_block->block_type);
+                }
+                break;
         }
     }
 
@@ -1279,6 +1324,29 @@ malformed:
     current_block->malformed = true;
     return AWS_OP_SUCCESS;
 already_malformed:
+    return AWS_OP_SUCCESS;
+}
+
+static int s_flush_cookie_header(struct aws_h2_decoder *decoder) {
+    struct aws_header_block_in_progress *current_block = &decoder->header_block_in_progress;
+    if (current_block->malformed) {
+        return AWS_OP_SUCCESS;
+    }
+    if (current_block->cookies.len == 0) {
+        /* Nothing to flush */
+        return AWS_OP_SUCCESS;
+    }
+    struct aws_http_header concatenated_cookie;
+    struct aws_byte_cursor header_name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("cookie");
+    concatenated_cookie.name = header_name;
+    concatenated_cookie.value = aws_byte_cursor_from_buf(&current_block->cookies);
+    concatenated_cookie.compression = current_block->cookie_header_compression_type;
+    if (current_block->is_push_promise) {
+        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, &concatenated_cookie, AWS_HTTP_HEADER_COOKIE);
+    } else {
+        DECODER_CALL_VTABLE_STREAM_ARGS(
+            decoder, on_headers_i, &concatenated_cookie, AWS_HTTP_HEADER_COOKIE, current_block->block_type);
+    }
     return AWS_OP_SUCCESS;
 }
 
@@ -1295,6 +1363,10 @@ static int s_state_fn_header_block_loop(struct aws_h2_decoder *decoder, struct a
         if (decoder->frame_in_progress.flags.end_headers) {
             /* Ensure pseudo-headers have been flushed */
             if (s_flush_pseudoheaders(decoder)) {
+                return AWS_OP_ERR;
+            }
+            /* flush the concatenated cookie header */
+            if (s_flush_cookie_header(decoder)) {
                 return AWS_OP_ERR;
             }
 
@@ -1388,8 +1460,6 @@ static int s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct 
     /* #TODO Enforces dynamic table resize rules from RFC-7541 4.2
      * If dynamic table size changed via SETTINGS frame, next header-block must start with DYNAMIC_TABLE_RESIZE entry.
      * Is it illegal to receive a resize entry at other times? */
-
-    /* #TODO Cookie headers must be concatenated into single delivery RFC-7540 8.1.2.5 */
 
     /* #TODO The TE header field ... MUST NOT contain any value other than "trailers" */
 
