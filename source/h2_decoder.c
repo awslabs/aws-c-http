@@ -1294,7 +1294,7 @@ static int s_process_header_field(struct aws_h2_decoder *decoder, const struct a
 
                 if (current_block->cookies.len) {
                     /* add a delimiter */
-                    struct aws_byte_cursor delimiter = aws_byte_cursor_from_c_str("; ");
+                    struct aws_byte_cursor delimiter = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("; ");
                     if (aws_byte_buf_append_dynamic(&current_block->cookies, &delimiter)) {
                         return AWS_OP_ERR;
                     }
@@ -1337,7 +1337,8 @@ static int s_flush_cookie_header(struct aws_h2_decoder *decoder) {
         return AWS_OP_SUCCESS;
     }
     struct aws_http_header concatenated_cookie;
-    concatenated_cookie.name = aws_byte_cursor_from_c_str("cookie");
+    struct aws_byte_cursor cookie_name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("cookie");
+    concatenated_cookie.name = cookie_name;
     concatenated_cookie.value = aws_byte_cursor_from_buf(&current_block->cookies);
     concatenated_cookie.compression = current_block->cookie_header_compression_type;
     if (current_block->is_push_promise) {
