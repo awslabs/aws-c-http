@@ -78,6 +78,7 @@ enum aws_h2_settings {
 #define AWS_H2_PAYLOAD_MAX (0x00FFFFFF)       /* must fit in 3 bytes */
 #define AWS_H2_WINDOW_UPDATE_MAX (0x7FFFFFFF) /* cannot use high bit */
 #define AWS_H2_STREAM_ID_MAX (0x7FFFFFFF)     /* cannot use high bit */
+#define AWS_H2_FRAME_PREFIX_SIZE (9)
 #define AWS_H2_PING_DATA_SIZE (8)
 
 /* Legal min(inclusive) and max(inclusive) for each setting */

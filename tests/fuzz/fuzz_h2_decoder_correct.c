@@ -26,7 +26,6 @@
 
 #include <inttypes.h>
 
-static const uint32_t FRAME_PREFIX_SIZE = 3 + 1 + 1 + 4;
 static const uint32_t MAX_PAYLOAD_SIZE = 16384;
 
 enum header_style {
@@ -210,7 +209,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     /* Init the buffer */
     struct aws_byte_buf frame_data;
-    aws_byte_buf_init(&frame_data, allocator, FRAME_PREFIX_SIZE + MAX_PAYLOAD_SIZE);
+    aws_byte_buf_init(&frame_data, allocator, AWS_H2_FRAME_PREFIX_SIZE + MAX_PAYLOAD_SIZE);
 
     /*
      * Generate the frame to decode
@@ -460,7 +459,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             /* fallthrough */
         case AWS_H2_FRAME_T_UNKNOWN: {
             /* #YOLO roll our own frame */
-            uint32_t payload_length = aws_min_u32(input.len, MAX_PAYLOAD_SIZE - FRAME_PREFIX_SIZE);
+            uint32_t payload_length = aws_min_u32(input.len, MAX_PAYLOAD_SIZE - AWS_H2_FRAME_PREFIX_SIZE);
 
             /* Write payload length */
             aws_byte_buf_write_be24(&frame_data, payload_length);

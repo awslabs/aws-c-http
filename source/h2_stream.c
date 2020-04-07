@@ -288,21 +288,68 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
         /* If stream has DATA to send, put it in the outgoing_streams_list, and we'll send data later */
         stream->thread_data.state = AWS_H2_STREAM_STATE_OPEN;
         AWS_H2_STREAM_LOG(TRACE, stream, "Sending HEADERS. State -> OPEN");
-
-        *out_has_outgoing_data = has_body_stream;
     } else {
         /* If stream has no body, then HEADERS frame marks the end of outgoing data */
         stream->thread_data.state = AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL;
         AWS_H2_STREAM_LOG(TRACE, stream, "Sending HEADERS with END_STREAM. State -> HALF_CLOSED_LOCAL");
-
-        *out_has_outgoing_data = has_body_stream;
     }
 
+    *out_has_outgoing_data = has_body_stream;
     aws_h2_connection_enqueue_outgoing_frame(connection, headers_frame);
     return AWS_OP_SUCCESS;
 
 error:
     return AWS_OP_ERR;
+}
+
+int aws_h2_stream_encode_data_frame(
+    struct aws_h2_stream *stream,
+    struct aws_h2_frame_encoder *encoder,
+    struct aws_byte_buf *output,
+    bool *out_has_more_data) {
+
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+    AWS_PRECONDITION(
+        stream->thread_data.state == AWS_H2_STREAM_STATE_OPEN ||
+        stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE);
+
+    *out_has_more_data = false;
+
+    struct aws_input_stream *body = aws_http_message_get_body_stream(stream->thread_data.outgoing_message);
+    AWS_ASSERT(body);
+
+    bool body_complete;
+    if (aws_h2_encode_data_frame(
+            encoder, stream->base.id, body, true /*body_ends_stream*/, 0 /*pad_length*/, output, &body_complete)) {
+
+        /* Failed to write DATA, treat it as a Stream Error */
+        AWS_H2_STREAM_LOGF(ERROR, stream, "Error encoding stream DATA, %s", aws_error_name(aws_last_error()));
+        return s_send_rst_and_close_stream(stream, aws_last_error());
+    }
+
+    if (body_complete) {
+        if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE) {
+            /* Both sides have sent END_STREAM */
+            stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
+            AWS_H2_STREAM_LOG(TRACE, stream, "Sent END_STREAM. State -> CLOSED");
+
+            /* Tell connection that stream is now closed */
+            if (aws_h2_connection_on_stream_closed(
+                    s_get_h2_connection(stream),
+                    stream,
+                    AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM,
+                    AWS_ERROR_SUCCESS)) {
+                return AWS_OP_ERR;
+            }
+        } else {
+            /* Else can't close until we receive END_STREAM */
+            stream->thread_data.state = AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL;
+            AWS_H2_STREAM_LOG(TRACE, stream, "Sent END_STREAM. State -> HALF_CLOSED_LOCAL");
+        }
+    }
+
+    *out_has_more_data = !body_complete;
+    return AWS_OP_SUCCESS;
 }
 
 int aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *stream) {
