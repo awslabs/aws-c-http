@@ -517,6 +517,33 @@ int aws_http_message_get_request_path(const struct aws_http_message *request_mes
 AWS_HTTP_API
 int aws_http_message_set_request_path(struct aws_http_message *request_message, struct aws_byte_cursor path);
 
+/*
+ * Get the scheme value (h2 request messages only).
+ */
+AWS_HTTP_API
+int aws_http_message_get_request_scheme(const struct aws_http_message *request_message, struct aws_byte_cursor *out_scheme);
+
+/*
+ * Set the scheme value (h2 request messages only).
+ * The request makes its own copy of the underlying string.
+ */
+AWS_HTTP_API
+int aws_http_message_set_request_scheme(const struct aws_http_message *request_message, struct aws_byte_cursor scheme);
+
+/*
+ * Get the authority/host value (request messages only, get the value for :authority(h2)/host(h1)).
+ */
+AWS_HTTP_API
+int aws_http_message_get_request_auth(const struct aws_http_message *request_message, struct aws_byte_cursor *out_auth);
+
+/*
+ * Set the authority/host value (request messages only).
+ * The request makes its own copy of the underlying string.
+ */
+AWS_HTTP_API
+int aws_http_message_set_request_auth(const struct aws_http_message *request_message, struct aws_byte_cursor auth);
+
+
 /**
  * Get the status code (response messages only).
  * If no status is set, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE is raised.

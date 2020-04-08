@@ -331,6 +331,8 @@ struct aws_http_message {
         struct aws_http_message_request_data {
             struct aws_string *method;
             struct aws_string *path;
+            struct aws_string *scheme;
+            struct aws_string *authority;
         } request;
         struct aws_http_message_response_data {
             int status;
@@ -526,6 +528,58 @@ int aws_http_message_get_request_path(
     }
 
     AWS_ZERO_STRUCT(*out_path);
+    return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
+}
+
+int aws_http_message_get_request_scheme(const struct aws_http_message *request_message, struct aws_byte_cursor *out_scheme){
+    AWS_PRECONDITION(request_message);
+    AWS_PRECONDITION(out_scheme);
+    AWS_PRECONDITION(request_message->request_data);
+
+    if (request_message->request_data && request_message->request_data->scheme) {
+        *out_scheme = aws_byte_cursor_from_string(request_message->request_data->scheme);
+        return AWS_OP_SUCCESS;
+    }
+
+    AWS_ZERO_STRUCT(*out_scheme);
+    return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
+}
+
+int aws_http_message_set_request_scheme(const struct aws_http_message *request_message, struct aws_byte_cursor scheme){
+    AWS_PRECONDITION(request_message);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&scheme));
+    AWS_PRECONDITION(request_message->request_data);
+
+    if (request_message->request_data) {
+        return s_set_string_from_cursor(&request_message->request_data->scheme, scheme, request_message->allocator);
+    }
+
+    return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
+}
+
+int aws_http_message_get_request_auth(const struct aws_http_message *request_message, struct aws_byte_cursor *out_auth){
+    AWS_PRECONDITION(request_message);
+    AWS_PRECONDITION(out_auth);
+    AWS_PRECONDITION(request_message->request_data);
+
+    if (request_message->request_data && request_message->request_data->authority) {
+        *out_auth = aws_byte_cursor_from_string(request_message->request_data->authority);
+        return AWS_OP_SUCCESS;
+    }
+
+    AWS_ZERO_STRUCT(*out_auth);
+    return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
+}
+
+int aws_http_message_set_request_auth(const struct aws_http_message *request_message, struct aws_byte_cursor auth){
+    AWS_PRECONDITION(request_message);
+    AWS_PRECONDITION(aws_byte_cursor_is_valid(&auth));
+    AWS_PRECONDITION(request_message->request_data);
+
+    if (request_message->request_data) {
+        return s_set_string_from_cursor(&request_message->request_data->authority, auth, request_message->allocator);
+    }
+
     return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
 }
 
