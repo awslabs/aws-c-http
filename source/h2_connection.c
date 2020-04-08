@@ -1017,7 +1017,8 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
                         goto error;
                     }
                     for (size_t i = 0; i < aws_array_list_length(&cookie_chunks); i++) {
-                        struct aws_byte_cursor cookie_chunk = {0};
+                        struct aws_byte_cursor cookie_chunk;
+                        AWS_ZERO_STRUCT(cookie_chunk);
                         if (aws_array_list_get_at(&cookie_chunks, &cookie_chunk, i)) {
                             aws_array_list_clean_up(&cookie_chunks);
                             goto error;
