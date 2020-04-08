@@ -678,7 +678,7 @@ TEST_CASE(h2_client_stream_send_lots_of_data) {
 
         /* fill first body with "aaaa...", second with "bbbb...", etc */
         ASSERT_SUCCESS(aws_byte_buf_init(&request_body_bufs[i], allocator, body_size));
-        ASSERT_TRUE(aws_byte_buf_write_u8_n(&request_body_bufs[i], 'a' + i, body_size));
+        ASSERT_TRUE(aws_byte_buf_write_u8_n(&request_body_bufs[i], (uint8_t)('a' + i), body_size));
         struct aws_byte_cursor body_cursor = aws_byte_cursor_from_buf(&request_body_bufs[i]);
 
         request_bodies[i] = aws_input_stream_new_from_cursor(allocator, &body_cursor);
