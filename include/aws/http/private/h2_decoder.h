@@ -104,6 +104,27 @@ struct aws_h2_decoder_params {
     bool skip_connection_preface;
 };
 
+/* for storing things in array without worrying about the specific values of the other AWS_HTTP_HEADER_XYZ enums */
+enum pseudoheader_name {
+    PSEUDOHEADER_UNKNOWN = -1, /* Unrecognized value */
+
+    /* Request pseudo-headers */
+    PSEUDOHEADER_METHOD,
+    PSEUDOHEADER_SCHEME,
+    PSEUDOHEADER_AUTHORITY,
+    PSEUDOHEADER_PATH,
+    /* Response pseudo-headers */
+    PSEUDOHEADER_STATUS,
+
+    PSEUDOHEADER_COUNT, /* Number of valid enums */
+};
+
+/* Legal min(inclusive) and max(inclusive) for each setting */
+extern const struct aws_byte_cursor *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_COUNT];
+
+/* Initial values for settings RFC-7540 6.5.2 */
+extern const enum aws_http_header_name aws_h2_pseudoheader_to_header_name[PSEUDOHEADER_COUNT];
+
 struct aws_h2_decoder;
 
 AWS_EXTERN_C_BEGIN
@@ -115,6 +136,8 @@ AWS_HTTP_API int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_c
 AWS_HTTP_API void aws_h2_decoder_set_setting_header_table_size(struct aws_h2_decoder *decoder, uint32_t data);
 AWS_HTTP_API void aws_h2_decoder_set_setting_enable_push(struct aws_h2_decoder *decoder, uint32_t data);
 AWS_HTTP_API void aws_h2_decoder_set_setting_max_frame_size(struct aws_h2_decoder *decoder, uint32_t data);
+
+AWS_HTTP_API enum pseudoheader_name aws_h2_header_to_pseudoheader_name(enum aws_http_header_name name);
 
 AWS_EXTERN_C_END
 

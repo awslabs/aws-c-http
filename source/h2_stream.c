@@ -204,6 +204,12 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     aws_atomic_init_int(&stream->base.refcount, 1);
 
     /* Init H2 specific stuff */
+    struct aws_http_headers *h2_headers = aws_h2_create_headers_from_request(options->request, client_connection->alloc);
+    if(aws_http_message_reset_headers(options->request, h2_headers)){
+        AWS_H2_STREAM_LOG(ERROR, stream, "Failed to convert the message into h2 style.");
+        s_stream_destroy(&stream->base);
+        return NULL;
+    }
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
     stream->thread_data.outgoing_message = options->request;
     aws_http_message_acquire(stream->thread_data.outgoing_message);

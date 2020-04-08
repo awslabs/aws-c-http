@@ -574,6 +574,12 @@ AWS_HTTP_API
 void aws_http_message_set_body_stream(struct aws_http_message *message, struct aws_input_stream *body_stream);
 
 /**
+ * Reset headers of message to meet some extra requirement, like h2 style headers
+ */
+AWS_HTTP_API
+int *aws_http_message_reset_headers(struct aws_http_message *message, struct aws_http_headers *new_headers);
+
+/**
  * Get the message's aws_http_headers.
  *
  * This datastructure has more functions for inspecting and modifying headers than

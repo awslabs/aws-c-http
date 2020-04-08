@@ -68,22 +68,7 @@ static const size_t s_decoder_cookie_buffer_initial_size = 512;
 #define DECODER_CALL_VTABLE_STREAM_ARGS(decoder, fn, ...)                                                              \
     DECODER_CALL_VTABLE_ARGS(decoder, fn, (decoder)->frame_in_progress.stream_id, __VA_ARGS__)
 
-/* for storing things in array without worrying about the specific values of the other AWS_HTTP_HEADER_XYZ enums */
-enum pseudoheader_name {
-    PSEUDOHEADER_UNKNOWN = -1, /* Unrecognized value */
-
-    /* Request pseudo-headers */
-    PSEUDOHEADER_METHOD,
-    PSEUDOHEADER_SCHEME,
-    PSEUDOHEADER_AUTHORITY,
-    PSEUDOHEADER_PATH,
-    /* Response pseudo-headers */
-    PSEUDOHEADER_STATUS,
-
-    PSEUDOHEADER_COUNT, /* Number of valid enums */
-};
-
-static const struct aws_byte_cursor *s_pseudoheader_name_to_cursor[PSEUDOHEADER_COUNT] = {
+const struct aws_byte_cursor *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_COUNT] = {
     [PSEUDOHEADER_METHOD] = &aws_http_header_method,
     [PSEUDOHEADER_SCHEME] = &aws_http_header_scheme,
     [PSEUDOHEADER_AUTHORITY] = &aws_http_header_authority,
@@ -91,7 +76,7 @@ static const struct aws_byte_cursor *s_pseudoheader_name_to_cursor[PSEUDOHEADER_
     [PSEUDOHEADER_STATUS] = &aws_http_header_status,
 };
 
-static const enum aws_http_header_name s_pseudoheader_to_header_name[PSEUDOHEADER_COUNT] = {
+const enum aws_http_header_name aws_h2_pseudoheader_to_header_name[PSEUDOHEADER_COUNT] = {
     [PSEUDOHEADER_METHOD] = AWS_HTTP_HEADER_METHOD,
     [PSEUDOHEADER_SCHEME] = AWS_HTTP_HEADER_SCHEME,
     [PSEUDOHEADER_AUTHORITY] = AWS_HTTP_HEADER_AUTHORITY,
@@ -99,7 +84,7 @@ static const enum aws_http_header_name s_pseudoheader_to_header_name[PSEUDOHEADE
     [PSEUDOHEADER_STATUS] = AWS_HTTP_HEADER_STATUS,
 };
 
-static enum pseudoheader_name s_header_to_pseudoheader_name(enum aws_http_header_name name) {
+enum pseudoheader_name aws_h2_header_to_pseudoheader_name(enum aws_http_header_name name) {
     /* The compiled switch statement is actually faster than array lookup with bounds-checking.
      * (the lookup arrays above don't need to do bounds-checking) */
     switch (name) {
@@ -1168,12 +1153,12 @@ static int s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
         if (value_string) {
 
             struct aws_http_header header_field = {
-                .name = *s_pseudoheader_name_to_cursor[i],
+                .name = *aws_h2_pseudoheader_name_to_cursor[i],
                 .value = aws_byte_cursor_from_string(value_string),
                 .compression = current_block->pseudoheader_compression[i],
             };
 
-            enum aws_http_header_name name_enum = s_pseudoheader_to_header_name[i];
+            enum aws_http_header_name name_enum = aws_h2_pseudoheader_to_header_name[i];
 
             if (current_block->is_push_promise) {
                 DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, &header_field, name_enum);
@@ -1221,7 +1206,7 @@ static int s_process_header_field(struct aws_h2_decoder *decoder, const struct a
             goto malformed;
         }
 
-        enum pseudoheader_name pseudoheader_enum = s_header_to_pseudoheader_name(name_enum);
+        enum pseudoheader_name pseudoheader_enum = aws_h2_header_to_pseudoheader_name(name_enum);
         if (pseudoheader_enum == PSEUDOHEADER_UNKNOWN) {
             DECODER_LOG(ERROR, decoder, "Unrecognized pseudo-header");
             DECODER_LOGF(DEBUG, decoder, "Unrecognized pseudo-header is '" PRInSTR "'", AWS_BYTE_CURSOR_PRI(name));

@@ -17,6 +17,9 @@
 
 #include <aws/http/private/h2_decoder.h>
 #include <aws/http/private/h2_stream.h>
+#include<aws/http/private/strutil.h>
+
+#include <aws/io/uri.h>
 
 #include <aws/common/logging.h>
 
@@ -939,6 +942,141 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
 
     /* release connection's hold on stream */
     aws_http_stream_release(&stream->base);
+}
+
+struct aws_http_headers *aws_h2_create_headers_from_request(
+    struct aws_http_message *request,
+    struct aws_allocator *alloc) {
+
+    struct aws_http_headers *old_headers = aws_http_message_get_headers(request);
+    struct aws_http_headers *result = aws_http_headers_new(alloc);
+    struct aws_http_header header_iter;
+    struct aws_byte_buf lower_name_buf;
+    AWS_ZERO_STRUCT(lower_name_buf);
+
+    /* required pseudo headers for a request */
+    bool request_pseudo_headers[PSEUDOHEADER_COUNT - 1];
+    AWS_ZERO_ARRAY(request_pseudo_headers);
+    size_t inter = 0;
+    for (; inter < aws_http_headers_count(old_headers); inter++) {
+        if (aws_http_headers_get_index(old_headers, inter, &header_iter)) {
+            goto error;
+        }
+        const struct aws_byte_cursor name = header_iter.name;
+        if (name.len == 0) {
+            goto error;
+        }
+        bool is_pseudoheader = header_iter.name.ptr[0] == ':';
+        if (!is_pseudoheader) {
+            break;
+        }
+        enum aws_http_header_name name_enum = aws_http_lowercase_str_to_header_name(name);
+        enum pseudoheader_name pseudoheader_enum = aws_h2_header_to_pseudoheader_name(name_enum);
+        /* add pseudo headers to the result */
+        if (aws_http_headers_add(result, *aws_h2_pseudoheader_name_to_cursor[pseudoheader_enum], header_iter.value)) {
+            goto error;
+        }
+        /* mark which pseudo header is found */
+        request_pseudo_headers[pseudoheader_enum] = true;
+    }
+    /* If any required pseudo headers are not set, try to transform from the h1 style message */
+    if (!request_pseudo_headers[PSEUDOHEADER_METHOD]) {
+        /* :method has not set yet. */
+        struct aws_byte_cursor method;
+        if (aws_http_message_get_request_method(request, &method)) {
+            /* error will happen when the request is invalid */
+            goto error;
+        }
+        if (aws_http_headers_set(result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_METHOD], method)) {
+            goto error;
+        }
+    }
+    if (!(request_pseudo_headers[PSEUDOHEADER_SCHEME] && request_pseudo_headers[PSEUDOHEADER_AUTHORITY] &&
+          request_pseudo_headers[PSEUDOHEADER_PATH])) {
+        /* headers about URI are not all set */
+        struct aws_uri uri;
+        struct aws_byte_cursor path_cursor;
+        if (aws_http_message_get_request_path(request, &path_cursor)) {
+            goto error;
+        }
+        if (path_cursor.len) {
+            /* parse the URI to get the scheme/authority/path */
+            if (aws_uri_init_parse(&uri, alloc, &path_cursor)) {
+                goto error;
+            }
+            /* parse URI success, try to update the empty pseudo headers */
+            if (!request_pseudo_headers[PSEUDOHEADER_SCHEME]) {
+                if (aws_http_headers_set(
+                        result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_SCHEME], uri.scheme)) {
+                    goto error;
+                }
+            }
+            if (!request_pseudo_headers[PSEUDOHEADER_AUTHORITY]) {
+                if (aws_http_headers_set(
+                        result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_AUTHORITY], uri.authority)) {
+                    goto error;
+                }
+            }
+            if (!request_pseudo_headers[PSEUDOHEADER_PATH]) {
+                if (aws_http_headers_set(
+                        result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_PATH], uri.path_and_query)) {
+                    goto error;
+                }
+            }
+        }
+    }
+
+    /* convert regular headers,  */
+    if (aws_byte_buf_init(&lower_name_buf, alloc, 256)) {
+        goto error;
+    }
+    for (; inter < aws_http_headers_count(old_headers); inter++) {
+        /* name should be converted to lower case */
+        if (aws_http_headers_get_index(old_headers, inter, &header_iter)) {
+            goto error;
+        }
+        /* append lower case name to the buffer */
+        aws_byte_buf_append_with_lookup(&lower_name_buf, &header_iter.name, aws_lookup_table_to_lower_get());
+        struct aws_byte_cursor lower_name_cursor = aws_byte_cursor_from_buf(&lower_name_buf);
+        enum aws_http_header_name name_enum = aws_http_lowercase_str_to_header_name(lower_name_cursor);
+        switch (name_enum) {
+            case AWS_HTTP_HEADER_COOKIE:
+                /* split cookie if USE CACHE */
+                if (header_iter.compression == AWS_HTTP_HEADER_COMPRESSION_USE_CACHE) {
+                    struct aws_array_list cookie_chunks;
+                    if (aws_array_list_init_dynamic(&cookie_chunks, alloc, 4, sizeof(struct aws_byte_cursor))) {
+                        goto error;
+                    }
+                    if (aws_byte_cursor_split_on_char(&header_iter.value, ';', &cookie_chunks)) {
+                        aws_array_list_clean_up(&cookie_chunks);
+                        goto error;
+                    }
+                    for (size_t i = 0; i < aws_array_list_length(&cookie_chunks); i++) {
+                        struct aws_byte_cursor cookie_chunk = {0};
+                        if (aws_array_list_get_at(&cookie_chunks, &cookie_chunk, i)) {
+                            aws_array_list_clean_up(&cookie_chunks);
+                            goto error;
+                        }
+                        aws_http_headers_add(result, lower_name_cursor, aws_strutil_trim_http_whitespace(cookie_chunk));
+                    }
+                    aws_array_list_clean_up(&cookie_chunks);
+                } else {
+                    aws_http_headers_add(result, lower_name_cursor, header_iter.value);
+                }
+                break;
+
+            default:
+                aws_http_headers_add(result, lower_name_cursor, header_iter.value);
+                break;
+        }
+        aws_byte_buf_reset(&lower_name_buf, false);
+    }
+    aws_byte_buf_clean_up(&lower_name_buf);
+    return result;
+error:
+    aws_http_headers_clear(result);
+    aws_byte_buf_clean_up(&lower_name_buf);
+    return NULL;
 }
 
 int aws_h2_connection_on_stream_closed(
