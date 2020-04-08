@@ -129,7 +129,7 @@ static void s_unlock_synced_data(struct aws_h2_connection *connection) {
 }
 
 /**
- * iternal function for bringing connection to a stop.
+ * Internal function for bringing connection to a stop.
  * Invoked multiple times, including when:
  * - Channel is shutting down in the read direction.
  * - Channel is shutting down in the write direction.
@@ -322,7 +322,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     struct aws_h2_connection *connection = handler->impl;
     CONNECTION_LOG(TRACE, connection, "Destroying connection");
 
-    /* No streams should be left in iternal datastructures */
+    /* No streams should be left in internal datastructures */
     AWS_ASSERT(
         !aws_hash_table_is_valid(&connection->thread_data.active_streams_map) ||
         aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0);
@@ -1342,7 +1342,7 @@ static int s_handler_shutdown(
     } else /* AWS_CHANNEL_DIR_WRITE */ {
         s_stop(connection, false /*stop_reading*/, true /*stop_writing*/, false /*schedule_shutdown*/, error_code);
 
-        /* Remove remaining streams from iternal datastructures and mark them as complete. */
+        /* Remove remaining streams from internal datastructures and mark them as complete. */
 
         struct aws_hash_iter stream_iter = aws_hash_iter_begin(&connection->thread_data.active_streams_map);
         while (!aws_hash_iter_done(&stream_iter)) {
