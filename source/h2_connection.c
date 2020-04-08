@@ -17,6 +17,7 @@
 
 #include <aws/http/private/h2_decoder.h>
 #include <aws/http/private/h2_stream.h>
+#include <aws/http/private/strutil.h>
 
 #include <aws/common/logging.h>
 
@@ -128,7 +129,7 @@ static void s_unlock_synced_data(struct aws_h2_connection *connection) {
 }
 
 /**
- * Internal function for bringing connection to a stop.
+ * iternal function for bringing connection to a stop.
  * Invoked multiple times, including when:
  * - Channel is shutting down in the read direction.
  * - Channel is shutting down in the write direction.
@@ -321,7 +322,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     struct aws_h2_connection *connection = handler->impl;
     CONNECTION_LOG(TRACE, connection, "Destroying connection");
 
-    /* No streams should be left in internal datastructures */
+    /* No streams should be left in iternal datastructures */
     AWS_ASSERT(
         !aws_hash_table_is_valid(&connection->thread_data.active_streams_map) ||
         aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0);
@@ -941,6 +942,111 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
     aws_http_stream_release(&stream->base);
 }
 
+struct aws_http_headers *aws_h2_create_headers_from_request(
+    struct aws_http_message *request,
+    struct aws_allocator *alloc) {
+
+    struct aws_http_headers *old_headers = aws_http_message_get_headers(request);
+    struct aws_http_headers *result = aws_http_headers_new(alloc);
+    struct aws_http_header header_iter;
+    struct aws_byte_buf lower_name_buf;
+    AWS_ZERO_STRUCT(lower_name_buf);
+
+    /* Check whether the old_headers have pseudo header or not */
+    if (aws_http_headers_get_index(old_headers, 0, &header_iter)) {
+        goto error;
+    }
+    bool is_pseudoheader = header_iter.name.ptr[0] == ':';
+    if (!is_pseudoheader) {
+        /* TODO: Set pseudo headers all from message, which will lead an API change to aws_http_message */
+        /* No pseudoheader detected, we set them from the request */
+        /* Set pseudo headers */
+        struct aws_byte_cursor method;
+        if (aws_http_message_get_request_method(request, &method)) {
+            /* error will happen when the request is invalid */
+            goto error;
+        }
+        if (aws_http_headers_add(result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_METHOD], method)) {
+            goto error;
+        }
+        /* we set a default value, "https", for now */
+        struct aws_byte_cursor scheme_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https");
+        if (aws_http_headers_add(result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_SCHEME], scheme_cursor)) {
+            goto error;
+        }
+        /* Set an empty authority for now, if host header field is found, we set it as the value of host */
+        struct aws_byte_cursor authority_cursor;
+        struct aws_byte_cursor host_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("host");
+        if (!aws_http_headers_get(old_headers, host_cursor, &authority_cursor)) {
+            if (aws_http_headers_add(
+                    result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_AUTHORITY], authority_cursor)) {
+                goto error;
+            }
+        }
+        struct aws_byte_cursor path_cursor;
+        if (aws_http_message_get_request_path(request, &path_cursor)) {
+            goto error;
+        }
+        if (aws_http_headers_add(result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_PATH], path_cursor)) {
+            goto error;
+        }
+    }
+    /* if pseudoheader is included in message, we just convert all the headers from old_headers to result */
+    if (aws_byte_buf_init(&lower_name_buf, alloc, 256)) {
+        goto error;
+    }
+    for (size_t iter = 0; iter < aws_http_headers_count(old_headers); iter++) {
+        /* name should be converted to lower case */
+        if (aws_http_headers_get_index(old_headers, iter, &header_iter)) {
+            goto error;
+        }
+        /* append lower case name to the buffer */
+        aws_byte_buf_append_with_lookup(&lower_name_buf, &header_iter.name, aws_lookup_table_to_lower_get());
+        struct aws_byte_cursor lower_name_cursor = aws_byte_cursor_from_buf(&lower_name_buf);
+        enum aws_http_header_name name_enum = aws_http_lowercase_str_to_header_name(lower_name_cursor);
+        switch (name_enum) {
+            case AWS_HTTP_HEADER_COOKIE:
+                /* split cookie if USE CACHE */
+                if (header_iter.compression == AWS_HTTP_HEADER_COMPRESSION_USE_CACHE) {
+                    struct aws_array_list cookie_chunks;
+                    if (aws_array_list_init_dynamic(&cookie_chunks, alloc, 4, sizeof(struct aws_byte_cursor))) {
+                        goto error;
+                    }
+                    if (aws_byte_cursor_split_on_char(&header_iter.value, ';', &cookie_chunks)) {
+                        aws_array_list_clean_up(&cookie_chunks);
+                        goto error;
+                    }
+                    for (size_t i = 0; i < aws_array_list_length(&cookie_chunks); i++) {
+                        struct aws_byte_cursor cookie_chunk = {0};
+                        if (aws_array_list_get_at(&cookie_chunks, &cookie_chunk, i)) {
+                            aws_array_list_clean_up(&cookie_chunks);
+                            goto error;
+                        }
+                        aws_http_headers_add(result, lower_name_cursor, aws_strutil_trim_http_whitespace(cookie_chunk));
+                    }
+                    aws_array_list_clean_up(&cookie_chunks);
+                } else {
+                    aws_http_headers_add(result, lower_name_cursor, header_iter.value);
+                }
+                break;
+            case AWS_HTTP_HEADER_HOST:
+                /* host header has been converted to :authority, do nothing here */
+                break;
+            /* TODO: handle connection-specific header field (RFC7540 8.1.2.2) */
+            default:
+                aws_http_headers_add(result, lower_name_cursor, header_iter.value);
+                break;
+        }
+        aws_byte_buf_reset(&lower_name_buf, false);
+    }
+    aws_byte_buf_clean_up(&lower_name_buf);
+    return result;
+error:
+    aws_http_headers_clear(result);
+    aws_byte_buf_clean_up(&lower_name_buf);
+    return NULL;
+}
+
 int aws_h2_connection_on_stream_closed(
     struct aws_h2_connection *connection,
     struct aws_h2_stream *stream,
@@ -1093,7 +1199,7 @@ static struct aws_http_stream *s_connection_make_request(
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(client_connection, struct aws_h2_connection, base);
 
     /* #TODO: http/2-ify the request (ex: add ":method" header). Should we mutate a copy or the original? Validate?
-     *  Or just pass pointer to headers struct and let encoder transform it while encoding? */
+     *  Or just pass poiter to headers struct and let encoder transform it while encoding? */
 
     struct aws_h2_stream *stream = aws_h2_stream_new_request(client_connection, options);
     if (!stream) {
@@ -1235,7 +1341,7 @@ static int s_handler_shutdown(
     } else /* AWS_CHANNEL_DIR_WRITE */ {
         s_stop(connection, false /*stop_reading*/, true /*stop_writing*/, false /*schedule_shutdown*/, error_code);
 
-        /* Remove remaining streams from internal datastructures and mark them as complete. */
+        /* Remove remaining streams from iternal datastructures and mark them as complete. */
 
         struct aws_hash_iter stream_iter = aws_hash_iter_begin(&connection->thread_data.active_streams_map);
         while (!aws_hash_iter_done(&stream_iter)) {
