@@ -17,9 +17,7 @@
 
 #include <aws/http/private/h2_decoder.h>
 #include <aws/http/private/h2_stream.h>
-#include<aws/http/private/strutil.h>
-
-#include <aws/io/uri.h>
+#include <aws/http/private/strutil.h>
 
 #include <aws/common/logging.h>
 
@@ -954,85 +952,49 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
     struct aws_byte_buf lower_name_buf;
     AWS_ZERO_STRUCT(lower_name_buf);
 
-    /* required pseudo headers for a request */
-    bool request_pseudo_headers[PSEUDOHEADER_COUNT - 1];
-    AWS_ZERO_ARRAY(request_pseudo_headers);
-    size_t inter = 0;
-    for (; inter < aws_http_headers_count(old_headers); inter++) {
-        if (aws_http_headers_get_index(old_headers, inter, &header_iter)) {
-            goto error;
-        }
-        const struct aws_byte_cursor name = header_iter.name;
-        if (name.len == 0) {
-            goto error;
-        }
-        bool is_pseudoheader = header_iter.name.ptr[0] == ':';
-        if (!is_pseudoheader) {
-            break;
-        }
-        enum aws_http_header_name name_enum = aws_http_lowercase_str_to_header_name(name);
-        enum pseudoheader_name pseudoheader_enum = aws_h2_header_to_pseudoheader_name(name_enum);
-        /* add pseudo headers to the result */
-        if (aws_http_headers_add(result, *aws_h2_pseudoheader_name_to_cursor[pseudoheader_enum], header_iter.value)) {
-            goto error;
-        }
-        /* mark which pseudo header is found */
-        request_pseudo_headers[pseudoheader_enum] = true;
+    /* Set pseudo headers */
+    struct aws_byte_cursor method;
+    if (aws_http_message_get_request_method(request, &method)) {
+        /* error will happen when the request is invalid */
+        goto error;
     }
-    /* If any required pseudo headers are not set, try to transform from the h1 style message */
-    if (!request_pseudo_headers[PSEUDOHEADER_METHOD]) {
-        /* :method has not set yet. */
-        struct aws_byte_cursor method;
-        if (aws_http_message_get_request_method(request, &method)) {
-            /* error will happen when the request is invalid */
-            goto error;
-        }
-        if (aws_http_headers_set(result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_METHOD], method)) {
-            goto error;
-        }
+    if (aws_http_headers_add(result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_METHOD], method)) {
+        goto error;
     }
-    if (!(request_pseudo_headers[PSEUDOHEADER_SCHEME] && request_pseudo_headers[PSEUDOHEADER_AUTHORITY] &&
-          request_pseudo_headers[PSEUDOHEADER_PATH])) {
-        /* headers about URI are not all set */
-        struct aws_uri uri;
-        struct aws_byte_cursor path_cursor;
-        if (aws_http_message_get_request_path(request, &path_cursor)) {
-            goto error;
-        }
-        if (path_cursor.len) {
-            /* parse the URI to get the scheme/authority/path */
-            if (aws_uri_init_parse(&uri, alloc, &path_cursor)) {
-                goto error;
-            }
-            /* parse URI success, try to update the empty pseudo headers */
-            if (!request_pseudo_headers[PSEUDOHEADER_SCHEME]) {
-                if (aws_http_headers_set(
-                        result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_SCHEME], uri.scheme)) {
-                    goto error;
-                }
-            }
-            if (!request_pseudo_headers[PSEUDOHEADER_AUTHORITY]) {
-                if (aws_http_headers_set(
-                        result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_AUTHORITY], uri.authority)) {
-                    goto error;
-                }
-            }
-            if (!request_pseudo_headers[PSEUDOHEADER_PATH]) {
-                if (aws_http_headers_set(
-                        result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_PATH], uri.path_and_query)) {
-                    goto error;
-                }
-            }
-        }
+    struct aws_byte_cursor scheme_cursor;
+    if (aws_http_message_get_request_scheme(request, &scheme_cursor)) {
+        goto error;
+    }
+    if(scheme_cursor.len == 0) {
+        /* if scheme is not set, which is allowed, we will set a default value as "https" */
+        struct aws_byte_cursor default_scheme = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https");
+        scheme_cursor = default_scheme;
+    }
+    if (aws_http_headers_add(result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_SCHEME], scheme_cursor)) {
+        goto error;
+    }
+    struct aws_byte_cursor authority_cursor;
+    if (aws_http_message_get_request_auth(request, &authority_cursor)) {
+        goto error;
+    }
+    if (aws_http_headers_add(result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_AUTHORITY], authority_cursor)) {
+        goto error;
+    }
+    struct aws_byte_cursor path_cursor;
+    if (aws_http_message_get_request_path(request, &path_cursor)) {
+        goto error;
+    }
+    if (aws_http_headers_add(result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_PATH], path_cursor)) {
+        goto error;
     }
 
     /* convert regular headers,  */
     if (aws_byte_buf_init(&lower_name_buf, alloc, 256)) {
         goto error;
     }
-    for (; inter < aws_http_headers_count(old_headers); inter++) {
+    for (size_t iter; iter < aws_http_headers_count(old_headers); iter++) {
         /* name should be converted to lower case */
-        if (aws_http_headers_get_index(old_headers, inter, &header_iter)) {
+        if (aws_http_headers_get_index(old_headers, iter, &header_iter)) {
             goto error;
         }
         /* append lower case name to the buffer */
@@ -1064,7 +1026,8 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
                     aws_http_headers_add(result, lower_name_cursor, header_iter.value);
                 }
                 break;
-
+            case AWS_HTTP_HEADER_HOST:
+                /* host header is converted to :authority */
             default:
                 aws_http_headers_add(result, lower_name_cursor, header_iter.value);
                 break;
