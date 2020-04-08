@@ -272,8 +272,9 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
     struct aws_http_message *msg = stream->thread_data.outgoing_message;
     bool has_body_stream = aws_http_message_get_body_stream(msg) != NULL;
     struct aws_http_headers *h2_headers = aws_h2_create_headers_from_request(msg, stream->base.alloc);
-    if(!h2_headers) {
-        AWS_H2_STREAM_LOGF(ERROR, stream, "Failed to create h2 style headers from request %s", aws_error_name(aws_last_error()));
+    if (!h2_headers) {
+        AWS_H2_STREAM_LOGF(
+            ERROR, stream, "Failed to create h2 style headers from request %s", aws_error_name(aws_last_error()));
         goto error;
     }
     struct aws_h2_frame *headers_frame = aws_h2_frame_new_headers(
