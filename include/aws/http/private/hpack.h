@@ -94,6 +94,7 @@ int aws_hpack_decode(
  * This function will mutate the hpack context, so an error means the context can no longer be used.
  * Note that output will be dynamically resized if it's too short.
  */
+AWS_HTTP_API
 int aws_hpack_encode_header_block(
     struct aws_hpack_context *context,
     const struct aws_http_headers *headers,
