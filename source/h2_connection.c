@@ -1200,7 +1200,7 @@ static struct aws_http_stream *s_connection_make_request(
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(client_connection, struct aws_h2_connection, base);
 
     /* #TODO: http/2-ify the request (ex: add ":method" header). Should we mutate a copy or the original? Validate?
-     *  Or just pass poiter to headers struct and let encoder transform it while encoding? */
+     *  Or just pass pointer to headers struct and let encoder transform it while encoding? */
 
     struct aws_h2_stream *stream = aws_h2_stream_new_request(client_connection, options);
     if (!stream) {
