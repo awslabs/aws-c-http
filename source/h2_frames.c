@@ -314,7 +314,8 @@ int aws_h2_encode_data_frame(
     bool body_ends_stream,
     uint8_t pad_length,
     struct aws_byte_buf *output,
-    bool *body_complete) {
+    bool *body_complete,
+    bool *body_stalled) {
 
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(body_stream);
@@ -326,6 +327,7 @@ int aws_h2_encode_data_frame(
     }
 
     *body_complete = false;
+    *body_stalled = false;
     uint8_t flags = 0;
 
     /*
@@ -379,18 +381,24 @@ int aws_h2_encode_data_frame(
             flags |= AWS_H2_FRAME_F_END_STREAM;
         }
     } else {
-        if (body_sub_buf.len == 0) {
-            /* This frame would have no useful information, don't even bother sending it */
-            goto handle_nothing_to_send_right_now;
+        if (body_sub_buf.len < body_sub_buf.capacity) {
+            /* Body stream was unable to provide as much data as it could have */
+            *body_stalled = true;
+
+            if (body_sub_buf.len == 0) {
+                /* This frame would have no useful information, don't even bother sending it */
+                goto handle_nothing_to_send_right_now;
+            }
         }
     }
 
     ENCODER_LOGF(
         TRACE,
         encoder,
-        "Encoding frame type=DATA stream_id=%" PRIu32 " data_len=%zu%s",
+        "Encoding frame type=DATA stream_id=%" PRIu32 " data_len=%zu stalled=%d%s",
         stream_id,
         body_sub_buf.len,
+        *body_stalled,
         (flags & AWS_H2_FRAME_F_END_STREAM) ? " END_STREAM" : "");
 
     /*

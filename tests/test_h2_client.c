@@ -616,7 +616,7 @@ TEST_CASE(h2_client_stream_send_data) {
         aws_h2_frame_new_headers(allocator, stream_id, response_headers, true /*end_stream*/, 0, NULL);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
 
-    /* validate that client received complete response */
+    /* validate that request completed successfully */
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_TRUE(stream_tester.complete);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
@@ -629,5 +629,140 @@ TEST_CASE(h2_client_stream_send_data) {
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
     aws_input_stream_destroy(request_body);
+    return s_tester_clean_up();
+}
+
+/* Test sending multiple requests, each with large bodies that must be sent across multiple DATA frames.
+ * The connection should not let one stream hog the connection, the streams should take turns sending DATA.
+ * Also, the stream should not send more than one aws_io_message full of frames per event-loop-tick */
+TEST_CASE(h2_client_stream_send_lots_of_data) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* bodies must be big enough to span multiple H2-frames and multiple aws_io_messages */
+    size_t body_size =
+        aws_max_size(aws_h2_settings_initial[AWS_H2_SETTINGS_MAX_FRAME_SIZE], g_aws_channel_max_fragment_size) * 5;
+
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    /* send multiple requests */
+    enum { NUM_STREAMS = 3 };
+    struct aws_http_message *requests[NUM_STREAMS];
+    struct aws_http_header request_headers_src[NUM_STREAMS][3] = {
+        {
+            DEFINE_HEADER(":method", "GET"),
+            DEFINE_HEADER(":scheme", "https"),
+            DEFINE_HEADER(":path", "/a.txt"),
+        },
+        {
+            DEFINE_HEADER(":method", "GET"),
+            DEFINE_HEADER(":scheme", "https"),
+            DEFINE_HEADER(":path", "/b.txt"),
+        },
+        {
+            DEFINE_HEADER(":method", "GET"),
+            DEFINE_HEADER(":scheme", "https"),
+            DEFINE_HEADER(":path", "/c.txt"),
+        },
+    };
+
+    struct aws_byte_buf request_body_bufs[NUM_STREAMS];
+    struct aws_input_stream *request_bodies[NUM_STREAMS];
+    struct client_stream_tester stream_testers[NUM_STREAMS];
+    uint32_t stream_ids[NUM_STREAMS];
+    for (size_t i = 0; i < NUM_STREAMS; ++i) {
+        requests[i] = aws_http_message_new_request(allocator);
+        aws_http_message_add_header_array(requests[i], request_headers_src[i], AWS_ARRAY_SIZE(request_headers_src[i]));
+
+        /* fill first body with "aaaa...", second with "bbbb...", etc */
+        ASSERT_SUCCESS(aws_byte_buf_init(&request_body_bufs[i], allocator, body_size));
+        ASSERT_TRUE(aws_byte_buf_write_u8_n(&request_body_bufs[i], 'a' + i, body_size));
+        struct aws_byte_cursor body_cursor = aws_byte_cursor_from_buf(&request_body_bufs[i]);
+
+        request_bodies[i] = aws_input_stream_new_from_cursor(allocator, &body_cursor);
+        ASSERT_NOT_NULL(request_bodies[i]);
+
+        aws_http_message_set_body_stream(requests[i], request_bodies[i]);
+
+        ASSERT_SUCCESS(s_stream_tester_init(&stream_testers[i], requests[i]));
+        stream_ids[i] = aws_http_stream_get_id(stream_testers[i].stream);
+    }
+
+    /* now loop until all requests are done sending.
+     * 1 aws_io_message should be written with each tick of the event-loop.
+     * determine when (based on event-loop tick count) each request sent its END_STREAM. */
+    struct aws_linked_list *written_msg_queue = testing_channel_get_written_message_queue(&s_tester.testing_channel);
+    size_t tick_i = 0;
+    size_t end_stream_count = 0;
+    size_t end_stream_tick[NUM_STREAMS];
+    while (end_stream_count < NUM_STREAMS) {
+
+        /* check that connection sends exactly 1 aws_io_message per event-loop tick */
+        testing_channel_run_currently_queued_tasks(&s_tester.testing_channel);
+
+        size_t written_msg_queue_len = 0;
+        for (struct aws_linked_list_node *node = aws_linked_list_begin(written_msg_queue);
+             node != aws_linked_list_end(written_msg_queue);
+             node = aws_linked_list_next(node)) {
+            written_msg_queue_len++;
+        }
+        ASSERT_UINT_EQUALS(1, written_msg_queue_len);
+
+        /* decode all new frames and examine them to see if any request has finished */
+        const size_t prev_frame_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
+        ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+        const size_t frame_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
+
+        for (size_t i = prev_frame_count; i < frame_count; ++i) {
+            struct h2_decoded_frame *frame = h2_decode_tester_get_frame(&s_tester.peer.decode, i);
+            if (frame->type == AWS_H2_FRAME_T_DATA && frame->end_stream) {
+                end_stream_tick[end_stream_count++] = tick_i;
+            }
+        }
+
+        tick_i++;
+    }
+
+    for (size_t i = 1; i < NUM_STREAMS; ++i) {
+        /* as a simple fairness test, check that each of the requests finished within 1 event-loop tick of the last. */
+        size_t streams_finished_n_ticks_apart = end_stream_tick[i] - end_stream_tick[i - 1];
+        ASSERT_TRUE(streams_finished_n_ticks_apart <= 1);
+
+        /* validate that all data sent successfully */
+        ASSERT_SUCCESS(h2_decode_tester_check_data_across_frames(
+            &s_tester.peer.decode,
+            stream_ids[i],
+            aws_byte_cursor_from_buf(&request_body_bufs[i]),
+            true /*expect_end_frame*/));
+    }
+
+    /* finally, send responses and ensure all streams complete successfully */
+    struct aws_http_header response_headers_src[] = {DEFINE_HEADER(":status", "200")};
+    struct aws_http_headers *response_headers = aws_http_headers_new(allocator);
+    aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
+    for (size_t i = 0; i < NUM_STREAMS; ++i) {
+        struct aws_h2_frame *response_frame =
+            aws_h2_frame_new_headers(allocator, stream_ids[i], response_headers, true /* end_stream */, 0, NULL);
+        ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
+    }
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    for (size_t i = 0; i < NUM_STREAMS; ++i) {
+        ASSERT_TRUE(stream_testers[i].complete);
+        ASSERT_INT_EQUALS(200, stream_testers[i].response_status);
+    }
+
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* clean up */
+    aws_http_headers_release(response_headers);
+    for (size_t i = 0; i < 3; ++i) {
+        client_stream_tester_clean_up(&stream_testers[i]);
+        aws_http_message_release(requests[i]);
+        aws_input_stream_destroy(request_bodies[i]);
+        aws_byte_buf_clean_up(&request_body_bufs[i]);
+    }
     return s_tester_clean_up();
 }

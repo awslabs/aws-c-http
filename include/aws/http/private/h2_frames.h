@@ -221,6 +221,7 @@ int aws_h2_encode_frame(
  * Attempt to encode a DATA frame into the output buffer.
  * AWS_OP_ERR is returned if encoder encounters an unrecoverable error.
  * body_complete will be set true if encoder reaches the end of the body_stream.
+ * body_stalled will be set true if body_stream didn't provide as much data as we would have liked.
  *
  * Each call to this function encodes a complete DATA frame, or nothing at all,
  * so it's always safe to encode a different frame type or the body of a different stream
@@ -234,7 +235,8 @@ int aws_h2_encode_data_frame(
     bool body_ends_stream,
     uint8_t pad_length,
     struct aws_byte_buf *output,
-    bool *body_complete);
+    bool *body_complete,
+    bool *body_stalled);
 
 AWS_HTTP_API
 void aws_h2_frame_destroy(struct aws_h2_frame *frame);

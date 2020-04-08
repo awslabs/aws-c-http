@@ -243,10 +243,17 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             struct aws_input_stream *body = aws_input_stream_new_from_cursor(allocator, &input);
 
             bool body_complete;
+            bool body_stalled;
             AWS_FATAL_ASSERT(
                 aws_h2_encode_data_frame(
-                    &encoder, stream_id, body, (bool)body_ends_stream, pad_length, &frame_data, &body_complete) ==
-                AWS_OP_SUCCESS);
+                    &encoder,
+                    stream_id,
+                    body,
+                    (bool)body_ends_stream,
+                    pad_length,
+                    &frame_data,
+                    &body_complete,
+                    &body_stalled) == AWS_OP_SUCCESS);
 
             struct aws_stream_status body_status;
             aws_input_stream_get_status(body, &body_status);

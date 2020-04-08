@@ -306,7 +306,8 @@ int aws_h2_stream_encode_data_frame(
     struct aws_h2_stream *stream,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output,
-    bool *out_has_more_data) {
+    bool *out_has_more_data,
+    bool *out_stream_stalled) {
 
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
     AWS_PRECONDITION(
@@ -314,13 +315,22 @@ int aws_h2_stream_encode_data_frame(
         stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE);
 
     *out_has_more_data = false;
+    *out_stream_stalled = false;
 
     struct aws_input_stream *body = aws_http_message_get_body_stream(stream->thread_data.outgoing_message);
     AWS_ASSERT(body);
 
     bool body_complete;
+    bool body_stalled;
     if (aws_h2_encode_data_frame(
-            encoder, stream->base.id, body, true /*body_ends_stream*/, 0 /*pad_length*/, output, &body_complete)) {
+            encoder,
+            stream->base.id,
+            body,
+            true /*body_ends_stream*/,
+            0 /*pad_length*/,
+            output,
+            &body_complete,
+            &body_stalled)) {
 
         /* Failed to write DATA, treat it as a Stream Error */
         AWS_H2_STREAM_LOGF(ERROR, stream, "Error encoding stream DATA, %s", aws_error_name(aws_last_error()));
@@ -346,9 +356,12 @@ int aws_h2_stream_encode_data_frame(
             stream->thread_data.state = AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL;
             AWS_H2_STREAM_LOG(TRACE, stream, "Sent END_STREAM. State -> HALF_CLOSED_LOCAL");
         }
+    } else {
+        /* Body not complete */
+        *out_has_more_data = true;
+        *out_stream_stalled = body_stalled;
     }
 
-    *out_has_more_data = !body_complete;
     return AWS_OP_SUCCESS;
 }
 
