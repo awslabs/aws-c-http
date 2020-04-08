@@ -141,4 +141,9 @@ int aws_h2_connection_on_stream_closed(
     enum aws_h2_stream_closed_when closed_when,
     int aws_error_code);
 
+/* Transform the request to h2 style headers */
+struct aws_http_headers *aws_h2_create_headers_from_request(
+    struct aws_http_message *request,
+    struct aws_allocator *alloc);
+
 #endif /* AWS_HTTP_H2_CONNECTION_H */

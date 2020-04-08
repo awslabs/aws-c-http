@@ -148,6 +148,22 @@ int h2_fake_peer_decode_messages_from_testing_channel(struct h2_fake_peer *peer)
 int h2_fake_peer_send_frame(struct h2_fake_peer *peer, struct aws_h2_frame *frame);
 
 /**
+ * Encode the entire byte cursor into a single DATA frame.
+ * Fails if the cursor is too large for this to work.
+ */
+int h2_fake_peer_send_data_frame(
+    struct h2_fake_peer *peer,
+    uint32_t stream_id,
+    struct aws_byte_cursor data,
+    bool end_stream);
+
+/**
+ * Encode the entire string into a single DATA frame.
+ * Fails if the string is too large for this to work.
+ */
+int h2_fake_peer_send_data_frame_str(struct h2_fake_peer *peer, uint32_t stream_id, const char *data, bool end_stream);
+
+/**
  * Peer sends the connection preface with specified settings.
  * Takes ownership of frame and destroys after sending
  */

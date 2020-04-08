@@ -66,7 +66,6 @@ struct aws_http_connection {
     struct aws_channel_slot *channel_slot;
     struct aws_allocator *alloc;
     enum aws_http_version http_version;
-    size_t initial_window_size;
 
     aws_http_proxy_request_transform_fn *proxy_request_transform;
     void *user_data;

@@ -204,6 +204,12 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     aws_atomic_init_int(&stream->base.refcount, 1);
 
     /* Init H2 specific stuff */
+    struct aws_http_headers *h2_headers = aws_h2_create_headers_from_request(options->request, client_connection->alloc);
+    if(aws_http_message_reset_headers(options->request, h2_headers)){
+        AWS_H2_STREAM_LOG(ERROR, stream, "Failed to convert the message into h2 style.");
+        s_stream_destroy(&stream->base);
+        return NULL;
+    }
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
     stream->thread_data.outgoing_message = options->request;
     aws_http_message_acquire(stream->thread_data.outgoing_message);
@@ -423,6 +429,32 @@ int aws_h2_stream_on_decoder_headers_end(
                 stream,
                 "Incoming-header-block-done callback raised error, %s",
                 aws_error_name(aws_last_error()));
+            return AWS_OP_ERR;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_cursor data) {
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+
+    if (s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_DATA)) {
+        return s_send_rst_and_close_stream(stream, aws_last_error());
+    }
+
+    if (!stream->thread_data.received_main_headers) {
+        /* #TODO Not 100% sure whether this is Stream Error or Connection Error. */
+        AWS_H2_STREAM_LOG(ERROR, stream, "Malformed message, received DATA before main HEADERS");
+        return s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+
+    /* #TODO Update stream's flow-control window */
+
+    if (stream->base.on_incoming_body) {
+        if (stream->base.on_incoming_body(&stream->base, &data, stream->base.user_data)) {
+            AWS_H2_STREAM_LOGF(
+                ERROR, stream, "Incoming body callback raised error, %s", aws_error_name(aws_last_error()));
             return AWS_OP_ERR;
         }
     }

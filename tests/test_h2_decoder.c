@@ -293,6 +293,61 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_ignores_unknown_flags) {
     return AWS_OP_SUCCESS;
 }
 
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_payload_max_size_update) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+    /* The initial max size is set as 16384. Let's create a data frame with 16500 bytes data, and update the setting to
+     * make it valid */
+    aws_h2_decoder_set_setting_max_frame_size(fixture->decode.decoder, 16500);
+    /* clang-format off */
+    uint8_t input[16509] = {
+        0x00, 0x40, 0x74,           /* Length (24) */
+        AWS_H2_FRAME_T_DATA,        /* Type (8) */
+        AWS_H2_FRAME_F_END_STREAM,  /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* DATA */
+    };
+    /* clang-format on */
+    /* set the data and expected to 16500 'a' */
+    char expected[16500];
+    for (int i = 9; i < 16509; i++) {
+        input[i] = 'a';
+        expected[i - 9] = 'a';
+    }
+
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate. */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
+    ASSERT_SUCCESS(h2_decode_tester_check_data_across_frames(
+        &fixture->decode, 0x76543210 /*stream_id*/, aws_byte_cursor_from_array(expected, 16500), true /*end_stream*/));
+    return AWS_OP_SUCCESS;
+}
+
+/* The size of a frame payload is limited by the maximum size. An endpoint MUST send an error code of FRAME_SIZE_ERROR
+ * if a frame exceeds the size */
+H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_data_payload_exceed_max_size) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+    /* The initial max size is set as 16384. Let's create a data frame with 16500 bytes data, which will be invalid in
+     * this case */
+    /* clang-format off */
+    uint8_t input[16509] = {
+        0x00, 0x40, 0x74,           /* Length (24) */
+        AWS_H2_FRAME_T_DATA,        /* Type (8) */
+        AWS_H2_FRAME_F_END_STREAM,  /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* DATA */
+    };
+    /* clang-format on */
+
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_FRAME_SIZE, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    return AWS_OP_SUCCESS;
+}
+
 /* DATA frames MUST specify a stream-id */
 H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_data_requires_stream_id) {
     (void)allocator;
@@ -576,6 +631,51 @@ H2_DECODER_ON_SERVER_TEST(h2_decoder_headers_request) {
     ASSERT_SUCCESS(s_check_header(frame, 4, "user-agent", "test", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
     ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
     ASSERT_TRUE(frame->end_stream);
+    return AWS_OP_SUCCESS;
+}
+
+H2_DECODER_ON_SERVER_TEST(h2_decoder_headers_cookies) {
+    (void)allocator;
+    struct fixture *fixture = ctx;
+
+    /* clang-format off */
+    uint8_t input[] = {
+        /* HEADERS FRAME*/
+        0x00, 0x00, 0x06,           /* Length (24) */
+        AWS_H2_FRAME_T_HEADERS,     /* Type (8) */
+        AWS_H2_FRAME_F_END_STREAM,  /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* HEADERS */
+        0x82,                       /* ":method: GET" - indexed */
+        0x60, 0x03, 'a', '=', 'b',  /* "cache: a=b" - indexed name, uncompressed value */
+
+        /* CONTINUATION FRAME*/
+        0x00, 0x00, 16,             /* Length (24) */
+        AWS_H2_FRAME_T_CONTINUATION,/* Type (8) */
+        AWS_H2_FRAME_F_END_HEADERS, /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* PAYLOAD */
+        0x7a, 0x04, 't', 'e', 's', 't',  /* "user-agent: test" - indexed name, uncompressed value */
+        0x60, 0x03, 'c', '=', 'd',  /* "cache: c=d" - indexed name, uncompressed value */
+        0x60, 0x03, 'e', '=', 'f',  /* "cache: e=f" - indexed name, uncompressed value */
+    };
+    /* clang-format on */
+
+    /* Decode */
+    ASSERT_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+
+    /* Validate */
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_HEADERS, 0x76543210 /*stream_id*/));
+    ASSERT_FALSE(frame->headers_malformed);
+    /* two sepaprate cookie headers are concatenated and moved as the last header*/
+    ASSERT_UINT_EQUALS(3, aws_http_headers_count(frame->headers));
+    ASSERT_SUCCESS(s_check_header(frame, 0, ":method", "GET", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 1, "user-agent", "test", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_SUCCESS(s_check_header(frame, 2, "cookie", "a=b; c=d; e=f", AWS_HTTP_HEADER_COMPRESSION_USE_CACHE));
+    ASSERT_INT_EQUALS(AWS_HTTP_HEADER_BLOCK_MAIN, frame->header_block_type);
+    ASSERT_TRUE(frame->end_stream);
+
     return AWS_OP_SUCCESS;
 }
 

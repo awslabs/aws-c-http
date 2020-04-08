@@ -394,12 +394,27 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
 
     aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str(app_ctx->verb));
     aws_http_message_set_request_path(request, app_ctx->uri.path_and_query);
+
+    for (size_t i = 0; i < app_ctx->header_line_count; ++i) {
+        /* reverse search to delimar to support pseudo headers */
+        char *delimiter = strrchr(app_ctx->header_lines[i], ':');
+        if (!delimiter) {
+            fprintf(stderr, "invalid header line %s configured.", app_ctx->header_lines[i]);
+            exit(1);
+        }
+
+        struct aws_http_header custom_header = {
+            .name = aws_byte_cursor_from_array(app_ctx->header_lines[i], delimiter - app_ctx->header_lines[i]),
+            .value = aws_byte_cursor_from_c_str(delimiter + 1)};
+        aws_http_message_add_header(request, custom_header);
+    }
+
     struct aws_http_header accept_header = {.name = aws_byte_cursor_from_c_str("accept"),
                                             .value = aws_byte_cursor_from_c_str("*/*")};
     aws_http_message_add_header(request, accept_header);
 
-    struct aws_http_header host_header = {.name = aws_byte_cursor_from_c_str("host"), .value = app_ctx->uri.host_name};
-    aws_http_message_add_header(request, host_header);
+    // struct aws_http_header host_header = {.name = aws_byte_cursor_from_c_str("host"), .value = app_ctx->uri.host_name};
+    // aws_http_message_add_header(request, host_header);
 
     struct aws_http_header user_agent_header = {
         .name = aws_byte_cursor_from_c_str("user-agent"),
@@ -425,19 +440,7 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
     }
 
     AWS_ASSERT(app_ctx->header_line_count <= 10);
-    for (size_t i = 0; i < app_ctx->header_line_count; ++i) {
-        char *delimiter = memchr(app_ctx->header_lines[i], ':', strlen(app_ctx->header_lines[i]));
 
-        if (!delimiter) {
-            fprintf(stderr, "invalid header line %s configured.", app_ctx->header_lines[i]);
-            exit(1);
-        }
-
-        struct aws_http_header custom_header = {
-            .name = aws_byte_cursor_from_array(app_ctx->header_lines[i], delimiter - app_ctx->header_lines[i]),
-            .value = aws_byte_cursor_from_c_str(delimiter + 1)};
-        aws_http_message_add_header(request, custom_header);
-    }
 
     return request;
 }
@@ -645,7 +648,7 @@ int main(int argc, char **argv) {
         }
 
         /* "h2;http/1.1", add this back when we have h2 support */
-        if (aws_tls_ctx_options_set_alpn_list(&tls_ctx_options, "http/1.1")) {
+        if (aws_tls_ctx_options_set_alpn_list(&tls_ctx_options, "h2")) {
             fprintf(stderr, "Failed to load alpn list with error %s.", aws_error_debug_str(aws_last_error()));
             exit(1);
         }

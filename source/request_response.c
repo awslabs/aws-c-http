@@ -571,6 +571,16 @@ struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_
     return message->body_stream;
 }
 
+int *aws_http_message_reset_headers(struct aws_http_message *message, struct aws_http_headers *new_headers){
+    AWS_PRECONDITION(message);
+    AWS_PRECONDITION(new_headers);
+
+    aws_http_headers_release(message->headers);
+    message->headers = new_headers;
+    aws_http_headers_acquire(message->headers);
+    return AWS_OP_SUCCESS;
+}
+
 struct aws_http_headers *aws_http_message_get_headers(struct aws_http_message *message) {
     AWS_PRECONDITION(message);
     return message->headers;
