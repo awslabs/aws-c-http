@@ -96,6 +96,27 @@ struct h2_decoded_frame *h2_decode_tester_get_frame(const struct h2_decode_teste
 struct h2_decoded_frame *h2_decode_tester_latest_frame(const struct h2_decode_tester *decode_tester);
 
 /**
+ * Search for frame of a given type, starting at specified index.
+ * To search for the next frame, pass search_start_idx = prev_idx + 1
+ */
+struct h2_decoded_frame *h2_decode_tester_find_frame(
+    const struct h2_decode_tester *decode_tester,
+    enum aws_h2_frame_type type,
+    size_t search_start_idx,
+    size_t *out_idx);
+
+/**
+ * Search for frame of a given type and stream-id, starting at specified index.
+ * To search for the next frame, pass search_start_idx = prev_idx + 1
+ */
+struct h2_decoded_frame *h2_decode_tester_find_stream_frame(
+    const struct h2_decode_tester *decode_tester,
+    enum aws_h2_frame_type type,
+    uint32_t stream_id,
+    size_t search_start_idx,
+    size_t *out_idx);
+
+/**
  * Compare data (which may be split across N frames) against expected
  */
 int h2_decode_tester_check_data_across_frames(

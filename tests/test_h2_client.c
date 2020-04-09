@@ -412,9 +412,9 @@ TEST_CASE(h2_client_stream_ignores_some_frames_received_soon_after_closing) {
 
     struct client_stream_tester stream_tester;
     ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
-    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
 
     /* fake peer sends complete response */
     struct aws_http_header response_headers_src[] = {
@@ -671,7 +671,6 @@ TEST_CASE(h2_client_stream_send_lots_of_data) {
     struct aws_byte_buf request_body_bufs[NUM_STREAMS];
     struct aws_input_stream *request_bodies[NUM_STREAMS];
     struct client_stream_tester stream_testers[NUM_STREAMS];
-    uint32_t stream_ids[NUM_STREAMS];
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
         requests[i] = aws_http_message_new_request(allocator);
         aws_http_message_add_header_array(requests[i], request_headers_src[i], AWS_ARRAY_SIZE(request_headers_src[i]));
@@ -687,7 +686,6 @@ TEST_CASE(h2_client_stream_send_lots_of_data) {
         aws_http_message_set_body_stream(requests[i], request_bodies[i]);
 
         ASSERT_SUCCESS(s_stream_tester_init(&stream_testers[i], requests[i]));
-        stream_ids[i] = aws_http_stream_get_id(stream_testers[i].stream);
     }
 
     /* now loop until all requests are done sending.
@@ -733,7 +731,7 @@ TEST_CASE(h2_client_stream_send_lots_of_data) {
         /* validate that all data sent successfully */
         ASSERT_SUCCESS(h2_decode_tester_check_data_across_frames(
             &s_tester.peer.decode,
-            stream_ids[i],
+            aws_http_stream_get_id(stream_testers[i].stream),
             aws_byte_cursor_from_buf(&request_body_bufs[i]),
             true /*expect_end_frame*/));
     }
@@ -743,8 +741,13 @@ TEST_CASE(h2_client_stream_send_lots_of_data) {
     struct aws_http_headers *response_headers = aws_http_headers_new(allocator);
     aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
-        struct aws_h2_frame *response_frame =
-            aws_h2_frame_new_headers(allocator, stream_ids[i], response_headers, true /* end_stream */, 0, NULL);
+        struct aws_h2_frame *response_frame = aws_h2_frame_new_headers(
+            allocator,
+            aws_http_stream_get_id(stream_testers[i].stream),
+            response_headers,
+            true /* end_stream */,
+            0,
+            NULL);
         ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
     }
 
@@ -764,5 +767,77 @@ TEST_CASE(h2_client_stream_send_lots_of_data) {
         aws_input_stream_destroy(request_bodies[i]);
         aws_byte_buf_clean_up(&request_body_bufs[i]);
     }
+    return s_tester_clean_up();
+}
+
+/* Test sending a request whose aws_input_stream is not providing body data all at once */
+TEST_CASE(h2_client_stream_send_stalled_data) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    /* get request ready
+     * the body_stream will stall and provide no data when we try to read from it */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    const char *body_src = "hello";
+    struct aws_byte_cursor body_cursor = aws_byte_cursor_from_c_str(body_src);
+    struct aws_input_stream *request_body = aws_input_stream_new_tester(allocator, body_cursor);
+    aws_input_stream_tester_set_max_bytes_per_read(request_body, 0);
+
+    aws_http_message_set_body_stream(request, request_body);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+
+    /* Execute 1 event-loop tick. Validate that no DATA frames were written */
+    testing_channel_run_currently_queued_tasks(&s_tester.testing_channel);
+    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    ASSERT_NULL(h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_DATA, 0 /*search_start_idx*/, NULL));
+
+    /* Execute a few more event-loop ticks. No more frames should be written */
+    testing_channel_run_currently_queued_tasks(&s_tester.testing_channel);
+    testing_channel_run_currently_queued_tasks(&s_tester.testing_channel);
+    testing_channel_run_currently_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(aws_linked_list_empty(testing_channel_get_written_message_queue(&s_tester.testing_channel)));
+
+    /* Let aws_input_stream produce just 1 byte. This should result in 1 DATA frame with 1 byte of payload */
+    aws_input_stream_tester_set_max_bytes_per_read(request_body, 1);
+    testing_channel_run_currently_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    size_t data_frame_idx;
+    struct h2_decoded_frame *data_frame = h2_decode_tester_find_frame(
+        &s_tester.peer.decode, AWS_H2_FRAME_T_DATA, 0 /*search_start_idx*/, &data_frame_idx);
+    ASSERT_NOT_NULL(data_frame);
+    ASSERT_UINT_EQUALS(1, data_frame->data.len);
+    ASSERT_FALSE(data_frame->end_stream);
+
+    ASSERT_NULL(h2_decode_tester_find_frame(
+        &s_tester.peer.decode, AWS_H2_FRAME_T_DATA, data_frame_idx + 1 /*search_start_idx*/, NULL));
+
+    /* finish up. Let aws_input_stream produce the rest of its data */
+    aws_input_stream_tester_set_max_bytes_per_read(request_body, SIZE_MAX);
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    ASSERT_SUCCESS(
+        h2_decode_tester_check_data_str_across_frames(&s_tester.peer.decode, stream_id, body_src, true /*end_stream*/));
+
+    /* clean up */
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    aws_input_stream_destroy(request_body);
     return s_tester_clean_up();
 }
