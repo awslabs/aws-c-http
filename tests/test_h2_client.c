@@ -240,6 +240,49 @@ static int s_compare_headers(const struct aws_http_headers *expected, const stru
     return AWS_OP_SUCCESS;
 }
 
+/* Test that h2 can split cookie headers from request, if we need to compress it use cache. */
+TEST_CASE(h2_client_request_cookie_headers) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send a request with cookie headers */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+        DEFINE_HEADER("cookie", "a=b; c=d; e=f"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct aws_http_headers *h2_headers = aws_h2_create_headers_from_request(request, allocator);
+
+    /* set expected h2 style headers */
+    struct aws_http_header expected_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+        DEFINE_HEADER("cookie", "a=b"),
+        DEFINE_HEADER("cookie", "c=d"),
+        DEFINE_HEADER("cookie", "e=f"),
+    };
+    struct aws_http_headers *expected_headers = aws_http_headers_new(allocator);
+    ASSERT_SUCCESS(
+        aws_http_headers_add_array(expected_headers, expected_headers_src, AWS_ARRAY_SIZE(expected_headers_src)));
+
+    ASSERT_SUCCESS(s_compare_headers(expected_headers, h2_headers));
+
+    /* clean up */
+    aws_http_headers_release(h2_headers);
+    aws_http_headers_release(expected_headers);
+    aws_http_message_release(request);
+    return s_tester_clean_up();
+}
+
 /* Test that a simple request/response can be carried to completion.
  * The request consists of a single HEADERS frame and the response consists of a single HEADERS frame. */
 TEST_CASE(h2_client_stream_complete) {
