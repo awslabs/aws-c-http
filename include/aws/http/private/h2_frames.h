@@ -219,9 +219,11 @@ int aws_h2_encode_frame(
 
 /**
  * Attempt to encode a DATA frame into the output buffer.
+ * The body_stream will be read into the available space (up to MAX_FRAME_SIZE).
  * AWS_OP_ERR is returned if encoder encounters an unrecoverable error.
  * body_complete will be set true if encoder reaches the end of the body_stream.
- * body_stalled will be set true if body_stream didn't provide as much data as we would have liked.
+ * body_stalled will be true if aws_input_stream_read() stopped early (didn't
+ * complete, though more space was available).
  *
  * Each call to this function encodes a complete DATA frame, or nothing at all,
  * so it's always safe to encode a different frame type or the body of a different stream
