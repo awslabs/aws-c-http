@@ -66,6 +66,7 @@ struct elasticurl_ctx {
     const char *signing_function_name;
     struct aws_hash_table signing_context;
     aws_http_message_transform_fn *signing_function;
+    const char *alpn;
     bool include_headers;
     bool insecure;
     FILE *output;
@@ -103,6 +104,7 @@ static void s_usage(int exit_code) {
     fprintf(stderr, "  -t, --trace FILE: dumps logs to FILE instead of stderr.\n");
     fprintf(stderr, "  -v, --verbose: ERROR|INFO|DEBUG|TRACE: log level to configure. Default is none.\n");
     fprintf(stderr, "      --version: print the version of elasticurl.\n");
+    fprintf(stderr, "      --http2: try to use HTTP/2");
     fprintf(stderr, "  -h, --help\n");
     fprintf(stderr, "            Display this message and quit.\n");
     exit(exit_code);
@@ -130,6 +132,7 @@ static struct aws_cli_option s_long_options[] = {
     {"trace", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 't'},
     {"verbose", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'v'},
     {"version", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'V'},
+    {"http2", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'w'},
     {"help", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'h'},
     /* Per getopt(3) the last element of the array has to be filled with all zeros */
     {NULL, AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 0},
@@ -165,7 +168,8 @@ static int s_parse_signing_context(
 static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
     while (true) {
         int option_index = 0;
-        int c = aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:j:l:m:M:GPHiko:t:v:Vh", s_long_options, &option_index);
+        int c =
+            aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:j:l:m:M:GPHiko:t:v:Vwh", s_long_options, &option_index);
         if (c == -1) {
             break;
         }
@@ -271,6 +275,9 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
             case 'V':
                 fprintf(stderr, "elasticurl %s\n", ELASTICURL_VERSION);
                 exit(0);
+            case 'w':
+                ctx->alpn = "h2";
+                break;
             case 'h':
                 s_usage(0);
                 break;
@@ -359,7 +366,7 @@ static int s_on_incoming_headers_fn(
 
         for (size_t i = 0; i < num_headers; ++i) {
             fwrite(header_array[i].name.ptr, 1, header_array[i].name.len, stdout);
-            fprintf(stdout, ":");
+            fprintf(stdout, ": ");
             fwrite(header_array[i].value.ptr, 1, header_array[i].value.len, stdout);
             fprintf(stdout, "\n");
         }
@@ -553,6 +560,7 @@ int main(int argc, char **argv) {
     app_ctx.connect_timeout = 3000;
     app_ctx.output = stdout;
     app_ctx.verb = "GET";
+    app_ctx.alpn = "http/1.1";
     aws_mutex_init(&app_ctx.mutex);
     aws_hash_table_init(
         &app_ctx.signing_context,
@@ -644,8 +652,7 @@ int main(int argc, char **argv) {
             aws_tls_ctx_options_set_verify_peer(&tls_ctx_options, false);
         }
 
-        /* "h2;http/1.1", add this back when we have h2 support */
-        if (aws_tls_ctx_options_set_alpn_list(&tls_ctx_options, "http/1.1")) {
+        if (aws_tls_ctx_options_set_alpn_list(&tls_ctx_options, app_ctx.alpn)) {
             fprintf(stderr, "Failed to load alpn list with error %s.", aws_error_debug_str(aws_last_error()));
             exit(1);
         }
