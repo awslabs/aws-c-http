@@ -564,16 +564,17 @@ int aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *stream, uint32_t h
         return AWS_OP_ERR;
     }
 
-    int aws_error_code = AWS_ERROR_HTTP_RST_STREAM_RECEIVED;
-
     /* RFC-7540 8.1 - a server MAY request that the client abort transmission of a request without error by sending a
      * RST_STREAM with an error code of NO_ERROR after sending a complete response (i.e., a frame with the END_STREAM
      * flag). Clients MUST NOT discard responses as a result of receiving such a RST_STREAM */
+    int aws_error_code;
     if (stream->base.client_data && (h2_error_code == AWS_H2_ERR_NO_ERROR) &&
         (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE)) {
 
         aws_error_code = AWS_ERROR_SUCCESS;
+
     } else {
+        aws_error_code = AWS_ERROR_HTTP_RST_STREAM_RECEIVED;
         AWS_H2_STREAM_LOGF(
             ERROR,
             stream,
