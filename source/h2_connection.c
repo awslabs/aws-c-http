@@ -1008,10 +1008,10 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
     AWS_ZERO_STRUCT(lower_name_buf);
 
     /* Check whether the old_headers have pseudo header or not */
-    if(aws_http_headers_count(old_headers)) {
+    if (aws_http_headers_count(old_headers)) {
         if (aws_http_headers_get_index(old_headers, 0, &header_iter)) {
-                goto error;
-            }
+            goto error;
+        }
         is_pseudoheader = header_iter.name.ptr[0] == ':';
     }
     if (!is_pseudoheader) {
@@ -1036,8 +1036,7 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
         struct aws_byte_cursor authority_cursor;
         struct aws_byte_cursor host_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("host");
         if (!aws_http_headers_get(old_headers, host_cursor, &authority_cursor)) {
-            if (aws_http_headers_add(
-                    result, aws_http_header_authority, authority_cursor)) {
+            if (aws_http_headers_add(result, aws_http_header_authority, authority_cursor)) {
                 goto error;
             }
         }
@@ -1070,12 +1069,13 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
                     struct aws_byte_cursor cookie_chunk;
                     AWS_ZERO_STRUCT(cookie_chunk);
                     while (aws_byte_cursor_next_split(&header_iter.value, ';', &cookie_chunk)) {
-                        if(aws_http_headers_add(result, lower_name_cursor, aws_strutil_trim_http_whitespace(cookie_chunk))){
+                        if (aws_http_headers_add(
+                                result, lower_name_cursor, aws_strutil_trim_http_whitespace(cookie_chunk))) {
                             goto error;
                         }
                     }
                 } else {
-                    if(aws_http_headers_add(result, lower_name_cursor, header_iter.value)) {
+                    if (aws_http_headers_add(result, lower_name_cursor, header_iter.value)) {
                         goto error;
                     }
                 }
@@ -1085,7 +1085,7 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
                 break;
             /* TODO: handle connection-specific header field (RFC7540 8.1.2.2) */
             default:
-                if(aws_http_headers_add(result, lower_name_cursor, header_iter.value)){
+                if (aws_http_headers_add(result, lower_name_cursor, header_iter.value)) {
                     goto error;
                 }
                 break;
