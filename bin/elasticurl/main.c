@@ -366,7 +366,7 @@ static int s_on_incoming_headers_fn(
 
         for (size_t i = 0; i < num_headers; ++i) {
             fwrite(header_array[i].name.ptr, 1, header_array[i].name.len, stdout);
-            fprintf(stdout, ":");
+            fprintf(stdout, ": ");
             fwrite(header_array[i].value.ptr, 1, header_array[i].value.len, stdout);
             fprintf(stdout, "\n");
         }
