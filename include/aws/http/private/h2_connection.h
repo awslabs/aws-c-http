@@ -69,6 +69,10 @@ struct aws_h2_connection {
          * Entries are removed after a period of time. */
         struct aws_hash_table closed_streams_where_frames_might_trickle_in;
 
+        /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
+         * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
+         * connection */
+        int64_t peer_window_size;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */

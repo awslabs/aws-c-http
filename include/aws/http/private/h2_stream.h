@@ -63,7 +63,7 @@ struct aws_h2_stream {
     /* Only the event-loop thread may touch this data */
     struct {
         enum aws_h2_stream_state state;
-        uint64_t window_size; /* #TODO try to figure out how this actually works, and then implement it */
+        int64_t window_size; /* #TODO try to figure out how this actually works, and then implement it */
         struct aws_http_message *outgoing_message;
         bool received_main_headers;
     } thread_data;

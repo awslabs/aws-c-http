@@ -113,6 +113,7 @@ static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
     .on_ping = s_decoder_on_ping,
     .on_settings = s_decoder_on_settings,
     .on_settings_ack = s_decoder_on_settings_ack,
+    .on_window_update = s_decoder_on_window_update,
 };
 
 static void s_lock_synced_data(struct aws_h2_connection *connection) {
@@ -253,6 +254,9 @@ static struct aws_h2_connection *s_connection_new(
     /* Initialize the value of settings */
     memcpy(connection->thread_data.settings_peer, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
     memcpy(connection->thread_data.settings_self, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
+
+    /* Initial connection flow-control window with 65535 bytes (RFC 6.9.2) */
+    connection->thread_data.peer_window_size = 65535;
 
     /* Create a new decoder */
     struct aws_h2_decoder_params params = {
@@ -824,6 +828,27 @@ static int s_decoder_on_settings_ack(void *userdata) {
     /* inform decoder about the settings */
     s_aws_h2_decoder_change_settings(connection);
     return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_increment, void *userdata) {
+    struct aws_h2_connection *connection = userdata;
+
+    if (stream_id == 0) {
+        /* Let's update the connection window size */
+        connection->thread_data.peer_window_size += window_size_increment;
+        if (connection->thread_data.peer_window_size > AWS_H2_WINDOW_UPDATE_MAX) {
+            /* We MUST NOT allow a flow-control window to exceed the max */
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "Window udpate frame causes the connection flow-control window exceeding the maximum size, %s",
+                aws_h2_error_code_to_str(AWS_H2_ERR_FLOW_CONTROL_ERROR))
+            /* #TODO send GOAWAY frame with FLOW_CONTROL_ERROR RFC7540 6.9.1 */
+
+            return aws_raise_error(AWS_H2_ERR_FLOW_CONTROL_ERROR);
+        }
+        return AWS_OP_SUCCESS;
+    }
 }
 
 /* End decoder callbacks */
