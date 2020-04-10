@@ -106,6 +106,7 @@ int aws_h2_stream_on_decoder_headers_end(
 
 int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_cursor data);
 int aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stream);
+int aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *stream, uint32_t h2_error_code);
 
 int aws_h2_stream_activate(struct aws_http_stream *stream);
 
