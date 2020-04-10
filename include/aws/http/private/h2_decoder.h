@@ -104,24 +104,6 @@ struct aws_h2_decoder_params {
     bool skip_connection_preface;
 };
 
-/* for storing things in array without worrying about the specific values of the other AWS_HTTP_HEADER_XYZ enums */
-enum pseudoheader_name {
-    PSEUDOHEADER_UNKNOWN = -1, /* Unrecognized value */
-
-    /* Request pseudo-headers */
-    PSEUDOHEADER_METHOD,
-    PSEUDOHEADER_SCHEME,
-    PSEUDOHEADER_AUTHORITY,
-    PSEUDOHEADER_PATH,
-    /* Response pseudo-headers */
-    PSEUDOHEADER_STATUS,
-
-    PSEUDOHEADER_COUNT, /* Number of valid enums */
-};
-
-/* Transform from pseudoheader_name to aws_byte_cursor */
-extern const struct aws_byte_cursor *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_COUNT];
-
 struct aws_h2_decoder;
 
 AWS_EXTERN_C_BEGIN

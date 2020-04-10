@@ -242,11 +242,8 @@ static int s_compare_headers(const struct aws_http_headers *expected, const stru
 
 /* Test that h2 can split cookie headers from request, if we need to compress it use cache. */
 TEST_CASE(h2_client_request_cookie_headers) {
-    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
-
-    /* fake peer sends connection preface */
-    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    (void)ctx;
+    aws_http_library_init(allocator);
 
     /* send a request with cookie headers */
     struct aws_http_message *request = aws_http_message_new_request(allocator);
@@ -280,7 +277,8 @@ TEST_CASE(h2_client_request_cookie_headers) {
     aws_http_headers_release(h2_headers);
     aws_http_headers_release(expected_headers);
     aws_http_message_release(request);
-    return s_tester_clean_up();
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
 }
 
 /* Test that a simple request/response can be carried to completion.

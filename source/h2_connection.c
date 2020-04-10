@@ -947,16 +947,19 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
     struct aws_allocator *alloc) {
 
     struct aws_http_headers *old_headers = aws_http_message_get_headers(request);
+    bool is_pseudoheader = false;
     struct aws_http_headers *result = aws_http_headers_new(alloc);
     struct aws_http_header header_iter;
     struct aws_byte_buf lower_name_buf;
     AWS_ZERO_STRUCT(lower_name_buf);
 
     /* Check whether the old_headers have pseudo header or not */
-    if (aws_http_headers_get_index(old_headers, 0, &header_iter)) {
-        goto error;
+    if(aws_http_headers_count(old_headers)) {
+        if (aws_http_headers_get_index(old_headers, 0, &header_iter)) {
+                goto error;
+            }
+        is_pseudoheader = header_iter.name.ptr[0] == ':';
     }
-    bool is_pseudoheader = header_iter.name.ptr[0] == ':';
     if (!is_pseudoheader) {
         /* TODO: Set pseudo headers all from message, which will lead an API change to aws_http_message */
         /* No pseudoheader detected, we set them from the request */
@@ -964,14 +967,15 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
         struct aws_byte_cursor method;
         if (aws_http_message_get_request_method(request, &method)) {
             /* error will happen when the request is invalid */
+            aws_raise_error(AWS_ERROR_HTTP_INVALID_METHOD);
             goto error;
         }
-        if (aws_http_headers_add(result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_METHOD], method)) {
+        if (aws_http_headers_add(result, aws_http_header_method, method)) {
             goto error;
         }
         /* we set a default value, "https", for now */
         struct aws_byte_cursor scheme_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https");
-        if (aws_http_headers_add(result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_SCHEME], scheme_cursor)) {
+        if (aws_http_headers_add(result, aws_http_header_scheme, scheme_cursor)) {
             goto error;
         }
         /* Set an empty authority for now, if host header field is found, we set it as the value of host */
@@ -979,15 +983,16 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
         struct aws_byte_cursor host_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("host");
         if (!aws_http_headers_get(old_headers, host_cursor, &authority_cursor)) {
             if (aws_http_headers_add(
-                    result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_AUTHORITY], authority_cursor)) {
+                    result, aws_http_header_authority, authority_cursor)) {
                 goto error;
             }
         }
         struct aws_byte_cursor path_cursor;
         if (aws_http_message_get_request_path(request, &path_cursor)) {
+            aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
             goto error;
         }
-        if (aws_http_headers_add(result, *aws_h2_pseudoheader_name_to_cursor[PSEUDOHEADER_PATH], path_cursor)) {
+        if (aws_http_headers_add(result, aws_http_header_path, path_cursor)) {
             goto error;
         }
     }
@@ -1008,26 +1013,17 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
             case AWS_HTTP_HEADER_COOKIE:
                 /* split cookie if USE CACHE */
                 if (header_iter.compression == AWS_HTTP_HEADER_COMPRESSION_USE_CACHE) {
-                    struct aws_array_list cookie_chunks;
-                    if (aws_array_list_init_dynamic(&cookie_chunks, alloc, 4, sizeof(struct aws_byte_cursor))) {
-                        goto error;
-                    }
-                    if (aws_byte_cursor_split_on_char(&header_iter.value, ';', &cookie_chunks)) {
-                        aws_array_list_clean_up(&cookie_chunks);
-                        goto error;
-                    }
-                    for (size_t i = 0; i < aws_array_list_length(&cookie_chunks); i++) {
-                        struct aws_byte_cursor cookie_chunk;
-                        AWS_ZERO_STRUCT(cookie_chunk);
-                        if (aws_array_list_get_at(&cookie_chunks, &cookie_chunk, i)) {
-                            aws_array_list_clean_up(&cookie_chunks);
+                    struct aws_byte_cursor cookie_chunk;
+                    AWS_ZERO_STRUCT(cookie_chunk);
+                    while (aws_byte_cursor_next_split(&header_iter.value, ';', &cookie_chunk)) {
+                        if(aws_http_headers_add(result, lower_name_cursor, aws_strutil_trim_http_whitespace(cookie_chunk))){
                             goto error;
                         }
-                        aws_http_headers_add(result, lower_name_cursor, aws_strutil_trim_http_whitespace(cookie_chunk));
                     }
-                    aws_array_list_clean_up(&cookie_chunks);
                 } else {
-                    aws_http_headers_add(result, lower_name_cursor, header_iter.value);
+                    if(aws_http_headers_add(result, lower_name_cursor, header_iter.value)) {
+                        goto error;
+                    }
                 }
                 break;
             case AWS_HTTP_HEADER_HOST:
@@ -1035,7 +1031,9 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
                 break;
             /* TODO: handle connection-specific header field (RFC7540 8.1.2.2) */
             default:
-                aws_http_headers_add(result, lower_name_cursor, header_iter.value);
+                if(aws_http_headers_add(result, lower_name_cursor, header_iter.value)){
+                    goto error;
+                }
                 break;
         }
         aws_byte_buf_reset(&lower_name_buf, false);
@@ -1043,7 +1041,7 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
     aws_byte_buf_clean_up(&lower_name_buf);
     return result;
 error:
-    aws_http_headers_clear(result);
+    aws_http_headers_release(result);
     aws_byte_buf_clean_up(&lower_name_buf);
     return NULL;
 }
