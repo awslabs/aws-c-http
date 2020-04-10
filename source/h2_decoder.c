@@ -69,21 +69,22 @@ static const size_t s_decoder_cookie_buffer_initial_size = 512;
     DECODER_CALL_VTABLE_ARGS(decoder, fn, (decoder)->frame_in_progress.stream_id, __VA_ARGS__)
 
 /* for storing things in array without worrying about the specific values of the other AWS_HTTP_HEADER_XYZ enums */
-enum pseudoheader_name {	
-    PSEUDOHEADER_UNKNOWN = -1, /* Unrecognized value */	
+enum pseudoheader_name {
+    PSEUDOHEADER_UNKNOWN = -1, /* Unrecognized value */
 
-    /* Request pseudo-headers */	
-    PSEUDOHEADER_METHOD,	
-    PSEUDOHEADER_SCHEME,	
-    PSEUDOHEADER_AUTHORITY,	
-    PSEUDOHEADER_PATH,	
-    /* Response pseudo-headers */	
-    PSEUDOHEADER_STATUS,	
+    /* Request pseudo-headers */
+    PSEUDOHEADER_METHOD,
+    PSEUDOHEADER_SCHEME,
+    PSEUDOHEADER_AUTHORITY,
+    PSEUDOHEADER_PATH,
+    /* Response pseudo-headers */
+    PSEUDOHEADER_STATUS,
 
-    PSEUDOHEADER_COUNT, /* Number of valid enums */	
-};	
+    PSEUDOHEADER_COUNT, /* Number of valid enums */
+};
 
-static const struct aws_byte_cursor *s_pseudoheader_name_to_cursor[PSEUDOHEADER_COUNT] = {    [PSEUDOHEADER_METHOD] = &aws_http_header_method,
+static const struct aws_byte_cursor *s_pseudoheader_name_to_cursor[PSEUDOHEADER_COUNT] = {
+    [PSEUDOHEADER_METHOD] = &aws_http_header_method,
     [PSEUDOHEADER_SCHEME] = &aws_http_header_scheme,
     [PSEUDOHEADER_AUTHORITY] = &aws_http_header_authority,
     [PSEUDOHEADER_PATH] = &aws_http_header_path,
