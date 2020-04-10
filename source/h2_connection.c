@@ -84,6 +84,7 @@ static int s_decoder_on_settings(
     size_t num_settings,
     void *userdata);
 static int s_decoder_on_settings_ack(void *userdata);
+static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_increment, void *userdata);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
@@ -888,7 +889,7 @@ static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_i
     struct aws_h2_connection *connection = userdata;
 
     if (stream_id == 0) {
-        /* Let's update the connection window size */
+        /* Let's update the connection flow-contorl window size */
         connection->thread_data.peer_window_size += window_size_increment;
         if (connection->thread_data.peer_window_size > AWS_H2_WINDOW_UPDATE_MAX) {
             /* We MUST NOT allow a flow-control window to exceed the max */
@@ -897,11 +898,14 @@ static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_i
                 connection,
                 "Window udpate frame causes the connection flow-control window exceeding the maximum size, %s",
                 aws_h2_error_code_to_str(AWS_H2_ERR_FLOW_CONTROL_ERROR))
-            /* #TODO send GOAWAY frame with FLOW_CONTROL_ERROR RFC7540 6.9.1 */
+            /* #TODO send GOAWAY frame with FLOW_CONTROL_ERROR (RFC7540 6.9.1) */
 
             return aws_raise_error(AWS_H2_ERR_FLOW_CONTROL_ERROR);
         }
         return AWS_OP_SUCCESS;
+    }
+    else {
+        /* Update the flow-contorl window size for stream */
     }
 }
 
