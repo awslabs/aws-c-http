@@ -553,3 +553,52 @@ int aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stream) {
 
     return AWS_OP_SUCCESS;
 }
+
+int aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *stream, uint32_t h2_error_code) {
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+
+    /* Check that this state allows RST_STREAM. */
+    if (s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_RST_STREAM)) {
+        /* Usually we send a RST_STREAM when the state doesn't allow a frame type, but RFC-7540 5.4.2 says:
+         * "To avoid looping, an endpoint MUST NOT send a RST_STREAM in response to a RST_STREAM frame." */
+        return AWS_OP_ERR;
+    }
+
+    /* RFC-7540 8.1 - a server MAY request that the client abort transmission of a request without error by sending a
+     * RST_STREAM with an error code of NO_ERROR after sending a complete response (i.e., a frame with the END_STREAM
+     * flag). Clients MUST NOT discard responses as a result of receiving such a RST_STREAM */
+    int aws_error_code;
+    if (stream->base.client_data && (h2_error_code == AWS_H2_ERR_NO_ERROR) &&
+        (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE)) {
+
+        aws_error_code = AWS_ERROR_SUCCESS;
+
+    } else {
+        aws_error_code = AWS_ERROR_HTTP_RST_STREAM_RECEIVED;
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "Peer terminated stream with HTTP/2 RST_STREAM frame, error-code=0x%x(%s)",
+            h2_error_code,
+            aws_h2_error_code_to_str(h2_error_code));
+    }
+
+    /* #TODO some way for users to learn h2_error_code value. A callback? A queryable property on the stream?
+     * Specific AWS_ERROR_ per known code doesn't work because what if user wants to use their own magic numbers */
+
+    stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
+
+    AWS_H2_STREAM_LOGF(
+        TRACE,
+        stream,
+        "Received RST_STREAM code=0x%x(%s). State -> CLOSED",
+        h2_error_code,
+        aws_h2_error_code_to_str(h2_error_code));
+
+    if (aws_h2_connection_on_stream_closed(
+            s_get_h2_connection(stream), stream, AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED, aws_error_code)) {
+        return AWS_OP_ERR;
+    }
+
+    return AWS_OP_SUCCESS;
+}

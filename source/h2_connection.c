@@ -79,6 +79,7 @@ static int s_decoder_on_headers_end(
     void *userdata);
 static int s_decoder_on_data(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
 static int s_decoder_on_end_stream(uint32_t stream_id, void *userdata);
+static int s_decoder_on_rst_stream(uint32_t stream_id, uint32_t h2_error_code, void *userdata);
 static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
 static int s_decoder_on_settings(
     const struct aws_h2_frame_setting *settings_array,
@@ -113,6 +114,7 @@ static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
     .on_headers_end = s_decoder_on_headers_end,
     .on_data = s_decoder_on_data,
     .on_end_stream = s_decoder_on_end_stream,
+    .on_rst_stream = s_decoder_on_rst_stream,
     .on_ping = s_decoder_on_ping,
     .on_settings = s_decoder_on_settings,
     .on_settings_ack = s_decoder_on_settings_ack,
@@ -802,6 +804,24 @@ int s_decoder_on_end_stream(uint32_t stream_id, void *userdata) {
     if (found) {
         struct aws_h2_stream *stream = found->value;
         if (aws_h2_stream_on_decoder_end_stream(stream)) {
+            return AWS_OP_ERR;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_rst_stream(uint32_t stream_id, uint32_t h2_error_code, void *userdata) {
+    struct aws_h2_connection *connection = userdata;
+
+    /* Pass RST_STREAM to stream */
+    struct aws_h2_stream *stream;
+    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_RST_STREAM, &stream)) {
+        return AWS_OP_ERR;
+    }
+
+    if (stream) {
+        if (aws_h2_stream_on_decoder_rst_stream(stream, h2_error_code)) {
             return AWS_OP_ERR;
         }
     }

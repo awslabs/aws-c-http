@@ -122,6 +122,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_FRAME_SIZE,
         "Received frame with an illegal frame size"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_RST_STREAM_RECEIVED,
+        "Peer sent RST_STREAM to terminate stream"),
 };
 /* clang-format on */
 
