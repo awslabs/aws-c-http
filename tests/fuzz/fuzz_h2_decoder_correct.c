@@ -26,7 +26,6 @@
 
 #include <inttypes.h>
 
-static const uint32_t FRAME_PREFIX_SIZE = 3 + 1 + 1 + 4;
 static const uint32_t MAX_PAYLOAD_SIZE = 16384;
 
 enum header_style {
@@ -210,7 +209,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     /* Init the buffer */
     struct aws_byte_buf frame_data;
-    aws_byte_buf_init(&frame_data, allocator, FRAME_PREFIX_SIZE + MAX_PAYLOAD_SIZE);
+    aws_byte_buf_init(&frame_data, allocator, AWS_H2_FRAME_PREFIX_SIZE + MAX_PAYLOAD_SIZE);
 
     /*
      * Generate the frame to decode
@@ -244,10 +243,17 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             struct aws_input_stream *body = aws_input_stream_new_from_cursor(allocator, &input);
 
             bool body_complete;
+            bool body_stalled;
             AWS_FATAL_ASSERT(
                 aws_h2_encode_data_frame(
-                    &encoder, stream_id, body, (bool)body_ends_stream, pad_length, &frame_data, &body_complete) ==
-                AWS_OP_SUCCESS);
+                    &encoder,
+                    stream_id,
+                    body,
+                    (bool)body_ends_stream,
+                    pad_length,
+                    &frame_data,
+                    &body_complete,
+                    &body_stalled) == AWS_OP_SUCCESS);
 
             struct aws_stream_status body_status;
             aws_input_stream_get_status(body, &body_status);
@@ -460,7 +466,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             /* fallthrough */
         case AWS_H2_FRAME_T_UNKNOWN: {
             /* #YOLO roll our own frame */
-            uint32_t payload_length = aws_min_u32(input.len, MAX_PAYLOAD_SIZE - FRAME_PREFIX_SIZE);
+            uint32_t payload_length = aws_min_u32(input.len, MAX_PAYLOAD_SIZE - AWS_H2_FRAME_PREFIX_SIZE);
 
             /* Write payload length */
             aws_byte_buf_write_be24(&frame_data, payload_length);

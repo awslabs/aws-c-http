@@ -20,6 +20,8 @@
 #include <aws/http/request_response.h>
 #include <aws/testing/aws_test_harness.h>
 
+struct aws_input_stream;
+
 /**
  * Information gathered about a given frame from decoder callbacks.
  * These aren't 1:1 with literal H2 frames:
@@ -92,6 +94,27 @@ void h2_decode_tester_clean_up(struct h2_decode_tester *decode_tester);
 size_t h2_decode_tester_frame_count(const struct h2_decode_tester *decode_tester);
 struct h2_decoded_frame *h2_decode_tester_get_frame(const struct h2_decode_tester *decode_tester, size_t i);
 struct h2_decoded_frame *h2_decode_tester_latest_frame(const struct h2_decode_tester *decode_tester);
+
+/**
+ * Search for frame of a given type, starting at specified index.
+ * To search for the next frame, pass search_start_idx = prev_idx + 1
+ */
+struct h2_decoded_frame *h2_decode_tester_find_frame(
+    const struct h2_decode_tester *decode_tester,
+    enum aws_h2_frame_type type,
+    size_t search_start_idx,
+    size_t *out_idx);
+
+/**
+ * Search for frame of a given type and stream-id, starting at specified index.
+ * To search for the next frame, pass search_start_idx = prev_idx + 1
+ */
+struct h2_decoded_frame *h2_decode_tester_find_stream_frame(
+    const struct h2_decode_tester *decode_tester,
+    enum aws_h2_frame_type type,
+    uint32_t stream_id,
+    size_t search_start_idx,
+    size_t *out_idx);
 
 /**
  * Compare data (which may be split across N frames) against expected
@@ -173,5 +196,16 @@ int h2_fake_peer_send_connection_preface(struct h2_fake_peer *peer, struct aws_h
  * Peer sends the connection preface with default settings.
  */
 int h2_fake_peer_send_connection_preface_default_settings(struct h2_fake_peer *peer);
+
+/******************************************************************************/
+
+/**
+ * Create input stream that can do weird stuff in tests
+ */
+struct aws_input_stream *aws_input_stream_new_tester(struct aws_allocator *alloc, struct aws_byte_cursor cursor);
+
+void aws_input_stream_tester_set_max_bytes_per_read(struct aws_input_stream *input_stream, size_t max_bytes);
+
+void aws_input_stream_tester_set_reading_broken(struct aws_input_stream *input_stream, bool is_broken);
 
 #endif /* AWS_HTTP_H2_TEST_HELPER_H */

@@ -12,6 +12,7 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
+#include "h2_test_helper.h"
 #include <aws/testing/aws_test_harness.h>
 
 #include <aws/http/private/h2_frames.h>
@@ -93,6 +94,7 @@ TEST_CASE(h2_encoder_data) {
     /* clang-format on */
 
     bool body_complete;
+    bool body_stalled;
     ASSERT_SUCCESS(aws_h2_encode_data_frame(
         &encoder,
         0x76543210 /*stream_id*/,
@@ -100,11 +102,102 @@ TEST_CASE(h2_encoder_data) {
         true /*body_ends_stream*/,
         2 /*pad_length*/,
         &output,
-        &body_complete));
+        &body_complete,
+        &body_stalled));
 
     ASSERT_BIN_ARRAYS_EQUALS(expected, sizeof(expected), output.buffer, output.len);
-    ASSERT_UINT_EQUALS(true, body_complete);
+    ASSERT_TRUE(body_complete);
+    ASSERT_FALSE(body_stalled);
 
+    aws_byte_buf_clean_up(&output);
+    aws_input_stream_destroy(body);
+    aws_h2_frame_encoder_clean_up(&encoder);
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that we set body_stalled to true if the aws_input_stream is unable to fill the available space */
+TEST_CASE(h2_encoder_data_stalled) {
+    (void)ctx;
+
+    struct aws_h2_frame_encoder encoder;
+    ASSERT_SUCCESS(aws_h2_frame_encoder_init(&encoder, allocator, NULL /*logging_id*/));
+
+    struct aws_byte_buf output;
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, allocator, 1024));
+
+    struct aws_byte_cursor body_src = aws_byte_cursor_from_c_str("hello");
+    struct aws_input_stream *body = aws_input_stream_new_tester(allocator, body_src);
+    ASSERT_NOT_NULL(body);
+
+    /* Run encoder where body produces only 1 byte */
+    aws_input_stream_tester_set_max_bytes_per_read(body, 1);
+
+    /* clang-format off */
+    uint8_t expected[] = {
+        0x00, 0x00, 0x01,           /* Length (24) */
+        AWS_H2_FRAME_T_DATA,        /* Type (8) */
+        0x0,                        /* Flags (8) */
+        0x76, 0x54, 0x32, 0x10,     /* Reserved (1) | Stream Identifier (31) */
+        /* DATA */
+        'h',                        /* Data (*) */
+    };
+    /* clang-format on */
+
+    bool body_complete;
+    bool body_stalled;
+    ASSERT_SUCCESS(aws_h2_encode_data_frame(
+        &encoder,
+        0x76543210 /*stream_id*/,
+        body,
+        true /*body_ends_stream*/,
+        0 /*pad_length*/,
+        &output,
+        &body_complete,
+        &body_stalled));
+
+    ASSERT_BIN_ARRAYS_EQUALS(expected, sizeof(expected), output.buffer, output.len);
+    ASSERT_FALSE(body_complete);
+    ASSERT_TRUE(body_stalled);
+
+    aws_byte_buf_clean_up(&output);
+    aws_input_stream_destroy(body);
+    aws_h2_frame_encoder_clean_up(&encoder);
+    return AWS_OP_SUCCESS;
+}
+
+/* Run encoder where body produces zero bytes. The encoder should not even bother writing a frame. */
+TEST_CASE(h2_encoder_data_stalled_completely) {
+    (void)ctx;
+
+    struct aws_h2_frame_encoder encoder;
+    ASSERT_SUCCESS(aws_h2_frame_encoder_init(&encoder, allocator, NULL /*logging_id*/));
+
+    struct aws_byte_buf output;
+    ASSERT_SUCCESS(aws_byte_buf_init(&output, allocator, 1024));
+
+    struct aws_byte_cursor body_src = aws_byte_cursor_from_c_str("hello");
+    struct aws_input_stream *body = aws_input_stream_new_tester(allocator, body_src);
+    ASSERT_NOT_NULL(body);
+
+    aws_input_stream_tester_set_max_bytes_per_read(body, 0);
+
+    bool body_complete;
+    bool body_stalled;
+    ASSERT_SUCCESS(aws_h2_encode_data_frame(
+        &encoder,
+        0x76543210 /*stream_id*/,
+        body,
+        true /*body_ends_stream*/,
+        0 /*pad_length*/,
+        &output,
+        &body_complete,
+        &body_stalled));
+
+    ASSERT_FALSE(body_complete);
+    ASSERT_TRUE(body_stalled);
+    ASSERT_UINT_EQUALS(0, output.len);
+
+    /* clean up */
     aws_byte_buf_clean_up(&output);
     aws_input_stream_destroy(body);
     aws_h2_frame_encoder_clean_up(&encoder);
