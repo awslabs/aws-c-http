@@ -66,9 +66,6 @@ const uint32_t aws_h2_settings_bounds[AWS_H2_SETTINGS_END_RANGE][2] = {
 /* Stream ids & dependencies should only write the bottom 31 bits */
 static const uint32_t s_u32_top_bit_mask = UINT32_MAX << 31;
 
-/* All frames begin with a fixed 9-octet prefix */
-static const size_t s_frame_prefix_length = 9;
-
 /* Bytes to initially reserve for encoding of an entire header block. Buffer will grow if necessary. */
 static const size_t s_encoded_header_block_reserve = 128; /* Value pulled from thin air */
 
@@ -170,7 +167,7 @@ int aws_h2_validate_stream_id(uint32_t stream_id) {
  * 2) obey encoders current MAX_FRAME_SIZE
  *
  * Assumes no part of the frame has been written yet to output.
- * The total length of the frame would be: returned-payload-len + s_frame_prefix_length
+ * The total length of the frame would be: returned-payload-len + AWS_H2_FRAME_PREFIX_SIZE
  *
  * Raises error if there is not enough space available for even a frame prefix.
  */
@@ -182,7 +179,7 @@ static int s_get_max_contiguous_payload_length(
     const size_t space_available = output->capacity - output->len;
 
     size_t max_payload_given_space_available;
-    if (aws_sub_size_checked(space_available, s_frame_prefix_length, &max_payload_given_space_available)) {
+    if (aws_sub_size_checked(space_available, AWS_H2_FRAME_PREFIX_SIZE, &max_payload_given_space_available)) {
         return aws_raise_error(AWS_ERROR_SHORT_BUFFER);
     }
 
@@ -317,7 +314,8 @@ int aws_h2_encode_data_frame(
     bool body_ends_stream,
     uint8_t pad_length,
     struct aws_byte_buf *output,
-    bool *body_complete) {
+    bool *body_complete,
+    bool *body_stalled) {
 
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(body_stream);
@@ -329,6 +327,7 @@ int aws_h2_encode_data_frame(
     }
 
     *body_complete = false;
+    *body_stalled = false;
     uint8_t flags = 0;
 
     /*
@@ -339,7 +338,7 @@ int aws_h2_encode_data_frame(
      * Then we will go and write the other parts of the frame in around it.
      */
 
-    size_t bytes_preceding_body = s_frame_prefix_length;
+    size_t bytes_preceding_body = AWS_H2_FRAME_PREFIX_SIZE;
     size_t payload_overhead = 0; /* Amount of "payload" that will not contain body (padding) */
     if (pad_length > 0) {
         flags |= AWS_H2_FRAME_F_PADDED;
@@ -382,18 +381,24 @@ int aws_h2_encode_data_frame(
             flags |= AWS_H2_FRAME_F_END_STREAM;
         }
     } else {
-        if (body_sub_buf.len == 0) {
-            /* This frame would have no useful information, don't even bother sending it */
-            goto handle_nothing_to_send_right_now;
+        if (body_sub_buf.len < body_sub_buf.capacity) {
+            /* Body stream was unable to provide as much data as it could have */
+            *body_stalled = true;
+
+            if (body_sub_buf.len == 0) {
+                /* This frame would have no useful information, don't even bother sending it */
+                goto handle_nothing_to_send_right_now;
+            }
         }
     }
 
     ENCODER_LOGF(
         TRACE,
         encoder,
-        "Encoding frame type=DATA stream_id=%" PRIu32 " data_len=%zu%s",
+        "Encoding frame type=DATA stream_id=%" PRIu32 " data_len=%zu stalled=%d%s",
         stream_id,
         body_sub_buf.len,
+        *body_stalled,
         (flags & AWS_H2_FRAME_F_END_STREAM) ? " END_STREAM" : "");
 
     /*
@@ -643,7 +648,7 @@ void s_encode_single_header_block_frame(
         flags |= AWS_H2_FRAME_F_END_HEADERS;
     } else {
         /* If we're not finishing the header-block, is it even worth trying to send this frame now? */
-        const size_t even_worth_sending_threshold = s_frame_prefix_length + payload_overhead;
+        const size_t even_worth_sending_threshold = AWS_H2_FRAME_PREFIX_SIZE + payload_overhead;
         if (fragment_len < even_worth_sending_threshold) {
             goto handle_waiting_for_more_space;
         }
@@ -791,7 +796,7 @@ static struct aws_h2_frame_prebuilt *s_h2_frame_new_prebuilt(
 
     AWS_PRECONDITION(payload_len <= s_prebuilt_payload_max());
 
-    const size_t encoded_frame_len = s_frame_prefix_length + payload_len;
+    const size_t encoded_frame_len = AWS_H2_FRAME_PREFIX_SIZE + payload_len;
 
     /* Use single allocation for frame and buffer storage */
     struct aws_h2_frame_prebuilt *frame;
