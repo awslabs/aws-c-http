@@ -241,6 +241,47 @@ static int s_compare_headers(const struct aws_http_headers *expected, const stru
     return AWS_OP_SUCCESS;
 }
 
+/* Test that h2 can split cookie headers from request, if we need to compress it use cache. */
+TEST_CASE(h2_client_request_cookie_headers) {
+    (void)ctx;
+    aws_http_library_init(allocator);
+
+    /* send a request with cookie headers */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+        DEFINE_HEADER("cookie", "a=b; c=d; e=f"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct aws_http_headers *h2_headers = aws_h2_create_headers_from_request(request, allocator);
+
+    /* set expected h2 style headers */
+    struct aws_http_header expected_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+        DEFINE_HEADER("cookie", "a=b"),
+        DEFINE_HEADER("cookie", "c=d"),
+        DEFINE_HEADER("cookie", "e=f"),
+    };
+    struct aws_http_headers *expected_headers = aws_http_headers_new(allocator);
+    ASSERT_SUCCESS(
+        aws_http_headers_add_array(expected_headers, expected_headers_src, AWS_ARRAY_SIZE(expected_headers_src)));
+
+    ASSERT_SUCCESS(s_compare_headers(expected_headers, h2_headers));
+
+    /* clean up */
+    aws_http_headers_release(h2_headers);
+    aws_http_headers_release(expected_headers);
+    aws_http_message_release(request);
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
 /* Test that a simple request/response can be carried to completion.
  * The request consists of a single HEADERS frame and the response consists of a single HEADERS frame. */
 TEST_CASE(h2_client_stream_complete) {
@@ -297,6 +338,54 @@ TEST_CASE(h2_client_stream_complete) {
 
     /* clean up */
     aws_http_headers_release(response_headers);
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
+/* Test that h2 stream can take a h1 request massega and transfrom it to h2 style to send it. */
+TEST_CASE(h2_client_stream_with_h1_request_message) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send an h1 request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_message_set_request_method(request, aws_http_method_get));
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER("Accept", "*/*"),
+        DEFINE_HEADER("Host", "example.com"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+
+    /* set expected h2 style headers */
+    struct aws_http_header expected_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":authority", "example.com"),
+        DEFINE_HEADER(":path", "/"),
+        DEFINE_HEADER("accept", "*/*"),
+    };
+    struct aws_http_headers *expected_headers = aws_http_headers_new(allocator);
+    ASSERT_SUCCESS(
+        aws_http_headers_add_array(expected_headers, expected_headers_src, AWS_ARRAY_SIZE(expected_headers_src)));
+    /* validate sent request, */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct h2_decoded_frame *sent_headers_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
+    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_HEADERS, sent_headers_frame->type);
+    ASSERT_TRUE(sent_headers_frame->end_stream);
+    ASSERT_SUCCESS(s_compare_headers(expected_headers, sent_headers_frame->headers));
+
+    /* clean up */
+    aws_http_headers_release(expected_headers);
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
     return s_tester_clean_up();

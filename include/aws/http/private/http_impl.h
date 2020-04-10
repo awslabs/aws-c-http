@@ -52,6 +52,7 @@ enum aws_http_header_name {
     AWS_HTTP_HEADER_EXPECT,
     AWS_HTTP_HEADER_TRANSFER_ENCODING,
     AWS_HTTP_HEADER_COOKIE,
+    AWS_HTTP_HEADER_HOST,
 
     AWS_HTTP_HEADER_COUNT, /* Number of enums */
 };
