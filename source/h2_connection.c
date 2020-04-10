@@ -61,6 +61,8 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
 
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
+static int s_encode_outgoing_frames_queue(struct aws_h2_connection *connection, struct aws_byte_buf *output);
+static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connection, struct aws_byte_buf *output);
 
 static int s_decoder_on_headers_begin(uint32_t stream_id, void *userdata);
 static int s_decoder_on_headers_i(
@@ -433,90 +435,22 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
         "Outgoing frames task acquired message with %zu bytes available",
         msg->message_data.capacity - msg->message_data.len);
 
-    /* Track number of frames encoded, just used for logging */
-    size_t num_frames_encoded = 0;
-
     /* Write as many frames from outgoing_frames_queue as possible. */
-    while (!aws_linked_list_empty(outgoing_frames_queue)) {
-        struct aws_linked_list_node *frame_node = aws_linked_list_front(outgoing_frames_queue);
-        struct aws_h2_frame *frame = AWS_CONTAINER_OF(frame_node, struct aws_h2_frame, node);
-
-        bool frame_complete;
-        if (aws_h2_encode_frame(&connection->thread_data.encoder, frame, &msg->message_data, &frame_complete)) {
-            CONNECTION_LOGF(
-                ERROR,
-                connection,
-                "Error encoding frame: type=%s stream=%" PRIu32 " error=%s",
-                aws_h2_frame_type_to_str(frame->type),
-                frame->stream_id,
-                aws_error_name(aws_last_error()));
-            goto error;
-        }
-
-        if (!frame_complete) {
-            if (msg->message_data.len == 0) {
-                /* We're in trouble if an empty message isn't big enough for this frame to do any work with */
-                CONNECTION_LOGF(
-                    ERROR,
-                    connection,
-                    "Message is too small for encoder. frame-type=%s stream=%" PRIu32 " available-space=%zu",
-                    aws_h2_frame_type_to_str(frame->type),
-                    frame->stream_id,
-                    msg->message_data.capacity);
-                aws_raise_error(AWS_ERROR_INVALID_STATE);
-                goto error;
-            }
-
-            CONNECTION_LOG(TRACE, connection, "Outgoing frames task filled message, and has more frames to send later");
-            goto done_encoding;
-        }
-
-        /* Done encoding frame, pop from queue and cleanup*/
-        aws_linked_list_remove(frame_node);
-        aws_h2_frame_destroy(frame);
-
-        num_frames_encoded++;
-    }
-
-    /* Write as many DATA frames from outgoing_streams_list as possible.
-     * We simply round-robin through available streams, instead of using stream priority.
-     *
-     * Respecting priority is not required (RFC-7540 5.3), so we're ignoring it for now. This also keeps use safe
-     * from priority DOS attacks: https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-9513
-     */
-    while (!aws_linked_list_empty(outgoing_streams_list)) {
-        num_frames_encoded++;
-
-        /* #TODO actually encode DATA frames.
-         * It will go something like:
-         * If there's not enough room in msg to bother encoding anything: goto done_encoding.
-         * Encode a DATA frame
-         * - It will write as much data as will fit in msg, and as much data as body_stream will give us
-         * - Encoder will go back and edit frame length to fit what we actually encoded.
-         * - Encoder will go back and edit END_STREAM flag if we reached the end of the body_stream.
-         *
-         * If stream has sent all data:
-         * - Remove stream from outgoing_streams_list
-         * - Stream is complete if it is also done receiving (weird edge case, but theoretically possible)
-         * Else stream has not sent all data:
-         * - Move stream to back of outgoing_streams_list ("round-robin" DATA frames from available streams)
-         * - Beware getting into a loop, don't read from the same stream twice
-         */
-        CONNECTION_LOG(ERROR, connection, "DATA frames not supported yet");
-        aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+    if (s_encode_outgoing_frames_queue(connection, &msg->message_data)) {
         goto error;
     }
 
-done_encoding:
+    /* If outgoing_frames_queue emptied, then write as many DATA frames from outgoing_streams_list as possible. */
+    if (aws_linked_list_empty(outgoing_frames_queue)) {
+        if (s_encode_data_from_outgoing_streams(connection, &msg->message_data)) {
+            goto error;
+        }
+    }
+
     if (msg->message_data.len) {
         /* Write message to channel.
          * outgoing_frames_task will resume when message completes. */
-        CONNECTION_LOGF(
-            TRACE,
-            connection,
-            "Outgoing frames task sending message of size %zu containing ~%zu frames",
-            msg->message_data.len,
-            num_frames_encoded);
+        CONNECTION_LOGF(TRACE, connection, "Outgoing frames task sending message of size %zu", msg->message_data.len);
 
         if (aws_channel_slot_send_message(channel_slot, msg, AWS_CHANNEL_DIR_WRITE)) {
             CONNECTION_LOGF(
@@ -547,6 +481,126 @@ error:;
     }
 
     s_shutdown_due_to_write_err(connection, error_code);
+}
+
+/* Write as many frames from outgoing_frames_queue as possible (contains all non-DATA frames) */
+static int s_encode_outgoing_frames_queue(struct aws_h2_connection *connection, struct aws_byte_buf *output) {
+
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+    struct aws_linked_list *outgoing_frames_queue = &connection->thread_data.outgoing_frames_queue;
+
+    /* Write as many frames from outgoing_frames_queue as possible. */
+    while (!aws_linked_list_empty(outgoing_frames_queue)) {
+        struct aws_linked_list_node *frame_node = aws_linked_list_front(outgoing_frames_queue);
+        struct aws_h2_frame *frame = AWS_CONTAINER_OF(frame_node, struct aws_h2_frame, node);
+
+        bool frame_complete;
+        if (aws_h2_encode_frame(&connection->thread_data.encoder, frame, output, &frame_complete)) {
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "Error encoding frame: type=%s stream=%" PRIu32 " error=%s",
+                aws_h2_frame_type_to_str(frame->type),
+                frame->stream_id,
+                aws_error_name(aws_last_error()));
+            return AWS_OP_ERR;
+        }
+
+        if (!frame_complete) {
+            if (output->len == 0) {
+                /* We're in trouble if an empty message isn't big enough for this frame to do any work with */
+                CONNECTION_LOGF(
+                    ERROR,
+                    connection,
+                    "Message is too small for encoder. frame-type=%s stream=%" PRIu32 " available-space=%zu",
+                    aws_h2_frame_type_to_str(frame->type),
+                    frame->stream_id,
+                    output->capacity);
+                aws_raise_error(AWS_ERROR_INVALID_STATE);
+                return AWS_OP_ERR;
+            }
+
+            CONNECTION_LOG(TRACE, connection, "Outgoing frames task filled message, and has more frames to send later");
+            break;
+        }
+
+        /* Done encoding frame, pop from queue and cleanup*/
+        aws_linked_list_remove(frame_node);
+        aws_h2_frame_destroy(frame);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Write as many DATA frames from outgoing_streams_list as possible. */
+static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connection, struct aws_byte_buf *output) {
+
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+    struct aws_linked_list *outgoing_streams_list = &connection->thread_data.outgoing_streams_list;
+
+    /* If a stream stalls, put it in this list until the function ends so we don't keep trying to read from it.
+     * We put it back at the end of function. */
+    struct aws_linked_list stalled_streams_list;
+    aws_linked_list_init(&stalled_streams_list);
+
+    int aws_error_code = 0;
+
+    /* We simply round-robin through streams, instead of using stream priority.
+     * Respecting priority is not required (RFC-7540 5.3), so we're ignoring it for now. This also keeps use safe
+     * from priority DOS attacks: https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-9513 */
+    while (!aws_linked_list_empty(outgoing_streams_list)) {
+
+        /* Stop looping if message is so full it's not worth the bother */
+        size_t space_available = output->capacity - output->len;
+        size_t worth_trying_threshold = AWS_H2_FRAME_PREFIX_SIZE * 2;
+        if (space_available < worth_trying_threshold) {
+            CONNECTION_LOG(TRACE, connection, "Outgoing frames task filled message, and has more frames to send later");
+            goto done;
+        }
+
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(outgoing_streams_list);
+        struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
+
+        /* Ask stream to encode a data frame.
+         * Stream may complete itself as a result of encoding its data,
+         * in which case it will vanish from the connection's datastructures as a side-effect of this call.
+         * But if stream has more data to send, push it back into the appropriate list. */
+        bool has_more_data;
+        bool stream_stalled;
+        if (aws_h2_stream_encode_data_frame(
+                stream, &connection->thread_data.encoder, output, &has_more_data, &stream_stalled)) {
+
+            aws_error_code = aws_last_error();
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "Connection error while encoding DATA on stream %" PRIu32 ", %s",
+                stream->base.id,
+                aws_error_name(aws_error_code));
+            goto done;
+        }
+
+        /* If stream has more data, push it into the appropriate list. */
+        if (has_more_data) {
+            if (stream_stalled) {
+                aws_linked_list_push_back(&stalled_streams_list, node);
+            } else {
+                aws_linked_list_push_back(outgoing_streams_list, node);
+            }
+        }
+    }
+
+done:
+    /* Return any stalled streams to outgoing_streams_list */
+    while (!aws_linked_list_empty(&stalled_streams_list)) {
+        aws_linked_list_push_back(outgoing_streams_list, aws_linked_list_pop_front(&stalled_streams_list));
+    }
+
+    if (aws_error_code) {
+        return aws_raise_error(aws_error_code);
+    }
+
+    return AWS_OP_SUCCESS;
 }
 
 /* If the outgoing-frames-task isn't scheduled, run it immediately. */

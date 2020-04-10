@@ -78,6 +78,7 @@ enum aws_h2_settings {
 #define AWS_H2_PAYLOAD_MAX (0x00FFFFFF)       /* must fit in 3 bytes */
 #define AWS_H2_WINDOW_UPDATE_MAX (0x7FFFFFFF) /* cannot use high bit */
 #define AWS_H2_STREAM_ID_MAX (0x7FFFFFFF)     /* cannot use high bit */
+#define AWS_H2_FRAME_PREFIX_SIZE (9)
 #define AWS_H2_PING_DATA_SIZE (8)
 
 /* Legal min(inclusive) and max(inclusive) for each setting */
@@ -218,8 +219,11 @@ int aws_h2_encode_frame(
 
 /**
  * Attempt to encode a DATA frame into the output buffer.
+ * The body_stream will be read into the available space (up to MAX_FRAME_SIZE).
  * AWS_OP_ERR is returned if encoder encounters an unrecoverable error.
  * body_complete will be set true if encoder reaches the end of the body_stream.
+ * body_stalled will be true if aws_input_stream_read() stopped early (didn't
+ * complete, though more space was available).
  *
  * Each call to this function encodes a complete DATA frame, or nothing at all,
  * so it's always safe to encode a different frame type or the body of a different stream
@@ -233,7 +237,8 @@ int aws_h2_encode_data_frame(
     bool body_ends_stream,
     uint8_t pad_length,
     struct aws_byte_buf *output,
-    bool *body_complete);
+    bool *body_complete,
+    bool *body_stalled);
 
 AWS_HTTP_API
 void aws_h2_frame_destroy(struct aws_h2_frame *frame);

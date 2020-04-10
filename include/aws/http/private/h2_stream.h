@@ -80,6 +80,17 @@ enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *str
 /* Connection is ready to send frames from stream now */
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data);
 
+/* Connection is ready to send data from stream now.
+ * Stream may complete itself during this call.
+ * out_has_more_data: Will be set true if stream has more data to send.
+ * out_data_stalled: Will be set true if stream has more data to send, but it's not ready right now */
+int aws_h2_stream_encode_data_frame(
+    struct aws_h2_stream *stream,
+    struct aws_h2_frame_encoder *encoder,
+    struct aws_byte_buf *output,
+    bool *out_has_more_data,
+    bool *out_stream_stalled);
+
 int aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *stream);
 
 int aws_h2_stream_on_decoder_headers_i(
