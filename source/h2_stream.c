@@ -565,8 +565,10 @@ int aws_h2_stream_on_decoder_window_update(struct aws_h2_stream *stream, uint32_
     int32_t old_window_size = stream->thread_data.window_size;
     if (aws_h2_stream_window_size_change(stream, window_size_increment)) {
         /* We MUST NOT allow a flow-control window to exceed the max */
-        /* JUST_FOR_REVIEW: A receiver that receives a flow-controlled frame MUST always account for its contribution against the
-         * connection flow-control window, unless the receiver treats this as a connection error. Should we update the window size here???? */
+        /* JUST_FOR_REVIEW: A receiver that receives a flow-controlled frame MUST always account for its contribution
+         * against the
+         * connection flow-control window, unless the receiver treats this as a connection error. Should we update the
+         * window size here???? */
         AWS_H2_STREAM_LOG(
             ERROR, stream, "Window udpate frame causes the connection flow-control window exceeding the maximum size");
         return s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);

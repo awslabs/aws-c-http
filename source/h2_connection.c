@@ -730,7 +730,7 @@ static int s_update_activated_stream_initial_window_size(struct aws_h2_connectio
         struct aws_h2_stream *stream = stream_iter.element.value;
         aws_hash_iter_next(&stream_iter);
         if (aws_h2_stream_window_size_change(stream, size_changed)) {
-            CONNECTION_LOGF(
+            CONNECTION_LOG(
                 ERROR,
                 connection,
                 "Update the flow-control window size exceed the maximum size when setting changes");
@@ -922,12 +922,12 @@ static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_i
         /* Let's update the connection flow-contorl window size */
         if (window_size_increment == 0) {
             /* flow-control winodw increment of 0 MUST be treated as error (RFC7540 6.9.1) */
-            CONNECTION_LOGF(ERROR, connection, "Window udpate frame with 0 increment size")
+            CONNECTION_LOG(ERROR, connection, "Window udpate frame with 0 increment size")
             return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
         }
         if (connection->thread_data.peer_window_size + window_size_increment > AWS_H2_WINDOW_UPDATE_MAX) {
             /* We MUST NOT allow a flow-control window to exceed the max */
-            CONNECTION_LOGF(
+            CONNECTION_LOG(
                 ERROR,
                 connection,
                 "Window udpate frame causes the connection flow-control window exceeding the maximum size")
