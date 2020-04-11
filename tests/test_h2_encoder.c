@@ -217,7 +217,7 @@ TEST_CASE(h2_encoder_data_stalled_completely) {
     ASSERT_TRUE(body_stalled);
     ASSERT_UINT_EQUALS(0, output.len);
     ASSERT_FALSE(will_be_controlled);
-    
+
     /* clean up */
     aws_byte_buf_clean_up(&output);
     aws_input_stream_destroy(body);
