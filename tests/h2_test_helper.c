@@ -573,11 +573,25 @@ int h2_fake_peer_send_data_frame(
 
     bool body_complete;
     bool body_stalled;
+    bool will_be_controlled;
+    int32_t stream_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
+    size_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
     ASSERT_SUCCESS(aws_h2_encode_data_frame(
-        &peer->encoder, stream_id, body_stream, end_stream, 0, &msg->message_data, &body_complete, &body_stalled));
+        &peer->encoder,
+        stream_id,
+        body_stream,
+        end_stream,
+        0,
+        &stream_window_size_peer,
+        &connection_window_size_peer,
+        &msg->message_data,
+        &body_complete,
+        &body_stalled,
+        &will_be_controlled));
 
     ASSERT_TRUE(body_complete);
     ASSERT_FALSE(body_stalled);
+    ASSERT_FALSE(will_be_controlled);
     ASSERT_TRUE(msg->message_data.len != 0);
 
     ASSERT_SUCCESS(testing_channel_push_read_message(peer->testing_channel, msg));

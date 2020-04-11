@@ -263,6 +263,22 @@ static int s_send_rst_and_close_stream(struct aws_h2_stream *stream, int aws_err
     return AWS_OP_SUCCESS;
 }
 
+int aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed) {
+
+    if ((int64_t)(stream->thread_data.window_size + size_changed) > AWS_H2_WINDOW_UPDATE_MAX) {
+        return AWS_OP_ERR;
+    }
+    stream->thread_data.window_size += size_changed;
+    /* Frames with zero length with the END_STREAM flag set (that is, an empty DATA frame) MAY be sent if there is
+     * no available space in either flow-control window */
+    if (stream->thread_data.window_size < 0) {
+        stream->thread_data.stalled = true;
+    } else {
+        stream->thread_data.stalled = false;
+    }
+    return AWS_OP_SUCCESS;
+}
+
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
@@ -283,6 +299,10 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
         AWS_H2_STREAM_LOGF(ERROR, stream, "Failed to create HEADERS frame: %s", aws_error_name(aws_last_error()));
         goto error;
     }
+
+    /* Initialize the flow-control window size for peer */
+    stream->thread_data.window_size = connection->thread_data.settings_peer[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
+    stream->thread_data.stalled = !stream->thread_data.window_size;
 
     if (has_body_stream) {
         /* If stream has DATA to send, put it in the outgoing_streams_list, and we'll send data later */
@@ -307,7 +327,8 @@ int aws_h2_stream_encode_data_frame(
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output,
     bool *out_has_more_data,
-    bool *out_stream_stalled) {
+    bool *out_stream_stalled,
+    bool *flow_controlled) {
 
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
     AWS_PRECONDITION(
@@ -316,21 +337,34 @@ int aws_h2_stream_encode_data_frame(
 
     *out_has_more_data = false;
     *out_stream_stalled = false;
+    *flow_controlled = false;
+    struct aws_h2_connection *connection = s_get_h2_connection(stream);
+
+    if (stream->thread_data.stalled) {
+        /* The stream has negative window size now */
+        *out_has_more_data = true;
+        *flow_controlled = true;
+        return AWS_OP_SUCCESS;
+    }
 
     struct aws_input_stream *body = aws_http_message_get_body_stream(stream->thread_data.outgoing_message);
     AWS_ASSERT(body);
 
     bool body_complete;
     bool body_stalled;
+    bool will_be_controlled;
     if (aws_h2_encode_data_frame(
             encoder,
             stream->base.id,
             body,
             true /*body_ends_stream*/,
             0 /*pad_length*/,
+            &stream->thread_data.window_size,
+            &connection->thread_data.peer_window_size,
             output,
             &body_complete,
-            &body_stalled)) {
+            &body_stalled,
+            &will_be_controlled)) {
 
         /* Failed to write DATA, treat it as a Stream Error */
         AWS_H2_STREAM_LOGF(ERROR, stream, "Error encoding stream DATA, %s", aws_error_name(aws_last_error()));
@@ -360,6 +394,7 @@ int aws_h2_stream_encode_data_frame(
         /* Body not complete */
         *out_has_more_data = true;
         *out_stream_stalled = body_stalled;
+        *flow_controlled = will_be_controlled;
     }
 
     return AWS_OP_SUCCESS;
@@ -513,6 +548,36 @@ int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_
         }
     }
 
+    return AWS_OP_SUCCESS;
+}
+
+int aws_h2_stream_on_decoder_window_update(struct aws_h2_stream *stream, uint32_t window_size_increment) {
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+
+    if (s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_WINDOW_UPDATE)) {
+        return s_send_rst_and_close_stream(stream, aws_last_error());
+    }
+    if (window_size_increment == 0) {
+        /* flow-control winodw increment of 0 MUST be treated as error (RFC7540 6.9.1) */
+        AWS_H2_STREAM_LOG(ERROR, stream, "Window udpate frame with 0 increment size");
+        return s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+    int32_t old_window_size = stream->thread_data.window_size;
+    if (aws_h2_stream_window_size_change(stream, window_size_increment)) {
+        /* We MUST NOT allow a flow-control window to exceed the max */
+        /* JUST_FOR_REVIEW: A receiver that receives a flow-controlled frame MUST always account for its contribution against the
+         * connection flow-control window, unless the receiver treats this as a connection error. Should we update the window size here???? */
+        AWS_H2_STREAM_LOG(
+            ERROR, stream, "Window udpate frame causes the connection flow-control window exceeding the maximum size");
+        return s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
+    }
+    if (stream->thread_data.window_size > 0 && old_window_size <= 0) {
+        struct aws_h2_connection *connection = s_get_h2_connection(stream);
+        /* It may already be in the outgoing stream list, but we can remove it and put it at the back again, for
+         * simplicity */
+        aws_linked_list_remove(&stream->node);
+        aws_linked_list_push_back(&connection->thread_data.outgoing_streams_list, &stream->node);
+    }
     return AWS_OP_SUCCESS;
 }
 

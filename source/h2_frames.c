@@ -143,6 +143,8 @@ enum aws_h2_error_code aws_error_to_h2_error_code(int aws_error_code) {
     switch (aws_error_code) {
         case AWS_ERROR_HTTP_PROTOCOL_ERROR:
             return AWS_H2_ERR_PROTOCOL_ERROR;
+        case AWS_ERROR_HTTP_FLOW_CONTROL_ERROR:
+            return AWS_H2_ERR_FLOW_CONTROL_ERROR;
         case AWS_ERROR_HTTP_STREAM_CLOSED:
             return AWS_H2_ERR_STREAM_CLOSED;
         case AWS_ERROR_HTTP_INVALID_FRAME_SIZE:
@@ -295,7 +297,6 @@ int aws_h2_frame_encoder_init(
 
     encoder->settings.header_table_size = aws_h2_settings_initial[AWS_H2_SETTINGS_HEADER_TABLE_SIZE];
     encoder->settings.max_frame_size = aws_h2_settings_initial[AWS_H2_SETTINGS_MAX_FRAME_SIZE];
-
     return AWS_OP_SUCCESS;
 }
 void aws_h2_frame_encoder_clean_up(struct aws_h2_frame_encoder *encoder) {
@@ -313,14 +314,20 @@ int aws_h2_encode_data_frame(
     struct aws_input_stream *body_stream,
     bool body_ends_stream,
     uint8_t pad_length,
+    int32_t *stream_window_size_peer,
+    size_t *connection_window_size_peer,
     struct aws_byte_buf *output,
     bool *body_complete,
-    bool *body_stalled) {
+    bool *body_stalled,
+    bool *will_be_controlled) {
 
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(body_stream);
     AWS_PRECONDITION(output);
     AWS_PRECONDITION(body_complete);
+    AWS_PRECONDITION(body_stalled);
+    AWS_PRECONDITION(will_be_controlled);
+    AWS_PRECONDITION(*stream_window_size_peer > 0);
 
     if (aws_h2_validate_stream_id(stream_id)) {
         return AWS_OP_ERR;
@@ -328,6 +335,7 @@ int aws_h2_encode_data_frame(
 
     *body_complete = false;
     *body_stalled = false;
+    *will_be_controlled = false;
     uint8_t flags = 0;
 
     /*
@@ -348,15 +356,22 @@ int aws_h2_encode_data_frame(
         payload_overhead = 1 + pad_length;
     }
 
+    /* Max amount allowed by stream and connection flow-control window */
+    size_t min_window_size = aws_min_size(*stream_window_size_peer, *connection_window_size_peer);
+
     /* Max amount of payload we can do right now */
     size_t max_payload;
     if (s_get_max_contiguous_payload_length(encoder, output, &max_payload)) {
         goto handle_waiting_for_more_space;
     }
-
+    /* The flow-control window will limit the size for max_payload of a flow-controlled frame */
+    max_payload = aws_min_size(max_payload, min_window_size);
     /* Max amount of body we can fit in the payload*/
     size_t max_body;
     if (aws_sub_size_checked(max_payload, payload_overhead, &max_body) || max_body == 0) {
+        /* if flow-control window size is the bottleneck, we will control the stream from trying sending more data
+         * frame */
+        *will_be_controlled = max_payload == min_window_size;
         goto handle_waiting_for_more_space;
     }
 
@@ -424,6 +439,11 @@ int aws_h2_encode_data_frame(
         writes_ok &= aws_byte_buf_write_u8_n(output, 0, pad_length);
     }
 
+    /* udpate the connection window size now, we will update stream window size when this function returns */
+    AWS_ASSERT(payload_len <= min_window_size);
+    *connection_window_size_peer -= payload_len;
+    *stream_window_size_peer -= (int32_t)payload_len;
+    *will_be_controlled = *connection_window_size_peer == 0 || *stream_window_size_peer == 0;
     AWS_ASSERT(writes_ok);
     return AWS_OP_SUCCESS;
 

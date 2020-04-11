@@ -224,6 +224,7 @@ static struct aws_h2_connection *s_connection_new(
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
 
     aws_linked_list_init(&connection->thread_data.outgoing_streams_list);
+    aws_linked_list_init(&connection->thread_data.controlled_outgoing_streams_list);
     aws_linked_list_init(&connection->thread_data.outgoing_frames_queue);
 
     if (aws_mutex_init(&connection->synced_data.lock)) {
@@ -259,7 +260,7 @@ static struct aws_h2_connection *s_connection_new(
     memcpy(connection->thread_data.settings_self, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
 
     /* Initial connection flow-control window with 65535 bytes (RFC 6.9.2) */
-    connection->thread_data.peer_window_size = 65535;
+    connection->thread_data.peer_window_size = aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
 
     /* Create a new decoder */
     struct aws_h2_decoder_params params = {
@@ -332,7 +333,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     AWS_ASSERT(
         !aws_hash_table_is_valid(&connection->thread_data.active_streams_map) ||
         aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0);
-
+    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.controlled_outgoing_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.outgoing_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
 
@@ -542,6 +543,7 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
 
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
     struct aws_linked_list *outgoing_streams_list = &connection->thread_data.outgoing_streams_list;
+    struct aws_linked_list *controlled_outgoing_streams_list = &connection->thread_data.controlled_outgoing_streams_list;
 
     /* If a stream stalls, put it in this list until the function ends so we don't keep trying to read from it.
      * We put it back at the end of function. */
@@ -565,15 +567,23 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
 
         struct aws_linked_list_node *node = aws_linked_list_pop_front(outgoing_streams_list);
         struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
-
+        if (connection->thread_data.peer_window_size == 0) {
+            CONNECTION_LOG(
+                TRACE,
+                connection,
+                "Connection flow-control window size is 0 now, every outgoing stream stop sending data");
+            aws_linked_list_push_back(controlled_outgoing_streams_list, node);
+            continue;
+        }
         /* Ask stream to encode a data frame.
          * Stream may complete itself as a result of encoding its data,
          * in which case it will vanish from the connection's datastructures as a side-effect of this call.
          * But if stream has more data to send, push it back into the appropriate list. */
         bool has_more_data;
         bool stream_stalled;
+        bool flow_controlled;
         if (aws_h2_stream_encode_data_frame(
-                stream, &connection->thread_data.encoder, output, &has_more_data, &stream_stalled)) {
+                stream, &connection->thread_data.encoder, output, &has_more_data, &stream_stalled, &flow_controlled)) {
 
             aws_error_code = aws_last_error();
             CONNECTION_LOGF(
@@ -587,7 +597,9 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
 
         /* If stream has more data, push it into the appropriate list. */
         if (has_more_data) {
-            if (stream_stalled) {
+            if (flow_controlled) {
+                aws_linked_list_push_back(controlled_outgoing_streams_list, node);
+            } else if (stream_stalled) {
                 aws_linked_list_push_back(&stalled_streams_list, node);
             } else {
                 aws_linked_list_push_back(outgoing_streams_list, node);
@@ -707,6 +719,27 @@ int s_get_active_stream_for_incoming_frame(
     return aws_raise_error(AWS_ERROR_HTTP_STREAM_CLOSED);
 }
 
+static int s_update_activated_stream_initial_window_size(struct aws_h2_connection *connection, uint32_t new_size) {
+    /* update the flow-control window for every activated stream */
+    int32_t size_changed = new_size - connection->thread_data.settings_peer[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
+    if (size_changed == 0) {
+        return AWS_OP_SUCCESS;
+    }
+    struct aws_hash_iter stream_iter = aws_hash_iter_begin(&connection->thread_data.active_streams_map);
+    while (!aws_hash_iter_done(&stream_iter)) {
+        struct aws_h2_stream *stream = stream_iter.element.value;
+        aws_hash_iter_next(&stream_iter);
+        if (aws_h2_stream_window_size_change(stream, size_changed)) {
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "Update the flow-control window size exceed the maximum size when setting changes");
+            return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
+        }
+    }
+    return AWS_OP_SUCCESS;
+}
+
 /* Decoder callbacks */
 
 int s_decoder_on_headers_begin(uint32_t stream_id, void *userdata) {
@@ -777,7 +810,7 @@ int s_decoder_on_headers_end(
 int s_decoder_on_data(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
-    /* #TODO Update connection's flow-control window */
+    /* #TODO Send a window update frame back. */
 
     /* Pass data to stream */
     struct aws_h2_stream *stream;
@@ -819,22 +852,12 @@ static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *u
     /* send a PING frame with the ACK flag set in response, with an identical payload. */
     struct aws_h2_frame *ping_ack_frame = aws_h2_frame_new_ping(connection->base.alloc, true, opaque_data);
     if (!ping_ack_frame) {
-        goto error;
+        CONNECTION_LOGF(ERROR, connection, "Ping ACK frame failed to be sent, error %s", aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
     }
 
     aws_h2_connection_enqueue_outgoing_frame(connection, ping_ack_frame);
     return AWS_OP_SUCCESS;
-error:
-    CONNECTION_LOGF(ERROR, connection, "Ping ACK frame failed to be sent, error %s", aws_error_name(aws_last_error()));
-    return AWS_OP_ERR;
-}
-
-static void s_aws_h2_decoder_change_settings(struct aws_h2_connection *connection) {
-    struct aws_h2_decoder *decoder = connection->thread_data.decoder;
-    uint32_t *settings_self = connection->thread_data.settings_self;
-    aws_h2_decoder_set_setting_header_table_size(decoder, settings_self[AWS_H2_SETTINGS_HEADER_TABLE_SIZE]);
-    aws_h2_decoder_set_setting_enable_push(decoder, settings_self[AWS_H2_SETTINGS_ENABLE_PUSH]);
-    aws_h2_decoder_set_setting_max_frame_size(decoder, settings_self[AWS_H2_SETTINGS_MAX_FRAME_SIZE]);
 }
 
 static int s_decoder_on_settings(
@@ -849,7 +872,7 @@ static int s_decoder_on_settings(
     if (!settings_ack_frame) {
         CONNECTION_LOGF(
             ERROR, connection, "Settings ACK frame failed to be sent, error %s", aws_error_name(aws_last_error()));
-        goto error;
+        return AWS_OP_ERR;
     }
     aws_h2_connection_enqueue_outgoing_frame(connection, settings_ack_frame);
     /* Store the change to encoder and connection after enqueue the setting ACK frame */
@@ -866,14 +889,17 @@ static int s_decoder_on_settings(
             case AWS_H2_SETTINGS_MAX_FRAME_SIZE:
                 aws_h2_frame_encoder_set_setting_max_frame_size(encoder, settings_array[i].value);
                 break;
+            case AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE:
+                /* When the value of SETTINGS_INITIAL_WINDOW_SIZE changes, a receiver MUST adjust the size of all stream
+                 * flow-control windows that it maintains by the difference between the new value and the old value. */
+                if(s_update_activated_stream_initial_window_size(connection, settings_array[i].value)){
+                    return AWS_OP_ERR;
+                }
+                break;
         }
         connection->thread_data.settings_peer[settings_array[i].id] = settings_array[i].value;
     }
     return AWS_OP_SUCCESS;
-
-error:
-
-    return AWS_OP_ERR;
 }
 
 static int s_decoder_on_settings_ack(void *userdata) {
@@ -881,7 +907,11 @@ static int s_decoder_on_settings_ack(void *userdata) {
     /* #TODO track which SETTINGS frames is ACKed by this */
 
     /* inform decoder about the settings */
-    s_aws_h2_decoder_change_settings(connection);
+    struct aws_h2_decoder *decoder = connection->thread_data.decoder;
+    uint32_t *settings_self = connection->thread_data.settings_self;
+    aws_h2_decoder_set_setting_header_table_size(decoder, settings_self[AWS_H2_SETTINGS_HEADER_TABLE_SIZE]);
+    aws_h2_decoder_set_setting_enable_push(decoder, settings_self[AWS_H2_SETTINGS_ENABLE_PUSH]);
+    aws_h2_decoder_set_setting_max_frame_size(decoder, settings_self[AWS_H2_SETTINGS_MAX_FRAME_SIZE]);
     return AWS_OP_SUCCESS;
 }
 
@@ -890,23 +920,47 @@ static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_i
 
     if (stream_id == 0) {
         /* Let's update the connection flow-contorl window size */
-        connection->thread_data.peer_window_size += window_size_increment;
-        if (connection->thread_data.peer_window_size > AWS_H2_WINDOW_UPDATE_MAX) {
+        if (window_size_increment == 0) {
+            /* flow-control winodw increment of 0 MUST be treated as error (RFC7540 6.9.1) */
+            CONNECTION_LOGF(ERROR, connection, "Window udpate frame with 0 increment size")
+            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+        }
+        if (connection->thread_data.peer_window_size + window_size_increment > AWS_H2_WINDOW_UPDATE_MAX) {
             /* We MUST NOT allow a flow-control window to exceed the max */
             CONNECTION_LOGF(
                 ERROR,
                 connection,
-                "Window udpate frame causes the connection flow-control window exceeding the maximum size, %s",
-                aws_h2_error_code_to_str(AWS_H2_ERR_FLOW_CONTROL_ERROR))
+                "Window udpate frame causes the connection flow-control window exceeding the maximum size")
             /* #TODO send GOAWAY frame with FLOW_CONTROL_ERROR (RFC7540 6.9.1) */
 
-            return aws_raise_error(AWS_H2_ERR_FLOW_CONTROL_ERROR);
+            return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
         }
+        if (connection->thread_data.peer_window_size == 0) {
+            /* Free all the controlled streams, it may cause those streams controlled by stream flow-control window be
+             * freed, but they will be back if that control is still there */
+            struct aws_linked_list *outgoing_streams_list = &connection->thread_data.outgoing_streams_list;
+            struct aws_linked_list *controlled_outgoing_streams_list =
+                &connection->thread_data.controlled_outgoing_streams_list;
+            while (!aws_linked_list_empty(controlled_outgoing_streams_list)) {
+                struct aws_linked_list_node *node = aws_linked_list_pop_front(controlled_outgoing_streams_list);
+                aws_linked_list_push_back(outgoing_streams_list, node);
+            }
+        }
+        connection->thread_data.peer_window_size += window_size_increment;
         return AWS_OP_SUCCESS;
-    }
-    else {
+    } else {
         /* Update the flow-contorl window size for stream */
+        struct aws_h2_stream *stream;
+        if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_WINDOW_UPDATE, &stream)) {
+            return AWS_OP_ERR;
+        }
+        if (stream) {
+            if (aws_h2_stream_on_decoder_window_update(stream, window_size_increment)) {
+                return AWS_OP_ERR;
+            }
+        }
     }
+    return AWS_OP_SUCCESS;
 }
 
 /* End decoder callbacks */

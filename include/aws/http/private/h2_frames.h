@@ -236,9 +236,12 @@ int aws_h2_encode_data_frame(
     struct aws_input_stream *body_stream,
     bool body_ends_stream,
     uint8_t pad_length,
+    int32_t *stream_window_size_peer,
+    size_t *connection_window_size_peer,
     struct aws_byte_buf *output,
     bool *body_complete,
-    bool *body_stalled);
+    bool *body_stalled,
+    bool *will_be_controlled);
 
 AWS_HTTP_API
 void aws_h2_frame_destroy(struct aws_h2_frame *frame);

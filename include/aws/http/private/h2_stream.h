@@ -63,9 +63,11 @@ struct aws_h2_stream {
     /* Only the event-loop thread may touch this data */
     struct {
         enum aws_h2_stream_state state;
-        int64_t window_size; /* #TODO try to figure out how this actually works, and then implement it */
+        int32_t window_size;
         struct aws_http_message *outgoing_message;
         bool received_main_headers;
+        /* True, when the window size is negative, we cannot send any more flow-controlled frame */
+        bool stalled;
     } thread_data;
 };
 
@@ -76,6 +78,8 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     const struct aws_http_make_request_options *options);
 
 enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *stream);
+
+int aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed);
 
 /* Connection is ready to send frames from stream now */
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data);
@@ -89,7 +93,8 @@ int aws_h2_stream_encode_data_frame(
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output,
     bool *out_has_more_data,
-    bool *out_stream_stalled);
+    bool *out_stream_stalled,
+    bool *flow_controlled);
 
 int aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *stream);
 
@@ -105,6 +110,7 @@ int aws_h2_stream_on_decoder_headers_end(
     enum aws_http_header_block block_type);
 
 int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_cursor data);
+int aws_h2_stream_on_decoder_window_update(struct aws_h2_stream *stream, uint32_t window_size_increment);
 int aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stream);
 
 int aws_h2_stream_activate(struct aws_http_stream *stream);

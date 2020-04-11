@@ -58,6 +58,11 @@ struct aws_h2_connection {
          * Any stream in this list is also in the active_streams_map. */
         struct aws_linked_list outgoing_streams_list;
 
+        /* List using aws_h2_stream.node.
+         * Contains all streams with DATA frames to send, and cannot send now due to flow control.
+         * Waiting for WINDOW_UPDATE to set them free */
+        struct aws_linked_list controlled_outgoing_streams_list;
+
         /* List using aws_h2_frame.node.
          * Queues all frames (except DATA frames) for connection to send.
          * When queue is empty, then we send DATA frames from the outgoing_streams_list */
@@ -72,7 +77,7 @@ struct aws_h2_connection {
         /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
          * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
          * connection */
-        int64_t peer_window_size;
+        size_t peer_window_size;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
