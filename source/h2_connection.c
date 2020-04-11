@@ -543,7 +543,8 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
 
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
     struct aws_linked_list *outgoing_streams_list = &connection->thread_data.outgoing_streams_list;
-    struct aws_linked_list *controlled_outgoing_streams_list = &connection->thread_data.controlled_outgoing_streams_list;
+    struct aws_linked_list *controlled_outgoing_streams_list =
+        &connection->thread_data.controlled_outgoing_streams_list;
 
     /* If a stream stalls, put it in this list until the function ends so we don't keep trying to read from it.
      * We put it back at the end of function. */
@@ -731,9 +732,7 @@ static int s_update_activated_stream_initial_window_size(struct aws_h2_connectio
         aws_hash_iter_next(&stream_iter);
         if (aws_h2_stream_window_size_change(stream, size_changed)) {
             CONNECTION_LOG(
-                ERROR,
-                connection,
-                "Update the flow-control window size exceed the maximum size when setting changes");
+                ERROR, connection, "Update the flow-control window size exceed the maximum size when setting changes");
             return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
         }
     }
@@ -852,7 +851,8 @@ static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *u
     /* send a PING frame with the ACK flag set in response, with an identical payload. */
     struct aws_h2_frame *ping_ack_frame = aws_h2_frame_new_ping(connection->base.alloc, true, opaque_data);
     if (!ping_ack_frame) {
-        CONNECTION_LOGF(ERROR, connection, "Ping ACK frame failed to be sent, error %s", aws_error_name(aws_last_error()));
+        CONNECTION_LOGF(
+            ERROR, connection, "Ping ACK frame failed to be sent, error %s", aws_error_name(aws_last_error()));
         return AWS_OP_ERR;
     }
 
@@ -892,7 +892,7 @@ static int s_decoder_on_settings(
             case AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE:
                 /* When the value of SETTINGS_INITIAL_WINDOW_SIZE changes, a receiver MUST adjust the size of all stream
                  * flow-control windows that it maintains by the difference between the new value and the old value. */
-                if(s_update_activated_stream_initial_window_size(connection, settings_array[i].value)){
+                if (s_update_activated_stream_initial_window_size(connection, settings_array[i].value)) {
                     return AWS_OP_ERR;
                 }
                 break;
