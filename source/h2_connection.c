@@ -64,6 +64,10 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static int s_encode_outgoing_frames_queue(struct aws_h2_connection *connection, struct aws_byte_buf *output);
 static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connection, struct aws_byte_buf *output);
+static int s_record_closed_stream(
+    struct aws_h2_connection *connection,
+    uint32_t stream_id,
+    enum aws_h2_stream_closed_when closed_when);
 
 static int s_decoder_on_headers_begin(uint32_t stream_id, void *userdata);
 static int s_decoder_on_headers_i(
@@ -77,6 +81,7 @@ static int s_decoder_on_headers_end(
     bool malformed,
     enum aws_http_header_block block_type,
     void *userdata);
+static int s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised_stream_id, void *userdata);
 static int s_decoder_on_data(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
 static int s_decoder_on_end_stream(uint32_t stream_id, void *userdata);
 static int s_decoder_on_rst_stream(uint32_t stream_id, uint32_t h2_error_code, void *userdata);
@@ -112,6 +117,7 @@ static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
     .on_headers_begin = s_decoder_on_headers_begin,
     .on_headers_i = s_decoder_on_headers_i,
     .on_headers_end = s_decoder_on_headers_end,
+    .on_push_promise_begin = s_decoder_on_push_promise,
     .on_data = s_decoder_on_data,
     .on_end_stream = s_decoder_on_end_stream,
     .on_rst_stream = s_decoder_on_rst_stream,
@@ -772,6 +778,41 @@ int s_decoder_on_headers_end(
     return AWS_OP_SUCCESS;
 }
 
+int s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised_stream_id, void *userdata) {
+    struct aws_h2_connection *connection = userdata;
+    AWS_ASSERT(connection->base.client_data); /* decoder enforces that server cannot receive PUSH_PROMISE */
+    AWS_ASSERT(promised_stream_id % 2 == 0);  /* decoder enforces that promised_stream_id is even-numbered */
+
+    /* The identifier of a newly established stream MUST be numerically greater
+     * than all streams that the initiating endpoint has opened or reserved (RFC-7540 5.1.1) */
+    if (promised_stream_id <= connection->thread_data.latest_peer_initiated_stream_id) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Newly promised stream ID %" PRIu32 " must be higher than previously established ID %" PRIu32,
+            promised_stream_id,
+            connection->thread_data.latest_peer_initiated_stream_id);
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+    connection->thread_data.latest_peer_initiated_stream_id = promised_stream_id;
+
+    /* If we ever fully support PUSH_PROMISE, this is where we'd add the
+     * promised_stream_id to some reserved_streams datastructure */
+
+    struct aws_h2_stream *stream;
+    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_PUSH_PROMISE, &stream)) {
+        return AWS_OP_ERR;
+    }
+
+    if (stream) {
+        if (aws_h2_stream_on_decoder_push_promise(stream, promised_stream_id)) {
+            return AWS_OP_ERR;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 int s_decoder_on_data(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
@@ -1137,6 +1178,20 @@ int aws_h2_connection_on_stream_closed(
     s_stream_complete(connection, stream, aws_error_code);
     stream = NULL; /* Reference released, do not touch again */
 
+    if (s_record_closed_stream(connection, stream_id, closed_when)) {
+        return AWS_OP_ERR;
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_record_closed_stream(
+    struct aws_h2_connection *connection,
+    uint32_t stream_id,
+    enum aws_h2_stream_closed_when closed_when) {
+
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
     /* Peer might have already sent/queued frames for this stream before learning that we closed it.
      * But if peer was the one to close the stream via RST_STREAM, they know better than to send more frames. */
     bool frames_might_trickle_in = closed_when != AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED;
@@ -1147,7 +1202,7 @@ int aws_h2_connection_on_stream_closed(
                 (void *)(size_t)closed_when,
                 NULL)) {
 
-            AWS_H2_STREAM_LOG(ERROR, stream, "Failed inserting ID into map of recently closed streams");
+            CONNECTION_LOG(ERROR, connection, "Failed inserting ID into map of recently closed streams");
             return AWS_OP_ERR;
         }
 
@@ -1155,6 +1210,25 @@ int aws_h2_connection_on_stream_closed(
     }
 
     return AWS_OP_SUCCESS;
+}
+
+int aws_h2_connection_send_rst_and_close_reserved_stream(
+    struct aws_h2_connection *connection,
+    uint32_t stream_id,
+    uint32_t h2_error_code) {
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
+    struct aws_h2_frame *rst_stream = aws_h2_frame_new_rst_stream(connection->base.alloc, stream_id, h2_error_code);
+    if (!rst_stream) {
+        CONNECTION_LOGF(ERROR, connection, "Error creating RST_STREAM frame, %s", aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+    aws_h2_connection_enqueue_outgoing_frame(connection, rst_stream);
+
+    /* If we ever fully support PUSH_PROMISE, this is where we'd remove the
+     * promised_stream_id from some reserved_streams datastructure */
+
+    return s_record_closed_stream(connection, stream_id, AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT);
 }
 
 /* Move stream into "active" datastructures and notify stream that it can send frames now */
