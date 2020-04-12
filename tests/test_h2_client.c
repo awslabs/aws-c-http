@@ -1338,3 +1338,139 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
     }
     return s_tester_clean_up();
 }
+
+/* Receiving invalid WINDOW_UPDATE frame of stream should result in a "Stream Error", invalid WINDOW_UPDATE frame of
+ * connection should result in a "Connection Error". */
+static int s_invalid_window_update(
+    struct aws_allocator *allocator,
+    void *ctx,
+    size_t window_update_size,
+    enum aws_http_errors error_type) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* Send the largest update on stream, which will cause the flow-control window of stream exceeding the max */
+    struct aws_h2_frame *stream_window_update =
+        aws_h2_frame_new_window_update(allocator, aws_http_stream_get_id(stream_tester.stream), window_update_size);
+    ASSERT_NOT_NULL(stream_window_update);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, stream_window_update));
+
+    /* validate that stream completed with error */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(error_type, stream_tester.on_complete_error_code);
+
+    /* a stream error should not affect the connection */
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* validate that stream sent RST_STREAM */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *rst_stream_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
+    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
+
+    /* Send the largest update on stream, which will cause the flow-control window of stream exceeding the max */
+    stream_window_update = aws_h2_frame_new_window_update(allocator, 0, window_update_size);
+    ASSERT_NOT_NULL(stream_window_update);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, stream_window_update));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* validate the connection completed with error */
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_INT_EQUALS(error_type, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+
+    /* #TODO client should send GOAWAY */
+
+    /* clean up */
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
+/* Window update cause window to exceed max size will lead to FLOW_CONTROL_ERROR */
+TEST_CASE(h2_client_stream_err_invalid_window_update_exceed_max) {
+    return s_invalid_window_update(allocator, ctx, AWS_H2_WINDOW_UPDATE_MAX, AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
+}
+
+/* Window update with zero update size will lead to PROTOCOL_ERROR */
+TEST_CASE(h2_client_stream_err_invalid_window_update_zero_update) {
+    return s_invalid_window_update(allocator, ctx, 0, AWS_ERROR_HTTP_PROTOCOL_ERROR);
+}
+
+/* SETTINGS_INITIAL_WINDOW_SIZE cause stream window to exceed the max size is a Connection ERROR... */
+TEST_CASE(h2_client_stream_err_initial_window_size_cause_window_exceed_max) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* Send a small update on stream */
+    struct aws_h2_frame *stream_window_update =
+        aws_h2_frame_new_window_update(allocator, aws_http_stream_get_id(stream_tester.stream), 1);
+    ASSERT_NOT_NULL(stream_window_update);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, stream_window_update));
+
+    /* Then we set INITIAL_WINDOW_SIZE to largest - 1, which will not lead to any error */
+    struct aws_h2_frame_setting settings_array[1];
+    settings_array[0].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
+    settings_array[0].value = AWS_H2_WINDOW_UPDATE_MAX - 1;
+    struct aws_h2_frame *settings = aws_h2_frame_new_settings(allocator, settings_array, 1, false /*ack*/);
+    ASSERT_NOT_NULL(settings);
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface(&s_tester.peer, settings));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* validate connection is still open */
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* Finally we set INITIAL_WINDOW_SIZE to largest, which cause the stream window size to exceed the max size */
+    settings_array[0].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
+    settings_array[0].value = AWS_H2_WINDOW_UPDATE_MAX;
+    settings = aws_h2_frame_new_settings(allocator, settings_array, 1, false /*ack*/);
+    ASSERT_NOT_NULL(settings);
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface(&s_tester.peer, settings));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* validate the connection completed with error */
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_INT_EQUALS(
+        AWS_ERROR_HTTP_FLOW_CONTROL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+
+    /* #TODO client should send GOAWAY */
+
+    /* clean up */
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
