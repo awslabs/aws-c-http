@@ -1344,7 +1344,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
 static int s_invalid_window_update(
     struct aws_allocator *allocator,
     void *ctx,
-    size_t window_update_size,
+    uint32_t window_update_size,
     enum aws_http_errors error_type) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
