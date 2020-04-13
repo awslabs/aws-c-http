@@ -780,8 +780,8 @@ int s_decoder_on_headers_end(
 
 int s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised_stream_id, void *userdata) {
     struct aws_h2_connection *connection = userdata;
-    AWS_ASSERT(connection->base.client_data); /* decoder enforces that server cannot receive PUSH_PROMISE */
-    AWS_ASSERT(promised_stream_id % 2 == 0);  /* decoder enforces that promised_stream_id is even-numbered */
+    AWS_ASSERT(connection->base.client_data); /* decoder has already enforced this */
+    AWS_ASSERT(promised_stream_id % 2 == 0);  /* decoder has already enforced this  */
 
     /* The identifier of a newly established stream MUST be numerically greater
      * than all streams that the initiating endpoint has opened or reserved (RFC-7540 5.1.1) */
