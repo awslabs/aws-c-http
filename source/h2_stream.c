@@ -285,16 +285,24 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
 
     /* Create HEADERS frame */
-    const struct aws_http_message *msg = stream->thread_data.outgoing_message;
+    struct aws_http_message *msg = stream->thread_data.outgoing_message;
     bool has_body_stream = aws_http_message_get_body_stream(msg) != NULL;
+    struct aws_http_headers *h2_headers = aws_h2_create_headers_from_request(msg, stream->base.alloc);
+    if (!h2_headers) {
+        AWS_H2_STREAM_LOGF(
+            ERROR, stream, "Failed to create HTTP/2 style headers from request %s", aws_error_name(aws_last_error()));
+        goto error;
+    }
     struct aws_h2_frame *headers_frame = aws_h2_frame_new_headers(
         stream->base.alloc,
         stream->base.id,
-        aws_http_message_get_const_headers(msg),
+        h2_headers,
         !has_body_stream /* end_stream */,
         0 /* padding - not currently configurable via public API */,
         NULL /* priority - not currently configurable via public API */);
 
+    /* Release refcount of h2_headers here, let frame take the full ownership of it */
+    aws_http_headers_release(h2_headers);
     if (!headers_frame) {
         AWS_H2_STREAM_LOGF(ERROR, stream, "Failed to create HEADERS frame: %s", aws_error_name(aws_last_error()));
         goto error;
@@ -608,6 +616,55 @@ int aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stream) {
         /* Else can't close until our side sends END_STREAM */
         stream->thread_data.state = AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE;
         AWS_H2_STREAM_LOG(TRACE, stream, "Received END_STREAM. State -> HALF_CLOSED_REMOTE");
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+int aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *stream, uint32_t h2_error_code) {
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+
+    /* Check that this state allows RST_STREAM. */
+    if (s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_RST_STREAM)) {
+        /* Usually we send a RST_STREAM when the state doesn't allow a frame type, but RFC-7540 5.4.2 says:
+         * "To avoid looping, an endpoint MUST NOT send a RST_STREAM in response to a RST_STREAM frame." */
+        return AWS_OP_ERR;
+    }
+
+    /* RFC-7540 8.1 - a server MAY request that the client abort transmission of a request without error by sending a
+     * RST_STREAM with an error code of NO_ERROR after sending a complete response (i.e., a frame with the END_STREAM
+     * flag). Clients MUST NOT discard responses as a result of receiving such a RST_STREAM */
+    int aws_error_code;
+    if (stream->base.client_data && (h2_error_code == AWS_H2_ERR_NO_ERROR) &&
+        (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE)) {
+
+        aws_error_code = AWS_ERROR_SUCCESS;
+
+    } else {
+        aws_error_code = AWS_ERROR_HTTP_RST_STREAM_RECEIVED;
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "Peer terminated stream with HTTP/2 RST_STREAM frame, error-code=0x%x(%s)",
+            h2_error_code,
+            aws_h2_error_code_to_str(h2_error_code));
+    }
+
+    /* #TODO some way for users to learn h2_error_code value. A callback? A queryable property on the stream?
+     * Specific AWS_ERROR_ per known code doesn't work because what if user wants to use their own magic numbers */
+
+    stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
+
+    AWS_H2_STREAM_LOGF(
+        TRACE,
+        stream,
+        "Received RST_STREAM code=0x%x(%s). State -> CLOSED",
+        h2_error_code,
+        aws_h2_error_code_to_str(h2_error_code));
+
+    if (aws_h2_connection_on_stream_closed(
+            s_get_h2_connection(stream), stream, AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED, aws_error_code)) {
+        return AWS_OP_ERR;
     }
 
     return AWS_OP_SUCCESS;

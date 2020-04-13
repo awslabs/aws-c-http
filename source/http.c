@@ -125,6 +125,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_INVALID_FRAME_SIZE,
         "Received frame with an illegal frame size"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_RST_STREAM_RECEIVED,
+        "Peer sent RST_STREAM to terminate stream"),
 };
 /* clang-format on */
 
@@ -257,6 +260,7 @@ static void s_headers_init(struct aws_allocator *alloc) {
     s_header_enum_to_str[AWS_HTTP_HEADER_PATH] = aws_byte_cursor_from_c_str(":path");
     s_header_enum_to_str[AWS_HTTP_HEADER_STATUS] = aws_byte_cursor_from_c_str(":status");
     s_header_enum_to_str[AWS_HTTP_HEADER_COOKIE] = aws_byte_cursor_from_c_str("cookie");
+    s_header_enum_to_str[AWS_HTTP_HEADER_HOST] = aws_byte_cursor_from_c_str("host");
     s_header_enum_to_str[AWS_HTTP_HEADER_CONNECTION] = aws_byte_cursor_from_c_str("connection");
     s_header_enum_to_str[AWS_HTTP_HEADER_CONTENT_LENGTH] = aws_byte_cursor_from_c_str("content-length");
     s_header_enum_to_str[AWS_HTTP_HEADER_EXPECT] = aws_byte_cursor_from_c_str("expect");

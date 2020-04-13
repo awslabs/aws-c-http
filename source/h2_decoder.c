@@ -1303,7 +1303,7 @@ static int s_process_header_field(struct aws_h2_decoder *decoder, const struct a
                     return AWS_OP_ERR;
                 }
                 break;
-
+            /* TODO: Validate connection-specific header field (RFC7540 8.1.2.2) */
             default:
                 /* Deliver header-field via callback */
                 if (current_block->is_push_promise) {
