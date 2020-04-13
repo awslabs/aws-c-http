@@ -891,12 +891,12 @@ static int s_decoder_on_settings(
             case AWS_H2_SETTINGS_MAX_FRAME_SIZE:
                 aws_h2_frame_encoder_set_setting_max_frame_size(encoder, settings_array[i].value);
                 break;
-            case AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE:
+            case AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE: {
                 /* When the value of SETTINGS_INITIAL_WINDOW_SIZE changes, a receiver MUST adjust the size of all stream
                  * flow-control windows that it maintains by the difference between the new value and the old value. */
-                struct aws_hash_iter stream_iter = aws_hash_iter_begin(&connection->thread_data.active_streams_map);
                 int32_t size_changed =
                     settings_array[i].value - connection->thread_data.settings_peer[settings_array[i].id];
+                struct aws_hash_iter stream_iter = aws_hash_iter_begin(&connection->thread_data.active_streams_map);
                 while (!aws_hash_iter_done(&stream_iter)) {
                     struct aws_h2_stream *stream = stream_iter.element.value;
                     aws_hash_iter_next(&stream_iter);
@@ -908,7 +908,7 @@ static int s_decoder_on_settings(
                         return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
                     }
                 }
-                break;
+            } break;
         }
         connection->thread_data.settings_peer[settings_array[i].id] = settings_array[i].value;
     }
