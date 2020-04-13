@@ -263,7 +263,7 @@ static struct aws_h2_connection *s_connection_new(
     memcpy(connection->thread_data.settings_self, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
 
     /* Initial connection flow-control window with 65535 bytes (RFC 6.9.2) */
-    connection->thread_data.peer_window_size = aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
+    connection->thread_data.window_size_peer = aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
 
     /* Create a new decoder */
     struct aws_h2_decoder_params params = {
@@ -571,7 +571,7 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
 
         struct aws_linked_list_node *node = aws_linked_list_pop_front(outgoing_streams_list);
         struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
-        if (connection->thread_data.peer_window_size == 0) {
+        if (connection->thread_data.window_size_peer == 0) {
             CONNECTION_LOG(
                 TRACE,
                 connection,
@@ -938,7 +938,7 @@ static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_i
             CONNECTION_LOG(ERROR, connection, "Window udpate frame with 0 increment size")
             return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
         }
-        if (connection->thread_data.peer_window_size + window_size_increment > AWS_H2_WINDOW_UPDATE_MAX) {
+        if (connection->thread_data.window_size_peer + window_size_increment > AWS_H2_WINDOW_UPDATE_MAX) {
             /* We MUST NOT allow a flow-control window to exceed the max */
             CONNECTION_LOG(
                 ERROR,
@@ -948,7 +948,7 @@ static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_i
 
             return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
         }
-        if (connection->thread_data.peer_window_size == 0) {
+        if (connection->thread_data.window_size_peer == 0) {
             /* Free all the controlled streams, it may cause those streams controlled by stream flow-control window be
              * freed, but they will be back if that control is still there */
             struct aws_linked_list *outgoing_streams_list = &connection->thread_data.outgoing_streams_list;
@@ -959,7 +959,7 @@ static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_i
                 aws_linked_list_push_back(outgoing_streams_list, node);
             }
         }
-        connection->thread_data.peer_window_size += window_size_increment;
+        connection->thread_data.window_size_peer += window_size_increment;
         return AWS_OP_SUCCESS;
     } else {
         /* Update the flow-contorl window size for stream */

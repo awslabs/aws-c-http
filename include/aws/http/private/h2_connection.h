@@ -77,7 +77,7 @@ struct aws_h2_connection {
         /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
          * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
          * connection */
-        size_t peer_window_size;
+        size_t window_size_peer;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */

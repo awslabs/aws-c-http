@@ -63,7 +63,7 @@ struct aws_h2_stream {
     /* Only the event-loop thread may touch this data */
     struct {
         enum aws_h2_stream_state state;
-        int32_t window_size;
+        int32_t window_size_peer;
         struct aws_http_message *outgoing_message;
         bool received_main_headers;
         /* True, when the window size is negative, we cannot send any more flow-controlled frame */
