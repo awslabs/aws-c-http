@@ -723,25 +723,6 @@ int s_get_active_stream_for_incoming_frame(
     return aws_raise_error(AWS_ERROR_HTTP_STREAM_CLOSED);
 }
 
-static int s_update_activated_stream_initial_window_size(struct aws_h2_connection *connection, uint32_t new_size) {
-    /* update the flow-control window for every activated stream */
-    int32_t size_changed = new_size - connection->thread_data.settings_peer[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
-    if (size_changed == 0) {
-        return AWS_OP_SUCCESS;
-    }
-    struct aws_hash_iter stream_iter = aws_hash_iter_begin(&connection->thread_data.active_streams_map);
-    while (!aws_hash_iter_done(&stream_iter)) {
-        struct aws_h2_stream *stream = stream_iter.element.value;
-        aws_hash_iter_next(&stream_iter);
-        if (aws_h2_stream_window_size_change(stream, size_changed)) {
-            CONNECTION_LOG(
-                ERROR, connection, "Update the flow-control window size exceed the maximum size when setting changes");
-            return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
-        }
-    }
-    return AWS_OP_SUCCESS;
-}
-
 /* Decoder callbacks */
 
 int s_decoder_on_headers_begin(uint32_t stream_id, void *userdata) {
@@ -913,8 +894,19 @@ static int s_decoder_on_settings(
             case AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE:
                 /* When the value of SETTINGS_INITIAL_WINDOW_SIZE changes, a receiver MUST adjust the size of all stream
                  * flow-control windows that it maintains by the difference between the new value and the old value. */
-                if (s_update_activated_stream_initial_window_size(connection, settings_array[i].value)) {
-                    return AWS_OP_ERR;
+                struct aws_hash_iter stream_iter = aws_hash_iter_begin(&connection->thread_data.active_streams_map);
+                int32_t size_changed =
+                    settings_array[i].value - connection->thread_data.settings_peer[settings_array[i].id];
+                while (!aws_hash_iter_done(&stream_iter)) {
+                    struct aws_h2_stream *stream = stream_iter.element.value;
+                    aws_hash_iter_next(&stream_iter);
+                    if (aws_h2_stream_window_size_change(stream, size_changed)) {
+                        CONNECTION_LOG(
+                            ERROR,
+                            connection,
+                            "Update the flow-control window size exceed the maximum size when setting changes");
+                        return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
+                    }
                 }
                 break;
         }
