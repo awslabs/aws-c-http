@@ -61,7 +61,7 @@ struct aws_h2_connection {
         /* List using aws_h2_stream.node.
          * Contains all streams with DATA frames to send, and cannot send now due to flow control.
          * Waiting for WINDOW_UPDATE to set them free */
-        struct aws_linked_list controlled_outgoing_streams_list;
+        struct aws_linked_list stalled_window_streams_list;
 
         /* List using aws_h2_frame.node.
          * Queues all frames (except DATA frames) for connection to send.
@@ -106,6 +106,8 @@ enum aws_h2_stream_closed_when {
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED,
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT,
 };
+
+#define AWS_H2_MIN_WINDOW_SIZE (256)
 
 /* Private functions called from tests... */
 

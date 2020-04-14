@@ -66,8 +66,6 @@ struct aws_h2_stream {
         int32_t window_size_peer;
         struct aws_http_message *outgoing_message;
         bool received_main_headers;
-        /* True, when the window size is negative, we cannot send any more flow-controlled frame */
-        bool stalled;
     } thread_data;
 };
 
@@ -87,14 +85,16 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
 /* Connection is ready to send data from stream now.
  * Stream may complete itself during this call.
  * out_has_more_data: Will be set true if stream has more data to send.
- * out_data_stalled: Will be set true if stream has more data to send, but it's not ready right now */
+ * out_data_stalled: Will be set true if stream has more data to send, but it's not ready right now
+ * stream_window_stalled: Will be set true if stream window size is too small, and stream will be moved to
+ * stalled_window_stream_list */
 int aws_h2_stream_encode_data_frame(
     struct aws_h2_stream *stream,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output,
     bool *out_has_more_data,
     bool *out_stream_stalled,
-    bool *flow_controlled);
+    bool *stream_window_stalled);
 
 int aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *stream);
 
@@ -110,7 +110,10 @@ int aws_h2_stream_on_decoder_headers_end(
     enum aws_http_header_block block_type);
 
 int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_cursor data);
-int aws_h2_stream_on_decoder_window_update(struct aws_h2_stream *stream, uint32_t window_size_increment);
+int aws_h2_stream_on_decoder_window_update(
+    struct aws_h2_stream *stream,
+    uint32_t window_size_increment,
+    bool *window_resume);
 int aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stream);
 int aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *stream, uint32_t h2_error_code);
 

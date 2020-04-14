@@ -227,7 +227,7 @@ static struct aws_h2_connection *s_connection_new(
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
 
     aws_linked_list_init(&connection->thread_data.outgoing_streams_list);
-    aws_linked_list_init(&connection->thread_data.controlled_outgoing_streams_list);
+    aws_linked_list_init(&connection->thread_data.stalled_window_streams_list);
     aws_linked_list_init(&connection->thread_data.outgoing_frames_queue);
 
     if (aws_mutex_init(&connection->synced_data.lock)) {
@@ -336,7 +336,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     AWS_ASSERT(
         !aws_hash_table_is_valid(&connection->thread_data.active_streams_map) ||
         aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0);
-    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.controlled_outgoing_streams_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stalled_window_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.outgoing_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
 
@@ -421,7 +421,9 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
     AWS_PRECONDITION(connection->thread_data.is_outgoing_frames_task_active);
 
     /* If there is nothing to send, then end the task immediately */
-    if (aws_linked_list_empty(outgoing_frames_queue) && aws_linked_list_empty(outgoing_streams_list)) {
+    if (aws_linked_list_empty(outgoing_frames_queue) &&
+        (aws_linked_list_empty(outgoing_streams_list) ||
+         (connection->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE))) {
         CONNECTION_LOG(TRACE, connection, "Outgoing frames task stopped, nothing to send at this time");
         connection->thread_data.is_outgoing_frames_task_active = false;
         return;
@@ -546,8 +548,7 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
 
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
     struct aws_linked_list *outgoing_streams_list = &connection->thread_data.outgoing_streams_list;
-    struct aws_linked_list *controlled_outgoing_streams_list =
-        &connection->thread_data.controlled_outgoing_streams_list;
+    struct aws_linked_list *stalled_window_streams_list = &connection->thread_data.stalled_window_streams_list;
 
     /* If a stream stalls, put it in this list until the function ends so we don't keep trying to read from it.
      * We put it back at the end of function. */
@@ -560,6 +561,15 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
      * Respecting priority is not required (RFC-7540 5.3), so we're ignoring it for now. This also keeps use safe
      * from priority DOS attacks: https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-9513 */
     while (!aws_linked_list_empty(outgoing_streams_list)) {
+        if (connection->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE) {
+            CONNECTION_LOGF(
+                DEBUG,
+                connection,
+                "Peer connection's flow-control window is too small now %" PRIu64
+                ". Connection will stop sending DATA until WINDOW_UPDATE is received.",
+                connection->thread_data.window_size_peer);
+            break;
+        }
 
         /* Stop looping if message is so full it's not worth the bother */
         size_t space_available = output->capacity - output->len;
@@ -571,23 +581,21 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
 
         struct aws_linked_list_node *node = aws_linked_list_pop_front(outgoing_streams_list);
         struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
-        if (connection->thread_data.window_size_peer == 0) {
-            CONNECTION_LOG(
-                TRACE,
-                connection,
-                "Connection flow-control window size is 0 now, every outgoing stream stop sending data");
-            aws_linked_list_push_back(controlled_outgoing_streams_list, node);
-            continue;
-        }
+
         /* Ask stream to encode a data frame.
          * Stream may complete itself as a result of encoding its data,
          * in which case it will vanish from the connection's datastructures as a side-effect of this call.
          * But if stream has more data to send, push it back into the appropriate list. */
         bool has_more_data;
         bool stream_stalled;
-        bool flow_controlled;
+        bool stream_window_stalled;
         if (aws_h2_stream_encode_data_frame(
-                stream, &connection->thread_data.encoder, output, &has_more_data, &stream_stalled, &flow_controlled)) {
+                stream,
+                &connection->thread_data.encoder,
+                output,
+                &has_more_data,
+                &stream_stalled,
+                &stream_window_stalled)) {
 
             aws_error_code = aws_last_error();
             CONNECTION_LOGF(
@@ -601,8 +609,13 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
 
         /* If stream has more data, push it into the appropriate list. */
         if (has_more_data) {
-            if (flow_controlled) {
-                aws_linked_list_push_back(controlled_outgoing_streams_list, node);
+            if (stream_window_stalled) {
+                aws_linked_list_push_back(stalled_window_streams_list, node);
+                AWS_H2_STREAM_LOG(
+                    DEBUG,
+                    stream,
+                    "Peer stream's flow-control window is now 0. Data frames on this stream will not be sent until "
+                    "WINDOW_UPDATE. ");
             } else if (stream_stalled) {
                 aws_linked_list_push_back(&stalled_streams_list, node);
             } else {
@@ -932,10 +945,10 @@ static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_i
     struct aws_h2_connection *connection = userdata;
 
     if (stream_id == 0) {
-        /* Let's update the connection flow-contorl window size */
+        /* Let's update the connection flow-control window size */
         if (window_size_increment == 0) {
-            /* flow-control winodw increment of 0 MUST be treated as error (RFC7540 6.9.1) */
-            CONNECTION_LOG(ERROR, connection, "Window udpate frame with 0 increment size")
+            /* flow-control window increment of 0 MUST be treated as error (RFC7540 6.9.1) */
+            CONNECTION_LOG(ERROR, connection, "Window update frame with 0 increment size")
             return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
         }
         if (connection->thread_data.window_size_peer + window_size_increment > AWS_H2_WINDOW_UPDATE_MAX) {
@@ -943,33 +956,42 @@ static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_i
             CONNECTION_LOG(
                 ERROR,
                 connection,
-                "Window udpate frame causes the connection flow-control window exceeding the maximum size")
+                "Window update frame causes the connection flow-control window exceeding the maximum size")
             /* #TODO send GOAWAY frame with FLOW_CONTROL_ERROR (RFC7540 6.9.1) */
 
             return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
         }
-        if (connection->thread_data.window_size_peer == 0) {
-            /* Free all the controlled streams, it may cause those streams controlled by stream flow-control window be
-             * freed, but they will be back if that control is still there */
-            struct aws_linked_list *outgoing_streams_list = &connection->thread_data.outgoing_streams_list;
-            struct aws_linked_list *controlled_outgoing_streams_list =
-                &connection->thread_data.controlled_outgoing_streams_list;
-            while (!aws_linked_list_empty(controlled_outgoing_streams_list)) {
-                struct aws_linked_list_node *node = aws_linked_list_pop_front(controlled_outgoing_streams_list);
-                aws_linked_list_push_back(outgoing_streams_list, node);
-            }
+        if (connection->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE) {
+            CONNECTION_LOGF(
+                DEBUG,
+                connection,
+                "Peer connection's flow-control window is resumed from too small to %" PRIu32
+                ". Connection will resume sending DATA.",
+                window_size_increment);
         }
         connection->thread_data.window_size_peer += window_size_increment;
         return AWS_OP_SUCCESS;
     } else {
-        /* Update the flow-contorl window size for stream */
+        /* Update the flow-control window size for stream */
         struct aws_h2_stream *stream;
+        bool window_resume;
         if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_WINDOW_UPDATE, &stream)) {
             return AWS_OP_ERR;
         }
         if (stream) {
-            if (aws_h2_stream_on_decoder_window_update(stream, window_size_increment)) {
+            if (aws_h2_stream_on_decoder_window_update(stream, window_size_increment, &window_resume)) {
                 return AWS_OP_ERR;
+            }
+            if (window_resume) {
+                /* Set the stream free from stalled list */
+                AWS_H2_STREAM_LOGF(
+                    DEBUG,
+                    stream,
+                    "Peer stream's flow-control window is resumed from 0 or negative to %" PRIu32
+                    " Stream will resume sending data.",
+                    stream->thread_data.window_size_peer);
+                aws_linked_list_remove(&stream->node);
+                aws_linked_list_push_back(&connection->thread_data.outgoing_streams_list, &stream->node);
             }
         }
     }

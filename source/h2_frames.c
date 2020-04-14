@@ -318,15 +318,13 @@ int aws_h2_encode_data_frame(
     size_t *connection_window_size_peer,
     struct aws_byte_buf *output,
     bool *body_complete,
-    bool *body_stalled,
-    bool *will_be_controlled) {
+    bool *body_stalled) {
 
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(body_stream);
     AWS_PRECONDITION(output);
     AWS_PRECONDITION(body_complete);
     AWS_PRECONDITION(body_stalled);
-    AWS_PRECONDITION(will_be_controlled);
     AWS_PRECONDITION(*stream_window_size_peer > 0);
 
     if (aws_h2_validate_stream_id(stream_id)) {
@@ -335,7 +333,6 @@ int aws_h2_encode_data_frame(
 
     *body_complete = false;
     *body_stalled = false;
-    *will_be_controlled = false;
     uint8_t flags = 0;
 
     /*
@@ -369,9 +366,6 @@ int aws_h2_encode_data_frame(
     /* Max amount of body we can fit in the payload*/
     size_t max_body;
     if (aws_sub_size_checked(max_payload, payload_overhead, &max_body) || max_body == 0) {
-        /* if flow-control window size is the bottleneck, we will control the stream from trying sending more data
-         * frame */
-        *will_be_controlled = max_payload == min_window_size;
         goto handle_waiting_for_more_space;
     }
 
@@ -439,11 +433,11 @@ int aws_h2_encode_data_frame(
         writes_ok &= aws_byte_buf_write_u8_n(output, 0, pad_length);
     }
 
-    /* udpate the connection window size now, we will update stream window size when this function returns */
+    /* update the connection window size now, we will update stream window size when this function returns */
     AWS_ASSERT(payload_len <= min_window_size);
     *connection_window_size_peer -= payload_len;
     *stream_window_size_peer -= (int32_t)payload_len;
-    *will_be_controlled = *connection_window_size_peer == 0 || *stream_window_size_peer == 0;
+
     AWS_ASSERT(writes_ok);
     return AWS_OP_SUCCESS;
 
