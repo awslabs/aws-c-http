@@ -565,8 +565,8 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
             CONNECTION_LOGF(
                 DEBUG,
                 connection,
-                "Peer connection's flow-control window is too small now %" PRIu64
-                ". Connection will stop sending DATA until WINDOW_UPDATE is received.",
+                "Peer connection's flow-control window is too small now %zu. Connection will stop sending DATA until "
+                "WINDOW_UPDATE is received.",
                 connection->thread_data.window_size_peer);
             break;
         }
