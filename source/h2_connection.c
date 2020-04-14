@@ -620,7 +620,7 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
                 break;
             default:
                 /* invalid */
-                CONNECTION_LOGF(ERROR, connection, "Data encode status is invalid.");
+                CONNECTION_LOG(ERROR, connection, "Data encode status is invalid.");
                 aws_error_code = AWS_ERROR_INVALID_STATE;
         }
     }
