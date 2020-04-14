@@ -943,12 +943,12 @@ TEST_CASE(h2_client_stream_send_stalled_data) {
     return s_tester_clean_up();
 }
 
-static int fake_peer_window_update_check(
+static int s_fake_peer_window_update_check(
     struct aws_allocator *alloc,
     uint32_t stream_id,
     uint32_t window_size_increment,
-    char *expected_date,
-    size_t expected_date_len,
+    const char *expected_data,
+    size_t expected_data_len,
     bool end_stream,
     bool skip_check_data) {
 
@@ -957,14 +957,14 @@ static int fake_peer_window_update_check(
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, stream_window_update));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    if (expected_date) {
+    if (expected_data) {
         /* DATA should be received now as the last frame, check the result */
         struct h2_decoded_frame *latest_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
         ASSERT_INT_EQUALS(AWS_H2_FRAME_T_DATA, latest_frame->type);
         ASSERT_TRUE(latest_frame->end_stream == end_stream);
         if (!skip_check_data) {
             ASSERT_BIN_ARRAYS_EQUALS(
-                latest_frame->data.buffer, latest_frame->data.len, expected_date, expected_date_len);
+                latest_frame->data.buffer, latest_frame->data.len, expected_data, expected_data_len);
         }
     } else {
         ASSERT_TRUE(aws_linked_list_empty(testing_channel_get_written_message_queue(&s_tester.testing_channel)));
@@ -1023,7 +1023,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_stream_window_size) {
     ASSERT_FALSE(sent_headers_frame->end_stream);
 
     /* fake peer sends a WINDOW_UPDATE on stream to unblock the DATA frame. We need to release the min window size */
-    ASSERT_SUCCESS(fake_peer_window_update_check(
+    ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator, stream_id, 256, "hello CRT!", 10, true /*end_stream*/, false /*skip_check_data*/));
 
     /* fake peer sends response headers */
@@ -1128,11 +1128,11 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_negative_stream_window_size) 
 
     /* fake peer sends a WINDOW_UPDATE on stream to try unblocking the DATA frame. But just release (300+min window
      * size) bytes, it will still be min window size, nothing will be sent */
-    ASSERT_SUCCESS(fake_peer_window_update_check(
+    ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator, stream_id, 300 + AWS_H2_MIN_WINDOW_SIZE, NULL, 0, false /*end_stream*/, false /*skip_check_data*/));
 
     /* Release one more bytes, rest of the data will be sent */
-    ASSERT_SUCCESS(fake_peer_window_update_check(
+    ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator, stream_id, 1, body_src, 100, true /*end_stream*/, false /*skip_check_data*/));
 
     /* fake peer sends response headers */
@@ -1233,7 +1233,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_window_size) {
     ASSERT_FALSE(sent_headers_frame->end_stream);
 
     /* WINDOW UPDATE at the second stream will no help */
-    ASSERT_SUCCESS(fake_peer_window_update_check(
+    ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator,
         aws_http_stream_get_id(stream_testers[1].stream),
         400,
@@ -1248,11 +1248,11 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_window_size) {
     }
 
     /* Connection window update will help, and the rest of the previous request is sent now */
-    ASSERT_SUCCESS(fake_peer_window_update_check(
+    ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator, 0, 400 - AWS_H2_MIN_WINDOW_SIZE, expected, 400, false /*end_stream*/, false /*skip_check_data*/));
 
     /* Release all the window */
-    ASSERT_SUCCESS(fake_peer_window_update_check(
+    ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator, 0, (uint32_t)body_size, "", 0, true /*end_stream*/, true /*skip_check_data*/));
 
     /* finally, send responses and ensure all streams complete successfully */
@@ -1397,7 +1397,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
         expected_c[i] = 'c';
     }
     /* WINDOW UPDATE at requests[1] will no help */
-    ASSERT_SUCCESS(fake_peer_window_update_check(
+    ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator,
         aws_http_stream_get_id(stream_testers[1].stream),
         400,
@@ -1407,11 +1407,11 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
         false /*skip_check_data*/));
 
     /* WINDOW UPDATE at the connection to keep connection wide open, but only 10 bytes of requests[1] will be sent */
-    ASSERT_SUCCESS(fake_peer_window_update_check(
+    ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator, 0, (uint32_t)body_size * 3, expected_b, 400, false /*end_stream*/, false /*skip_check_data*/));
 
     /* WINDOW UPDATE at requests[1] will help requests[1] to send data now */
-    ASSERT_SUCCESS(fake_peer_window_update_check(
+    ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator,
         aws_http_stream_get_id(stream_testers[1].stream),
         400,
@@ -1420,7 +1420,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
         false /*end_stream*/,
         false /*skip_check_data*/));
     /* WINDOW UPDATE at requests[2] will help requests[2] to send data now */
-    ASSERT_SUCCESS(fake_peer_window_update_check(
+    ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator,
         aws_http_stream_get_id(stream_testers[2].stream),
         400,
@@ -1430,7 +1430,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
         false /*skip_check_data*/));
 
     /* Release all the window for requests[0] */
-    ASSERT_SUCCESS(fake_peer_window_update_check(
+    ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator,
         aws_http_stream_get_id(stream_testers[0].stream),
         (uint32_t)body_size + AWS_H2_MIN_WINDOW_SIZE,
@@ -1439,7 +1439,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
         true /*end_stream*/,
         true /*skip_check_data*/));
     /* Release all the window for requests[1] */
-    ASSERT_SUCCESS(fake_peer_window_update_check(
+    ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator,
         aws_http_stream_get_id(stream_testers[1].stream),
         (uint32_t)body_size + AWS_H2_MIN_WINDOW_SIZE,
@@ -1448,7 +1448,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
         true /*end_stream*/,
         true /*skip_check_data*/));
     /* Release all the window for requests[2] */
-    ASSERT_SUCCESS(fake_peer_window_update_check(
+    ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator,
         aws_http_stream_get_id(stream_testers[2].stream),
         (uint32_t)body_size + AWS_H2_MIN_WINDOW_SIZE,

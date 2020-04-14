@@ -84,17 +84,17 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
 
 /* Connection is ready to send data from stream now.
  * Stream may complete itself during this call.
- * out_has_more_data: Will be set true if stream has more data to send.
- * out_data_stalled: Will be set true if stream has more data to send, but it's not ready right now
- * stream_window_stalled: Will be set true if stream window size is too small, and stream will be moved to
- * stalled_window_stream_list */
+ * data_encode_status:
+ * AWS_H2_DATA_ENCODE_COMPLETE: Finished encoding data for the stream
+ * AWS_H2_DATA_ENCODE_ONGOING: Stream has more data to send.
+ * AWS_H2_DATA_ENCODE_ONGOING_BODY_STALLED: Stream has more data to send, but it's not ready right now
+ * AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED: Stream has more data to send but its window size is too small, and stream
+ * will be moved to stalled_window_stream_list */
 int aws_h2_stream_encode_data_frame(
     struct aws_h2_stream *stream,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output,
-    bool *out_has_more_data,
-    bool *out_stream_stalled,
-    bool *stream_window_stalled);
+    int *data_encode_status);
 
 int aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *stream);
 

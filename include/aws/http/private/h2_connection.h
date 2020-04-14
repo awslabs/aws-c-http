@@ -107,6 +107,13 @@ enum aws_h2_stream_closed_when {
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT,
 };
 
+enum aws_h2_data_encode_status {
+  AWS_H2_DATA_ENCODE_COMPLETE,
+  AWS_H2_DATA_ENCODE_ONGOING,
+  AWS_H2_DATA_ENCODE_ONGOING_BODY_STALLED,
+  AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED,
+};
+
 #define AWS_H2_MIN_WINDOW_SIZE (256)
 
 /* Private functions called from tests... */

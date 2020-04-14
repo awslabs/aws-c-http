@@ -420,11 +420,12 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(channel_slot->channel));
     AWS_PRECONDITION(connection->thread_data.is_outgoing_frames_task_active);
 
-    /* If there is nothing to send, then end the task immediately */
+    /* If we have nothing to send, or we're unable to send, then end task immediately */
     if (aws_linked_list_empty(outgoing_frames_queue) &&
         (aws_linked_list_empty(outgoing_streams_list) ||
          (connection->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE))) {
-        CONNECTION_LOG(TRACE, connection, "Outgoing frames task stopped, nothing to send at this time");
+        CONNECTION_LOG(
+            TRACE, connection, "Outgoing frames task stopped, nothing to send or unable to send at this time");
         connection->thread_data.is_outgoing_frames_task_active = false;
         return;
     }
@@ -586,16 +587,8 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
          * Stream may complete itself as a result of encoding its data,
          * in which case it will vanish from the connection's datastructures as a side-effect of this call.
          * But if stream has more data to send, push it back into the appropriate list. */
-        bool has_more_data;
-        bool stream_stalled;
-        bool stream_window_stalled;
-        if (aws_h2_stream_encode_data_frame(
-                stream,
-                &connection->thread_data.encoder,
-                output,
-                &has_more_data,
-                &stream_stalled,
-                &stream_window_stalled)) {
+        int data_encode_status;
+        if (aws_h2_stream_encode_data_frame(stream, &connection->thread_data.encoder, output, &data_encode_status)) {
 
             aws_error_code = aws_last_error();
             CONNECTION_LOGF(
@@ -608,19 +601,31 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
         }
 
         /* If stream has more data, push it into the appropriate list. */
-        if (has_more_data) {
-            if (stream_window_stalled) {
+        switch (data_encode_status) {
+            case AWS_H2_DATA_ENCODE_COMPLETE:
+                break;
+            case AWS_H2_DATA_ENCODE_ONGOING:
+                aws_linked_list_push_back(outgoing_streams_list, node);
+                break;
+            case AWS_H2_DATA_ENCODE_ONGOING_BODY_STALLED:
+                aws_linked_list_push_back(&stalled_streams_list, node);
+                break;
+            case AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED:
                 aws_linked_list_push_back(stalled_window_streams_list, node);
                 AWS_H2_STREAM_LOG(
                     DEBUG,
                     stream,
-                    "Peer stream's flow-control window is now 0. Data frames on this stream will not be sent until "
+                    "Peer stream's flow-control window is too small. Data frames on this stream will not be sent until "
                     "WINDOW_UPDATE. ");
-            } else if (stream_stalled) {
-                aws_linked_list_push_back(&stalled_streams_list, node);
-            } else {
-                aws_linked_list_push_back(outgoing_streams_list, node);
-            }
+                break;
+            default:
+                /* invalid */
+                CONNECTION_LOGF(
+                    ERROR,
+                    connection,
+                    "Data encode status is invalid.",
+                    connection->thread_data.window_size_peer);
+                aws_error_code = AWS_ERROR_INVALID_STATE;
         }
     }
 
@@ -917,7 +922,8 @@ static int s_decoder_on_settings(
                         CONNECTION_LOG(
                             ERROR,
                             connection,
-                            "Update the flow-control window size exceed the maximum size when setting changes");
+                            "Connection error, change to SETTINGS_INITIAL_WINDOW_SIZE caused a stream's flow-control "
+                            "window to exceed the maximum size");
                         return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
                     }
                 }

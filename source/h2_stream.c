@@ -326,9 +326,7 @@ int aws_h2_stream_encode_data_frame(
     struct aws_h2_stream *stream,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output,
-    bool *out_has_more_data,
-    bool *out_stream_stalled,
-    bool *stream_window_stalled) {
+    int *data_encode_status) {
 
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
     AWS_PRECONDITION(
@@ -339,15 +337,11 @@ int aws_h2_stream_encode_data_frame(
 
     if (stream->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE) {
         /* The stream is stalled now */
-        *out_has_more_data = true;
-        *out_stream_stalled = false;
-        *stream_window_stalled = true;
+        *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED;
         return AWS_OP_SUCCESS;
     }
 
-    *out_has_more_data = false;
-    *out_stream_stalled = false;
-    *stream_window_stalled = false;
+    *data_encode_status = AWS_H2_DATA_ENCODE_COMPLETE;
     struct aws_input_stream *body = aws_http_message_get_body_stream(stream->thread_data.outgoing_message);
     AWS_ASSERT(body);
 
@@ -388,9 +382,15 @@ int aws_h2_stream_encode_data_frame(
         }
     } else {
         /* Body not complete */
-        *out_has_more_data = true;
-        *out_stream_stalled = body_stalled;
-        *stream_window_stalled = stream->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE;
+        *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING;
+        if (body_stalled) {
+            *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING_BODY_STALLED;
+        }
+        if (stream->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE) {
+            /* if body and window both stalled, we take the window stalled status, which will take the stream out from
+             * outgoing list */
+            *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED;
+        }
     }
 
     return AWS_OP_SUCCESS;
