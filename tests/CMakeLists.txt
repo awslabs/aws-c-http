@@ -361,6 +361,7 @@ add_test_case(h2_client_stream_err_initial_window_size_cause_window_exceed_max)
 #TODO add_test_case(h2_client_stream_err_input_stream_failure)
 add_test_case(h2_client_stream_err_receive_rst_stream)
 add_test_case(h2_client_stream_receive_rst_stream_after_complete_response_ok)
+add_test_case(h2_client_push_promise_automatically_rejected)
 
 
 add_test_case(server_new_destroy)

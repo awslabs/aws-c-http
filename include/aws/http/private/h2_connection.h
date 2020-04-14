@@ -48,6 +48,9 @@ struct aws_h2_connection {
         /* My settings to send/sent to peer, which affects the decoding */
         uint32_t settings_self[AWS_H2_SETTINGS_END_RANGE];
 
+        /* Most recent stream-id that was initiated by peer */
+        uint32_t latest_peer_initiated_stream_id;
+
         /* Maps stream-id to aws_h2_stream*.
          * Contains all streams in the open, reserved, and half-closed states (terms from RFC-7540 5.1).
          * Once a stream enters closed state, it is removed from this map. */
@@ -132,6 +135,12 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
     bool manual_window_management,
     size_t initial_window_size);
 
+/* Transform the request to h2 style headers */
+AWS_HTTP_API
+struct aws_http_headers *aws_h2_create_headers_from_request(
+    struct aws_http_message *request,
+    struct aws_allocator *alloc);
+
 AWS_EXTERN_C_END
 
 /* Private functions called from multiple .c files... */
@@ -159,12 +168,12 @@ int aws_h2_connection_on_stream_closed(
     enum aws_h2_stream_closed_when closed_when,
     int aws_error_code);
 
-AWS_EXTERN_C_BEGIN
-/* Transform the request to h2 style headers */
-AWS_HTTP_API
-struct aws_http_headers *aws_h2_create_headers_from_request(
-    struct aws_http_message *request,
-    struct aws_allocator *alloc);
+/**
+ * Send RST_STREAM and close a stream reserved via PUSH_PROMISE.
+ */
+int aws_h2_connection_send_rst_and_close_reserved_stream(
+    struct aws_h2_connection *connection,
+    uint32_t stream_id,
+    uint32_t h2_error_code);
 
-AWS_EXTERN_C_END
 #endif /* AWS_HTTP_H2_CONNECTION_H */

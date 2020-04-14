@@ -658,7 +658,7 @@ TEST_CASE(h2_client_stream_send_data) {
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
-        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":method", "POST"),
         DEFINE_HEADER(":scheme", "https"),
         DEFINE_HEADER(":path", "/"),
     };
@@ -741,17 +741,17 @@ TEST_CASE(h2_client_stream_send_lots_of_data) {
     struct aws_http_message *requests[NUM_STREAMS];
     struct aws_http_header request_headers_src[NUM_STREAMS][3] = {
         {
-            DEFINE_HEADER(":method", "GET"),
+            DEFINE_HEADER(":method", "POST"),
             DEFINE_HEADER(":scheme", "https"),
             DEFINE_HEADER(":path", "/a.txt"),
         },
         {
-            DEFINE_HEADER(":method", "GET"),
+            DEFINE_HEADER(":method", "POST"),
             DEFINE_HEADER(":scheme", "https"),
             DEFINE_HEADER(":path", "/b.txt"),
         },
         {
-            DEFINE_HEADER(":method", "GET"),
+            DEFINE_HEADER(":method", "POST"),
             DEFINE_HEADER(":scheme", "https"),
             DEFINE_HEADER(":path", "/c.txt"),
         },
@@ -886,7 +886,7 @@ TEST_CASE(h2_client_stream_send_stalled_data) {
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
-        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":method", "POST"),
         DEFINE_HEADER(":scheme", "https"),
         DEFINE_HEADER(":path", "/"),
     };
@@ -1689,7 +1689,7 @@ TEST_CASE(h2_client_stream_receive_rst_stream_after_complete_response_ok) {
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
-        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":method", "POST"),
         DEFINE_HEADER(":scheme", "https"),
         DEFINE_HEADER(":path", "/"),
     };
@@ -1741,5 +1741,103 @@ TEST_CASE(h2_client_stream_receive_rst_stream_after_complete_response_ok) {
     client_stream_tester_clean_up(&stream_tester);
     aws_http_message_release(request);
     aws_input_stream_destroy(request_body);
+    return s_tester_clean_up();
+}
+
+/* We don't fully support PUSH_PROMISE, so we automatically send RST_STREAM to reject any promised streams.
+ * Why, you ask, don't we simply send SETTINGS_ENABLE_PUSH=0 in the initial SETTINGS frame and call it a day?
+ * Because it's theoretically possible for a server to start sending PUSH_PROMISE frames in the initial
+ * response, before sending the ACK to the initial SETTINGS. */
+TEST_CASE(h2_client_push_promise_automatically_rejected) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":authority", "veryblackpage.com"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
+
+    /* fake peer sends push request (PUSH_PROMISE) */
+    struct aws_http_header push_request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":authority", "veryblackpage.com"),
+        DEFINE_HEADER(":path", "/style.css"),
+    };
+    struct aws_http_headers *push_request_headers = aws_http_headers_new(allocator);
+    ASSERT_SUCCESS(aws_http_headers_add_array(
+        push_request_headers, push_request_headers_src, AWS_ARRAY_SIZE(push_request_headers_src)));
+
+    uint32_t promised_stream_id = 2;
+    struct aws_h2_frame *peer_frame =
+        aws_h2_frame_new_push_promise(allocator, stream_id, promised_stream_id, push_request_headers, 0);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+
+    /* fake peer sends push response RIGHT AWAY before there's any possibility of receiving RST_STREAM */
+    struct aws_http_header push_response_headers_src[] = {
+        DEFINE_HEADER(":status", "200"),
+    };
+    struct aws_http_headers *push_response_headers = aws_http_headers_new(allocator);
+    ASSERT_SUCCESS(aws_http_headers_add_array(
+        push_response_headers, push_response_headers_src, AWS_ARRAY_SIZE(push_response_headers_src)));
+
+    peer_frame =
+        aws_h2_frame_new_headers(allocator, promised_stream_id, push_response_headers, false /*end_stream*/, 0, NULL);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+
+    ASSERT_SUCCESS(h2_fake_peer_send_data_frame_str(
+        &s_tester.peer, promised_stream_id, "body {background-color: black;}", true /*end_stream*/));
+
+    /* fake peer sends response to the initial request */
+    struct aws_http_header response_headers_src[] = {
+        DEFINE_HEADER(":status", "200"),
+    };
+    struct aws_http_headers *response_headers = aws_http_headers_new(allocator);
+    aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
+
+    peer_frame = aws_h2_frame_new_headers(allocator, stream_id, response_headers, false /*end_stream*/, 0, NULL);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+
+    const char *body_src = "<html><head><link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\"></head></html>";
+    ASSERT_SUCCESS(h2_fake_peer_send_data_frame_str(&s_tester.peer, stream_id, body_src, true /*end_stream*/));
+
+    /* validate that stream completed successfully. */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(200, stream_tester.response_status);
+    ASSERT_BIN_ARRAYS_EQUALS(
+        body_src, strlen(body_src), stream_tester.response_body.buffer, stream_tester.response_body.len);
+
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* validate that client automatically sent RST_STREAM to reject the promised stream */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *client_sent_rst_stream = h2_decode_tester_find_stream_frame(
+        &s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, promised_stream_id, 0, NULL);
+    ASSERT_NOT_NULL(client_sent_rst_stream);
+
+    /* clean up */
+    aws_http_headers_release(push_request_headers);
+    aws_http_headers_release(push_response_headers);
+    aws_http_headers_release(response_headers);
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
     return s_tester_clean_up();
 }
