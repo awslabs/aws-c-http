@@ -104,6 +104,7 @@ int aws_h2_stream_on_decoder_headers_end(
     bool malformed,
     enum aws_http_header_block block_type);
 
+int aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *stream, uint32_t promised_stream_id);
 int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_cursor data);
 int aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stream);
 int aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *stream, uint32_t h2_error_code);

@@ -498,6 +498,20 @@ int aws_h2_stream_on_decoder_headers_end(
     return AWS_OP_SUCCESS;
 }
 
+int aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *stream, uint32_t promised_stream_id) {
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+
+    if (s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_PUSH_PROMISE)) {
+        return s_send_rst_and_close_stream(stream, aws_last_error());
+    }
+
+    /* Note: Until we have a need for it, PUSH_PROMISE is not a fully supported feature.
+     * Promised streams are automatically rejected in a manner compliant with RFC-7540. */
+    AWS_H2_STREAM_LOG(DEBUG, stream, "Automatically rejecting promised stream, PUSH_PROMISE is not fully supported");
+    return aws_h2_connection_send_rst_and_close_reserved_stream(
+        s_get_h2_connection(stream), promised_stream_id, AWS_H2_ERR_REFUSED_STREAM);
+}
+
 int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_cursor data) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
