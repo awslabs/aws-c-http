@@ -63,7 +63,7 @@ struct aws_h2_stream {
     /* Only the event-loop thread may touch this data */
     struct {
         enum aws_h2_stream_state state;
-        uint64_t window_size; /* #TODO try to figure out how this actually works, and then implement it */
+        int32_t window_size_peer;
         struct aws_http_message *outgoing_message;
         bool received_main_headers;
     } thread_data;
@@ -77,19 +77,24 @@ struct aws_h2_stream *aws_h2_stream_new_request(
 
 enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *stream);
 
+int aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed);
+
 /* Connection is ready to send frames from stream now */
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data);
 
 /* Connection is ready to send data from stream now.
  * Stream may complete itself during this call.
- * out_has_more_data: Will be set true if stream has more data to send.
- * out_data_stalled: Will be set true if stream has more data to send, but it's not ready right now */
+ * data_encode_status:
+ * AWS_H2_DATA_ENCODE_COMPLETE: Finished encoding data for the stream
+ * AWS_H2_DATA_ENCODE_ONGOING: Stream has more data to send.
+ * AWS_H2_DATA_ENCODE_ONGOING_BODY_STALLED: Stream has more data to send, but it's not ready right now
+ * AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED: Stream has more data to send but its window size is too small, and stream
+ * will be moved to stalled_window_stream_list */
 int aws_h2_stream_encode_data_frame(
     struct aws_h2_stream *stream,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output,
-    bool *out_has_more_data,
-    bool *out_stream_stalled);
+    int *data_encode_status);
 
 int aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *stream);
 
@@ -106,6 +111,10 @@ int aws_h2_stream_on_decoder_headers_end(
 
 int aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *stream, uint32_t promised_stream_id);
 int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_cursor data);
+int aws_h2_stream_on_decoder_window_update(
+    struct aws_h2_stream *stream,
+    uint32_t window_size_increment,
+    bool *window_resume);
 int aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stream);
 int aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *stream, uint32_t h2_error_code);
 

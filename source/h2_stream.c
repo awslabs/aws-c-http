@@ -263,6 +263,15 @@ static int s_send_rst_and_close_stream(struct aws_h2_stream *stream, int aws_err
     return AWS_OP_SUCCESS;
 }
 
+int aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed) {
+
+    if ((int64_t)stream->thread_data.window_size_peer + size_changed > AWS_H2_WINDOW_UPDATE_MAX) {
+        return AWS_OP_ERR;
+    }
+    stream->thread_data.window_size_peer += size_changed;
+    return AWS_OP_SUCCESS;
+}
+
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
@@ -292,6 +301,9 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
         goto error;
     }
 
+    /* Initialize the flow-control window size for peer */
+    stream->thread_data.window_size_peer = connection->thread_data.settings_peer[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
+
     if (has_body_stream) {
         /* If stream has DATA to send, put it in the outgoing_streams_list, and we'll send data later */
         stream->thread_data.state = AWS_H2_STREAM_STATE_OPEN;
@@ -314,17 +326,22 @@ int aws_h2_stream_encode_data_frame(
     struct aws_h2_stream *stream,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output,
-    bool *out_has_more_data,
-    bool *out_stream_stalled) {
+    int *data_encode_status) {
 
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
     AWS_PRECONDITION(
         stream->thread_data.state == AWS_H2_STREAM_STATE_OPEN ||
         stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE);
+    struct aws_h2_connection *connection = s_get_h2_connection(stream);
+    AWS_PRECONDITION(connection->thread_data.window_size_peer > AWS_H2_MIN_WINDOW_SIZE);
 
-    *out_has_more_data = false;
-    *out_stream_stalled = false;
+    if (stream->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE) {
+        /* The stream is stalled now */
+        *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED;
+        return AWS_OP_SUCCESS;
+    }
 
+    *data_encode_status = AWS_H2_DATA_ENCODE_COMPLETE;
     struct aws_input_stream *body = aws_http_message_get_body_stream(stream->thread_data.outgoing_message);
     AWS_ASSERT(body);
 
@@ -336,6 +353,8 @@ int aws_h2_stream_encode_data_frame(
             body,
             true /*body_ends_stream*/,
             0 /*pad_length*/,
+            &stream->thread_data.window_size_peer,
+            &connection->thread_data.window_size_peer,
             output,
             &body_complete,
             &body_stalled)) {
@@ -353,10 +372,7 @@ int aws_h2_stream_encode_data_frame(
 
             /* Tell connection that stream is now closed */
             if (aws_h2_connection_on_stream_closed(
-                    s_get_h2_connection(stream),
-                    stream,
-                    AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM,
-                    AWS_ERROR_SUCCESS)) {
+                    connection, stream, AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM, AWS_ERROR_SUCCESS)) {
                 return AWS_OP_ERR;
             }
         } else {
@@ -366,8 +382,15 @@ int aws_h2_stream_encode_data_frame(
         }
     } else {
         /* Body not complete */
-        *out_has_more_data = true;
-        *out_stream_stalled = body_stalled;
+        *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING;
+        if (body_stalled) {
+            *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING_BODY_STALLED;
+        }
+        if (stream->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE) {
+            /* if body and window both stalled, we take the window stalled status, which will take the stream out from
+             * outgoing list */
+            *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED;
+        }
     }
 
     return AWS_OP_SUCCESS;
@@ -535,6 +558,34 @@ int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_
         }
     }
 
+    return AWS_OP_SUCCESS;
+}
+
+int aws_h2_stream_on_decoder_window_update(
+    struct aws_h2_stream *stream,
+    uint32_t window_size_increment,
+    bool *window_resume) {
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+
+    *window_resume = false;
+    if (s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_WINDOW_UPDATE)) {
+        return s_send_rst_and_close_stream(stream, aws_last_error());
+    }
+    if (window_size_increment == 0) {
+        /* flow-control window increment of 0 MUST be treated as error (RFC7540 6.9.1) */
+        AWS_H2_STREAM_LOG(ERROR, stream, "Window update frame with 0 increment size");
+        return s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+    int32_t old_window_size = stream->thread_data.window_size_peer;
+    if (aws_h2_stream_window_size_change(stream, window_size_increment)) {
+        /* We MUST NOT allow a flow-control window to exceed the max */
+        AWS_H2_STREAM_LOG(
+            ERROR, stream, "Window update frame causes the stream flow-control window to exceed the maximum size");
+        return s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
+    }
+    if (stream->thread_data.window_size_peer > AWS_H2_MIN_WINDOW_SIZE && old_window_size <= AWS_H2_MIN_WINDOW_SIZE) {
+        *window_resume = true;
+    }
     return AWS_OP_SUCCESS;
 }
 

@@ -61,6 +61,11 @@ struct aws_h2_connection {
          * Any stream in this list is also in the active_streams_map. */
         struct aws_linked_list outgoing_streams_list;
 
+        /* List using aws_h2_stream.node.
+         * Contains all streams with DATA frames to send, and cannot send now due to flow control.
+         * Waiting for WINDOW_UPDATE to set them free */
+        struct aws_linked_list stalled_window_streams_list;
+
         /* List using aws_h2_frame.node.
          * Queues all frames (except DATA frames) for connection to send.
          * When queue is empty, then we send DATA frames from the outgoing_streams_list */
@@ -72,6 +77,10 @@ struct aws_h2_connection {
          * Entries are removed after a period of time. */
         struct aws_hash_table closed_streams_where_frames_might_trickle_in;
 
+        /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
+         * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
+         * connection */
+        size_t window_size_peer;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
@@ -100,6 +109,15 @@ enum aws_h2_stream_closed_when {
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED,
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT,
 };
+
+enum aws_h2_data_encode_status {
+    AWS_H2_DATA_ENCODE_COMPLETE,
+    AWS_H2_DATA_ENCODE_ONGOING,
+    AWS_H2_DATA_ENCODE_ONGOING_BODY_STALLED,
+    AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED,
+};
+
+#define AWS_H2_MIN_WINDOW_SIZE (256)
 
 /* Private functions called from tests... */
 

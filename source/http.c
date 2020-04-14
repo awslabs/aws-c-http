@@ -114,6 +114,9 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_PROTOCOL_ERROR,
         "Protocol rules violated by API call or peer"),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_FLOW_CONTROL_ERROR,
+        "Flow control rules violated by API call or peer"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_STREAM_CLOSED,
         "Received frame on a closed stream"),
     AWS_DEFINE_ERROR_INFO_HTTP(
