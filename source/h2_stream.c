@@ -539,7 +539,8 @@ int aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *stream, uint32_t
 int aws_h2_stream_on_decoder_data_begin(struct aws_h2_stream *stream, uint32_t data_payload_len) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
-    if (stream->thread_data.window_size_self < 0 || stream->thread_data.window_size_self == 0 && data_payload_len > 0) {
+    if (stream->thread_data.window_size_self < 0 ||
+        (stream->thread_data.window_size_self == 0 && data_payload_len > 0)) {
         /* We should not treat when the window size and data payload len are both 0 as an error */
         s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
     }
