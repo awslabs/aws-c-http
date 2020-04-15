@@ -47,8 +47,8 @@ static const size_t s_decoder_cookie_buffer_initial_size = 512;
     do {                                                                                                               \
         if ((decoder)->vtable->fn) {                                                                                   \
             DECODER_LOG(TRACE, decoder, "Invoking callback " #fn)                                                      \
-            struct aws_h2_err vtable_err = (decoder)->vtable->fn((decoder)->userdata);                                 \
-            if (aws_h2_err_failed(vtable_err)) {                                                                       \
+            struct aws_h2err vtable_err = (decoder)->vtable->fn((decoder)->userdata);                                  \
+            if (aws_h2err_failed(vtable_err)) {                                                                        \
                 DECODER_LOGF(                                                                                          \
                     ERROR,                                                                                             \
                     decoder,                                                                                           \
@@ -63,8 +63,8 @@ static const size_t s_decoder_cookie_buffer_initial_size = 512;
     do {                                                                                                               \
         if ((decoder)->vtable->fn) {                                                                                   \
             DECODER_LOG(TRACE, decoder, "Invoking callback " #fn)                                                      \
-            struct aws_h2_err vtable_err = (decoder)->vtable->fn(__VA_ARGS__, (decoder)->userdata);                    \
-            if (aws_h2_err_failed(vtable_err)) {                                                                       \
+            struct aws_h2err vtable_err = (decoder)->vtable->fn(__VA_ARGS__, (decoder)->userdata);                     \
+            if (aws_h2err_failed(vtable_err)) {                                                                        \
                 DECODER_LOGF(                                                                                          \
                     ERROR,                                                                                             \
                     decoder,                                                                                           \
@@ -134,7 +134,7 @@ static enum pseudoheader_name s_header_to_pseudoheader_name(enum aws_http_header
  * State Machine
  **********************************************************************************************************************/
 
-typedef struct aws_h2_err(state_fn)(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input);
+typedef struct aws_h2err(state_fn)(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input);
 struct decoder_state {
     state_fn *fn;
     uint32_t bytes_required;
@@ -373,13 +373,13 @@ void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder) {
     aws_mem_release(decoder->alloc, decoder);
 }
 
-struct aws_h2_err aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) {
+struct aws_h2err aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data) {
     AWS_PRECONDITION(decoder);
     AWS_PRECONDITION(data);
 
     AWS_FATAL_ASSERT(!decoder->has_errored);
 
-    struct aws_h2_err err = AWS_H2_ERR_SUCCESS;
+    struct aws_h2err err = AWS_H2ERR_SUCCESS;
 
     /* Run decoder state machine until we're no longer changing states.
      * We don't simply loop `while(data->len)` because some states consume no data,
@@ -399,7 +399,7 @@ struct aws_h2_err aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_
             DECODER_LOGF(TRACE, decoder, "Running state '%s' with %zu bytes available", current_state_name, data->len);
 
             err = decoder->state->fn(decoder, data);
-            if (aws_h2_err_failed(err)) {
+            if (aws_h2err_failed(err)) {
                 goto handle_error;
             }
 
@@ -430,7 +430,7 @@ struct aws_h2_err aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_
 
                 struct aws_byte_cursor state_data = aws_byte_cursor_from_buf(&decoder->scratch);
                 err = decoder->state->fn(decoder, &state_data);
-                if (aws_h2_err_failed(err)) {
+                if (aws_h2err_failed(err)) {
                     goto handle_error;
                 }
 
@@ -447,7 +447,7 @@ struct aws_h2_err aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_
         }
     } while (decoder->state_changed);
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 
 handle_error:
     decoder->has_errored = true;
@@ -458,36 +458,36 @@ handle_error:
  * State functions
  **********************************************************************************************************************/
 
-static struct aws_h2_err s_decoder_switch_state(struct aws_h2_decoder *decoder, const struct decoder_state *state) {
+static struct aws_h2err s_decoder_switch_state(struct aws_h2_decoder *decoder, const struct decoder_state *state) {
     /* Ensure payload is big enough to enter next state.
      * If this fails, then the payload length we received is too small for this frame type.
      * (ex: a RST_STREAM frame with < 4 bytes) */
     if (decoder->frame_in_progress.payload_len < state->bytes_required) {
         DECODER_LOGF(
             ERROR, decoder, "%s payload is too small", aws_h2_frame_type_to_str(decoder->frame_in_progress.type));
-        return aws_h2_err_from_h2_code(AWS_H2_ERR_FRAME_SIZE_ERROR);
+        return aws_h2err_from_h2_code(AWS_H2_ERR_FRAME_SIZE_ERROR);
     }
 
     DECODER_LOGF(TRACE, decoder, "Moving from state '%s' to '%s'", decoder->state->name, state->name);
     decoder->scratch.len = 0;
     decoder->state = state;
     decoder->state_changed = true;
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-static struct aws_h2_err s_decoder_switch_to_frame_state(struct aws_h2_decoder *decoder) {
+static struct aws_h2err s_decoder_switch_to_frame_state(struct aws_h2_decoder *decoder) {
     AWS_ASSERT(decoder->frame_in_progress.type < AWS_H2_FRAME_TYPE_COUNT);
     return s_decoder_switch_state(decoder, s_state_frames[decoder->frame_in_progress.type]);
 }
 
-static struct aws_h2_err s_decoder_reset_state(struct aws_h2_decoder *decoder) {
+static struct aws_h2err s_decoder_reset_state(struct aws_h2_decoder *decoder) {
     /* Ensure we've consumed all payload (and padding) when state machine finishes this frame.
      * If this fails, the payload length we received is too large for this frame type.
      * (ex: a RST_STREAM frame with > 4 bytes) */
     if (decoder->frame_in_progress.payload_len > 0 || decoder->frame_in_progress.padding_len > 0) {
         DECODER_LOGF(
             ERROR, decoder, "%s frame payload is too large", aws_h2_frame_type_to_str(decoder->frame_in_progress.type));
-        return aws_h2_err_from_h2_code(AWS_H2_ERR_FRAME_SIZE_ERROR);
+        return aws_h2err_from_h2_code(AWS_H2_ERR_FRAME_SIZE_ERROR);
     }
 
     DECODER_LOGF(TRACE, decoder, "%s frame complete", aws_h2_frame_type_to_str(decoder->frame_in_progress.type));
@@ -497,7 +497,7 @@ static struct aws_h2_err s_decoder_reset_state(struct aws_h2_decoder *decoder) {
     decoder->state_changed = true;
 
     AWS_ZERO_STRUCT(decoder->frame_in_progress);
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
 /** Returns as much of the current frame's payload as possible, and updates payload_len */
@@ -571,7 +571,7 @@ static const enum stream_id_rules s_stream_id_rules_for_frame[AWS_H2_FRAME_TYPE_
  *  |                   Frame Payload (0...)                      ...
  *  +---------------------------------------------------------------+
  */
-static struct aws_h2_err s_state_fn_prefix(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_prefix(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     AWS_ASSERT(input->len >= s_state_prefix_requires_9_bytes);
 
@@ -611,7 +611,7 @@ static struct aws_h2_err s_state_fn_prefix(struct aws_h2_decoder *decoder, struc
             decoder->connection_preface_complete = true;
         } else {
             DECODER_LOG(ERROR, decoder, "First frame must be SETTINGS");
-            return aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+            return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
         }
     }
 
@@ -625,12 +625,12 @@ static struct aws_h2_err s_state_fn_prefix(struct aws_h2_decoder *decoder, struc
     if (frame->stream_id) {
         if (stream_id_rules == STREAM_ID_FORBIDDEN) {
             DECODER_LOGF(ERROR, decoder, "Stream ID for %s frame must be 0.", aws_h2_frame_type_to_str(frame->type));
-            return aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+            return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
         }
     } else {
         if (stream_id_rules == STREAM_ID_REQUIRED) {
             DECODER_LOGF(ERROR, decoder, "Stream ID for %s frame cannot be 0.", aws_h2_frame_type_to_str(frame->type));
-            return aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+            return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
         }
     }
 
@@ -640,12 +640,12 @@ static struct aws_h2_err s_state_fn_prefix(struct aws_h2_decoder *decoder, struc
     if (frame->type == AWS_H2_FRAME_T_CONTINUATION) {
         if (decoder->header_block_in_progress.stream_id != frame->stream_id) {
             DECODER_LOG(ERROR, decoder, "Unexpected CONTINUATION frame.");
-            return aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+            return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
         }
     } else {
         if (decoder->header_block_in_progress.stream_id) {
             DECODER_LOG(ERROR, decoder, "Expected CONTINUATION frame.");
-            return aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+            return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
         }
     }
 
@@ -658,7 +658,7 @@ static struct aws_h2_err s_state_fn_prefix(struct aws_h2_decoder *decoder, struc
             "Decoder's max frame size is %" PRIu32 ", but frame of size %" PRIu32 " was received.",
             max_frame_size,
             frame->payload_len);
-        return aws_h2_err_from_h2_code(AWS_H2_ERR_FRAME_SIZE_ERROR);
+        return aws_h2err_from_h2_code(AWS_H2_ERR_FRAME_SIZE_ERROR);
     }
 
     DECODER_LOGF(
@@ -688,7 +688,7 @@ static struct aws_h2_err s_state_fn_prefix(struct aws_h2_decoder *decoder, struc
  *  |Pad Length? (8)|
  *  +---------------+
  */
-static struct aws_h2_err s_state_fn_padding_len(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_padding_len(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     AWS_ASSERT(input->len >= s_state_padding_len_requires_1_bytes);
 
@@ -701,7 +701,7 @@ static struct aws_h2_err s_state_fn_padding_len(struct aws_h2_decoder *decoder, 
     uint32_t reduce_payload = s_state_padding_len_requires_1_bytes + decoder->frame_in_progress.padding_len;
     if (reduce_payload > decoder->frame_in_progress.payload_len) {
         DECODER_LOG(ERROR, decoder, "Padding length exceeds payload length");
-        return aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
     }
     decoder->frame_in_progress.payload_len -= reduce_payload;
 
@@ -716,7 +716,7 @@ static struct aws_h2_err s_state_fn_padding_len(struct aws_h2_decoder *decoder, 
     return s_decoder_switch_to_frame_state(decoder);
 }
 
-static struct aws_h2_err s_state_fn_padding(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_padding(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     const uint8_t remaining_len = decoder->frame_in_progress.padding_len;
     const uint8_t consuming_len = input->len < remaining_len ? (uint8_t)input->len : remaining_len;
@@ -728,7 +728,7 @@ static struct aws_h2_err s_state_fn_padding(struct aws_h2_decoder *decoder, stru
         return s_decoder_reset_state(decoder);
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
 /* Shared code for:
@@ -740,7 +740,7 @@ static struct aws_h2_err s_state_fn_padding(struct aws_h2_decoder *decoder, stru
  *  |  Weight (8)   |
  *  +-+-------------+-----------------------------------------------+
  */
-static struct aws_h2_err s_state_fn_priority_block(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_priority_block(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     AWS_ASSERT(input->len >= s_state_priority_block_requires_5_bytes);
 
@@ -754,7 +754,7 @@ static struct aws_h2_err s_state_fn_priority_block(struct aws_h2_decoder *decode
     return s_decoder_switch_to_frame_state(decoder);
 }
 
-static struct aws_h2_err s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     const struct aws_byte_cursor body_data = s_decoder_get_payload(decoder, input);
 
@@ -780,9 +780,9 @@ static struct aws_h2_err s_state_fn_frame_data(struct aws_h2_decoder *decoder, s
         return s_decoder_switch_state(decoder, &s_state_padding);
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
-static struct aws_h2_err s_state_fn_frame_headers(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_headers(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
     /* Start header-block and alert the user */
@@ -795,7 +795,7 @@ static struct aws_h2_err s_state_fn_frame_headers(struct aws_h2_decoder *decoder
     /* Read the header-block fragment */
     return s_decoder_switch_state(decoder, &s_state_header_block_loop);
 }
-static struct aws_h2_err s_state_fn_frame_priority(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_priority(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
     /* We already processed this data in the shared priority_block state, so we're done! */
@@ -807,7 +807,7 @@ static struct aws_h2_err s_state_fn_frame_priority(struct aws_h2_decoder *decode
  *  |                        Error Code (32)                        |
  *  +---------------------------------------------------------------+
  */
-static struct aws_h2_err s_state_fn_frame_rst_stream(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_rst_stream(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     AWS_ASSERT(input->len >= s_state_frame_rst_stream_requires_4_bytes);
 
@@ -825,9 +825,7 @@ static struct aws_h2_err s_state_fn_frame_rst_stream(struct aws_h2_decoder *deco
 
 /* A SETTINGS frame may contain any number of 6-byte entries.
  * This state consumes no data, but sends us into the appropriate next state */
-static struct aws_h2_err s_state_fn_frame_settings_begin(
-    struct aws_h2_decoder *decoder,
-    struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_settings_begin(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
     /* If ack is set, report and we're done */
@@ -840,7 +838,7 @@ static struct aws_h2_err s_state_fn_frame_settings_begin(
                 decoder,
                 "SETTINGS ACK frame received, but it has non-0 payload length %" PRIu32,
                 decoder->frame_in_progress.payload_len);
-            return aws_h2_err_from_h2_code(AWS_H2_ERR_FRAME_SIZE_ERROR);
+            return aws_h2err_from_h2_code(AWS_H2_ERR_FRAME_SIZE_ERROR);
         }
 
         DECODER_CALL_VTABLE(decoder, on_settings_ack);
@@ -856,7 +854,7 @@ static struct aws_h2_err s_state_fn_frame_settings_begin(
             "Settings frame payload length is %" PRIu32 ", but it must be divisible by %" PRIu32,
             decoder->frame_in_progress.payload_len,
             s_state_frame_settings_i_requires_6_bytes);
-        return aws_h2_err_from_h2_code(AWS_H2_ERR_FRAME_SIZE_ERROR);
+        return aws_h2err_from_h2_code(AWS_H2_ERR_FRAME_SIZE_ERROR);
     }
 
     /* Enter looping states until all entries are consumed. */
@@ -864,7 +862,7 @@ static struct aws_h2_err s_state_fn_frame_settings_begin(
 }
 
 /* Check if we're done consuming settings */
-static struct aws_h2_err s_state_fn_frame_settings_loop(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_settings_loop(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
     if (decoder->frame_in_progress.payload_len == 0) {
@@ -888,7 +886,7 @@ static struct aws_h2_err s_state_fn_frame_settings_loop(struct aws_h2_decoder *d
  *  |                        Value (32)                             |
  *  +---------------------------------------------------------------+
  */
-static struct aws_h2_err s_state_fn_frame_settings_i(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_settings_i(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     AWS_ASSERT(input->len >= s_state_frame_settings_i_requires_6_bytes);
 
@@ -911,9 +909,9 @@ static struct aws_h2_err s_state_fn_frame_settings_i(struct aws_h2_decoder *deco
             DECODER_LOGF(
                 ERROR, decoder, "A value of SETTING frame is invalid, id: %" PRIu16 ", value: %" PRIu32, id, value);
             if (id == AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE) {
-                return aws_h2_err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
+                return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
             } else {
-                return aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+                return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
             }
         }
         struct aws_h2_frame_setting setting;
@@ -922,7 +920,7 @@ static struct aws_h2_err s_state_fn_frame_settings_i(struct aws_h2_decoder *deco
         /* array_list will keep a copy of setting, it is fine to be a local variable */
         if (aws_array_list_push_back(&decoder->settings_buffer_list, &setting)) {
             DECODER_LOGF(ERROR, decoder, "Writing setting to buffer failed, %s", aws_error_name(aws_last_error()));
-            return aws_h2_err_from_last_error();
+            return aws_h2err_from_last_error();
         }
     }
 
@@ -938,12 +936,12 @@ static struct aws_h2_err s_state_fn_frame_settings_i(struct aws_h2_decoder *deco
  *  |R|                  Promised Stream ID (31)                    |
  *  +-+-----------------------------+-------------------------------+
  */
-static struct aws_h2_err s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_push_promise(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     if (decoder->settings.enable_push == 0) {
         /* treat the receipt of a PUSH_PROMISE frame as a connection error of type PROTOCOL_ERROR.(RFC-7540 6.5.2) */
         DECODER_LOG(ERROR, decoder, "PUSH_PROMISE is invalid, the seting for enable push is 0");
-        return aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
     }
 
     AWS_ASSERT(input->len >= s_state_frame_push_promise_requires_4_bytes);
@@ -962,13 +960,13 @@ static struct aws_h2_err s_state_fn_frame_push_promise(struct aws_h2_decoder *de
      * Promised stream ID (server-initiated) must be even-numbered (RFC-7540 5.1.1). */
     if ((promised_stream_id == 0) || (promised_stream_id % 2) != 0) {
         DECODER_LOGF(ERROR, decoder, "PUSH_PROMISE is promising invalid stream ID %" PRIu32, promised_stream_id);
-        return aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
     }
 
     /* Server cannot receive PUSH_PROMISE frames */
     if (decoder->is_server) {
         DECODER_LOG(ERROR, decoder, "Server cannot receive PUSH_PROMISE frames");
-        return aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
     }
 
     /* Start header-block and alert the user. */
@@ -989,7 +987,7 @@ static struct aws_h2_err s_state_fn_frame_push_promise(struct aws_h2_decoder *de
  *  |                                                               |
  *  +---------------------------------------------------------------+
  */
-static struct aws_h2_err s_state_fn_frame_ping(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_ping(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     AWS_ASSERT(input->len >= s_state_frame_ping_requires_8_bytes);
 
@@ -1017,7 +1015,7 @@ static struct aws_h2_err s_state_fn_frame_ping(struct aws_h2_decoder *decoder, s
  *  |                      Error Code (32)                          |
  *  +---------------------------------------------------------------+
  */
-static struct aws_h2_err s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     AWS_ASSERT(input->len >= s_state_frame_goaway_requires_8_bytes);
 
@@ -1046,7 +1044,7 @@ static struct aws_h2_err s_state_fn_frame_goaway(struct aws_h2_decoder *decoder,
  *  |                  Additional Debug Data (*)                    |
  *  +---------------------------------------------------------------+
  */
-static struct aws_h2_err s_state_fn_frame_goaway_debug_data(
+static struct aws_h2err s_state_fn_frame_goaway_debug_data(
     struct aws_h2_decoder *decoder,
     struct aws_byte_cursor *input) {
 
@@ -1061,7 +1059,7 @@ static struct aws_h2_err s_state_fn_frame_goaway_debug_data(
         return s_decoder_reset_state(decoder);
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
 /* WINDOW_UPDATE frame.
@@ -1069,7 +1067,7 @@ static struct aws_h2_err s_state_fn_frame_goaway_debug_data(
  *  |R|              Window Size Increment (31)                     |
  *  +-+-------------------------------------------------------------+
  */
-static struct aws_h2_err s_state_fn_frame_window_update(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_window_update(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     AWS_ASSERT(input->len >= s_state_frame_window_update_requires_4_bytes);
 
@@ -1088,7 +1086,7 @@ static struct aws_h2_err s_state_fn_frame_window_update(struct aws_h2_decoder *d
 }
 
 /* CONTINUATION is a lot like HEADERS, so it uses shared states. */
-static struct aws_h2_err s_state_fn_frame_continuation(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_continuation(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
     /* Read the header-block fragment */
@@ -1096,7 +1094,7 @@ static struct aws_h2_err s_state_fn_frame_continuation(struct aws_h2_decoder *de
 }
 
 /* Implementations MUST ignore and discard any frame that has a type that is unknown. */
-static struct aws_h2_err s_state_fn_frame_unknown(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_unknown(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     /* Read all data possible, and throw it on the floor */
     s_decoder_get_payload(decoder, input);
@@ -1106,12 +1104,12 @@ static struct aws_h2_err s_state_fn_frame_unknown(struct aws_h2_decoder *decoder
         return s_decoder_reset_state(decoder);
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
 /* Perform analysis that can't be done until all pseudo-headers are received.
  * Then deliver buffered pseudoheaders via callback */
-static struct aws_h2_err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
+static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
     struct aws_header_block_in_progress *current_block = &decoder->header_block_in_progress;
 
     if (current_block->malformed) {
@@ -1119,7 +1117,7 @@ static struct aws_h2_err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
     }
 
     if (current_block->pseudoheaders_done) {
-        return AWS_H2_ERR_SUCCESS;
+        return AWS_H2ERR_SUCCESS;
     }
     current_block->pseudoheaders_done = true;
 
@@ -1203,21 +1201,21 @@ static struct aws_h2_err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
         }
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 
 malformed:
     /* A malformed header-block is not a connection error, it's a Stream Error (RFC-7540 5.4.2).
      * We continue decoding and report that it's malformed in on_headers_end(). */
     current_block->malformed = true;
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 already_malformed:
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
 /* Process single header-field.
  * If it's invalid, mark the header-block as malformed.
  * If it's valid, and header-block is not malformed, deliver via callback. */
-static struct aws_h2_err s_process_header_field(
+static struct aws_h2err s_process_header_field(
     struct aws_h2_decoder *decoder,
     const struct aws_http_header *header_field) {
 
@@ -1278,15 +1276,15 @@ static struct aws_h2_err s_process_header_field(
         current_block->pseudoheader_values[pseudoheader_enum] =
             aws_string_new_from_array(decoder->alloc, header_field->value.ptr, header_field->value.len);
         if (!current_block->pseudoheader_values[pseudoheader_enum]) {
-            return aws_h2_err_from_last_error();
+            return aws_h2err_from_last_error();
         }
 
     } else { /* Else regular header-field. */
 
         /* Regular header-fields come after pseudo-headers, so make sure pseudo-headers are flushed */
         if (!current_block->pseudoheaders_done) {
-            struct aws_h2_err err = s_flush_pseudoheaders(decoder);
-            if (aws_h2_err_failed(err)) {
+            struct aws_h2err err = s_flush_pseudoheaders(decoder);
+            if (aws_h2err_failed(err)) {
                 return err;
             }
 
@@ -1319,11 +1317,11 @@ static struct aws_h2_err s_process_header_field(
                     /* add a delimiter */
                     struct aws_byte_cursor delimiter = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("; ");
                     if (aws_byte_buf_append_dynamic(&current_block->cookies, &delimiter)) {
-                        return aws_h2_err_from_last_error();
+                        return aws_h2err_from_last_error();
                     }
                 }
                 if (aws_byte_buf_append_dynamic(&current_block->cookies, &header_field->value)) {
-                    return aws_h2_err_from_last_error();
+                    return aws_h2err_from_last_error();
                 }
                 break;
             /* TODO: Validate connection-specific header field (RFC7540 8.1.2.2) */
@@ -1339,25 +1337,25 @@ static struct aws_h2_err s_process_header_field(
         }
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 
 malformed:
     /* A malformed header-block is not a connection error, it's a Stream Error (RFC-7540 5.4.2).
      * We continue decoding and report that it's malformed in on_headers_end(). */
     current_block->malformed = true;
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 already_malformed:
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-static struct aws_h2_err s_flush_cookie_header(struct aws_h2_decoder *decoder) {
+static struct aws_h2err s_flush_cookie_header(struct aws_h2_decoder *decoder) {
     struct aws_header_block_in_progress *current_block = &decoder->header_block_in_progress;
     if (current_block->malformed) {
-        return AWS_H2_ERR_SUCCESS;
+        return AWS_H2ERR_SUCCESS;
     }
     if (current_block->cookies.len == 0) {
         /* Nothing to flush */
-        return AWS_H2_ERR_SUCCESS;
+        return AWS_H2ERR_SUCCESS;
     }
     struct aws_http_header concatenated_cookie;
     struct aws_byte_cursor header_name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("cookie");
@@ -1370,13 +1368,13 @@ static struct aws_h2_err s_flush_cookie_header(struct aws_h2_decoder *decoder) {
         DECODER_CALL_VTABLE_STREAM_ARGS(
             decoder, on_headers_i, &concatenated_cookie, AWS_HTTP_HEADER_COOKIE, current_block->block_type);
     }
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
 /* This state checks whether we've consumed the current frame's entire header-block fragment.
  * We revisit this state after each entry is decoded.
  * This state consumes no data. */
-static struct aws_h2_err s_state_fn_header_block_loop(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_header_block_loop(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
     /* If we're out of payload data, handle frame complete */
@@ -1385,13 +1383,13 @@ static struct aws_h2_err s_state_fn_header_block_loop(struct aws_h2_decoder *dec
         /* If this is the end of the header-block, invoke callback and clear header_block_in_progress */
         if (decoder->frame_in_progress.flags.end_headers) {
             /* Ensure pseudo-headers have been flushed */
-            struct aws_h2_err err = s_flush_pseudoheaders(decoder);
-            if (aws_h2_err_failed(err)) {
+            struct aws_h2err err = s_flush_pseudoheaders(decoder);
+            if (aws_h2err_failed(err)) {
                 return err;
             }
             /* flush the concatenated cookie header */
             err = s_flush_cookie_header(decoder);
-            if (aws_h2_err_failed(err)) {
+            if (aws_h2err_failed(err)) {
                 return err;
             }
 
@@ -1431,7 +1429,7 @@ static struct aws_h2_err s_state_fn_header_block_loop(struct aws_h2_decoder *dec
 
 /* We stay in this state until a single "entry" is decoded from the header-block fragment.
  * Then we return to the header_block_loop state */
-static struct aws_h2_err s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_header_block_entry(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     /* This state requires at least 1 byte, but will likely consume more */
     AWS_ASSERT(input->len >= s_state_header_block_entry_requires_1_bytes);
 
@@ -1450,9 +1448,9 @@ static struct aws_h2_err s_state_fn_header_block_entry(struct aws_h2_decoder *de
 
         /* Any possible error from HPACK decoder (except OOM) is treated as a COMPRESSION error. */
         if (aws_last_error() == AWS_ERROR_OOM) {
-            return aws_h2_err_from_last_error();
+            return aws_h2err_from_last_error();
         } else {
-            return aws_h2_err_from_h2_code(AWS_H2_ERR_COMPRESSION_ERROR);
+            return aws_h2err_from_h2_code(AWS_H2_ERR_COMPRESSION_ERROR);
         }
     }
 
@@ -1468,14 +1466,14 @@ static struct aws_h2_err s_state_fn_header_block_entry(struct aws_h2_decoder *de
         if (decoder->frame_in_progress.payload_len > 0) {
             /* More payload is coming. Remain in state until it arrives */
             DECODER_LOG(TRACE, decoder, "Header-block entry partially decoded, waiting for more data.");
-            return AWS_H2_ERR_SUCCESS;
+            return AWS_H2ERR_SUCCESS;
         }
 
         if (decoder->frame_in_progress.flags.end_headers) {
             /* Reached end of the frame's payload, and this frame ends the header-block.
              * Error if we ended up with a partially decoded entry. */
             DECODER_LOG(ERROR, decoder, "Compression error: incomplete entry at end of header-block");
-            return aws_h2_err_from_h2_code(AWS_H2_ERR_COMPRESSION_ERROR);
+            return aws_h2err_from_h2_code(AWS_H2_ERR_COMPRESSION_ERROR);
         }
 
         /* Reached end of this frame's payload, but CONTINUATION frames are expected to arrive.
@@ -1502,8 +1500,8 @@ static struct aws_h2_err s_state_fn_header_block_entry(struct aws_h2_decoder *de
             AWS_BYTE_CURSOR_PRI(header_field->name),
             AWS_BYTE_CURSOR_PRI(header_field->value));
 
-        struct aws_h2_err err = s_process_header_field(decoder, header_field);
-        if (aws_h2_err_failed(err)) {
+        struct aws_h2err err = s_process_header_field(decoder, header_field);
+        if (aws_h2err_failed(err)) {
             return err;
         }
     }
@@ -1514,7 +1512,7 @@ static struct aws_h2_err s_state_fn_header_block_entry(struct aws_h2_decoder *de
 /* The first thing a client sends on a connection is a 24 byte magic string (RFC-7540 3.5).
  * Note that this state doesn't "require" the full 24 bytes, it runs as data arrives.
  * This avoids hanging if < 24 bytes rolled in. */
-static struct aws_h2_err s_state_fn_connection_preface_string(
+static struct aws_h2err s_state_fn_connection_preface_string(
     struct aws_h2_decoder *decoder,
     struct aws_byte_cursor *input) {
     size_t remaining_len = decoder->connection_preface_cursor.len;
@@ -1526,7 +1524,7 @@ static struct aws_h2_err s_state_fn_connection_preface_string(
 
     if (!aws_byte_cursor_eq(&expected, &received)) {
         DECODER_LOG(ERROR, decoder, "Client connection preface is invalid");
-        return aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
     }
 
     if (decoder->connection_preface_cursor.len == 0) {
@@ -1535,7 +1533,7 @@ static struct aws_h2_err s_state_fn_connection_preface_string(
     }
 
     /* Remain in state until more data arrives */
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
 void aws_h2_decoder_set_setting_header_table_size(struct aws_h2_decoder *decoder, uint32_t data) {

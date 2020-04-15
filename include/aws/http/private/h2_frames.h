@@ -71,13 +71,13 @@ enum aws_h2_error_code {
  * Used in place of normal error handling in functions that may result
  * in an HTTP/2 Connection Error or Stream Error.
  */
-struct aws_h2_err {
+struct aws_h2err {
     enum aws_h2_error_code h2_code;
     int aws_code;
 };
 
-#define AWS_H2_ERR_SUCCESS                                                                                             \
-    (struct aws_h2_err) { .h2_code = 0, .aws_code = 0 }
+#define AWS_H2ERR_SUCCESS                                                                                              \
+    (struct aws_h2err) { .h2_code = 0, .aws_code = 0 }
 
 /* Predefined settings identifiers (RFC-7540 6.5.2) */
 enum aws_h2_settings {
@@ -189,7 +189,7 @@ const char *aws_h2_error_code_to_str(enum aws_h2_error_code h2_error_code);
  * The AWS_ERROR reported to the API user will be AWS_ERROR_HTTP_PROTOCOL_ERROR.
  */
 AWS_HTTP_API
-struct aws_h2_err aws_h2_err_from_h2_code(enum aws_h2_error_code h2_error_code);
+struct aws_h2err aws_h2err_from_h2_code(enum aws_h2_error_code h2_error_code);
 
 /**
  * Specify which AWS_ERROR will be reported to the API user.
@@ -197,16 +197,16 @@ struct aws_h2_err aws_h2_err_from_h2_code(enum aws_h2_error_code h2_error_code);
  * The peer will be sent a GOAWAY or RST_STREAM with the INTERNAL_ERROR HTTP/2 error-code.
  */
 AWS_HTTP_API
-struct aws_h2_err aws_h2_err_from_aws_code(int aws_error_code);
+struct aws_h2err aws_h2err_from_aws_code(int aws_error_code);
 
 AWS_HTTP_API
-struct aws_h2_err aws_h2_err_from_last_error(void);
+struct aws_h2err aws_h2err_from_last_error(void);
 
 AWS_HTTP_API
-bool aws_h2_err_success(struct aws_h2_err err);
+bool aws_h2err_success(struct aws_h2err err);
 
 AWS_HTTP_API
-bool aws_h2_err_failed(struct aws_h2_err err);
+bool aws_h2err_failed(struct aws_h2err err);
 
 /* Raises AWS_ERROR_INVALID_ARGUMENT if stream_id is 0 or exceeds AWS_H2_MAX_STREAM_ID */
 AWS_HTTP_API

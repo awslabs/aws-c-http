@@ -143,7 +143,7 @@ static bool s_server_state_allows_frame_type[AWS_H2_STREAM_STATE_COUNT][AWS_H2_F
 };
 
 /* Returns the appropriate Stream Error if given frame not allowed in current state */
-static struct aws_h2_err s_check_state_allows_frame_type(
+static struct aws_h2err s_check_state_allows_frame_type(
     const struct aws_h2_stream *stream,
     enum aws_h2_frame_type frame_type) {
 
@@ -160,7 +160,7 @@ static struct aws_h2_err s_check_state_allows_frame_type(
     }
 
     if (allowed) {
-        return AWS_H2_ERR_SUCCESS;
+        return AWS_H2ERR_SUCCESS;
     }
 
     /* Determine specific error code */
@@ -178,7 +178,7 @@ static struct aws_h2_err s_check_state_allows_frame_type(
         aws_h2_frame_type_to_str(frame_type),
         aws_h2_stream_state_to_str(state));
 
-    return aws_h2_err_from_h2_code(h2_error_code);
+    return aws_h2err_from_h2_code(h2_error_code);
 }
 
 struct aws_h2_stream *aws_h2_stream_new_request(
@@ -233,7 +233,7 @@ enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *str
 
 /* Given a Stream Error, send RST_STREAM frame and close stream.
  * A Connection Error is returned if something goes catastrophically wrong */
-static struct aws_h2_err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2_err stream_error) {
+static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
     AWS_PRECONDITION(stream->thread_data.state != AWS_H2_STREAM_STATE_CLOSED);
 
@@ -252,17 +252,17 @@ static struct aws_h2_err s_send_rst_and_close_stream(struct aws_h2_stream *strea
         aws_h2_frame_new_rst_stream(stream->base.alloc, stream->base.id, stream_error.h2_code);
     if (!rst_stream_frame) {
         AWS_H2_STREAM_LOGF(ERROR, stream, "Error creating RST_STREAM frame, %s", aws_error_name(aws_last_error()));
-        return aws_h2_err_from_last_error();
+        return aws_h2err_from_last_error();
     }
     aws_h2_connection_enqueue_outgoing_frame(connection, rst_stream_frame); /* connection takes ownership of frame */
 
     /* Tell connection that stream is now closed */
     if (aws_h2_connection_on_stream_closed(
             connection, stream, AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT, stream_error.aws_code)) {
-        return aws_h2_err_from_last_error();
+        return aws_h2err_from_last_error();
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
 int aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed) {
@@ -398,18 +398,18 @@ int aws_h2_stream_encode_data_frame(
     return AWS_OP_SUCCESS;
 }
 
-struct aws_h2_err aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *stream) {
+struct aws_h2err aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *stream) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
-    struct aws_h2_err stream_err = s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_HEADERS);
-    if (aws_h2_err_failed(stream_err)) {
+    struct aws_h2err stream_err = s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_HEADERS);
+    if (aws_h2err_failed(stream_err)) {
         return s_send_rst_and_close_stream(stream, stream_err);
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2_err aws_h2_stream_on_decoder_headers_i(
+struct aws_h2err aws_h2_stream_on_decoder_headers_i(
     struct aws_h2_stream *stream,
     const struct aws_http_header *header,
     enum aws_http_header_name name_enum,
@@ -452,7 +452,7 @@ struct aws_h2_err aws_h2_stream_on_decoder_headers_i(
     }
 
     if (is_server) {
-        return aws_h2_err_from_aws_code(AWS_ERROR_UNIMPLEMENTED);
+        return aws_h2err_from_aws_code(AWS_ERROR_UNIMPLEMENTED);
 
     } else {
         /* Client */
@@ -471,17 +471,17 @@ struct aws_h2_err aws_h2_stream_on_decoder_headers_i(
             /* #TODO: callback errors should be Stream Errors, not Connection Errors */
             AWS_H2_STREAM_LOGF(
                 ERROR, stream, "Incoming header callback raised error, %s", aws_error_name(aws_last_error()));
-            return aws_h2_err_from_last_error();
+            return aws_h2err_from_last_error();
         }
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 
 malformed:
-    return s_send_rst_and_close_stream(stream, aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR));
+    return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR));
 }
 
-struct aws_h2_err aws_h2_stream_on_decoder_headers_end(
+struct aws_h2err aws_h2_stream_on_decoder_headers_end(
     struct aws_h2_stream *stream,
     bool malformed,
     enum aws_http_header_block block_type) {
@@ -493,7 +493,7 @@ struct aws_h2_err aws_h2_stream_on_decoder_headers_end(
 
     if (malformed) {
         AWS_H2_STREAM_LOG(ERROR, stream, "Headers are malformed");
-        return s_send_rst_and_close_stream(stream, aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR));
+        return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR));
     }
 
     switch (block_type) {
@@ -518,18 +518,18 @@ struct aws_h2_err aws_h2_stream_on_decoder_headers_end(
                 stream,
                 "Incoming-header-block-done callback raised error, %s",
                 aws_error_name(aws_last_error()));
-            return aws_h2_err_from_last_error();
+            return aws_h2err_from_last_error();
         }
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2_err aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *stream, uint32_t promised_stream_id) {
+struct aws_h2err aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *stream, uint32_t promised_stream_id) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
-    struct aws_h2_err stream_err = s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_PUSH_PROMISE);
-    if (aws_h2_err_failed(stream_err)) {
+    struct aws_h2err stream_err = s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_PUSH_PROMISE);
+    if (aws_h2err_failed(stream_err)) {
         return s_send_rst_and_close_stream(stream, stream_err);
     }
 
@@ -538,23 +538,23 @@ struct aws_h2_err aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *st
     AWS_H2_STREAM_LOG(DEBUG, stream, "Automatically rejecting promised stream, PUSH_PROMISE is not fully supported");
     if (aws_h2_connection_send_rst_and_close_reserved_stream(
             s_get_h2_connection(stream), promised_stream_id, AWS_H2_ERR_REFUSED_STREAM)) {
-        return aws_h2_err_from_last_error();
+        return aws_h2err_from_last_error();
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2_err aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_cursor data) {
+struct aws_h2err aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_cursor data) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
-    struct aws_h2_err stream_err = s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_DATA);
-    if (aws_h2_err_failed(stream_err)) {
+    struct aws_h2err stream_err = s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_DATA);
+    if (aws_h2err_failed(stream_err)) {
         return s_send_rst_and_close_stream(stream, stream_err);
     }
 
     if (!stream->thread_data.received_main_headers) {
         AWS_H2_STREAM_LOG(ERROR, stream, "Malformed message, received DATA before main HEADERS");
-        return s_send_rst_and_close_stream(stream, aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR));
+        return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR));
     }
 
     /* #TODO Update stream's flow-control window */
@@ -563,14 +563,14 @@ struct aws_h2_err aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, st
         if (stream->base.on_incoming_body(&stream->base, &data, stream->base.user_data)) {
             AWS_H2_STREAM_LOGF(
                 ERROR, stream, "Incoming body callback raised error, %s", aws_error_name(aws_last_error()));
-            return aws_h2_err_from_last_error();
+            return aws_h2err_from_last_error();
         }
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2_err aws_h2_stream_on_decoder_window_update(
+struct aws_h2err aws_h2_stream_on_decoder_window_update(
     struct aws_h2_stream *stream,
     uint32_t window_size_increment,
     bool *window_resume) {
@@ -578,29 +578,29 @@ struct aws_h2_err aws_h2_stream_on_decoder_window_update(
 
     *window_resume = false;
 
-    struct aws_h2_err stream_err = s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_WINDOW_UPDATE);
-    if (aws_h2_err_failed(stream_err)) {
+    struct aws_h2err stream_err = s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_WINDOW_UPDATE);
+    if (aws_h2err_failed(stream_err)) {
         return s_send_rst_and_close_stream(stream, stream_err);
     }
     if (window_size_increment == 0) {
         /* flow-control window increment of 0 MUST be treated as error (RFC7540 6.9.1) */
         AWS_H2_STREAM_LOG(ERROR, stream, "Window update frame with 0 increment size");
-        return s_send_rst_and_close_stream(stream, aws_h2_err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR));
+        return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR));
     }
     int32_t old_window_size = stream->thread_data.window_size_peer;
     if (aws_h2_stream_window_size_change(stream, window_size_increment)) {
         /* We MUST NOT allow a flow-control window to exceed the max */
         AWS_H2_STREAM_LOG(
             ERROR, stream, "Window update frame causes the stream flow-control window to exceed the maximum size");
-        return s_send_rst_and_close_stream(stream, aws_h2_err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR));
+        return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR));
     }
     if (stream->thread_data.window_size_peer > AWS_H2_MIN_WINDOW_SIZE && old_window_size <= AWS_H2_MIN_WINDOW_SIZE) {
         *window_resume = true;
     }
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2_err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stream) {
+struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stream) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
     /* Not calling s_check_state_allows_frame_type() here because END_STREAM isn't
@@ -618,7 +618,7 @@ struct aws_h2_err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stre
                 stream,
                 AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM,
                 AWS_ERROR_SUCCESS)) {
-            return aws_h2_err_from_last_error();
+            return aws_h2err_from_last_error();
         }
 
     } else {
@@ -627,15 +627,15 @@ struct aws_h2_err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stre
         AWS_H2_STREAM_LOG(TRACE, stream, "Received END_STREAM. State -> HALF_CLOSED_REMOTE");
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2_err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *stream, uint32_t h2_error_code) {
+struct aws_h2err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *stream, uint32_t h2_error_code) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
     /* Check that this state allows RST_STREAM. */
-    struct aws_h2_err err = s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_RST_STREAM);
-    if (aws_h2_err_failed(err)) {
+    struct aws_h2err err = s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_RST_STREAM);
+    if (aws_h2err_failed(err)) {
         /* Usually we send a RST_STREAM when the state doesn't allow a frame type, but RFC-7540 5.4.2 says:
          * "To avoid looping, an endpoint MUST NOT send a RST_STREAM in response to a RST_STREAM frame." */
         return err;
@@ -674,8 +674,8 @@ struct aws_h2_err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *stre
 
     if (aws_h2_connection_on_stream_closed(
             s_get_h2_connection(stream), stream, AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED, aws_error_code)) {
-        return aws_h2_err_from_last_error();
+        return aws_h2err_from_last_error();
     }
 
-    return AWS_H2_ERR_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }

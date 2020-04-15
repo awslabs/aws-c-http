@@ -22,13 +22,13 @@
 
 struct aws_input_stream;
 
-#define ASSERT_H2_SUCCESS(condition, ...)                                                                              \
+#define ASSERT_H2ERR_SUCCESS(condition, ...)                                                                           \
     do {                                                                                                               \
-        struct aws_h2_err assert_rv = (condition);                                                                     \
-        if (!aws_h2_err_success(assert_rv)) {                                                                          \
+        struct aws_h2err assert_rv = (condition);                                                                      \
+        if (!aws_h2err_success(assert_rv)) {                                                                           \
             if (!PRINT_FAIL_INTERNAL0(__VA_ARGS__)) {                                                                  \
                 PRINT_FAIL_INTERNAL0(                                                                                  \
-                    "Expected success at %s; got aws_h2_err{%s, %s}\n",                                                \
+                    "Expected success at %s; got aws_h2err{%s, %s}\n",                                                 \
                     #condition,                                                                                        \
                     aws_h2_error_code_to_str(assert_rv.h2_code),                                                       \
                     aws_error_name(assert_rv.aws_code));                                                               \
@@ -37,24 +37,24 @@ struct aws_input_stream;
         }                                                                                                              \
     } while (0)
 
-#define ASSERT_H2_FAILS(condition, ...)                                                                                \
+#define ASSERT_H2ERR_FAILS(condition, ...)                                                                             \
     do {                                                                                                               \
-        struct aws_h2_err assert_rv = (condition);                                                                     \
-        if (!aws_h2_err_failed(assert_rv)) {                                                                           \
+        struct aws_h2err assert_rv = (condition);                                                                      \
+        if (!aws_h2err_failed(assert_rv)) {                                                                            \
             if (!PRINT_FAIL_INTERNAL0(__VA_ARGS__)) {                                                                  \
-                PRINT_FAIL_INTERNAL0("Expected failure at %s; got AWS_H2_ERR_SUCCESS\n", #condition);                  \
+                PRINT_FAIL_INTERNAL0("Expected failure at %s; got AWS_H2ERR_SUCCESS\n", #condition);                   \
             }                                                                                                          \
             POSTFAIL_INTERNAL();                                                                                       \
         }                                                                                                              \
     } while (0)
 
-#define ASSERT_H2_ERROR(h2_error, condition, ...)                                                                      \
+#define ASSERT_H2ERR_ERROR(h2_error, condition, ...)                                                                   \
     do {                                                                                                               \
-        struct aws_h2_err assert_rv = (condition);                                                                     \
-        if (!aws_h2_err_failed(assert_rv)) {                                                                           \
+        struct aws_h2err assert_rv = (condition);                                                                      \
+        if (!aws_h2err_failed(assert_rv)) {                                                                            \
             if (!PRINT_FAIL_INTERNAL0(__VA_ARGS__)) {                                                                  \
                 PRINT_FAIL_INTERNAL0(                                                                                  \
-                    "Expected %s failure at %s; got AWS_H2_ERR_SUCCESS\n",                                             \
+                    "Expected %s failure at %s; got AWS_H2ERR_SUCCESS\n",                                              \
                     aws_h2_error_code_to_str(h2_error),                                                                \
                     #condition);                                                                                       \
             }                                                                                                          \
@@ -62,7 +62,7 @@ struct aws_input_stream;
         }                                                                                                              \
         if (assert_rv.h2_code != h2_error) {                                                                           \
             PRINT_FAIL_INTERNAL0(                                                                                      \
-                "Expected %s failure at %s; got aws_h2_err{%s, %s}\n",                                                 \
+                "Expected %s failure at %s; got aws_h2err{%s, %s}\n",                                                  \
                 aws_h2_error_code_to_str(h2_error),                                                                    \
                 #condition,                                                                                            \
                 aws_h2_error_code_to_str(assert_rv.h2_code),                                                           \
