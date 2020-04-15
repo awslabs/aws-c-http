@@ -746,18 +746,11 @@ static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte
 
     const struct aws_byte_cursor body_data = s_decoder_get_payload(decoder, input);
 
-    bool on_data_invoked = false;
     if (body_data.len) {
-        on_data_invoked = true;
         DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data_i, body_data);
     }
 
     if (decoder->frame_in_progress.payload_len == 0) {
-        /* Even if DATA frame had no payload, we still want to invoke the callback at least once.
-         * This lets the stream check whether its current state allows a DATA frame */
-        if (!on_data_invoked) {
-            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data_i, body_data);
-        }
         DECODER_CALL_VTABLE_STREAM(decoder, on_data_end);
         /* If frame had END_STREAM flag, alert user now */
         if (decoder->frame_in_progress.flags.end_stream) {
