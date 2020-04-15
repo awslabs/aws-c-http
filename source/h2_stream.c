@@ -546,14 +546,12 @@ int aws_h2_stream_on_decoder_data_begin(struct aws_h2_stream *stream, uint32_t d
     if (s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_DATA)) {
         return s_send_rst_and_close_stream(stream, aws_last_error());
     }
-
-    stream->thread_data.window_size_self -= data_payload_len;
-
     if (!stream->thread_data.received_main_headers) {
         /* #TODO Not 100% sure whether this is Stream Error or Connection Error. */
         AWS_H2_STREAM_LOG(ERROR, stream, "Malformed message, received DATA before main HEADERS");
         return s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
+    stream->thread_data.window_size_self -= data_payload_len;
     /* send a stream window_update frame to automatically maintain the stream self window size */
     struct aws_h2_frame *stream_window_update_frame =
         aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, data_payload_len);
