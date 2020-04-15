@@ -539,16 +539,35 @@ int aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *stream, uint32_t
 int aws_h2_stream_on_decoder_data_begin(struct aws_h2_stream *stream, uint32_t data_payload_len) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
-    stream->thread_data.window_size_self -= data_payload_len;
+    if (stream->thread_data.window_size_self < 0 || stream->thread_data.window_size_self == 0 && data_payload_len > 0) {
+        /* We should not treat when the window size and data payload len are both 0 as an error */
+        s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
+    }
     if (s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_DATA)) {
         return s_send_rst_and_close_stream(stream, aws_last_error());
     }
+
+    stream->thread_data.window_size_self -= data_payload_len;
 
     if (!stream->thread_data.received_main_headers) {
         /* #TODO Not 100% sure whether this is Stream Error or Connection Error. */
         AWS_H2_STREAM_LOG(ERROR, stream, "Malformed message, received DATA before main HEADERS");
         return s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
+    /* send a stream window_update frame to automatically maintain the stream self window size */
+    struct aws_h2_frame *stream_window_update_frame =
+        aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, data_payload_len);
+    if (!stream_window_update_frame) {
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "WINDOW_UPDATE frame on stream failed to be sent, error %s",
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+
+    aws_h2_connection_enqueue_outgoing_frame(s_get_h2_connection(stream), stream_window_update_frame);
+    stream->thread_data.window_size_self += data_payload_len;
     return AWS_OP_SUCCESS;
 }
 

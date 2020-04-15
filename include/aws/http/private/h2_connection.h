@@ -82,7 +82,7 @@ struct aws_h2_connection {
          * connection */
         size_t window_size_peer;
 
-        /* Flow-control of connection for this side. Indicating the buffer capacity of our peer.
+        /* Flow-control of connection for this side.
          * Reduce the space after receiving a flow-controlled frame. Increment after sending WINDOW_UPDATE for
          * connection */
         size_t window_size_self;
@@ -124,8 +124,6 @@ enum aws_h2_data_encode_status {
 
 /* When window size is too small to fit the possible padding into it, we stop sending data and wait for WINDOW_UPDATE */
 #define AWS_H2_MIN_WINDOW_SIZE (256)
-/* Initial connection flow-control window with 65535 bytes (RFC 6.9.2) */
-#define AWS_H2_INITIAL_WINDOW_SIZE (65535)
 
 /* Private functions called from tests... */
 

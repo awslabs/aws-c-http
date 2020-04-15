@@ -106,6 +106,16 @@ struct h2_decoded_frame *h2_decode_tester_find_frame(
     size_t *out_idx);
 
 /**
+ * Search for frame of a given stream-id, starting at specified index.
+ * To search for the next frame, pass search_start_idx = prev_idx + 1
+ */
+struct h2_decoded_frame *h2_decode_tester_find_stream_frame_any_type(
+    const struct h2_decode_tester *decode_tester,
+    uint32_t stream_id,
+    size_t search_start_idx,
+    size_t *out_idx);
+
+/**
  * Search for frame of a given type and stream-id, starting at specified index.
  * To search for the next frame, pass search_start_idx = prev_idx + 1
  */

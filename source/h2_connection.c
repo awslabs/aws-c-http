@@ -270,8 +270,8 @@ static struct aws_h2_connection *s_connection_new(
     memcpy(connection->thread_data.settings_peer, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
     memcpy(connection->thread_data.settings_self, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
 
-    connection->thread_data.window_size_peer = AWS_H2_INITIAL_WINDOW_SIZE;
-    connection->thread_data.window_size_self = AWS_H2_INITIAL_WINDOW_SIZE;
+    connection->thread_data.window_size_peer = aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
+    connection->thread_data.window_size_self = aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
 
     /* Create a new decoder */
     struct aws_h2_decoder_params params = {
@@ -851,11 +851,11 @@ int s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, void *user
 
     /* A receiver that receives a flow-controlled frame MUST always account for its contribution against the connection
      * flow-control window, unless the receiver treats this as a connection error */
-    if (connection->thread_data.window_size_self < payload_len) {
-        /* TODO: Figure out what kind error this is, I failed to find it from spec, and it is possible to happen */
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    if (aws_sub_size_checked(
+            connection->thread_data.window_size_self, payload_len, &connection->thread_data.window_size_self)) {
+        return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
     }
-    connection->thread_data.window_size_self -= payload_len;
+
     struct aws_h2_stream *stream;
     if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_DATA, &stream)) {
         return AWS_OP_ERR;
@@ -865,20 +865,6 @@ int s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, void *user
         if (aws_h2_stream_on_decoder_data_begin(stream, payload_len)) {
             return AWS_OP_ERR;
         }
-        /* send a stream window_update frame to automatically maintain the stream self window size */
-        struct aws_h2_frame *stream_window_update_frame =
-            aws_h2_frame_new_window_update(connection->base.alloc, stream_id, payload_len);
-        if (!stream_window_update_frame) {
-            CONNECTION_LOGF(
-                ERROR,
-                connection,
-                "WINDOW_UPDATE frame on stream failed to be sent, error %s",
-                aws_error_name(aws_last_error()));
-            return AWS_OP_ERR;
-        }
-
-        aws_h2_connection_enqueue_outgoing_frame(connection, stream_window_update_frame);
-        stream->thread_data.window_size_self += payload_len;
     }
     /* send a connection window_update frame to automatically maintain the connection self window size */
     struct aws_h2_frame *connection_window_update_frame =

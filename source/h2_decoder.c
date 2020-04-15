@@ -484,7 +484,7 @@ static int s_decoder_reset_state(struct aws_h2_decoder *decoder) {
     return AWS_OP_SUCCESS;
 }
 
-/** Returns as much of the current frame's payload as possible, and updates payload_len */
+/* Returns as much of the current frame's payload as possible, and updates payload_len */
 static struct aws_byte_cursor s_decoder_get_payload(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     struct aws_byte_cursor result;

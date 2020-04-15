@@ -56,7 +56,7 @@ struct aws_h2_decoder_vtable {
         void *userdata);
     int (*on_push_promise_end)(uint32_t stream_id, bool malformed, void *userdata);
 
-    /* For DATA header-block: _begin() is called, then 0+ _i() calls, then _end().
+    /* For DATA frame: _begin() is called, then 0+ _i() calls, then _end().
      * No other decoder callbacks will occur in this time */
     int (*on_data_begin)(uint32_t stream_id, uint32_t payload_len, void *userdata);
     int (*on_data_i)(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);

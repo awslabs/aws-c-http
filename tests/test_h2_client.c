@@ -639,9 +639,8 @@ TEST_CASE(h2_client_stream_err_receive_data_before_headers) {
 
     /* validate that stream sent RST_STREAM */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    /* last two frames will be window updates */
     struct h2_decoded_frame *rst_stream_frame =
-        h2_decode_tester_get_frame(&s_tester.peer.decode, h2_decode_tester_frame_count(&s_tester.peer.decode) - 3);
+        h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
     ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
     ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
 

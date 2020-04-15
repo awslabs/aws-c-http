@@ -84,6 +84,16 @@ struct h2_decoded_frame *h2_decode_tester_find_frame(
     return h2_decode_tester_find_stream_frame(decode_tester, type, UINT32_MAX /*stream_id*/, search_start_idx, out_idx);
 }
 
+struct h2_decoded_frame *h2_decode_tester_find_stream_frame_any_type(
+    const struct h2_decode_tester *decode_tester,
+    uint32_t stream_id,
+    size_t search_start_idx,
+    size_t *out_idx) {
+
+    return h2_decode_tester_find_stream_frame(
+        decode_tester, AWS_H2_FRAME_TYPE_COUNT /*frame_type*/, stream_id, search_start_idx, out_idx);
+}
+
 struct h2_decoded_frame *h2_decode_tester_find_stream_frame(
     const struct h2_decode_tester *decode_tester,
     enum aws_h2_frame_type type,
@@ -98,7 +108,7 @@ struct h2_decoded_frame *h2_decode_tester_find_stream_frame(
 
     for (size_t i = search_start_idx; i < frame_count; ++i) {
         struct h2_decoded_frame *frame = h2_decode_tester_get_frame(decode_tester, i);
-        if (frame->type == type) {
+        if (frame->type == type || type == AWS_H2_FRAME_TYPE_COUNT) {
             if (frame->stream_id == stream_id || stream_id == UINT32_MAX) {
                 if (out_idx) {
                     *out_idx = i;
