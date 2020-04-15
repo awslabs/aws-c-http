@@ -301,8 +301,9 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
         goto error;
     }
 
-    /* Initialize the flow-control window size for peer */
+    /* Initialize the flow-control window size */
     stream->thread_data.window_size_peer = connection->thread_data.settings_peer[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
+    stream->thread_data.window_size_self = connection->thread_data.settings_self[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
 
     if (has_body_stream) {
         /* If stream has DATA to send, put it in the outgoing_streams_list, and we'll send data later */
@@ -535,9 +536,10 @@ int aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *stream, uint32_t
         s_get_h2_connection(stream), promised_stream_id, AWS_H2_ERR_REFUSED_STREAM);
 }
 
-int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_cursor data) {
+int aws_h2_stream_on_decoder_data_begin(struct aws_h2_stream *stream, uint32_t data_payload_len) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
+    stream->thread_data.window_size_self -= data_payload_len;
     if (s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_DATA)) {
         return s_send_rst_and_close_stream(stream, aws_last_error());
     }
@@ -547,8 +549,15 @@ int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_
         AWS_H2_STREAM_LOG(ERROR, stream, "Malformed message, received DATA before main HEADERS");
         return s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
+    return AWS_OP_SUCCESS;
+}
 
-    /* #TODO Update stream's flow-control window */
+int aws_h2_stream_on_decoder_data_i(struct aws_h2_stream *stream, struct aws_byte_cursor data) {
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+
+    if (s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_DATA)) {
+        return s_send_rst_and_close_stream(stream, aws_last_error());
+    }
 
     if (stream->base.on_incoming_body) {
         if (stream->base.on_incoming_body(&stream->base, &data, stream->base.user_data)) {

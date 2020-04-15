@@ -653,6 +653,10 @@ static int s_state_fn_prefix(struct aws_h2_decoder *decoder, struct aws_byte_cur
         frame->stream_id,
         frame->payload_len);
 
+    if (decoder->frame_in_progress.type == AWS_H2_FRAME_T_DATA) {
+        /* We invoke the on_data_begin here to report the whole payload size */
+        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data_begin, frame->payload_len);
+    }
     if (is_padded) {
         /* Read padding length if necessary */
         return s_decoder_switch_state(decoder, &s_state_padding_len);
@@ -745,16 +749,16 @@ static int s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte
     bool on_data_invoked = false;
     if (body_data.len) {
         on_data_invoked = true;
-        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data, body_data);
+        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data_i, body_data);
     }
 
     if (decoder->frame_in_progress.payload_len == 0) {
         /* Even if DATA frame had no payload, we still want to invoke the callback at least once.
          * This lets the stream check whether its current state allows a DATA frame */
         if (!on_data_invoked) {
-            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data, body_data);
+            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data_i, body_data);
         }
-
+        DECODER_CALL_VTABLE_STREAM(decoder, on_data_end);
         /* If frame had END_STREAM flag, alert user now */
         if (decoder->frame_in_progress.flags.end_stream) {
             DECODER_CALL_VTABLE_STREAM(decoder, on_end_stream);

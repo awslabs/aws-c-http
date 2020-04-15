@@ -290,7 +290,7 @@ static int s_decoder_on_push_promise_end(uint32_t stream_id, bool malformed, voi
     return s_on_headers_end(true /*is_push_promise*/, stream_id, malformed, AWS_HTTP_HEADER_BLOCK_MAIN, userdata);
 }
 
-static int s_decoder_on_data(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
+static int s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
     struct h2_decode_tester *decode_tester = userdata;
     struct h2_decoded_frame *frame;
 
@@ -458,7 +458,7 @@ static struct aws_h2_decoder_vtable s_decoder_vtable = {
     .on_push_promise_begin = s_decoder_on_push_promise_begin,
     .on_push_promise_i = s_decoder_on_push_promise_i,
     .on_push_promise_end = s_decoder_on_push_promise_end,
-    .on_data = s_decoder_on_data,
+    .on_data_i = s_decoder_on_data_i,
     .on_end_stream = s_decoder_on_end_stream,
     .on_rst_stream = s_decoder_on_rst_stream,
     .on_settings = s_decoder_on_settings,
