@@ -291,7 +291,7 @@ static int s_decoder_on_push_promise_end(uint32_t stream_id, bool malformed, voi
 }
 
 static int s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, void *userdata) {
-    (void) payload_len;
+    (void)payload_len;
     struct h2_decode_tester *decode_tester = userdata;
     struct h2_decoded_frame *frame;
     ASSERT_SUCCESS(s_begin_new_frame(decode_tester, AWS_H2_FRAME_T_DATA, stream_id, &frame));
@@ -299,7 +299,7 @@ static int s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, voi
 }
 
 static int s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
-    (void) stream_id;
+    (void)stream_id;
     struct h2_decode_tester *decode_tester = userdata;
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(decode_tester);
 
