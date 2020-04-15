@@ -1497,7 +1497,7 @@ static int s_invalid_window_update(
     struct aws_allocator *allocator,
     void *ctx,
     uint32_t window_update_size,
-    enum aws_http_errors error_type) {
+    enum aws_h2_error_code h2_error_code) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* fake peer sends connection preface */
@@ -1528,7 +1528,7 @@ static int s_invalid_window_update(
     /* validate that stream completed with error */
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_TRUE(stream_tester.complete);
-    ASSERT_INT_EQUALS(error_type, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, stream_tester.on_complete_error_code);
 
     /* a stream error should not affect the connection */
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
@@ -1537,6 +1537,7 @@ static int s_invalid_window_update(
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
     struct h2_decoded_frame *rst_stream_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
     ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
+    ASSERT_INT_EQUALS(h2_error_code, rst_stream_frame->error_code);
 
     /* Send the largest update on stream, which will cause the flow-control window of stream exceeding the max */
     stream_window_update = aws_h2_frame_new_window_update(allocator, 0, window_update_size);
@@ -1546,7 +1547,8 @@ static int s_invalid_window_update(
 
     /* validate the connection completed with error */
     ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
-    ASSERT_INT_EQUALS(error_type, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+    ASSERT_INT_EQUALS(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
 
     /* #TODO client should send GOAWAY */
 
@@ -1558,12 +1560,12 @@ static int s_invalid_window_update(
 
 /* Window update cause window to exceed max size will lead to FLOW_CONTROL_ERROR */
 TEST_CASE(h2_client_stream_err_invalid_window_update_exceed_max) {
-    return s_invalid_window_update(allocator, ctx, AWS_H2_WINDOW_UPDATE_MAX, AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
+    return s_invalid_window_update(allocator, ctx, AWS_H2_WINDOW_UPDATE_MAX, AWS_H2_ERR_FLOW_CONTROL_ERROR);
 }
 
 /* Window update with zero update size will lead to PROTOCOL_ERROR */
 TEST_CASE(h2_client_stream_err_invalid_window_update_zero_update) {
-    return s_invalid_window_update(allocator, ctx, 0, AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    return s_invalid_window_update(allocator, ctx, 0, AWS_H2_ERR_PROTOCOL_ERROR);
 }
 
 /* SETTINGS_INITIAL_WINDOW_SIZE cause stream window to exceed the max size is a Connection ERROR... */
@@ -1617,7 +1619,7 @@ TEST_CASE(h2_client_stream_err_initial_window_size_cause_window_exceed_max) {
     /* validate the connection completed with error */
     ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
     ASSERT_INT_EQUALS(
-        AWS_ERROR_HTTP_FLOW_CONTROL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
 
     /* #TODO client should send GOAWAY */
 

@@ -72,12 +72,12 @@ enum aws_h2_error_code {
  * in an HTTP/2 Connection Error or Stream Error.
  */
 struct aws_h2_err {
-    int aws_code;
     enum aws_h2_error_code h2_code;
+    int aws_code;
 };
 
 #define AWS_H2_ERR_SUCCESS                                                                                             \
-    (struct aws_h2_err) { .aws_code = 0, .h2_code = 0 }
+    (struct aws_h2_err) { .h2_code = 0, .aws_code = 0 }
 
 /* Predefined settings identifiers (RFC-7540 6.5.2) */
 enum aws_h2_settings {

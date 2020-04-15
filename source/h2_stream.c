@@ -468,6 +468,7 @@ struct aws_h2_err aws_h2_stream_on_decoder_headers_i(
 
     if (stream->base.on_incoming_headers) {
         if (stream->base.on_incoming_headers(&stream->base, block_type, header, 1, stream->base.user_data)) {
+            /* #TODO: callback errors should be Stream Errors, not Connection Errors */
             AWS_H2_STREAM_LOGF(
                 ERROR, stream, "Incoming header callback raised error, %s", aws_error_name(aws_last_error()));
             return aws_h2_err_from_last_error();

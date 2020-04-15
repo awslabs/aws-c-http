@@ -143,8 +143,8 @@ struct aws_h2_err aws_h2_err_from_h2_code(enum aws_h2_error_code h2_error_code) 
     AWS_PRECONDITION(h2_error_code > AWS_H2_ERR_NO_ERROR && h2_error_code < AWS_H2_ERR_COUNT);
 
     return (struct aws_h2_err){
-        .aws_code = AWS_ERROR_HTTP_PROTOCOL_ERROR,
         .h2_code = h2_error_code,
+        .aws_code = AWS_ERROR_HTTP_PROTOCOL_ERROR,
     };
 }
 
@@ -152,8 +152,8 @@ struct aws_h2_err aws_h2_err_from_aws_code(int aws_error_code) {
     AWS_PRECONDITION(aws_error_code != 0);
 
     return (struct aws_h2_err){
-        .aws_code = aws_error_code,
         .h2_code = AWS_H2_ERR_INTERNAL_ERROR,
+        .aws_code = aws_error_code,
     };
 }
 
@@ -162,11 +162,11 @@ struct aws_h2_err aws_h2_err_from_last_error(void) {
 }
 
 bool aws_h2_err_success(struct aws_h2_err err) {
-    return err.aws_code == 0 && err.h2_code == 0;
+    return err.h2_code == 0 && err.aws_code == 0;
 }
 
 bool aws_h2_err_failed(struct aws_h2_err err) {
-    return err.aws_code != 0 || err.h2_code != 0;
+    return err.h2_code != 0 || err.aws_code != 0;
 }
 
 int aws_h2_validate_stream_id(uint32_t stream_id) {
