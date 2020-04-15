@@ -24,6 +24,10 @@
 
 #include <inttypes.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#endif
+
 #define ENCODER_LOGF(level, encoder, text, ...)                                                                        \
     AWS_LOGF_##level(AWS_LS_HTTP_ENCODER, "id=%p " text, (encoder)->logging_id, __VA_ARGS__)
 
