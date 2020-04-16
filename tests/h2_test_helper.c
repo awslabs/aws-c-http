@@ -314,6 +314,7 @@ static int s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, 
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(decode_tester);
 
     /* Stash data*/
+    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_DATA, frame->type);
     ASSERT_SUCCESS(aws_byte_buf_append_dynamic(&frame->data, &data));
 
     return AWS_OP_SUCCESS;

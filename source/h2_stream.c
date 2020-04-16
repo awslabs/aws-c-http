@@ -539,10 +539,13 @@ int aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *stream, uint32_t
 int aws_h2_stream_on_decoder_data_begin(struct aws_h2_stream *stream, uint32_t data_payload_len) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
-    if (stream->thread_data.window_size_self < 0 ||
-        (stream->thread_data.window_size_self == 0 && data_payload_len > 0)) {
-        /* We should not treat when the window size and data payload len are both 0 as an error */
-        s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
+    if (stream->thread_data.window_size_self <= 0 && data_payload_len > 0) {
+        /* Frames with zero length with the END_STREAM flag set (that is, an empty DATA frame) MAY be sent if there is
+         * no available space in either flow-control window RFC 7540 6.9.1
+         * A sender MUST track the negative flow-control window and MUST NOT send new flow-controlled frames until XXX
+         * RFC 7540 6.9.2
+         * We accept empty DATA frame when we have no space at the flow-control window */
+        return s_send_rst_and_close_stream(stream, AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
     }
     if (s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_DATA)) {
         return s_send_rst_and_close_stream(stream, aws_last_error());
@@ -573,9 +576,8 @@ int aws_h2_stream_on_decoder_data_begin(struct aws_h2_stream *stream, uint32_t d
 int aws_h2_stream_on_decoder_data_i(struct aws_h2_stream *stream, struct aws_byte_cursor data) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
-    if (s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_DATA)) {
-        return s_send_rst_and_close_stream(stream, aws_last_error());
-    }
+    /* Not calling s_check_state_allows_frame_type() here because we already checked at start of DATA frame in
+     * aws_h2_stream_on_decoder_data_begin() */
 
     if (stream->base.on_incoming_body) {
         if (stream->base.on_incoming_body(&stream->base, &data, stream->base.user_data)) {
