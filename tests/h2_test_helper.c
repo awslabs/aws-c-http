@@ -84,6 +84,16 @@ struct h2_decoded_frame *h2_decode_tester_find_frame(
     return h2_decode_tester_find_stream_frame(decode_tester, type, UINT32_MAX /*stream_id*/, search_start_idx, out_idx);
 }
 
+struct h2_decoded_frame *h2_decode_tester_find_stream_frame_any_type(
+    const struct h2_decode_tester *decode_tester,
+    uint32_t stream_id,
+    size_t search_start_idx,
+    size_t *out_idx) {
+
+    return h2_decode_tester_find_stream_frame(
+        decode_tester, AWS_H2_FRAME_TYPE_COUNT /*frame_type*/, stream_id, search_start_idx, out_idx);
+}
+
 struct h2_decoded_frame *h2_decode_tester_find_stream_frame(
     const struct h2_decode_tester *decode_tester,
     enum aws_h2_frame_type type,
@@ -98,7 +108,7 @@ struct h2_decoded_frame *h2_decode_tester_find_stream_frame(
 
     for (size_t i = search_start_idx; i < frame_count; ++i) {
         struct h2_decoded_frame *frame = h2_decode_tester_get_frame(decode_tester, i);
-        if (frame->type == type) {
+        if (frame->type == type || type == AWS_H2_FRAME_TYPE_COUNT) {
             if (frame->stream_id == stream_id || stream_id == UINT32_MAX) {
                 if (out_idx) {
                     *out_idx = i;
@@ -290,15 +300,28 @@ static int s_decoder_on_push_promise_end(uint32_t stream_id, bool malformed, voi
     return s_on_headers_end(true /*is_push_promise*/, stream_id, malformed, AWS_HTTP_HEADER_BLOCK_MAIN, userdata);
 }
 
-static int s_decoder_on_data(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
+static int s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, void *userdata) {
+    (void)payload_len;
     struct h2_decode_tester *decode_tester = userdata;
     struct h2_decoded_frame *frame;
-
-    /* Pretend each on_data callback is a full DATA frame for the purposes of these tests */
     ASSERT_SUCCESS(s_begin_new_frame(decode_tester, AWS_H2_FRAME_T_DATA, stream_id, &frame));
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
+    (void)stream_id;
+    struct h2_decode_tester *decode_tester = userdata;
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(decode_tester);
 
     /* Stash data*/
+    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_DATA, frame->type);
     ASSERT_SUCCESS(aws_byte_buf_append_dynamic(&frame->data, &data));
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_decoder_on_data_end(uint32_t stream_id, void *userdata) {
+    struct h2_decode_tester *decode_tester = userdata;
 
     ASSERT_SUCCESS(s_end_current_frame(decode_tester, AWS_H2_FRAME_T_DATA, stream_id));
     return AWS_OP_SUCCESS;
@@ -458,7 +481,9 @@ static struct aws_h2_decoder_vtable s_decoder_vtable = {
     .on_push_promise_begin = s_decoder_on_push_promise_begin,
     .on_push_promise_i = s_decoder_on_push_promise_i,
     .on_push_promise_end = s_decoder_on_push_promise_end,
-    .on_data = s_decoder_on_data,
+    .on_data_begin = s_decoder_on_data_begin,
+    .on_data_i = s_decoder_on_data_i,
+    .on_data_end = s_decoder_on_data_end,
     .on_end_stream = s_decoder_on_end_stream,
     .on_rst_stream = s_decoder_on_rst_stream,
     .on_settings = s_decoder_on_settings,

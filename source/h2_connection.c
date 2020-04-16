@@ -82,7 +82,8 @@ static int s_decoder_on_headers_end(
     enum aws_http_header_block block_type,
     void *userdata);
 static int s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised_stream_id, void *userdata);
-static int s_decoder_on_data(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
+static int s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, void *userdata);
+static int s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
 static int s_decoder_on_end_stream(uint32_t stream_id, void *userdata);
 static int s_decoder_on_rst_stream(uint32_t stream_id, uint32_t h2_error_code, void *userdata);
 static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
@@ -119,7 +120,8 @@ static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
     .on_headers_i = s_decoder_on_headers_i,
     .on_headers_end = s_decoder_on_headers_end,
     .on_push_promise_begin = s_decoder_on_push_promise,
-    .on_data = s_decoder_on_data,
+    .on_data_begin = s_decoder_on_data_begin,
+    .on_data_i = s_decoder_on_data_i,
     .on_end_stream = s_decoder_on_end_stream,
     .on_rst_stream = s_decoder_on_rst_stream,
     .on_ping = s_decoder_on_ping,
@@ -268,8 +270,8 @@ static struct aws_h2_connection *s_connection_new(
     memcpy(connection->thread_data.settings_peer, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
     memcpy(connection->thread_data.settings_self, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
 
-    /* Initial connection flow-control window with 65535 bytes (RFC 6.9.2) */
     connection->thread_data.window_size_peer = aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
+    connection->thread_data.window_size_self = aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
 
     /* Create a new decoder */
     struct aws_h2_decoder_params params = {
@@ -625,7 +627,6 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
                     "WINDOW_UPDATE. ");
                 break;
             default:
-                /* invalid */
                 CONNECTION_LOG(ERROR, connection, "Data encode status is invalid.");
                 aws_error_code = AWS_ERROR_INVALID_STATE;
         }
@@ -845,10 +846,44 @@ int s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised_stream_id, v
     return AWS_OP_SUCCESS;
 }
 
-int s_decoder_on_data(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
+int s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
-    /* #TODO Send a window update frame back. */
+    /* A receiver that receives a flow-controlled frame MUST always account for its contribution against the connection
+     * flow-control window, unless the receiver treats this as a connection error */
+    if (aws_sub_size_checked(
+            connection->thread_data.window_size_self, payload_len, &connection->thread_data.window_size_self)) {
+        return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
+    }
+
+    struct aws_h2_stream *stream;
+    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_DATA, &stream)) {
+        return AWS_OP_ERR;
+    }
+
+    if (stream) {
+        if (aws_h2_stream_on_decoder_data_begin(stream, payload_len)) {
+            return AWS_OP_ERR;
+        }
+    }
+    /* send a connection window_update frame to automatically maintain the connection self window size */
+    struct aws_h2_frame *connection_window_update_frame =
+        aws_h2_frame_new_window_update(connection->base.alloc, 0, payload_len);
+    if (!connection_window_update_frame) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "WINDOW_UPDATE frame on connection failed to be sent, error %s",
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+    aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
+    connection->thread_data.window_size_self += payload_len;
+    return AWS_OP_SUCCESS;
+}
+
+int s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
+    struct aws_h2_connection *connection = userdata;
 
     /* Pass data to stream */
     struct aws_h2_stream *stream;
@@ -857,7 +892,7 @@ int s_decoder_on_data(uint32_t stream_id, struct aws_byte_cursor data, void *use
     }
 
     if (stream) {
-        if (aws_h2_stream_on_decoder_data(stream, data)) {
+        if (aws_h2_stream_on_decoder_data_i(stream, data)) {
             return AWS_OP_ERR;
         }
     }

@@ -64,6 +64,7 @@ struct aws_h2_stream {
     struct {
         enum aws_h2_stream_state state;
         int32_t window_size_peer;
+        int32_t window_size_self;
         struct aws_http_message *outgoing_message;
         bool received_main_headers;
     } thread_data;
@@ -110,7 +111,8 @@ int aws_h2_stream_on_decoder_headers_end(
     enum aws_http_header_block block_type);
 
 int aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *stream, uint32_t promised_stream_id);
-int aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_cursor data);
+int aws_h2_stream_on_decoder_data_begin(struct aws_h2_stream *stream, uint32_t data_payload_len);
+int aws_h2_stream_on_decoder_data_i(struct aws_h2_stream *stream, struct aws_byte_cursor data);
 int aws_h2_stream_on_decoder_window_update(
     struct aws_h2_stream *stream,
     uint32_t window_size_increment,
