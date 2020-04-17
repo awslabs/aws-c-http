@@ -97,28 +97,31 @@ int aws_h2_stream_encode_data_frame(
     struct aws_byte_buf *output,
     int *data_encode_status);
 
-int aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *stream);
+struct aws_h2err aws_h2_stream_on_decoder_headers_begin(struct aws_h2_stream *stream);
 
-int aws_h2_stream_on_decoder_headers_i(
+struct aws_h2err aws_h2_stream_on_decoder_headers_i(
     struct aws_h2_stream *stream,
     const struct aws_http_header *header,
     enum aws_http_header_name name_enum,
     enum aws_http_header_block block_type);
 
-int aws_h2_stream_on_decoder_headers_end(
+struct aws_h2err aws_h2_stream_on_decoder_headers_end(
     struct aws_h2_stream *stream,
     bool malformed,
     enum aws_http_header_block block_type);
 
-int aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *stream, uint32_t promised_stream_id);
-int aws_h2_stream_on_decoder_data_begin(struct aws_h2_stream *stream, uint32_t data_payload_len);
-int aws_h2_stream_on_decoder_data_i(struct aws_h2_stream *stream, struct aws_byte_cursor data);
-int aws_h2_stream_on_decoder_window_update(
+struct aws_h2err aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *stream, uint32_t promised_stream_id);
+struct aws_h2err aws_h2_stream_on_decoder_data_begin(
+    struct aws_h2_stream *stream,
+    uint32_t payload_len,
+    bool end_stream);
+struct aws_h2err aws_h2_stream_on_decoder_data_i(struct aws_h2_stream *stream, struct aws_byte_cursor data);
+struct aws_h2err aws_h2_stream_on_decoder_window_update(
     struct aws_h2_stream *stream,
     uint32_t window_size_increment,
     bool *window_resume);
-int aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stream);
-int aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *stream, uint32_t h2_error_code);
+struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *stream);
+struct aws_h2err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *stream, uint32_t h2_error_code);
 
 int aws_h2_stream_activate(struct aws_http_stream *stream);
 

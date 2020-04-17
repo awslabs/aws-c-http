@@ -112,19 +112,10 @@ static struct aws_error_info s_errors[] = {
         "Http connection channel shut down due to failure to meet throughput minimum"),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_PROTOCOL_ERROR,
-        "Protocol rules violated by API call or peer"),
-    AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_FLOW_CONTROL_ERROR,
-        "Flow control rules violated by API call or peer"),
-    AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_STREAM_CLOSED,
-        "Received frame on a closed stream"),
+        "Protocol rules violated by peer"),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_STREAM_IDS_EXHAUSTED,
         "Connection exhausted all possible stream IDs. Establish a new connection for new streams."),
-    AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_INVALID_FRAME_SIZE,
-        "Received frame with an illegal frame size"),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_RST_STREAM_RECEIVED,
         "Peer sent RST_STREAM to terminate stream"),

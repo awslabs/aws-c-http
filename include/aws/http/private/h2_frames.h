@@ -48,20 +48,36 @@ enum aws_h2_frame_flag {
 /* Error codes that may be present in RST_STREAM and GOAWAY frames (RFC-7540 7). */
 enum aws_h2_error_code {
     AWS_H2_ERR_NO_ERROR = 0x00,
-    AWS_H2_ERR_PROTOCOL_ERROR = 0x01, /* corresponds to AWS_ERROR_HTTP_PROTOCOL_ERROR */
+    AWS_H2_ERR_PROTOCOL_ERROR = 0x01,
     AWS_H2_ERR_INTERNAL_ERROR = 0x02,
     AWS_H2_ERR_FLOW_CONTROL_ERROR = 0x03,
     AWS_H2_ERR_SETTINGS_TIMEOUT = 0x04,
-    AWS_H2_ERR_STREAM_CLOSED = 0x05,    /* corresponds to AWS_ERROR_HTTP_STREAM_CLOSED */
-    AWS_H2_ERR_FRAME_SIZE_ERROR = 0x06, /* corresponds to AWS_ERROR_HTTP_INVALID_FRAME_SIZE */
+    AWS_H2_ERR_STREAM_CLOSED = 0x05,
+    AWS_H2_ERR_FRAME_SIZE_ERROR = 0x06,
     AWS_H2_ERR_REFUSED_STREAM = 0x07,
     AWS_H2_ERR_CANCEL = 0x08,
-    AWS_H2_ERR_COMPRESSION_ERROR = 0x09, /* corresponds to AWS_ERROR_HTTP_COMPRESSION */
+    AWS_H2_ERR_COMPRESSION_ERROR = 0x09,
     AWS_H2_ERR_CONNECT_ERROR = 0x0A,
     AWS_H2_ERR_ENHANCE_YOUR_CALM = 0x0B,
     AWS_H2_ERR_INADEQUATE_SECURITY = 0x0C,
     AWS_H2_ERR_HTTP_1_1_REQUIRED = 0x0D,
+    AWS_H2_ERR_COUNT,
 };
+
+/* Pairs the AWS_ERROR_* to show our API user,
+ * along with the AWS_H2_ERR_* that should
+ * be sent to the peer via RST_STREAM or GOAWAY.
+ *
+ * Used in place of normal error handling in functions that may result
+ * in an HTTP/2 Connection Error or Stream Error.
+ */
+struct aws_h2err {
+    enum aws_h2_error_code h2_code;
+    int aws_code;
+};
+
+#define AWS_H2ERR_SUCCESS                                                                                              \
+    (struct aws_h2err) { .h2_code = 0, .aws_code = 0 }
 
 /* Predefined settings identifiers (RFC-7540 6.5.2) */
 enum aws_h2_settings {
@@ -168,20 +184,29 @@ AWS_HTTP_API
 const char *aws_h2_error_code_to_str(enum aws_h2_error_code h2_error_code);
 
 /**
- * Translate an AWS_ERROR_* into the appropriate HTTP/2 error-code to sending in a RST_STREAM or GOAWAY frame.
+ * Specify which HTTP/2 error-code will be sent to the peer in a GOAWAY or RST_STREAM frame.
  *
- * Ex: AWS_ERROR_HTTP_PROTOCOL_ERROR -> AWS_H2_ERR_PROTOCOL_ERROR (0x1)
- *
- * AWS_H2_ERR_INTERNAL_ERROR is returned if nothing else matches.
- *
- * #TODO - is this really how we want to handle things? It seems weird to tell OUR user
- *         about the specific rule that the peer violated. Also, if a bunch of AWS_ERROR_*
- *         magically result in the peer being told that THEY did something wrong,
- *         we are for sure going to accidentally re-use those AWS_ERROR_* codes for
- *         errors-on-our-side when we should only be using them for errors-from-their-side.
+ * The AWS_ERROR reported to the API user will be AWS_ERROR_HTTP_PROTOCOL_ERROR.
  */
 AWS_HTTP_API
-enum aws_h2_error_code aws_error_to_h2_error_code(int aws_error_code);
+struct aws_h2err aws_h2err_from_h2_code(enum aws_h2_error_code h2_error_code);
+
+/**
+ * Specify which AWS_ERROR will be reported to the API user.
+ *
+ * The peer will be sent a GOAWAY or RST_STREAM with the INTERNAL_ERROR HTTP/2 error-code.
+ */
+AWS_HTTP_API
+struct aws_h2err aws_h2err_from_aws_code(int aws_error_code);
+
+AWS_HTTP_API
+struct aws_h2err aws_h2err_from_last_error(void);
+
+AWS_HTTP_API
+bool aws_h2err_success(struct aws_h2err err);
+
+AWS_HTTP_API
+bool aws_h2err_failed(struct aws_h2err err);
 
 /* Raises AWS_ERROR_INVALID_ARGUMENT if stream_id is 0 or exceeds AWS_H2_MAX_STREAM_ID */
 AWS_HTTP_API

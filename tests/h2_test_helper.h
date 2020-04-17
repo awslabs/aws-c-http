@@ -22,6 +22,54 @@
 
 struct aws_input_stream;
 
+#define ASSERT_H2ERR_SUCCESS(condition, ...)                                                                           \
+    do {                                                                                                               \
+        struct aws_h2err assert_rv = (condition);                                                                      \
+        if (!aws_h2err_success(assert_rv)) {                                                                           \
+            if (!PRINT_FAIL_INTERNAL0(__VA_ARGS__)) {                                                                  \
+                PRINT_FAIL_INTERNAL0(                                                                                  \
+                    "Expected success at %s; got aws_h2err{%s, %s}\n",                                                 \
+                    #condition,                                                                                        \
+                    aws_h2_error_code_to_str(assert_rv.h2_code),                                                       \
+                    aws_error_name(assert_rv.aws_code));                                                               \
+            }                                                                                                          \
+            POSTFAIL_INTERNAL();                                                                                       \
+        }                                                                                                              \
+    } while (0)
+
+#define ASSERT_H2ERR_FAILS(condition, ...)                                                                             \
+    do {                                                                                                               \
+        struct aws_h2err assert_rv = (condition);                                                                      \
+        if (!aws_h2err_failed(assert_rv)) {                                                                            \
+            if (!PRINT_FAIL_INTERNAL0(__VA_ARGS__)) {                                                                  \
+                PRINT_FAIL_INTERNAL0("Expected failure at %s; got AWS_H2ERR_SUCCESS\n", #condition);                   \
+            }                                                                                                          \
+            POSTFAIL_INTERNAL();                                                                                       \
+        }                                                                                                              \
+    } while (0)
+
+#define ASSERT_H2ERR_ERROR(h2_error, condition, ...)                                                                   \
+    do {                                                                                                               \
+        struct aws_h2err assert_rv = (condition);                                                                      \
+        if (!aws_h2err_failed(assert_rv)) {                                                                            \
+            if (!PRINT_FAIL_INTERNAL0(__VA_ARGS__)) {                                                                  \
+                PRINT_FAIL_INTERNAL0(                                                                                  \
+                    "Expected %s failure at %s; got AWS_H2ERR_SUCCESS\n",                                              \
+                    aws_h2_error_code_to_str(h2_error),                                                                \
+                    #condition);                                                                                       \
+            }                                                                                                          \
+            POSTFAIL_INTERNAL();                                                                                       \
+        }                                                                                                              \
+        if (assert_rv.h2_code != h2_error) {                                                                           \
+            PRINT_FAIL_INTERNAL0(                                                                                      \
+                "Expected %s failure at %s; got aws_h2err{%s, %s}\n",                                                  \
+                aws_h2_error_code_to_str(h2_error),                                                                    \
+                #condition,                                                                                            \
+                aws_h2_error_code_to_str(assert_rv.h2_code),                                                           \
+                aws_error_name(assert_rv.aws_code));                                                                   \
+        }                                                                                                              \
+    } while (0)
+
 /**
  * Information gathered about a given frame from decoder callbacks.
  * These aren't 1:1 with literal H2 frames:
@@ -58,7 +106,9 @@ struct h2_decoded_frame {
     bool headers_malformed;                       /* HEADERS and PUSH_PROMISE have this */
     enum aws_http_header_block header_block_type; /* HEADERS have this */
     struct aws_array_list settings;               /* contains aws_h2_frame_setting, SETTINGS has this */
-    struct aws_byte_buf data /* DATA has this */;
+    struct aws_byte_buf data;                     /* DATA has this */
+    uint32_t data_payload_len;                    /* DATA has this */
+    bool data_end_stream;                         /* DATA has this */
 };
 
 /**

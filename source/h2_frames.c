@@ -24,6 +24,10 @@
 
 #include <inttypes.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#endif
+
 #define ENCODER_LOGF(level, encoder, text, ...)                                                                        \
     AWS_LOGF_##level(AWS_LS_HTTP_ENCODER, "id=%p " text, (encoder)->logging_id, __VA_ARGS__)
 
@@ -139,21 +143,34 @@ const char *aws_h2_error_code_to_str(enum aws_h2_error_code h2_error_code) {
     }
 }
 
-enum aws_h2_error_code aws_error_to_h2_error_code(int aws_error_code) {
-    switch (aws_error_code) {
-        case AWS_ERROR_HTTP_PROTOCOL_ERROR:
-            return AWS_H2_ERR_PROTOCOL_ERROR;
-        case AWS_ERROR_HTTP_FLOW_CONTROL_ERROR:
-            return AWS_H2_ERR_FLOW_CONTROL_ERROR;
-        case AWS_ERROR_HTTP_STREAM_CLOSED:
-            return AWS_H2_ERR_STREAM_CLOSED;
-        case AWS_ERROR_HTTP_INVALID_FRAME_SIZE:
-            return AWS_H2_ERR_FRAME_SIZE_ERROR;
-        case AWS_ERROR_HTTP_COMPRESSION:
-            return AWS_H2_ERR_COMPRESSION_ERROR;
-        default:
-            return AWS_H2_ERR_INTERNAL_ERROR;
-    }
+struct aws_h2err aws_h2err_from_h2_code(enum aws_h2_error_code h2_error_code) {
+    AWS_PRECONDITION(h2_error_code > AWS_H2_ERR_NO_ERROR && h2_error_code < AWS_H2_ERR_COUNT);
+
+    return (struct aws_h2err){
+        .h2_code = h2_error_code,
+        .aws_code = AWS_ERROR_HTTP_PROTOCOL_ERROR,
+    };
+}
+
+struct aws_h2err aws_h2err_from_aws_code(int aws_error_code) {
+    AWS_PRECONDITION(aws_error_code != 0);
+
+    return (struct aws_h2err){
+        .h2_code = AWS_H2_ERR_INTERNAL_ERROR,
+        .aws_code = aws_error_code,
+    };
+}
+
+struct aws_h2err aws_h2err_from_last_error(void) {
+    return aws_h2err_from_aws_code(aws_last_error());
+}
+
+bool aws_h2err_success(struct aws_h2err err) {
+    return err.h2_code == 0 && err.aws_code == 0;
+}
+
+bool aws_h2err_failed(struct aws_h2err err) {
+    return err.h2_code != 0 || err.aws_code != 0;
 }
 
 int aws_h2_validate_stream_id(uint32_t stream_id) {

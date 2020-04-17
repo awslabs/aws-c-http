@@ -500,8 +500,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     /* Decode whatever we got */
     AWS_FATAL_ASSERT(frame_data.len > 0);
     struct aws_byte_cursor to_decode = aws_byte_cursor_from_buf(&frame_data);
-    int err = aws_h2_decode(decoder, &to_decode);
-    AWS_FATAL_ASSERT(err == AWS_OP_SUCCESS);
+    struct aws_h2err err = aws_h2_decode(decoder, &to_decode);
+    AWS_FATAL_ASSERT(aws_h2err_success(err));
     AWS_FATAL_ASSERT(to_decode.len == 0);
 
     /* Clean up */

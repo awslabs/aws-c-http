@@ -69,30 +69,34 @@ static int s_record_closed_stream(
     uint32_t stream_id,
     enum aws_h2_stream_closed_when closed_when);
 
-static int s_decoder_on_headers_begin(uint32_t stream_id, void *userdata);
-static int s_decoder_on_headers_i(
+static struct aws_h2err s_decoder_on_headers_begin(uint32_t stream_id, void *userdata);
+static struct aws_h2err s_decoder_on_headers_i(
     uint32_t stream_id,
     const struct aws_http_header *header,
     enum aws_http_header_name name_enum,
     enum aws_http_header_block block_type,
     void *userdata);
-static int s_decoder_on_headers_end(
+static struct aws_h2err s_decoder_on_headers_end(
     uint32_t stream_id,
     bool malformed,
     enum aws_http_header_block block_type,
     void *userdata);
-static int s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised_stream_id, void *userdata);
-static int s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, void *userdata);
-static int s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
-static int s_decoder_on_end_stream(uint32_t stream_id, void *userdata);
-static int s_decoder_on_rst_stream(uint32_t stream_id, uint32_t h2_error_code, void *userdata);
-static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
-static int s_decoder_on_settings(
+static struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised_stream_id, void *userdata);
+static struct aws_h2err s_decoder_on_data_begin(
+    uint32_t stream_id,
+    uint32_t payload_len,
+    bool end_stream,
+    void *userdata);
+static struct aws_h2err s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
+static struct aws_h2err s_decoder_on_end_stream(uint32_t stream_id, void *userdata);
+static struct aws_h2err s_decoder_on_rst_stream(uint32_t stream_id, uint32_t h2_error_code, void *userdata);
+static struct aws_h2err s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
+static struct aws_h2err s_decoder_on_settings(
     const struct aws_h2_frame_setting *settings_array,
     size_t num_settings,
     void *userdata);
-static int s_decoder_on_settings_ack(void *userdata);
-static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_increment, void *userdata);
+static struct aws_h2err s_decoder_on_settings_ack(void *userdata);
+static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_increment, void *userdata);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
@@ -659,11 +663,11 @@ static void s_try_write_outgoing_frames(struct aws_h2_connection *connection) {
 }
 
 /**
- * Returns AWS_OP_SUCCESS and sets `out_stream` if stream is currently active.
- * Returns AWS_OP_SUCCESS and sets `out_stream` to NULL if the frame should be ignored.
- * Returns AWS_OP_ERR if it is a connection error to receive this frame.
+ * Returns successfully and sets `out_stream` if stream is currently active.
+ * Returns successfully and sets `out_stream` to NULL if the frame should be ignored.
+ * Returns failed aws_h2err if it is a connection error to receive this frame.
  */
-int s_get_active_stream_for_incoming_frame(
+struct aws_h2err s_get_active_stream_for_incoming_frame(
     struct aws_h2_connection *connection,
     uint32_t stream_id,
     enum aws_h2_frame_type frame_type,
@@ -678,7 +682,7 @@ int s_get_active_stream_for_incoming_frame(
     if (found) {
         /* Found it! return */
         *out_stream = found->value;
-        return AWS_OP_SUCCESS;
+        return AWS_H2ERR_SUCCESS;
     }
 
     /* #TODO account for odd-numbered vs even-numbered stream-ids when we handle PUSH_PROMISE frames */
@@ -693,7 +697,7 @@ int s_get_active_stream_for_incoming_frame(
             "Illegal to receive %s frame on stream id=%" PRIu32 " state=IDLE",
             aws_h2_frame_type_to_str(frame_type),
             stream_id);
-        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
     }
 
     /* Stream is closed, check whether it's legal for a few more frames to trickle in */
@@ -709,7 +713,7 @@ int s_get_active_stream_for_incoming_frame(
                 aws_h2_frame_type_to_str(frame_type),
                 stream_id);
 
-            return AWS_OP_SUCCESS;
+            return AWS_H2ERR_SUCCESS;
 
         } else {
             AWS_ASSERT(closed_when == AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM);
@@ -725,7 +729,7 @@ int s_get_active_stream_for_incoming_frame(
                     aws_h2_frame_type_to_str(frame_type),
                     stream_id);
 
-                return AWS_OP_SUCCESS;
+                return AWS_H2ERR_SUCCESS;
             }
         }
     }
@@ -741,34 +745,37 @@ int s_get_active_stream_for_incoming_frame(
         aws_h2_frame_type_to_str(frame_type),
         stream_id);
 
-    return aws_raise_error(AWS_ERROR_HTTP_STREAM_CLOSED);
+    return aws_h2err_from_h2_code(AWS_H2_ERR_STREAM_CLOSED);
 }
 
 /* Decoder callbacks */
 
-int s_decoder_on_headers_begin(uint32_t stream_id, void *userdata) {
+struct aws_h2err s_decoder_on_headers_begin(uint32_t stream_id, void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
     if (connection->base.server_data) {
         /* Server would create new request-handler stream... */
-        return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+        return aws_h2err_from_aws_code(AWS_ERROR_UNIMPLEMENTED);
     }
 
     struct aws_h2_stream *stream;
-    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_HEADERS, &stream)) {
-        return AWS_OP_ERR;
+    struct aws_h2err err =
+        s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_HEADERS, &stream);
+    if (aws_h2err_failed(err)) {
+        return err;
     }
 
     if (stream) {
-        if (aws_h2_stream_on_decoder_headers_begin(stream)) {
-            return AWS_OP_ERR;
+        err = aws_h2_stream_on_decoder_headers_begin(stream);
+        if (aws_h2err_failed(err)) {
+            return err;
         }
     }
 
-    return AWS_OP_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-int s_decoder_on_headers_i(
+struct aws_h2err s_decoder_on_headers_i(
     uint32_t stream_id,
     const struct aws_http_header *header,
     enum aws_http_header_name name_enum,
@@ -777,20 +784,23 @@ int s_decoder_on_headers_i(
 
     struct aws_h2_connection *connection = userdata;
     struct aws_h2_stream *stream;
-    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_HEADERS, &stream)) {
-        return AWS_OP_ERR;
+    struct aws_h2err err =
+        s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_HEADERS, &stream);
+    if (aws_h2err_failed(err)) {
+        return err;
     }
 
     if (stream) {
-        if (aws_h2_stream_on_decoder_headers_i(stream, header, name_enum, block_type)) {
-            return AWS_OP_ERR;
+        err = aws_h2_stream_on_decoder_headers_i(stream, header, name_enum, block_type);
+        if (aws_h2err_failed(err)) {
+            return err;
         }
     }
 
-    return AWS_OP_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-int s_decoder_on_headers_end(
+struct aws_h2err s_decoder_on_headers_end(
     uint32_t stream_id,
     bool malformed,
     enum aws_http_header_block block_type,
@@ -798,20 +808,23 @@ int s_decoder_on_headers_end(
 
     struct aws_h2_connection *connection = userdata;
     struct aws_h2_stream *stream;
-    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_HEADERS, &stream)) {
-        return AWS_OP_ERR;
+    struct aws_h2err err =
+        s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_HEADERS, &stream);
+    if (aws_h2err_failed(err)) {
+        return err;
     }
 
     if (stream) {
-        if (aws_h2_stream_on_decoder_headers_end(stream, malformed, block_type)) {
-            return AWS_OP_ERR;
+        err = aws_h2_stream_on_decoder_headers_end(stream, malformed, block_type);
+        if (aws_h2err_failed(err)) {
+            return err;
         }
     }
 
-    return AWS_OP_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-int s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised_stream_id, void *userdata) {
+struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised_stream_id, void *userdata) {
     struct aws_h2_connection *connection = userdata;
     AWS_ASSERT(connection->base.client_data); /* decoder has already enforced this */
     AWS_ASSERT(promised_stream_id % 2 == 0);  /* decoder has already enforced this  */
@@ -825,7 +838,7 @@ int s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised_stream_id, v
             "Newly promised stream ID %" PRIu32 " must be higher than previously established ID %" PRIu32,
             promised_stream_id,
             connection->thread_data.latest_peer_initiated_stream_id);
-        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
     }
     connection->thread_data.latest_peer_initiated_stream_id = promised_stream_id;
 
@@ -833,74 +846,91 @@ int s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised_stream_id, v
      * promised_stream_id to some reserved_streams datastructure */
 
     struct aws_h2_stream *stream;
-    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_PUSH_PROMISE, &stream)) {
-        return AWS_OP_ERR;
+    struct aws_h2err err =
+        s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_PUSH_PROMISE, &stream);
+    if (aws_h2err_failed(err)) {
+        return err;
     }
 
     if (stream) {
-        if (aws_h2_stream_on_decoder_push_promise(stream, promised_stream_id)) {
-            return AWS_OP_ERR;
+        err = aws_h2_stream_on_decoder_push_promise(stream, promised_stream_id);
+        if (aws_h2err_failed(err)) {
+            return err;
         }
     }
 
-    return AWS_OP_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-int s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, void *userdata) {
+struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, bool end_stream, void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
     /* A receiver that receives a flow-controlled frame MUST always account for its contribution against the connection
      * flow-control window, unless the receiver treats this as a connection error */
     if (aws_sub_size_checked(
             connection->thread_data.window_size_self, payload_len, &connection->thread_data.window_size_self)) {
-        return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
-    }
-
-    struct aws_h2_stream *stream;
-    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_DATA, &stream)) {
-        return AWS_OP_ERR;
-    }
-
-    if (stream) {
-        if (aws_h2_stream_on_decoder_data_begin(stream, payload_len)) {
-            return AWS_OP_ERR;
-        }
-    }
-    /* send a connection window_update frame to automatically maintain the connection self window size */
-    struct aws_h2_frame *connection_window_update_frame =
-        aws_h2_frame_new_window_update(connection->base.alloc, 0, payload_len);
-    if (!connection_window_update_frame) {
         CONNECTION_LOGF(
             ERROR,
             connection,
-            "WINDOW_UPDATE frame on connection failed to be sent, error %s",
-            aws_error_name(aws_last_error()));
-        return AWS_OP_ERR;
+            "DATA length %" PRIu32 " exceeds flow-control window %zu",
+            payload_len,
+            connection->thread_data.window_size_self);
+        return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
     }
-    aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
-    connection->thread_data.window_size_self += payload_len;
-    return AWS_OP_SUCCESS;
+
+    struct aws_h2_stream *stream;
+    struct aws_h2err err = s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_DATA, &stream);
+    if (aws_h2err_failed(err)) {
+        return err;
+    }
+
+    if (stream) {
+        err = aws_h2_stream_on_decoder_data_begin(stream, payload_len, end_stream);
+        if (aws_h2err_failed(err)) {
+            return err;
+        }
+    }
+
+    if (payload_len != 0) {
+        /* send a connection window_update frame to automatically maintain the connection self window size */
+        struct aws_h2_frame *connection_window_update_frame =
+            aws_h2_frame_new_window_update(connection->base.alloc, 0, payload_len);
+        if (!connection_window_update_frame) {
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "WINDOW_UPDATE frame on connection failed to be sent, error %s",
+                aws_error_name(aws_last_error()));
+            return aws_h2err_from_last_error();
+        }
+        aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
+        connection->thread_data.window_size_self += payload_len;
+    }
+
+    return AWS_H2ERR_SUCCESS;
 }
 
-int s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
+struct aws_h2err s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
     /* Pass data to stream */
     struct aws_h2_stream *stream;
-    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_DATA, &stream)) {
-        return AWS_OP_ERR;
+    struct aws_h2err err = s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_DATA, &stream);
+    if (aws_h2err_failed(err)) {
+        return err;
     }
 
     if (stream) {
-        if (aws_h2_stream_on_decoder_data_i(stream, data)) {
-            return AWS_OP_ERR;
+        err = aws_h2_stream_on_decoder_data_i(stream, data);
+        if (aws_h2err_failed(err)) {
+            return err;
         }
     }
 
-    return AWS_OP_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-int s_decoder_on_end_stream(uint32_t stream_id, void *userdata) {
+struct aws_h2err s_decoder_on_end_stream(uint32_t stream_id, void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
     /* Not calling s_get_active_stream_for_incoming_frame() here because END_STREAM
@@ -911,33 +941,37 @@ int s_decoder_on_end_stream(uint32_t stream_id, void *userdata) {
     aws_hash_table_find(&connection->thread_data.active_streams_map, (void *)(size_t)stream_id, &found);
     if (found) {
         struct aws_h2_stream *stream = found->value;
-        if (aws_h2_stream_on_decoder_end_stream(stream)) {
-            return AWS_OP_ERR;
+        struct aws_h2err err = aws_h2_stream_on_decoder_end_stream(stream);
+        if (aws_h2err_failed(err)) {
+            return err;
         }
     }
 
-    return AWS_OP_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-static int s_decoder_on_rst_stream(uint32_t stream_id, uint32_t h2_error_code, void *userdata) {
+static struct aws_h2err s_decoder_on_rst_stream(uint32_t stream_id, uint32_t h2_error_code, void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
     /* Pass RST_STREAM to stream */
     struct aws_h2_stream *stream;
-    if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_RST_STREAM, &stream)) {
-        return AWS_OP_ERR;
+    struct aws_h2err err =
+        s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_RST_STREAM, &stream);
+    if (aws_h2err_failed(err)) {
+        return err;
     }
 
     if (stream) {
-        if (aws_h2_stream_on_decoder_rst_stream(stream, h2_error_code)) {
-            return AWS_OP_ERR;
+        err = aws_h2_stream_on_decoder_rst_stream(stream, h2_error_code);
+        if (aws_h2err_failed(err)) {
+            return err;
         }
     }
 
-    return AWS_OP_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
+static struct aws_h2err s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
     /* send a PING frame with the ACK flag set in response, with an identical payload. */
@@ -945,14 +979,14 @@ static int s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *u
     if (!ping_ack_frame) {
         CONNECTION_LOGF(
             ERROR, connection, "Ping ACK frame failed to be sent, error %s", aws_error_name(aws_last_error()));
-        return AWS_OP_ERR;
+        return aws_h2err_from_last_error();
     }
 
     aws_h2_connection_enqueue_outgoing_frame(connection, ping_ack_frame);
-    return AWS_OP_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-static int s_decoder_on_settings(
+static struct aws_h2err s_decoder_on_settings(
     const struct aws_h2_frame_setting *settings_array,
     size_t num_settings,
     void *userdata) {
@@ -964,7 +998,7 @@ static int s_decoder_on_settings(
     if (!settings_ack_frame) {
         CONNECTION_LOGF(
             ERROR, connection, "Settings ACK frame failed to be sent, error %s", aws_error_name(aws_last_error()));
-        return AWS_OP_ERR;
+        return aws_h2err_from_last_error();
     }
     aws_h2_connection_enqueue_outgoing_frame(connection, settings_ack_frame);
     /* Store the change to encoder and connection after enqueue the setting ACK frame */
@@ -996,17 +1030,17 @@ static int s_decoder_on_settings(
                             connection,
                             "Connection error, change to SETTINGS_INITIAL_WINDOW_SIZE caused a stream's flow-control "
                             "window to exceed the maximum size");
-                        return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
+                        return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
                     }
                 }
             } break;
         }
         connection->thread_data.settings_peer[settings_array[i].id] = settings_array[i].value;
     }
-    return AWS_OP_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-static int s_decoder_on_settings_ack(void *userdata) {
+static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
     struct aws_h2_connection *connection = userdata;
     /* #TODO track which SETTINGS frames is ACKed by this */
 
@@ -1016,10 +1050,10 @@ static int s_decoder_on_settings_ack(void *userdata) {
     aws_h2_decoder_set_setting_header_table_size(decoder, settings_self[AWS_H2_SETTINGS_HEADER_TABLE_SIZE]);
     aws_h2_decoder_set_setting_enable_push(decoder, settings_self[AWS_H2_SETTINGS_ENABLE_PUSH]);
     aws_h2_decoder_set_setting_max_frame_size(decoder, settings_self[AWS_H2_SETTINGS_MAX_FRAME_SIZE]);
-    return AWS_OP_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
-static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_increment, void *userdata) {
+static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_increment, void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
     if (stream_id == 0) {
@@ -1027,7 +1061,7 @@ static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_i
         if (window_size_increment == 0) {
             /* flow-control window increment of 0 MUST be treated as error (RFC7540 6.9.1) */
             CONNECTION_LOG(ERROR, connection, "Window update frame with 0 increment size")
-            return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+            return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
         }
         if (connection->thread_data.window_size_peer + window_size_increment > AWS_H2_WINDOW_UPDATE_MAX) {
             /* We MUST NOT allow a flow-control window to exceed the max */
@@ -1035,9 +1069,7 @@ static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_i
                 ERROR,
                 connection,
                 "Window update frame causes the connection flow-control window exceeding the maximum size")
-            /* #TODO send GOAWAY frame with FLOW_CONTROL_ERROR (RFC7540 6.9.1) */
-
-            return aws_raise_error(AWS_ERROR_HTTP_FLOW_CONTROL_ERROR);
+            return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
         }
         if (connection->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE) {
             CONNECTION_LOGF(
@@ -1048,17 +1080,20 @@ static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_i
                 window_size_increment);
         }
         connection->thread_data.window_size_peer += window_size_increment;
-        return AWS_OP_SUCCESS;
+        return AWS_H2ERR_SUCCESS;
     } else {
         /* Update the flow-control window size for stream */
         struct aws_h2_stream *stream;
         bool window_resume;
-        if (s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_WINDOW_UPDATE, &stream)) {
-            return AWS_OP_ERR;
+        struct aws_h2err err =
+            s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_WINDOW_UPDATE, &stream);
+        if (aws_h2err_failed(err)) {
+            return err;
         }
         if (stream) {
-            if (aws_h2_stream_on_decoder_window_update(stream, window_size_increment, &window_resume)) {
-                return AWS_OP_ERR;
+            err = aws_h2_stream_on_decoder_window_update(stream, window_size_increment, &window_resume);
+            if (aws_h2err_failed(err)) {
+                return err;
             }
             if (window_resume) {
                 /* Set the stream free from stalled list */
@@ -1073,7 +1108,7 @@ static int s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_i
             }
         }
     }
-    return AWS_OP_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
 /* End decoder callbacks */
@@ -1536,7 +1571,10 @@ static int s_handler_process_read_message(
     }
 
     struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
-    if (aws_h2_decode(connection->thread_data.decoder, &message_cursor)) {
+    struct aws_h2err err = aws_h2_decode(connection->thread_data.decoder, &message_cursor);
+    if (aws_h2err_failed(err)) {
+        /* #TODO: send GOAWAY as a result of this aws_h2err trickling all the way up to the top of the stack */
+        aws_raise_error(err.aws_code);
         CONNECTION_LOGF(
             ERROR,
             connection,

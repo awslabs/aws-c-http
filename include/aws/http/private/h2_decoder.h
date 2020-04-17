@@ -32,63 +32,67 @@
  *   take two complete different actions based on the ACK, we opted for two callbacks.
  */
 
+/* Return a failed aws_h2err from any callback to stop the decoder and cause a Connection Error */
 struct aws_h2_decoder_vtable {
     /* For HEADERS header-block: _begin() is called, then 0+ _i() calls, then _end().
      * No other decoder callbacks will occur in this time.
      * If something is malformed, no further _i() calls occur, and it is reported in _end() */
-    int (*on_headers_begin)(uint32_t stream_id, void *userdata);
-    int (*on_headers_i)(
+    struct aws_h2err (*on_headers_begin)(uint32_t stream_id, void *userdata);
+    struct aws_h2err (*on_headers_i)(
         uint32_t stream_id,
         const struct aws_http_header *header,
         enum aws_http_header_name name_enum,
         enum aws_http_header_block block_type,
         void *userdata);
-    int (*on_headers_end)(uint32_t stream_id, bool malformed, enum aws_http_header_block block_type, void *userdata);
+    struct aws_h2err (
+        *on_headers_end)(uint32_t stream_id, bool malformed, enum aws_http_header_block block_type, void *userdata);
 
     /* For PUSH_PROMISE header-block: _begin() is called, then 0+ _i() calls, then _end().
      * No other decoder callbacks will occur in this time.
      * If something is malformed, no further _i() calls occur, and it is reported in _end() */
-    int (*on_push_promise_begin)(uint32_t stream_id, uint32_t promised_stream_id, void *userdata);
-    int (*on_push_promise_i)(
+    struct aws_h2err (*on_push_promise_begin)(uint32_t stream_id, uint32_t promised_stream_id, void *userdata);
+    struct aws_h2err (*on_push_promise_i)(
         uint32_t stream_id,
         const struct aws_http_header *header,
         enum aws_http_header_name name_enum,
         void *userdata);
-    int (*on_push_promise_end)(uint32_t stream_id, bool malformed, void *userdata);
+    struct aws_h2err (*on_push_promise_end)(uint32_t stream_id, bool malformed, void *userdata);
 
     /* For DATA frame: _begin() is called, then 0+ _i() calls, then _end().
      * No other decoder callbacks will occur in this time */
-    int (*on_data_begin)(uint32_t stream_id, uint32_t payload_len, void *userdata);
-    int (*on_data_i)(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
-    int (*on_data_end)(uint32_t stream_id, void *userdata);
+    struct aws_h2err (*on_data_begin)(uint32_t stream_id, uint32_t payload_len, bool end_stream, void *userdata);
+    struct aws_h2err (*on_data_i)(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
+    struct aws_h2err (*on_data_end)(uint32_t stream_id, void *userdata);
 
     /* Called at end of DATA frame containing the END_STREAM flag.
      * OR called at end of header-block which began with HEADERS frame containing the END_STREAM flag */
-    int (*on_end_stream)(uint32_t stream_id, void *userdata);
+    struct aws_h2err (*on_end_stream)(uint32_t stream_id, void *userdata);
 
     /* Called once for RST_STREAM frame */
-    int (*on_rst_stream)(uint32_t stream_id, uint32_t error_code, void *userdata);
+    struct aws_h2err (*on_rst_stream)(uint32_t stream_id, uint32_t error_code, void *userdata);
 
     /* Called once For PING frame with ACK flag set */
-    int (*on_ping_ack)(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
+    struct aws_h2err (*on_ping_ack)(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
 
     /* Called once for PING frame (no ACK flag set)*/
-    int (*on_ping)(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
+    struct aws_h2err (*on_ping)(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
 
     /* Called once for SETTINGS frame with ACK flag */
-    int (*on_settings_ack)(void *userdata);
+    struct aws_h2err (*on_settings_ack)(void *userdata);
 
     /* Called once for SETTINGS frame, without ACK flag */
-    int (*on_settings)(const struct aws_h2_frame_setting *settings_array, size_t num_settings, void *userdata);
+    struct aws_h2err (
+        *on_settings)(const struct aws_h2_frame_setting *settings_array, size_t num_settings, void *userdata);
 
     /* For GOAWAY frame: _begin() is called, then 0+ _i() calls, then _end().
      * No other decoder callbacks will occur in this time. */
-    int (*on_goaway_begin)(uint32_t last_stream, uint32_t error_code, uint32_t debug_data_length, void *userdata);
-    int (*on_goaway_i)(struct aws_byte_cursor debug_data, void *userdata);
-    int (*on_goaway_end)(void *userdata);
+    struct aws_h2err (
+        *on_goaway_begin)(uint32_t last_stream, uint32_t error_code, uint32_t debug_data_length, void *userdata);
+    struct aws_h2err (*on_goaway_i)(struct aws_byte_cursor debug_data, void *userdata);
+    struct aws_h2err (*on_goaway_end)(void *userdata);
 
     /* Called once for WINDOW_UPDATE frame */
-    int (*on_window_update)(uint32_t stream_id, uint32_t window_size_increment, void *userdata);
+    struct aws_h2err (*on_window_update)(uint32_t stream_id, uint32_t window_size_increment, void *userdata);
 };
 
 /**
@@ -112,7 +116,9 @@ AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params);
 AWS_HTTP_API void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder);
-AWS_HTTP_API int aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data);
+
+/* If failed aws_h2err returned, it is a Connection Error */
+AWS_HTTP_API struct aws_h2err aws_h2_decode(struct aws_h2_decoder *decoder, struct aws_byte_cursor *data);
 
 AWS_HTTP_API void aws_h2_decoder_set_setting_header_table_size(struct aws_h2_decoder *decoder, uint32_t data);
 AWS_HTTP_API void aws_h2_decoder_set_setting_enable_push(struct aws_h2_decoder *decoder, uint32_t data);

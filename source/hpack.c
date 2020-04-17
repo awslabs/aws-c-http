@@ -638,9 +638,17 @@ reset_dyn_table_state:
 
     /* Re-insert all of the reverse lookup elements */
     for (size_t i = 0; i < context->dynamic_table.num_elements; ++i) {
-        aws_hash_table_put(&context->dynamic_table.reverse_lookup, &context->dynamic_table.buffer[i], (void *)i, NULL);
-        aws_hash_table_put(
-            &context->dynamic_table.reverse_lookup_name_only, &context->dynamic_table.buffer[i].name, (void *)i, NULL);
+        if (aws_hash_table_put(
+                &context->dynamic_table.reverse_lookup, &context->dynamic_table.buffer[i], (void *)i, NULL)) {
+            return AWS_OP_ERR;
+        }
+        if (aws_hash_table_put(
+                &context->dynamic_table.reverse_lookup_name_only,
+                &context->dynamic_table.buffer[i].name,
+                (void *)i,
+                NULL)) {
+            return AWS_OP_ERR;
+        }
     }
 
     return AWS_OP_SUCCESS;
@@ -752,6 +760,7 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
             "New dynamic table max size %zu is greater than the supported max size (%zu)",
             new_max_size,
             s_hpack_dynamic_table_max_size);
+        aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
         goto error;
     }
 
@@ -771,7 +780,7 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
     return AWS_OP_SUCCESS;
 
 error:
-    return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
+    return AWS_OP_ERR;
 }
 
 void aws_hpack_set_max_table_size(struct aws_hpack_context *context, size_t new_max_size) {
@@ -1007,7 +1016,7 @@ int aws_hpack_decode_string(
                      * EOS (end-of-string) symbol could stop it early, but HPACK says to treat EOS as error. */
                     if (chunk.len != 0) {
                         HPACK_LOG(ERROR, context, "Huffman encoded end-of-string symbol is illegal");
-                        return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
+                        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
                     }
                 } else {
                     if (aws_byte_buf_append_dynamic(output, &chunk)) {
@@ -1230,7 +1239,7 @@ int aws_hpack_decode(
 
                 if (*size64 > SIZE_MAX) {
                     HPACK_LOG(ERROR, context, "Dynamic table update size is absurdly large");
-                    return aws_raise_error(AWS_ERROR_HTTP_COMPRESSION);
+                    return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
                 }
                 size_t size = (size_t)*size64;
 
