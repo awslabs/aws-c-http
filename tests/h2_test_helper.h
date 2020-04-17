@@ -106,7 +106,9 @@ struct h2_decoded_frame {
     bool headers_malformed;                       /* HEADERS and PUSH_PROMISE have this */
     enum aws_http_header_block header_block_type; /* HEADERS have this */
     struct aws_array_list settings;               /* contains aws_h2_frame_setting, SETTINGS has this */
-    struct aws_byte_buf data /* DATA has this */;
+    struct aws_byte_buf data;                     /* DATA has this */
+    uint32_t data_payload_len;                    /* DATA has this */
+    bool data_end_stream;                         /* DATA has this */
 };
 
 /**
@@ -150,6 +152,16 @@ struct h2_decoded_frame *h2_decode_tester_latest_frame(const struct h2_decode_te
 struct h2_decoded_frame *h2_decode_tester_find_frame(
     const struct h2_decode_tester *decode_tester,
     enum aws_h2_frame_type type,
+    size_t search_start_idx,
+    size_t *out_idx);
+
+/**
+ * Search for frame of a given stream-id, starting at specified index.
+ * To search for the next frame, pass search_start_idx = prev_idx + 1
+ */
+struct h2_decoded_frame *h2_decode_tester_find_stream_frame_any_type(
+    const struct h2_decode_tester *decode_tester,
+    uint32_t stream_id,
     size_t search_start_idx,
     size_t *out_idx);
 

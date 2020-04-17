@@ -151,8 +151,9 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data) {
     /* Validate. */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
-    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
-        &fixture->decode, 0x76543210 /*stream_id*/, "hello", true /*end_stream*/));
+    ASSERT_UINT_EQUALS(5, frame->data_payload_len);
+    ASSERT_TRUE(frame->end_stream);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&frame->data, "hello"));
     return AWS_OP_SUCCESS;
 }
 
@@ -179,8 +180,9 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_padded) {
     /* Validate. */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
-    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
-        &fixture->decode, 0x76543210 /*stream_id*/, "hello", false /*end_stream*/));
+    ASSERT_UINT_EQUALS(8, frame->data_payload_len);
+    ASSERT_FALSE(frame->end_stream);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&frame->data, "hello"));
     return AWS_OP_SUCCESS;
 }
 
@@ -207,8 +209,9 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_pad_length_zero) {
     /* Validate. */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
-    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
-        &fixture->decode, 0x76543210 /*stream_id*/, "hello", true /*end_stream*/));
+    ASSERT_UINT_EQUALS(6, frame->data_payload_len);
+    ASSERT_TRUE(frame->end_stream);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&frame->data, "hello"));
     return AWS_OP_SUCCESS;
 }
 
@@ -261,8 +264,11 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_empty_padded) {
     ASSERT_H2ERR_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
-    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
-        &fixture->decode, 0x76543210 /*stream_id*/, "", false /*end_stream*/));
+    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
+    ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
+    ASSERT_UINT_EQUALS(3, frame->data_payload_len);
+    ASSERT_FALSE(frame->end_stream);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&frame->data, ""));
     return AWS_OP_SUCCESS;
 }
 
@@ -290,8 +296,9 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_ignores_unknown_flags) {
     /* Validate. */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
-    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
-        &fixture->decode, 0x76543210 /*stream_id*/, "hello", true /*end_stream*/));
+    ASSERT_UINT_EQUALS(8, frame->data_payload_len);
+    ASSERT_TRUE(frame->end_stream);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&frame->data, "hello"));
     return AWS_OP_SUCCESS;
 }
 
@@ -316,14 +323,16 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_data_payload_max_size_update) {
         input[i] = 'a';
         expected[i - 9] = 'a';
     }
+    struct aws_byte_cursor expected_cursor = aws_byte_cursor_from_array(expected, sizeof(expected));
 
     ASSERT_H2ERR_SUCCESS(s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     /* Validate. */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x76543210 /*stream_id*/));
-    ASSERT_SUCCESS(h2_decode_tester_check_data_across_frames(
-        &fixture->decode, 0x76543210 /*stream_id*/, aws_byte_cursor_from_array(expected, 16500), true /*end_stream*/));
+    ASSERT_UINT_EQUALS(16500, frame->data_payload_len);
+    ASSERT_TRUE(frame->end_stream);
+    ASSERT_TRUE(aws_byte_cursor_eq_byte_buf(&expected_cursor, &frame->data));
     return AWS_OP_SUCCESS;
 }
 
@@ -416,8 +425,9 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_stream_id_ignores_reserved_bit) {
     /* Validate. */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_DATA, 0x7FFFFFFF /*stream_id*/));
-    ASSERT_SUCCESS(h2_decode_tester_check_data_str_across_frames(
-        &fixture->decode, 0x7FFFFFFF /*stream_id*/, "hello", true /*end_stream*/));
+    ASSERT_UINT_EQUALS(5, frame->data_payload_len);
+    ASSERT_TRUE(frame->end_stream);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&frame->data, "hello"));
     return AWS_OP_SUCCESS;
 }
 

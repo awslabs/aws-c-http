@@ -303,8 +303,9 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
         goto error;
     }
 
-    /* Initialize the flow-control window size for peer */
+    /* Initialize the flow-control window size */
     stream->thread_data.window_size_peer = connection->thread_data.settings_peer[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
+    stream->thread_data.window_size_self = connection->thread_data.settings_self[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
 
     if (has_body_stream) {
         /* If stream has DATA to send, put it in the outgoing_streams_list, and we'll send data later */
@@ -544,7 +545,11 @@ struct aws_h2err aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *str
     return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2err aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, struct aws_byte_cursor data) {
+struct aws_h2err aws_h2_stream_on_decoder_data_begin(
+    struct aws_h2_stream *stream,
+    uint32_t payload_len,
+    bool end_stream) {
+
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
     struct aws_h2err stream_err = s_check_state_allows_frame_type(stream, AWS_H2_FRAME_T_DATA);
@@ -557,7 +562,47 @@ struct aws_h2err aws_h2_stream_on_decoder_data(struct aws_h2_stream *stream, str
         return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR));
     }
 
-    /* #TODO Update stream's flow-control window */
+    /* RFC-7540 6.9.1:
+     * The sender MUST NOT send a flow-controlled frame with a length that exceeds
+     * the space available in either of the flow-control windows advertised by the receiver.
+     * Frames with zero length with the END_STREAM flag set (that is, an empty DATA frame)
+     * MAY be sent if there is no available space in either flow-control window. */
+    if ((int32_t)payload_len > stream->thread_data.window_size_self && payload_len != 0) {
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "DATA length=%" PRIu32 " exceeds flow-control window=%" PRIi32,
+            payload_len,
+            stream->thread_data.window_size_self);
+        return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR));
+    }
+    stream->thread_data.window_size_self -= payload_len;
+
+    if (payload_len != 0 && !end_stream) {
+        /* send a stream window_update frame to automatically maintain the stream self window size */
+        struct aws_h2_frame *stream_window_update_frame =
+            aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, payload_len);
+        if (!stream_window_update_frame) {
+            AWS_H2_STREAM_LOGF(
+                ERROR,
+                stream,
+                "WINDOW_UPDATE frame on stream failed to be sent, error %s",
+                aws_error_name(aws_last_error()));
+            return aws_h2err_from_last_error();
+        }
+
+        aws_h2_connection_enqueue_outgoing_frame(s_get_h2_connection(stream), stream_window_update_frame);
+        stream->thread_data.window_size_self += payload_len;
+    }
+
+    return AWS_H2ERR_SUCCESS;
+}
+
+struct aws_h2err aws_h2_stream_on_decoder_data_i(struct aws_h2_stream *stream, struct aws_byte_cursor data) {
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+
+    /* Not calling s_check_state_allows_frame_type() here because we already checked at start of DATA frame in
+     * aws_h2_stream_on_decoder_data_begin() */
 
     if (stream->base.on_incoming_body) {
         if (stream->base.on_incoming_body(&stream->base, &data, stream->base.user_data)) {
