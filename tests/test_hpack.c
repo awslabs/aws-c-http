@@ -835,9 +835,9 @@ static int test_hpack_dynamic_table_size_update_from_setting(struct aws_allocato
     ASSERT_NOT_NULL(context);
 
     /* let's pretent multiple times max size update happened from encoder setting */
-    aws_hpack_set_max_table_size(context, 10, true /*udpate table size*/);
-    aws_hpack_set_max_table_size(context, 0, true /*udpate table size*/);
-    aws_hpack_set_max_table_size(context, 1337, true /*udpate table size*/);
+    aws_hpack_set_max_table_size(context, 10);
+    aws_hpack_set_max_table_size(context, 0);
+    aws_hpack_set_max_table_size(context, 1337);
 
     /* encode a header block */
     struct aws_http_headers *headers = aws_http_headers_new(allocator);

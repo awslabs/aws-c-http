@@ -248,7 +248,7 @@ struct aws_hpack_context {
         size_t size;
         size_t max_size;
 
-        /* SETTINGS_HEARDER_TABLE_SIZE from http2 */
+        /* SETTINGS_HEADER_TABLE_SIZE from http2 */
         size_t protocol_max_size_setting;
         /* aws_http_header * -> size_t */
         struct aws_hash_table reverse_lookup;
@@ -786,15 +786,17 @@ error:
     return AWS_OP_ERR;
 }
 
-void aws_hpack_set_max_table_size(struct aws_hpack_context *context, size_t setting_max_size, bool update_table_size) {
-    if (update_table_size) {
-        if (!context->dynamic_table_size_update.pending) {
-            context->dynamic_table_size_update.pending = true;
-        }
-        context->dynamic_table_size_update.smallest_value =
-            aws_min_size(setting_max_size, context->dynamic_table_size_update.smallest_value);
-        context->dynamic_table_size_update.last_value = setting_max_size;
+void aws_hpack_set_max_table_size(struct aws_hpack_context *context, uint32_t new_max_size) {
+
+    if (!context->dynamic_table_size_update.pending) {
+        context->dynamic_table_size_update.pending = true;
     }
+    context->dynamic_table_size_update.smallest_value =
+        aws_min_size(new_max_size, context->dynamic_table_size_update.smallest_value);
+    context->dynamic_table_size_update.last_value = new_max_size;
+}
+
+void aws_hpack_set_protocol_max_size_setting(struct aws_hpack_context *context, uint32_t setting_max_size) {
     context->dynamic_table.protocol_max_size_setting = setting_max_size;
 }
 

@@ -265,13 +265,13 @@ static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream
     return AWS_H2ERR_SUCCESS;
 }
 
-int aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed, bool self) {
+struct aws_h2err aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed, bool self) {
     int32_t *window_size = self ? &stream->thread_data.window_size_self : &stream->thread_data.window_size_peer;
     if ((int64_t)*window_size + size_changed > AWS_H2_WINDOW_UPDATE_MAX) {
-        return AWS_OP_ERR;
+        return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
     }
     *window_size += size_changed;
-    return AWS_OP_SUCCESS;
+    return AWS_H2ERR_SUCCESS;
 }
 
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data) {
@@ -633,11 +633,12 @@ struct aws_h2err aws_h2_stream_on_decoder_window_update(
         return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR));
     }
     int32_t old_window_size = stream->thread_data.window_size_peer;
-    if (aws_h2_stream_window_size_change(stream, window_size_increment, false)) {
+    stream_err = (aws_h2_stream_window_size_change(stream, window_size_increment, false /*self*/));
+    if (aws_h2err_failed(stream_err)) {
         /* We MUST NOT allow a flow-control window to exceed the max */
         AWS_H2_STREAM_LOG(
             ERROR, stream, "Window update frame causes the stream flow-control window to exceed the maximum size");
-        return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR));
+        return s_send_rst_and_close_stream(stream, stream_err);
     }
     if (stream->thread_data.window_size_peer > AWS_H2_MIN_WINDOW_SIZE && old_window_size <= AWS_H2_MIN_WINDOW_SIZE) {
         *window_resume = true;

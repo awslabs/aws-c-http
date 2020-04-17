@@ -50,7 +50,7 @@ struct aws_h2_connection {
 
         /* List using h2_pending_settings.node
          * Contains settings waiting to be ACKed by peer and applied */
-        struct aws_linked_list pending_settings_self_list;
+        struct aws_linked_list pending_settings_queue;
 
         /* Most recent stream-id that was initiated by peer */
         uint32_t latest_peer_initiated_stream_id;

@@ -78,7 +78,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
 
 enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *stream);
 
-int aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed, bool self);
+struct aws_h2err aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed, bool self);
 
 /* Connection is ready to send frames from stream now */
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data);
