@@ -277,6 +277,8 @@ static struct aws_h2_connection *s_connection_new(
     connection->thread_data.window_size_peer = aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
     connection->thread_data.window_size_self = aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
 
+    connection->thread_data.goaway_received_last_stream_id = AWS_H2_STREAM_ID_MAX;
+
     /* Create a new decoder */
     struct aws_h2_decoder_params params = {
         .alloc = alloc,

@@ -86,6 +86,18 @@ struct aws_h2_connection {
          * Reduce the space after receiving a flow-controlled frame. Increment after sending WINDOW_UPDATE for
          * connection */
         size_t window_size_self;
+
+        /* Highest self-initiated stream-id that peer might have processed.
+         * Defaults to max stream-id, may be lowered when GOAWAY frame received. */
+        uint32_t goaway_received_last_stream_id;
+
+        /* Latest HTTP/2 error-code received via GOAWAY.
+         * Defaults to 0 (NO_ERROR), may be updated by receipt of multiple GOAWAY frames*/
+        uint32_t goaway_received_error_code;
+
+        /* Whether GOAWAY frame received. Illegal to initiate new streams when true. */
+        bool goaway_received;
+
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
