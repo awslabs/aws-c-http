@@ -418,6 +418,15 @@ int aws_h2_connection_change_settings(
     if (!num_settings) {
         return AWS_OP_SUCCESS;
     }
+
+    /* push the setting array into the queue, not applying the change until it is ACKed by peer */
+    struct h2_pending_settings *pending_settings =
+        s_new_pending_settings(connection->base.alloc, settings_array, num_settings);
+    if (!pending_settings) {
+        return AWS_OP_ERR;
+    }
+    aws_linked_list_push_back(&connection->thread_data.pending_settings_self_list, &pending_settings->node);
+
     /* Send setting frame to inform our peer */
     struct aws_h2_frame *setting_frame =
         aws_h2_frame_new_settings(connection->base.alloc, settings_array, num_settings, false /*ACK*/);
@@ -426,16 +435,6 @@ int aws_h2_connection_change_settings(
         return AWS_OP_ERR;
     }
     aws_h2_connection_enqueue_outgoing_frame(connection, setting_frame);
-
-    /* push the setting array into the queue, not applying the change until it is ACKed by peer */
-    struct h2_pending_settings *pending_settings =
-        s_new_pending_settings(connection->base.alloc, settings_array, num_settings);
-    if (!pending_settings) {
-        /* TODO: memalloc failed, should I raise any kind of error? */
-        aws_raise_error(AWS_ERROR_HTTP_UNKNOWN);
-        return AWS_OP_ERR;
-    }
-    aws_linked_list_push_back(&connection->thread_data.pending_settings_self_list, &pending_settings->node);
 
     return AWS_OP_SUCCESS;
 }
