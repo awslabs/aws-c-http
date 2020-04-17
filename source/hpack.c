@@ -248,6 +248,8 @@ struct aws_hpack_context {
         size_t size;
         size_t max_size;
 
+        /* SETTINGS_HEARDER_TABLE_SIZE from http2 */
+        size_t protocol_max_size_setting;
         /* aws_http_header * -> size_t */
         struct aws_hash_table reverse_lookup;
         /* aws_byte_cursor * -> size_t */
@@ -339,7 +341,8 @@ struct aws_hpack_context *aws_hpack_context_new(
 
     /* Initialize dynamic table */
     context->dynamic_table.max_size = s_hpack_dynamic_table_initial_size;
-
+    /* Initial header table size for http2 setting is the same as initial size for dynamic table */
+    context->dynamic_table.protocol_max_size_setting = s_hpack_dynamic_table_initial_size;
     context->dynamic_table.buffer_capacity = s_hpack_dynamic_table_initial_elements;
     context->dynamic_table.buffer =
         aws_mem_calloc(allocator, context->dynamic_table.buffer_capacity, sizeof(struct aws_http_header));
@@ -783,14 +786,16 @@ error:
     return AWS_OP_ERR;
 }
 
-void aws_hpack_set_max_table_size(struct aws_hpack_context *context, size_t new_max_size) {
-
-    if (!context->dynamic_table_size_update.pending) {
-        context->dynamic_table_size_update.pending = true;
+void aws_hpack_set_max_table_size(struct aws_hpack_context *context, size_t setting_max_size, bool update_table_size) {
+    if (update_table_size) {
+        if (!context->dynamic_table_size_update.pending) {
+            context->dynamic_table_size_update.pending = true;
+        }
+        context->dynamic_table_size_update.smallest_value =
+            aws_min_size(setting_max_size, context->dynamic_table_size_update.smallest_value);
+        context->dynamic_table_size_update.last_value = setting_max_size;
     }
-    context->dynamic_table_size_update.smallest_value =
-        aws_min_size(new_max_size, context->dynamic_table_size_update.smallest_value);
-    context->dynamic_table_size_update.last_value = new_max_size;
+    context->dynamic_table.protocol_max_size_setting = setting_max_size;
 }
 
 int aws_hpack_decode_integer(
@@ -1236,9 +1241,10 @@ int aws_hpack_decode(
                 if (!size_complete) {
                     break;
                 }
-
-                if (*size64 > SIZE_MAX) {
-                    HPACK_LOG(ERROR, context, "Dynamic table update size is absurdly large");
+                /* The new maximum size MUST be lower than or equal to the limit determined by the protocol using HPACK.
+                 * A value that exceeds this limit MUST be treated as a decoding error. */
+                if (*size64 > context->dynamic_table.protocol_max_size_setting) {
+                    HPACK_LOG(ERROR, context, "Dynamic table update size is larger than the protocal setting");
                     return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
                 }
                 size_t size = (size_t)*size64;

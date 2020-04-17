@@ -131,7 +131,7 @@ int aws_hpack_resize_dynamic_table(struct aws_hpack_context *context, size_t new
  * two header blocks. The dynamic table resize and the dynamic table size update entry will be handled properly when we
  * encode the next header block  */
 AWS_HTTP_API
-void aws_hpack_set_max_table_size(struct aws_hpack_context *context, size_t new_max_size);
+void aws_hpack_set_max_table_size(struct aws_hpack_context *context, size_t setting_max_size, bool update_table_size);
 
 AWS_HTTP_API
 void aws_hpack_set_huffman_mode(struct aws_hpack_context *context, enum aws_hpack_huffman_mode mode);

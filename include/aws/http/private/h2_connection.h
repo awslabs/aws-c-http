@@ -48,6 +48,10 @@ struct aws_h2_connection {
         /* My settings to send/sent to peer, which affects the decoding */
         uint32_t settings_self[AWS_H2_SETTINGS_END_RANGE];
 
+        /* List using h2_pending_settings.node
+         * Contains settings waiting to be ACKed by peer and applied */
+        struct aws_linked_list pending_settings_self_list;
+
         /* Most recent stream-id that was initiated by peer */
         uint32_t latest_peer_initiated_stream_id;
 
@@ -150,6 +154,12 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
 AWS_EXTERN_C_END
 
 /* Private functions called from multiple .c files... */
+
+/* Internal API for changing self settings of the connection */
+int aws_h2_connection_change_settings(
+    struct aws_h2_connection *connection,
+    const struct aws_h2_frame_setting *setting_array,
+    size_t num_settings);
 
 /**
  * Enqueue outgoing frame.

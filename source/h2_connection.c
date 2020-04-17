@@ -239,6 +239,7 @@ static struct aws_h2_connection *s_connection_new(
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
 
     aws_linked_list_init(&connection->thread_data.outgoing_streams_list);
+    aws_linked_list_init(&connection->thread_data.pending_settings_self_list);
     aws_linked_list_init(&connection->thread_data.stalled_window_streams_list);
     aws_linked_list_init(&connection->thread_data.outgoing_frames_queue);
 
@@ -340,6 +341,14 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
     return &connection->base;
 }
 
+struct h2_pending_settings {
+    struct aws_allocator *alloc;
+
+    struct aws_h2_frame_setting *settings_array;
+    size_t num_settings;
+    struct aws_linked_list_node node;
+};
+
 static void s_handler_destroy(struct aws_channel_handler *handler) {
     struct aws_h2_connection *connection = handler->impl;
     CONNECTION_LOG(TRACE, connection, "Destroying connection");
@@ -348,6 +357,14 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     AWS_ASSERT(
         !aws_hash_table_is_valid(&connection->thread_data.active_streams_map) ||
         aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0);
+    while (!aws_linked_list_empty(&connection->thread_data.pending_settings_self_list)) {
+        /* Some settings are sent, but peer never sends ACK back. It's not an error. We just have to clean it up */
+        struct aws_linked_list_node *node =
+            aws_linked_list_pop_front(&connection->thread_data.pending_settings_self_list);
+        struct h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct h2_pending_settings, node);
+        aws_mem_release(pending_settings->alloc, pending_settings->settings_array);
+        aws_mem_release(pending_settings->alloc, pending_settings);
+    }
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stalled_window_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.outgoing_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
@@ -366,6 +383,61 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     aws_hash_table_clean_up(&connection->thread_data.closed_streams_where_frames_might_trickle_in);
     aws_mutex_clean_up(&connection->synced_data.lock);
     aws_mem_release(connection->base.alloc, connection);
+}
+
+static struct h2_pending_settings *s_new_pending_settings(
+    struct aws_allocator *allocator,
+    const struct aws_h2_frame_setting *settings_array,
+    size_t num_settings) {
+
+    struct h2_pending_settings *pending_settings = aws_mem_acquire(allocator, sizeof(struct h2_pending_settings));
+    if (!pending_settings) {
+        return NULL;
+    }
+
+    AWS_ZERO_STRUCT(*pending_settings);
+    pending_settings->alloc = allocator;
+    /* We buffer the settings up, incase the caller has freed them when the ACK arrives */
+    pending_settings->settings_array = aws_mem_acquire(allocator, num_settings * sizeof(*settings_array));
+    if (!pending_settings->settings_array) {
+        return NULL;
+    }
+    memcpy(pending_settings->settings_array, settings_array, num_settings * sizeof(*settings_array));
+    pending_settings->num_settings = num_settings;
+
+    return pending_settings;
+}
+
+int aws_h2_connection_change_settings(
+    struct aws_h2_connection *connection,
+    const struct aws_h2_frame_setting *settings_array,
+    size_t num_settings) {
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+    AWS_PRECONDITION(settings_array);
+
+    if (!num_settings) {
+        return AWS_OP_SUCCESS;
+    }
+    /* Send setting frame to inform our peer */
+    struct aws_h2_frame *setting_frame =
+        aws_h2_frame_new_settings(connection->base.alloc, settings_array, num_settings, false /*ACK*/);
+    if (!setting_frame) {
+        CONNECTION_LOGF(ERROR, connection, "Failed to send setting_frames, error %s", aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+    aws_h2_connection_enqueue_outgoing_frame(connection, setting_frame);
+
+    /* push the setting array into the queue, not applying the change until it is ACKed by peer */
+    struct h2_pending_settings *pending_settings =
+        s_new_pending_settings(connection->base.alloc, settings_array, num_settings);
+    if (!pending_settings) {
+        /* TODO: memalloc failed, should I raise any kind of error? */
+        aws_raise_error(AWS_ERROR_HTTP_UNKNOWN);
+        return AWS_OP_ERR;
+    }
+    aws_linked_list_push_back(&connection->thread_data.pending_settings_self_list, &pending_settings->node);
+
+    return AWS_OP_SUCCESS;
 }
 
 void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connection, struct aws_h2_frame *frame) {
@@ -1024,7 +1096,7 @@ static struct aws_h2err s_decoder_on_settings(
                 while (!aws_hash_iter_done(&stream_iter)) {
                     struct aws_h2_stream *stream = stream_iter.element.value;
                     aws_hash_iter_next(&stream_iter);
-                    if (aws_h2_stream_window_size_change(stream, size_changed)) {
+                    if (aws_h2_stream_window_size_change(stream, size_changed, false)) {
                         CONNECTION_LOG(
                             ERROR,
                             connection,
@@ -1042,14 +1114,55 @@ static struct aws_h2err s_decoder_on_settings(
 
 static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
     struct aws_h2_connection *connection = userdata;
-    /* #TODO track which SETTINGS frames is ACKed by this */
 
-    /* inform decoder about the settings */
+    struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_self_list);
+    struct h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct h2_pending_settings, node);
+    struct aws_h2_frame_setting *settings_array = pending_settings->settings_array;
+    /* Apply the settings */
     struct aws_h2_decoder *decoder = connection->thread_data.decoder;
-    uint32_t *settings_self = connection->thread_data.settings_self;
-    aws_h2_decoder_set_setting_header_table_size(decoder, settings_self[AWS_H2_SETTINGS_HEADER_TABLE_SIZE]);
-    aws_h2_decoder_set_setting_enable_push(decoder, settings_self[AWS_H2_SETTINGS_ENABLE_PUSH]);
-    aws_h2_decoder_set_setting_max_frame_size(decoder, settings_self[AWS_H2_SETTINGS_MAX_FRAME_SIZE]);
+    for (size_t i = 0; i < pending_settings->num_settings; i++) {
+        if (connection->thread_data.settings_self[settings_array[i].id] == settings_array[i].value) {
+            /* No change, don't do any work */
+            continue;
+        }
+        switch (settings_array[i].id) {
+            case AWS_H2_SETTINGS_HEADER_TABLE_SIZE:
+                aws_h2_decoder_set_setting_header_table_size(decoder, settings_array[i].value);
+                break;
+            case AWS_H2_SETTINGS_MAX_FRAME_SIZE:
+                aws_h2_decoder_set_setting_max_frame_size(decoder, settings_array[i].value);
+                break;
+            case AWS_H2_SETTINGS_ENABLE_PUSH:
+                aws_h2_decoder_set_setting_enable_push(decoder, settings_array[i].value);
+                break;
+            case AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE: {
+                /* When the value of SETTINGS_INITIAL_WINDOW_SIZE changes, a receiver MUST adjust the size of all stream
+                 * flow-control windows that it maintains by the difference between the new value and the old value. */
+                int32_t size_changed =
+                    settings_array[i].value - connection->thread_data.settings_self[settings_array[i].id];
+                struct aws_hash_iter stream_iter = aws_hash_iter_begin(&connection->thread_data.active_streams_map);
+                while (!aws_hash_iter_done(&stream_iter)) {
+                    struct aws_h2_stream *stream = stream_iter.element.value;
+                    aws_hash_iter_next(&stream_iter);
+                    if (aws_h2_stream_window_size_change(stream, size_changed, true)) {
+                        CONNECTION_LOG(
+                            ERROR,
+                            connection,
+                            "Connection error, change to SETTINGS_INITIAL_WINDOW_SIZE from internal caused a stream's "
+                            "flow-control window to exceed the maximum size");
+                        /* clean up the pending_settings */
+                        aws_mem_release(pending_settings->alloc, pending_settings->settings_array);
+                        aws_mem_release(pending_settings->alloc, pending_settings);
+                        return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
+                    }
+                }
+            } break;
+        }
+        connection->thread_data.settings_self[settings_array[i].id] = settings_array[i].value;
+    }
+    /* clean up the pending_settings */
+    aws_mem_release(pending_settings->alloc, pending_settings->settings_array);
+    aws_mem_release(pending_settings->alloc, pending_settings);
     return AWS_H2ERR_SUCCESS;
 }
 
@@ -1142,20 +1255,6 @@ error:
     return AWS_OP_ERR;
 }
 
-/* #TODO actually fill with initial settings */
-/* #TODO track which SETTINGS frames have been ACK'd */
-static int s_enqueue_settings_frame(struct aws_h2_connection *connection) {
-    struct aws_allocator *alloc = connection->base.alloc;
-
-    struct aws_h2_frame *settings_frame = aws_h2_frame_new_settings(alloc, NULL, 0, false /*ack*/);
-    if (!settings_frame) {
-        return AWS_OP_ERR;
-    }
-
-    aws_h2_connection_enqueue_outgoing_frame(connection, settings_frame);
-    return AWS_OP_SUCCESS;
-}
-
 static void s_handler_installed(struct aws_channel_handler *handler, struct aws_channel_slot *slot) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(slot->channel));
     struct aws_h2_connection *connection = handler->impl;
@@ -1169,6 +1268,12 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
     /* Send HTTP/2 connection preface (RFC-7540 3.5)
      * - clients must send magic string
      * - both client and server must send SETTINGS frame */
+
+    /* #TODO actually fill with initial settings, now we just disable the push promise for client */
+    /* #TODO Probably we will move the initial settings to connection_new_http2_XXX after we got API for user to change
+     * settings */
+    struct aws_h2_frame_setting initial_settings[2];
+    size_t new_setting_iter = 0;
     if (connection->base.client_data) {
         if (s_send_connection_preface_client_string(connection)) {
             CONNECTION_LOGF(
@@ -1178,9 +1283,12 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
                 aws_error_name(aws_last_error()));
             goto error;
         }
+        initial_settings[new_setting_iter].id = AWS_H2_SETTINGS_ENABLE_PUSH;
+        initial_settings[new_setting_iter].value = 0;
+        new_setting_iter++;
     }
 
-    if (s_enqueue_settings_frame(connection)) {
+    if (aws_h2_connection_change_settings(connection, initial_settings, new_setting_iter)) {
         CONNECTION_LOGF(
             ERROR,
             connection,
