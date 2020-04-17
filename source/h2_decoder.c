@@ -1531,8 +1531,7 @@ static struct aws_h2err s_state_fn_connection_preface_string(
 }
 
 void aws_h2_decoder_set_setting_header_table_size(struct aws_h2_decoder *decoder, uint32_t data) {
-    /* Set the max_dynamic_table_size for hpack, but we will not update the dynamic table size until we receive dynamic
-     * table size update from header block */
+    /* Set the protocol_max_size_setting for hpack. */
     aws_hpack_set_protocol_max_size_setting(decoder->hpack, data);
 }
 
