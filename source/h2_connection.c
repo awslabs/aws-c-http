@@ -425,17 +425,18 @@ int aws_h2_connection_change_settings(
     if (!pending_settings) {
         return AWS_OP_ERR;
     }
-    aws_linked_list_push_back(&connection->thread_data.pending_settings_self_list, &pending_settings->node);
-
     /* Send setting frame to inform our peer */
     struct aws_h2_frame *setting_frame =
         aws_h2_frame_new_settings(connection->base.alloc, settings_array, num_settings, false /*ACK*/);
     if (!setting_frame) {
         CONNECTION_LOGF(ERROR, connection, "Failed to send setting_frames, error %s", aws_error_name(aws_last_error()));
+        aws_mem_release(pending_settings->alloc, pending_settings->settings_array);
+        aws_mem_release(pending_settings->alloc, pending_settings);
         return AWS_OP_ERR;
     }
     aws_h2_connection_enqueue_outgoing_frame(connection, setting_frame);
 
+    aws_linked_list_push_back(&connection->thread_data.pending_settings_self_list, &pending_settings->node);
     return AWS_OP_SUCCESS;
 }
 
