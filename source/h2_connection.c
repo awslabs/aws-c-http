@@ -1127,7 +1127,7 @@ struct aws_h2err s_decoder_on_goaway_begin(
     void *userdata) {
     (void)debug_data_length;
     struct aws_h2_connection *connection = userdata;
-    
+
     if (last_stream > connection->thread_data.goaway_received_last_stream_id) {
         CONNECTION_LOGF(
             ERROR,
