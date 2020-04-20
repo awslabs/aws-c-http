@@ -55,10 +55,10 @@ static size_t s_handler_initial_window_size(struct aws_channel_handler *handler)
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
 static void s_handler_installed(struct aws_channel_handler *handler, struct aws_channel_slot *slot);
-static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h2_stream *stream, int error_code);
 static struct aws_http_stream *s_connection_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options);
+static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
@@ -69,7 +69,10 @@ static int s_record_closed_stream(
     struct aws_h2_connection *connection,
     uint32_t stream_id,
     enum aws_h2_stream_closed_when closed_when);
+static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h2_stream *stream, int error_code);
 static void s_try_write_outgoing_frames(struct aws_h2_connection *connection);
+static void s_write_outgoing_frames(struct aws_h2_connection *connection, bool first_try);
+static void s_finish_shutdown(struct aws_h2_connection *connection);
 
 static struct aws_h2err s_decoder_on_headers_begin(uint32_t stream_id, void *userdata);
 static struct aws_h2err s_decoder_on_headers_i(
@@ -121,7 +124,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .make_request = s_connection_make_request,
     .new_server_request_handler_stream = NULL,
     .stream_send_response = NULL,
-    .close = NULL,
+    .close = s_connection_close,
     .is_open = s_connection_is_open,
     .update_window = NULL,
 };
@@ -198,14 +201,16 @@ static void s_stop(
     }
 }
 
-static void s_shutdown_due_to_read_err(struct aws_h2_connection *connection, int error_code) {
-    AWS_PRECONDITION(error_code);
-    s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, error_code);
-}
-
 static void s_shutdown_due_to_write_err(struct aws_h2_connection *connection, int error_code) {
     AWS_PRECONDITION(error_code);
-    s_stop(connection, false /*stop_reading*/, true /*stop_writing*/, true /*schedule_shutdown*/, error_code);
+
+    if (connection->thread_data.channel_shutdown_waiting_for_goaway_to_be_written) {
+        /* If shutdown is waiting for writes to complete, but writes are now broken,
+         * then we must finish shutdown now */
+        s_finish_shutdown(connection);
+    } else {
+        s_stop(connection, false /*stop_reading*/, true /*stop_writing*/, true /*schedule_shutdown*/, error_code);
+    }
 }
 
 /* Common new() logic for server & client */
@@ -287,6 +292,7 @@ static struct aws_h2_connection *s_connection_new(
     connection->thread_data.window_size_self = aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
 
     connection->thread_data.goaway_received_last_stream_id = AWS_H2_STREAM_ID_MAX;
+    connection->thread_data.goaway_sent_last_stream_id = AWS_H2_STREAM_ID_MAX;
 
     /* Create a new decoder */
     struct aws_h2_decoder_params params = {
@@ -502,26 +508,58 @@ static void s_on_channel_write_complete(
 }
 
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;
     }
 
     struct aws_h2_connection *connection = arg;
+    s_write_outgoing_frames(connection, false /*first_try*/);
+}
+
+static void s_write_outgoing_frames(struct aws_h2_connection *connection, bool first_try) {
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+    AWS_PRECONDITION(connection->thread_data.is_outgoing_frames_task_active);
+
     struct aws_channel_slot *channel_slot = connection->base.channel_slot;
     struct aws_linked_list *outgoing_frames_queue = &connection->thread_data.outgoing_frames_queue;
     struct aws_linked_list *outgoing_streams_list = &connection->thread_data.outgoing_streams_list;
 
-    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(channel_slot->channel));
-    AWS_PRECONDITION(connection->thread_data.is_outgoing_frames_task_active);
-
-    /* If we have nothing to send, or we're unable to send, then end task immediately */
-    if (aws_linked_list_empty(outgoing_frames_queue) &&
-        (aws_linked_list_empty(outgoing_streams_list) ||
-         (connection->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE))) {
-        CONNECTION_LOG(
-            TRACE, connection, "Outgoing frames task stopped, nothing to send or unable to send at this time");
-        connection->thread_data.is_outgoing_frames_task_active = false;
+    if (connection->thread_data.is_writing_stopped) {
         return;
+    }
+
+    /* Determine whether there's work to do, and end task immediately if there's not.
+     * Note that we stop writing DATA frames if the channel is trying to shut down */
+    bool has_control_frames = !aws_linked_list_empty(outgoing_frames_queue);
+    bool has_data_frames = !aws_linked_list_empty(outgoing_streams_list);
+    bool may_write_data_frames = (connection->thread_data.window_size_peer > AWS_H2_MIN_WINDOW_SIZE) &&
+                                 !connection->thread_data.channel_shutdown_waiting_for_goaway_to_be_written;
+    bool will_write = has_control_frames || (has_data_frames && may_write_data_frames);
+
+    if (!will_write) {
+        if (!first_try) {
+            CONNECTION_LOGF(
+                TRACE,
+                connection,
+                "Outgoing frames task stopped. has_control_frames:%d has_data_frames:%d may_write_data_frames:%d",
+                has_control_frames,
+                has_data_frames,
+                may_write_data_frames);
+        }
+
+        connection->thread_data.is_outgoing_frames_task_active = false;
+
+        if (connection->thread_data.channel_shutdown_waiting_for_goaway_to_be_written) {
+            s_finish_shutdown(connection);
+        }
+
+        return;
+    }
+
+    if (first_try) {
+        CONNECTION_LOG(TRACE, connection, "Starting outgoing frames task");
     }
 
     /* Acquire aws_io_message, that we will attempt to fill up */
@@ -546,8 +584,9 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
         goto error;
     }
 
-    /* If outgoing_frames_queue emptied, then write as many DATA frames from outgoing_streams_list as possible. */
-    if (aws_linked_list_empty(outgoing_frames_queue)) {
+    /* If outgoing_frames_queue emptied, and connection is running normally,
+     * then write as many DATA frames from outgoing_streams_list as possible. */
+    if (aws_linked_list_empty(outgoing_frames_queue) && may_write_data_frames) {
         if (s_encode_data_from_outgoing_streams(connection, &msg->message_data)) {
             goto error;
         }
@@ -575,7 +614,7 @@ static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enu
 
         aws_mem_release(msg->allocator, msg);
 
-        aws_channel_schedule_task_now(channel_slot->channel, task);
+        aws_channel_schedule_task_now(channel_slot->channel, &connection->outgoing_frames_task);
     }
     return;
 
@@ -739,9 +778,8 @@ static void s_try_write_outgoing_frames(struct aws_h2_connection *connection) {
         return;
     }
 
-    CONNECTION_LOG(TRACE, connection, "Starting outgoing frames task");
     connection->thread_data.is_outgoing_frames_task_active = true;
-    s_outgoing_frames_task(&connection->outgoing_frames_task, connection, AWS_TASK_STATUS_RUN_READY);
+    s_write_outgoing_frames(connection, true /*first_try*/);
 }
 
 /**
@@ -767,10 +805,12 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
         return AWS_H2ERR_SUCCESS;
     }
 
-    /* #TODO account for odd-numbered vs even-numbered stream-ids when we handle PUSH_PROMISE frames */
+    bool client_initiated = (stream_id % 2) == 1;
+    bool self_initiated_stream = client_initiated && (connection->base.client_data != NULL);
+    bool peer_initiated_stream = !self_initiated_stream;
 
-    /* Stream isn't active, check whether it's idle (doesn't exist yet) or closed. */
-    if (stream_id >= connection->base.next_stream_id) {
+    if ((self_initiated_stream && stream_id >= connection->base.next_stream_id) ||
+        (peer_initiated_stream && stream_id > connection->thread_data.latest_peer_initiated_stream_id)) {
         /* Illegal to receive frames for a stream in the idle state (stream doesn't exist yet)
          * (except server receiving HEADERS to start a stream, but that's handled elsewhere) */
         CONNECTION_LOGF(
@@ -780,6 +820,19 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
             aws_h2_frame_type_to_str(frame_type),
             stream_id);
         return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+    }
+
+    if (peer_initiated_stream && stream_id > connection->thread_data.goaway_sent_last_stream_id) {
+        /* Once GOAWAY sent, ignore frames for peer-initiated streams whose id > last-stream-id */
+        CONNECTION_LOGF(
+            TRACE,
+            connection,
+            "Ignoring %s frame on stream id=%" PRIu32 " because GOAWAY sent with last-stream-id=%" PRIu32,
+            aws_h2_frame_type_to_str(frame_type),
+            stream_id,
+            connection->thread_data.goaway_sent_last_stream_id);
+
+        return AWS_H2ERR_SUCCESS;
     }
 
     /* Stream is closed, check whether it's legal for a few more frames to trickle in */
@@ -1735,10 +1788,44 @@ error:
     return NULL;
 }
 
+static void s_connection_close(struct aws_http_connection *connection_base) {
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
+
+    /* Don't stop reading/writing immediately, let that happen naturally during the channel shutdown process. */
+    s_stop(connection, false /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, AWS_ERROR_SUCCESS);
+}
+
 static bool s_connection_is_open(const struct aws_http_connection *connection_base) {
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     bool is_open = aws_atomic_load_int(&connection->atomic.is_open);
     return is_open;
+}
+
+/* Send a GOAWAY with the lowest possible last-stream-id */
+static void s_send_goaway(struct aws_h2_connection *connection, enum aws_h2_error_code h2_error_code) {
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+    AWS_PRECONDITION(!connection->thread_data.is_writing_stopped);
+
+    uint32_t last_stream_id = aws_min_u32(
+        connection->thread_data.latest_peer_initiated_stream_id, connection->thread_data.goaway_sent_last_stream_id);
+
+    struct aws_byte_cursor debug_data;
+    AWS_ZERO_STRUCT(debug_data);
+
+    struct aws_h2_frame *goaway =
+        aws_h2_frame_new_goaway(connection->base.alloc, last_stream_id, h2_error_code, debug_data);
+    if (!goaway) {
+        CONNECTION_LOGF(ERROR, connection, "Error creating GOAWAY frame, %s", aws_error_name(aws_last_error()));
+        goto error;
+    }
+
+    connection->thread_data.goaway_sent_last_stream_id = last_stream_id;
+    aws_h2_connection_enqueue_outgoing_frame(connection, goaway);
+    s_try_write_outgoing_frames(connection);
+    return;
+
+error:
+    s_shutdown_due_to_write_err(connection, aws_last_error());
 }
 
 static int s_handler_process_read_message(
@@ -1752,21 +1839,21 @@ static int s_handler_process_read_message(
 
     if (connection->thread_data.is_reading_stopped) {
         CONNECTION_LOG(ERROR, connection, "Cannot process message because connection is shutting down.");
-        aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
-        goto shutdown;
+        goto clean_up;
     }
 
+    /* Any error that bubbles up from the decoder or its callbacks is treated as
+     * a Connection Error (a GOAWAY frames is sent, and the connection is closed) */
     struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
     struct aws_h2err err = aws_h2_decode(connection->thread_data.decoder, &message_cursor);
     if (aws_h2err_failed(err)) {
-        /* #TODO: send GOAWAY as a result of this aws_h2err trickling all the way up to the top of the stack */
-        aws_raise_error(err.aws_code);
         CONNECTION_LOGF(
             ERROR,
             connection,
-            "Decoding message failed, error %d (%s). Closing connection",
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
+            "Failure while receiving frames, %s. Sending GOAWAY %s(0x%x) and closing connection",
+            aws_error_name(err.aws_code),
+            aws_h2_error_code_to_str(err.h2_code),
+            err.h2_code);
         goto shutdown;
     }
 
@@ -1779,25 +1866,22 @@ static int s_handler_process_read_message(
             "Incrementing read window failed, error %d (%s). Closing connection",
             aws_last_error(),
             aws_error_name(aws_last_error()));
+        err = aws_h2err_from_last_error();
         goto shutdown;
     }
 
-    /* release message */
-    if (message) {
-        aws_mem_release(message->allocator, message);
-        message = NULL;
-    }
+    goto clean_up;
+
+shutdown:
+    s_send_goaway(connection, err.h2_code);
+    s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, err.aws_code);
+
+clean_up:
+    aws_mem_release(message->allocator, message);
 
     /* Flush any outgoing frames that might have been queued as a result of decoder callbacks. */
     s_try_write_outgoing_frames(connection);
-    return AWS_OP_SUCCESS;
 
-shutdown:
-    if (message) {
-        aws_mem_release(message->allocator, message);
-    }
-
-    s_shutdown_due_to_read_err(connection, aws_last_error());
     return AWS_OP_SUCCESS;
 }
 
@@ -1843,31 +1927,73 @@ static int s_handler_shutdown(
         /* This call ensures that no further streams will be created. */
         s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, false /*schedule_shutdown*/, error_code);
 
-    } else /* AWS_CHANNEL_DIR_WRITE */ {
-        s_stop(connection, false /*stop_reading*/, true /*stop_writing*/, false /*schedule_shutdown*/, error_code);
-
-        /* Remove remaining streams from internal datastructures and mark them as complete. */
-
-        struct aws_hash_iter stream_iter = aws_hash_iter_begin(&connection->thread_data.active_streams_map);
-        while (!aws_hash_iter_done(&stream_iter)) {
-            struct aws_h2_stream *stream = stream_iter.element.value;
-            aws_hash_iter_delete(&stream_iter, true);
-            aws_hash_iter_next(&stream_iter);
-
-            s_stream_complete(connection, stream, AWS_ERROR_HTTP_CONNECTION_CLOSED);
+        /* Send GOAWAY if none have been sent so far,
+         * or if we've only sent a "graceful shutdown warning" that didn't name a last-stream-id */
+        if (connection->thread_data.goaway_sent_last_stream_id == AWS_H2_STREAM_ID_MAX) {
+            s_send_goaway(connection, error_code ? AWS_H2_ERR_INTERNAL_ERROR : AWS_H2_ERR_NO_ERROR);
         }
 
-        /* It's OK to access synced_data.pending_stream_list without holding the lock because
-         * no more streams can be added after s_stop() has been invoked. */
-        while (!aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
-            struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->synced_data.pending_stream_list);
-            struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
-            s_stream_complete(connection, stream, AWS_ERROR_HTTP_CONNECTION_CLOSED);
+        aws_channel_slot_on_handler_shutdown_complete(
+            slot, AWS_CHANNEL_DIR_READ, error_code, free_scarce_resources_immediately);
+
+    } else /* AWS_CHANNEL_DIR_WRITE */ {
+        connection->thread_data.channel_shutdown_error_code = error_code;
+        connection->thread_data.channel_shutdown_immediately = free_scarce_resources_immediately;
+        connection->thread_data.channel_shutdown_waiting_for_goaway_to_be_written = true;
+
+        /* We'd prefer to wait until we know GOAWAY has been written, but don't wait if... */
+        if (free_scarce_resources_immediately /* we must finish ASAP */ ||
+            connection->thread_data.is_writing_stopped /* write will never complete */ ||
+            !connection->thread_data.is_outgoing_frames_task_active /* write is already complete */) {
+
+            s_finish_shutdown(connection);
+        } else {
+            CONNECTION_LOG(TRACE, connection, "HTTP/2 handler will finish shutdown once GOAWAY frame is written");
         }
     }
 
-    aws_channel_slot_on_handler_shutdown_complete(slot, dir, error_code, free_scarce_resources_immediately);
     return AWS_OP_SUCCESS;
+}
+
+static void s_finish_shutdown(struct aws_h2_connection *connection) {
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+    AWS_PRECONDITION(connection->thread_data.channel_shutdown_waiting_for_goaway_to_be_written);
+
+    CONNECTION_LOG(TRACE, connection, "Finishing HTTP/2 handler shutdown");
+
+    connection->thread_data.channel_shutdown_waiting_for_goaway_to_be_written = false;
+
+    s_stop(
+        connection,
+        false /*stop_reading*/,
+        true /*stop_writing*/,
+        false /*schedule_shutdown*/,
+        connection->thread_data.channel_shutdown_error_code);
+
+    /* Remove remaining streams from internal datastructures and mark them as complete. */
+
+    struct aws_hash_iter stream_iter = aws_hash_iter_begin(&connection->thread_data.active_streams_map);
+    while (!aws_hash_iter_done(&stream_iter)) {
+        struct aws_h2_stream *stream = stream_iter.element.value;
+        aws_hash_iter_delete(&stream_iter, true);
+        aws_hash_iter_next(&stream_iter);
+
+        s_stream_complete(connection, stream, AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    }
+
+    /* It's OK to access synced_data.pending_stream_list without holding the lock because
+     * no more streams can be added after s_stop() has been invoked. */
+    while (!aws_linked_list_empty(&connection->synced_data.pending_stream_list)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->synced_data.pending_stream_list);
+        struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
+        s_stream_complete(connection, stream, AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    }
+
+    aws_channel_slot_on_handler_shutdown_complete(
+        connection->base.channel_slot,
+        AWS_CHANNEL_DIR_WRITE,
+        connection->thread_data.channel_shutdown_error_code,
+        connection->thread_data.channel_shutdown_immediately);
 }
 
 static size_t s_handler_initial_window_size(struct aws_channel_handler *handler) {
