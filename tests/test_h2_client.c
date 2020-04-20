@@ -2021,7 +2021,7 @@ TEST_CASE(h2_client_conn_err_invalid_last_stream_id_goaway) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
-    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));    
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
     ASSERT_INT_EQUALS(
         AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
     /* clean up */
