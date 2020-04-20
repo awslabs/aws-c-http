@@ -1132,8 +1132,9 @@ struct aws_h2err s_decoder_on_goaway_begin(
         CONNECTION_LOGF(
             ERROR,
             connection,
-            "Peer GOAWAY frame has invalid last stream id %" PRIu32 ", which is higher than the one we received",
-            last_stream);
+            "Received GOAWAY with invalid last-stream-id=%" PRIu32 ", must not exceed previous last-stream-id=%" PRIu32,
+            last_stream,
+            connection->thread_data.goaway_received_last_stream_id);
         return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
     }
     /* stop sending any new stream and making new request */
@@ -1144,10 +1145,13 @@ struct aws_h2err s_decoder_on_goaway_begin(
     CONNECTION_LOGF(
         DEBUG,
         connection,
-        "Peer sent a GOAWAY frame, with error code %" PRIu32 ". New streams will not be accepted.",
-        error_code);
+        "Received GOAWAY error-code=%s(0x%x) last-stream-id=%" PRIu32,
+        aws_h2_error_code_to_str(error_code),
+        error_code,
+        last_stream);
     /* Complete activated streams whose id is higher than last_stream, since they will not process by peer. We should
-     * treat them as they had never been created at all */
+     * treat them as they had never been created at all.
+     * This would be more efficient if we could iterate streams in reverse-id order */
     struct aws_hash_iter stream_iter = aws_hash_iter_begin(&connection->thread_data.active_streams_map);
     while (!aws_hash_iter_done(&stream_iter)) {
         struct aws_h2_stream *stream = stream_iter.element.value;
