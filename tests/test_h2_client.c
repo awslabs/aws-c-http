@@ -2005,10 +2005,11 @@ TEST_CASE(h2_client_conn_err_invalid_last_stream_id_goaway) {
     /* fake peer send multiple GOAWAY frames  */
     struct aws_byte_cursor debug_info;
     AWS_ZERO_STRUCT(debug_info);
-    /* First last_stream_id is INT_MAX */
-    struct aws_h2_frame *peer_frame = aws_h2_frame_new_goaway(allocator, INT32_MAX, AWS_H2_ERR_NO_ERROR, debug_info);
+    /* First on with last_stream_id as AWS_H2_STREAM_ID_MAX */
+    struct aws_h2_frame *peer_frame =
+        aws_h2_frame_new_goaway(allocator, AWS_H2_STREAM_ID_MAX, AWS_H2_ERR_NO_ERROR, debug_info);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
-    /* Second last_stream_id is 1, with some error */
+    /* Second one with last_stream_id as 1 and some error */
     peer_frame = aws_h2_frame_new_goaway(allocator, 1, AWS_H2_ERR_FLOW_CONTROL_ERROR, debug_info);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
