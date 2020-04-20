@@ -55,6 +55,7 @@ static size_t s_handler_initial_window_size(struct aws_channel_handler *handler)
 static size_t s_handler_message_overhead(struct aws_channel_handler *handler);
 static void s_handler_destroy(struct aws_channel_handler *handler);
 static void s_handler_installed(struct aws_channel_handler *handler, struct aws_channel_slot *slot);
+static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h2_stream *stream, int error_code);
 static struct aws_http_stream *s_connection_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options);
@@ -97,6 +98,11 @@ static struct aws_h2err s_decoder_on_settings(
     void *userdata);
 static struct aws_h2err s_decoder_on_settings_ack(void *userdata);
 static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_increment, void *userdata);
+struct aws_h2err s_decoder_on_goaway_begin(
+    uint32_t last_stream,
+    uint32_t error_code,
+    uint32_t debug_data_length,
+    void *userdata);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
@@ -132,6 +138,7 @@ static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
     .on_settings = s_decoder_on_settings,
     .on_settings_ack = s_decoder_on_settings_ack,
     .on_window_update = s_decoder_on_window_update,
+    .on_goaway_begin = s_decoder_on_goaway_begin,
 };
 
 static void s_lock_synced_data(struct aws_h2_connection *connection) {
@@ -1113,6 +1120,51 @@ static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t 
     return AWS_H2ERR_SUCCESS;
 }
 
+struct aws_h2err s_decoder_on_goaway_begin(
+    uint32_t last_stream,
+    uint32_t error_code,
+    uint32_t debug_data_length,
+    void *userdata) {
+    (void)debug_data_length;
+    struct aws_h2_connection *connection = userdata;
+    
+    if (last_stream > connection->thread_data.goaway_received_last_stream_id) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Peer GOAWAY frame has invalid last stream id %" PRIu32 ", which is higher than the one we received",
+            last_stream);
+        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+    }
+    /* stop sending any new stream and making new request */
+    aws_atomic_store_int(&connection->synced_data.new_stream_error_code, AWS_ERROR_HTTP_GOAWAY_RECEIVED);
+    connection->thread_data.goaway_received = true;
+    connection->thread_data.goaway_received_error_code = error_code;
+    connection->thread_data.goaway_received_last_stream_id = last_stream;
+    CONNECTION_LOGF(
+        DEBUG,
+        connection,
+        "Peer sent a GOAWAY frame, with error code %" PRIu32 ". New streams will not be accepted.",
+        error_code);
+    /* Complete activated streams whose id is higher than last_stream, since they will not process by peer. We should
+     * treat them as they had never been created at all */
+    struct aws_hash_iter stream_iter = aws_hash_iter_begin(&connection->thread_data.active_streams_map);
+    while (!aws_hash_iter_done(&stream_iter)) {
+        struct aws_h2_stream *stream = stream_iter.element.value;
+        aws_hash_iter_next(&stream_iter);
+        if (stream->base.id > last_stream) {
+            AWS_H2_STREAM_LOG(
+                DEBUG,
+                stream,
+                "stream ID is higher than GOAWAY last stream ID, please retry this stream on a new connection.");
+            s_stream_complete(connection, stream, AWS_ERROR_HTTP_GOAWAY_RECEIVED);
+        }
+    }
+
+    /* #TODO inform our user about the error_code and debug data by fire some kind of API */
+    return AWS_H2ERR_SUCCESS;
+}
+
 /* End decoder callbacks */
 
 static int s_send_connection_preface_client_string(struct aws_h2_connection *connection) {
@@ -1405,6 +1457,12 @@ int aws_h2_connection_send_rst_and_close_reserved_stream(
 /* Move stream into "active" datastructures and notify stream that it can send frames now */
 static void s_activate_stream(struct aws_h2_connection *connection, struct aws_h2_stream *stream) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
+    if (connection->thread_data.goaway_received) {
+        AWS_H2_STREAM_LOG(ERROR, stream, "Failed activating stream, GOAWAY frame received.");
+        aws_raise_error(AWS_ERROR_HTTP_GOAWAY_RECEIVED);
+        goto error;
+    }
 
     uint32_t max_concurrent_streams = connection->thread_data.settings_peer[AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS];
     if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) >= max_concurrent_streams) {

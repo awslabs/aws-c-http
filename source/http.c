@@ -118,7 +118,7 @@ static struct aws_error_info s_errors[] = {
         "Connection exhausted all possible stream IDs. Establish a new connection for new streams."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_GOAWAY_RECEIVED,
-        "Peer sent GOAWAY to initiate connection shutdown"),
+        "Peer sent GOAWAY to initiate connection shutdown. Establish a new connection to retry the streams."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_RST_STREAM_RECEIVED,
         "Peer sent RST_STREAM to terminate stream"),
