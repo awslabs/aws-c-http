@@ -68,6 +68,7 @@ static int s_record_closed_stream(
     struct aws_h2_connection *connection,
     uint32_t stream_id,
     enum aws_h2_stream_closed_when closed_when);
+static void s_try_write_outgoing_frames(struct aws_h2_connection *connection);
 
 static struct aws_h2err s_decoder_on_headers_begin(uint32_t stream_id, void *userdata);
 static struct aws_h2err s_decoder_on_headers_i(
@@ -436,6 +437,7 @@ int aws_h2_connection_change_settings(
     aws_h2_connection_enqueue_outgoing_frame(connection, setting_frame);
 
     aws_linked_list_push_back(&connection->thread_data.pending_settings_queue, &pending_settings->node);
+    s_try_write_outgoing_frames(connection);
     return AWS_OP_SUCCESS;
 }
 
@@ -1300,8 +1302,6 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
             aws_error_name(aws_last_error()));
         goto error;
     }
-
-    s_try_write_outgoing_frames(connection);
     return;
 
 error:
