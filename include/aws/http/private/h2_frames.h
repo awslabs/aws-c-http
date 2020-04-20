@@ -154,8 +154,6 @@ struct aws_h2_frame_encoder {
 
     /* Settings for frame encoder, which is based on the settings received from peer */
     struct {
-        /* the maximum size of the header compression table used to decode header blocks */
-        uint32_t header_table_size;
         /*  the size of the largest frame payload */
         uint32_t max_frame_size;
     } settings;
