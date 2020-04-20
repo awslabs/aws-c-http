@@ -343,6 +343,78 @@ TEST_CASE(h2_client_stream_complete) {
     return s_tester_clean_up();
 }
 
+/* Test that client automatically sends the HTTP/2 Connection Preface (magic string, followed by initial SETTINGS frame,
+ * which we disabled the push_promise) And it will not be applied until the SETTINGS ack is received */
+TEST_CASE(h2_client_connection_init_setting_applied_after_ack_by_peer) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* send request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+
+    /* validate sent request, */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct h2_decoded_frame *sent_headers_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
+    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_HEADERS, sent_headers_frame->type);
+    ASSERT_TRUE(sent_headers_frame->end_stream);
+    ASSERT_SUCCESS(s_compare_headers(aws_http_message_get_headers(request), sent_headers_frame->headers));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* fake peer sends push_promise */
+    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
+
+    /* fake peer sends push request (PUSH_PROMISE) */
+    struct aws_http_header push_request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":authority", "veryblackpage.com"),
+        DEFINE_HEADER(":path", "/style.css"),
+    };
+    struct aws_http_headers *push_request_headers = aws_http_headers_new(allocator);
+    ASSERT_SUCCESS(aws_http_headers_add_array(
+        push_request_headers, push_request_headers_src, AWS_ARRAY_SIZE(push_request_headers_src)));
+
+    uint32_t promised_stream_id = 2;
+    struct aws_h2_frame *peer_frame =
+        aws_h2_frame_new_push_promise(allocator, stream_id, promised_stream_id, push_request_headers, 0);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* validate the connection is still open */
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* fake peer sends setting ack */
+    struct aws_h2_frame *settings_ack_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, settings_ack_frame));
+    /* fake peer sends another push_promise again, after setting applied, connection will be closed */
+    peer_frame = aws_h2_frame_new_push_promise(allocator, stream_id, promised_stream_id + 2, push_request_headers, 0);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* validate the connection completed with error */
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_INT_EQUALS(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+    /* clean up */
+    aws_http_headers_release(push_request_headers);
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
 /* Test that h2 stream can take a h1 request massega and transfrom it to h2 style to send it. */
 TEST_CASE(h2_client_stream_with_h1_request_message) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
