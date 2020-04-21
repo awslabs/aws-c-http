@@ -1978,3 +1978,125 @@ TEST_CASE(h2_client_push_promise_automatically_rejected) {
     client_stream_tester_clean_up(&stream_tester);
     return s_tester_clean_up();
 }
+
+/* Test client receives the GOAWAY frame, stop creating new stream and complete the streams whose id are higher than the
+ * last stream id included in GOAWAY frame */
+TEST_CASE(h2_client_conn_receive_goaway) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    /* send multiple requests */
+    enum { NUM_STREAMS = 3 };
+    struct aws_http_message *requests[NUM_STREAMS];
+    struct aws_http_header request_headers_src[NUM_STREAMS][3] = {
+        {
+            DEFINE_HEADER(":method", "GET"),
+            DEFINE_HEADER(":scheme", "https"),
+            DEFINE_HEADER(":path", "/a.txt"),
+        },
+        {
+            DEFINE_HEADER(":method", "GET"),
+            DEFINE_HEADER(":scheme", "https"),
+            DEFINE_HEADER(":path", "/b.txt"),
+        },
+        {
+            DEFINE_HEADER(":method", "GET"),
+            DEFINE_HEADER(":scheme", "https"),
+            DEFINE_HEADER(":path", "/c.txt"),
+        },
+    };
+    struct client_stream_tester stream_testers[NUM_STREAMS];
+    for (size_t i = 0; i < NUM_STREAMS; ++i) {
+        requests[i] = aws_http_message_new_request(allocator);
+        aws_http_message_add_header_array(requests[i], request_headers_src[i], AWS_ARRAY_SIZE(request_headers_src[i]));
+    }
+    /* Send the first two requests */
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_testers[0], requests[0]));
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_testers[1], requests[1]));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* fake peer send a GOAWAY frame indicating only the first request will be processed */
+    uint32_t stream_id = aws_http_stream_get_id(stream_testers[0].stream);
+    struct aws_byte_cursor debug_info;
+    AWS_ZERO_STRUCT(debug_info);
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_goaway(allocator, stream_id, AWS_H2_ERR_NO_ERROR, debug_info);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* validate the connection is still open, and the second request finished with GOAWAY_RECEIVED */
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_FALSE(stream_testers[0].complete);
+    ASSERT_TRUE(stream_testers[1].complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_GOAWAY_RECEIVED, stream_testers[1].on_complete_error_code);
+
+    /* validate the new requst will no be accepted */
+    ASSERT_FAILS(s_stream_tester_init(&stream_testers[2], requests[2]));
+
+    /* Try gracefully shutting down the connection */
+    struct aws_http_header response_headers_src[] = {DEFINE_HEADER(":status", "200")};
+    struct aws_http_headers *response_headers = aws_http_headers_new(allocator);
+    aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
+    struct aws_h2_frame *response_frame = aws_h2_frame_new_headers(
+        allocator, aws_http_stream_get_id(stream_testers[0].stream), response_headers, true /* end_stream */, 0, NULL);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
+    /* shutdown channel */
+    aws_channel_shutdown(s_tester.testing_channel.channel, AWS_ERROR_SUCCESS);
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(testing_channel_is_shutdown_completed(&s_tester.testing_channel));
+
+    /* validate the first request finishes successfully */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(stream_testers[0].complete);
+    ASSERT_INT_EQUALS(200, stream_testers[0].response_status);
+
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+
+    /* clean up */
+    aws_http_headers_release(response_headers);
+    for (size_t i = 0; i < NUM_STREAMS; ++i) {
+        client_stream_tester_clean_up(&stream_testers[i]);
+        aws_http_message_release(requests[i]);
+    }
+    return s_tester_clean_up();
+}
+
+/* Test client receives the GOAWAY frame, stop creating new stream and complete the streams whose id are higher than the
+ * last stream id included in GOAWAY frame */
+TEST_CASE(h2_client_conn_err_invalid_last_stream_id_goaway) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    /* fake peer send multiple GOAWAY frames  */
+    struct aws_byte_cursor debug_info;
+    AWS_ZERO_STRUCT(debug_info);
+    /* First on with last_stream_id as AWS_H2_STREAM_ID_MAX */
+    struct aws_h2_frame *peer_frame =
+        aws_h2_frame_new_goaway(allocator, AWS_H2_STREAM_ID_MAX, AWS_H2_ERR_NO_ERROR, debug_info);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    /* Second one with last_stream_id as 1 and some error */
+    peer_frame = aws_h2_frame_new_goaway(allocator, 1, AWS_H2_ERR_FLOW_CONTROL_ERROR, debug_info);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* validate the connection is still open, everything is fine */
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* Another GOAWAY with higher last stream id will cause connection closed with an error */
+    peer_frame = aws_h2_frame_new_goaway(allocator, 3, AWS_H2_ERR_FLOW_CONTROL_ERROR, debug_info);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_INT_EQUALS(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+    /* clean up */
+    return s_tester_clean_up();
+}
