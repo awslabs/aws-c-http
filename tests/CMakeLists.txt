@@ -110,6 +110,7 @@ add_test_case(strutil_is_http_token)
 add_test_case(strutil_is_lowercase_http_token)
 
 add_net_test_case(tls_download_medium_file)
+add_net_test_case(tls_download_medium_file_http2)
 
 add_test_case(websocket_decoder_sanity_check)
 add_test_case(websocket_decoder_simplest_frame)

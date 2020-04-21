@@ -43,6 +43,12 @@
 
 #define ELASTICURL_VERSION "0.2.0"
 
+enum ctx_required_http_version {
+    CTX_HTTP_DEFAULT,
+    CTX_REQUIRED_HTTP1,
+    CTX_REQUIRED_HTTP2,
+};
+
 struct elasticurl_ctx {
     struct aws_allocator *allocator;
     const char *verb;
@@ -72,6 +78,7 @@ struct elasticurl_ctx {
     FILE *output;
     const char *trace_file;
     enum aws_log_level log_level;
+    enum ctx_required_http_version http_version;
     bool exchange_completed;
     bool bootstrap_shutdown_completed;
 };
@@ -104,7 +111,8 @@ static void s_usage(int exit_code) {
     fprintf(stderr, "  -t, --trace FILE: dumps logs to FILE instead of stderr.\n");
     fprintf(stderr, "  -v, --verbose: ERROR|INFO|DEBUG|TRACE: log level to configure. Default is none.\n");
     fprintf(stderr, "      --version: print the version of elasticurl.\n");
-    fprintf(stderr, "      --http2: try to use HTTP/2");
+    fprintf(stderr, "      --http2: force using HTTP/2, error if we cannot get an HTTP/2 connection");
+    fprintf(stderr, "      --http1.1: force using HTTP/1.1, error if we cannot get an HTTP/1.1 connection");
     fprintf(stderr, "  -h, --help\n");
     fprintf(stderr, "            Display this message and quit.\n");
     exit(exit_code);
@@ -133,6 +141,7 @@ static struct aws_cli_option s_long_options[] = {
     {"verbose", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'v'},
     {"version", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'V'},
     {"http2", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'w'},
+    {"http1.1", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'W'},
     {"help", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'h'},
     /* Per getopt(3) the last element of the array has to be filled with all zeros */
     {NULL, AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 0},
@@ -169,7 +178,7 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
     while (true) {
         int option_index = 0;
         int c =
-            aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:j:l:m:M:GPHiko:t:v:Vwh", s_long_options, &option_index);
+            aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:j:l:m:M:GPHiko:t:v:VwWh", s_long_options, &option_index);
         if (c == -1) {
             break;
         }
@@ -277,6 +286,11 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 exit(0);
             case 'w':
                 ctx->alpn = "h2";
+                ctx->http_version = CTX_REQUIRED_HTTP2;
+                break;
+            case 'W':
+                ctx->alpn = "http/1.1";
+                ctx->http_version = CTX_REQUIRED_HTTP1;
                 break;
             case 'h':
                 s_usage(0);
@@ -453,7 +467,24 @@ static void s_on_signing_complete(struct aws_http_message *request, int error_co
 
 static void s_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct elasticurl_ctx *app_ctx = user_data;
-
+    switch (app_ctx->http_version) {
+        case CTX_REQUIRED_HTTP2:
+            if (aws_http_connection_get_version(connection) != AWS_HTTP_VERSION_2) {
+                fprintf(
+                    stderr,
+                    "Forced to create HTTP2 connection, but failed to create one. Server doesn't support HTTP2.");
+                exit(1);
+            }
+            break;
+        case CTX_REQUIRED_HTTP1:
+            if (aws_http_connection_get_version(connection) != AWS_HTTP_VERSION_1_1) {
+                fprintf(stderr, "Forced to create HTTP/1.1 connection, but failed to create one.");
+                exit(1);
+            }
+            break;
+        default:
+            break;
+    }
     if (error_code) {
         fprintf(stderr, "Connection failed with error %s\n", aws_error_debug_str(error_code));
         aws_mutex_lock(&app_ctx->mutex);
@@ -560,7 +591,7 @@ int main(int argc, char **argv) {
     app_ctx.connect_timeout = 3000;
     app_ctx.output = stdout;
     app_ctx.verb = "GET";
-    app_ctx.alpn = "http/1.1";
+    app_ctx.alpn = "h2;http/1.1";
     aws_mutex_init(&app_ctx.mutex);
     aws_hash_table_init(
         &app_ctx.signing_context,
@@ -675,6 +706,10 @@ int main(int argc, char **argv) {
             port = app_ctx.uri.port;
         }
     } else {
+        if (app_ctx.http_version == CTX_REQUIRED_HTTP2) {
+            fprintf(stderr, "Error, we don't support h2c, please use TLS for HTTP2 connection");
+            exit(1);
+        }
         port = 80;
         if (app_ctx.uri.port) {
             port = app_ctx.uri.port;
