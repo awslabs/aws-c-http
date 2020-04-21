@@ -95,7 +95,7 @@ class SimpleTests(unittest.TestCase):
     def test_simple_download_h2(self):
         elasticurl_download_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '-o', 'elastigirl_h2.png', '--http2', 'https://d1cz66xoahf9cl.cloudfront.net/elastigirl.png']
         run_command(elasticurl_download_args)
-        urllib.request.urlretrieve('https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png', 'elastigirl_expected.png')
+        urllib.request.urlretrieve('https://d1cz66xoahf9cl.cloudfront.net/elastigirl.png', 'elastigirl_expected.png')
 
         compare_files('elastigirl_expected.png', 'elastigirl_h2.png')
 
