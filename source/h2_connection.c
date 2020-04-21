@@ -1258,8 +1258,6 @@ struct aws_h2err s_decoder_on_goaway_begin(
     }
     /* stop sending any new stream and making new request */
     aws_atomic_store_int(&connection->synced_data.new_stream_error_code, AWS_ERROR_HTTP_GOAWAY_RECEIVED);
-    connection->thread_data.goaway_received = true;
-    connection->thread_data.goaway_received_error_code = error_code;
     connection->thread_data.goaway_received_last_stream_id = last_stream;
     CONNECTION_LOGF(
         DEBUG,
@@ -1574,7 +1572,8 @@ int aws_h2_connection_send_rst_and_close_reserved_stream(
 static void s_activate_stream(struct aws_h2_connection *connection, struct aws_h2_stream *stream) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
-    if (connection->thread_data.goaway_received) {
+    int new_stream_error_code = (int)aws_atomic_load_int(&connection->synced_data.new_stream_error_code);
+    if (new_stream_error_code) {
         AWS_H2_STREAM_LOG(ERROR, stream, "Failed activating stream, GOAWAY frame received.");
         aws_raise_error(AWS_ERROR_HTTP_GOAWAY_RECEIVED);
         goto error;
