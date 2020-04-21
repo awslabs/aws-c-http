@@ -148,7 +148,8 @@ static int s_test_tls_download_medium_file_general(
     ASSERT_NOT_NULL(test.client_bootstrap = aws_client_bootstrap_new(test.alloc, &bootstrap_options));
     struct aws_tls_ctx_options tls_ctx_options;
     aws_tls_ctx_options_init_default_client(&tls_ctx_options, allocator);
-    aws_tls_ctx_options_set_alpn_list(&tls_ctx_options, "h2;http/1.1");
+    char *apln = h2_required? "h2":"http/1.1";
+    aws_tls_ctx_options_set_alpn_list(&tls_ctx_options, apln);
     ASSERT_NOT_NULL(test.tls_ctx = aws_tls_client_ctx_new(allocator, &tls_ctx_options));
     struct aws_tls_connection_options tls_connection_options;
     aws_tls_connection_options_init_from_ctx(&tls_connection_options, test.tls_ctx);
@@ -171,6 +172,9 @@ static int s_test_tls_download_medium_file_general(
     ASSERT_NOT_NULL(test.client_connection);
     if (h2_required) {
         ASSERT_INT_EQUALS(aws_http_connection_get_version(test.client_connection), AWS_HTTP_VERSION_2);
+    }
+    else {
+        ASSERT_INT_EQUALS(aws_http_connection_get_version(test.client_connection), AWS_HTTP_VERSION_1_1);
     }
 
     struct aws_http_message *request = aws_http_message_new_request(allocator);
@@ -225,20 +229,20 @@ static int s_test_tls_download_medium_file_general(
     return AWS_OP_SUCCESS;
 }
 
-static int s_test_tls_download_medium_file(struct aws_allocator *allocator, void *ctx) {
+static int s_test_tls_download_medium_file_h1(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     struct aws_byte_cursor url =
         aws_byte_cursor_from_c_str("https://aws-crt-test-stuff.s3.amazonaws.com/http_test_doc.txt");
     ASSERT_SUCCESS(s_test_tls_download_medium_file_general(allocator, url, false /*h2_required*/));
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(tls_download_medium_file, s_test_tls_download_medium_file);
+AWS_TEST_CASE(tls_download_medium_file_h1, s_test_tls_download_medium_file_h1);
 
-static int s_tls_download_medium_file_http2(struct aws_allocator *allocator, void *ctx) {
+static int s_tls_download_medium_file_h2(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     /* The cloudfront domain for aws-crt-test-stuff */
     struct aws_byte_cursor url = aws_byte_cursor_from_c_str("https://d1cz66xoahf9cl.cloudfront.net/http_test_doc.txt");
     ASSERT_SUCCESS(s_test_tls_download_medium_file_general(allocator, url, true /*h2_required*/));
     return AWS_OP_SUCCESS;
 }
-AWS_TEST_CASE(tls_download_medium_file_http2, s_tls_download_medium_file_http2);
+AWS_TEST_CASE(tls_download_medium_file_h2, s_tls_download_medium_file_h2);

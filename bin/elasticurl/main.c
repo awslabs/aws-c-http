@@ -43,12 +43,6 @@
 
 #define ELASTICURL_VERSION "0.2.0"
 
-enum ctx_required_http_version {
-    CTX_HTTP_DEFAULT,
-    CTX_REQUIRED_HTTP1,
-    CTX_REQUIRED_HTTP2,
-};
-
 struct elasticurl_ctx {
     struct aws_allocator *allocator;
     const char *verb;
@@ -78,7 +72,7 @@ struct elasticurl_ctx {
     FILE *output;
     const char *trace_file;
     enum aws_log_level log_level;
-    enum ctx_required_http_version http_version;
+    enum aws_http_version required_http_version;
     bool exchange_completed;
     bool bootstrap_shutdown_completed;
 };
@@ -111,8 +105,8 @@ static void s_usage(int exit_code) {
     fprintf(stderr, "  -t, --trace FILE: dumps logs to FILE instead of stderr.\n");
     fprintf(stderr, "  -v, --verbose: ERROR|INFO|DEBUG|TRACE: log level to configure. Default is none.\n");
     fprintf(stderr, "      --version: print the version of elasticurl.\n");
-    fprintf(stderr, "      --http2: force using HTTP/2, error if we cannot get an HTTP/2 connection");
-    fprintf(stderr, "      --http1.1: force using HTTP/1.1, error if we cannot get an HTTP/1.1 connection");
+    fprintf(stderr, "      --http2: HTTP/2 connection required");
+    fprintf(stderr, "      --http1.1: HTTP/1.1 connection required");
     fprintf(stderr, "  -h, --help\n");
     fprintf(stderr, "            Display this message and quit.\n");
     exit(exit_code);
@@ -286,11 +280,11 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                 exit(0);
             case 'w':
                 ctx->alpn = "h2";
-                ctx->http_version = CTX_REQUIRED_HTTP2;
+                ctx->required_http_version = AWS_HTTP_VERSION_2;
                 break;
             case 'W':
                 ctx->alpn = "http/1.1";
-                ctx->http_version = CTX_REQUIRED_HTTP1;
+                ctx->required_http_version = AWS_HTTP_VERSION_1_1;
                 break;
             case 'h':
                 s_usage(0);
@@ -467,24 +461,13 @@ static void s_on_signing_complete(struct aws_http_message *request, int error_co
 
 static void s_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct elasticurl_ctx *app_ctx = user_data;
-    switch (app_ctx->http_version) {
-        case CTX_REQUIRED_HTTP2:
-            if (aws_http_connection_get_version(connection) != AWS_HTTP_VERSION_2) {
-                fprintf(
-                    stderr,
-                    "Forced to create HTTP2 connection, but failed to create one. Server doesn't support HTTP2.");
-                exit(1);
-            }
-            break;
-        case CTX_REQUIRED_HTTP1:
-            if (aws_http_connection_get_version(connection) != AWS_HTTP_VERSION_1_1) {
-                fprintf(stderr, "Forced to create HTTP/1.1 connection, but failed to create one.");
-                exit(1);
-            }
-            break;
-        default:
-            break;
+    if (aws_http_connection_get_version(connection) != app_ctx->required_http_version) {
+        fprintf(
+            stderr,
+            "Error. Connection we got is different from the required version.");
+        exit(1);
     }
+
     if (error_code) {
         fprintf(stderr, "Connection failed with error %s\n", aws_error_debug_str(error_code));
         aws_mutex_lock(&app_ctx->mutex);
@@ -706,7 +689,7 @@ int main(int argc, char **argv) {
             port = app_ctx.uri.port;
         }
     } else {
-        if (app_ctx.http_version == CTX_REQUIRED_HTTP2) {
+        if (app_ctx.required_http_version == AWS_HTTP_VERSION_2) {
             fprintf(stderr, "Error, we don't support h2c, please use TLS for HTTP2 connection");
             exit(1);
         }

@@ -63,37 +63,37 @@ def compare_files(filename_expected, filename_other):
         print("filecmp says these files differ, but they are identical. what the heck.")
 
 class SimpleTests(unittest.TestCase):
-#make a simple GET request and make sure it succeeds
-    def test_simple_get(self):
-        simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', 'http://example.com']
+    def test_simple_get_h1(self):
+        """make a simple GET request via HTTP/1.1 and make sure it succeeds"""
+        simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http1.1', 'http://example.com']
         run_command(simple_get_args)
 
-#make a simple POST request to make sure sending data succeeds
-    def test_simple_post(self):
-        simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'http://httpbin.org/post']
+    def test_simple_post_h1(self):
+        """make a simple POST request via HTTP/1.1 to make sure sending data succeeds"""
+        simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http1.1', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'http://httpbin.org/post']
         run_command(simple_post_args)
 
-#download a large file and compare the results with something we assume works (e.g. urllib)
-    def test_simple_download(self):
-        elasticurl_download_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '-o', 'elastigirl.png', 'https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png']
+    def test_simple_download_h1(self):
+        """download a large file via HTTP/1.1 and compare the results with something we assume works (e.g. urllib)"""
+        elasticurl_download_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http1.1', '-o', 'elastigirl.png', 'https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png']
         run_command(elasticurl_download_args)
         urllib.request.urlretrieve('https://s3.amazonaws.com/code-sharing-aws-crt/elastigirl.png', 'elastigirl_expected.png')
 
         compare_files('elastigirl_expected.png', 'elastigirl.png')
 
-#make a simple GET request via HTTP2 and make sure it succeeds
     def test_simple_get_h2(self):
+        """make a simple GET request via HTTP2 and make sure it succeeds"""
         simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http2', 'https://example.com']
         run_command(simple_get_args)
 
-#make a simple POST request via HTTP2 to make sure sending data succeeds
     def test_simple_post_h2(self):
+        """make a simple POST request via HTTP2 to make sure sending data succeeds"""
         simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http2', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'https://httpbin.org/post']
         run_command(simple_post_args)
 
-#download a large file and compare the results with something we assume works (e.g. urllib)
     def test_simple_download_h2(self):
-        elasticurl_download_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '-o', 'elastigirl_h2.png', '--http2', 'https://d1cz66xoahf9cl.cloudfront.net/elastigirl.png']
+        """download a large file via HTTP2 and compare the results with something we assume works (e.g. urllib)"""
+        elasticurl_download_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http2', '-o', 'elastigirl_h2.png', 'https://d1cz66xoahf9cl.cloudfront.net/elastigirl.png']
         run_command(elasticurl_download_args)
         urllib.request.urlretrieve('https://d1cz66xoahf9cl.cloudfront.net/elastigirl.png', 'elastigirl_expected.png')
 
