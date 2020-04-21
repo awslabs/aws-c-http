@@ -1574,8 +1574,13 @@ static void s_activate_stream(struct aws_h2_connection *connection, struct aws_h
 
     int new_stream_error_code = (int)aws_atomic_load_int(&connection->synced_data.new_stream_error_code);
     if (new_stream_error_code) {
-        AWS_H2_STREAM_LOG(ERROR, stream, "Failed activating stream, GOAWAY frame received.");
-        aws_raise_error(AWS_ERROR_HTTP_GOAWAY_RECEIVED);
+        aws_raise_error(new_stream_error_code);
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "Failed activating stream, error %d (%s)",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
         goto error;
     }
 
