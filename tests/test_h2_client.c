@@ -343,6 +343,55 @@ TEST_CASE(h2_client_stream_complete) {
     return s_tester_clean_up();
 }
 
+/* Calling aws_http_connection_close() should cleanly shut down connection */
+TEST_CASE(h2_client_close) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+
+    /* close connection */
+    aws_http_connection_close(s_tester.connection);
+
+    /* connection should immediately lose "open" status */
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+
+    /* finish shutting down */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    /* validate that pending streams complete with error */
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, stream_tester.on_complete_error_code);
+
+    /* validate that GOAWAY sent */
+    struct h2_decoded_frame *goaway =
+        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
+    ASSERT_NOT_NULL(goaway);
+    ASSERT_UINT_EQUALS(AWS_H2_ERR_NO_ERROR, goaway->error_code);
+    ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
+
+    /* clean up */
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
 /* Test that client automatically sends the HTTP/2 Connection Preface (magic string, followed by initial SETTINGS frame,
  * which we disabled the push_promise) And it will not be applied until the SETTINGS ack is received */
 TEST_CASE(h2_client_connection_init_setting_applied_after_ack_by_peer) {
@@ -544,7 +593,14 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_for_idle_stream) {
     ASSERT_INT_EQUALS(
         AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
 
-    /* #TODO client should send GOAWAY */
+    /* validate that client sent GOAWAY */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct h2_decoded_frame *goaway =
+        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
+    ASSERT_NOT_NULL(goaway);
+    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, goaway->error_code);
+    ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
 
     /* clean up */
     aws_http_headers_release(response_headers);
@@ -1685,7 +1741,12 @@ static int s_invalid_window_update(
     ASSERT_INT_EQUALS(
         AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
 
-    /* #TODO client should send GOAWAY */
+    /* client should send GOAWAY */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *goaway =
+        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
+    ASSERT_NOT_NULL(goaway);
+    ASSERT_UINT_EQUALS(h2_error_code, goaway->error_code);
 
     /* clean up */
     aws_http_message_release(request);
@@ -1694,17 +1755,17 @@ static int s_invalid_window_update(
 }
 
 /* Window update cause window to exceed max size will lead to FLOW_CONTROL_ERROR */
-TEST_CASE(h2_client_stream_err_invalid_window_update_exceed_max) {
+TEST_CASE(h2_client_conn_err_window_update_exceed_max) {
     return s_invalid_window_update(allocator, ctx, AWS_H2_WINDOW_UPDATE_MAX, AWS_H2_ERR_FLOW_CONTROL_ERROR);
 }
 
 /* Window update with zero update size will lead to PROTOCOL_ERROR */
-TEST_CASE(h2_client_stream_err_invalid_window_update_zero_update) {
+TEST_CASE(h2_client_conn_err_window_update_size_zero) {
     return s_invalid_window_update(allocator, ctx, 0, AWS_H2_ERR_PROTOCOL_ERROR);
 }
 
 /* SETTINGS_INITIAL_WINDOW_SIZE cause stream window to exceed the max size is a Connection ERROR... */
-TEST_CASE(h2_client_stream_err_initial_window_size_cause_window_exceed_max) {
+TEST_CASE(h2_client_conn_err_initial_window_size_cause_window_exceed_max) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* fake peer sends connection preface */
@@ -1756,7 +1817,13 @@ TEST_CASE(h2_client_stream_err_initial_window_size_cause_window_exceed_max) {
     ASSERT_INT_EQUALS(
         AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
 
-    /* #TODO client should send GOAWAY */
+    /* client should send GOAWAY */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *goaway =
+        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
+    ASSERT_NOT_NULL(goaway);
+    ASSERT_UINT_EQUALS(AWS_H2_ERR_FLOW_CONTROL_ERROR, goaway->error_code);
+    ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
 
     /* clean up */
     aws_http_message_release(request);
