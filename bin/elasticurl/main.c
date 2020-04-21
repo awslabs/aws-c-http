@@ -462,9 +462,7 @@ static void s_on_signing_complete(struct aws_http_message *request, int error_co
 static void s_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct elasticurl_ctx *app_ctx = user_data;
     if (aws_http_connection_get_version(connection) != app_ctx->required_http_version) {
-        fprintf(
-            stderr,
-            "Error. Connection we got is different from the required version.");
+        fprintf(stderr, "Error. Connection we got is different from the required version.");
         exit(1);
     }
 

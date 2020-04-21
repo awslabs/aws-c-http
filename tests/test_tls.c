@@ -148,7 +148,7 @@ static int s_test_tls_download_medium_file_general(
     ASSERT_NOT_NULL(test.client_bootstrap = aws_client_bootstrap_new(test.alloc, &bootstrap_options));
     struct aws_tls_ctx_options tls_ctx_options;
     aws_tls_ctx_options_init_default_client(&tls_ctx_options, allocator);
-    char *apln = h2_required? "h2":"http/1.1";
+    char *apln = h2_required ? "h2" : "http/1.1";
     aws_tls_ctx_options_set_alpn_list(&tls_ctx_options, apln);
     ASSERT_NOT_NULL(test.tls_ctx = aws_tls_client_ctx_new(allocator, &tls_ctx_options));
     struct aws_tls_connection_options tls_connection_options;
@@ -172,8 +172,7 @@ static int s_test_tls_download_medium_file_general(
     ASSERT_NOT_NULL(test.client_connection);
     if (h2_required) {
         ASSERT_INT_EQUALS(aws_http_connection_get_version(test.client_connection), AWS_HTTP_VERSION_2);
-    }
-    else {
+    } else {
         ASSERT_INT_EQUALS(aws_http_connection_get_version(test.client_connection), AWS_HTTP_VERSION_1_1);
     }
 
