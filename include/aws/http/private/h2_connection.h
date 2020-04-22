@@ -95,16 +95,18 @@ struct aws_h2_connection {
          * Defaults to max stream-id, may be lowered when GOAWAY frame received. */
         uint32_t goaway_received_last_stream_id;
 
+        /* Last-stream-id sent in most recent GOAWAY frame. Defaults to max stream-id. */
+        uint32_t goaway_sent_last_stream_id;
+
+        /* Cached channel shutdown values.
+         * If possible, we delay shutdown-in-the-write-dir until GOAWAY is written. */
+        int channel_shutdown_error_code;
+        bool channel_shutdown_immediately;
+        bool channel_shutdown_waiting_for_goaway_to_be_written;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
     struct {
-        /* For checking status from outside the event-loop thread. */
-        struct aws_atomic_var is_open;
-
-        /* If non-zero, reason to immediately reject new streams. (ex: closing) */
-        struct aws_atomic_var new_stream_error_code;
-
         struct aws_mutex lock;
 
         /* New `aws_h2_stream *` that haven't moved to `thread_data` yet */
@@ -113,6 +115,14 @@ struct aws_h2_connection {
         bool is_cross_thread_work_task_scheduled;
 
     } synced_data;
+
+    struct {
+        /* For checking status from outside the event-loop thread. */
+        struct aws_atomic_var is_open;
+
+        /* If non-zero, reason to immediately reject new streams. (ex: closing) */
+        struct aws_atomic_var new_stream_error_code;
+    } atomic;
 };
 
 /**
