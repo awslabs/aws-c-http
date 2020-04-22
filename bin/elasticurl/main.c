@@ -106,7 +106,7 @@ static void s_usage(int exit_code) {
     fprintf(stderr, "  -v, --verbose: ERROR|INFO|DEBUG|TRACE: log level to configure. Default is none.\n");
     fprintf(stderr, "      --version: print the version of elasticurl.\n");
     fprintf(stderr, "      --http2: HTTP/2 connection required");
-    fprintf(stderr, "      --http1.1: HTTP/1.1 connection required");
+    fprintf(stderr, "      --http1_1: HTTP/1.1 connection required");
     fprintf(stderr, "  -h, --help\n");
     fprintf(stderr, "            Display this message and quit.\n");
     exit(exit_code);
@@ -135,7 +135,7 @@ static struct aws_cli_option s_long_options[] = {
     {"verbose", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'v'},
     {"version", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'V'},
     {"http2", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'w'},
-    {"http1.1", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'W'},
+    {"http1_1", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'W'},
     {"help", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'h'},
     /* Per getopt(3) the last element of the array has to be filled with all zeros */
     {NULL, AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 0},
