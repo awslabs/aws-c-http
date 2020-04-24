@@ -17,6 +17,7 @@
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 #include <aws/io/stream.h>
+#include <aws/common/encoding.h>
 
 #include <inttypes.h>
 
@@ -37,6 +38,7 @@ static int s_scan_outgoing_headers(
     size_t total = 0;
     bool has_body_stream = aws_http_message_get_body_stream(message);
     bool has_body_headers = false;
+    bool has_content_length_header = false;
 
     const size_t num_headers = aws_http_message_get_header_count(message);
     for (size_t i = 0; i < num_headers; ++i) {
@@ -52,6 +54,7 @@ static int s_scan_outgoing_headers(
                 }
             } break;
             case AWS_HTTP_HEADER_CONTENT_LENGTH: {
+                has_content_length_header = true;
                 struct aws_byte_cursor trimmed_value = aws_strutil_trim_http_whitespace(header.value);
                 if (aws_strutil_read_unsigned_num(trimmed_value, &encoder_message->content_length)) {
                     AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Invalid Content-Length");
@@ -61,9 +64,20 @@ static int s_scan_outgoing_headers(
                     has_body_headers = true;
                 }
             } break;
-            case AWS_HTTP_HEADER_TRANSFER_ENCODING:
-                AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Sending of chunked messages not yet implemented");
-                return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+            case AWS_HTTP_HEADER_TRANSFER_ENCODING: {
+                if (0 == header.value.len) {
+                    AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Transfer-Encoding must include a valid value");
+                    return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+                }
+                struct aws_byte_cursor trimmed_value = aws_strutil_trim_http_whitespace(header.value);
+                if (!aws_byte_cursor_eq_c_str(&trimmed_value, "chunked")) {
+                    AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM,
+                                   "id=static: Sending of chunked message extensions not yet implemented");
+                    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+                }
+                has_body_headers = true;
+                encoder_message->has_chunked_encoding_header = true;
+            }
             default:
                 break;
         }
@@ -77,6 +91,15 @@ static int s_scan_outgoing_headers(
             return AWS_OP_ERR;
         }
     }
+
+    /* Per RFC 2656 (https://tools.ietf.org/html/rfc2616#section-4.4), if both the Content-Length and Transfer-Encoding
+     * header are defined, the client should not send the request. */
+    if (encoder_message->has_chunked_encoding_header && has_content_length_header) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM,
+            "id=static: Both Content-Length and Transfer-Encoding are set. Only one may be used");
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+    }
+
     if (body_headers_forbidden && has_body_headers) {
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
     }
@@ -85,6 +108,7 @@ static int s_scan_outgoing_headers(
         /* Don't send body, no matter what the headers are */
         has_body_headers = false;
         encoder_message->content_length = 0;
+        encoder_message->has_chunked_encoding_header = false;
     }
 
     if (has_body_headers && !has_body_stream) {
@@ -319,6 +343,208 @@ int aws_h1_encoder_start_message(
     return AWS_OP_SUCCESS;
 }
 
+static int s_h1_encoder_process_content_length_body(struct aws_byte_buf *dst, struct aws_h1_encoder *encoder) {
+    while (true) {
+        if (dst->capacity == dst->len) {
+            /* Can't write anymore */
+            ENCODER_LOG(TRACE, encoder, "Cannot fit any more body data in this message");
+
+            /* Return success because we want to try again later */
+            return AWS_OP_SUCCESS;
+        }
+
+        const size_t prev_len = dst->len;
+        int err = aws_input_stream_read(encoder->message->body, dst);
+        const size_t amount_read = dst->len - prev_len;
+
+        if (err) {
+            ENCODER_LOGF(
+                ERROR,
+                encoder,
+                "Failed to read body stream, error %d (%s)",
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
+
+            return AWS_OP_ERR;
+        }
+
+        if ((amount_read > encoder->message->content_length) ||
+            (encoder->progress_bytes > encoder->message->content_length - amount_read)) {
+            ENCODER_LOGF(
+                ERROR,
+                encoder,
+                "Body stream has exceeded Content-Length: %" PRIu64,
+                encoder->message->content_length);
+            return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+        }
+
+        encoder->progress_bytes += amount_read;
+
+        ENCODER_LOGF(TRACE, encoder, "Writing %zu body bytes to message", amount_read);
+
+        if (encoder->progress_bytes == encoder->message->content_length) {
+            ENCODER_LOG(TRACE, encoder, "Done sending body.");
+            encoder->progress_bytes = 0;
+            encoder->state++;
+            break;
+        }
+
+        /* Return if user failed to write anything. Maybe their data isn't ready yet. */
+        if (amount_read == 0) {
+            /* Ensure we're not at end-of-stream too early */
+            struct aws_stream_status status;
+            err = aws_input_stream_get_status(encoder->message->body, &status);
+            if (err) {
+                ENCODER_LOGF(
+                    TRACE,
+                    encoder,
+                    "Failed to query body stream status, error %d (%s)",
+                    aws_last_error(),
+                    aws_error_name(aws_last_error()));
+
+                return AWS_OP_ERR;
+            }
+            if (status.is_end_of_stream) {
+                ENCODER_LOGF(
+                    ERROR,
+                    encoder,
+                    "Reached end of body stream before Content-Length: %" PRIu64 " sent",
+                    encoder->message->content_length);
+                return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+            }
+
+            ENCODER_LOG(
+                TRACE,
+                encoder,
+                "No body data written, concluding this message. "
+                "Will try to write body data again in the next message.");
+            return AWS_OP_SUCCESS;
+        }
+    }
+    return AWS_OP_SUCCESS;
+}
+
+static ssize_t s_calculate_max_body_chunk_size_bytes(size_t buffer_size) {
+    const size_t crlf_size_bytes = sizeof("\r\n");
+    const size_t max_ascii_hex_size_bytes = sizeof(size_t) * 2;
+    const size_t chunked_encoding_overhead_in_bytes = max_ascii_hex_size_bytes + crlf_size_bytes + crlf_size_bytes;
+    return buffer_size - chunked_encoding_overhead_in_bytes;
+}
+
+static bool s_write_crlf(struct aws_byte_buf *dst) {
+    return aws_byte_buf_write_u8(dst, '\r') &&  aws_byte_buf_write_u8(dst, '\n');
+}
+
+static bool s_write_chunk_size(size_t chunk_size, struct aws_byte_buf *dst) {
+    char ascii_hex_chunk_size_str[sizeof(size_t) * 2 + 1] = {0};
+    snprintf(ascii_hex_chunk_size_str, sizeof(ascii_hex_chunk_size_str), "%zX", chunk_size);
+    return aws_byte_buf_write_from_whole_cursor(dst, aws_byte_cursor_from_c_str(ascii_hex_chunk_size_str));
+}
+
+static int s_transfer_encode_chunk(struct aws_byte_buf *dst, struct aws_h1_encoder *encoder) {
+    int64_t body_len = 0;
+    if (AWS_OP_ERR == aws_input_stream_get_remaining_length(encoder->message->body, &body_len)) {
+        ENCODER_LOGF(
+            ERROR,
+            encoder,
+            "Failed to read body stream length, error %d (%s)",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+    if (0 == body_len) {
+        return AWS_OP_SUCCESS;
+    }
+
+    ssize_t max_read = s_calculate_max_body_chunk_size_bytes(dst->capacity - dst->len);
+    if (max_read <= 0) {
+        /* Can't write anymore */
+        ENCODER_LOG(TRACE, encoder, "Cannot fit any more body data in this message");
+        /* Return success because we want to try again later */
+        return AWS_OP_SUCCESS;
+    }
+
+    const size_t chunk_size = aws_min_size(body_len, max_read);
+    AWS_ASSERT((dst->capacity - dst->len) >= (size_t) max_read);
+    bool wrote_chunk = s_write_chunk_size(chunk_size, dst);
+    wrote_chunk &= s_write_crlf(dst);
+    const size_t prev_len = dst->len;
+    wrote_chunk &= (AWS_OP_SUCCESS == aws_input_stream_read_n(encoder->message->body, dst, chunk_size));
+    const size_t amount_read = dst->len - prev_len;
+    ENCODER_LOGF(TRACE, encoder, "Wrote %zu body bytes to message", amount_read);
+    wrote_chunk &= s_write_crlf(dst);
+    if (AWS_UNLIKELY(!wrote_chunk)) {
+        return AWS_OP_ERR;
+    }
+    return AWS_OP_SUCCESS;
+}
+
+static bool s_terminate_chunked_encoding_stream(struct aws_byte_buf *dst) {
+    return s_write_chunk_size(0, dst) && s_write_crlf(dst) && s_write_crlf(dst);
+}
+
+static int s_h1_encoder_process_chunked_encoding_body(struct aws_byte_buf *dst, struct aws_h1_encoder *encoder) {
+    while (true) {
+        const size_t prev_len = dst->len;
+        if (AWS_UNLIKELY(AWS_OP_SUCCESS != s_transfer_encode_chunk(dst, encoder))) {
+            ENCODER_LOGF(
+                ERROR,
+                encoder,
+                "Failed to read body stream, error %d (%s)",
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
+            return AWS_OP_ERR;
+        }
+        const size_t amount_read = dst->len - prev_len;
+        encoder->progress_bytes += amount_read;
+
+        /* Return if user failed to write anything. Maybe their data isn't ready yet. */
+        if (0 == amount_read) {
+            struct aws_stream_status status;
+            int err = aws_input_stream_get_status(encoder->message->body, &status);
+            if (err) {
+                ENCODER_LOGF(
+                    TRACE,
+                    encoder,
+                    "Failed to query body stream status, error %d (%s)",
+                    aws_last_error(),
+                    aws_error_name(aws_last_error()));
+                return AWS_OP_ERR;
+            }
+            if (status.is_end_of_stream) {
+                if (!s_terminate_chunked_encoding_stream(dst)) {
+                    ENCODER_LOGF(
+                        TRACE,
+                        encoder,
+                        "Failed to write chunked encoding terminator stream status, error %d (%s)",
+                        aws_last_error(),
+                        aws_error_name(aws_last_error()));
+                    return AWS_OP_ERR;
+                }
+                encoder->state++;
+                encoder->progress_bytes = 0;
+                return AWS_OP_SUCCESS;
+            }
+            AWS_ASSERT(status.is_valid);
+            return AWS_OP_SUCCESS;
+        }
+    }
+}
+
+static int s_h1_encoder_process_body(struct aws_byte_buf *dst, struct aws_h1_encoder *encoder) {
+    if (encoder->message->body && encoder->message->content_length) {
+        ENCODER_LOG(TRACE, encoder, "Sending body with content length")
+        return s_h1_encoder_process_content_length_body(dst, encoder);
+    } else if (encoder->message->has_chunked_encoding_header) {
+        ENCODER_LOG(TRACE, encoder, "Sending body with chunked transfer encoding")
+        return s_h1_encoder_process_chunked_encoding_body(dst, encoder);
+    } else {
+        ENCODER_LOG(TRACE, encoder, "Skipping body")
+        encoder->state++;
+    }
+    return AWS_OP_SUCCESS;
+}
+
 int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *out_buf) {
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(out_buf);
@@ -367,87 +593,9 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
     }
 
     if (encoder->state == AWS_H1_ENCODER_STATE_BODY) {
-        if (!encoder->message->body || !encoder->message->content_length) {
-            ENCODER_LOG(TRACE, encoder, "Skipping body")
-            encoder->state++;
-        } else {
-            while (true) {
-                if (dst->capacity == dst->len) {
-                    /* Can't write anymore */
-                    ENCODER_LOG(TRACE, encoder, "Cannot fit any more body data in this message");
-
-                    /* Return success because we want to try again later */
-                    return AWS_OP_SUCCESS;
-                }
-
-                const size_t prev_len = dst->len;
-                int err = aws_input_stream_read(encoder->message->body, dst);
-                const size_t amount_read = dst->len - prev_len;
-
-                if (err) {
-                    ENCODER_LOGF(
-                        ERROR,
-                        encoder,
-                        "Failed to read body stream, error %d (%s)",
-                        aws_last_error(),
-                        aws_error_name(aws_last_error()));
-
-                    return AWS_OP_ERR;
-                }
-
-                if ((amount_read > encoder->message->content_length) ||
-                    (encoder->progress_bytes > encoder->message->content_length - amount_read)) {
-                    ENCODER_LOGF(
-                        ERROR,
-                        encoder,
-                        "Body stream has exceeded Content-Length: %" PRIu64,
-                        encoder->message->content_length);
-                    return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
-                }
-
-                encoder->progress_bytes += amount_read;
-
-                ENCODER_LOGF(TRACE, encoder, "Writing %zu body bytes to message", amount_read);
-
-                if (encoder->progress_bytes == encoder->message->content_length) {
-                    ENCODER_LOG(TRACE, encoder, "Done sending body.");
-                    encoder->progress_bytes = 0;
-                    encoder->state++;
-                    break;
-                }
-
-                /* Return if user failed to write anything. Maybe their data isn't ready yet. */
-                if (amount_read == 0) {
-                    /* Ensure we're not at end-of-stream too early */
-                    struct aws_stream_status status;
-                    err = aws_input_stream_get_status(encoder->message->body, &status);
-                    if (err) {
-                        ENCODER_LOGF(
-                            TRACE,
-                            encoder,
-                            "Failed to query body stream status, error %d (%s)",
-                            aws_last_error(),
-                            aws_error_name(aws_last_error()));
-
-                        return AWS_OP_ERR;
-                    }
-                    if (status.is_end_of_stream) {
-                        ENCODER_LOGF(
-                            ERROR,
-                            encoder,
-                            "Reached end of body stream before Content-Length: %" PRIu64 " sent",
-                            encoder->message->content_length);
-                        return aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
-                    }
-
-                    ENCODER_LOG(
-                        TRACE,
-                        encoder,
-                        "No body data written, concluding this message. "
-                        "Will try to write body data again in the next message.");
-                    return AWS_OP_SUCCESS;
-                }
-            }
+        int process_body_op_result = s_h1_encoder_process_body(dst, encoder);
+        if (AWS_OP_SUCCESS != process_body_op_result) {
+            return process_body_op_result;
         }
     }
 

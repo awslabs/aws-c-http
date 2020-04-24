@@ -232,6 +232,60 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
     return AWS_OP_SUCCESS;
 }
 
+H1_CLIENT_TEST_CASE(h1_client_request_send_body_transfer_encoding_chunked) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request */
+    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
+
+    struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked"),
+        },
+    };
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+    aws_http_message_set_body_stream(request, body_stream);
+
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
+                           "Transfer-Encoding: chunked\r\n"
+                           "\r\n"
+                           "10\r\n"
+                           "write more tests"
+                           "\r\n"
+                           "0\r\n"
+                           "\r\n";
+
+    ASSERT_SUCCESS(testing_channel_check_written_message_str(&tester.testing_channel, expected));
+
+    /* clean up */
+    aws_input_stream_destroy(body_stream);
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 H1_CLIENT_TEST_CASE(h1_client_request_content_length_0_ok) {
     (void)ctx;
     struct tester tester;
@@ -290,7 +344,59 @@ H1_CLIENT_TEST_CASE(h1_client_request_content_length_0_ok) {
     return AWS_OP_SUCCESS;
 }
 
-/* Send a request whose body doesn't fit in a single aws_io_message */
+
+H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_0_ok) {
+    ASSERT_TRUE(true);
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request with Content-Length: 0 and NO body stream */
+    struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked"),
+        },
+    };
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+
+    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("");
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
+    aws_http_message_set_body_stream(request, body_stream);
+
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    /* check result */
+    const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
+                           "Transfer-Encoding: chunked\r\n"
+                           "\r\n"
+                           "0\r\n"
+                           "\r\n";
+
+    ASSERT_SUCCESS(testing_channel_check_written_message_str(&tester.testing_channel, expected));
+
+    /* clean up */
+    aws_input_stream_destroy(body_stream);
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Send a request whose body doesn't fit in a single aws_io_message using content length*/
 H1_CLIENT_TEST_CASE(h1_client_request_send_large_body) {
     (void)ctx;
     struct tester tester;
@@ -357,6 +463,123 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body) {
 
     aws_byte_buf_clean_up(&body_buf);
     aws_byte_buf_clean_up(&expected_buf);
+    return AWS_OP_SUCCESS;
+}
+
+static int s_can_parse_as_chunked_encoding(
+    struct aws_byte_buf *chunked_http_request_headers_and_body,
+    struct aws_byte_buf *expected_head,
+    char body_char) {
+
+    /* Check that the HTTP header matches the expected value */
+    ASSERT_TRUE(chunked_http_request_headers_and_body->len > expected_head->len);
+    ASSERT_BIN_ARRAYS_EQUALS(expected_head->buffer, expected_head->len,
+                             chunked_http_request_headers_and_body->buffer, expected_head->len);
+
+    /* move the cursor past the head and enter the chunked body */
+    struct aws_byte_cursor request_cursor = aws_byte_cursor_from_buf(chunked_http_request_headers_and_body);
+    aws_byte_cursor_advance(&request_cursor, expected_head->len);
+    struct aws_byte_cursor crlf_cursor = aws_byte_cursor_from_c_str("\r\n");
+    struct aws_byte_cursor match_cursor;
+    /* Provide a max iterations in case of a bug the test doesn't infinite loop but fails fast. */
+    int max_iter = 128;
+    int i = 0;
+    for(i = 0; i < max_iter; ++i)  {
+        ASSERT_SUCCESS(aws_byte_cursor_find_exact(&request_cursor, &crlf_cursor, &match_cursor));
+        char chunk_ascii_hex[64] = {0};
+        memcpy(&chunk_ascii_hex, (char *)request_cursor.ptr, match_cursor.ptr - request_cursor.ptr);
+        long chunk_size = strtol((char *)&chunk_ascii_hex, 0, 16);
+        long total_chunk_size_with_overhead = (long)
+            (match_cursor.ptr -  request_cursor.ptr /* size of the chunk in ascii hex */
+            + crlf_cursor.len                       /* size of the crlf */
+            + chunk_size                            /* size of the payload */
+            + crlf_cursor.len);                     /* size of the chunk terminating crlf */
+
+        /* 0 length chunk signals end of stream. Check for the terminatino string and exit with success */
+        if (0 == chunk_size) {
+            struct aws_byte_cursor terminate_cursor = aws_byte_cursor_from_c_str("0\r\n\r\n");
+            ASSERT_TRUE(aws_byte_cursor_eq(&request_cursor, &terminate_cursor));
+            break;
+        }
+
+        /* The buffer should be filled with the character specified for the whole length of the chunk */
+        for (int j = (int) (match_cursor.ptr - request_cursor.ptr + crlf_cursor.len); j < chunk_size; ++j) {
+            ASSERT_TRUE(body_char == (char) request_cursor.ptr[j]);
+        }
+        /* advance to the next chunk */
+        aws_byte_cursor_advance(&request_cursor, total_chunk_size_with_overhead);
+    }
+    /* Test that we didn't exit the loop due to hitting the max iterations */
+    ASSERT_TRUE(i < (max_iter - 1));
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Send a request whose body doesn't fit in a single aws_io_message using chunked transfer encoding*/
+H1_CLIENT_TEST_CASE(h1_client_request_send_large_body_transfer_encoding_chunked) {
+    ASSERT_TRUE(true);
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request with large body full of data */
+    size_t body_len = 1024 * 1024 * 1; /* 1MB */
+    struct aws_byte_buf body_buf;
+    ASSERT_SUCCESS(aws_byte_buf_init(&body_buf, allocator, body_len));
+    char body_char = 'z';
+    while (body_buf.len < body_len) {
+        aws_byte_buf_write_u8(&body_buf, body_char);
+    }
+
+    const struct aws_byte_cursor body = aws_byte_cursor_from_buf(&body_buf);
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
+
+    struct aws_http_header headers[] = {
+        {
+            .name = aws_byte_cursor_from_c_str("Transfer-Encoding"),
+            .value = aws_byte_cursor_from_c_str("chunked"),
+        },
+    };
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/large.txt")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+    aws_http_message_set_body_stream(request, body_stream);
+
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
+
+    /* check result */
+    const char expected_head_fmt[] = "PUT /large.txt HTTP/1.1\r\n"
+                                    "Transfer-Encoding: chunked\r\n"
+                                    "\r\n";
+    struct aws_byte_buf expected_head_buf = aws_byte_buf_from_c_str((char *) &expected_head_fmt);
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    struct aws_byte_buf written_buf;
+    ASSERT_SUCCESS(aws_byte_buf_init(&written_buf, allocator, body_len * 2));
+    ASSERT_SUCCESS(testing_channel_drain_written_messages(&tester.testing_channel, &written_buf));
+
+    ASSERT_SUCCESS(s_can_parse_as_chunked_encoding(&written_buf, &expected_head_buf, body_char));
+
+    /* clean up */
+    aws_input_stream_destroy(body_stream);
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+
+    aws_byte_buf_clean_up(&body_buf);
+    aws_byte_buf_clean_up(&expected_head_buf);
+    aws_byte_buf_clean_up(&written_buf);
     return AWS_OP_SUCCESS;
 }
 
@@ -1442,6 +1665,41 @@ static int s_test_content_length_mismatch_is_error(
     aws_input_stream_destroy(body_stream);
     aws_http_message_destroy(request);
     aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_fails_if_no_body_stream) {
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request with Transfer-Encoding: chunked and NO body stream */
+    struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked"),
+        },
+    };
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+
+    /* check result */
+    ASSERT_NULL(stream);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_MISSING_BODY_STREAM, aws_last_error());
+
+    /* clean up */
+    aws_http_message_destroy(request);
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
