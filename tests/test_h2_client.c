@@ -168,6 +168,14 @@ TEST_CASE(h2_client_connection_preface_sent) {
     return s_tester_clean_up();
 }
 
+static int s_stream_tester_init(struct client_stream_tester *stream_tester, struct aws_http_message *request) {
+    struct client_stream_tester_options options = {
+        .request = request,
+        .connection = s_tester.connection,
+    };
+    return client_stream_tester_init(stream_tester, s_tester.alloc, &options);
+}
+
 /* Test that client will automatically send the PING ACK frame back, when the PING frame is received */
 TEST_CASE(h2_client_ping_ack) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
@@ -182,8 +190,6 @@ TEST_CASE(h2_client_ping_ack) {
 
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    /* Have the fake peer to run its decoder on what the client has written.
-     * The decoder will raise an error if it doesn't receive the "client connection preface string" first. */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     /* Now check that client sent PING ACK frame, it should be the latest frame received by peer
@@ -195,7 +201,60 @@ TEST_CASE(h2_client_ping_ack) {
 
     return s_tester_clean_up();
 }
-/* TODO: test that ping response is sent with higher priority than any other frame */
+
+TEST_CASE(h2_client_ping_ack_higher_priority) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    size_t frames_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
+
+    /* send request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "POST"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    const char *body_src = "hello";
+    struct aws_byte_cursor body_cursor = aws_byte_cursor_from_c_str(body_src);
+    struct aws_input_stream *request_body = aws_input_stream_new_from_cursor(allocator, &body_cursor);
+    aws_http_message_set_body_stream(request, request_body);
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+
+    /* Frames for the request are activated. Fake peer send PING frame now */
+    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE] = {0, 1, 2, 3, 4, 5, 6, 7};
+
+    struct aws_h2_frame *frame = aws_h2_frame_new_ping(allocator, false /*ack*/, opaque_data);
+    ASSERT_NOT_NULL(frame);
+
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, frame));
+    
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    
+    /* validate PING ACK frame has higher priority than the normal request frames, and be received earliest */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct h2_decoded_frame *fastest_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, frames_count);
+    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_PING, fastest_frame->type);
+    ASSERT_TRUE(fastest_frame->ack);
+    ASSERT_BIN_ARRAYS_EQUALS(opaque_data, AWS_H2_PING_DATA_SIZE, fastest_frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);    
+
+    /* clean up */
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    aws_input_stream_destroy(request_body);
+    return s_tester_clean_up();
+}
 
 TEST_CASE(h2_client_setting_ack) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
@@ -213,14 +272,6 @@ TEST_CASE(h2_client_setting_ack) {
     ASSERT_TRUE(latest_frame->ack);
 
     return s_tester_clean_up();
-}
-
-static int s_stream_tester_init(struct client_stream_tester *stream_tester, struct aws_http_message *request) {
-    struct client_stream_tester_options options = {
-        .request = request,
-        .connection = s_tester.connection,
-    };
-    return client_stream_tester_init(stream_tester, s_tester.alloc, &options);
 }
 
 static int s_compare_headers(const struct aws_http_headers *expected, const struct aws_http_headers *got) {
