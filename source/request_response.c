@@ -48,6 +48,7 @@ bool aws_http_header_name_eq(struct aws_byte_cursor name_a, struct aws_byte_curs
  */
 struct aws_http_headers {
     struct aws_allocator *alloc;
+    struct aws_allocator *parent_alloc;
     struct aws_array_list array_list; /* Contains aws_http_header */
     struct aws_atomic_var refcount;
 };
@@ -60,7 +61,11 @@ struct aws_http_headers *aws_http_headers_new(struct aws_allocator *allocator) {
         goto alloc_failed;
     }
 
-    headers->alloc = allocator;
+    headers->parent_alloc = allocator;
+    headers->alloc = aws_small_block_allocator_new(allocator, false);
+    if (!headers->alloc) {
+        goto sba_failed;
+    }
     aws_atomic_init_int(&headers->refcount, 1);
 
     if (aws_array_list_init_dynamic(
@@ -71,7 +76,9 @@ struct aws_http_headers *aws_http_headers_new(struct aws_allocator *allocator) {
     return headers;
 
 array_list_failed:
-    aws_mem_release(headers->alloc, headers);
+    aws_small_block_allocator_destroy(headers->alloc);
+sba_failed:
+    aws_mem_release(headers->parent_alloc, headers);
 alloc_failed:
     return NULL;
 }
@@ -86,7 +93,8 @@ void aws_http_headers_release(struct aws_http_headers *headers) {
     if (prev_refcount == 1) {
         aws_http_headers_clear(headers);
         aws_array_list_clean_up(&headers->array_list);
-        aws_mem_release(headers->alloc, headers);
+        aws_small_block_allocator_destroy(headers->alloc);
+        aws_mem_release(headers->parent_alloc, headers);
     } else {
         AWS_ASSERT(prev_refcount != 0);
     }
