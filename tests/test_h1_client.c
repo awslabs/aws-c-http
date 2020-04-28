@@ -344,7 +344,6 @@ H1_CLIENT_TEST_CASE(h1_client_request_content_length_0_ok) {
     return AWS_OP_SUCCESS;
 }
 
-
 H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_0_ok) {
     ASSERT_TRUE(true);
     (void)ctx;

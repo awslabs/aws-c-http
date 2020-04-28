@@ -38,10 +38,19 @@ enum aws_h1_encoder_state {
     AWS_H1_ENCODER_STATE_DONE,
 };
 
+enum aws_h1_encoder_body_stream_state {
+    AWS_H1_ENCODER_STATE_CHUNK_INIT,
+    AWS_H1_ENCODER_STATE_CHUNK_SIZE,
+    AWS_H1_ENCODER_STATE_CHUNK_EXTENSION,
+    AWS_H1_ENCODER_STATE_CHUNK_PAYLOAD,
+    AWS_H1_ENCODER_STATE_CHUNK_END,
+};
+
 struct aws_h1_encoder {
     struct aws_allocator *allocator;
 
     enum aws_h1_encoder_state state;
+    enum aws_h1_encoder_body_stream_state stream_state;
     struct aws_h1_encoder_message *message;
     uint64_t progress_bytes;
     const void *logging_id;
