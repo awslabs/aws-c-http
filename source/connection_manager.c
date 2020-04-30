@@ -375,7 +375,7 @@ static void s_aws_http_connection_manager_complete_acquisitions(
                 pending_acquisition->connection->channel_slot &&
                 pending_acquisition->connection->channel_slot->channel);
 
-            /* For some workloads, going ahead and moving the connection callback to the connection's callback is a
+            /* For some workloads, going ahead and moving the connection callback to the connection's thread is a
              * substantial performance improvement so let's do that */
             if (!aws_channel_thread_is_callers_thread(pending_acquisition->connection->channel_slot->channel)) {
                 aws_channel_task_init(
