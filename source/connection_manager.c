@@ -380,13 +380,13 @@ static void s_aws_http_connection_manager_complete_acquisitions(
             AWS_PRECONDITION(
                 pending_acquisition->connection->channel_slot &&
                 pending_acquisition->connection->channel_slot->channel);
-            AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: Successfully completed connection acquisition with connection id=%p",
-                (void *)pending_acquisition->manager,
-                (void *)pending_acquisition->connection);
 
             if (aws_channel_thread_is_callers_thread(pending_acquisition->connection->channel_slot->channel)) {
+                AWS_LOGF_DEBUG(
+                    AWS_LS_HTTP_CONNECTION_MANAGER,
+                    "id=%p: Successfully completed connection acquisition with connection id=%p",
+                    (void *)pending_acquisition->manager,
+                    (void *)pending_acquisition->connection);
                 pending_acquisition->callback(
                     pending_acquisition->connection, pending_acquisition->error_code, pending_acquisition->user_data);
                 aws_mem_release(allocator, pending_acquisition);
