@@ -330,12 +330,16 @@ static void s_connection_acquisition_task(
 
     struct aws_http_connection_acquisition *pending_acquisition = arg;
 
+    /* this is a channel task. If it is canceled, that means the channel shutdown. In that case, that's equivalent
+     * to a closed connection. */
     if (status != AWS_TASK_STATUS_RUN_READY) {
         AWS_LOGF_WARN(
             AWS_LS_HTTP_CONNECTION_MANAGER,
-            "id=%p: Failed to completed connection acquisition because the connection was closed",
+            "id=%p: Failed to complete connection acquisition because the connection was closed",
             (void *)pending_acquisition->manager);
         pending_acquisition->callback(NULL, AWS_ERROR_HTTP_CONNECTION_CLOSED, pending_acquisition->user_data);
+        /* release it back to prevent a leak of the connection count. */
+        aws_http_connection_manager_release_connection(pending_acquisition->manager, pending_acquisition->connection);
     } else {
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_CONNECTION_MANAGER,
@@ -366,31 +370,14 @@ static void s_aws_http_connection_manager_complete_acquisitions(
         struct aws_http_connection_acquisition *pending_acquisition =
             AWS_CONTAINER_OF(node, struct aws_http_connection_acquisition, node);
 
-        if (pending_acquisition->error_code != 0) {
-            AWS_LOGF_WARN(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: Failed to completed connection acquisition with error_code %d(%s)",
-                (void *)pending_acquisition->manager,
-                pending_acquisition->error_code,
-                aws_error_str(pending_acquisition->error_code));
-            pending_acquisition->callback(
-                pending_acquisition->connection, pending_acquisition->error_code, pending_acquisition->user_data);
-            aws_mem_release(allocator, pending_acquisition);
-        } else {
+        if (pending_acquisition->error_code == AWS_OP_SUCCESS) {
             AWS_PRECONDITION(
                 pending_acquisition->connection->channel_slot &&
                 pending_acquisition->connection->channel_slot->channel);
 
-            if (aws_channel_thread_is_callers_thread(pending_acquisition->connection->channel_slot->channel)) {
-                AWS_LOGF_DEBUG(
-                    AWS_LS_HTTP_CONNECTION_MANAGER,
-                    "id=%p: Successfully completed connection acquisition with connection id=%p",
-                    (void *)pending_acquisition->manager,
-                    (void *)pending_acquisition->connection);
-                pending_acquisition->callback(
-                    pending_acquisition->connection, pending_acquisition->error_code, pending_acquisition->user_data);
-                aws_mem_release(allocator, pending_acquisition);
-            } else {
+            /* For some workloads, going ahead and moving the connection callback to the connection's callback is a
+             * substantial performance improvement so let's do that */
+            if (!aws_channel_thread_is_callers_thread(pending_acquisition->connection->channel_slot->channel)) {
                 aws_channel_task_init(
                     &pending_acquisition->acquisition_task,
                     s_connection_acquisition_task,
@@ -398,8 +385,26 @@ static void s_aws_http_connection_manager_complete_acquisitions(
                     "s_connection_acquisition_task");
                 aws_channel_schedule_task_now(
                     pending_acquisition->connection->channel_slot->channel, &pending_acquisition->acquisition_task);
+                return;
             }
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_CONNECTION_MANAGER,
+                "id=%p: Successfully completed connection acquisition with connection id=%p",
+                (void *)pending_acquisition->manager,
+                (void *)pending_acquisition->connection);
+
+        } else {
+            AWS_LOGF_WARN(
+                AWS_LS_HTTP_CONNECTION_MANAGER,
+                "id=%p: Failed to complete connection acquisition with error_code %d(%s)",
+                (void *)pending_acquisition->manager,
+                pending_acquisition->error_code,
+                aws_error_str(pending_acquisition->error_code));
         }
+
+        pending_acquisition->callback(
+            pending_acquisition->connection, pending_acquisition->error_code, pending_acquisition->user_data);
+        aws_mem_release(allocator, pending_acquisition);
     }
 }
 
