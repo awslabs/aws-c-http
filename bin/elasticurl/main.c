@@ -105,8 +105,8 @@ static void s_usage(int exit_code) {
     fprintf(stderr, "  -t, --trace FILE: dumps logs to FILE instead of stderr.\n");
     fprintf(stderr, "  -v, --verbose: ERROR|INFO|DEBUG|TRACE: log level to configure. Default is none.\n");
     fprintf(stderr, "      --version: print the version of elasticurl.\n");
-    fprintf(stderr, "      --http2: HTTP/2 connection required");
-    fprintf(stderr, "      --http1_1: HTTP/1.1 connection required");
+    fprintf(stderr, "      --http2: HTTP/2 connection required\n");
+    fprintf(stderr, "      --http1_1: HTTP/1.1 connection required\n");
     fprintf(stderr, "  -h, --help\n");
     fprintf(stderr, "            Display this message and quit.\n");
     exit(exit_code);
@@ -463,7 +463,7 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     struct elasticurl_ctx *app_ctx = user_data;
     if (app_ctx->required_http_version) {
         if (aws_http_connection_get_version(connection) != app_ctx->required_http_version) {
-            fprintf(stderr, "Error. The requested http version, %s, is not supported by the peer.", app_ctx->alpn);
+            fprintf(stderr, "Error. The requested HTTP version, %s, is not supported by the peer.", app_ctx->alpn);
             exit(1);
         }
     }
@@ -690,7 +690,7 @@ int main(int argc, char **argv) {
         }
     } else {
         if (app_ctx.required_http_version == AWS_HTTP_VERSION_2) {
-            fprintf(stderr, "Error, we don't support h2c, please use TLS for HTTP2 connection");
+            fprintf(stderr, "Error, we don't support h2c, please use TLS for HTTP/2 connection");
             exit(1);
         }
         port = 80;
