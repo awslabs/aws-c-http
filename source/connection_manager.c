@@ -16,7 +16,6 @@
 #include <aws/http/connection_manager.h>
 
 #include <aws/http/connection.h>
-#include <aws/http/private/connection_impl.h>
 #include <aws/http/private/connection_manager_system_vtable.h>
 #include <aws/http/private/connection_monitor.h>
 #include <aws/http/private/http_impl.h>
@@ -27,7 +26,6 @@
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 
-#include <aws/common/atomics.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/linked_list.h>
 #include <aws/common/mutex.h>
@@ -371,20 +369,18 @@ static void s_aws_http_connection_manager_complete_acquisitions(
             AWS_CONTAINER_OF(node, struct aws_http_connection_acquisition, node);
 
         if (pending_acquisition->error_code == AWS_OP_SUCCESS) {
-            AWS_PRECONDITION(
-                pending_acquisition->connection->channel_slot &&
-                pending_acquisition->connection->channel_slot->channel);
+            struct aws_channel *channel = aws_http_connection_get_channel(pending_acquisition->connection);
+            AWS_PRECONDITION(channel);
 
             /* For some workloads, going ahead and moving the connection callback to the connection's thread is a
              * substantial performance improvement so let's do that */
-            if (!aws_channel_thread_is_callers_thread(pending_acquisition->connection->channel_slot->channel)) {
+            if (!aws_channel_thread_is_callers_thread(channel)) {
                 aws_channel_task_init(
                     &pending_acquisition->acquisition_task,
                     s_connection_acquisition_task,
                     pending_acquisition,
                     "s_connection_acquisition_task");
-                aws_channel_schedule_task_now(
-                    pending_acquisition->connection->channel_slot->channel, &pending_acquisition->acquisition_task);
+                aws_channel_schedule_task_now(channel, &pending_acquisition->acquisition_task);
                 return;
             }
             AWS_LOGF_DEBUG(
