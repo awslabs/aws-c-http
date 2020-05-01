@@ -26,7 +26,6 @@
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 
-#include <aws/common/atomics.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/linked_list.h>
 #include <aws/common/mutex.h>
@@ -39,7 +38,8 @@ static struct aws_http_connection_manager_system_vtable s_default_system_vtable 
     .create_connection = aws_http_client_connect,
     .release_connection = aws_http_connection_release,
     .close_connection = aws_http_connection_close,
-    .is_connection_open = aws_http_connection_is_open};
+    .is_connection_open = aws_http_connection_is_open,
+};
 
 const struct aws_http_connection_manager_system_vtable *g_aws_http_connection_manager_default_system_vtable_ptr =
     &s_default_system_vtable;
@@ -310,13 +310,46 @@ static bool s_aws_http_connection_manager_should_destroy(struct aws_http_connect
  * simply by setting the error_code and moving it to the current transaction's completion list.
  */
 struct aws_http_connection_acquisition {
+    struct aws_allocator *allocator;
     struct aws_linked_list_node node;
     struct aws_http_connection_manager *manager; /* Only used by logging */
     aws_http_connection_manager_on_connection_setup_fn *callback;
     void *user_data;
     struct aws_http_connection *connection;
     int error_code;
+    struct aws_channel_task acquisition_task;
 };
+
+static void s_connection_acquisition_task(
+    struct aws_channel_task *channel_task,
+    void *arg,
+    enum aws_task_status status) {
+    (void)channel_task;
+
+    struct aws_http_connection_acquisition *pending_acquisition = arg;
+
+    /* this is a channel task. If it is canceled, that means the channel shutdown. In that case, that's equivalent
+     * to a closed connection. */
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "id=%p: Failed to complete connection acquisition because the connection was closed",
+            (void *)pending_acquisition->manager);
+        pending_acquisition->callback(NULL, AWS_ERROR_HTTP_CONNECTION_CLOSED, pending_acquisition->user_data);
+        /* release it back to prevent a leak of the connection count. */
+        aws_http_connection_manager_release_connection(pending_acquisition->manager, pending_acquisition->connection);
+    } else {
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "id=%p: Successfully completed connection acquisition with connection id=%p",
+            (void *)pending_acquisition->manager,
+            (void *)pending_acquisition->connection);
+        pending_acquisition->callback(
+            pending_acquisition->connection, pending_acquisition->error_code, pending_acquisition->user_data);
+    }
+
+    aws_mem_release(pending_acquisition->allocator, pending_acquisition);
+}
 
 /*
  * Invokes a set of connection acquisition completion callbacks.
@@ -335,24 +368,38 @@ static void s_aws_http_connection_manager_complete_acquisitions(
         struct aws_http_connection_acquisition *pending_acquisition =
             AWS_CONTAINER_OF(node, struct aws_http_connection_acquisition, node);
 
-        pending_acquisition->callback(
-            pending_acquisition->connection, pending_acquisition->error_code, pending_acquisition->user_data);
+        if (pending_acquisition->error_code == AWS_OP_SUCCESS) {
+            struct aws_channel *channel = aws_http_connection_get_channel(pending_acquisition->connection);
+            AWS_PRECONDITION(channel);
 
-        if (pending_acquisition->error_code != 0) {
-            AWS_LOGF_WARN(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: Failed to completed connection acquisition with error_code %d(%s)",
-                (void *)pending_acquisition->manager,
-                pending_acquisition->error_code,
-                aws_error_str(pending_acquisition->error_code));
-        } else {
+            /* For some workloads, going ahead and moving the connection callback to the connection's thread is a
+             * substantial performance improvement so let's do that */
+            if (!aws_channel_thread_is_callers_thread(channel)) {
+                aws_channel_task_init(
+                    &pending_acquisition->acquisition_task,
+                    s_connection_acquisition_task,
+                    pending_acquisition,
+                    "s_connection_acquisition_task");
+                aws_channel_schedule_task_now(channel, &pending_acquisition->acquisition_task);
+                return;
+            }
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
                 "id=%p: Successfully completed connection acquisition with connection id=%p",
                 (void *)pending_acquisition->manager,
                 (void *)pending_acquisition->connection);
+
+        } else {
+            AWS_LOGF_WARN(
+                AWS_LS_HTTP_CONNECTION_MANAGER,
+                "id=%p: Failed to complete connection acquisition with error_code %d(%s)",
+                (void *)pending_acquisition->manager,
+                pending_acquisition->error_code,
+                aws_error_str(pending_acquisition->error_code));
         }
 
+        pending_acquisition->callback(
+            pending_acquisition->connection, pending_acquisition->error_code, pending_acquisition->user_data);
         aws_mem_release(allocator, pending_acquisition);
     }
 }
@@ -856,6 +903,7 @@ void aws_http_connection_manager_acquire_connection(
         return;
     }
 
+    request->allocator = manager->allocator;
     request->callback = callback;
     request->user_data = user_data;
 

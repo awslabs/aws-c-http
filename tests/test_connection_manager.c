@@ -591,7 +591,9 @@ static int s_test_connection_manager_acquire_release_mix_synchronous(struct aws_
     (void)ctx;
 
     struct cm_tester_options options = {
-        .allocator = allocator, .max_connections = 5, .mock_table = &s_synchronous_mocks};
+        .allocator = allocator,
+        .max_connections = 5,
+    };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
@@ -669,39 +671,6 @@ static int s_test_connection_manager_connect_immediate_failure(struct aws_alloca
 }
 AWS_TEST_CASE(test_connection_manager_connect_immediate_failure, s_test_connection_manager_connect_immediate_failure);
 
-static int s_test_connection_manager_success_then_cancel_pending_from_failure(
-    struct aws_allocator *allocator,
-    void *ctx) {
-    (void)ctx;
-
-    struct cm_tester_options options = {
-        .allocator = allocator, .max_connections = 1, .mock_table = &s_synchronous_mocks};
-
-    ASSERT_SUCCESS(s_cm_tester_init(&options));
-
-    s_add_mock_connections(1, AWS_NCRT_SUCCESS, true);
-    s_add_mock_connections(1, AWS_NCRT_ERROR_FROM_CREATE, false);
-
-    s_acquire_connections(5);
-
-    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
-
-    ASSERT_TRUE(s_tester.connection_errors == 0);
-
-    ASSERT_SUCCESS(s_release_connections(1, true));
-
-    ASSERT_SUCCESS(s_wait_on_connection_reply_count(5));
-
-    ASSERT_TRUE(s_tester.connection_errors == 4);
-
-    ASSERT_SUCCESS(s_cm_tester_clean_up());
-
-    return AWS_OP_SUCCESS;
-}
-AWS_TEST_CASE(
-    test_connection_manager_success_then_cancel_pending_from_failure,
-    s_test_connection_manager_success_then_cancel_pending_from_failure);
-
 static int s_test_connection_manager_proxy_setup_shutdown(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
@@ -724,34 +693,3 @@ static int s_test_connection_manager_proxy_setup_shutdown(struct aws_allocator *
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_proxy_setup_shutdown, s_test_connection_manager_proxy_setup_shutdown);
-
-static int s_test_connection_manager_proxy_acquire_single(struct aws_allocator *allocator, void *ctx) {
-    (void)ctx;
-
-    struct aws_http_proxy_options proxy_options = {
-        .host = aws_byte_cursor_from_c_str("127.0.0.1"),
-        .port = 8080,
-    };
-
-    struct cm_tester_options options = {
-        .allocator = allocator,
-        .max_connections = 1,
-        .mock_table = &s_synchronous_mocks,
-        .proxy_options = &proxy_options,
-    };
-
-    ASSERT_SUCCESS(s_cm_tester_init(&options));
-
-    s_add_mock_connections(1, AWS_NCRT_SUCCESS, true);
-    s_acquire_connections(1);
-    s_wait_on_connection_reply_count(1);
-
-    ASSERT_TRUE(s_tester.connection_errors == 0);
-
-    ASSERT_SUCCESS(s_release_connections(1, true));
-
-    ASSERT_SUCCESS(s_cm_tester_clean_up());
-
-    return AWS_OP_SUCCESS;
-}
-AWS_TEST_CASE(test_connection_manager_proxy_acquire_single, s_test_connection_manager_proxy_acquire_single);
