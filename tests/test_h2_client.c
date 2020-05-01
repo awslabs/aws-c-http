@@ -2478,8 +2478,7 @@ TEST_CASE(h2_client_stream_err_input_stream_failure) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
-    ASSERT_INT_EQUALS(
-        AWS_IO_STREAM_READ_FAILED, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+    ASSERT_INT_EQUALS(AWS_IO_STREAM_READ_FAILED, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
     /* clean up */
     client_stream_tester_clean_up(&stream_tester);
     aws_http_message_release(request);
