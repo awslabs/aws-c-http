@@ -22,12 +22,6 @@
 
 #include <ctype.h>
 
-#ifdef _MSC_VER
-#    pragma warning(disable : 4311) /* 'type cast': pointer truncation from 'void *' to 'int' */
-#else
-#    pragma GCC diagnostic ignored "-Wpointer-to-int-cast"
-#endif
-
 #define AWS_DEFINE_ERROR_INFO_HTTP(CODE, STR) [(CODE)-0x0800] = AWS_DEFINE_ERROR_INFO(CODE, STR, "aws-c-http")
 
 /* clang-format off */
@@ -147,6 +141,16 @@ static struct aws_log_subject_info_list s_log_subject_list = {
     .count = AWS_ARRAY_SIZE(s_log_subject_infos),
 };
 
+struct aws_enum_value {
+    struct aws_allocator *allocator;
+    int value;
+};
+
+static void s_destroy_enum_value(void *value) {
+    struct aws_enum_value *enum_value = value;
+    aws_mem_release(enum_value->allocator, enum_value);
+}
+
 /**
  * Given array of aws_byte_cursors, init hashtable where...
  * Key is aws_byte_cursor* (pointing into cursor from array) and comparisons are case-insensitive.
@@ -167,13 +171,18 @@ static void s_init_str_to_enum_hash_table(
         ignore_case ? aws_hash_byte_cursor_ptr_ignore_case : aws_hash_byte_cursor_ptr,
         (aws_hash_callback_eq_fn *)(ignore_case ? aws_byte_cursor_eq_ignore_case : aws_byte_cursor_eq),
         NULL,
-        NULL);
+        s_destroy_enum_value);
     AWS_FATAL_ASSERT(!err);
 
     for (size_t i = start_index; i < (size_t)end_index; ++i) {
-        int was_created;
+        int was_created = 0;
+        struct aws_enum_value *enum_value = aws_mem_calloc(alloc, 1, sizeof(struct aws_enum_value));
+        AWS_FATAL_ASSERT(enum_value);
+        enum_value->allocator = alloc;
+        enum_value->value = i;
+
         AWS_FATAL_ASSERT(str_array[i].ptr && "Missing enum string");
-        err = aws_hash_table_put(table, &str_array[i], (void *)i, &was_created);
+        err = aws_hash_table_put(table, &str_array[i], (void *)enum_value, &was_created);
         AWS_FATAL_ASSERT(!err && was_created);
     }
 }
@@ -186,7 +195,8 @@ static int s_find_in_str_to_enum_hash_table(const struct aws_hash_table *table, 
     struct aws_hash_element *elem;
     aws_hash_table_find(table, key, &elem);
     if (elem) {
-        return (int)elem->value;
+        struct aws_enum_value *enum_value = elem->value;
+        return enum_value->value;
     }
     return -1;
 }
@@ -235,7 +245,7 @@ static void s_versions_init(struct aws_allocator *alloc) {
 static void s_versions_clean_up(void) {}
 
 struct aws_byte_cursor aws_http_version_to_str(enum aws_http_version version) {
-    if (version < AWS_HTTP_VERSION_UNKNOWN || version >= AWS_HTTP_VERSION_COUNT) {
+    if ((int)version < AWS_HTTP_VERSION_UNKNOWN || (int)version >= AWS_HTTP_VERSION_COUNT) {
         version = AWS_HTTP_VERSION_UNKNOWN;
     }
 
