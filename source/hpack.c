@@ -1261,7 +1261,9 @@ int aws_hpack_decode(
                 goto handle_complete;
             } break;
 
-            default: { AWS_ASSERT(0 && "invalid state"); } break;
+            default: {
+                AWS_ASSERT(0 && "invalid state");
+            } break;
         }
     }
 
