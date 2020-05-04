@@ -75,11 +75,15 @@ struct aws_h2_connection {
          * When queue is empty, then we send DATA frames from the outgoing_streams_list */
         struct aws_linked_list outgoing_frames_queue;
 
-        /* Maps stream-id to aws_h2_stream_closed_when.
-         * Contains data about streams that were recently closed by this end (sent RST_STREAM frame or END_STREAM flag),
-         * but might still receive frames that remote peer sent before learning that the stream was closed.
+        /* Maps stream-id to aws_h2_stream_closed_detail.
+         * Contains data about streams that were recently closed.
          * Entries are removed after a period of time. */
-        struct aws_hash_table closed_streams_where_frames_might_trickle_in;
+        struct aws_hash_table closed_streams_map;
+
+        /* Array list with stream_id
+         * Contains the id of streams that were recently closed, and ordered by the time they closed.
+         * Entries are removed after a period of time. */
+        struct aws_array_list closed_streams_array;
 
         /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
          * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
@@ -134,6 +138,15 @@ enum aws_h2_stream_closed_when {
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT,
 };
 
+/**
+ * The detail about how and when stream closed
+ */
+struct aws_h2_stream_closed_detail {
+    struct aws_allocator *allocator;
+    enum aws_h2_stream_closed_when closed_when;
+    uint64_t closed_time_stamp;
+};
+
 enum aws_h2_data_encode_status {
     AWS_H2_DATA_ENCODE_COMPLETE,
     AWS_H2_DATA_ENCODE_ONGOING,
@@ -143,6 +156,9 @@ enum aws_h2_data_encode_status {
 
 /* When window size is too small to fit the possible padding into it, we stop sending data and wait for WINDOW_UPDATE */
 #define AWS_H2_MIN_WINDOW_SIZE (256)
+/* We will ignore frames for closed stream within this time slot, after that we will treat them as connection error:
+ * nano secs, 100000000 nano secs -> 0.1 sec */
+#define AWS_H2_IGNORE_TIME (100000000)
 
 /* Private functions called from tests... */
 
