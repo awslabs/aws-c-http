@@ -877,8 +877,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
                     stream_id);
 
                 return AWS_H2ERR_SUCCESS;
-            }
-            else {
+            } else {
                 CONNECTION_LOGF(
                     ERROR,
                     connection,
