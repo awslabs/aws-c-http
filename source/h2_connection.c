@@ -1602,7 +1602,7 @@ int aws_h2_connection_on_stream_closed(
 
 static struct aws_h2err s_remove_entry_closed_long_ago_from_recently_closed_stucture(
     struct aws_h2_connection *connection) {
-    size_t time_stamp;
+    uint64_t time_stamp;
     if (aws_sys_clock_get_ticks(&time_stamp)) {
         CONNECTION_LOG(ERROR, connection, "Failed getting the time stamp when stream closed");
         return aws_h2err_from_last_error();
@@ -1641,7 +1641,7 @@ static int s_record_closed_stream(
 
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
-    size_t time_stamp;
+    uint64_t time_stamp;
     if (aws_sys_clock_get_ticks(&time_stamp)) {
         CONNECTION_LOG(ERROR, connection, "Failed getting the time stamp when stream closed");
         return AWS_OP_ERR;
