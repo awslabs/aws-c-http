@@ -673,8 +673,6 @@ TEST_CASE(h2_client_stream_err_state_forbids_frame) {
     struct aws_h2_frame *response_frame =
         aws_h2_frame_new_headers(allocator, stream_id, response_headers, true /*end_stream*/, 0, NULL);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
-    /* validate that stream completed with error */
-    testing_channel_run_currently_queued_tasks(&s_tester.testing_channel);
 
     /* AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE will reject body frame */
     ASSERT_SUCCESS(h2_fake_peer_send_data_frame_str(&s_tester.peer, stream_id, body_src, true /*end_stream*/));
