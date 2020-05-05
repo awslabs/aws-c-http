@@ -847,6 +847,10 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
     /* Stream is closed, check whether it's legal for a few more frames to trickle in */
     aws_hash_table_find(&connection->thread_data.closed_streams_map, stream_id_key, &found);
     if (found) {
+        if (frame_type == AWS_H2_FRAME_T_PRIORITY) {
+            /* If we support PRIORITY, do something here. Right now just ignore it */
+            return AWS_H2ERR_SUCCESS;
+        }
         struct aws_h2_stream_closed_detail *closed_detail = found->value;
         if (closed_detail->closed_when == AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT) {
             /* An endpoint MUST ignore frames that it receives on closed streams after it has sent a RST_STREAM frame */
@@ -874,13 +878,25 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
 
                 return AWS_H2ERR_SUCCESS;
             }
+            else {
+                CONNECTION_LOGF(
+                    ERROR,
+                    connection,
+                    "Illegal to receive %s frame on stream id=%" PRIu32 " because END_STREAM flag received.",
+                    aws_h2_frame_type_to_str(frame_type),
+                    stream_id);
+
+                return aws_h2err_from_h2_code(AWS_H2_ERR_STREAM_CLOSED);
+            }
         } else {
             /* An endpoint that receives any frame other than PRIORITY after receiving a RST_STREAM
              * MUST treat that as a stream error (Section 5.4.2) of type STREAM_CLOSED */
-            if (frame_type == AWS_H2_FRAME_T_PRIORITY) {
-                /* We don't support priority now, just ignore it */
-                return AWS_H2ERR_SUCCESS;
-            }
+            CONNECTION_LOGF(
+                ERROR,
+                connection,
+                "Illegal to receive %s frame on stream id=%" PRIu32 " because RST_STREAM received",
+                aws_h2_frame_type_to_str(frame_type),
+                stream_id);
             struct aws_h2_frame *rst_stream =
                 aws_h2_frame_new_rst_stream(connection->base.alloc, stream_id, AWS_H2_ERR_STREAM_CLOSED);
             if (!rst_stream) {
@@ -897,15 +913,15 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
         return AWS_H2ERR_SUCCESS;
     }
 
-    /* Stream was closed long ago, or didn't fit criteria for being ignored */
+    /* Stream was closed long ago */
     CONNECTION_LOGF(
         ERROR,
         connection,
-        "Illegal to receive %s frame on stream id=%" PRIu32 " state=closed",
+        "Illegal to receive %s frame on stream id=%" PRIu32 " stream closed too long ago.",
         aws_h2_frame_type_to_str(frame_type),
         stream_id);
 
-    return aws_h2err_from_h2_code(AWS_H2_ERR_STREAM_CLOSED);
+    return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
 }
 
 /* Decoder callbacks */

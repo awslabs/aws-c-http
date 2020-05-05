@@ -670,7 +670,71 @@ TEST_CASE(h2_client_stream_ignores_some_frames_received_soon_after_closing) {
     return s_tester_clean_up();
 }
 
-/* Received frames for a stream closed long ago, we will consider them as connection error */
+/* Peer should not send any frames other than WINDOW_UPDATE and RST_STREAM once they send END_STREAM flag, we will treat
+ * that as connection error (STREAM_CLOSED) */
+TEST_CASE(h2_client_conn_err_stream_frames_received_soon_after_closing) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
+
+    /* fake peer sends complete response */
+    struct aws_http_header response_headers_src[] = {
+        DEFINE_HEADER(":status", "404"),
+        DEFINE_HEADER("date", "Wed, 01 Apr 2020 23:02:49 GMT"),
+    };
+
+    struct aws_http_headers *response_headers = aws_http_headers_new(allocator);
+    aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
+
+    struct aws_h2_frame *peer_frame =
+        aws_h2_frame_new_headers(allocator, stream_id, response_headers, true /*end_stream*/, 0, NULL);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+
+    /* fake peer try to send data frame */
+    ASSERT_SUCCESS(h2_fake_peer_send_data_frame_str(&s_tester.peer, stream_id, "hello", true /*end_stream*/));
+
+    /* validate that connection has closed. */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_INT_EQUALS(
+        AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+
+    /* validate that client sent GOAWAY */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct h2_decoded_frame *goaway =
+        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
+    ASSERT_NOT_NULL(goaway);
+    ASSERT_UINT_EQUALS(AWS_H2_ERR_STREAM_CLOSED, goaway->error_code);
+    ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
+
+    /* clean up */
+    aws_http_headers_release(response_headers);
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
+/* Received frames for a stream closed long ago, we will consider them as connection error (PROTOCOL_ERROR) */
 TEST_CASE(h2_client_conn_err_stream_frames_received_long_after_closing) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
@@ -726,7 +790,7 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_long_after_closing) {
     struct h2_decoded_frame *goaway =
         h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
     ASSERT_NOT_NULL(goaway);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_STREAM_CLOSED, goaway->error_code);
+    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, goaway->error_code);
 
     /* clean up */
     aws_http_headers_release(response_headers);
@@ -846,7 +910,7 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_long_after_rst_stream_receiv
     struct h2_decoded_frame *goaway =
         h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
     ASSERT_NOT_NULL(goaway);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_STREAM_CLOSED, goaway->error_code);
+    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, goaway->error_code);
 
     /* clean up */
     aws_http_headers_release(response_headers);
