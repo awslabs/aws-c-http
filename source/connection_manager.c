@@ -498,6 +498,21 @@ static void s_aws_http_connection_manager_build_transaction(struct aws_connectio
 
             aws_array_list_pop_back(&manager->connections);
 
+            /*
+             * If this connection has closed while sitting in the pool, skip and release it
+             */
+            if (!manager->system_vtable->is_connection_open(connection)) {
+                if (aws_array_list_push_back(&work->connections_to_release, connection)) {
+                    /* Nothing we can do here; it's a potential deadlock to release the connection right now */
+                    AWS_LOGF_ERROR(
+                        AWS_LS_HTTP_CONNECTION_MANAGER,
+                        "id=%p: Failed to queue connection (%p) for release.  This will leak",
+                        (void *)manager,
+                        (void *)connection);
+                }
+                continue;
+            }
+
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
                 "id=%p: Grabbing pooled connection (%p)",

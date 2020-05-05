@@ -693,3 +693,45 @@ static int s_test_connection_manager_proxy_setup_shutdown(struct aws_allocator *
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_proxy_setup_shutdown, s_test_connection_manager_proxy_setup_shutdown);
+
+static int s_test_connection_manager_release_closed_connection_on_acquire(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct cm_tester_options options = {.allocator = allocator, .max_connections = 5};
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_acquire_connections(1);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
+
+    struct aws_http_connection *first_connection = NULL;
+    ASSERT_INT_EQUALS(aws_array_list_length(&s_tester.connections), 1);
+    ASSERT_SUCCESS(aws_array_list_get_at(&s_tester.connections, &first_connection, 0));
+
+    ASSERT_SUCCESS(s_release_connections(1, false));
+
+    aws_http_connection_close(first_connection);
+
+    s_acquire_connections(1);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(2));
+
+    struct aws_http_connection *second_connection = NULL;
+    ASSERT_INT_EQUALS(aws_array_list_length(&s_tester.connections), 1);
+    ASSERT_SUCCESS(aws_array_list_get_at(&s_tester.connections, &second_connection, 0));
+
+    /*
+     * We closed the first connection after releasing it; verifying that the next one we acquire is not the
+     * first connection is the closest we can come to inferring that the closed connection was released completely
+     */
+    ASSERT_TRUE(second_connection != first_connection);
+
+    ASSERT_SUCCESS(s_release_connections(1, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_connection_manager_release_closed_connection_on_acquire,
+    s_test_connection_manager_release_closed_connection_on_acquire);
