@@ -364,7 +364,8 @@ int aws_h2_stream_encode_data_frame(
 
         /* Failed to write DATA, treat it as a Stream Error */
         AWS_H2_STREAM_LOGF(ERROR, stream, "Error encoding stream DATA, %s", aws_error_name(aws_last_error()));
-        return aws_last_error();
+        s_send_rst_and_close_stream(stream, aws_h2err_from_last_error());
+        return AWS_OP_SUCCESS;
     }
 
     if (body_complete) {

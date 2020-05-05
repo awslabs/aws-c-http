@@ -75,6 +75,58 @@ static int s_tester_clean_up(void) {
     return AWS_OP_SUCCESS;
 }
 
+/* Check stream error happened. Stream completed with stream_complete_error_code, RST_STREAM was sent with
+ * rst_stream_error_code when rst_stream_error_code is not -1, else RST_STREAM should not be sent */
+static int s_stream_error_check(
+    const struct client_stream_tester *stream_tester,
+    int stream_complete_error_code,
+    int rst_stream_error_code) {
+
+    /* validate that stream completed with error */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(stream_tester->complete);
+    ASSERT_INT_EQUALS(stream_complete_error_code, stream_tester->on_complete_error_code);
+
+    /* a stream error should not affect the connection */
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    if (rst_stream_error_code == -1) {
+        /*validate that stream did NOT send RST_STREAM*/
+        ASSERT_NULL(h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, 0, NULL));
+    } else {
+        /* validate that stream sent RST_STREAM with rst_stream_error_code */
+        struct h2_decoded_frame *rst_stream_frame = h2_decode_tester_find_stream_frame(
+            &s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, aws_http_stream_get_id(stream_tester->stream), 0, NULL);
+        ASSERT_UINT_EQUALS(rst_stream_error_code, rst_stream_frame->error_code);
+    }
+    return AWS_OP_SUCCESS;
+}
+
+/* Check connection error happened */
+static int s_connection_error_check(
+    const struct client_stream_tester *stream_tester,
+    int conn_complete_error_code,
+    int goaway_error_code) {
+
+    /* validate that connection has closed due to PROTOCOL_ERROR */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_INT_EQUALS(
+        conn_complete_error_code, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
+
+    /* validate that client sent GOAWAY */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct h2_decoded_frame *goaway =
+        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
+    ASSERT_NOT_NULL(goaway);
+    ASSERT_UINT_EQUALS(goaway_error_code, goaway->error_code);
+    ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
+
+    return AWS_OP_SUCCESS;
+}
+
 /* Test the common setup/teardown used by all tests in this file */
 TEST_CASE(h2_client_sanity_check) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
@@ -598,20 +650,11 @@ TEST_CASE(h2_client_stream_err_malformed_header) {
     struct aws_h2_frame *response_frame = aws_h2_frame_new_headers(
         allocator, aws_http_stream_get_id(stream_tester.stream), response_headers, true /*end_stream*/, 0, NULL);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
-
-    /* validate that stream completed with error */
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    ASSERT_TRUE(stream_tester.complete);
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, stream_tester.on_complete_error_code);
-
-    /* a stream error should not affect the connection */
-    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
-
-    /* validate that stream sent RST_STREAM */
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *rst_stream_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
-    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
+    /* check stream error happened, and RST_STREAM was sent */
+    ASSERT_SUCCESS(s_stream_error_check(
+        &stream_tester,
+        AWS_ERROR_HTTP_PROTOCOL_ERROR /*stream_complete_error_code*/,
+        AWS_H2_ERR_PROTOCOL_ERROR /*rst_stream_error_code*/));
 
     /* clean up */
     aws_http_headers_release(response_headers);
@@ -641,6 +684,7 @@ TEST_CASE(h2_client_stream_err_state_forbids_frame) {
     const char *body_src = "hello";
     struct aws_byte_cursor body_cursor = aws_byte_cursor_from_c_str(body_src);
     struct aws_input_stream *request_body = aws_input_stream_new_tester(allocator, body_cursor);
+    /* Prevent END_STREAM from being sent */
     aws_input_stream_tester_set_max_bytes_per_read(request_body, 0);
 
     aws_http_message_set_body_stream(request, request_body);
@@ -678,20 +722,11 @@ TEST_CASE(h2_client_stream_err_state_forbids_frame) {
     /* AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE will reject body frame */
     ASSERT_SUCCESS(h2_fake_peer_send_data_frame_str(&s_tester.peer, stream_id, body_src, true /*end_stream*/));
 
-    /* validate that stream completed with error */
-    testing_channel_run_currently_queued_tasks(&s_tester.testing_channel);
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, stream_tester.on_complete_error_code);
-
-    /* a stream error should not affect the connection */
-    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
-
-    /* validate that stream sent RST_STREAM */
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *rst_stream_frame =
-        h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
-    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_STREAM_CLOSED, rst_stream_frame->error_code);
-
+    /* check stream error happened, and RST_STREAM was sent */
+    ASSERT_SUCCESS(s_stream_error_check(
+        &stream_tester,
+        AWS_ERROR_HTTP_PROTOCOL_ERROR /*stream_complete_error_code*/,
+        AWS_H2_ERR_STREAM_CLOSED /*rst_stream_error_code*/));
     /* clean up */
     aws_http_headers_release(response_headers);
     aws_http_message_release(request);
@@ -901,6 +936,12 @@ TEST_CASE(h2_client_stream_receive_info_headers) {
         aws_h2_frame_new_headers(allocator, stream_id, info_response_headers, false /*end_stream*/, 0, NULL);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
 
+    /* check info response */
+    ASSERT_INT_EQUALS(1, stream_tester.num_info_responses);
+    ASSERT_SUCCESS(aws_http_message_set_response_status(stream_tester.info_responses[0], 100));
+    struct aws_http_headers *rev_info_headers = aws_http_message_get_headers(stream_tester.info_responses[0]);
+    ASSERT_SUCCESS(s_compare_headers(info_response_headers, rev_info_headers));
+
     /* fake peer sends a main-header-block response */
     struct aws_http_header response_headers_src[] = {
         DEFINE_HEADER(":status", "404"),
@@ -917,12 +958,6 @@ TEST_CASE(h2_client_stream_receive_info_headers) {
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
     ASSERT_INT_EQUALS(404, stream_tester.response_status);
     ASSERT_SUCCESS(s_compare_headers(response_headers, stream_tester.response_headers));
-
-    /* check info response */
-    ASSERT_INT_EQUALS(1, stream_tester.num_info_responses);
-    ASSERT_SUCCESS(aws_http_message_set_response_status(stream_tester.info_responses[0], 100));
-    struct aws_http_headers *rev_info_headers = aws_http_message_get_headers(stream_tester.info_responses[0]);
-    ASSERT_SUCCESS(s_compare_headers(info_response_headers, rev_info_headers));
 
     /* clean up */
     aws_http_headers_release(response_headers);
@@ -981,18 +1016,11 @@ TEST_CASE(h2_client_stream_err_receive_info_headers_after_main) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    /* validate the stream compeleted with error */
-    ASSERT_TRUE(stream_tester.complete);
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, stream_tester.on_complete_error_code);
-    /* validate the connection is not affected */
-    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
-
-    /* validate that stream sent RST_STREAM */
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *rst_stream_frame =
-        h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
-    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
+    /* check stream error happened, and RST_STREAM was sent */
+    ASSERT_SUCCESS(s_stream_error_check(
+        &stream_tester,
+        AWS_ERROR_HTTP_PROTOCOL_ERROR /*stream_complete_error_code*/,
+        AWS_H2_ERR_PROTOCOL_ERROR /*rst_stream_error_code*/));
 
     /* clean up */
     aws_http_headers_release(response_headers);
@@ -1103,19 +1131,11 @@ TEST_CASE(h2_client_stream_err_receive_trailing_before_main) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    /* validate the stream compeleted with error */
-    ASSERT_TRUE(stream_tester.complete);
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, stream_tester.on_complete_error_code);
-    /* validate the connection is not affected */
-    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
-
-    /* validate that stream sent RST_STREAM */
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *rst_stream_frame =
-        h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
-    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
-
+    /* check stream error happened, and RST_STREAM was sent */
+    ASSERT_SUCCESS(s_stream_error_check(
+        &stream_tester,
+        AWS_ERROR_HTTP_PROTOCOL_ERROR /*stream_complete_error_code*/,
+        AWS_H2_ERR_PROTOCOL_ERROR /*rst_stream_error_code*/));
     /* clean up */
     aws_http_headers_release(response_trailer);
     aws_http_message_release(request);
@@ -1210,20 +1230,12 @@ TEST_CASE(h2_client_stream_err_receive_data_before_headers) {
     const char *body_src = "hello";
     ASSERT_SUCCESS(h2_fake_peer_send_data_frame_str(&s_tester.peer, stream_id, body_src, true /*end_stream*/));
 
-    /* validate that stream completed with error */
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    ASSERT_TRUE(stream_tester.complete);
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, stream_tester.on_complete_error_code);
-
-    /* a stream error should not affect the connection */
-    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
-
-    /* validate that stream sent RST_STREAM */
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *rst_stream_frame =
-        h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
-    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
+    /* check stream error happened, and RST_STREAM was sent */
+    ASSERT_SUCCESS(s_stream_error_check(
+        &stream_tester,
+        AWS_ERROR_HTTP_PROTOCOL_ERROR /*stream_complete_error_code*/,
+        AWS_H2_ERR_PROTOCOL_ERROR /*rst_stream_error_code*/));
 
     /* clean up */
     aws_http_message_release(request);
@@ -2433,6 +2445,8 @@ TEST_CASE(h2_client_stream_receive_end_stream_and_rst_before_done_sending) {
     return s_tester_clean_up();
 }
 
+/* Check when the input stream failed to read, we should treat it as a stream error, and send the RST_STREAM to close
+ * the stream */
 TEST_CASE(h2_client_stream_err_input_stream_failure) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
@@ -2452,33 +2466,21 @@ TEST_CASE(h2_client_stream_err_input_stream_failure) {
     };
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
 
-    /* use a stalled body-stream so our test can send the response before the request is completely sent */
     const char *body_src = "hello";
     struct aws_byte_cursor body_cursor = aws_byte_cursor_from_c_str(body_src);
     struct aws_input_stream *request_body = aws_input_stream_new_tester(allocator, body_cursor);
     aws_http_message_set_body_stream(request, request_body);
-    aws_input_stream_tester_set_max_bytes_per_read(request_body, 1);
-
+    aws_input_stream_tester_set_reading_broken(request_body, true /*is_broken*/);
     struct client_stream_tester stream_tester;
     ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
 
-    /* execute 1 event-loop tick, 1 byte of the body and header should be written */
-    testing_channel_run_currently_queued_tasks(&s_tester.testing_channel);
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    ASSERT_NOT_NULL(
-        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_HEADERS, 0 /*search_start_idx*/, NULL));
-    struct h2_decoded_frame *sent_data_frame =
-        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_DATA, 0 /*search_start_idx*/, NULL);
-    ASSERT_FALSE(sent_data_frame->end_stream);
-    ASSERT_TRUE(aws_byte_buf_eq_c_str(&sent_data_frame->data, "h"));
-
-    aws_input_stream_tester_set_reading_broken(request_body, true /*is_broken*/);
-
-    /* validate connection shutdown due to error */
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* check stream error happened, and RST_STREAM was sent */
+    ASSERT_SUCCESS(s_stream_error_check(
+        &stream_tester,
+        AWS_IO_STREAM_READ_FAILED /*stream_complete_error_code*/,
+        AWS_H2_ERR_INTERNAL_ERROR /*rst_stream_error_code*/));
 
-    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
-    ASSERT_INT_EQUALS(AWS_IO_STREAM_READ_FAILED, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
     /* clean up */
     client_stream_tester_clean_up(&stream_tester);
     aws_http_message_release(request);
@@ -2517,15 +2519,12 @@ TEST_CASE(h2_client_stream_err_receive_rst_stream) {
 
     /* validate that stream completed with error */
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    ASSERT_TRUE(stream_tester.complete);
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_RST_STREAM_RECEIVED, stream_tester.on_complete_error_code);
 
-    /* a stream error should not affect the connection */
-    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
-
-    /* validate that stream did NOT send RST_STREAM */
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    ASSERT_NULL(h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, 0, NULL));
+    /* check stream error happened, and RST_STREAM was NOT sent */
+    ASSERT_SUCCESS(s_stream_error_check(
+        &stream_tester,
+        AWS_ERROR_HTTP_RST_STREAM_RECEIVED /*stream_complete_error_code*/,
+        -1 /*rst_stream_error_code*/));
 
     /* clean up */
     aws_http_message_release(request);
