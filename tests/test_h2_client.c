@@ -801,19 +801,19 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_long_after_removed_from_cach
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
-    size_t requests_num = AWS_H2_DEFAULT_MAX_CACHE_SIZE + 2;
+    enum { NUM_STREAMS = AWS_H2_DEFAULT_MAX_CACHE_SIZE + 2 };
     /* send request */
-    struct aws_http_message *requests[requests_num];
+    struct aws_http_message *requests[NUM_STREAMS];
 
     struct aws_http_header request_headers_src[] = {
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
         DEFINE_HEADER(":path", "/"),
     };
-    struct client_stream_tester stream_tester[AWS_H2_DEFAULT_MAX_CACHE_SIZE + 2];
+    struct client_stream_tester stream_tester[NUM_STREAMS];
 
     /* fill out the cache */
-    for (size_t i = 0; i < AWS_H2_DEFAULT_MAX_CACHE_SIZE + 2; i++) {
+    for (size_t i = 0; i < NUM_STREAMS; i++) {
         requests[i] = aws_http_message_new_request(allocator);
         aws_http_message_add_header_array(requests[i], request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
         ASSERT_SUCCESS(s_stream_tester_init(&stream_tester[i], requests[i]));
@@ -855,7 +855,7 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_long_after_removed_from_cach
 
     /* clean up */
     aws_http_headers_release(response_headers);
-    for (size_t i = 0; i < AWS_H2_DEFAULT_MAX_CACHE_SIZE + 2; i++) {
+    for (size_t i = 0; i < NUM_STREAMS; i++) {
         aws_http_message_release(requests[i]);
         client_stream_tester_clean_up(&stream_tester[i]);
     }
