@@ -78,7 +78,7 @@ struct aws_h2_connection {
 
         /* LRU cache for closed stream, key: steam-id, value: aws_h2_stream_closed_detail.
          * Contains data about streams that were recently closed.
-         * Entries are removed after a period of time. (AWS_H2_IGNORE_TIME) */
+         * The LRU entry will be removed if the cache is full */
         struct aws_lru_cache closed_streams;
 
         /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
