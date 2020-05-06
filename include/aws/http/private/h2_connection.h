@@ -98,6 +98,10 @@ struct aws_h2_connection {
         /* Last-stream-id sent in most recent GOAWAY frame. Defaults to max stream-id. */
         uint32_t goaway_sent_last_stream_id;
 
+        /* Frame we are encoding now. NULL if we are not encoding anything and it's safe to pop the front from
+         * outgoing_frames_queue. */
+        struct aws_h2_frame *on_going_frame;
+
         /* Cached channel shutdown values.
          * If possible, we delay shutdown-in-the-write-dir until GOAWAY is written. */
         int channel_shutdown_error_code;

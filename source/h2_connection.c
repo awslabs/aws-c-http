@@ -636,17 +636,19 @@ static int s_encode_outgoing_frames_queue(struct aws_h2_connection *connection, 
 
     /* Write as many frames from outgoing_frames_queue as possible. */
     while (!aws_linked_list_empty(outgoing_frames_queue)) {
-        struct aws_linked_list_node *frame_node = aws_linked_list_front(outgoing_frames_queue);
-        struct aws_h2_frame *frame = AWS_CONTAINER_OF(frame_node, struct aws_h2_frame, node);
-
+        if (!connection->thread_data.on_going_frame) {
+            struct aws_linked_list_node *frame_node = aws_linked_list_pop_front(outgoing_frames_queue);
+            connection->thread_data.on_going_frame = AWS_CONTAINER_OF(frame_node, struct aws_h2_frame, node);
+        }
+        struct aws_h2_frame *on_going_frame = connection->thread_data.on_going_frame;
         bool frame_complete;
-        if (aws_h2_encode_frame(&connection->thread_data.encoder, frame, output, &frame_complete)) {
+        if (aws_h2_encode_frame(&connection->thread_data.encoder, on_going_frame, output, &frame_complete)) {
             CONNECTION_LOGF(
                 ERROR,
                 connection,
                 "Error encoding frame: type=%s stream=%" PRIu32 " error=%s",
-                aws_h2_frame_type_to_str(frame->type),
-                frame->stream_id,
+                aws_h2_frame_type_to_str(on_going_frame->type),
+                on_going_frame->stream_id,
                 aws_error_name(aws_last_error()));
             return AWS_OP_ERR;
         }
@@ -658,8 +660,8 @@ static int s_encode_outgoing_frames_queue(struct aws_h2_connection *connection, 
                     ERROR,
                     connection,
                     "Message is too small for encoder. frame-type=%s stream=%" PRIu32 " available-space=%zu",
-                    aws_h2_frame_type_to_str(frame->type),
-                    frame->stream_id,
+                    aws_h2_frame_type_to_str(on_going_frame->type),
+                    on_going_frame->stream_id,
                     output->capacity);
                 aws_raise_error(AWS_ERROR_INVALID_STATE);
                 return AWS_OP_ERR;
@@ -669,9 +671,9 @@ static int s_encode_outgoing_frames_queue(struct aws_h2_connection *connection, 
             break;
         }
 
-        /* Done encoding frame, pop from queue and cleanup*/
-        aws_linked_list_remove(frame_node);
-        aws_h2_frame_destroy(frame);
+        /* Done encoding frame, cleanup */
+        aws_h2_frame_destroy(on_going_frame);
+        connection->thread_data.on_going_frame = NULL;
     }
 
     return AWS_OP_SUCCESS;
