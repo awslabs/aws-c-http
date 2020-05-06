@@ -244,9 +244,6 @@ static struct aws_h2_connection *s_connection_new(
     connection->base.next_stream_id = (server ? 2 : 1);
     connection->base.manual_window_management = manual_window_management;
 
-    /* TODO: make this configurable */
-    connection->thread_data.max_closed_stream_cache_size = AWS_H2_DEFAULT_MAX_CACHE_SIZE;
-
     aws_channel_task_init(
         &connection->cross_thread_work_task, s_cross_thread_work_task, connection, "HTTP/2 cross-thread work");
 
@@ -278,7 +275,7 @@ static struct aws_h2_connection *s_connection_new(
             ERROR, connection, "Hashtable init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
         goto error;
     }
-
+    /* TODO: make the max_items configurable */
     if (aws_lru_cache_init(
             &connection->thread_data.closed_streams,
             alloc,
@@ -286,7 +283,7 @@ static struct aws_h2_connection *s_connection_new(
             aws_ptr_eq,
             NULL,
             s_stream_closed_detail_destroy,
-            connection->thread_data.max_closed_stream_cache_size)) {
+            AWS_H2_DEFAULT_MAX_CACHE_SIZE)) {
 
         CONNECTION_LOGF(
             ERROR, connection, "Hashtable init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));

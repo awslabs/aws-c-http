@@ -81,9 +81,6 @@ struct aws_h2_connection {
          * Entries are removed after a period of time. (AWS_H2_IGNORE_TIME) */
         struct aws_lru_cache closed_streams;
 
-        /* Max size for the closed stream cache */
-        size_t max_closed_stream_cache_size;
-
         /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
          * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
          * connection */
