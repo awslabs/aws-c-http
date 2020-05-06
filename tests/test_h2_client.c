@@ -801,7 +801,7 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_long_after_removed_from_cach
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
-    enum { NUM_STREAMS = AWS_H2_DEFAULT_MAX_CACHE_SIZE + 2 };   
+    enum { NUM_STREAMS = AWS_H2_DEFAULT_MAX_CACHE_SIZE + 2 };
     /* send request */
     struct aws_http_message *requests[NUM_STREAMS];
 
