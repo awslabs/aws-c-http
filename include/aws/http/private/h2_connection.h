@@ -78,12 +78,12 @@ struct aws_h2_connection {
         /* Maps stream-id to aws_h2_stream_closed_detail.
          * Contains data about streams that were recently closed.
          * Entries are removed after a period of time. (AWS_H2_IGNORE_TIME) */
-        struct aws_hash_table closed_streams_map;
+        struct aws_hash_table closed_streams_by_id;
 
         /* Array list with stream_id
          * Contains the id of streams that were recently closed, and ordered by the time they closed.
          * Entries are removed after a period of time. (AWS_H2_IGNORE_TIME) */
-        struct aws_array_list closed_streams_array;
+        struct aws_array_list closed_streams_by_time;
 
         /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
          * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
@@ -144,7 +144,7 @@ enum aws_h2_stream_closed_when {
 struct aws_h2_stream_closed_detail {
     struct aws_allocator *allocator;
     enum aws_h2_stream_closed_when closed_when;
-    uint64_t closed_time_stamp;
+    uint64_t closed_timestamp;
 };
 
 enum aws_h2_data_encode_status {
