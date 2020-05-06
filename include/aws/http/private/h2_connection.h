@@ -18,6 +18,7 @@
 
 #include <aws/common/atomics.h>
 #include <aws/common/hash_table.h>
+#include <aws/common/lru_cache.h>
 #include <aws/common/mutex.h>
 
 #include <aws/http/private/connection_impl.h>
@@ -75,15 +76,13 @@ struct aws_h2_connection {
          * When queue is empty, then we send DATA frames from the outgoing_streams_list */
         struct aws_linked_list outgoing_frames_queue;
 
-        /* Maps stream-id to aws_h2_stream_closed_detail.
+        /* LRU cache for closed stream, key: steam-id, value: aws_h2_stream_closed_detail.
          * Contains data about streams that were recently closed.
          * Entries are removed after a period of time. (AWS_H2_IGNORE_TIME) */
-        struct aws_hash_table closed_streams_by_id;
+        struct aws_lru_cache closed_streams;
 
-        /* Array list with stream_id
-         * Contains the id of streams that were recently closed, and ordered by the time they closed.
-         * Entries are removed after a period of time. (AWS_H2_IGNORE_TIME) */
-        struct aws_array_list closed_streams_by_time;
+        /* Max size for the closed stream cache */
+        size_t max_closed_stream_cache_size;
 
         /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
          * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
@@ -156,9 +155,8 @@ enum aws_h2_data_encode_status {
 
 /* When window size is too small to fit the possible padding into it, we stop sending data and wait for WINDOW_UPDATE */
 #define AWS_H2_MIN_WINDOW_SIZE (256)
-/* We will ignore frames for closed stream within this time slot, after that we will treat them as connection error:
- * nano secs, 100000000 nano secs -> 0.1 sec */
-#define AWS_H2_IGNORE_TIME (100000000)
+/* Default value for thread_data.max_closed_stream_cache_size */
+#define AWS_H2_DEFAULT_MAX_CACHE_SIZE (32)
 
 /* Private functions called from tests... */
 

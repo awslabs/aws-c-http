@@ -734,71 +734,6 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_soon_after_closing) {
     return s_tester_clean_up();
 }
 
-/* Received frames for a stream closed long ago, we will consider them as connection error (PROTOCOL_ERROR) */
-TEST_CASE(h2_client_conn_err_stream_frames_received_long_after_closing) {
-    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
-
-    /* fake peer sends connection preface */
-    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-
-    /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
-    ASSERT_NOT_NULL(request);
-
-    struct aws_http_header request_headers_src[] = {
-        DEFINE_HEADER(":method", "GET"),
-        DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":path", "/"),
-    };
-    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
-
-    struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
-
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
-
-    /* fake peer sends complete response */
-    struct aws_http_header response_headers_src[] = {
-        DEFINE_HEADER(":status", "404"),
-        DEFINE_HEADER("date", "Wed, 01 Apr 2020 23:02:49 GMT"),
-    };
-
-    struct aws_http_headers *response_headers = aws_http_headers_new(allocator);
-    aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
-
-    struct aws_h2_frame *peer_frame =
-        aws_h2_frame_new_headers(allocator, stream_id, response_headers, true /*end_stream*/, 0, NULL);
-    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
-
-    /* wait until it will not be ignored */
-    aws_thread_current_sleep(AWS_H2_IGNORE_TIME);
-
-    /* fake peer sends WINDOW_UPDATE */
-    peer_frame = aws_h2_frame_new_window_update(allocator, stream_id, 99);
-    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
-
-    /* validate the connection completed with error */
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
-    ASSERT_INT_EQUALS(
-        AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
-
-    /* client should send GOAWAY */
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *goaway =
-        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
-    ASSERT_NOT_NULL(goaway);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, goaway->error_code);
-
-    /* clean up */
-    aws_http_headers_release(response_headers);
-    aws_http_message_release(request);
-    client_stream_tester_clean_up(&stream_tester);
-    return s_tester_clean_up();
-}
-
 TEST_CASE(h2_client_stream_err_stream_frames_received_soon_after_rst_stream_received) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
@@ -857,36 +792,41 @@ TEST_CASE(h2_client_stream_err_stream_frames_received_soon_after_rst_stream_rece
     return s_tester_clean_up();
 }
 
-TEST_CASE(h2_client_conn_err_stream_frames_received_long_after_rst_stream_received) {
+/* Connection error for frames received on a closed stream we have removed from cache, which may because it closed too
+ * long ago */
+TEST_CASE(h2_client_conn_err_stream_frames_received_long_after_removed_from_cache) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* fake peer sends connection preface */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
+    size_t requests_num = AWS_H2_DEFAULT_MAX_CACHE_SIZE + 2;
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
-    ASSERT_NOT_NULL(request);
+    struct aws_http_message *requests[requests_num];
 
     struct aws_http_header request_headers_src[] = {
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
         DEFINE_HEADER(":path", "/"),
     };
-    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct client_stream_tester stream_tester[AWS_H2_DEFAULT_MAX_CACHE_SIZE + 2];
 
-    struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+    /* fill out the cache */
+    for (size_t i = 0; i < AWS_H2_DEFAULT_MAX_CACHE_SIZE + 2; i++) {
+        requests[i] = aws_http_message_new_request(allocator);
+        aws_http_message_add_header_array(requests[i], request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+        ASSERT_SUCCESS(s_stream_tester_init(&stream_tester[i], requests[i]));
+        testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+        /* close the streams immediately */
+        struct aws_h2_frame *peer_frame = aws_h2_frame_new_rst_stream(
+            allocator, aws_http_stream_get_id(stream_tester[i].stream), AWS_H2_ERR_ENHANCE_YOUR_CALM);
+        ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+        testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    }
+    uint32_t stream_id = aws_http_stream_get_id(stream_tester[0].stream);
 
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
-
-    /* fake peer sends RST_STREAM */
-    struct aws_h2_frame *peer_frame = aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_H2_ERR_ENHANCE_YOUR_CALM);
-    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     struct aws_http_headers *response_headers;
-    /* wait until it will not be ignored */
-    aws_thread_current_sleep(AWS_H2_IGNORE_TIME);
 
     /* fake peer try sending complete response */
     struct aws_http_header response_headers_src[] = {
@@ -897,7 +837,8 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_long_after_rst_stream_receiv
     response_headers = aws_http_headers_new(allocator);
     aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
 
-    peer_frame = aws_h2_frame_new_headers(allocator, stream_id, response_headers, true /*end_stream*/, 0, NULL);
+    struct aws_h2_frame *peer_frame =
+        aws_h2_frame_new_headers(allocator, stream_id, response_headers, true /*end_stream*/, 0, NULL);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     /* validate the connection completed with error */
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -914,8 +855,10 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_long_after_rst_stream_receiv
 
     /* clean up */
     aws_http_headers_release(response_headers);
-    aws_http_message_release(request);
-    client_stream_tester_clean_up(&stream_tester);
+    for (size_t i = 0; i < AWS_H2_DEFAULT_MAX_CACHE_SIZE + 2; i++) {
+        aws_http_message_release(requests[i]);
+        client_stream_tester_clean_up(&stream_tester[i]);
+    }
     return s_tester_clean_up();
 }
 

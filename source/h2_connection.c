@@ -244,6 +244,9 @@ static struct aws_h2_connection *s_connection_new(
     connection->base.next_stream_id = (server ? 2 : 1);
     connection->base.manual_window_management = manual_window_management;
 
+    /* TODO: make this configurable */
+    connection->thread_data.max_closed_stream_cache_size = AWS_H2_DEFAULT_MAX_CACHE_SIZE;
+
     aws_channel_task_init(
         &connection->cross_thread_work_task, s_cross_thread_work_task, connection, "HTTP/2 cross-thread work");
 
@@ -262,8 +265,6 @@ static struct aws_h2_connection *s_connection_new(
     aws_linked_list_init(&connection->thread_data.stalled_window_streams_list);
     aws_linked_list_init(&connection->thread_data.outgoing_frames_queue);
 
-    aws_array_list_init_dynamic(&connection->thread_data.closed_streams_by_time, alloc, 8, sizeof(uint32_t));
-
     if (aws_mutex_init(&connection->synced_data.lock)) {
         CONNECTION_LOGF(
             ERROR, connection, "Mutex init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
@@ -278,14 +279,14 @@ static struct aws_h2_connection *s_connection_new(
         goto error;
     }
 
-    if (aws_hash_table_init(
-            &connection->thread_data.closed_streams_by_id,
+    if (aws_lru_cache_init(
+            &connection->thread_data.closed_streams,
             alloc,
-            8,
             aws_hash_ptr,
             aws_ptr_eq,
             NULL,
-            s_stream_closed_detail_destroy)) {
+            s_stream_closed_detail_destroy,
+            connection->thread_data.max_closed_stream_cache_size)) {
 
         CONNECTION_LOGF(
             ERROR, connection, "Hashtable init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
@@ -400,8 +401,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     aws_h2_decoder_destroy(connection->thread_data.decoder);
     aws_h2_frame_encoder_clean_up(&connection->thread_data.encoder);
     aws_hash_table_clean_up(&connection->thread_data.active_streams_map);
-    aws_hash_table_clean_up(&connection->thread_data.closed_streams_by_id);
-    aws_array_list_clean_up(&connection->thread_data.closed_streams_by_time);
+    aws_lru_cache_clean_up(&connection->thread_data.closed_streams);
     aws_mutex_clean_up(&connection->synced_data.lock);
     aws_mem_release(connection->base.alloc, connection);
 }
@@ -844,14 +844,17 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
         return AWS_H2ERR_SUCCESS;
     }
 
+    void *cached_value;
     /* Stream is closed, check whether it's legal for a few more frames to trickle in */
-    aws_hash_table_find(&connection->thread_data.closed_streams_by_id, stream_id_key, &found);
-    if (found) {
+    if (aws_lru_cache_find(&connection->thread_data.closed_streams, stream_id_key, &cached_value)) {
+        return aws_h2err_from_last_error();
+    }
+    if (cached_value) {
         if (frame_type == AWS_H2_FRAME_T_PRIORITY) {
             /* If we support PRIORITY, do something here. Right now just ignore it */
             return AWS_H2ERR_SUCCESS;
         }
-        struct aws_h2_stream_closed_detail *closed_detail = found->value;
+        struct aws_h2_stream_closed_detail *closed_detail = cached_value;
         if (closed_detail->closed_when == AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT) {
             /* An endpoint MUST ignore frames that it receives on closed streams after it has sent a RST_STREAM frame */
             CONNECTION_LOGF(
@@ -881,7 +884,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
                 CONNECTION_LOGF(
                     ERROR,
                     connection,
-                    "Illegal to receive %s frame on stream id=%" PRIu32 " because END_STREAM flag previously received.",
+                    "Illegal to receive %s frame on stream id=%" PRIu32 " after END_STREAM has been received.",
                     aws_h2_frame_type_to_str(frame_type),
                     stream_id);
 
@@ -893,7 +896,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
             CONNECTION_LOGF(
                 ERROR,
                 connection,
-                "Illegal to receive %s frame on stream id=%" PRIu32 " because RST_STREAM previously received",
+                "Illegal to receive %s frame on stream id=%" PRIu32 " after RST_STREAM has been received",
                 aws_h2_frame_type_to_str(frame_type),
                 stream_id);
             struct aws_h2_frame *rst_stream =
@@ -912,14 +915,14 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
         return AWS_H2ERR_SUCCESS;
     }
 
-    /* Stream was closed long ago */
+    /* Stream was closed long ago (or implicitly closed when its ID was skipped) */
     CONNECTION_LOGF(
         ERROR,
         connection,
-        "Illegal to receive %s frame on stream id=%" PRIu32 " stream closed more than %lf sec ago.",
+        "Illegal to receive %s frame on stream id=%" PRIu32
+        ", no memory of closed stream (ID skipped, or removed from cache)",
         aws_h2_frame_type_to_str(frame_type),
-        stream_id,
-        (double)AWS_H2_IGNORE_TIME / 1000000000);
+        stream_id);
 
     return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
 }
@@ -1616,40 +1619,6 @@ int aws_h2_connection_on_stream_closed(
     return AWS_OP_SUCCESS;
 }
 
-static struct aws_h2err s_remove_entry_closed_long_ago_from_recently_closed_stucture(
-    struct aws_h2_connection *connection) {
-    uint64_t timestamp;
-    if (aws_sys_clock_get_ticks(&timestamp)) {
-        CONNECTION_LOG(ERROR, connection, "Failed getting the time stamp when stream closed");
-        return aws_h2err_from_last_error();
-    }
-    struct aws_array_list *closed_stream_array = &connection->thread_data.closed_streams_by_time;
-    uint32_t stream_id;
-    struct aws_hash_element *found = NULL;
-    /* iterate the array list from beginning, and remove all the entries closed long ago */
-    while (!aws_array_list_front(closed_stream_array, &stream_id)) {
-        const void *stream_id_key = (void *)(size_t)stream_id;
-        aws_hash_table_find(&connection->thread_data.closed_streams_by_id, stream_id_key, &found);
-        if (!found) {
-            CONNECTION_LOG(
-                ERROR,
-                connection,
-                "Internal error, stream id recorded in closed_stream array cannot be found in the hash map.");
-            return aws_h2err_from_h2_code(AWS_H2_ERR_INTERNAL_ERROR);
-        }
-        struct aws_h2_stream_closed_detail *closed_detail = found->value;
-        if (timestamp > AWS_H2_IGNORE_TIME + closed_detail->closed_timestamp) {
-            /* Probably remove the stream from dependency tree here, if we support PRIORITY */
-            /* Remove the element from the hash table and the array list, those options will not fail */
-            aws_hash_table_remove(&connection->thread_data.closed_streams_by_id, stream_id_key, NULL, NULL);
-            aws_array_list_pop_front(closed_stream_array);
-        } else {
-            break;
-        }
-    }
-    return AWS_H2ERR_SUCCESS;
-}
-
 static int s_record_closed_stream(
     struct aws_h2_connection *connection,
     uint32_t stream_id,
@@ -1670,15 +1639,9 @@ static int s_record_closed_stream(
     closed_detail->allocator = connection->base.alloc;
     closed_detail->closed_timestamp = timestamp;
     closed_detail->closed_when = closed_when;
-    if (aws_hash_table_put(
-            &connection->thread_data.closed_streams_by_id, (void *)(size_t)stream_id, closed_detail, NULL)) {
+    if (aws_lru_cache_put(&connection->thread_data.closed_streams, (void *)(size_t)stream_id, closed_detail)) {
 
-        CONNECTION_LOG(ERROR, connection, "Failed inserting ID into map of recently closed streams");
-        return AWS_OP_ERR;
-    }
-    /* array list will keep a copy of it, and raise error inside the call if anything went wrong */
-    if (aws_array_list_push_back(&connection->thread_data.closed_streams_by_time, &stream_id)) {
-        CONNECTION_LOG(ERROR, connection, "Failed inserting ID into array_list of recently closed streams");
+        CONNECTION_LOG(ERROR, connection, "Failed inserting ID into cache of recently closed streams");
         return AWS_OP_ERR;
     }
 
@@ -1918,19 +1881,6 @@ static int s_handler_process_read_message(
     (void)slot;
     struct aws_h2_connection *connection = handler->impl;
 
-    struct aws_h2err err = s_remove_entry_closed_long_ago_from_recently_closed_stucture(connection);
-    if (aws_h2err_failed(err)) {
-        CONNECTION_LOGF(
-            ERROR,
-            connection,
-            "Failure to remove entry from recently closed_stream structure, %s. Sending GOAWAY %s(0x%x) and closing "
-            "connection",
-            aws_error_name(err.aws_code),
-            aws_h2_error_code_to_str(err.h2_code),
-            err.h2_code);
-        goto shutdown;
-    }
-
     CONNECTION_LOGF(TRACE, connection, "Begin processing message of size %zu.", message->message_data.len);
 
     if (connection->thread_data.is_reading_stopped) {
@@ -1941,7 +1891,7 @@ static int s_handler_process_read_message(
     /* Any error that bubbles up from the decoder or its callbacks is treated as
      * a Connection Error (a GOAWAY frames is sent, and the connection is closed) */
     struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
-    err = aws_h2_decode(connection->thread_data.decoder, &message_cursor);
+    struct aws_h2err err = aws_h2_decode(connection->thread_data.decoder, &message_cursor);
     if (aws_h2err_failed(err)) {
         CONNECTION_LOGF(
             ERROR,
