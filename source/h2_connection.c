@@ -1640,7 +1640,7 @@ static int s_record_closed_stream(
     closed_detail->closed_timestamp = timestamp;
     closed_detail->closed_when = closed_when;
     if (aws_lru_cache_put(&connection->thread_data.closed_streams, (void *)(size_t)stream_id, closed_detail)) {
-
+        s_stream_closed_detail_destroy(closed_detail);
         CONNECTION_LOG(ERROR, connection, "Failed inserting ID into cache of recently closed streams");
         return AWS_OP_ERR;
     }
