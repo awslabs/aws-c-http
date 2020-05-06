@@ -15,6 +15,7 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/common/mutex.h>
 #include <aws/http/private/h1_encoder.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
@@ -23,6 +24,9 @@ struct aws_h1_stream {
     struct aws_http_stream base;
 
     struct aws_linked_list_node node;
+
+    /* Linked list of stream to be encoded on the same connection via transfer encoding chunked */
+    struct aws_http1_chunks body_chunks;
 
     /* Message (derived from outgoing request or response) to be submitted to encoder */
     struct aws_h1_encoder_message encoder_message;
@@ -43,23 +47,28 @@ struct aws_h1_stream {
     struct {
         /* Whether a "request handler" stream has a response to send. */
         bool has_outgoing_response;
-    } synced_data;
-};
+        } synced_data;
+    };
 
-AWS_EXTERN_C_BEGIN
+    AWS_EXTERN_C_BEGIN
 
-AWS_HTTP_API
-struct aws_h1_stream *aws_h1_stream_new_request(
-    struct aws_http_connection *client_connection,
-    const struct aws_http_make_request_options *options);
+    AWS_HTTP_API
+    struct aws_h1_stream *aws_h1_stream_new_request(
+        struct aws_http_connection *client_connection,
+        const struct aws_http_make_request_options *options);
 
-AWS_HTTP_API
-struct aws_h1_stream *aws_h1_stream_new_request_handler(const struct aws_http_request_handler_options *options);
+    AWS_HTTP_API
+    struct aws_h1_stream *aws_h1_stream_new_request_handler(const struct aws_http_request_handler_options *options);
 
-AWS_EXTERN_C_END
+    AWS_EXTERN_C_END
 
-/* we don't want this exported. We just want it to have external linkage between h1_stream and h1_connection compilation
- * units. it is defined in h1_connection.c */
+/* we don't want these exported. We just want it to have external linkage between h1_stream and h1_connection
+ * compilation units. it is defined in h1_connection.c */
 int aws_h1_stream_activate(struct aws_http_stream *stream);
+int aws_h1_stream_schedule_outgoing_stream_task(struct aws_http_stream *stream);
+
+bool aws_h1_stream_get_next_chunk(struct aws_http1_chunks *body_chunks, struct aws_http1_stream_chunk **chunk_out);
+size_t aws_h1_stream_get_count_of_pending_chunks(struct aws_http1_chunks *body_chunks);
+bool aws_h1_stream_is_paused(struct aws_h1_stream *stream);
 
 #endif /* AWS_HTTP_H1_STREAM_H */

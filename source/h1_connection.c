@@ -420,6 +420,17 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
     }
 }
 
+int aws_h1_stream_schedule_outgoing_stream_task(struct aws_http_stream *stream) {
+    AWS_ASSERT(stream);
+    struct aws_http_connection *base_connection = stream->owning_connection;
+    AWS_ASSERT(base_connection);
+    struct h1_connection *connection = AWS_CONTAINER_OF(base_connection, struct h1_connection, base);
+    AWS_ASSERT(connection);
+    AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling outgoing stream task.", (void *)&connection->base);
+    aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
+    return AWS_OP_SUCCESS;
+}
+
 int aws_h1_stream_activate(struct aws_http_stream *stream) {
     struct aws_h1_stream *h1_stream = AWS_CONTAINER_OF(stream, struct aws_h1_stream, base);
 
@@ -835,10 +846,36 @@ static void s_on_channel_write_complete(
     aws_channel_schedule_task_now(channel, &connection->outgoing_stream_task);
 }
 
+static bool s_populate_outgoing_buffer(const struct h1_connection *connection, struct aws_h1_stream *outgoing_stream) {
+    if (AWS_H1_ENCODER_STATE_CHUNK_INIT == connection->thread_data.encoder.stream_state) {
+        return aws_h1_stream_get_next_chunk(
+            &outgoing_stream->body_chunks,
+            &connection->thread_data.encoder.message->body_chunk);
+    }
+    return true;
+}
+
+/* in the case of a Content-Length stream, the body is sent completely in one message, when less than the
+ * message data capacity, or a new message needs to be obtained to finish sending the body.
+ * For the chunked stream, there may be multiple chunks which fit in a single message.
+ * Therefore, when deciding if we need another chunk on the same message, the control flow
+ * takes into account if the stream is chunked, and if so, it can loop, otherwise, exit after one iteration. */
+static bool s_should_process_body(
+    const struct h1_connection* connection,
+    const struct aws_io_message *msg,
+    struct aws_h1_stream *outgoing_stream) {
+    AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: checking if should process body", (void *)&connection->base);
+    return aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder)
+        && connection->thread_data.encoder.message->has_chunked_encoding_header
+        && msg->message_data.capacity > msg->message_data.len
+        && s_populate_outgoing_buffer(connection, outgoing_stream);
+}
+
 static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;
     }
+
 
     struct h1_connection *connection = arg;
     struct aws_channel *channel = connection->base.channel_slot->channel;
@@ -859,6 +896,11 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         return;
     }
 
+    if (aws_h1_stream_is_paused(outgoing_stream)) {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Pausing outgoing stream task", (void *)outgoing_stream);
+        return;
+    }
+
     msg = aws_channel_slot_acquire_max_message_for_write(connection->base.channel_slot);
     if (!msg) {
         AWS_LOGF_ERROR(
@@ -874,14 +916,16 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
     msg->on_completion = s_on_channel_write_complete;
     msg->user_data = connection;
 
-    /**
-     * Fill message data from the outgoing stream.
-     * Note that we might be resuming work on a stream from a previous run of this task.
-     */
-    if (aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
-        /* Error sending data, abandon ship */
-        goto error;
-    }
+    do {
+        /*
+         * Fill message data from the outgoing stream.
+         * Note that we might be resuming work on a stream from a previous run of this task.
+         */
+        if (AWS_OP_SUCCESS != aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
+            /* Error sending data, abandon ship */
+            goto error;
+        }
+    } while (s_should_process_body(connection, msg, outgoing_stream));
 
     if (msg->message_data.len > 0) {
         AWS_LOGF_TRACE(
@@ -918,7 +962,7 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
     }
 
     return;
-error:
+    error:
     if (msg) {
         aws_mem_release(msg->allocator, msg);
     }
@@ -973,7 +1017,7 @@ static int s_decoder_on_request(
     /* No user callbacks, so we're not checking for shutdown */
     return AWS_OP_SUCCESS;
 
-error:
+    error:
     AWS_LOGF_ERROR(
         AWS_LS_HTTP_CONNECTION,
         "id=%p: Failed to process new incoming request, error %d (%s).",
@@ -1024,7 +1068,7 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
          * for the tunneling. */
         bool ignore_connection_close =
             incoming_stream->base.request_method == AWS_HTTP_METHOD_CONNECT && incoming_stream->base.client_data &&
-            incoming_stream->base.client_data->response_status == AWS_HTTP_STATUS_CODE_200_OK;
+                incoming_stream->base.client_data->response_status == AWS_HTTP_STATUS_CODE_200_OK;
 
         if (!ignore_connection_close && aws_byte_cursor_eq_c_str_ignore_case(&header->value_data, "close")) {
             AWS_LOGF_TRACE(
@@ -1312,11 +1356,11 @@ static struct h1_connection *s_connection_new(
 
     return connection;
 
-error_decoder:
+    error_decoder:
     aws_mutex_clean_up(&connection->synced_data.lock);
-error_mutex:
+    error_mutex:
     aws_mem_release(alloc, connection);
-error_connection_alloc:
+    error_connection_alloc:
     return NULL;
 }
 
@@ -1464,7 +1508,7 @@ static void s_connection_try_send_read_messages(struct h1_connection *connection
 
     return;
 
-error:
+    error:
     if (sending_msg) {
         aws_mem_release(sending_msg->allocator, sending_msg);
     }
@@ -1683,7 +1727,7 @@ static int s_handler_process_read_message(
 
     return AWS_OP_SUCCESS;
 
-shutdown:
+    shutdown:
     if (message) {
         aws_mem_release(message->allocator, message);
     }
@@ -1716,7 +1760,7 @@ static int s_handler_process_write_message(
 
     return AWS_OP_SUCCESS;
 
-error:
+    error:
     AWS_LOGF_ERROR(
         AWS_LS_HTTP_CONNECTION,
         "id=%p: Destroying write message without passing it along, error %d (%s)",
@@ -1761,7 +1805,7 @@ static int s_handler_increment_read_window(
     aws_channel_slot_increment_read_window(slot, size);
     return AWS_OP_SUCCESS;
 
-error:
+    error:
     AWS_LOGF_ERROR(
         AWS_LS_HTTP_CONNECTION,
         "id=%p: Failed to increment read window, error %d (%s)",

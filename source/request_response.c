@@ -14,6 +14,7 @@
  */
 
 #include <aws/common/array_list.h>
+#include <aws/common/mutex.h>
 #include <aws/common/string.h>
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/request_response_impl.h>
@@ -21,6 +22,7 @@
 #include <aws/http/server.h>
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
+#include <aws/io/stream.h>
 
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
@@ -564,6 +566,33 @@ int aws_http_message_set_response_status(struct aws_http_message *response_messa
 void aws_http_message_set_body_stream(struct aws_http_message *message, struct aws_input_stream *body_stream) {
     AWS_PRECONDITION(message);
     message->body_stream = body_stream;
+}
+
+int aws_http1_stream_write_chunk(struct aws_http_stream *stream, struct aws_http1_stream_chunk *chunk) {
+    AWS_PRECONDITION(stream);
+    AWS_PRECONDITION(stream->vtable);
+    AWS_PRECONDITION(stream->vtable->http1_write_chunk);
+    AWS_PRECONDITION(chunk);
+    return stream->vtable->http1_write_chunk(stream, chunk);
+}
+
+void aws_http1_stream_chunk_initialize(
+    struct aws_http1_stream_chunk *chunk,
+    struct aws_input_stream *stream,
+    aws_http1_stream_write_chunk_complete_fn *on_complete,
+    void *user_data,
+    struct aws_http1_chunk_extension *extensions,
+    size_t num_extensions) {
+    AWS_ASSERT(chunk);
+    AWS_ASSERT(stream);
+    AWS_ASSERT(0 == num_extensions || extensions);
+    chunk->stream = stream;
+    chunk->options.on_complete = on_complete;
+    chunk->options.user_data = user_data;
+    chunk->options.num_extensions = num_extensions;
+    chunk->options.sent_extensions = 0;
+    chunk->options.extensions = extensions;
+    aws_linked_list_node_reset(&chunk->node);
 }
 
 struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_message *message) {

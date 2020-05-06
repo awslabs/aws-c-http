@@ -15,7 +15,6 @@
 #include <aws/http/private/h1_stream.h>
 
 #include <aws/http/private/connection_impl.h>
-#include <aws/http/private/h1_connection.h>
 
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
@@ -26,16 +25,79 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     aws_h1_encoder_message_clean_up(&stream->encoder_message);
     aws_byte_buf_clean_up(&stream->incoming_storage_buf);
     aws_mem_release(stream->base.alloc, stream);
+    aws_mutex_clean_up(&stream->body_chunks.lock);
 }
 
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
     aws_http_connection_update_window(stream->owning_connection, increment_size);
 }
 
+static bool s_body_chunks_init(struct aws_h1_stream *stream) {
+    AWS_ASSERT(stream);
+    aws_linked_list_init(&stream->body_chunks.chunk_list);
+    stream->body_chunks.paused = false;
+    return AWS_OP_SUCCESS == aws_mutex_init(&stream->body_chunks.lock);
+}
+
+bool aws_h1_stream_is_paused(struct aws_h1_stream *stream) {
+    AWS_ASSERT(stream);
+    if (!stream->encoder_message.has_chunked_encoding_header) {
+        return false;
+    }
+    bool is_paused = false;
+    /* Begin critical section */
+    aws_h1_lock_stream_list(&stream->body_chunks);
+    is_paused = stream->body_chunks.paused;
+    aws_h1_unlock_stream_list(&stream->body_chunks);
+    /* End critical section */
+    return is_paused;
+}
+
+static int s_aws_h1_stream_write_chunk(struct aws_http_stream *stream_base, struct aws_http1_stream_chunk *chunk) {
+    AWS_ASSERT(stream_base);
+    AWS_ASSERT(chunk);
+    struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
+    /* Begin critical section */
+    aws_h1_lock_stream_list(&stream->body_chunks);
+    aws_linked_list_push_back(&stream->body_chunks.chunk_list, &chunk->node);
+    if (stream->body_chunks.paused) {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Waking up stream on new data available", (void *)stream);
+        stream->body_chunks.paused = false;
+        struct aws_http_connection *base_connection = stream->base.owning_connection;
+        AWS_ASSERT(base_connection);
+        aws_h1_stream_schedule_outgoing_stream_task(&stream->base);
+    }
+    aws_h1_unlock_stream_list(&stream->body_chunks);
+    /* End critical section */
+
+    return AWS_OP_SUCCESS;
+}
+
+bool aws_h1_stream_get_next_chunk(struct aws_http1_chunks *body_chunks, struct aws_http1_stream_chunk **chunk_out) {
+    AWS_ASSERT(body_chunks);
+    AWS_ASSERT(chunk_out);
+    bool has_next_chunk = true;
+    /* Begin critical section */
+    aws_h1_lock_stream_list(body_chunks);
+    if (aws_linked_list_empty(&body_chunks->chunk_list)) {
+        *chunk_out = NULL;
+        body_chunks->paused = true;
+        has_next_chunk = false;
+    } else {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&body_chunks->chunk_list);
+        *chunk_out = AWS_CONTAINER_OF(node, struct aws_http1_stream_chunk, node);
+        AWS_ASSERT(chunk_out);
+    }
+    aws_h1_unlock_stream_list(body_chunks);
+    /* End critical section */
+    return has_next_chunk;
+}
+
 static const struct aws_http_stream_vtable s_stream_vtable = {
     .destroy = s_stream_destroy,
     .update_window = s_stream_update_window,
     .activate = aws_h1_stream_activate,
+    .http1_write_chunk = s_aws_h1_stream_write_chunk,
 };
 
 static struct aws_h1_stream *s_stream_new_common(
@@ -89,6 +151,15 @@ struct aws_h1_stream *aws_h1_stream_new_request(
         if (client_connection->proxy_request_transform(options->request, client_connection->user_data)) {
             goto error;
         }
+    }
+
+    if (AWS_UNLIKELY(!s_body_chunks_init(stream))) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "static: Failed to initialize streamed chunks mutex, error %d (%s).",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        goto error;
     }
 
     stream->base.client_data = &stream->base.client_or_server_data.client;
