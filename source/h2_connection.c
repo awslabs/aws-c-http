@@ -1847,7 +1847,6 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
 /* Send a GOAWAY with the lowest possible last-stream-id */
 static void s_send_goaway(struct aws_h2_connection *connection, enum aws_h2_error_code h2_error_code) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
-    AWS_PRECONDITION(!connection->thread_data.is_writing_stopped);
 
     uint32_t last_stream_id = aws_min_u32(
         connection->thread_data.latest_peer_initiated_stream_id, connection->thread_data.goaway_sent_last_stream_id);
