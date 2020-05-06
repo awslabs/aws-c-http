@@ -919,7 +919,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
         "Illegal to receive %s frame on stream id=%" PRIu32 " stream closed more than %lf sec ago.",
         aws_h2_frame_type_to_str(frame_type),
         stream_id,
-        AWS_H2_IGNORE_TIME / 1000000000);
+        (double)AWS_H2_IGNORE_TIME / 1000000000);
 
     return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
 }
