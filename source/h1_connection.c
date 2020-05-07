@@ -421,7 +421,7 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
 }
 
 int aws_h1_stream_schedule_outgoing_stream_task(struct aws_http_stream *stream) {
-    AWS_ASSERT(stream);
+    AWS_PRECONDITION(stream);
     struct aws_http_connection *base_connection = stream->owning_connection;
     AWS_ASSERT(base_connection);
     struct h1_connection *connection = AWS_CONTAINER_OF(base_connection, struct h1_connection, base);

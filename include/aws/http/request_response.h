@@ -296,13 +296,11 @@ struct aws_http_request_handler_options {
     aws_http_on_stream_complete_fn *on_complete;
 };
 
-struct aws_http1_stream_chunk;
-
 /**
  * Signature definition of the function which will be invoked, if provided by the caller, after a chunked transfer
  *  encoding chunk has been written to an HTTP/1.1 connection.
  */
-typedef void aws_http1_stream_write_chunk_complete_fn(struct aws_http1_stream_chunk *chunk, void *user_data);
+typedef void aws_http1_stream_write_chunk_complete_fn(void *user_data);
 
 /**
  * HTTP/1.1 chunk extension for chunked encoding.
@@ -328,11 +326,6 @@ struct aws_http1_chunk_options {
     size_t num_extensions;
 
     /**
-     * Holds the number of extensions already sent over the connection.
-     */
-    size_t sent_extensions;
-
-    /**
      * A caller provided callback which will be invoked after the chunk has been submitted to the channel for writing
      * to the underlying HTTP connection.
      */
@@ -342,12 +335,6 @@ struct aws_http1_chunk_options {
      * User provided data passed to the on_complete callback on its invocation.
      */
     void *user_data;
-};
-
-struct aws_http1_stream_chunk {
-    struct aws_input_stream *stream;
-    struct aws_http1_chunk_options options;
-    struct aws_linked_list_node node;
 };
 
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
@@ -608,19 +595,11 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
  * on_complete, the caller may release or modify structures in the chunk.
  * On successful submission of the chunk to the stream, AWS_OP_SUCCESS is returned and AWS_OP_ERR otherwise.
  */
-AWS_HTTP_API int aws_http1_stream_write_chunk(struct aws_http_stream *stream, struct aws_http1_stream_chunk *chunk);
-
-/**
- * Convenience method to initialize an aws_http1_stream_chunk structure.
- * the chunk structure is populated with the other arguments to this function after the call.
- */
-AWS_HTTP_API void aws_http1_stream_chunk_initialize(
-    struct aws_http1_stream_chunk *chunk,
-    struct aws_input_stream *stream,
-    aws_http1_stream_write_chunk_complete_fn *on_complete,
-    void *user_data,
-    struct aws_http1_chunk_extension *extensions,
-    size_t num_extensions);
+AWS_HTTP_API int aws_http1_stream_write_chunk(
+    struct aws_allocator *allocator,
+    struct aws_http_stream *stream,
+    struct aws_input_stream *chunk_data,
+    struct aws_http1_chunk_options *options);
 
 /**
  * Get the message's aws_http_headers.

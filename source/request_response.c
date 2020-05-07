@@ -568,31 +568,17 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
     message->body_stream = body_stream;
 }
 
-int aws_http1_stream_write_chunk(struct aws_http_stream *stream, struct aws_http1_stream_chunk *chunk) {
+int aws_http1_stream_write_chunk(
+    struct aws_allocator *allocator,
+    struct aws_http_stream *stream,
+    struct aws_input_stream *chunk_data,
+    struct aws_http1_chunk_options *options) {
     AWS_PRECONDITION(stream);
     AWS_PRECONDITION(stream->vtable);
     AWS_PRECONDITION(stream->vtable->http1_write_chunk);
-    AWS_PRECONDITION(chunk);
-    return stream->vtable->http1_write_chunk(stream, chunk);
-}
-
-void aws_http1_stream_chunk_initialize(
-    struct aws_http1_stream_chunk *chunk,
-    struct aws_input_stream *stream,
-    aws_http1_stream_write_chunk_complete_fn *on_complete,
-    void *user_data,
-    struct aws_http1_chunk_extension *extensions,
-    size_t num_extensions) {
-    AWS_ASSERT(chunk);
-    AWS_ASSERT(stream);
-    AWS_ASSERT(0 == num_extensions || extensions);
-    chunk->stream = stream;
-    chunk->options.on_complete = on_complete;
-    chunk->options.user_data = user_data;
-    chunk->options.num_extensions = num_extensions;
-    chunk->options.sent_extensions = 0;
-    chunk->options.extensions = extensions;
-    aws_linked_list_node_reset(&chunk->node);
+    AWS_PRECONDITION(chunk_data);
+    AWS_PRECONDITION(options);
+    return stream->vtable->http1_write_chunk(allocator, stream, chunk_data, options);
 }
 
 struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_message *message) {

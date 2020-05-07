@@ -19,13 +19,21 @@
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
 
+struct aws_http1_stream_chunk {
+    struct aws_allocator *allocator;
+    struct aws_input_stream *data;
+    aws_http1_stream_write_chunk_complete_fn *on_complete;
+    void *user_data;
+    struct aws_linked_list_node node;
+    struct aws_byte_buf chunk_line;
+    struct aws_byte_cursor chunk_line_cursor;
+};
+
 struct aws_http1_chunks {
     struct aws_mutex lock;
     struct aws_linked_list chunk_list;
     bool paused;
 };
-void aws_h1_lock_stream_list(struct aws_http1_chunks *body_chunks);
-void aws_h1_unlock_stream_list(struct aws_http1_chunks *body_chunks);
 
 /**
  * Message to be submitted to encoder.
@@ -51,15 +59,13 @@ enum aws_h1_encoder_state {
 
 enum aws_h1_encoder_body_stream_state {
     AWS_H1_ENCODER_STATE_CHUNK_INIT,
-    AWS_H1_ENCODER_STATE_CHUNK_SIZE,
-    AWS_H1_ENCODER_STATE_CHUNK_EXTENSION_SEMICOLON_TOKEN,
-    AWS_H1_ENCODER_STATE_CHUNK_EXTENSION_KEY,
-    AWS_H1_ENCODER_STATE_CHUNK_EXTENSION_EQUAL_TOKEN,
-    AWS_H1_ENCODER_STATE_CHUNK_EXTENSION_VALUE,
+    AWS_H1_ENCODER_STATE_CHUNK_LINE,
     AWS_H1_ENCODER_STATE_CHUNK_PAYLOAD,
     AWS_H1_ENCODER_STATE_CHUNK_END,
     AWS_H1_ENCODER_STATE_CHUNK_TERMINATED,
 };
+#define MAX_ASCII_HEX_CHUNK_STR_SIZE sizeof(size_t) * 2 + 1
+#define CRLF_SIZE 2
 
 struct aws_h1_encoder {
     struct aws_allocator *allocator;
@@ -107,6 +113,15 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
 AWS_HTTP_API
 bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder);
 
+void aws_h1_lock_stream_list(struct aws_http1_chunks *body_chunks);
+
+void aws_h1_unlock_stream_list(struct aws_http1_chunks *body_chunks);
+
+bool write_chunk_size(struct aws_byte_buf *dst, struct aws_input_stream *chunk);
+
+bool write_crlf(struct aws_byte_buf *dst);
+
+bool write_chunk_extension(struct aws_byte_buf *dst, struct aws_http1_chunk_extension *chunk_extension);
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_H1_ENCODER_H */
