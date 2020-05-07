@@ -422,7 +422,7 @@ static int s_h1_encoder_process_content_length_body(struct aws_byte_buf *dst, st
 }
 
 static bool s_write_crlf(struct aws_byte_buf *dst) {
-    char crlf[2] = { '\r', '\n'};
+    char crlf[2] = {'\r', '\n'};
     struct aws_byte_cursor crlf_cursor = aws_byte_cursor_from_array(&crlf, AWS_ARRAY_SIZE(crlf));
     return aws_byte_buf_write_from_whole_cursor(dst, crlf_cursor);
 }
@@ -562,8 +562,12 @@ static bool s_end_chunk_state(struct aws_h1_encoder *encoder, int *aws_op_result
 
     int64_t original_bytes_in_stream = 0;
     if (aws_input_stream_get_length(encoder->message->body_chunk->stream, &original_bytes_in_stream)) {
-        ENCODER_LOGF(TRACE, encoder, "Failed to get original length of body stream, error %d (%s)",
-                     aws_last_error(), aws_error_name(aws_last_error()));
+        ENCODER_LOGF(
+            TRACE,
+            encoder,
+            "Failed to get original length of body stream, error %d (%s)",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
         *aws_op_result = AWS_OP_ERR;
         return false;
     }

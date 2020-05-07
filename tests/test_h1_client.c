@@ -448,11 +448,11 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_waits_for_data) {
 
     char *payloads[] = {"write more tests", "write more tests", ""};
     struct chunk_writer_data chunk_data = {.num_chunks = sizeof(payloads) / sizeof(payloads[0]),
-                                            .payloads = (const char **)&payloads,
-                                            .stream = stream,
-                                            .allocator = allocator,
-                                            .completed_chunks_counter = 0,
-                                            .delay_between_writes_ns = 10000};
+                                           .payloads = (const char **)&payloads,
+                                           .stream = stream,
+                                           .allocator = allocator,
+                                           .completed_chunks_counter = 0,
+                                           .delay_between_writes_ns = 10000};
 
     /* write and pause, in a loop. This exercises the rescheduling path. */
     for (size_t i = 0; i < chunk_data.num_chunks; ++i) {

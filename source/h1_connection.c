@@ -1758,7 +1758,7 @@ static int s_handler_process_write_message(
 
     return AWS_OP_SUCCESS;
 
-    error:
+error:
     AWS_LOGF_ERROR(
         AWS_LS_HTTP_CONNECTION,
         "id=%p: Destroying write message without passing it along, error %d (%s)",
