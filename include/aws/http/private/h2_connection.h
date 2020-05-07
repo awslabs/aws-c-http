@@ -76,7 +76,7 @@ struct aws_h2_connection {
          * When queue is empty, then we send DATA frames from the outgoing_streams_list */
         struct aws_linked_list outgoing_frames_queue;
 
-        /* LRU cache for closed stream, key: steam-id, value: aws_h2_stream_closed_detail.
+        /* LRU cache for closed stream, key: steam-id, value: aws_h2_stream_closed_when.
          * Contains data about streams that were recently closed.
          * The LRU entry will be removed if the cache is full */
         struct aws_lru_cache closed_streams;
@@ -129,18 +129,10 @@ struct aws_h2_connection {
  * The action which caused the stream to close.
  */
 enum aws_h2_stream_closed_when {
+    AWS_H2_STREAM_CLOSED_UNKNOWN,
     AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM,
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED,
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT,
-};
-
-/**
- * The detail about the action and the time stamp when stream closed
- */
-struct aws_h2_stream_closed_detail {
-    struct aws_allocator *allocator;
-    enum aws_h2_stream_closed_when closed_when;
-    uint64_t closed_timestamp;
 };
 
 enum aws_h2_data_encode_status {

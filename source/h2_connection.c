@@ -19,7 +19,6 @@
 #include <aws/http/private/h2_stream.h>
 #include <aws/http/private/strutil.h>
 
-#include <aws/common/clock.h>
 #include <aws/common/logging.h>
 
 #if _MSC_VER
@@ -158,11 +157,6 @@ static void s_unlock_synced_data(struct aws_h2_connection *connection) {
     (void)err;
 }
 
-static void s_stream_closed_detail_destroy(void *value) {
-    struct aws_h2_stream_closed_detail *closed_detail = value;
-    aws_mem_release(closed_detail->allocator, closed_detail);
-}
-
 /**
  * Internal function for bringing connection to a stop.
  * Invoked multiple times, including when:
@@ -282,7 +276,7 @@ static struct aws_h2_connection *s_connection_new(
             aws_hash_ptr,
             aws_ptr_eq,
             NULL,
-            s_stream_closed_detail_destroy,
+            NULL,
             AWS_H2_DEFAULT_MAX_CACHE_SIZE)) {
 
         CONNECTION_LOGF(
@@ -841,7 +835,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
         return AWS_H2ERR_SUCCESS;
     }
 
-    void *cached_value;
+    void *cached_value = NULL;
     /* Stream is closed, check whether it's legal for a few more frames to trickle in */
     if (aws_lru_cache_find(&connection->thread_data.closed_streams, stream_id_key, &cached_value)) {
         return aws_h2err_from_last_error();
@@ -851,8 +845,8 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
             /* If we support PRIORITY, do something here. Right now just ignore it */
             return AWS_H2ERR_SUCCESS;
         }
-        struct aws_h2_stream_closed_detail *closed_detail = cached_value;
-        if (closed_detail->closed_when == AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT) {
+        enum aws_h2_stream_closed_when closed_when = (enum aws_h2_stream_closed_when)(size_t)cached_value;
+        if (closed_when == AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT) {
             /* An endpoint MUST ignore frames that it receives on closed streams after it has sent a RST_STREAM frame */
             CONNECTION_LOGF(
                 TRACE,
@@ -863,7 +857,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
 
             return AWS_H2ERR_SUCCESS;
 
-        } else if (closed_detail->closed_when == AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM) {
+        } else if (closed_when == AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM) {
 
             /* WINDOW_UPDATE or RST_STREAM frames can be received ... for a short period after
              * a DATA or HEADERS frame containing an END_STREAM flag is sent.
@@ -1623,21 +1617,8 @@ static int s_record_closed_stream(
 
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
-    uint64_t timestamp;
-    if (aws_sys_clock_get_ticks(&timestamp)) {
-        CONNECTION_LOG(ERROR, connection, "Failed getting the time stamp when stream closed");
-        return AWS_OP_ERR;
-    }
-    struct aws_h2_stream_closed_detail *closed_detail =
-        aws_mem_acquire(connection->base.alloc, sizeof(struct aws_h2_stream_closed_detail));
-    if (!closed_detail) {
-        return AWS_OP_ERR;
-    }
-    closed_detail->allocator = connection->base.alloc;
-    closed_detail->closed_timestamp = timestamp;
-    closed_detail->closed_when = closed_when;
-    if (aws_lru_cache_put(&connection->thread_data.closed_streams, (void *)(size_t)stream_id, closed_detail)) {
-        s_stream_closed_detail_destroy(closed_detail);
+    if (aws_lru_cache_put(
+            &connection->thread_data.closed_streams, (void *)(size_t)stream_id, (void *)(size_t)closed_when)) {
         CONNECTION_LOG(ERROR, connection, "Failed inserting ID into cache of recently closed streams");
         return AWS_OP_ERR;
     }
