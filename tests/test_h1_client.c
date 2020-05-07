@@ -446,26 +446,20 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_waits_for_data) {
     /* activate stream *before* sending any data. */
     aws_http_stream_activate(stream);
 
-    char *payloads[] = {
-        "write more tests",
-        "write more tests",
-        ""
-    };
-    struct chunk_writer_data chunk_data = {
-        .num_chunks = sizeof(payloads) / sizeof(payloads[0]),
-        .payloads = (const char **)&payloads,
-        .stream = stream,
-        .allocator = allocator,
-        .completed_chunks_counter = 0,
-        .delay_between_writes_ns = 10000
-    };
+    char *payloads[] = {"write more tests", "write more tests", ""};
+    struct chunk_writer_data chunk_data = {.num_chunks = sizeof(payloads) / sizeof(payloads[0]),
+                                            .payloads = (const char **)&payloads,
+                                            .stream = stream,
+                                            .allocator = allocator,
+                                            .completed_chunks_counter = 0,
+                                            .delay_between_writes_ns = 10000};
 
     /* write and pause, in a loop. This exercises the rescheduling path. */
     for (size_t i = 0; i < chunk_data.num_chunks; ++i) {
         struct aws_byte_cursor body = aws_byte_cursor_from_c_str(chunk_data.payloads[i]);
         struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(chunk_data.allocator, &body);
-        struct aws_http1_stream_chunk *chunk = aws_mem_acquire(
-            chunk_data.allocator, sizeof(struct aws_http1_stream_chunk));
+        struct aws_http1_stream_chunk *chunk =
+            aws_mem_acquire(chunk_data.allocator, sizeof(struct aws_http1_stream_chunk));
         aws_http1_stream_chunk_initialize(chunk, body_stream, s_on_chunk_write_complete, &chunk_data, NULL, 0);
 
         /* sleep to cause a pause between writes */
@@ -490,9 +484,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_waits_for_data) {
 
     /* check result */
     ASSERT_SUCCESS(testing_channel_check_written_messages(
-        &tester.testing_channel,
-        allocator,
-        aws_byte_cursor_from_c_str(expected)));
+        &tester.testing_channel, allocator, aws_byte_cursor_from_c_str(expected)));
 
     /* clean up */
     aws_http_message_destroy(request);
@@ -795,7 +787,7 @@ static int s_can_parse_as_chunked_encoding(
     int i = 0;
     /* 3MB to hold a massive chunked extension size */
     char *chunk_ascii_hex = aws_mem_calloc(allocator, 3, 1024 * 1024);
-    for (i = 0; i < max_iter; ++i)  {
+    for (i = 0; i < max_iter; ++i) {
         ASSERT_SUCCESS(aws_byte_cursor_find_exact(&request_cursor, &crlf_cursor, &match_cursor));
         memset(chunk_ascii_hex, 0, 3 * 1024 * 1024);
         memcpy(chunk_ascii_hex, (char *)request_cursor.ptr, match_cursor.ptr - request_cursor.ptr);
@@ -841,7 +833,6 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body_transfer_encoding_chunked)
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-
 
     struct aws_http_header headers[] = {
         {
@@ -890,7 +881,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body_transfer_encoding_chunked)
     const char expected_head_fmt[] = "PUT /large.txt HTTP/1.1\r\n"
                                      "Transfer-Encoding: chunked\r\n"
                                      "\r\n";
-    struct aws_byte_buf expected_head_buf = aws_byte_buf_from_c_str((char *) &expected_head_fmt);
+    struct aws_byte_buf expected_head_buf = aws_byte_buf_from_c_str((char *)&expected_head_fmt);
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -916,7 +907,6 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_write_large_chunk_extens
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-
 
     struct aws_http_header headers[] = {
         {
@@ -981,7 +971,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_write_large_chunk_extens
     const char expected_head_fmt[] = "PUT /large.txt HTTP/1.1\r\n"
                                      "Transfer-Encoding: chunked\r\n"
                                      "\r\n";
-    struct aws_byte_buf expected_head_buf = aws_byte_buf_from_c_str((char *) &expected_head_fmt);
+    struct aws_byte_buf expected_head_buf = aws_byte_buf_from_c_str((char *)&expected_head_fmt);
 
     struct aws_http1_chunk_extension expected_extensions[] = {
         {
@@ -1001,12 +991,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_write_large_chunk_extens
     ASSERT_SUCCESS(testing_channel_drain_written_messages(&tester.testing_channel, &written_buf));
 
     ASSERT_SUCCESS(s_can_parse_as_chunked_encoding(
-        allocator,
-        &written_buf,
-        &expected_head_buf,
-        expected_extensions,
-        AWS_ARRAY_SIZE(extensions),
-        body_char));
+        allocator, &written_buf, &expected_head_buf, expected_extensions, AWS_ARRAY_SIZE(extensions), body_char));
 
     /* clean up */
     aws_http_message_destroy(request);
