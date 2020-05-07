@@ -846,59 +846,66 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
             return AWS_H2ERR_SUCCESS;
         }
         enum aws_h2_stream_closed_when closed_when = (enum aws_h2_stream_closed_when)(size_t)cached_value;
-        if (closed_when == AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT) {
-            /* An endpoint MUST ignore frames that it receives on closed streams after it has sent a RST_STREAM frame */
-            CONNECTION_LOGF(
-                TRACE,
-                connection,
-                "Ignoring %s frame on stream id=%" PRIu32 " because RST_STREAM was recently sent.",
-                aws_h2_frame_type_to_str(frame_type),
-                stream_id);
+        switch (closed_when) {
+            case AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM:
+                /* WINDOW_UPDATE or RST_STREAM frames can be received ... for a short period after
+                 * a DATA or HEADERS frame containing an END_STREAM flag is sent.
+                 * Endpoints MUST ignore WINDOW_UPDATE or RST_STREAM frames received in this state */
+                if (frame_type == AWS_H2_FRAME_T_WINDOW_UPDATE || frame_type == AWS_H2_FRAME_T_RST_STREAM) {
+                    CONNECTION_LOGF(
+                        TRACE,
+                        connection,
+                        "Ignoring %s frame on stream id=%" PRIu32 " because END_STREAM flag was recently sent.",
+                        aws_h2_frame_type_to_str(frame_type),
+                        stream_id);
 
-            return AWS_H2ERR_SUCCESS;
+                    return AWS_H2ERR_SUCCESS;
+                } else {
+                    CONNECTION_LOGF(
+                        ERROR,
+                        connection,
+                        "Illegal to receive %s frame on stream id=%" PRIu32 " after END_STREAM has been received.",
+                        aws_h2_frame_type_to_str(frame_type),
+                        stream_id);
 
-        } else if (closed_when == AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM) {
-
-            /* WINDOW_UPDATE or RST_STREAM frames can be received ... for a short period after
-             * a DATA or HEADERS frame containing an END_STREAM flag is sent.
-             * Endpoints MUST ignore WINDOW_UPDATE or RST_STREAM frames received in this state */
-            if (frame_type == AWS_H2_FRAME_T_WINDOW_UPDATE || frame_type == AWS_H2_FRAME_T_RST_STREAM) {
+                    return aws_h2err_from_h2_code(AWS_H2_ERR_STREAM_CLOSED);
+                }
+                break;
+            case AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED:
+                /* An endpoint that receives any frame other than PRIORITY after receiving a RST_STREAM
+                 * MUST treat that as a stream error (Section 5.4.2) of type STREAM_CLOSED */
+                CONNECTION_LOGF(
+                    ERROR,
+                    connection,
+                    "Illegal to receive %s frame on stream id=%" PRIu32 " after RST_STREAM has been received",
+                    aws_h2_frame_type_to_str(frame_type),
+                    stream_id);
+                struct aws_h2_frame *rst_stream =
+                    aws_h2_frame_new_rst_stream(connection->base.alloc, stream_id, AWS_H2_ERR_STREAM_CLOSED);
+                if (!rst_stream) {
+                    CONNECTION_LOGF(
+                        ERROR, connection, "Error creating RST_STREAM frame, %s", aws_error_name(aws_last_error()));
+                    return aws_h2err_from_last_error();
+                }
+                aws_h2_connection_enqueue_outgoing_frame(connection, rst_stream);
+                return AWS_H2ERR_SUCCESS;
+            case AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT:
+                /* An endpoint MUST ignore frames that it receives on closed streams after it has sent a RST_STREAM
+                 * frame */
                 CONNECTION_LOGF(
                     TRACE,
                     connection,
-                    "Ignoring %s frame on stream id=%" PRIu32 " because END_STREAM flag was recently sent.",
+                    "Ignoring %s frame on stream id=%" PRIu32 " because RST_STREAM was recently sent.",
                     aws_h2_frame_type_to_str(frame_type),
                     stream_id);
 
                 return AWS_H2ERR_SUCCESS;
-            } else {
+                break;
+            default:
                 CONNECTION_LOGF(
-                    ERROR,
-                    connection,
-                    "Illegal to receive %s frame on stream id=%" PRIu32 " after END_STREAM has been received.",
-                    aws_h2_frame_type_to_str(frame_type),
-                    stream_id);
-
-                return aws_h2err_from_h2_code(AWS_H2_ERR_STREAM_CLOSED);
-            }
-        } else {
-            /* An endpoint that receives any frame other than PRIORITY after receiving a RST_STREAM
-             * MUST treat that as a stream error (Section 5.4.2) of type STREAM_CLOSED */
-            CONNECTION_LOGF(
-                ERROR,
-                connection,
-                "Illegal to receive %s frame on stream id=%" PRIu32 " after RST_STREAM has been received",
-                aws_h2_frame_type_to_str(frame_type),
-                stream_id);
-            struct aws_h2_frame *rst_stream =
-                aws_h2_frame_new_rst_stream(connection->base.alloc, stream_id, AWS_H2_ERR_STREAM_CLOSED);
-            if (!rst_stream) {
-                CONNECTION_LOGF(
-                    ERROR, connection, "Error creating RST_STREAM frame, %s", aws_error_name(aws_last_error()));
-                return aws_h2err_from_last_error();
-            }
-            aws_h2_connection_enqueue_outgoing_frame(connection, rst_stream);
-            return AWS_H2ERR_SUCCESS;
+                    ERROR, connection, "Invalid state fo cached closed stream, stream id=%" PRIu32, stream_id);
+                return aws_h2err_from_h2_code(AWS_H2_ERR_INTERNAL_ERROR);
+                break;
         }
     }
     if (frame_type == AWS_H2_FRAME_T_PRIORITY) {
