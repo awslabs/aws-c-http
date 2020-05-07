@@ -25,9 +25,9 @@
 
 #define H1_ENCODER_TEST_CASE(NAME)                                                                                     \
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
-static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
+    static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
-    static struct aws_logger s_logger;
+static struct aws_logger s_logger;
 
 static void s_test_init(struct aws_allocator *allocator) {
     aws_http_library_init(allocator);
