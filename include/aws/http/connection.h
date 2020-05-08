@@ -557,6 +557,10 @@ int aws_http2_connection_get_received_goaway(
     struct aws_http_connection *http2_connection,
     uint32_t *out_http2_error,
     uint32_t *out_last_stream_id);
+ * Returns host address for the HTTP connection.
+ */
+AWS_HTTP_API
+struct aws_host_address *aws_http_connection_get_host_address(struct aws_http_connection *connection);
 
 AWS_EXTERN_C_END
 
