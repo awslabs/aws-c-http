@@ -467,6 +467,10 @@ void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connecti
         const struct aws_linked_list_node *end = aws_linked_list_end(&connection->thread_data.outgoing_frames_queue);
         while (iter != end) {
             struct aws_h2_frame *frame_i = AWS_CONTAINER_OF(iter, struct aws_h2_frame, node);
+            if (connection->thread_data.current_outgoing_frame == frame_i) {
+                iter = iter->next;
+                continue;
+            }
             if (!frame_i->high_priority) {
                 break;
             }
@@ -638,7 +642,7 @@ static int s_encode_outgoing_frames_queue(struct aws_h2_connection *connection, 
     while (!aws_linked_list_empty(outgoing_frames_queue)) {
         struct aws_linked_list_node *frame_node = aws_linked_list_front(outgoing_frames_queue);
         struct aws_h2_frame *frame = AWS_CONTAINER_OF(frame_node, struct aws_h2_frame, node);
-
+        connection->thread_data.current_outgoing_frame = frame;
         bool frame_complete;
         if (aws_h2_encode_frame(&connection->thread_data.encoder, frame, output, &frame_complete)) {
             CONNECTION_LOGF(
@@ -672,6 +676,7 @@ static int s_encode_outgoing_frames_queue(struct aws_h2_connection *connection, 
         /* Done encoding frame, pop from queue and cleanup*/
         aws_linked_list_remove(frame_node);
         aws_h2_frame_destroy(frame);
+        connection->thread_data.current_outgoing_frame = NULL;
     }
 
     return AWS_OP_SUCCESS;
