@@ -242,6 +242,14 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
     return connection->channel_slot->channel;
 }
 
+struct aws_host_address *aws_http_connection_get_host_address(struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    struct aws_channel *channel = aws_http_connection_get_channel(connection);
+
+    AWS_ASSERT(channel);
+    return aws_channel_get_host_address(channel);
+}
+
 void aws_http_connection_acquire(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     aws_atomic_fetch_add(&connection->refcount, 1);

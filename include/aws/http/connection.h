@@ -286,6 +286,12 @@ enum aws_http_version aws_http_connection_get_version(const struct aws_http_conn
 AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
 
+/**
+ * Returns host address for the HTTP connection.
+ */
+AWS_HTTP_API
+struct aws_host_address *aws_http_connection_get_host_address(struct aws_http_connection *connection);
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_CONNECTION_H */
