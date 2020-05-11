@@ -17,6 +17,7 @@
  */
 
 #include <aws/common/atomics.h>
+#include <aws/common/fifo_cache.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/mutex.h>
 
@@ -75,11 +76,10 @@ struct aws_h2_connection {
          * When queue is empty, then we send DATA frames from the outgoing_streams_list */
         struct aws_linked_list outgoing_frames_queue;
 
-        /* Maps stream-id to aws_h2_stream_closed_when.
-         * Contains data about streams that were recently closed by this end (sent RST_STREAM frame or END_STREAM flag),
-         * but might still receive frames that remote peer sent before learning that the stream was closed.
-         * Entries are removed after a period of time. */
-        struct aws_hash_table closed_streams_where_frames_might_trickle_in;
+        /* FIFO cache for closed stream, key: stream-id, value: aws_h2_stream_closed_when.
+         * Contains data about streams that were recently closed.
+         * The oldest entry will be removed if the cache is full */
+        struct aws_cache *closed_streams;
 
         /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
          * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
@@ -132,6 +132,7 @@ struct aws_h2_connection {
  * The action which caused the stream to close.
  */
 enum aws_h2_stream_closed_when {
+    AWS_H2_STREAM_CLOSED_UNKNOWN,
     AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM,
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED,
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT,
@@ -146,6 +147,8 @@ enum aws_h2_data_encode_status {
 
 /* When window size is too small to fit the possible padding into it, we stop sending data and wait for WINDOW_UPDATE */
 #define AWS_H2_MIN_WINDOW_SIZE (256)
+/* Default value for max closed streams we will keep in memory. */
+#define AWS_H2_DEFAULT_MAX_CLOSED_STREAMS (32)
 
 /* Private functions called from tests... */
 
