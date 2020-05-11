@@ -269,9 +269,10 @@ static struct aws_h2_connection *s_connection_new(
             ERROR, connection, "Hashtable init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
         goto error;
     }
+
+    /* TODO: make the max_items configurable */
     connection->thread_data.closed_streams =
         aws_cache_new_fifo(alloc, aws_hash_ptr, aws_ptr_eq, NULL, NULL, AWS_H2_DEFAULT_MAX_CACHE_SIZE);
-    /* TODO: make the max_items configurable */
     if (!connection->thread_data.closed_streams) {
         CONNECTION_LOGF(
             ERROR, connection, "FIFO cache init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
