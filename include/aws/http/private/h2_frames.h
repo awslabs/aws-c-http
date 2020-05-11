@@ -101,6 +101,7 @@ enum aws_h2_settings {
 extern const uint32_t aws_h2_settings_bounds[AWS_H2_SETTINGS_END_RANGE][2];
 
 /* Initial values for settings RFC-7540 6.5.2 */
+AWS_HTTP_API
 extern const uint32_t aws_h2_settings_initial[AWS_H2_SETTINGS_END_RANGE];
 
 /* This magic string must be the very first thing a client sends to the server.
