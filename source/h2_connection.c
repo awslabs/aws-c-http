@@ -272,7 +272,7 @@ static struct aws_h2_connection *s_connection_new(
 
     /* TODO: make the max_items configurable */
     connection->thread_data.closed_streams =
-        aws_cache_new_fifo(alloc, aws_hash_ptr, aws_ptr_eq, NULL, NULL, AWS_H2_DEFAULT_MAX_CACHE_SIZE);
+        aws_cache_new_fifo(alloc, aws_hash_ptr, aws_ptr_eq, NULL, NULL, AWS_H2_DEFAULT_MAX_CLOSED_STREAMS);
     if (!connection->thread_data.closed_streams) {
         CONNECTION_LOGF(
             ERROR, connection, "FIFO cache init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
@@ -913,7 +913,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
         return AWS_H2ERR_SUCCESS;
     }
 
-    /* Stream was closed long ago (or implicitly closed when its ID was skipped) */
+    /* Stream closed (purged from closed_streams, or implicitly closed when its ID was skipped) */
     CONNECTION_LOGF(
         ERROR,
         connection,

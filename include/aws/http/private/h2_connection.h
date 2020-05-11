@@ -76,7 +76,7 @@ struct aws_h2_connection {
          * When queue is empty, then we send DATA frames from the outgoing_streams_list */
         struct aws_linked_list outgoing_frames_queue;
 
-        /* FIFO cache for closed stream, key: steam-id, value: aws_h2_stream_closed_when.
+        /* FIFO cache for closed stream, key: stream-id, value: aws_h2_stream_closed_when.
          * Contains data about streams that were recently closed.
          * The oldest entry will be removed if the cache is full */
         struct aws_cache *closed_streams;
@@ -147,8 +147,8 @@ enum aws_h2_data_encode_status {
 
 /* When window size is too small to fit the possible padding into it, we stop sending data and wait for WINDOW_UPDATE */
 #define AWS_H2_MIN_WINDOW_SIZE (256)
-/* Default value for thread_data.max_closed_stream_cache_size */
-#define AWS_H2_DEFAULT_MAX_CACHE_SIZE (32)
+/* Default value for max closed streams we will keep in memory. */
+#define AWS_H2_DEFAULT_MAX_CLOSED_STREAMS (32)
 
 /* Private functions called from tests... */
 
