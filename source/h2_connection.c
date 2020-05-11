@@ -269,18 +269,12 @@ static struct aws_h2_connection *s_connection_new(
             ERROR, connection, "Hashtable init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
         goto error;
     }
+    connection->thread_data.closed_streams =
+        aws_cache_new_fifo(alloc, aws_hash_ptr, aws_ptr_eq, NULL, NULL, AWS_H2_DEFAULT_MAX_CACHE_SIZE);
     /* TODO: make the max_items configurable */
-    if (aws_lru_cache_init(
-            &connection->thread_data.closed_streams,
-            alloc,
-            aws_hash_ptr,
-            aws_ptr_eq,
-            NULL,
-            NULL,
-            AWS_H2_DEFAULT_MAX_CACHE_SIZE)) {
-
+    if (!connection->thread_data.closed_streams) {
         CONNECTION_LOGF(
-            ERROR, connection, "Hashtable init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
+            ERROR, connection, "FIFO cache init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
         goto error;
     }
 
@@ -392,7 +386,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     aws_h2_decoder_destroy(connection->thread_data.decoder);
     aws_h2_frame_encoder_clean_up(&connection->thread_data.encoder);
     aws_hash_table_clean_up(&connection->thread_data.active_streams_map);
-    aws_lru_cache_clean_up(&connection->thread_data.closed_streams);
+    aws_cache_destroy(connection->thread_data.closed_streams);
     aws_mutex_clean_up(&connection->synced_data.lock);
     aws_mem_release(connection->base.alloc, connection);
 }
@@ -837,7 +831,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
 
     void *cached_value = NULL;
     /* Stream is closed, check whether it's legal for a few more frames to trickle in */
-    if (aws_lru_cache_find(&connection->thread_data.closed_streams, stream_id_key, &cached_value)) {
+    if (aws_cache_find(connection->thread_data.closed_streams, stream_id_key, &cached_value)) {
         return aws_h2err_from_last_error();
     }
     if (cached_value) {
@@ -1624,8 +1618,7 @@ static int s_record_closed_stream(
 
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
-    if (aws_lru_cache_put(
-            &connection->thread_data.closed_streams, (void *)(size_t)stream_id, (void *)(size_t)closed_when)) {
+    if (aws_cache_put(connection->thread_data.closed_streams, (void *)(size_t)stream_id, (void *)(size_t)closed_when)) {
         CONNECTION_LOG(ERROR, connection, "Failed inserting ID into cache of recently closed streams");
         return AWS_OP_ERR;
     }

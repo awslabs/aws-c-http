@@ -18,7 +18,7 @@
 
 #include <aws/common/atomics.h>
 #include <aws/common/hash_table.h>
-#include <aws/common/lru_cache.h>
+#include <aws/common/fifo_cache.h>
 #include <aws/common/mutex.h>
 
 #include <aws/http/private/connection_impl.h>
@@ -76,10 +76,10 @@ struct aws_h2_connection {
          * When queue is empty, then we send DATA frames from the outgoing_streams_list */
         struct aws_linked_list outgoing_frames_queue;
 
-        /* LRU cache for closed stream, key: steam-id, value: aws_h2_stream_closed_when.
+        /* FIFO cache for closed stream, key: steam-id, value: aws_h2_stream_closed_when.
          * Contains data about streams that were recently closed.
-         * The LRU entry will be removed if the cache is full */
-        struct aws_lru_cache closed_streams;
+         * The oldest entry will be removed if the cache is full */
+        struct aws_cache *closed_streams;
 
         /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
          * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
