@@ -20,8 +20,8 @@
 #include <aws/http/private/request_response_impl.h>
 
 struct aws_http1_stream_chunk {
-    struct aws_allocator *allocator;
     struct aws_input_stream *data;
+    size_t data_size;
     aws_http1_stream_write_chunk_complete_fn *on_complete;
     void *user_data;
     struct aws_linked_list_node node;
@@ -35,6 +35,16 @@ struct aws_http1_chunks {
     bool paused;
 };
 
+enum aws_h1_encoder_body_stream_state {
+    AWS_H1_ENCODER_STATE_CHUNK_INIT,
+    AWS_H1_ENCODER_STATE_CHUNK_LINE,
+    AWS_H1_ENCODER_STATE_CHUNK_PAYLOAD,
+    AWS_H1_ENCODER_STATE_CHUNK_END,
+    AWS_H1_ENCODER_STATE_CHUNK_TERMINATED,
+};
+#define MAX_ASCII_HEX_CHUNK_STR_SIZE sizeof(size_t) * 2 + 1
+#define CRLF_SIZE 2
+
 /**
  * Message to be submitted to encoder.
  * Contains data necessary for encoder to write an outgoing request or response.
@@ -45,6 +55,10 @@ struct aws_h1_encoder_message {
     struct aws_input_stream *body;
     /* The currently ready for encoding chunk of data. This path is only used for Transfer-Encoding chunked. */
     struct aws_http1_stream_chunk *body_chunk;
+    /* State of the chunked encoding stream state of this message. */
+    enum aws_h1_encoder_body_stream_state stream_state;
+    /* List of body chunks awaiting writing. */
+    struct aws_http1_chunks *body_chunks;
     uint64_t content_length;
     bool has_connection_close_header;
     bool has_chunked_encoding_header;
@@ -57,25 +71,28 @@ enum aws_h1_encoder_state {
     AWS_H1_ENCODER_STATE_DONE,
 };
 
-enum aws_h1_encoder_body_stream_state {
-    AWS_H1_ENCODER_STATE_CHUNK_INIT,
-    AWS_H1_ENCODER_STATE_CHUNK_LINE,
-    AWS_H1_ENCODER_STATE_CHUNK_PAYLOAD,
-    AWS_H1_ENCODER_STATE_CHUNK_END,
-    AWS_H1_ENCODER_STATE_CHUNK_TERMINATED,
-};
-#define MAX_ASCII_HEX_CHUNK_STR_SIZE sizeof(size_t) * 2 + 1
-#define CRLF_SIZE 2
-
 struct aws_h1_encoder {
     struct aws_allocator *allocator;
 
     enum aws_h1_encoder_state state;
-    enum aws_h1_encoder_body_stream_state stream_state;
     struct aws_h1_encoder_message *message;
     uint64_t progress_bytes;
     const void *logging_id;
 };
+
+void aws_h1_lock_chunked_list(struct aws_http1_chunks *body_chunks);
+
+void aws_h1_unlock_chunked_list(struct aws_http1_chunks *body_chunks);
+
+int aws_chunk_line_from_options(struct aws_http1_chunk_options *options, struct aws_byte_buf *chunk_line);
+
+bool aws_write_chunk_size(struct aws_byte_buf *dst, size_t chunk_size);
+
+bool aws_write_crlf(struct aws_byte_buf *dst);
+
+bool aws_write_chunk_extension(struct aws_byte_buf *dst, struct aws_http1_chunk_extension *chunk_extension);
+
+bool aws_h1_get_next_stream_chunk(struct aws_http1_chunks *body_chunks, struct aws_http1_stream_chunk **chunk_out);
 
 AWS_EXTERN_C_BEGIN
 
@@ -113,15 +130,6 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
 AWS_HTTP_API
 bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder);
 
-void aws_h1_lock_stream_list(struct aws_http1_chunks *body_chunks);
-
-void aws_h1_unlock_stream_list(struct aws_http1_chunks *body_chunks);
-
-bool write_chunk_size(struct aws_byte_buf *dst, struct aws_input_stream *chunk);
-
-bool write_crlf(struct aws_byte_buf *dst);
-
-bool write_chunk_extension(struct aws_byte_buf *dst, struct aws_http1_chunk_extension *chunk_extension);
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_H1_ENCODER_H */

@@ -26,11 +26,7 @@ struct aws_http_stream_vtable {
     void (*destroy)(struct aws_http_stream *stream);
     void (*update_window)(struct aws_http_stream *stream, size_t increment_size);
     int (*activate)(struct aws_http_stream *stream);
-    int (*http1_write_chunk)(
-        struct aws_allocator *allocator,
-        struct aws_http_stream *stream,
-        struct aws_input_stream *chunk_data,
-        struct aws_http1_chunk_options *options);
+    int (*http1_write_chunk)(struct aws_http_stream *stream, struct aws_http1_chunk_options *options);
 };
 
 /**

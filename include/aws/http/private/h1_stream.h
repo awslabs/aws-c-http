@@ -15,7 +15,6 @@
  * permissions and limitations under the License.
  */
 
-#include <aws/common/mutex.h>
 #include <aws/http/private/h1_encoder.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
@@ -67,7 +66,8 @@ AWS_EXTERN_C_END
 int aws_h1_stream_activate(struct aws_http_stream *stream);
 int aws_h1_stream_schedule_outgoing_stream_task(struct aws_http_stream *stream);
 
-bool aws_h1_stream_get_next_chunk(struct aws_http1_chunks *body_chunks, struct aws_http1_stream_chunk **chunk_out);
+void aws_h1_stream_release_chunk(struct aws_http1_stream_chunk *chunk);
+void aws_h1_stream_body_chunks_clean_up(struct aws_h1_stream *stream);
 bool aws_h1_stream_is_paused(struct aws_h1_stream *stream);
 
 #endif /* AWS_HTTP_H1_STREAM_H */

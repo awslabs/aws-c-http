@@ -23,10 +23,10 @@
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
     struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
 
+    aws_h1_stream_body_chunks_clean_up(stream);
     aws_h1_encoder_message_clean_up(&stream->encoder_message);
     aws_byte_buf_clean_up(&stream->incoming_storage_buf);
     aws_mem_release(stream->base.alloc, stream);
-    aws_mutex_clean_up(&stream->body_chunks.lock);
 }
 
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
@@ -40,6 +40,24 @@ static bool s_body_chunks_init(struct aws_h1_stream *stream) {
     return AWS_OP_SUCCESS == aws_mutex_init(&stream->body_chunks.lock);
 }
 
+void s_clean_up_body_chunk(struct aws_http1_stream_chunk **chunk) {
+    AWS_PRECONDITION(chunk);
+    aws_h1_stream_release_chunk(*chunk);
+    *chunk = NULL;
+}
+
+void aws_h1_stream_body_chunks_clean_up(struct aws_h1_stream *stream) {
+    AWS_PRECONDITION(stream);
+    if (!stream->body_chunks.lock.initialized) {
+        return;
+    }
+    struct aws_http1_stream_chunk *chunk = NULL;
+    while (aws_h1_get_next_stream_chunk(&stream->body_chunks, &chunk)) {
+        s_clean_up_body_chunk(&chunk);
+    }
+    aws_mutex_clean_up(&stream->body_chunks.lock);
+}
+
 bool aws_h1_stream_is_paused(struct aws_h1_stream *stream) {
     AWS_PRECONDITION(stream);
     if (!stream->encoder_message.has_chunked_encoding_header) {
@@ -47,79 +65,36 @@ bool aws_h1_stream_is_paused(struct aws_h1_stream *stream) {
     }
     bool is_paused = false;
     /* Begin critical section */
-    aws_h1_lock_stream_list(&stream->body_chunks);
+    aws_h1_lock_chunked_list(&stream->body_chunks);
     is_paused = stream->body_chunks.paused;
-    aws_h1_unlock_stream_list(&stream->body_chunks);
+    aws_h1_unlock_chunked_list(&stream->body_chunks);
     /* End critical section */
     return is_paused;
 }
 
-static size_t s_calculate_chunk_line_size(struct aws_http1_chunk_options *options) {
-    size_t chunk_line_size = MAX_ASCII_HEX_CHUNK_STR_SIZE + CRLF_SIZE;
-    for (size_t i = 0; i < options->num_extensions; ++i) {
-        struct aws_http1_chunk_extension *chunk_extension = options->extensions + i;
-        chunk_line_size += sizeof(';');
-        chunk_line_size += chunk_extension->key.len;
-        chunk_line_size += sizeof('=');
-        chunk_line_size += chunk_extension->value.len;
-    }
-    return chunk_line_size;
-}
-
-static int s_populate_chunk_line_buffer(
-    struct aws_byte_buf *chunk_line,
-    struct aws_input_stream *chunk_data,
-    struct aws_http1_chunk_options *options) {
-    bool wrote_chunk_line = true;
-    wrote_chunk_line &= write_chunk_size(chunk_line, chunk_data);
-    for (size_t i = 0; i < options->num_extensions; ++i) {
-        wrote_chunk_line &= write_chunk_extension(chunk_line, options->extensions + i);
-    }
-    wrote_chunk_line &= write_crlf(chunk_line);
-    return wrote_chunk_line;
-}
-
-static int s_chunk_line_from_options(
-    struct aws_allocator *allocator,
-    struct aws_input_stream *chunk_data,
-    struct aws_http1_chunk_options *options,
-    struct aws_byte_buf *chunk_line) {
-    size_t chunk_line_size = s_calculate_chunk_line_size(options);
-    if (AWS_OP_SUCCESS != aws_byte_buf_init(chunk_line, allocator, chunk_line_size)) {
-        return AWS_OP_ERR;
-    }
-    if (!s_populate_chunk_line_buffer(chunk_line, chunk_data, options)) {
-        aws_mem_release(allocator, chunk_line);
-        return AWS_OP_ERR;
-    }
-    return AWS_OP_SUCCESS;
-}
-
-static int s_aws_h1_stream_write_chunk(
-    struct aws_allocator *allocator,
-    struct aws_http_stream *stream_base,
-    struct aws_input_stream *chunk_data,
-    struct aws_http1_chunk_options *options) {
-    AWS_PRECONDITION(allocator);
+static int s_aws_h1_stream_write_chunk(struct aws_http_stream *stream_base, struct aws_http1_chunk_options *options) {
     AWS_PRECONDITION(stream_base);
-    AWS_PRECONDITION(chunk_data);
     AWS_PRECONDITION(options);
-
     struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
-    struct aws_http1_stream_chunk *chunk = aws_mem_acquire(allocator, sizeof(struct aws_http1_stream_chunk));
-    chunk->allocator = allocator;
-    chunk->data = chunk_data;
+    const size_t chunk_alloc_size = sizeof(struct aws_http1_stream_chunk);
+    struct aws_http1_stream_chunk *chunk = aws_mem_acquire(options->chunk_data->allocator, chunk_alloc_size);
+    AWS_ASSERT(chunk);
+    AWS_ZERO_STRUCT(*chunk);
+    chunk->data = options->chunk_data;
+    chunk->data_size = options->chunk_data_size;
     chunk->on_complete = options->on_complete;
     chunk->user_data = options->user_data;
     aws_linked_list_node_reset(&chunk->node);
-    if (AWS_OP_SUCCESS != s_chunk_line_from_options(allocator, chunk_data, options, &chunk->chunk_line)) {
+    if (AWS_OP_SUCCESS != aws_chunk_line_from_options(options, &chunk->chunk_line)) {
+        s_clean_up_body_chunk(&chunk);
         return AWS_OP_ERR;
     }
     chunk->chunk_line_cursor = aws_byte_cursor_from_buf(&chunk->chunk_line);
 
     /* Begin critical section */
-    aws_h1_lock_stream_list(&stream->body_chunks);
+    aws_h1_lock_chunked_list(&stream->body_chunks);
     aws_linked_list_push_back(&stream->body_chunks.chunk_list, &chunk->node);
+    AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: adding chunk to stream", (void *)stream);
     if (stream->body_chunks.paused) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Waking up stream on new data available", (void *)stream);
         stream->body_chunks.paused = false;
@@ -127,30 +102,10 @@ static int s_aws_h1_stream_write_chunk(
         AWS_ASSERT(base_connection);
         aws_h1_stream_schedule_outgoing_stream_task(&stream->base);
     }
-    aws_h1_unlock_stream_list(&stream->body_chunks);
+    aws_h1_unlock_chunked_list(&stream->body_chunks);
     /* End critical section */
 
     return AWS_OP_SUCCESS;
-}
-
-bool aws_h1_stream_get_next_chunk(struct aws_http1_chunks *body_chunks, struct aws_http1_stream_chunk **chunk_out) {
-    AWS_PRECONDITION(body_chunks);
-    AWS_PRECONDITION(chunk_out);
-    bool has_next_chunk = true;
-    /* Begin critical section */
-    aws_h1_lock_stream_list(body_chunks);
-    if (aws_linked_list_empty(&body_chunks->chunk_list)) {
-        *chunk_out = NULL;
-        body_chunks->paused = true;
-        has_next_chunk = false;
-    } else {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(&body_chunks->chunk_list);
-        *chunk_out = AWS_CONTAINER_OF(node, struct aws_http1_stream_chunk, node);
-        AWS_POSTCONDITION(chunk_out);
-    }
-    aws_h1_unlock_stream_list(body_chunks);
-    /* End critical section */
-    return has_next_chunk;
 }
 
 static const struct aws_http_stream_vtable s_stream_vtable = {

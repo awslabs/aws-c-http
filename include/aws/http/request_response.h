@@ -315,6 +315,16 @@ struct aws_http1_chunk_extension {
  * Encoding options for an HTTP/1.1 chunked transfer encoding chunk.
  */
 struct aws_http1_chunk_options {
+    /*
+     * The data stream to be sent in a single chunk.
+     */
+    struct aws_input_stream *chunk_data;
+
+    /*
+     * Size of the chunk_data input stream in bytes.
+     */
+    size_t chunk_data_size;
+
     /**
      * A pointer to an array of chunked extensions. The num_extensions must match the length of the array.
      */
@@ -588,18 +598,12 @@ AWS_HTTP_API
 void aws_http_message_set_body_stream(struct aws_http_message *message, struct aws_input_stream *body_stream);
 
 /**
- * Submit a chunk of data to a stream for writing to an outbound HTTP/1.1 connection using chunked transfer encoding.
- * Note: The stream does not take ownership of allocated resources in the chunk, if any. The caller is responsible
- * for managing these resources. The data inside the chunk is expected not to be modified by the caller until
- * the on_complete callback inside the chunk structure is invoked (if provided by the caller). Upon invocation of
- * on_complete, the caller may release or modify structures in the chunk.
- * On successful submission of the chunk to the stream, AWS_OP_SUCCESS is returned and AWS_OP_ERR otherwise.
+ * Submit a stream of data for writing to an outbound HTTP/1.1 stream using chunked transfer encoding.
+ * Note: Everything except the input stream and http stream may be cleaned up after this call returns.
+ * Upon invocation of on_complete, the caller may release or modify the data stream.
+ * On successful submission of the data stream to the HTTP stream, AWS_OP_SUCCESS is returned and AWS_OP_ERR otherwise.
  */
-AWS_HTTP_API int aws_http1_stream_write_chunk(
-    struct aws_allocator *allocator,
-    struct aws_http_stream *stream,
-    struct aws_input_stream *chunk_data,
-    struct aws_http1_chunk_options *options);
+AWS_HTTP_API int aws_http1_stream_write_chunk(struct aws_http_stream *stream, struct aws_http1_chunk_options *options);
 
 /**
  * Get the message's aws_http_headers.

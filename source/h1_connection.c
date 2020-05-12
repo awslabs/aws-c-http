@@ -846,30 +846,6 @@ static void s_on_channel_write_complete(
     aws_channel_schedule_task_now(channel, &connection->outgoing_stream_task);
 }
 
-static bool s_populate_outgoing_buffer(const struct h1_connection *connection, struct aws_h1_stream *outgoing_stream) {
-    if (AWS_H1_ENCODER_STATE_CHUNK_INIT == connection->thread_data.encoder.stream_state) {
-        struct aws_http1_stream_chunk **body_chunk = &connection->thread_data.encoder.message->body_chunk;
-        return aws_h1_stream_get_next_chunk(&outgoing_stream->body_chunks, body_chunk);
-    }
-    return true;
-}
-
-/* in the case of a Content-Length stream, the body is sent completely in one message, when less than the
- * message data capacity, or a new message needs to be obtained to finish sending the body.
- * For the chunked stream, there may be multiple chunks which fit in a single message.
- * Therefore, when deciding if we need another chunk on the same message, the control flow
- * takes into account if the stream is chunked, and if so, it can loop, otherwise, exit after one iteration. */
-static bool s_should_process_body(
-    const struct h1_connection *connection,
-    const struct aws_io_message *msg,
-    struct aws_h1_stream *outgoing_stream) {
-    AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: checking if should process body", (void *)&connection->base);
-    return aws_h1_encoder_is_message_in_progress(&connection->thread_data.encoder) &&
-           connection->thread_data.encoder.message->has_chunked_encoding_header &&
-           msg->message_data.capacity > msg->message_data.len &&
-           s_populate_outgoing_buffer(connection, outgoing_stream);
-}
-
 static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
     if (status != AWS_TASK_STATUS_RUN_READY) {
         return;
@@ -914,16 +890,15 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
     msg->on_completion = s_on_channel_write_complete;
     msg->user_data = connection;
 
-    do {
-        /*
-         * Fill message data from the outgoing stream.
-         * Note that we might be resuming work on a stream from a previous run of this task.
-         */
-        if (AWS_OP_SUCCESS != aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
-            /* Error sending data, abandon ship */
-            goto error;
-        }
-    } while (s_should_process_body(connection, msg, outgoing_stream));
+    /*
+     * Fill message data from the outgoing stream.
+     * Note that we might be resuming work on a stream from a previous run of this task.
+     */
+    connection->thread_data.encoder.message->body_chunks = &outgoing_stream->body_chunks;
+    if (AWS_OP_SUCCESS != aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
+        /* Error sending data, abandon ship */
+        goto error;
+    }
 
     if (msg->message_data.len > 0) {
         AWS_LOGF_TRACE(
@@ -963,6 +938,13 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
 error:
     if (msg) {
         aws_mem_release(msg->allocator, msg);
+    }
+
+    /* The rest of the pending chunks will be taken care of when the http stream is destroyed.
+     * Only need to clean up the current one being processed here.*/
+    struct aws_http1_stream_chunk *cur_chunk = connection->thread_data.encoder.message->body_chunk;
+    if (cur_chunk) {
+        aws_h1_stream_release_chunk(cur_chunk);
     }
 
     s_shutdown_due_to_error(connection, aws_last_error());

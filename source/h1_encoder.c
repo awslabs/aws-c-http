@@ -69,15 +69,20 @@ static int s_scan_outgoing_headers(
                     return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
                 }
                 struct aws_byte_cursor trimmed_value = aws_strutil_trim_http_whitespace(header.value);
-                struct aws_byte_cursor chunked = aws_byte_cursor_from_c_str("chunked");
-                struct aws_byte_cursor chunked_match;
-                AWS_ZERO_STRUCT(chunked_match);
-                if (AWS_OP_SUCCESS == aws_byte_cursor_find_exact(&trimmed_value, &chunked, &chunked_match)) {
-                    has_body_headers = true;
-                    has_body_stream = true;
-                    encoder_message->has_chunked_encoding_header = true;
+                struct aws_byte_cursor chunked = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked");
+                if (trimmed_value.len >= chunked.len) {
+                    size_t expected_chunked_value_location = trimmed_value.len - chunked.len;
+                    aws_byte_cursor_advance(&trimmed_value, expected_chunked_value_location);
+                    encoder_message->has_chunked_encoding_header =
+                        aws_byte_cursor_eq_ignore_case(&chunked, &trimmed_value);
+                    has_body_headers = encoder_message->has_chunked_encoding_header;
+                    has_body_stream = encoder_message->has_chunked_encoding_header;
                 }
-            }
+                if (!encoder_message->has_chunked_encoding_header) {
+                    AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Transfer-Encoding header must end with \"chunked\"");
+                    return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+                }
+            } break;
             default:
                 break;
         }
@@ -148,6 +153,8 @@ int aws_h1_encoder_message_init_from_request(
 
     message->body = aws_http_message_get_body_stream(request);
     message->body_chunk = NULL;
+    message->body_chunks = NULL;
+    message->stream_state = AWS_H1_ENCODER_STATE_CHUNK_INIT;
 
     struct aws_byte_cursor method;
     int err = aws_http_message_get_request_method(request, &method);
@@ -422,29 +429,24 @@ static int s_h1_encoder_process_content_length_body(struct aws_byte_buf *dst, st
     return AWS_OP_SUCCESS;
 }
 
-bool write_crlf(struct aws_byte_buf *dst) {
+bool aws_write_crlf(struct aws_byte_buf *dst) {
     AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
     char crlf[CRLF_SIZE] = {'\r', '\n'};
     struct aws_byte_cursor crlf_cursor = aws_byte_cursor_from_array(&crlf, AWS_ARRAY_SIZE(crlf));
     return aws_byte_buf_write_from_whole_cursor(dst, crlf_cursor);
 }
 
-bool write_chunk_size(struct aws_byte_buf *dst, struct aws_input_stream *chunk) {
+bool aws_write_chunk_size(struct aws_byte_buf *dst, size_t chunk_size) {
     AWS_PRECONDITION(dst);
     AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
-    AWS_PRECONDITION(chunk);
     AWS_PRECONDITION((dst->capacity - dst->len) >= MAX_ASCII_HEX_CHUNK_STR_SIZE);
-    int64_t chunk_size = 0;
-    if (AWS_OP_SUCCESS != aws_input_stream_get_length(chunk, &chunk_size)) {
-        return false;
-    }
     char ascii_hex_chunk_size_str[MAX_ASCII_HEX_CHUNK_STR_SIZE];
     AWS_ZERO_ARRAY(ascii_hex_chunk_size_str);
     snprintf(ascii_hex_chunk_size_str, sizeof(ascii_hex_chunk_size_str), "%zX", chunk_size);
     return aws_byte_buf_write_from_whole_cursor(dst, aws_byte_cursor_from_c_str(ascii_hex_chunk_size_str));
 }
 
-bool write_chunk_extension(struct aws_byte_buf *dst, struct aws_http1_chunk_extension *chunk_extension) {
+bool aws_write_chunk_extension(struct aws_byte_buf *dst, struct aws_http1_chunk_extension *chunk_extension) {
     AWS_PRECONDITION(chunk_extension);
     AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
     bool wrote_all = true;
@@ -474,12 +476,7 @@ static bool s_chunk_line_state(struct aws_byte_buf *dst, struct aws_h1_encoder *
     AWS_PRECONDITION(encoder->message->body_chunk);
     AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
     AWS_PRECONDITION(aws_byte_buf_is_valid(&encoder->message->body_chunk->chunk_line));
-    bool completely_written = s_fill_byte_buffer(dst, &encoder->message->body_chunk->chunk_line_cursor);
-    if (completely_written) {
-        aws_byte_buf_clean_up(&encoder->message->body_chunk->chunk_line);
-        return true;
-    }
-    return false;
+    return s_fill_byte_buffer(dst, &encoder->message->body_chunk->chunk_line_cursor);
 }
 
 static bool s_chunk_payload_state(struct aws_byte_buf *dst, struct aws_h1_encoder *encoder, int *aws_op_result) {
@@ -519,47 +516,69 @@ static bool s_chunk_payload_state(struct aws_byte_buf *dst, struct aws_h1_encode
         return false;
     }
 
+    /* In the case where it is not end of stream, that means that the input stream doesn't have data available. */
     if (status.is_end_of_stream) {
-        return write_crlf(dst);
-    } else {
-        ENCODER_LOG(ERROR, encoder, "Wrote zero body bytes to message, but end of stream marker not set");
+        return aws_write_crlf(dst);
     }
     return false;
+}
+
+void aws_h1_stream_release_chunk(struct aws_http1_stream_chunk *chunk) {
+    AWS_PRECONDITION(chunk);
+    /* grab the allocator pointer invoking the on_complete callback as the caller may free the stream. */
+    struct aws_allocator *allocator = chunk->data->allocator;
+    if (NULL != chunk->on_complete) {
+        chunk->on_complete(chunk->user_data);
+    }
+    if (NULL != chunk->chunk_line.buffer) {
+        aws_byte_buf_clean_up(&chunk->chunk_line);
+    }
+    aws_mem_release(allocator, chunk);
+}
+
+static void s_clean_up_current_chunk(struct aws_h1_encoder *encoder) {
+    AWS_PRECONDITION(encoder);
+    AWS_PRECONDITION(encoder->message);
+    AWS_PRECONDITION(encoder->message->body_chunk);
+    aws_h1_stream_release_chunk(encoder->message->body_chunk);
+    encoder->message->body_chunk = NULL;
 }
 
 static bool s_end_chunk_state(struct aws_h1_encoder *encoder, int *aws_op_result) {
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(encoder->message);
     AWS_PRECONDITION(encoder->message->body_chunk);
-    int64_t original_bytes_in_stream = 0;
-    if (aws_input_stream_get_length(encoder->message->body_chunk->data, &original_bytes_in_stream)) {
+    /* In the event that the caller submitted a chunk size different than what was in the stream.
+     * set the error and return to terminate the transmission.
+     */
+    size_t chunk_size = encoder->message->body_chunk->data_size;
+    /* An empty stream signal end of transmission. */
+    bool terminate_transmission = 0 == chunk_size;
+    if (AWS_UNLIKELY(encoder->progress_bytes != chunk_size)) {
         ENCODER_LOGF(
-            TRACE,
+            ERROR,
             encoder,
-            "Failed to get original length of body stream, error %d (%s)",
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
-        *aws_op_result = AWS_OP_ERR;
-        return false;
+            "Chunk size does not match the data available to send. Expected %zu but sent %zu",
+            chunk_size,
+            encoder->progress_bytes);
+        *aws_op_result = aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+        /* Setting this value here will cause the client to terminate the stream without sending any more data. */
+        terminate_transmission = true;
     }
-
-    struct aws_http1_stream_chunk *chunk = encoder->message->body_chunk;
-    if (NULL != chunk->on_complete) {
-        chunk->on_complete(chunk->user_data);
-    }
-    aws_mem_release(chunk->allocator, chunk);
-    encoder->message->body_chunk = NULL;
-    return 0 != original_bytes_in_stream;
+    s_clean_up_current_chunk(encoder);
+    return terminate_transmission;
 }
 
 static int s_transfer_encode_chunk(struct aws_byte_buf *dst, struct aws_h1_encoder *encoder) {
     AWS_PRECONDITION(AWS_H1_ENCODER_STATE_BODY == encoder->state);
-    AWS_PRECONDITION(AWS_H1_ENCODER_STATE_CHUNK_TERMINATED != encoder->stream_state);
+    AWS_PRECONDITION(encoder->message);
+    AWS_PRECONDITION(AWS_H1_ENCODER_STATE_CHUNK_TERMINATED != encoder->message->stream_state);
     int aws_op_result = AWS_OP_SUCCESS;
-    switch (encoder->stream_state) {
+    switch (encoder->message->stream_state) {
         case AWS_H1_ENCODER_STATE_CHUNK_INIT: {
             ENCODER_LOG(TRACE, encoder, "Transfer-encoding chunked state: init");
-            encoder->stream_state = AWS_H1_ENCODER_STATE_CHUNK_LINE;
+            encoder->progress_bytes = 0;
+            encoder->message->stream_state = AWS_H1_ENCODER_STATE_CHUNK_LINE;
             goto aws_h1_encoder_state_chunk_line;
         }
         aws_h1_encoder_state_chunk_line:
@@ -568,7 +587,7 @@ static int s_transfer_encode_chunk(struct aws_byte_buf *dst, struct aws_h1_encod
             if (!s_chunk_line_state(dst, encoder)) {
                 return aws_op_result;
             }
-            encoder->stream_state = AWS_H1_ENCODER_STATE_CHUNK_PAYLOAD;
+            encoder->message->stream_state = AWS_H1_ENCODER_STATE_CHUNK_PAYLOAD;
             goto aws_h1_encoder_state_chunk_payload;
         }
         aws_h1_encoder_state_chunk_payload:
@@ -578,7 +597,7 @@ static int s_transfer_encode_chunk(struct aws_byte_buf *dst, struct aws_h1_encod
             if (!full_chunk_written) {
                 return aws_op_result;
             }
-            encoder->stream_state = AWS_H1_ENCODER_STATE_CHUNK_END;
+            encoder->message->stream_state = AWS_H1_ENCODER_STATE_CHUNK_END;
             goto aws_h1_encoder_state_chunk_end;
         }
         aws_h1_encoder_state_chunk_end:
@@ -587,15 +606,16 @@ static int s_transfer_encode_chunk(struct aws_byte_buf *dst, struct aws_h1_encod
             /* In the case that false is returned, the stream is finished either because of error
              * or because the caller sent the end of stream signal, which is a 0 length chunk.
              * Otherwise, the state machine resets back to the init state to receive the next chunk in the stream. */
-            if (!s_end_chunk_state(encoder, &aws_op_result)) {
+            bool stream_terminated = s_end_chunk_state(encoder, &aws_op_result);
+            if (stream_terminated) {
                 /* Sending an empty stream is the termination signal */
                 encoder->state++;
                 encoder->progress_bytes = 0;
-                encoder->stream_state = AWS_H1_ENCODER_STATE_CHUNK_TERMINATED;
+                encoder->message->stream_state = AWS_H1_ENCODER_STATE_CHUNK_TERMINATED;
                 ENCODER_LOG(TRACE, encoder, "Transfer-encoding chunked state: terminated")
                 return aws_op_result;
             }
-            encoder->stream_state = AWS_H1_ENCODER_STATE_CHUNK_INIT;
+            encoder->message->stream_state = AWS_H1_ENCODER_STATE_CHUNK_INIT;
             break;
         }
         default:
@@ -604,30 +624,112 @@ static int s_transfer_encode_chunk(struct aws_byte_buf *dst, struct aws_h1_encod
     return AWS_OP_SUCCESS;
 }
 
-void aws_h1_lock_stream_list(struct aws_http1_chunks *body_chunks) {
+void aws_h1_lock_chunked_list(struct aws_http1_chunks *body_chunks) {
+    AWS_PRECONDITION(body_chunks);
     int err = aws_mutex_lock(&body_chunks->lock);
     AWS_ASSERT(!err);
     (void)err;
 }
 
-void aws_h1_unlock_stream_list(struct aws_http1_chunks *body_chunks) {
+void aws_h1_unlock_chunked_list(struct aws_http1_chunks *body_chunks) {
+    AWS_PRECONDITION(body_chunks);
     int err = aws_mutex_unlock(&body_chunks->lock);
     AWS_ASSERT(!err);
     (void)err;
 }
 
-static int s_h1_encoder_process_chunked_encoding_body(struct aws_byte_buf *dst, struct aws_h1_encoder *encoder) {
-    if (NULL == encoder->message->body_chunk) {
-        return AWS_OP_SUCCESS;
+bool aws_h1_get_next_stream_chunk(struct aws_http1_chunks *body_chunks, struct aws_http1_stream_chunk **chunk_out) {
+    AWS_PRECONDITION(body_chunks);
+    AWS_PRECONDITION(chunk_out);
+    bool has_next_chunk = true;
+    /* Begin critical section */
+    aws_h1_lock_chunked_list(body_chunks);
+    if (!aws_linked_list_is_valid(&body_chunks->chunk_list)) {
+        has_next_chunk = false;
+        goto release_lock;
     }
-    if (AWS_UNLIKELY(AWS_OP_SUCCESS != s_transfer_encode_chunk(dst, encoder))) {
-        ENCODER_LOGF(
-            ERROR,
-            encoder,
-            "Failed to encode chunk, error %d (%s)",
-            aws_last_error(),
-            aws_error_name(aws_last_error()));
+    if (aws_linked_list_empty(&body_chunks->chunk_list)) {
+        *chunk_out = NULL;
+        body_chunks->paused = true;
+        has_next_chunk = false;
+    } else {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&body_chunks->chunk_list);
+        *chunk_out = AWS_CONTAINER_OF(node, struct aws_http1_stream_chunk, node);
+        aws_linked_list_node_reset(node);
+        AWS_POSTCONDITION(chunk_out);
+    }
+release_lock:
+    aws_h1_unlock_chunked_list(body_chunks);
+    /* End critical section */
+    return has_next_chunk;
+}
+
+static size_t s_calculate_chunk_line_size(struct aws_http1_chunk_options *options) {
+    size_t chunk_line_size = MAX_ASCII_HEX_CHUNK_STR_SIZE + CRLF_SIZE;
+    for (size_t i = 0; i < options->num_extensions; ++i) {
+        struct aws_http1_chunk_extension *chunk_extension = options->extensions + i;
+        chunk_line_size += sizeof(';');
+        chunk_line_size += chunk_extension->key.len;
+        chunk_line_size += sizeof('=');
+        chunk_line_size += chunk_extension->value.len;
+    }
+    return chunk_line_size;
+}
+
+static bool s_populate_chunk_line_buffer(struct aws_byte_buf *chunk_line, struct aws_http1_chunk_options *options) {
+    bool wrote_chunk_line = true;
+    wrote_chunk_line &= aws_write_chunk_size(chunk_line, options->chunk_data_size);
+    for (size_t i = 0; i < options->num_extensions; ++i) {
+        wrote_chunk_line &= aws_write_chunk_extension(chunk_line, options->extensions + i);
+    }
+    wrote_chunk_line &= aws_write_crlf(chunk_line);
+    return wrote_chunk_line;
+}
+
+int aws_chunk_line_from_options(struct aws_http1_chunk_options *options, struct aws_byte_buf *chunk_line) {
+    size_t chunk_line_size = s_calculate_chunk_line_size(options);
+    if (AWS_OP_SUCCESS != aws_byte_buf_init(chunk_line, options->chunk_data->allocator, chunk_line_size)) {
         return AWS_OP_ERR;
+    }
+    if (!s_populate_chunk_line_buffer(chunk_line, options)) {
+        /* The caller will free the chunk, which will free the chunk line in the process */
+        return AWS_OP_ERR;
+    }
+    return AWS_OP_SUCCESS;
+}
+
+static bool s_populate_outgoing_buffer(const struct aws_h1_encoder *encoder, struct aws_http1_chunks *body_chunks) {
+    if (AWS_H1_ENCODER_STATE_CHUNK_INIT == encoder->message->stream_state) {
+        struct aws_http1_stream_chunk **body_chunk = &encoder->message->body_chunk;
+        return aws_h1_get_next_stream_chunk(body_chunks, body_chunk);
+    }
+    return true;
+}
+
+/* in the case of a Content-Length stream, the body is sent completely in one message, when less than the
+ * message data capacity, or a new message needs to be obtained to finish sending the body.
+ * For the chunked stream, there may be multiple chunks which fit in a single message.
+ * Therefore, when deciding if we need another chunk on the same message, the control flow
+ * takes into account if the stream is chunked, and if so, it can loop, otherwise, exit after one iteration. */
+static bool s_should_process_body(const struct aws_h1_encoder *encoder, const struct aws_byte_buf *dst) {
+    return aws_h1_encoder_is_message_in_progress(encoder) && encoder->message->has_chunked_encoding_header &&
+           dst->capacity > dst->len && s_populate_outgoing_buffer(encoder, encoder->message->body_chunks);
+}
+
+static int s_h1_encoder_process_chunked_encoding_body(struct aws_byte_buf *dst, struct aws_h1_encoder *encoder) {
+    while (s_should_process_body(encoder, dst)) {
+        if (NULL == encoder->message->body_chunk) {
+            return AWS_OP_SUCCESS;
+        }
+        if (AWS_UNLIKELY(AWS_OP_SUCCESS != s_transfer_encode_chunk(dst, encoder))) {
+            ENCODER_LOGF(
+                ERROR,
+                encoder,
+                "Failed to encode chunk, error %d (%s)",
+                aws_last_error(),
+                aws_error_name(aws_last_error()));
+            return AWS_OP_ERR;
+        }
     }
     /* return success to schedule the rest of the transmission on the next message */
     return AWS_OP_SUCCESS;

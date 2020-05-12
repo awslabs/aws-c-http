@@ -568,17 +568,12 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
     message->body_stream = body_stream;
 }
 
-int aws_http1_stream_write_chunk(
-    struct aws_allocator *allocator,
-    struct aws_http_stream *stream,
-    struct aws_input_stream *chunk_data,
-    struct aws_http1_chunk_options *options) {
+int aws_http1_stream_write_chunk(struct aws_http_stream *stream, struct aws_http1_chunk_options *options) {
     AWS_PRECONDITION(stream);
     AWS_PRECONDITION(stream->vtable);
     AWS_PRECONDITION(stream->vtable->http1_write_chunk);
-    AWS_PRECONDITION(chunk_data);
     AWS_PRECONDITION(options);
-    return stream->vtable->http1_write_chunk(allocator, stream, chunk_data, options);
+    return stream->vtable->http1_write_chunk(stream, options);
 }
 
 struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_message *message) {
