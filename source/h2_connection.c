@@ -224,6 +224,15 @@ static struct aws_h2_connection *s_connection_new(
     size_t initial_window_size,
     bool server) {
 
+    if (initial_window_size > AWS_H2_WINDOW_UPDATE_MAX) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "Initial window size is too big for HTTP/2 connection, HTTP/2 connection requires flow-control window size "
+            "be not greater than 2147483647, but we got %zu",
+            initial_window_size);
+        return NULL;
+    }
+
     struct aws_h2_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct aws_h2_connection));
     if (!connection) {
         return NULL;
