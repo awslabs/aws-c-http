@@ -88,15 +88,15 @@ static int s_aws_h1_stream_write_chunk(struct aws_http_stream *stream_base, stru
             aws_error_name(aws_last_error()));
         return AWS_OP_ERR;
     }
+    if (AWS_OP_SUCCESS != aws_chunk_line_from_options(options, &chunk->chunk_line)) {
+        s_clean_up_body_chunk(&chunk);
+        return AWS_OP_ERR;
+    }
     chunk->data = options->chunk_data;
     chunk->data_size = options->chunk_data_size;
     chunk->on_complete = options->on_complete;
     chunk->user_data = options->user_data;
     aws_linked_list_node_reset(&chunk->node);
-    if (AWS_OP_SUCCESS != aws_chunk_line_from_options(options, &chunk->chunk_line)) {
-        s_clean_up_body_chunk(&chunk);
-        return AWS_OP_ERR;
-    }
     chunk->chunk_line_cursor = aws_byte_cursor_from_buf(&chunk->chunk_line);
 
     /* Begin critical section */

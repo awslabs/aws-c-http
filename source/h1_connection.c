@@ -870,7 +870,7 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         return;
     }
 
-    /* The s_outgoing_stream_task() will be resumed when a new chunk is added and the stream is paused.
+    /* The s_outgoing_stream_task() will be unpaused when a new chunk is added and the stream is paused.
      * See: h1_connection.c:aws_h1_stream_schedule_outgoing_stream_task()
      * and h1_stream.c:s_aws_h1_stream_write_chunk(). */
     if (aws_h1_stream_is_paused(outgoing_stream)) {

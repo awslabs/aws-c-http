@@ -720,7 +720,9 @@ int aws_chunk_line_from_options(struct aws_http1_chunk_options *options, struct 
     if (AWS_OP_SUCCESS != aws_byte_buf_init(chunk_line, options->chunk_data->allocator, chunk_line_size)) {
         return AWS_OP_ERR;
     }
-    AWS_ASSERT(s_populate_chunk_line_buffer(chunk_line, options));
+    if (AWS_UNLIKELY(!s_populate_chunk_line_buffer(chunk_line, options))) {
+        AWS_ASSERT(0);
+    }
     return AWS_OP_SUCCESS;
 }
 
