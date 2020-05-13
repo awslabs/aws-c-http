@@ -110,8 +110,8 @@ static int s_scan_outgoing_headers(
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
     }
 
-    /* Per RFC 2656 (https://tools.ietf.org/html/rfc2616#section-4.4), if both the Content-Length and Transfer-Encoding
-     * header are defined, the client should not send the request. */
+    /* Per RFC 7230: A sender MUST NOT send a Content-Length header field in any message that contains a
+     * Transfer-Encoding header field. */
     if (encoder_message->has_chunked_encoding_header && has_content_length_header) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_STREAM, "id=static: Both Content-Length and Transfer-Encoding are set. Only one may be used");
