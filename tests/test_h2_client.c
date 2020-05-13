@@ -2280,7 +2280,7 @@ TEST_CASE(h2_client_stream_err_received_data_flow_control) {
     AWS_ZERO_STRUCT(options);
     struct aws_h2_frame_setting settings[1];
     settings[0].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
-    settings[0].value = window_size;
+    settings[0].value = (uint32_t)window_size;
     options.num_settings = 1;
     options.settings_array = settings;
 
