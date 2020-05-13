@@ -76,8 +76,10 @@ static int s_scan_outgoing_headers(
                 while (aws_byte_cursor_next_split(&header.value, ',', &substr)) {
                     struct aws_byte_cursor trimmed = aws_strutil_trim_http_whitespace(substr);
                     if (0 == trimmed.len) {
-                        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Transfer-Encoding header whitespace only "
-                                                           "comma delimited header value");
+                        AWS_LOGF_ERROR(
+                            AWS_LS_HTTP_STREAM,
+                            "id=static: Transfer-Encoding header whitespace only "
+                            "comma delimited header value");
                         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
                     }
                     if (encoder_message->has_chunked_encoding_header) {
@@ -105,8 +107,7 @@ static int s_scan_outgoing_headers(
     }
 
     if (!encoder_message->has_chunked_encoding_header && has_transfer_encoding_header) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM, "id=static: Transfer-Encoding header must include \"chunked\"");
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Transfer-Encoding header must include \"chunked\"");
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
     }
 
@@ -120,8 +121,9 @@ static int s_scan_outgoing_headers(
 
     if (encoder_message->has_chunked_encoding_header && has_body_stream) {
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM, "id=static: Both Transfer-Encoding chunked header and body stream is set. "
-                                "chunked data must use the chunk API to write the body stream.");
+            AWS_LS_HTTP_STREAM,
+            "id=static: Both Transfer-Encoding chunked header and body stream is set. "
+            "chunked data must use the chunk API to write the body stream.");
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_BODY_STREAM);
     }
 

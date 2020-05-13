@@ -189,9 +189,8 @@ struct aws_h1_stream *aws_h1_stream_new_request(
     stream->base.client_data->response_status = AWS_HTTP_STATUS_CODE_UNKNOWN;
 
     /* Validate request and cache info that the encoder will eventually need */
-    int err =
-        aws_h1_encoder_message_init_from_request(
-            &stream->encoder_message, client_connection->alloc, options->request, &stream->body_chunks);
+    int err = aws_h1_encoder_message_init_from_request(
+        &stream->encoder_message, client_connection->alloc, options->request, &stream->body_chunks);
     if (err) {
         goto error;
     }
