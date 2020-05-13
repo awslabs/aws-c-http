@@ -870,6 +870,9 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         return;
     }
 
+    /* The s_outgoing_stream_task() will be resumed when a new chunk is added and the stream is paused.
+     * See: h1_connection.c:aws_h1_stream_schedule_outgoing_stream_task()
+     * and h1_stream.c:s_aws_h1_stream_write_chunk(). */
     if (aws_h1_stream_is_paused(outgoing_stream)) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Pausing outgoing stream task", (void *)outgoing_stream);
         return;
@@ -894,7 +897,6 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
      * Fill message data from the outgoing stream.
      * Note that we might be resuming work on a stream from a previous run of this task.
      */
-    connection->thread_data.encoder.message->body_chunks = &outgoing_stream->body_chunks;
     if (AWS_OP_SUCCESS != aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
         /* Error sending data, abandon ship */
         goto error;
@@ -939,14 +941,6 @@ error:
     if (msg) {
         aws_mem_release(msg->allocator, msg);
     }
-
-    /* The rest of the pending chunks will be taken care of when the http stream is destroyed.
-     * Only need to clean up the current one being processed here.*/
-    struct aws_http1_stream_chunk *cur_chunk = connection->thread_data.encoder.message->body_chunk;
-    if (cur_chunk) {
-        aws_h1_stream_release_chunk(cur_chunk);
-    }
-
     s_shutdown_due_to_error(connection, aws_last_error());
 }
 

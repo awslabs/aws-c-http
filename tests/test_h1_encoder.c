@@ -70,7 +70,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_content_length_put_request_headers) {
     aws_http_message_set_body_stream(request, body_stream);
 
     struct aws_h1_encoder_message encoder_message;
-    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request);
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
 
     ASSERT_FALSE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -91,8 +91,6 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_put_request_headers) {
     aws_h1_encoder_init(&encoder, allocator);
 
     /* request to send - we won't actually send it, we want to validate headers are set correctly. */
-    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
-    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
 
     struct aws_http_header headers[] = {
         {
@@ -105,16 +103,52 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_put_request_headers) {
     ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
-    aws_http_message_set_body_stream(request, body_stream);
 
     struct aws_h1_encoder_message encoder_message;
-    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request);
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
 
     ASSERT_TRUE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
     ASSERT_UINT_EQUALS(0, encoder_message.content_length);
 
-    aws_input_stream_destroy(body_stream);
+    aws_http_message_destroy(request);
+    aws_h1_encoder_message_clean_up(&encoder_message);
+    aws_h1_encoder_clean_up(&encoder);
+    s_test_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_put_request_multiple_te_headers) {
+    (void)ctx;
+    s_test_init(allocator);
+    struct aws_h1_encoder encoder;
+    aws_h1_encoder_init(&encoder, allocator);
+
+    /* request to send - we won't actually send it, we want to validate headers are set correctly. */
+
+    struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("gzip"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked"),
+        },
+    };
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+
+    struct aws_h1_encoder_message encoder_message;
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
+
+    ASSERT_TRUE(encoder_message.has_chunked_encoding_header);
+    ASSERT_FALSE(encoder_message.has_connection_close_header);
+    ASSERT_UINT_EQUALS(0, encoder_message.content_length);
+
     aws_http_message_destroy(request);
     aws_h1_encoder_message_clean_up(&encoder_message);
     aws_h1_encoder_clean_up(&encoder);
@@ -129,13 +163,11 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_put_request_headers_ca
     aws_h1_encoder_init(&encoder, allocator);
 
     /* request to send - we won't actually send it, we want to validate headers are set correctly. */
-    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
-    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
 
     struct aws_http_header headers[] = {
         {
             .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("traNsfeR-EncODIng"),
-            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("cHuNkEd"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked"),
         },
     };
 
@@ -143,16 +175,14 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_put_request_headers_ca
     ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
-    aws_http_message_set_body_stream(request, body_stream);
 
     struct aws_h1_encoder_message encoder_message;
-    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request);
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
 
     ASSERT_TRUE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
     ASSERT_UINT_EQUALS(0, encoder_message.content_length);
 
-    aws_input_stream_destroy(body_stream);
     aws_http_message_destroy(request);
     aws_h1_encoder_message_clean_up(&encoder_message);
     aws_h1_encoder_clean_up(&encoder);
@@ -184,13 +214,90 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_not_chunked_put_request_header
     aws_http_message_set_body_stream(request, body_stream);
 
     struct aws_h1_encoder_message encoder_message;
-    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request);
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
 
     ASSERT_FALSE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
     ASSERT_UINT_EQUALS(0, encoder_message.content_length);
 
     aws_input_stream_destroy(body_stream);
+    aws_http_message_destroy(request);
+    aws_h1_encoder_message_clean_up(&encoder_message);
+    aws_h1_encoder_clean_up(&encoder);
+    s_test_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_set_body_stream_errors) {
+    (void)ctx;
+    s_test_init(allocator);
+    struct aws_h1_encoder encoder;
+    aws_h1_encoder_init(&encoder, allocator);
+
+    /* request to send - we won't actually send it, we want to validate headers are set correctly. */
+    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
+
+    struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked"),
+        },
+    };
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+    /* Setting the body stream should cause an error */
+    aws_http_message_set_body_stream(request, body_stream);
+
+    struct aws_h1_encoder_message encoder_message;
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
+
+    ASSERT_FALSE(encoder_message.has_chunked_encoding_header);
+    ASSERT_FALSE(encoder_message.has_connection_close_header);
+    ASSERT_UINT_EQUALS(0, encoder_message.content_length);
+
+    aws_input_stream_destroy(body_stream);
+    aws_http_message_destroy(request);
+    aws_h1_encoder_message_clean_up(&encoder_message);
+    aws_h1_encoder_clean_up(&encoder);
+    s_test_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_not_ending_in_chunked_put_request_headers) {
+    (void)ctx;
+    s_test_init(allocator);
+    struct aws_h1_encoder encoder;
+    aws_h1_encoder_init(&encoder, allocator);
+
+    /* request to send - we won't actually send it, we want to validate headers are set correctly. */
+
+    struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("gzip"),
+        },
+    };
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
+    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+
+    struct aws_h1_encoder_message encoder_message;
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
+
+    ASSERT_FALSE(encoder_message.has_chunked_encoding_header);
+    ASSERT_FALSE(encoder_message.has_connection_close_header);
+    ASSERT_UINT_EQUALS(0, encoder_message.content_length);
+
     aws_http_message_destroy(request);
     aws_h1_encoder_message_clean_up(&encoder_message);
     aws_h1_encoder_clean_up(&encoder);
@@ -205,13 +312,11 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_multiple_put_request_h
     aws_h1_encoder_init(&encoder, allocator);
 
     /* request to send - we won't actually send it, we want to validate headers are set correctly. */
-    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
-    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
 
     struct aws_http_header headers[] = {
         {
             .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
-            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("gzip;chunked"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("gzip, chunked"),
         },
     };
 
@@ -219,16 +324,14 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_multiple_put_request_h
     ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
-    aws_http_message_set_body_stream(request, body_stream);
 
     struct aws_h1_encoder_message encoder_message;
-    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request);
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
 
     ASSERT_TRUE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
     ASSERT_UINT_EQUALS(0, encoder_message.content_length);
 
-    aws_input_stream_destroy(body_stream);
     aws_http_message_destroy(request);
     aws_h1_encoder_message_clean_up(&encoder_message);
     aws_h1_encoder_clean_up(&encoder);
@@ -261,13 +364,12 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_and_content_length_put
     ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
-    aws_http_message_set_body_stream(request, body_stream);
 
     struct aws_h1_encoder_message encoder_message;
 
     /* Per RFC 2656 (https://tools.ietf.org/html/rfc2616#section-4.4), if both the Content-Length and Transfer-Encoding
      * header are defined, the client should not send the request. */
-    ASSERT_INT_EQUALS(AWS_OP_ERR, aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request));
+    ASSERT_INT_EQUALS(AWS_OP_ERR, aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL));
 
     aws_input_stream_destroy(body_stream);
     aws_http_message_destroy(request);
@@ -284,8 +386,6 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_not_final_encoding_put
     aws_h1_encoder_init(&encoder, allocator);
 
     /* request to send - we won't actually send it, we want to validate headers are set correctly. */
-    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
-    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
 
     struct aws_http_header headers[] = {
         {
@@ -298,15 +398,13 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_not_final_encoding_put
     ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
-    aws_http_message_set_body_stream(request, body_stream);
 
     struct aws_h1_encoder_message encoder_message;
 
     /* Per RFC 2656 (https://tools.ietf.org/html/rfc2616#section-4.4), if both the Content-Length and Transfer-Encoding
      * header are defined, the client should not send the request. */
-    ASSERT_INT_EQUALS(AWS_OP_ERR, aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request));
+    ASSERT_INT_EQUALS(AWS_OP_ERR, aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL));
 
-    aws_input_stream_destroy(body_stream);
     aws_http_message_destroy(request);
     aws_h1_encoder_message_clean_up(&encoder_message);
     aws_h1_encoder_clean_up(&encoder);

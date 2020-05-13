@@ -33,11 +33,12 @@ static void s_stream_update_window(struct aws_http_stream *stream, size_t increm
     aws_http_connection_update_window(stream->owning_connection, increment_size);
 }
 
-static bool s_body_chunks_init(struct aws_h1_stream *stream) {
+static int s_body_chunks_init(struct aws_h1_stream *stream) {
     AWS_PRECONDITION(stream);
     aws_linked_list_init(&stream->body_chunks.chunk_list);
+    stream->body_chunks.current_chunk = NULL;
     stream->body_chunks.paused = false;
-    return AWS_OP_SUCCESS == aws_mutex_init(&stream->body_chunks.lock);
+    return aws_mutex_init(&stream->body_chunks.lock);
 }
 
 void s_clean_up_body_chunk(struct aws_http1_stream_chunk **chunk) {
@@ -51,10 +52,11 @@ void aws_h1_stream_body_chunks_clean_up(struct aws_h1_stream *stream) {
     if (!stream->body_chunks.lock.initialized) {
         return;
     }
-    struct aws_http1_stream_chunk *chunk = NULL;
-    while (aws_h1_get_next_stream_chunk(&stream->body_chunks, &chunk)) {
-        s_clean_up_body_chunk(&chunk);
-    }
+    do {
+        if (NULL != stream->body_chunks.current_chunk) {
+            s_clean_up_body_chunk(&stream->body_chunks.current_chunk);
+        }
+    } while (aws_h1_populate_current_stream_chunk(&stream->body_chunks));
     aws_mutex_clean_up(&stream->body_chunks.lock);
 }
 
@@ -77,9 +79,15 @@ static int s_aws_h1_stream_write_chunk(struct aws_http_stream *stream_base, stru
     AWS_PRECONDITION(options);
     struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
     const size_t chunk_alloc_size = sizeof(struct aws_http1_stream_chunk);
-    struct aws_http1_stream_chunk *chunk = aws_mem_acquire(options->chunk_data->allocator, chunk_alloc_size);
-    AWS_ASSERT(chunk);
-    AWS_ZERO_STRUCT(*chunk);
+    struct aws_http1_stream_chunk *chunk = aws_mem_calloc(options->chunk_data->allocator, 1, chunk_alloc_size);
+    if (AWS_UNLIKELY(NULL == chunk)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "static: Failed to initialize streamed chunk, error %d (%s).",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
     chunk->data = options->chunk_data;
     chunk->data_size = options->chunk_data_size;
     chunk->on_complete = options->on_complete;
@@ -168,7 +176,7 @@ struct aws_h1_stream *aws_h1_stream_new_request(
         }
     }
 
-    if (AWS_UNLIKELY(!s_body_chunks_init(stream))) {
+    if (AWS_UNLIKELY(AWS_OP_SUCCESS != s_body_chunks_init(stream))) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_STREAM,
             "static: Failed to initialize streamed chunks mutex, error %d (%s).",
@@ -182,7 +190,8 @@ struct aws_h1_stream *aws_h1_stream_new_request(
 
     /* Validate request and cache info that the encoder will eventually need */
     int err =
-        aws_h1_encoder_message_init_from_request(&stream->encoder_message, client_connection->alloc, options->request);
+        aws_h1_encoder_message_init_from_request(
+            &stream->encoder_message, client_connection->alloc, options->request, &stream->body_chunks);
     if (err) {
         goto error;
     }

@@ -38,6 +38,7 @@ static int s_scan_outgoing_headers(
     bool has_body_stream = aws_http_message_get_body_stream(message);
     bool has_body_headers = false;
     bool has_content_length_header = false;
+    bool has_transfer_encoding_header = false;
 
     const size_t num_headers = aws_http_message_get_header_count(message);
     for (size_t i = 0; i < num_headers; ++i) {
@@ -64,23 +65,29 @@ static int s_scan_outgoing_headers(
                 }
             } break;
             case AWS_HTTP_HEADER_TRANSFER_ENCODING: {
+                has_transfer_encoding_header = true;
                 if (0 == header.value.len) {
                     AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Transfer-Encoding must include a valid value");
                     return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
                 }
-                struct aws_byte_cursor trimmed_value = aws_strutil_trim_http_whitespace(header.value);
                 struct aws_byte_cursor chunked = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked");
-                if (trimmed_value.len >= chunked.len) {
-                    size_t expected_chunked_value_location = trimmed_value.len - chunked.len;
-                    aws_byte_cursor_advance(&trimmed_value, expected_chunked_value_location);
-                    encoder_message->has_chunked_encoding_header =
-                        aws_byte_cursor_eq_ignore_case(&chunked, &trimmed_value);
-                    has_body_headers = encoder_message->has_chunked_encoding_header;
-                    has_body_stream = encoder_message->has_chunked_encoding_header;
-                }
-                if (!encoder_message->has_chunked_encoding_header) {
-                    AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Transfer-Encoding header must end with \"chunked\"");
-                    return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+                struct aws_byte_cursor substr;
+                AWS_ZERO_STRUCT(substr);
+                while (aws_byte_cursor_next_split(&header.value, ',', &substr)) {
+                    struct aws_byte_cursor trimmed = aws_strutil_trim_http_whitespace(substr);
+                    if (0 == trimmed.len) {
+                        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Transfer-Encoding header whitespace only "
+                                                           "comma delimited header value");
+                        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+                    }
+                    if (encoder_message->has_chunked_encoding_header) {
+                        AWS_LOGF_ERROR(
+                            AWS_LS_HTTP_STREAM, "id=static: Transfer-Encoding header must end with \"chunked\"");
+                        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+                    }
+                    if (aws_byte_cursor_eq(&trimmed, &chunked)) {
+                        encoder_message->has_chunked_encoding_header = true;
+                    }
                 }
             } break;
             default:
@@ -97,12 +104,25 @@ static int s_scan_outgoing_headers(
         }
     }
 
+    if (!encoder_message->has_chunked_encoding_header && has_transfer_encoding_header) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM, "id=static: Transfer-Encoding header must include \"chunked\"");
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+    }
+
     /* Per RFC 2656 (https://tools.ietf.org/html/rfc2616#section-4.4), if both the Content-Length and Transfer-Encoding
      * header are defined, the client should not send the request. */
     if (encoder_message->has_chunked_encoding_header && has_content_length_header) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_STREAM, "id=static: Both Content-Length and Transfer-Encoding are set. Only one may be used");
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+    }
+
+    if (encoder_message->has_chunked_encoding_header && has_body_stream) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM, "id=static: Both Transfer-Encoding chunked header and body stream is set. "
+                                "chunked data must use the chunk API to write the body stream.");
+        return aws_raise_error(AWS_ERROR_HTTP_INVALID_BODY_STREAM);
     }
 
     if (body_headers_forbidden && has_body_headers) {
@@ -147,13 +167,13 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_mess
 int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
-    const struct aws_http_message *request) {
+    const struct aws_http_message *request,
+    struct aws_http1_chunks *body_chunks) {
 
     AWS_ZERO_STRUCT(*message);
 
     message->body = aws_http_message_get_body_stream(request);
-    message->body_chunk = NULL;
-    message->body_chunks = NULL;
+    message->body_chunks = body_chunks;
     message->stream_state = AWS_H1_ENCODER_STATE_CHUNK_INIT;
 
     struct aws_byte_cursor method;
@@ -473,10 +493,10 @@ static bool s_chunk_line_state(struct aws_byte_buf *dst, struct aws_h1_encoder *
     AWS_PRECONDITION(dst);
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(encoder->message);
-    AWS_PRECONDITION(encoder->message->body_chunk);
+    AWS_PRECONDITION(encoder->message->body_chunks->current_chunk);
     AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
-    AWS_PRECONDITION(aws_byte_buf_is_valid(&encoder->message->body_chunk->chunk_line));
-    return s_fill_byte_buffer(dst, &encoder->message->body_chunk->chunk_line_cursor);
+    AWS_PRECONDITION(aws_byte_buf_is_valid(&encoder->message->body_chunks->current_chunk->chunk_line));
+    return s_fill_byte_buffer(dst, &encoder->message->body_chunks->current_chunk->chunk_line_cursor);
 }
 
 static bool s_chunk_payload_state(struct aws_byte_buf *dst, struct aws_h1_encoder *encoder, int *aws_op_result) {
@@ -484,12 +504,12 @@ static bool s_chunk_payload_state(struct aws_byte_buf *dst, struct aws_h1_encode
     AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(encoder->message);
-    AWS_PRECONDITION(encoder->message->body_chunk);
-    AWS_PRECONDITION(encoder->message->body_chunk->data);
+    AWS_PRECONDITION(encoder->message->body_chunks->current_chunk);
+    AWS_PRECONDITION(encoder->message->body_chunks->current_chunk->data);
     AWS_PRECONDITION(aws_op_result);
 
     size_t prev_len = dst->len;
-    if (AWS_UNLIKELY(aws_input_stream_read(encoder->message->body_chunk->data, dst))) {
+    if (AWS_UNLIKELY(aws_input_stream_read(encoder->message->body_chunks->current_chunk->data, dst))) {
         ENCODER_LOGF(
             TRACE,
             encoder,
@@ -503,9 +523,19 @@ static bool s_chunk_payload_state(struct aws_byte_buf *dst, struct aws_h1_encode
     const int64_t amount_read = dst->len - prev_len;
     encoder->progress_bytes += amount_read;
     ENCODER_LOGF(TRACE, encoder, "Wrote %zu body bytes to message", amount_read);
+    if (encoder->progress_bytes > encoder->message->body_chunks->current_chunk->data_size) {
+        ENCODER_LOGF(
+            ERROR,
+            encoder,
+            "Chunk size written larger than the chunk size. Expected %zu but sent %zu",
+            encoder->message->body_chunks->current_chunk->data_size,
+            encoder->progress_bytes);
+        *aws_op_result = aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
+        return false;
+    }
 
     struct aws_stream_status status;
-    if (AWS_OP_SUCCESS != aws_input_stream_get_status(encoder->message->body_chunk->data, &status)) {
+    if (AWS_OP_SUCCESS != aws_input_stream_get_status(encoder->message->body_chunks->current_chunk->data, &status)) {
         ENCODER_LOGF(
             TRACE,
             encoder,
@@ -539,19 +569,21 @@ void aws_h1_stream_release_chunk(struct aws_http1_stream_chunk *chunk) {
 static void s_clean_up_current_chunk(struct aws_h1_encoder *encoder) {
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(encoder->message);
-    AWS_PRECONDITION(encoder->message->body_chunk);
-    aws_h1_stream_release_chunk(encoder->message->body_chunk);
-    encoder->message->body_chunk = NULL;
+    AWS_PRECONDITION(encoder->message->body_chunks);
+    AWS_PRECONDITION(encoder->message->body_chunks->current_chunk);
+    aws_h1_stream_release_chunk(encoder->message->body_chunks->current_chunk);
+    encoder->message->body_chunks->current_chunk = NULL;
 }
 
 static bool s_end_chunk_state(struct aws_h1_encoder *encoder, int *aws_op_result) {
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(encoder->message);
-    AWS_PRECONDITION(encoder->message->body_chunk);
+    AWS_PRECONDITION(encoder->message->body_chunks);
+    AWS_PRECONDITION(encoder->message->body_chunks->current_chunk);
     /* In the event that the caller submitted a chunk size different than what was in the stream.
      * set the error and return to terminate the transmission.
      */
-    size_t chunk_size = encoder->message->body_chunk->data_size;
+    size_t chunk_size = encoder->message->body_chunks->current_chunk->data_size;
     /* An empty stream signal end of transmission. */
     bool terminate_transmission = 0 == chunk_size;
     if (AWS_UNLIKELY(encoder->progress_bytes != chunk_size)) {
@@ -638,27 +670,22 @@ void aws_h1_unlock_chunked_list(struct aws_http1_chunks *body_chunks) {
     (void)err;
 }
 
-bool aws_h1_get_next_stream_chunk(struct aws_http1_chunks *body_chunks, struct aws_http1_stream_chunk **chunk_out) {
+bool aws_h1_populate_current_stream_chunk(struct aws_http1_chunks *body_chunks) {
     AWS_PRECONDITION(body_chunks);
-    AWS_PRECONDITION(chunk_out);
     bool has_next_chunk = true;
     /* Begin critical section */
     aws_h1_lock_chunked_list(body_chunks);
-    if (!aws_linked_list_is_valid(&body_chunks->chunk_list)) {
-        has_next_chunk = false;
-        goto release_lock;
-    }
+    AWS_ASSERT(aws_linked_list_is_valid(&body_chunks->chunk_list));
+    AWS_ASSERT(NULL == body_chunks->current_chunk);
     if (aws_linked_list_empty(&body_chunks->chunk_list)) {
-        *chunk_out = NULL;
         body_chunks->paused = true;
         has_next_chunk = false;
     } else {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&body_chunks->chunk_list);
-        *chunk_out = AWS_CONTAINER_OF(node, struct aws_http1_stream_chunk, node);
+        body_chunks->current_chunk = AWS_CONTAINER_OF(node, struct aws_http1_stream_chunk, node);
+        AWS_ASSERT(body_chunks->current_chunk);
         aws_linked_list_node_reset(node);
-        AWS_POSTCONDITION(chunk_out);
     }
-release_lock:
     aws_h1_unlock_chunked_list(body_chunks);
     /* End critical section */
     return has_next_chunk;
@@ -691,17 +718,13 @@ int aws_chunk_line_from_options(struct aws_http1_chunk_options *options, struct 
     if (AWS_OP_SUCCESS != aws_byte_buf_init(chunk_line, options->chunk_data->allocator, chunk_line_size)) {
         return AWS_OP_ERR;
     }
-    if (!s_populate_chunk_line_buffer(chunk_line, options)) {
-        /* The caller will free the chunk, which will free the chunk line in the process */
-        return AWS_OP_ERR;
-    }
+    AWS_ASSERT(s_populate_chunk_line_buffer(chunk_line, options));
     return AWS_OP_SUCCESS;
 }
 
-static bool s_populate_outgoing_buffer(const struct aws_h1_encoder *encoder, struct aws_http1_chunks *body_chunks) {
+static bool s_populate_outgoing_buffer(struct aws_h1_encoder *encoder) {
     if (AWS_H1_ENCODER_STATE_CHUNK_INIT == encoder->message->stream_state) {
-        struct aws_http1_stream_chunk **body_chunk = &encoder->message->body_chunk;
-        return aws_h1_get_next_stream_chunk(body_chunks, body_chunk);
+        return aws_h1_populate_current_stream_chunk(encoder->message->body_chunks);
     }
     return true;
 }
@@ -711,14 +734,14 @@ static bool s_populate_outgoing_buffer(const struct aws_h1_encoder *encoder, str
  * For the chunked stream, there may be multiple chunks which fit in a single message.
  * Therefore, when deciding if we need another chunk on the same message, the control flow
  * takes into account if the stream is chunked, and if so, it can loop, otherwise, exit after one iteration. */
-static bool s_should_process_body(const struct aws_h1_encoder *encoder, const struct aws_byte_buf *dst) {
+static bool s_should_process_body(struct aws_h1_encoder *encoder, const struct aws_byte_buf *dst) {
     return aws_h1_encoder_is_message_in_progress(encoder) && encoder->message->has_chunked_encoding_header &&
-           dst->capacity > dst->len && s_populate_outgoing_buffer(encoder, encoder->message->body_chunks);
+           dst->capacity > dst->len && s_populate_outgoing_buffer(encoder);
 }
 
 static int s_h1_encoder_process_chunked_encoding_body(struct aws_byte_buf *dst, struct aws_h1_encoder *encoder) {
     while (s_should_process_body(encoder, dst)) {
-        if (NULL == encoder->message->body_chunk) {
+        if (NULL == encoder->message->body_chunks->current_chunk) {
             return AWS_OP_SUCCESS;
         }
         if (AWS_UNLIKELY(AWS_OP_SUCCESS != s_transfer_encode_chunk(dst, encoder))) {

@@ -32,6 +32,8 @@ struct aws_http1_stream_chunk {
 struct aws_http1_chunks {
     struct aws_mutex lock;
     struct aws_linked_list chunk_list;
+    /* The currently ready for encoding chunk of data. */
+    struct aws_http1_stream_chunk *current_chunk;
     bool paused;
 };
 
@@ -53,8 +55,6 @@ struct aws_h1_encoder_message {
     /* Upon creation, the "head" (everything preceding body) is buffered here. */
     struct aws_byte_buf outgoing_head_buf;
     struct aws_input_stream *body;
-    /* The currently ready for encoding chunk of data. This path is only used for Transfer-Encoding chunked. */
-    struct aws_http1_stream_chunk *body_chunk;
     /* State of the chunked encoding stream state of this message. */
     enum aws_h1_encoder_body_stream_state stream_state;
     /* List of body chunks awaiting writing. */
@@ -92,7 +92,7 @@ bool aws_write_crlf(struct aws_byte_buf *dst);
 
 bool aws_write_chunk_extension(struct aws_byte_buf *dst, struct aws_http1_chunk_extension *chunk_extension);
 
-bool aws_h1_get_next_stream_chunk(struct aws_http1_chunks *body_chunks, struct aws_http1_stream_chunk **chunk_out);
+bool aws_h1_populate_current_stream_chunk(struct aws_http1_chunks *body_chunks);
 
 AWS_EXTERN_C_BEGIN
 
@@ -101,7 +101,8 @@ AWS_HTTP_API
 int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
-    const struct aws_http_message *request);
+    const struct aws_http_message *request,
+    struct aws_http1_chunks *body_chunks);
 
 int aws_h1_encoder_message_init_from_response(
     struct aws_h1_encoder_message *message,
