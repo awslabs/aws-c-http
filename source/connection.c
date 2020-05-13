@@ -240,7 +240,6 @@ void aws_http_connection_update_window(struct aws_http_connection *connection, s
 int aws_http2_connection_change_settings(
     struct aws_http_connection *connection,
     const struct aws_http2_change_settings_options *opt) {
-
     AWS_ASSERT(connection);
     AWS_PRECONDITION(connection->vtable->change_settings);
     AWS_PRECONDITION(opt);
