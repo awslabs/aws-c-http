@@ -224,9 +224,6 @@ static struct aws_h2_connection *s_connection_new(
     size_t initial_window_size,
     bool server) {
 
-    (void)server;
-    (void)initial_window_size;
-
     struct aws_h2_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct aws_h2_connection));
     if (!connection) {
         return NULL;
@@ -255,7 +252,7 @@ static struct aws_h2_connection *s_connection_new(
     aws_atomic_init_int(&connection->atomic.new_stream_error_code, 0);
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
     aws_linked_list_init(&connection->synced_data.pending_frame_list);
-    aws_linked_list_init(&connection->synced_data.pending_pending_settings_list);
+    aws_linked_list_init(&connection->synced_data.pending_settings_list);
 
     aws_linked_list_init(&connection->thread_data.outgoing_streams_list);
     aws_linked_list_init(&connection->thread_data.pending_settings_queue);
@@ -316,6 +313,31 @@ static struct aws_h2_connection *s_connection_new(
         goto error;
     }
 
+    /* Initial settings with initial window size and disable push promise for the client */
+    struct aws_h2_frame_setting initial_settings[2];
+    size_t iter = 0;
+    if (!server) {
+        initial_settings[iter].id = AWS_H2_SETTINGS_ENABLE_PUSH;
+        initial_settings[iter++].value = 0;
+    }
+    if (initial_window_size != aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE]) {
+        initial_settings[iter].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
+        initial_settings[iter++].value = initial_window_size;
+    }
+    struct aws_http2_change_settings_options options;
+    AWS_ZERO_STRUCT(options);
+    options.num_settings = iter;
+    options.settings_array = initial_settings;
+    if (aws_http2_connection_change_settings(&connection->base, &options)) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Failed to send SETTINGS frame for connection preface, %s",
+            aws_error_name(aws_last_error()));
+
+        goto error;
+    }
+
     return connection;
 
 error:
@@ -353,27 +375,6 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
 
     connection->base.client_data = &connection->base.client_or_server_data.client;
 
-    /* Initial settings with initial window size and disable push promise for the client */
-    struct aws_h2_frame_setting initial_settings[2];
-    initial_settings[0].id = AWS_H2_SETTINGS_ENABLE_PUSH;
-    initial_settings[0].value = 0;
-    initial_settings[1].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
-    initial_settings[1].value = initial_window_size;
-    struct aws_http2_change_settings_options options;
-    AWS_ZERO_STRUCT(options);
-    options.num_settings = 2;
-    options.settings_array = initial_settings;
-    if (aws_http2_connection_change_settings(&connection->base, &options)) {
-        CONNECTION_LOGF(
-            ERROR,
-            connection,
-            "Failed to send SETTINGS frame for connection preface, %s",
-            aws_error_name(aws_last_error()));
-        /******* probably wrong! *******/
-        s_handler_destroy(&connection->base.channel_handler);
-        return NULL;
-    }
-
     return &connection->base;
 }
 
@@ -395,7 +396,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.outgoing_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_frame_list));
-    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_pending_settings_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_settings_list));
 
     /* Clean up any unsent frames */
     struct aws_linked_list *outgoing_frames_queue = &connection->thread_data.outgoing_frames_queue;
@@ -1717,7 +1718,7 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
 
         aws_linked_list_swap_contents(&connection->synced_data.pending_stream_list, &pending_streams);
         aws_linked_list_swap_contents(&connection->synced_data.pending_frame_list, &pending_frames);
-        aws_linked_list_swap_contents(&connection->synced_data.pending_pending_settings_list, &pending_settings);
+        aws_linked_list_swap_contents(&connection->synced_data.pending_settings_list, &pending_settings);
 
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -1882,7 +1883,7 @@ static int s_connection_change_settings(
             connection->synced_data.is_cross_thread_work_task_scheduled = true;
         }
         aws_linked_list_push_back(&connection->synced_data.pending_frame_list, &setting_frame->node);
-        aws_linked_list_push_back(&connection->synced_data.pending_pending_settings_list, &pending_settings->node);
+        aws_linked_list_push_back(&connection->synced_data.pending_settings_list, &pending_settings->node);
 
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -2088,9 +2089,8 @@ static void s_finish_shutdown(struct aws_h2_connection *connection) {
         aws_h2_frame_destroy(frame);
     }
 
-    while (!aws_linked_list_empty(&connection->synced_data.pending_pending_settings_list)) {
-        struct aws_linked_list_node *node =
-            aws_linked_list_pop_front(&connection->synced_data.pending_pending_settings_list);
+    while (!aws_linked_list_empty(&connection->synced_data.pending_settings_list)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->synced_data.pending_settings_list);
         struct aws_h2_pending_settings *settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
         aws_mem_release(connection->base.alloc, settings);
     }

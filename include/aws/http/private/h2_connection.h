@@ -115,11 +115,12 @@ struct aws_h2_connection {
         /* New `aws_h2_stream *` that haven't moved to `thread_data` yet */
         struct aws_linked_list pending_stream_list;
 
-        /* New `aws_h2_frames *` that haven't moved to `thread_data` yet */
+        /* New `aws_h2_frames *` created by user that haven't moved to `thread_data` yet */
         struct aws_linked_list pending_frame_list;
 
-        /* New `aws_pending_settings *` that haven't moved to `thread_data` yet */
-        struct aws_linked_list pending_pending_settings_list;
+        /* New `aws_pending_settings *` created by user that haven't moved to `thread_data` yet */
+        struct aws_linked_list pending_settings_list;
+
         bool is_cross_thread_work_task_scheduled;
 
     } synced_data;
