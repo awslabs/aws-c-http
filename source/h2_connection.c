@@ -322,7 +322,7 @@ static struct aws_h2_connection *s_connection_new(
     }
     if (initial_window_size != aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE]) {
         initial_settings[iter].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
-        initial_settings[iter++].value = initial_window_size;
+        initial_settings[iter++].value = (uint32_t)initial_window_size;
     }
     struct aws_http2_change_settings_options options;
     AWS_ZERO_STRUCT(options);
