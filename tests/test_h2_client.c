@@ -45,7 +45,7 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
 
     ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc, &options));
 
-    s_tester.connection = aws_http_connection_new_http2_client(alloc, true, SIZE_MAX);
+    s_tester.connection = aws_http_connection_new_http2_client(alloc, true, 65536);
     ASSERT_NOT_NULL(s_tester.connection);
 
     { /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
@@ -2263,6 +2263,92 @@ TEST_CASE(h2_client_stream_send_window_update) {
     return s_tester_clean_up();
 }
 
+/* Peer sends a frame larger than the window size we had on stream, will result in stream error */
+TEST_CASE(h2_client_stream_err_received_data_flow_control) {
+
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    size_t window_size = 10;
+
+    /* change the settings of the initial window size for new stream flow-control window */
+    struct aws_http2_change_settings_options options;
+    AWS_ZERO_STRUCT(options);
+    struct aws_h2_frame_setting settings[1];
+    settings[0].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
+    settings[0].value = window_size;
+    options.num_settings = 1;
+    options.settings_array = settings;
+
+    ASSERT_SUCCESS(aws_http2_connection_change_settings(s_tester.connection, &options));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* fake peer sends two settings ack back, one for the initial settings, one for the user settings we just sent */
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
+
+    /* fake peer sends response headers */
+    struct aws_http_header response_headers_src[] = {
+        DEFINE_HEADER(":status", "200"),
+    };
+
+    struct aws_http_headers *response_headers = aws_http_headers_new(allocator);
+    aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
+
+    struct aws_h2_frame *response_frame =
+        aws_h2_frame_new_headers(allocator, stream_id, response_headers, false /*end_stream*/, 0, NULL);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
+
+    struct aws_byte_buf response_body_bufs;
+    /* fake peer sends a DATA frame larger than the window size we have */
+    ASSERT_SUCCESS(aws_byte_buf_init(&response_body_bufs, allocator, window_size + 1));
+    ASSERT_TRUE(aws_byte_buf_write_u8_n(&response_body_bufs, (uint8_t)'a', window_size + 1));
+    struct aws_byte_cursor body_cursor = aws_byte_cursor_from_buf(&response_body_bufs);
+    ASSERT_SUCCESS(h2_fake_peer_send_data_frame(&s_tester.peer, stream_id, body_cursor, true /*end_stream*/));
+
+    /* validate that stream completed with error */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_PROTOCOL_ERROR, stream_tester.on_complete_error_code);
+
+    /* a stream error should not affect the connection */
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* validate that stream sent RST_STREAM with AWS_H2_ERR_FLOW_CONTROL_ERROR */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *rst_stream_frame =
+        h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
+    ASSERT_UINT_EQUALS(AWS_H2_ERR_FLOW_CONTROL_ERROR, rst_stream_frame->error_code);
+
+    /* clean up */
+    aws_byte_buf_clean_up(&response_body_bufs);
+    aws_http_headers_release(response_headers);
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
 /* Receiving invalid WINDOW_UPDATE frame of stream should result in a "Stream Error", invalid WINDOW_UPDATE frame of
  * connection should result in a "Connection Error". */
 static int s_invalid_window_update(
@@ -2870,5 +2956,101 @@ TEST_CASE(h2_client_conn_err_invalid_last_stream_id_goaway) {
     ASSERT_INT_EQUALS(
         AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));
     /* clean up */
+    return s_tester_clean_up();
+}
+
+static int s_on_settings_ack(void *user_data) {
+    bool *fired = user_data;
+    *fired = true;
+    return AWS_OP_SUCCESS;
+}
+
+/* Test the user API for changing HTTP/2 connection settings */
+TEST_CASE(h2_client_change_settings_api) {
+
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    /* client sent the preface and first settings */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *first_written_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 0);
+    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, first_written_frame->type);
+    ASSERT_FALSE(first_written_frame->ack);
+
+    /* We disabled the push_promise at the initial setting, let's use user API to enable it. */
+    /* Use user API to change HTTP/2 connection settings */
+    struct aws_http2_change_settings_options options;
+    struct aws_h2_frame_setting settings[1];
+    settings[0].id = AWS_H2_SETTINGS_ENABLE_PUSH;
+    settings[0].value = 1;
+
+    options.num_settings = 1;
+    options.settings_array = settings;
+    options.on_settings_ack = s_on_settings_ack;
+    bool fired = false;
+    options.user_data = &fired;
+
+    ASSERT_SUCCESS(aws_http2_connection_change_settings(s_tester.connection, &options));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* check the settings frame is sent */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *second_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 1);
+    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, second_frame->type);
+    ASSERT_FALSE(second_frame->ack);
+    ASSERT_INT_EQUALS(1, second_frame->settings.length);
+    struct aws_h2_frame_setting setting_received;
+    aws_array_list_front(&second_frame->settings, &setting_received);
+    ASSERT_INT_EQUALS(AWS_H2_SETTINGS_ENABLE_PUSH, setting_received.id);
+    ASSERT_INT_EQUALS(1, setting_received.value);
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    /* fake peer sends two settings ack back, one for the initial settings, one for the user settings we just sent */
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Check the callback has NOT fired after the first settings ack frame */
+    ASSERT_FALSE(fired);
+    peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    /* Check the callback has fired after the second settings ack frame */
+    ASSERT_TRUE(fired);
+
+    /* fake peer sends push_promise, after two settings frames applied, it will be fine */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
+
+    /* fake peer sends push request (PUSH_PROMISE) */
+    struct aws_http_header push_request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":authority", "veryblackpage.com"),
+        DEFINE_HEADER(":path", "/style.css"),
+    };
+    struct aws_http_headers *push_request_headers = aws_http_headers_new(allocator);
+    ASSERT_SUCCESS(aws_http_headers_add_array(
+        push_request_headers, push_request_headers_src, AWS_ARRAY_SIZE(push_request_headers_src)));
+
+    uint32_t promised_stream_id = 2;
+    peer_frame = aws_h2_frame_new_push_promise(allocator, stream_id, promised_stream_id, push_request_headers, 0);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* validate the connection is still open */
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+
+    /* clean up */
+    aws_http_headers_release(push_request_headers);
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
     return s_tester_clean_up();
 }
