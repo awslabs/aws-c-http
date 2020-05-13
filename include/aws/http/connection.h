@@ -562,6 +562,12 @@ int aws_http2_connection_get_received_goaway(
 AWS_HTTP_API
 struct aws_host_address *aws_http_connection_get_host_address(struct aws_http_connection *connection);
 
+AWS_HTTP_API
+void aws_http_connection_set_endpoint_monitor(struct aws_http_connection *connection, void *monitor);
+
+AWS_HTTP_API
+void *aws_http_connection_get_endpoint_monitor(struct aws_http_connection *connection);
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_CONNECTION_H */

@@ -1051,3 +1051,11 @@ uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *conn
 
     return next_id;
 }
+
+void aws_http_connection_set_endpoint_monitor(struct aws_http_connection *connection, void *monitor) {
+    connection->endpoint_monitor = monitor;
+}
+
+void *aws_http_connection_get_endpoint_monitor(struct aws_http_connection *connection) {
+    return connection->endpoint_monitor;
+}

@@ -116,6 +116,8 @@ struct aws_http_connection {
     struct aws_http_connection_client_data *client_data;
     struct aws_http_connection_server_data *server_data;
 
+    void *endpoint_monitor;
+
     bool manual_window_management;
 };
 

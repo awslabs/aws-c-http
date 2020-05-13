@@ -136,6 +136,10 @@ struct aws_http_connection_manager {
      */
     void *shutdown_complete_user_data;
 
+    aws_http_connection_manager_on_connection_created_fn *on_connection_created_callback;
+
+    void *on_connection_created_user_data;
+
     /*
      * Controls access to all mutable state on the connection manager
      */
@@ -814,6 +818,8 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->bootstrap = options->bootstrap;
     manager->system_vtable = g_aws_http_connection_manager_default_system_vtable_ptr;
     manager->external_ref_count = 1;
+    manager->on_connection_created_callback = options->on_connection_created_callback;
+    manager->on_connection_created_user_data = options->on_connection_created_user_data;
     manager->shutdown_complete_callback = options->shutdown_complete_callback;
     manager->shutdown_complete_user_data = options->shutdown_complete_user_data;
     manager->enable_read_back_pressure = options->enable_read_back_pressure;
@@ -1202,6 +1208,15 @@ static void s_aws_http_connection_manager_on_connection_setup(
     --manager->pending_connects_count;
 
     if (connection != NULL) {
+        if (!is_shutting_down) {
+            /* We reserved enough room for max_connections, this should never fail */
+            AWS_FATAL_ASSERT(aws_array_list_push_back(&manager->connections, &connection) == AWS_OP_SUCCESS);
+
+            if (manager->on_connection_created_callback) {
+                manager->on_connection_created_callback(connection, manager->on_connection_created_user_data);
+            }
+        }
+
         if (is_shutting_down || s_idle_connection(manager, connection)) {
             /*
              * release it immediately
