@@ -237,6 +237,17 @@ void aws_http_connection_update_window(struct aws_http_connection *connection, s
     connection->vtable->update_window(connection, increment_size);
 }
 
+int aws_http2_connection_change_settings(
+    struct aws_http_connection *connection,
+    const struct aws_http2_change_settings_options *opt) {
+
+    AWS_ASSERT(connection);
+    AWS_PRECONDITION(connection->vtable->change_settings);
+    AWS_PRECONDITION(opt);
+    AWS_PRECONDITION(opt->settings_array);
+    return connection->vtable->change_settings(connection, opt);
+}
+
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     return connection->channel_slot->channel;

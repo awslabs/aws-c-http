@@ -60,6 +60,9 @@ static struct aws_http_stream *s_connection_make_request(
     const struct aws_http_make_request_options *options);
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
+static int s_connection_change_settings(
+    struct aws_http_connection *connection_base,
+    const struct aws_http2_change_settings_options *opt);
 
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
@@ -127,6 +130,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .close = s_connection_close,
     .is_open = s_connection_is_open,
     .update_window = NULL,
+    .change_settings = s_connection_change_settings,
 };
 
 static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
@@ -221,7 +225,7 @@ static struct aws_h2_connection *s_connection_new(
     bool server) {
 
     (void)server;
-    (void)initial_window_size; /* #TODO use this for our initial settings */
+    (void)initial_window_size;
 
     struct aws_h2_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct aws_h2_connection));
     if (!connection) {
@@ -250,6 +254,8 @@ static struct aws_h2_connection *s_connection_new(
     aws_atomic_init_int(&connection->atomic.is_open, 1);
     aws_atomic_init_int(&connection->atomic.new_stream_error_code, 0);
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
+    aws_linked_list_init(&connection->synced_data.pending_frame_list);
+    aws_linked_list_init(&connection->synced_data.pending_pending_settings_list);
 
     aws_linked_list_init(&connection->thread_data.outgoing_streams_list);
     aws_linked_list_init(&connection->thread_data.pending_settings_queue);
@@ -347,16 +353,29 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
 
     connection->base.client_data = &connection->base.client_or_server_data.client;
 
-    /* #TODO immediately send connection preface string and settings */
+    /* Initial settings with initial window size and disable push promise for the client */
+    struct aws_h2_frame_setting initial_settings[2];
+    initial_settings[0].id = AWS_H2_SETTINGS_ENABLE_PUSH;
+    initial_settings[0].value = 0;
+    initial_settings[1].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
+    initial_settings[1].value = initial_window_size;
+    struct aws_http2_change_settings_options options;
+    AWS_ZERO_STRUCT(options);
+    options.num_settings = 2;
+    options.settings_array = initial_settings;
+    if (aws_http2_connection_change_settings(&connection->base, &options)) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Failed to send SETTINGS frame for connection preface, %s",
+            aws_error_name(aws_last_error()));
+        /******* probably wrong! *******/
+        s_handler_destroy(&connection->base.channel_handler);
+        return NULL;
+    }
 
     return &connection->base;
 }
-
-struct h2_pending_settings {
-    struct aws_h2_frame_setting *settings_array;
-    size_t num_settings;
-    struct aws_linked_list_node node;
-};
 
 static void s_handler_destroy(struct aws_channel_handler *handler) {
     struct aws_h2_connection *connection = handler->impl;
@@ -369,12 +388,14 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     while (!aws_linked_list_empty(&connection->thread_data.pending_settings_queue)) {
         /* Some settings are sent, but peer never sends ACK back. It's not an error. We just have to clean it up */
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
-        struct h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct h2_pending_settings, node);
+        struct aws_h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
         aws_mem_release(connection->base.alloc, pending_settings);
     }
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stalled_window_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.outgoing_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_frame_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_pending_settings_list));
 
     /* Clean up any unsent frames */
     struct aws_linked_list *outgoing_frames_queue = &connection->thread_data.outgoing_frames_queue;
@@ -392,19 +413,18 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     aws_mem_release(connection->base.alloc, connection);
 }
 
-static struct h2_pending_settings *s_new_pending_settings(
+static struct aws_h2_pending_settings *s_new_pending_settings(
     struct aws_allocator *allocator,
-    const struct aws_h2_frame_setting *settings_array,
-    size_t num_settings) {
+    const struct aws_http2_change_settings_options *opt) {
 
-    size_t settings_storage_size = sizeof(struct aws_h2_frame_setting) * num_settings;
-    struct h2_pending_settings *pending_settings;
+    size_t settings_storage_size = sizeof(struct aws_h2_frame_setting) * opt->num_settings;
+    struct aws_h2_pending_settings *pending_settings;
     void *settings_storage;
     if (!aws_mem_acquire_many(
             allocator,
             2,
             &pending_settings,
-            sizeof(struct h2_pending_settings),
+            sizeof(struct aws_h2_pending_settings),
             &settings_storage,
             settings_storage_size)) {
         return NULL;
@@ -413,42 +433,13 @@ static struct h2_pending_settings *s_new_pending_settings(
     AWS_ZERO_STRUCT(*pending_settings);
     /* We buffer the settings up, incase the caller has freed them when the ACK arrives */
     pending_settings->settings_array = settings_storage;
-    memcpy(pending_settings->settings_array, settings_array, num_settings * sizeof(*settings_array));
-    pending_settings->num_settings = num_settings;
+    memcpy(
+        pending_settings->settings_array, opt->settings_array, opt->num_settings * sizeof(struct aws_h2_frame_setting));
+    pending_settings->num_settings = opt->num_settings;
+    pending_settings->on_settings_ack = opt->on_settings_ack;
+    pending_settings->user_data = opt->user_data;
 
     return pending_settings;
-}
-
-int aws_h2_connection_change_settings(
-    struct aws_h2_connection *connection,
-    const struct aws_h2_frame_setting *settings_array,
-    size_t num_settings) {
-    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
-    AWS_PRECONDITION(settings_array);
-
-    if (!num_settings) {
-        return AWS_OP_SUCCESS;
-    }
-
-    /* push the setting array into the queue, not applying the change until it is ACKed by peer */
-    struct h2_pending_settings *pending_settings =
-        s_new_pending_settings(connection->base.alloc, settings_array, num_settings);
-    if (!pending_settings) {
-        return AWS_OP_ERR;
-    }
-    /* Send setting frame to inform our peer */
-    struct aws_h2_frame *setting_frame =
-        aws_h2_frame_new_settings(connection->base.alloc, settings_array, num_settings, false /*ACK*/);
-    if (!setting_frame) {
-        CONNECTION_LOGF(ERROR, connection, "Failed to send setting_frames, error %s", aws_error_name(aws_last_error()));
-        aws_mem_release(connection->base.alloc, pending_settings);
-        return AWS_OP_ERR;
-    }
-    aws_h2_connection_enqueue_outgoing_frame(connection, setting_frame);
-
-    aws_linked_list_push_back(&connection->thread_data.pending_settings_queue, &pending_settings->node);
-    s_try_write_outgoing_frames(connection);
-    return AWS_OP_SUCCESS;
 }
 
 void aws_h2_connection_enqueue_outgoing_frame(struct aws_h2_connection *connection, struct aws_h2_frame *frame) {
@@ -1227,7 +1218,7 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
     }
     struct aws_h2err err;
     struct aws_linked_list_node *node = aws_linked_list_front(&connection->thread_data.pending_settings_queue);
-    struct h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct h2_pending_settings, node);
+    struct aws_h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
     struct aws_h2_frame_setting *settings_array = pending_settings->settings_array;
     /* Apply the settings */
     struct aws_h2_decoder *decoder = connection->thread_data.decoder;
@@ -1268,6 +1259,15 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
             } break;
         }
         connection->thread_data.settings_self[settings_array[i].id] = settings_array[i].value;
+    }
+    /* invoke the settings ack user callback */
+    if (pending_settings->on_settings_ack) {
+        if (pending_settings->on_settings_ack(pending_settings->user_data)) {
+            /* Error from user callback, we will treat it as connection error */
+            CONNECTION_LOGF(
+                ERROR, connection, "Settings ACK callback raised error, %s", aws_error_name(aws_last_error()));
+            return aws_h2err_from_last_error();
+        }
     }
     /* finish applying the settings, remove the front of the queue */
     aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
@@ -1437,22 +1437,19 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
         }
     }
 
-    /* #TODO actually fill with initial settings, now we just disable the push promise for client */
-    /* #TODO Probably we will move the initial settings to connection_new_http2_XXX after we got API for user to change
-     * settings */
-    struct aws_h2_frame_setting initial_settings[2];
-    size_t new_setting_iter = 0;
-    initial_settings[new_setting_iter].id = AWS_H2_SETTINGS_ENABLE_PUSH;
-    initial_settings[new_setting_iter].value = 0;
-    new_setting_iter++;
-    if (aws_h2_connection_change_settings(connection, initial_settings, new_setting_iter)) {
-        CONNECTION_LOGF(
-            ERROR,
-            connection,
-            "Failed to send SETTINGS frame for connection preface, %s",
-            aws_error_name(aws_last_error()));
-        goto error;
+    /* Invoke the cross_thread_task */
+    bool was_cross_thread_work_scheduled = false;
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+        was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
+        connection->synced_data.is_cross_thread_work_task_scheduled = true;
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+    if (!was_cross_thread_work_scheduled) {
+        CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
     }
+
     return;
 
 error:
@@ -1708,11 +1705,19 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
     struct aws_linked_list pending_streams;
     aws_linked_list_init(&pending_streams);
 
+    struct aws_linked_list pending_frames;
+    aws_linked_list_init(&pending_frames);
+
+    struct aws_linked_list pending_settings;
+    aws_linked_list_init(&pending_settings);
+
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
         connection->synced_data.is_cross_thread_work_task_scheduled = false;
 
         aws_linked_list_swap_contents(&connection->synced_data.pending_stream_list, &pending_streams);
+        aws_linked_list_swap_contents(&connection->synced_data.pending_frame_list, &pending_frames);
+        aws_linked_list_swap_contents(&connection->synced_data.pending_pending_settings_list, &pending_settings);
 
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -1727,6 +1732,22 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         } while (!aws_linked_list_empty(&pending_streams));
     }
 
+    /* Enqueue new pending frames */
+    if (!aws_linked_list_empty(&pending_frames)) {
+        do {
+            struct aws_linked_list_node *node = aws_linked_list_pop_front(&pending_frames);
+            struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
+            aws_h2_connection_enqueue_outgoing_frame(connection, frame);
+        } while (!aws_linked_list_empty(&pending_frames));
+    }
+
+    /* Move pending settings to thread data */
+    if (!aws_linked_list_empty(&pending_settings)) {
+        while (!aws_linked_list_empty(&pending_settings)) {
+            aws_linked_list_push_back(
+                &connection->thread_data.pending_settings_queue, aws_linked_list_pop_front(&pending_settings));
+        }
+    }
     /* #TODO: process stuff from other API calls (ex: window-updates) */
 
     /* It's likely that frames were queued while processing cross-thread work.
@@ -1829,6 +1850,49 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     bool is_open = aws_atomic_load_int(&connection->atomic.is_open);
     return is_open;
+}
+
+static int s_connection_change_settings(
+    struct aws_http_connection *connection_base,
+    const struct aws_http2_change_settings_options *opt) {
+
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
+
+    if (!opt->num_settings) {
+        return AWS_OP_SUCCESS;
+    }
+
+    struct aws_h2_pending_settings *pending_settings = s_new_pending_settings(connection->base.alloc, opt);
+    if (!pending_settings) {
+        return AWS_OP_ERR;
+    }
+    struct aws_h2_frame *setting_frame =
+        aws_h2_frame_new_settings(connection->base.alloc, opt->settings_array, opt->num_settings, false /*ACK*/);
+    if (!setting_frame) {
+        CONNECTION_LOGF(ERROR, connection, "Failed to send setting_frames, error %s", aws_error_name(aws_last_error()));
+        aws_mem_release(connection->base.alloc, pending_settings);
+        return AWS_OP_ERR;
+    }
+    /* if the channel has not setup yet, we should not schedule the task */
+    bool cross_thread_work_should_scheduled = false;
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+        if (connection->base.channel_slot) {
+            cross_thread_work_should_scheduled = !connection->synced_data.is_cross_thread_work_task_scheduled;
+            connection->synced_data.is_cross_thread_work_task_scheduled = true;
+        }
+        aws_linked_list_push_back(&connection->synced_data.pending_frame_list, &setting_frame->node);
+        aws_linked_list_push_back(&connection->synced_data.pending_pending_settings_list, &pending_settings->node);
+
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+
+    if (cross_thread_work_should_scheduled) {
+        CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
+    }
+
+    return AWS_OP_SUCCESS;
 }
 
 /* Send a GOAWAY with the lowest possible last-stream-id */
@@ -2016,6 +2080,19 @@ static void s_finish_shutdown(struct aws_h2_connection *connection) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->synced_data.pending_stream_list);
         struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
         s_stream_complete(connection, stream, AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    }
+
+    while (!aws_linked_list_empty(&connection->synced_data.pending_frame_list)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->synced_data.pending_frame_list);
+        struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
+        aws_h2_frame_destroy(frame);
+    }
+
+    while (!aws_linked_list_empty(&connection->synced_data.pending_pending_settings_list)) {
+        struct aws_linked_list_node *node =
+            aws_linked_list_pop_front(&connection->synced_data.pending_pending_settings_list);
+        struct aws_h2_pending_settings *settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
+        aws_mem_release(connection->base.alloc, settings);
     }
 
     aws_channel_slot_on_handler_shutdown_complete(

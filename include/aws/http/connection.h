@@ -57,6 +57,13 @@ typedef void(
     aws_http_on_client_connection_shutdown_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
 /**
+ * Invoked when the HTTP/2 connection settings ack frame received.
+ * It can be not invoked if we never received the settings ack frame for that settings.
+ * This is always invoked on connetion's event-loop thread.
+ */
+typedef int(aws_http2_on_settings_ack_received)(void *user_data);
+
+/**
  * Configuration options for connection monitoring
  */
 struct aws_http_connection_monitoring_options {
@@ -222,10 +229,43 @@ struct aws_http_client_connection_options {
 };
 
 /**
+ * Options for changing the settings for an HTTP/2 connection.
+ */
+struct aws_http2_change_settings_options {
+    /**
+     * Required
+     * The data of settings to chagne.
+     */
+    const struct aws_h2_frame_setting *settings_array;
+
+    /**
+     * Required
+     * The num of settings to change.
+     */
+    size_t num_settings;
+
+    /**
+     * User data for callbacks.
+     * Optional.
+     */
+    void *user_data;
+
+    /**
+     * Invoke when settings ack frame received.
+     * Optional.
+     */
+    aws_http2_on_settings_ack_received *on_settings_ack;
+};
+
+/**
+ * The max window size for flow control, which is required by HTTP/2 spec.
+ */
+#define AWS_HTTP_MAX_WINDOW_SIZE (0x7FFFFFFF)
+/**
  * Initializes aws_http_client_connection_options with default values.
  */
 #define AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT                                                                        \
-    { .self_size = sizeof(struct aws_http_client_connection_options), .initial_window_size = SIZE_MAX, }
+    { .self_size = sizeof(struct aws_http_client_connection_options), .initial_window_size = AWS_HTTP_MAX_WINDOW_SIZE, }
 
 AWS_EXTERN_C_BEGIN
 
@@ -285,6 +325,14 @@ enum aws_http_version aws_http_connection_get_version(const struct aws_http_conn
  */
 AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
+
+/**
+ *  HTTP/2 specific. Change the HTTP/2 conenction settings.
+ */
+AWS_HTTP_API
+int aws_http2_connection_change_settings(
+    struct aws_http_connection *connection,
+    const struct aws_http2_change_settings_options *opt);
 
 AWS_EXTERN_C_END
 
