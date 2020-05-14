@@ -59,8 +59,8 @@ typedef void(
 /**
  * Invoked when the HTTP/2 settings change is complete, whether successful or unsuccessful.
  * If error_code is AWS_ERROR_SUCCESS (0), then the peer has acknowledged the settings and the change has been applied.
- * If error_code is non-zero, then a connection error occurred before the settings could be fully acknowledged and applied. 
- * This is always invoked on the connection's event-loop thread.
+ * If error_code is non-zero, then a connection error occurred before the settings could be fully acknowledged and
+ * applied. This is always invoked on the connection's event-loop thread.
  */
 typedef void(
     aws_http2_on_change_settings_complete_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
