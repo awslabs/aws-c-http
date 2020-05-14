@@ -401,6 +401,7 @@ struct chunk_writer_data {
 };
 
 H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_waits_for_data) {
+    (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
