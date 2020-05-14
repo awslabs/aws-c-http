@@ -1750,6 +1750,15 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
+    /* Enqueue new pending control frames */
+    if (!aws_linked_list_empty(&pending_frames)) {
+        do {
+            struct aws_linked_list_node *node = aws_linked_list_pop_front(&pending_frames);
+            struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
+            aws_h2_connection_enqueue_outgoing_frame(connection, frame);
+        } while (!aws_linked_list_empty(&pending_frames));
+    }
+
     /* Process new pending_streams */
     if (!aws_linked_list_empty(&pending_streams)) {
         int new_stream_error_code = (int)aws_atomic_load_int(&connection->atomic.new_stream_error_code);
@@ -1758,15 +1767,6 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
             struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
             s_move_stream_to_thread(connection, stream, new_stream_error_code);
         } while (!aws_linked_list_empty(&pending_streams));
-    }
-
-    /* Enqueue new pending frames */
-    if (!aws_linked_list_empty(&pending_frames)) {
-        do {
-            struct aws_linked_list_node *node = aws_linked_list_pop_front(&pending_frames);
-            struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
-            aws_h2_connection_enqueue_outgoing_frame(connection, frame);
-        } while (!aws_linked_list_empty(&pending_frames));
     }
 
     /* Move pending settings to thread data */
