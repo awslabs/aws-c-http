@@ -24,6 +24,9 @@ struct aws_h1_stream {
 
     struct aws_linked_list_node node;
 
+    /* Contains linked list of aws_input_streams to be encoded on the same connection via transfer encoding chunked */
+    struct aws_http1_chunks body_chunks;
+
     /* Message (derived from outgoing request or response) to be submitted to encoder */
     struct aws_h1_encoder_message encoder_message;
 
@@ -58,8 +61,13 @@ struct aws_h1_stream *aws_h1_stream_new_request_handler(const struct aws_http_re
 
 AWS_EXTERN_C_END
 
-/* we don't want this exported. We just want it to have external linkage between h1_stream and h1_connection compilation
- * units. it is defined in h1_connection.c */
+/* we don't want these exported. We just want it to have external linkage between h1_stream and h1_connection
+ * compilation units. it is defined in h1_connection.c */
 int aws_h1_stream_activate(struct aws_http_stream *stream);
+int aws_h1_stream_schedule_outgoing_stream_task(struct aws_http_stream *stream);
+
+void aws_h1_stream_release_chunk(struct aws_http1_stream_chunk *chunk);
+void aws_h1_stream_body_chunks_clean_up(struct aws_h1_stream *stream);
+bool aws_h1_stream_is_paused(struct aws_h1_stream *stream);
 
 #endif /* AWS_HTTP_H1_STREAM_H */

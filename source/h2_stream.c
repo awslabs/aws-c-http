@@ -27,6 +27,7 @@ struct aws_http_stream_vtable s_h2_stream_vtable = {
     .destroy = s_stream_destroy,
     .update_window = NULL,
     .activate = aws_h2_stream_activate,
+    .http1_write_chunk = NULL,
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state) {
