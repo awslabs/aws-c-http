@@ -36,7 +36,6 @@ static int s_scan_outgoing_headers(
 
     size_t total = 0;
     bool has_body_stream = aws_http_message_get_body_stream(message);
-    bool has_body_headers = false;
     bool has_content_length_header = false;
     bool has_transfer_encoding_header = false;
 
@@ -59,9 +58,6 @@ static int s_scan_outgoing_headers(
                 if (aws_strutil_read_unsigned_num(trimmed_value, &encoder_message->content_length)) {
                     AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Invalid Content-Length");
                     return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
-                }
-                if (encoder_message->content_length > 0) {
-                    has_body_headers = true;
                 }
             } break;
             case AWS_HTTP_HEADER_TRANSFER_ENCODING: {
@@ -127,18 +123,20 @@ static int s_scan_outgoing_headers(
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_BODY_STREAM);
     }
 
-    if (body_headers_forbidden && has_body_headers) {
+    if (body_headers_forbidden && (encoder_message->content_length > 0 || has_transfer_encoding_header)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=static: Transfer-Encoding or Content-Length headers may not be present in such a message");
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
     }
 
     if (body_headers_ignored) {
         /* Don't send body, no matter what the headers are */
-        has_body_headers = false;
         encoder_message->content_length = 0;
         encoder_message->has_chunked_encoding_header = false;
     }
 
-    if (has_body_headers && !has_body_stream) {
+    if (encoder_message->content_length > 0 && !has_body_stream) {
         return aws_raise_error(AWS_ERROR_HTTP_MISSING_BODY_STREAM);
     }
 
@@ -522,14 +520,14 @@ static bool s_chunk_payload_state(struct aws_byte_buf *dst, struct aws_h1_encode
         return false;
     }
 
-    const int64_t amount_read = dst->len - prev_len;
+    const size_t amount_read = dst->len - prev_len;
     encoder->progress_bytes += amount_read;
     ENCODER_LOGF(TRACE, encoder, "Wrote %zu body bytes to message", amount_read);
     if (encoder->progress_bytes > encoder->message->body_chunks->current_chunk->data_size) {
         ENCODER_LOGF(
             ERROR,
             encoder,
-            "Chunk size written larger than the chunk size. Expected %zu but sent %zu",
+            "Chunk size written larger than the chunk size. Expected %zu but sent %" PRIu64,
             encoder->message->body_chunks->current_chunk->data_size,
             encoder->progress_bytes);
         *aws_op_result = aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
@@ -592,7 +590,7 @@ static bool s_end_chunk_state(struct aws_h1_encoder *encoder, int *aws_op_result
         ENCODER_LOGF(
             ERROR,
             encoder,
-            "Chunk size does not match the data available to send. Expected %zu but sent %zu",
+            "Chunk size does not match the data available to send. Expected %zu but sent %" PRIu64,
             chunk_size,
             encoder->progress_bytes);
         *aws_op_result = aws_raise_error(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT);
