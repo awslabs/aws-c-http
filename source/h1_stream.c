@@ -106,8 +106,7 @@ static int s_aws_h1_stream_write_chunk(struct aws_http_stream *stream_base, stru
     if (stream->body_chunks.paused) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Waking up stream on new data available", (void *)stream);
         stream->body_chunks.paused = false;
-        struct aws_http_connection *base_connection = stream->base.owning_connection;
-        AWS_ASSERT(base_connection);
+        AWS_ASSERT(stream->base.owning_connection);
         aws_h1_stream_schedule_outgoing_stream_task(&stream->base);
     }
     aws_h1_unlock_chunked_list(&stream->body_chunks);
