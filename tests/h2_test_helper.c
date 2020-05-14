@@ -32,8 +32,7 @@ static void s_frame_init(
     frame->type = type;
     frame->stream_id = stream_id;
     frame->headers = aws_http_headers_new(alloc);
-    AWS_FATAL_ASSERT(
-        0 == aws_array_list_init_dynamic(&frame->settings, alloc, 16, sizeof(struct aws_http2_setting)));
+    AWS_FATAL_ASSERT(0 == aws_array_list_init_dynamic(&frame->settings, alloc, 16, sizeof(struct aws_http2_setting)));
     AWS_FATAL_ASSERT(0 == aws_byte_buf_init(&frame->data, alloc, 1024));
 }
 

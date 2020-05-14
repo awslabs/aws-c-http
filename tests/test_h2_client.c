@@ -45,8 +45,8 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
 
     ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc, &options));
 
-    s_tester.connection =
-        aws_http_connection_new_http2_client(alloc, true, aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE]);
+    s_tester.connection = aws_http_connection_new_http2_client(
+        alloc, true, aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE]);
     ASSERT_NOT_NULL(s_tester.connection);
 
     { /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
@@ -2980,7 +2980,8 @@ TEST_CASE(h2_client_change_settings_api) {
     settings[0].id = AWS_HTTP2_SETTINGS_ENABLE_PUSH;
     settings[0].value = 1;
     bool callback_fired = false;
-    ASSERT_SUCCESS(aws_http2_connection_change_settings(s_tester.connection, settings, 1, &callback_fired, s_on_settings_ack));
+    ASSERT_SUCCESS(
+        aws_http2_connection_change_settings(s_tester.connection, settings, 1, &callback_fired, s_on_settings_ack));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* check the settings frame is sent */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
