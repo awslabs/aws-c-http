@@ -728,7 +728,7 @@ int main(int argc, char **argv) {
         .port = port,
         .host_name = app_ctx.uri.host_name,
         .bootstrap = bootstrap,
-        .initial_window_size = SIZE_MAX,
+        .initial_window_size = AWS_HTTP_MAX_WINDOW_SIZE,
         .tls_options = tls_options,
         .user_data = &app_ctx,
         .on_setup = s_on_client_connection_setup,

@@ -312,10 +312,10 @@ TEST_CASE(h2_encoder_rst_stream) {
 TEST_CASE(h2_encoder_settings) {
     (void)ctx;
 
-    struct aws_h2_frame_setting settings[] = {
-        {.id = AWS_H2_SETTINGS_ENABLE_PUSH, .value = 1}, /* real world value */
-        {.id = 0x0000, .value = 0x00000000},             /* min value */
-        {.id = 0xFFFF, .value = 0xFFFFFFFF},             /* max value */
+    struct aws_http2_setting settings[] = {
+        {.id = AWS_HTTP2_SETTINGS_ENABLE_PUSH, .value = 1}, /* real world value */
+        {.id = 0x0000, .value = 0x00000000},                /* min value */
+        {.id = 0xFFFF, .value = 0xFFFFFFFF},                /* max value */
     };
 
     struct aws_h2_frame *frame =

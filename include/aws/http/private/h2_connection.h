@@ -45,11 +45,11 @@ struct aws_h2_connection {
         bool is_outgoing_frames_task_active;
 
         /* Settings received from peer, which restricts the message to send */
-        uint32_t settings_peer[AWS_H2_SETTINGS_END_RANGE];
+        uint32_t settings_peer[AWS_HTTP2_SETTINGS_END_RANGE];
         /* My settings to send/sent to peer, which affects the decoding */
-        uint32_t settings_self[AWS_H2_SETTINGS_END_RANGE];
+        uint32_t settings_self[AWS_HTTP2_SETTINGS_END_RANGE];
 
-        /* List using h2_pending_settings.node
+        /* List using aws_h2_pending_settings.node
          * Contains settings waiting to be ACKed by peer and applied */
         struct aws_linked_list pending_settings_queue;
 
@@ -115,6 +115,12 @@ struct aws_h2_connection {
         /* New `aws_h2_stream *` that haven't moved to `thread_data` yet */
         struct aws_linked_list pending_stream_list;
 
+        /* New `aws_h2_frames *` created by user that haven't moved to `thread_data` yet */
+        struct aws_linked_list pending_frame_list;
+
+        /* New `aws_pending_settings *` created by user that haven't moved to `thread_data` yet */
+        struct aws_linked_list pending_settings_list;
+
         bool is_cross_thread_work_task_scheduled;
 
     } synced_data;
@@ -126,6 +132,15 @@ struct aws_h2_connection {
         /* If non-zero, reason to immediately reject new streams. (ex: closing) */
         struct aws_atomic_var new_stream_error_code;
     } atomic;
+};
+
+struct aws_h2_pending_settings {
+    struct aws_http2_setting *settings_array;
+    size_t num_settings;
+    struct aws_linked_list_node node;
+    /* user callback */
+    aws_http2_on_change_settings_complete_fn *on_completed;
+    void *user_data;
 };
 
 /**
@@ -175,12 +190,6 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
 AWS_EXTERN_C_END
 
 /* Private functions called from multiple .c files... */
-
-/* Internal API for changing self settings of the connection */
-int aws_h2_connection_change_settings(
-    struct aws_h2_connection *connection,
-    const struct aws_h2_frame_setting *setting_array,
-    size_t num_settings);
 
 /**
  * Enqueue outgoing frame.

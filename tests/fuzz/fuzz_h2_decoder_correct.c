@@ -349,18 +349,18 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             bool ack = flags & AWS_H2_FRAME_F_ACK;
 
             size_t settings_count = 0;
-            struct aws_h2_frame_setting *settings_array = NULL;
+            struct aws_http2_setting *settings_array = NULL;
 
             if (!ack) {
                 settings_count = aws_min_size(input.len / 6, MAX_PAYLOAD_SIZE);
                 if (settings_count > 0) {
-                    settings_array = aws_mem_calloc(allocator, settings_count, sizeof(struct aws_h2_frame_setting));
+                    settings_array = aws_mem_calloc(allocator, settings_count, sizeof(struct aws_http2_setting));
                     for (size_t i = 0; i < settings_count; ++i) {
                         uint16_t id = 0;
                         uint32_t value = 0;
                         aws_byte_cursor_read_be16(&input, &id);
                         aws_byte_cursor_read_be32(&input, &value);
-                        if (id >= AWS_H2_SETTINGS_BEGIN_RANGE && id < AWS_H2_SETTINGS_END_RANGE) {
+                        if (id >= AWS_HTTP2_SETTINGS_BEGIN_RANGE && id < AWS_HTTP2_SETTINGS_END_RANGE) {
                             value = aws_max_u32(value, aws_h2_settings_bounds[id][0]);
                             value = aws_min_u32(value, aws_h2_settings_bounds[id][1]);
                         }

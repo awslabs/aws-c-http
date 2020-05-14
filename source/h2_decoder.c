@@ -324,11 +324,11 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
         decoder->state = &s_state_prefix;
     }
 
-    decoder->settings.enable_push = aws_h2_settings_initial[AWS_H2_SETTINGS_ENABLE_PUSH];
-    decoder->settings.max_frame_size = aws_h2_settings_initial[AWS_H2_SETTINGS_MAX_FRAME_SIZE];
+    decoder->settings.enable_push = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_ENABLE_PUSH];
+    decoder->settings.max_frame_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE];
 
     if (aws_array_list_init_dynamic(
-            &decoder->settings_buffer_list, decoder->alloc, 0, sizeof(struct aws_h2_frame_setting))) {
+            &decoder->settings_buffer_list, decoder->alloc, 0, sizeof(struct aws_http2_setting))) {
         goto error;
     }
 
@@ -897,18 +897,18 @@ static struct aws_h2err s_state_fn_frame_settings_i(struct aws_h2_decoder *decod
 
     /* An endpoint that receives a SETTINGS frame with any unknown or unsupported identifier MUST ignore that setting.
      * RFC-7540 6.5.2 */
-    if (id >= AWS_H2_SETTINGS_BEGIN_RANGE && id < AWS_H2_SETTINGS_END_RANGE) {
+    if (id >= AWS_HTTP2_SETTINGS_BEGIN_RANGE && id < AWS_HTTP2_SETTINGS_END_RANGE) {
         /* check the value meets the settings bounds */
         if (value < aws_h2_settings_bounds[id][0] || value > aws_h2_settings_bounds[id][1]) {
             DECODER_LOGF(
                 ERROR, decoder, "A value of SETTING frame is invalid, id: %" PRIu16 ", value: %" PRIu32, id, value);
-            if (id == AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE) {
+            if (id == AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE) {
                 return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
             } else {
                 return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
             }
         }
-        struct aws_h2_frame_setting setting;
+        struct aws_http2_setting setting;
         setting.id = id;
         setting.value = value;
         /* array_list will keep a copy of setting, it is fine to be a local variable */

@@ -1687,7 +1687,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_settings) {
     ASSERT_FALSE(frame->ack);
     ASSERT_UINT_EQUALS(2, aws_array_list_length(&frame->settings));
 
-    struct aws_h2_frame_setting setting;
+    struct aws_http2_setting setting;
     aws_array_list_get_at(&frame->settings, &setting, 0);
     ASSERT_UINT_EQUALS(0x0005, setting.id);
     ASSERT_UINT_EQUALS(0x00FFFFFF, setting.value);
@@ -1769,7 +1769,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_settings_ignores_unknown_ids) {
         0x00, 0xFF, 0xFF, 0xFF,     /* Value (32) */
         0x00, 0x01,                 /* Identifier (16) <-- This is OK */
         0x00, 0x00, 0x00, 0x01,     /* Value (32) */
-        0x00, AWS_H2_SETTINGS_END_RANGE, /* Identifier (16) <-- SHOULD IGNORE */
+        0x00, AWS_HTTP2_SETTINGS_END_RANGE, /* Identifier (16) <-- SHOULD IGNORE */
         0x00, 0x00, 0x00, 0x01,     /* Value (32) */
     };
     /* clang-format on */
@@ -1783,7 +1783,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_settings_ignores_unknown_ids) {
     ASSERT_FALSE(frame->ack);
     ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->settings));
 
-    struct aws_h2_frame_setting setting;
+    struct aws_http2_setting setting;
     aws_array_list_get_at(&frame->settings, &setting, 0);
     ASSERT_UINT_EQUALS(0x0001, setting.id);
     ASSERT_UINT_EQUALS(0x00000001, setting.value);

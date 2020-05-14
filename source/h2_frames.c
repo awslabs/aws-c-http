@@ -38,33 +38,33 @@ AWS_HTTP_API const struct aws_byte_cursor aws_h2_connection_preface_client_strin
     AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 
 /* Initial values and bounds are from RFC-7540 6.5.2 */
-const uint32_t aws_h2_settings_initial[AWS_H2_SETTINGS_END_RANGE] = {
-    [AWS_H2_SETTINGS_HEADER_TABLE_SIZE] = 4096,
-    [AWS_H2_SETTINGS_ENABLE_PUSH] = 1,
-    [AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS] = UINT32_MAX, /* "Initially there is no limit to this value" */
-    [AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE] = 65535,
-    [AWS_H2_SETTINGS_MAX_FRAME_SIZE] = 16384,
-    [AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE] = UINT32_MAX, /* "The initial value of this setting is unlimited" */
+const uint32_t aws_h2_settings_initial[AWS_HTTP2_SETTINGS_END_RANGE] = {
+    [AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE] = 4096,
+    [AWS_HTTP2_SETTINGS_ENABLE_PUSH] = 1,
+    [AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS] = UINT32_MAX, /* "Initially there is no limit to this value" */
+    [AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] = 65535,
+    [AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE] = 16384,
+    [AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE] = UINT32_MAX, /* "The initial value of this setting is unlimited" */
 };
 
-const uint32_t aws_h2_settings_bounds[AWS_H2_SETTINGS_END_RANGE][2] = {
-    [AWS_H2_SETTINGS_HEADER_TABLE_SIZE][0] = 0,
-    [AWS_H2_SETTINGS_HEADER_TABLE_SIZE][1] = UINT32_MAX,
+const uint32_t aws_h2_settings_bounds[AWS_HTTP2_SETTINGS_END_RANGE][2] = {
+    [AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE][0] = 0,
+    [AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE][1] = UINT32_MAX,
 
-    [AWS_H2_SETTINGS_ENABLE_PUSH][0] = 0,
-    [AWS_H2_SETTINGS_ENABLE_PUSH][1] = 1,
+    [AWS_HTTP2_SETTINGS_ENABLE_PUSH][0] = 0,
+    [AWS_HTTP2_SETTINGS_ENABLE_PUSH][1] = 1,
 
-    [AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS][0] = 0,
-    [AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS][1] = UINT32_MAX,
+    [AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS][0] = 0,
+    [AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS][1] = UINT32_MAX,
 
-    [AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE][0] = 0,
-    [AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE][1] = AWS_H2_WINDOW_UPDATE_MAX,
+    [AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE][0] = 0,
+    [AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE][1] = AWS_H2_WINDOW_UPDATE_MAX,
 
-    [AWS_H2_SETTINGS_MAX_FRAME_SIZE][0] = 16384,
-    [AWS_H2_SETTINGS_MAX_FRAME_SIZE][1] = AWS_H2_PAYLOAD_MAX,
+    [AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE][0] = 16384,
+    [AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE][1] = AWS_H2_PAYLOAD_MAX,
 
-    [AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE][0] = 0,
-    [AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE][1] = UINT32_MAX,
+    [AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE][0] = 0,
+    [AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE][1] = UINT32_MAX,
 };
 
 /* Stream ids & dependencies should only write the bottom 31 bits */
@@ -312,7 +312,7 @@ int aws_h2_frame_encoder_init(
         return AWS_OP_ERR;
     }
 
-    encoder->settings.max_frame_size = aws_h2_settings_initial[AWS_H2_SETTINGS_MAX_FRAME_SIZE];
+    encoder->settings.max_frame_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE];
     return AWS_OP_SUCCESS;
 }
 void aws_h2_frame_encoder_clean_up(struct aws_h2_frame_encoder *encoder) {
@@ -812,7 +812,7 @@ DEFINE_FRAME_VTABLE(prebuilt);
 
 /* Can't pre-encode a frame unless it's guaranteed to fit, regardless of current settings. */
 static size_t s_prebuilt_payload_max(void) {
-    return aws_h2_settings_bounds[AWS_H2_SETTINGS_MAX_FRAME_SIZE][0];
+    return aws_h2_settings_bounds[AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE][0];
 }
 
 /* Create aws_h2_frame_prebuilt and encode frame prefix into frame->encoded_buf.
@@ -988,7 +988,7 @@ static const size_t s_frame_setting_length = 6;
 
 struct aws_h2_frame *aws_h2_frame_new_settings(
     struct aws_allocator *allocator,
-    const struct aws_h2_frame_setting *settings_array,
+    const struct aws_http2_setting *settings_array,
     size_t num_settings,
     bool ack) {
 

@@ -105,7 +105,7 @@ struct h2_decoded_frame {
     struct aws_http_headers *headers;             /* HEADERS and PUSH_PROMISE have this */
     bool headers_malformed;                       /* HEADERS and PUSH_PROMISE have this */
     enum aws_http_header_block header_block_type; /* HEADERS have this */
-    struct aws_array_list settings;               /* contains aws_h2_frame_setting, SETTINGS has this */
+    struct aws_array_list settings;               /* contains aws_http2_setting, SETTINGS has this */
     struct aws_byte_buf data;                     /* DATA has this */
     uint32_t data_payload_len;                    /* DATA has this */
     bool data_end_stream;                         /* DATA has this */
