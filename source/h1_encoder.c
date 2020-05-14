@@ -66,7 +66,6 @@ static int s_scan_outgoing_headers(
                     AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Transfer-Encoding must include a valid value");
                     return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
                 }
-                struct aws_byte_cursor chunked = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked");
                 struct aws_byte_cursor substr;
                 AWS_ZERO_STRUCT(substr);
                 while (aws_byte_cursor_next_split(&header.value, ',', &substr)) {
@@ -83,7 +82,7 @@ static int s_scan_outgoing_headers(
                             AWS_LS_HTTP_STREAM, "id=static: Transfer-Encoding header must end with \"chunked\"");
                         return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
                     }
-                    if (aws_byte_cursor_eq(&trimmed, &chunked)) {
+                    if (aws_byte_cursor_eq_c_str(&trimmed, "chunked")) {
                         encoder_message->has_chunked_encoding_header = true;
                     }
                 }
@@ -460,8 +459,7 @@ bool aws_write_chunk_size(struct aws_byte_buf *dst, size_t chunk_size) {
     AWS_PRECONDITION(dst);
     AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
     AWS_PRECONDITION((dst->capacity - dst->len) >= MAX_ASCII_HEX_CHUNK_STR_SIZE);
-    char ascii_hex_chunk_size_str[MAX_ASCII_HEX_CHUNK_STR_SIZE];
-    AWS_ZERO_ARRAY(ascii_hex_chunk_size_str);
+    char ascii_hex_chunk_size_str[MAX_ASCII_HEX_CHUNK_STR_SIZE] = {0};
     snprintf(ascii_hex_chunk_size_str, sizeof(ascii_hex_chunk_size_str), "%zX", chunk_size);
     return aws_byte_buf_write_from_whole_cursor(dst, aws_byte_cursor_from_c_str(ascii_hex_chunk_size_str));
 }

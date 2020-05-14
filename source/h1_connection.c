@@ -187,13 +187,13 @@ struct h1_connection {
     } synced_data;
 };
 
-void s_h1_connection_lock_synced_data(struct h1_connection *connection) {
+static void s_h1_connection_lock_synced_data(struct h1_connection *connection) {
     int err = aws_mutex_lock(&connection->synced_data.lock);
     AWS_ASSERT(!err);
     (void)err;
 }
 
-void s_h1_connection_unlock_synced_data(struct h1_connection *connection) {
+static void s_h1_connection_unlock_synced_data(struct h1_connection *connection) {
     int err = aws_mutex_unlock(&connection->synced_data.lock);
     AWS_ASSERT(!err);
     (void)err;

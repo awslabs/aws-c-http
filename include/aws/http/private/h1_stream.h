@@ -24,7 +24,7 @@ struct aws_h1_stream {
 
     struct aws_linked_list_node node;
 
-    /* Linked list of stream to be encoded on the same connection via transfer encoding chunked */
+    /* Contains linked list of aws_input_streams to be encoded on the same connection via transfer encoding chunked */
     struct aws_http1_chunks body_chunks;
 
     /* Message (derived from outgoing request or response) to be submitted to encoder */

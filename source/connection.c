@@ -66,13 +66,13 @@ struct aws_http_server {
     } synced_data;
 };
 
-void s_server_lock_synced_data(struct aws_http_server *server) {
+static void s_server_lock_synced_data(struct aws_http_server *server) {
     int err = aws_mutex_lock(&server->synced_data.lock);
     AWS_ASSERT(!err);
     (void)err;
 }
 
-void s_server_unlock_synced_data(struct aws_http_server *server) {
+static void s_server_unlock_synced_data(struct aws_http_server *server) {
     int err = aws_mutex_unlock(&server->synced_data.lock);
     AWS_ASSERT(!err);
     (void)err;

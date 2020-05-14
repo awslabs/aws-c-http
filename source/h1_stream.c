@@ -41,7 +41,7 @@ static int s_body_chunks_init(struct aws_h1_stream *stream) {
     return aws_mutex_init(&stream->body_chunks.lock);
 }
 
-void s_clean_up_body_chunk(struct aws_http1_stream_chunk **chunk) {
+static void s_clean_up_body_chunk(struct aws_http1_stream_chunk **chunk) {
     AWS_PRECONDITION(chunk);
     aws_h1_stream_release_chunk(*chunk);
     *chunk = NULL;

@@ -1568,7 +1568,7 @@ struct slow_body_sender {
     size_t bytes_per_tick; /* Don't send more than N bytes per tick */
 };
 
-int s_slow_stream_read(struct aws_input_stream *stream, struct aws_byte_buf *dest) {
+static int s_slow_stream_read(struct aws_input_stream *stream, struct aws_byte_buf *dest) {
     struct slow_body_sender *sender = stream->impl;
 
     size_t dst_available = dest->capacity - dest->len;
@@ -1596,17 +1596,17 @@ int s_slow_stream_read(struct aws_input_stream *stream, struct aws_byte_buf *des
 
     return AWS_OP_SUCCESS;
 }
-int s_slow_stream_get_status(struct aws_input_stream *stream, struct aws_stream_status *status) {
+static int s_slow_stream_get_status(struct aws_input_stream *stream, struct aws_stream_status *status) {
     struct slow_body_sender *sender = stream->impl;
     *status = sender->status;
     return AWS_OP_SUCCESS;
 }
-int s_slow_stream_get_length(struct aws_input_stream *stream, int64_t *out_length) {
+static int s_slow_stream_get_length(struct aws_input_stream *stream, int64_t *out_length) {
     struct slow_body_sender *sender = stream->impl;
     *out_length = sender->cursor.len;
     return AWS_OP_SUCCESS;
 }
-void s_slow_stream_destroy(struct aws_input_stream *stream) {
+static void s_slow_stream_destroy(struct aws_input_stream *stream) {
     aws_mem_release(stream->allocator, stream);
 }
 

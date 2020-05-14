@@ -44,7 +44,7 @@ enum aws_h1_encoder_body_stream_state {
     AWS_H1_ENCODER_STATE_CHUNK_END,
     AWS_H1_ENCODER_STATE_CHUNK_TERMINATED,
 };
-#define MAX_ASCII_HEX_CHUNK_STR_SIZE sizeof(size_t) * 2 + 1
+#define MAX_ASCII_HEX_CHUNK_STR_SIZE (sizeof(size_t) * 2 + 1)
 #define CRLF_SIZE 2
 
 /**

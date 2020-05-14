@@ -317,6 +317,12 @@ struct aws_http1_chunk_extension {
 struct aws_http1_chunk_options {
     /*
      * The data stream to be sent in a single chunk.
+     * The aws_input_stream must remain valid until on_complete is invoked.
+     *
+     * Note that, for Transfer-Encodings other than "chunked", the data is
+     * expected to already have that encoding applied. For example, if
+     * "Transfer-Encoding: gzip, chunked" then the data from aws_input_stream
+     * should already be in gzip format.
      */
     struct aws_input_stream *chunk_data;
 
@@ -326,7 +332,9 @@ struct aws_http1_chunk_options {
     size_t chunk_data_size;
 
     /**
-     * A pointer to an array of chunked extensions. The num_extensions must match the length of the array.
+     * A pointer to an array of chunked extensions.
+     * The num_extensions must match the length of the array.
+     * This data is copied, it does not need to remain valid on_complete is invoked.
      */
     struct aws_http1_chunk_extension *extensions;
 
