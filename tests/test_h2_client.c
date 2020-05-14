@@ -2965,7 +2965,7 @@ static void s_on_completed(struct aws_http_connection *connection, int error_cod
 }
 
 /* Test the user API for changing HTTP/2 connection settings */
-TEST_CASE(h2_client_change_settings_api) {
+TEST_CASE(h2_client_change_settings_succeed) {
 
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
     /* client sent the preface and first settings */
@@ -3046,4 +3046,42 @@ TEST_CASE(h2_client_change_settings_api) {
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
     return s_tester_clean_up();
+}
+
+/* Test the user API for changing HTTP/2 connection settings */
+TEST_CASE(h2_client_change_settings_failed_no_ack_received) {
+
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    /* client sent the preface and first settings */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *first_written_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 0);
+    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, first_written_frame->type);
+    ASSERT_FALSE(first_written_frame->ack);
+
+    /* request changing setting */
+    struct aws_http2_setting settings[1];
+    settings[0].id = AWS_HTTP2_SETTINGS_ENABLE_PUSH;
+    settings[0].value = 1;
+    int callback_error_code = INT32_MAX;
+    ASSERT_SUCCESS(
+        aws_http2_connection_change_settings(s_tester.connection, settings, 1, &callback_error_code, s_on_completed));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    /* fake peer sends one settings ack back the initial settings */
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Check the callback has NOT fired after the first settings ack frame, the user_data has not changed */
+    ASSERT_INT_EQUALS(INT32_MAX, callback_error_code);
+
+    /* shutdown the connection */
+    h2_fake_peer_clean_up(&s_tester.peer);
+    aws_http_connection_release(s_tester.connection);
+    ASSERT_SUCCESS(testing_channel_clean_up(&s_tester.testing_channel));
+    /* Check the callback has fired with error */
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, callback_error_code);
+    /* clean up */
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
 }

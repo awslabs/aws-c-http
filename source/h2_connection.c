@@ -2118,6 +2118,9 @@ static void s_finish_shutdown(struct aws_h2_connection *connection) {
     while (!aws_linked_list_empty(&connection->synced_data.pending_settings_list)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->synced_data.pending_settings_list);
         struct aws_h2_pending_settings *settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
+        if (settings->on_completed) {
+            settings->on_completed(&connection->base, AWS_ERROR_HTTP_CONNECTION_CLOSED, settings->user_data);
+        }
         aws_mem_release(connection->base.alloc, settings);
     }
 

@@ -373,7 +373,8 @@ add_test_case(h2_client_push_promise_automatically_rejected)
 add_test_case(h2_client_conn_receive_goaway)
 add_test_case(h2_client_conn_err_invalid_last_stream_id_goaway)
 #TODO add_test_case(h2_client_send_goaway_with_push_promises) id of 1st should be in GOAWAY 2nd should be ignored
-add_test_case(h2_client_change_settings_api)
+add_test_case(h2_client_change_settings_succeed)
+add_test_case(h2_client_change_settings_failed_no_ack_received)
 
 add_test_case(server_new_destroy)
 add_test_case(connection_setup_shutdown)
