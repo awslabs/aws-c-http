@@ -114,6 +114,13 @@ struct aws_h2err s_decoder_on_goaway_begin(
     uint32_t debug_data_length,
     void *userdata);
 
+static struct aws_h2_pending_settings *s_new_pending_settings(
+    struct aws_allocator *allocator,
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
+    void *user_data,
+    aws_http2_on_change_settings_complete *on_completed);
+
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
         {
@@ -335,17 +342,25 @@ static struct aws_h2_connection *s_connection_new(
         initial_settings[iter].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
         initial_settings[iter++].value = (uint32_t)initial_window_size;
     }
-    if (aws_http2_connection_change_settings(
-            &connection->base, initial_settings, iter, NULL /*user_data*/, NULL /*callback function*/)) {
+    struct aws_h2_pending_settings *init_pending_settings =
+        s_new_pending_settings(connection->base.alloc, initial_settings, iter, NULL, NULL);
+    if (!init_pending_settings) {
+        goto error;
+    }
+    struct aws_h2_frame *init_settings_frame =
+        aws_h2_frame_new_settings(connection->base.alloc, initial_settings, iter, false /*ACK*/);
+    if (!init_settings_frame) {
         CONNECTION_LOGF(
             ERROR,
             connection,
-            "Failed to send SETTINGS frame for connection preface, %s",
+            "Failed to create the initial settings frame, error %s",
             aws_error_name(aws_last_error()));
-
+        aws_mem_release(connection->base.alloc, init_pending_settings);
         goto error;
     }
-
+    /* enqueue the initial settings here */
+    aws_linked_list_push_back(&connection->thread_data.outgoing_frames_queue, &init_settings_frame->node);
+    aws_linked_list_push_back(&connection->thread_data.pending_settings_queue, &init_pending_settings->node);
     return connection;
 
 error:
@@ -1460,19 +1475,8 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
             goto error;
         }
     }
-
-    /* Invoke the cross_thread_task */
-    bool was_cross_thread_work_scheduled = false;
-    { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(connection);
-        was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
-        connection->synced_data.is_cross_thread_work_task_scheduled = true;
-        s_unlock_synced_data(connection);
-    } /* END CRITICAL SECTION */
-    if (!was_cross_thread_work_scheduled) {
-        CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
-        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
-    }
+    /* Initial settings are already enqueued */
+    s_try_write_outgoing_frames(connection);
 
     return;
 
@@ -1893,28 +1897,28 @@ static int s_connection_change_settings(
     if (!pending_settings) {
         return AWS_OP_ERR;
     }
-    struct aws_h2_frame *setting_frame =
+    struct aws_h2_frame *settings_frame =
         aws_h2_frame_new_settings(connection->base.alloc, settings_array, num_settings, false /*ACK*/);
-    if (!setting_frame) {
-        CONNECTION_LOGF(ERROR, connection, "Failed to send setting_frames, error %s", aws_error_name(aws_last_error()));
+    if (!settings_frame) {
+        CONNECTION_LOGF(
+            ERROR, connection, "Failed to create settings frame, error %s", aws_error_name(aws_last_error()));
         aws_mem_release(connection->base.alloc, pending_settings);
         return AWS_OP_ERR;
     }
-    /* if the channel has not setup yet, we should not schedule the task */
-    bool cross_thread_work_should_scheduled = false;
+
+    bool was_cross_thread_work_scheduled = false;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
-        if (connection->base.channel_slot) {
-            cross_thread_work_should_scheduled = !connection->synced_data.is_cross_thread_work_task_scheduled;
-            connection->synced_data.is_cross_thread_work_task_scheduled = true;
-        }
-        aws_linked_list_push_back(&connection->synced_data.pending_frame_list, &setting_frame->node);
+
+        was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
+        connection->synced_data.is_cross_thread_work_task_scheduled = true;
+        aws_linked_list_push_back(&connection->synced_data.pending_frame_list, &settings_frame->node);
         aws_linked_list_push_back(&connection->synced_data.pending_settings_list, &pending_settings->node);
 
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
-    if (cross_thread_work_should_scheduled) {
+    if (!was_cross_thread_work_scheduled) {
         CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
         aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
     }
