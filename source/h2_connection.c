@@ -65,7 +65,7 @@ static int s_connection_change_settings(
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     void *user_data,
-    aws_http2_on_change_settings_complete *on_completed);
+    aws_http2_on_change_settings_complete_fn *on_completed);
 
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
@@ -119,7 +119,7 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     void *user_data,
-    aws_http2_on_change_settings_complete *on_completed);
+    aws_http2_on_change_settings_complete_fn *on_completed);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
@@ -447,7 +447,7 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     void *user_data,
-    aws_http2_on_change_settings_complete *on_completed) {
+    aws_http2_on_change_settings_complete_fn *on_completed) {
 
     size_t settings_storage_size = sizeof(struct aws_http2_setting) * num_settings;
     struct aws_h2_pending_settings *pending_settings;
@@ -1297,7 +1297,7 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
     }
     /* invoke the change settings compeleted user callback */
     if (pending_settings->on_completed) {
-        pending_settings->on_completed(&connection->base, AWS_H2_ERR_NO_ERROR, pending_settings->user_data);
+        pending_settings->on_completed(&connection->base, AWS_ERROR_SUCCESS, pending_settings->user_data);
     }
     /* finish applying the settings, remove the front of the queue */
     aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
@@ -1884,7 +1884,7 @@ static int s_connection_change_settings(
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     void *user_data,
-    aws_http2_on_change_settings_complete *on_completed) {
+    aws_http2_on_change_settings_complete_fn *on_completed) {
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
 

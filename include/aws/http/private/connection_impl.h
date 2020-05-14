@@ -59,7 +59,7 @@ struct aws_http_connection_vtable {
         const struct aws_http2_setting *settings_array,
         size_t num_settings,
         void *user_data,
-        aws_http2_on_change_settings_complete *on_completed);
+        aws_http2_on_change_settings_complete_fn *on_completed);
 };
 
 typedef int(aws_http_proxy_request_transform_fn)(struct aws_http_message *request, void *user_data);

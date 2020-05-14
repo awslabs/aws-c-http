@@ -57,11 +57,14 @@ typedef void(
     aws_http_on_client_connection_shutdown_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
 /**
- * Invoked when the HTTP/2 settings change completes, whether successful or unsuccessful.
- * This is always invoked on connection's event-loop thread.
+ * Invoked when the HTTP/2 settings change is complete, whether successful or unsuccessful.
+ * If error_code is AWS_ERROR_SUCCESS (0), then the peer has acknowledged the settings and the change has been applied.
+ * If error_code is non-zero, then a connection error occurred before the settings could be fully acknowledged and
+ * applied. 
+ * This is always invoked on the connection's event-loop thread.
  */
 typedef void(
-    aws_http2_on_change_settings_complete)(struct aws_http_connection *connection, int error_code, void *user_data);
+    aws_http2_on_change_settings_complete_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
 /**
  * Configuration options for connection monitoring
@@ -317,7 +320,8 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
 
 /**
  * HTTP/2 specific. Change the HTTP/2 conenction settings.
- * Settings frame will be sent. If set, on_completed callback will always be invoked.
+ * Settings frame will be sent. If set, on_completed callback will be always be invoked, if no error is reported then
+ * the peer has acknowledged the settings and the change has been applied.
  */
 AWS_HTTP_API
 int aws_http2_connection_change_settings(
@@ -325,7 +329,7 @@ int aws_http2_connection_change_settings(
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     void *user_data,
-    aws_http2_on_change_settings_complete *on_completed);
+    aws_http2_on_change_settings_complete_fn *on_completed);
 
 AWS_EXTERN_C_END
 

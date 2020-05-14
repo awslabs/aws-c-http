@@ -242,7 +242,7 @@ int aws_http2_connection_change_settings(
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     void *user_data,
-    aws_http2_on_change_settings_complete *on_completed) {
+    aws_http2_on_change_settings_complete_fn *on_completed) {
     AWS_ASSERT(connection);
     AWS_PRECONDITION(connection->vtable);
     AWS_PRECONDITION(settings_array);
