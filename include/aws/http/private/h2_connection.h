@@ -139,7 +139,7 @@ struct aws_h2_pending_settings {
     size_t num_settings;
     struct aws_linked_list_node node;
     /* user callback */
-    aws_http2_on_settings_ack_received *on_settings_ack;
+    aws_http2_on_change_settings_complete *on_completed;
     void *user_data;
 };
 

@@ -242,7 +242,7 @@ int aws_http2_connection_change_settings(
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     void *user_data,
-    aws_http2_on_settings_ack_received *on_settings_ack) {
+    aws_http2_on_change_settings_complete *on_completed) {
     AWS_ASSERT(connection);
     AWS_PRECONDITION(connection->vtable);
     AWS_PRECONDITION(settings_array);
@@ -253,7 +253,7 @@ int aws_http2_connection_change_settings(
             (void *)connection);
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
-    return connection->vtable->change_settings(connection, settings_array, num_settings, user_data, on_settings_ack);
+    return connection->vtable->change_settings(connection, settings_array, num_settings, user_data, on_completed);
 }
 
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {

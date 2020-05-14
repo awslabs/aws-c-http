@@ -65,7 +65,7 @@ static int s_connection_change_settings(
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     void *user_data,
-    aws_http2_on_settings_ack_received *on_settings_ack);
+    aws_http2_on_change_settings_complete *on_completed);
 
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
@@ -398,6 +398,11 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
         /* Some settings are sent, but peer never sends ACK back. It's not an error. We just have to clean it up */
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
         struct aws_h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
+        /* fire the user callback with error */
+        if (pending_settings->on_completed) {
+            pending_settings->on_completed(
+                &connection->base, AWS_ERROR_HTTP_CONNECTION_CLOSED, pending_settings->user_data);
+        }
         aws_mem_release(connection->base.alloc, pending_settings);
     }
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stalled_window_streams_list));
@@ -427,7 +432,7 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     void *user_data,
-    aws_http2_on_settings_ack_received *on_settings_ack) {
+    aws_http2_on_change_settings_complete *on_completed) {
 
     size_t settings_storage_size = sizeof(struct aws_http2_setting) * num_settings;
     struct aws_h2_pending_settings *pending_settings;
@@ -447,7 +452,7 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     pending_settings->settings_array = settings_storage;
     memcpy(pending_settings->settings_array, settings_array, num_settings * sizeof(struct aws_http2_setting));
     pending_settings->num_settings = num_settings;
-    pending_settings->on_settings_ack = on_settings_ack;
+    pending_settings->on_completed = on_completed;
     pending_settings->user_data = user_data;
 
     return pending_settings;
@@ -1263,7 +1268,7 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
                             connection,
                             "Connection error, change to SETTINGS_INITIAL_WINDOW_SIZE from internal caused a stream's "
                             "flow-control window to exceed the maximum size");
-                        return err;
+                        goto error;
                     }
                 }
             } break;
@@ -1275,20 +1280,24 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
         }
         connection->thread_data.settings_self[settings_array[i].id] = settings_array[i].value;
     }
-    /* invoke the settings ack user callback */
-    if (pending_settings->on_settings_ack) {
-        if (pending_settings->on_settings_ack(pending_settings->user_data)) {
-            /* Error from user callback, we will treat it as connection error */
-            CONNECTION_LOGF(
-                ERROR, connection, "Settings ACK callback raised error, %s", aws_error_name(aws_last_error()));
-            return aws_h2err_from_last_error();
-        }
+    /* invoke the change settings compeleted user callback */
+    if (pending_settings->on_completed) {
+        pending_settings->on_completed(&connection->base, AWS_H2_ERR_NO_ERROR, pending_settings->user_data);
     }
     /* finish applying the settings, remove the front of the queue */
     aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
     /* clean up the pending_settings */
     aws_mem_release(connection->base.alloc, pending_settings);
     return AWS_H2ERR_SUCCESS;
+error:
+    /* invoke the user callback with error code */
+    if (pending_settings->on_completed) {
+        pending_settings->on_completed(&connection->base, err.aws_code, pending_settings->user_data);
+    }
+    /* clean up the pending settings here */
+    aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
+    aws_mem_release(connection->base.alloc, pending_settings);
+    return err;
 }
 
 static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_increment, void *userdata) {
@@ -1871,7 +1880,7 @@ static int s_connection_change_settings(
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     void *user_data,
-    aws_http2_on_settings_ack_received *on_settings_ack) {
+    aws_http2_on_change_settings_complete *on_completed) {
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
 
@@ -1880,7 +1889,7 @@ static int s_connection_change_settings(
     }
 
     struct aws_h2_pending_settings *pending_settings =
-        s_new_pending_settings(connection->base.alloc, settings_array, num_settings, user_data, on_settings_ack);
+        s_new_pending_settings(connection->base.alloc, settings_array, num_settings, user_data, on_completed);
     if (!pending_settings) {
         return AWS_OP_ERR;
     }

@@ -57,11 +57,11 @@ typedef void(
     aws_http_on_client_connection_shutdown_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
 /**
- * Invoked when the HTTP/2 connection settings ack frame received.
- * It can be not invoked if we never received the settings ack frame for that settings.
- * This is always invoked on connetion's event-loop thread.
+ * Invoked when the HTTP/2 settings change completes, whether successful or unsuccessful.
+ * This is always invoked on connection's event-loop thread.
  */
-typedef int(aws_http2_on_settings_ack_received)(void *user_data);
+typedef void(
+    aws_http2_on_change_settings_complete)(struct aws_http_connection *connection, int error_code, void *user_data);
 
 /**
  * Configuration options for connection monitoring
@@ -317,8 +317,7 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
 
 /**
  * HTTP/2 specific. Change the HTTP/2 conenction settings.
- * Settings frame will be sent. If settings ack frame for that settings we sent received, on_settings_ack will be
- * invoked.
+ * Settings frame will be sent. If set, on_completed callback will always be invoked.
  */
 AWS_HTTP_API
 int aws_http2_connection_change_settings(
@@ -326,7 +325,7 @@ int aws_http2_connection_change_settings(
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     void *user_data,
-    aws_http2_on_settings_ack_received *on_settings_ack);
+    aws_http2_on_change_settings_complete *on_completed);
 
 AWS_EXTERN_C_END
 
