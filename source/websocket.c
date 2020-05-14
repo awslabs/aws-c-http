@@ -233,13 +233,13 @@ bool aws_websocket_is_data_frame(uint8_t opcode) {
     return !(opcode & 0x08);
 }
 
-void s_lock_synced_data(struct aws_websocket *websocket) {
+static void s_lock_synced_data(struct aws_websocket *websocket) {
     int err = aws_mutex_lock(&websocket->synced_data.lock);
     AWS_ASSERT(!err);
     (void)err;
 }
 
-void s_unlock_synced_data(struct aws_websocket *websocket) {
+static void s_unlock_synced_data(struct aws_websocket *websocket) {
     int err = aws_mutex_unlock(&websocket->synced_data.lock);
     AWS_ASSERT(!err);
     (void)err;

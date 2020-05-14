@@ -50,7 +50,7 @@ struct test_ctx {
 
 static const uint32_t TEST_TIMEOUT_SEC = 4;
 
-void s_on_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
+static void s_on_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct test_ctx *test = user_data;
     AWS_FATAL_ASSERT(aws_mutex_lock(&test->wait_lock) == AWS_OP_SUCCESS);
 
@@ -61,7 +61,7 @@ void s_on_connection_setup(struct aws_http_connection *connection, int error_cod
     aws_condition_variable_notify_one(&test->wait_cvar);
 }
 
-void s_on_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
+static void s_on_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
     (void)connection;
     struct test_ctx *test = user_data;
     AWS_FATAL_ASSERT(aws_mutex_lock(&test->wait_lock) == AWS_OP_SUCCESS);

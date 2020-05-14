@@ -1038,7 +1038,10 @@ static struct aws_crt_statistics_handler *s_aws_crt_statistics_handler_new_http_
     return handler;
 }
 
-int s_aws_http_on_incoming_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
+static int s_aws_http_on_incoming_body(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    void *user_data) {
     (void)stream;
     (void)data;
     (void)user_data;
@@ -1046,7 +1049,7 @@ int s_aws_http_on_incoming_body(struct aws_http_stream *stream, const struct aws
     return AWS_OP_SUCCESS;
 }
 
-void s_aws_http_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+static void s_aws_http_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     (void)stream;
     (void)error_code;
 

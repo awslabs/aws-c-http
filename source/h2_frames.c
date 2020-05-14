@@ -611,7 +611,7 @@ static void s_frame_headers_destroy(struct aws_h2_frame *frame_base) {
 }
 
 /* Encode the next frame for this header-block (or encode nothing if output buffer is too small). */
-void s_encode_single_header_block_frame(
+static void s_encode_single_header_block_frame(
     struct aws_h2_frame_headers *frame,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output,
