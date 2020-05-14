@@ -33,7 +33,7 @@ static void s_frame_init(
     frame->stream_id = stream_id;
     frame->headers = aws_http_headers_new(alloc);
     AWS_FATAL_ASSERT(
-        0 == aws_array_list_init_dynamic(&frame->settings, alloc, 16, sizeof(struct aws_h2_frame_setting)));
+        0 == aws_array_list_init_dynamic(&frame->settings, alloc, 16, sizeof(struct aws_http2_setting)));
     AWS_FATAL_ASSERT(0 == aws_byte_buf_init(&frame->data, alloc, 1024));
 }
 
@@ -380,7 +380,7 @@ static struct aws_h2err s_decoder_on_rst_stream(uint32_t stream_id, uint32_t err
 }
 
 static struct aws_h2err s_decoder_on_settings(
-    const struct aws_h2_frame_setting *settings_array,
+    const struct aws_http2_setting *settings_array,
     size_t num_settings,
     void *userdata) {
 

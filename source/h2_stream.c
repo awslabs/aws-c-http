@@ -304,8 +304,8 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
     }
 
     /* Initialize the flow-control window size */
-    stream->thread_data.window_size_peer = connection->thread_data.settings_peer[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
-    stream->thread_data.window_size_self = connection->thread_data.settings_self[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
+    stream->thread_data.window_size_peer = connection->thread_data.settings_peer[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
+    stream->thread_data.window_size_self = connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
 
     if (has_body_stream) {
         /* If stream has DATA to send, put it in the outgoing_streams_list, and we'll send data later */

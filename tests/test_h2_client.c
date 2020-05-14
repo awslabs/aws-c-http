@@ -46,7 +46,7 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
     ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc, &options));
 
     s_tester.connection =
-        aws_http_connection_new_http2_client(alloc, true, aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE]);
+        aws_http_connection_new_http2_client(alloc, true, aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE]);
     ASSERT_NOT_NULL(s_tester.connection);
 
     { /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
@@ -1440,7 +1440,7 @@ TEST_CASE(h2_client_stream_send_lots_of_data) {
 
     /* bodies must be big enough to span multiple H2-frames and multiple aws_io_messages */
     size_t body_size =
-        aws_max_size(aws_h2_settings_initial[AWS_H2_SETTINGS_MAX_FRAME_SIZE], g_aws_channel_max_fragment_size) * 5;
+        aws_max_size(aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE], g_aws_channel_max_fragment_size) * 5;
 
     /* get connection preface and acks out of the way */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
@@ -1689,8 +1689,8 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_stream_window_size) {
 
     /* get connection preface and acks out of the way */
     /* fake peer sends setting with 5 initial window size */
-    struct aws_h2_frame_setting settings_array[1];
-    settings_array[0].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
+    struct aws_http2_setting settings_array[1];
+    settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
     settings_array[0].value = 5;
     struct aws_h2_frame *settings = aws_h2_frame_new_settings(allocator, settings_array, 1, false /*ack*/);
     ASSERT_NOT_NULL(settings);
@@ -1771,8 +1771,8 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_negative_stream_window_size) 
 
     /* get connection preface and acks out of the way */
     /* fake peer sends setting with 300 initial window size */
-    struct aws_h2_frame_setting settings_array[1];
-    settings_array[0].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
+    struct aws_http2_setting settings_array[1];
+    settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
     settings_array[0].value = 300;
     struct aws_h2_frame *settings = aws_h2_frame_new_settings(allocator, settings_array, 1, false /*ack*/);
     ASSERT_NOT_NULL(settings);
@@ -1879,7 +1879,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_window_size) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* bodies must be big enough to span multiple H2-frames and multiple aws_io_messages */
-    size_t body_size = aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE] - AWS_H2_MIN_WINDOW_SIZE;
+    size_t body_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] - AWS_H2_MIN_WINDOW_SIZE;
 
     /* get connection preface and acks out of the way */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
@@ -2006,7 +2006,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* bodies must be big enough to span multiple H2-frames and multiple aws_io_messages */
-    size_t body_size = aws_h2_settings_initial[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
+    size_t body_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
 
     /* get connection preface and acks out of the way */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
@@ -2065,8 +2065,8 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
     size_t frames_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
 
     /* fake peer set new INITIAL_WINDOW_SIZE to 0 to set window size for rest stream to be 0 */
-    struct aws_h2_frame_setting settings_array[1];
-    settings_array[0].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
+    struct aws_http2_setting settings_array[1];
+    settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
     settings_array[0].value = 0;
     struct aws_h2_frame *settings = aws_h2_frame_new_settings(allocator, settings_array, 1, false /*ack*/);
     ASSERT_NOT_NULL(settings);
@@ -2276,15 +2276,13 @@ TEST_CASE(h2_client_stream_err_received_data_flow_control) {
     size_t window_size = 10;
 
     /* change the settings of the initial window size for new stream flow-control window */
-    struct aws_http2_change_settings_options options;
-    AWS_ZERO_STRUCT(options);
-    struct aws_h2_frame_setting settings[1];
-    settings[0].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
+    struct aws_http2_setting settings[1];
+    settings[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
     settings[0].value = (uint32_t)window_size;
-    options.num_settings = 1;
-    options.settings_array = settings;
+    size_t num_settings = 1;
 
-    ASSERT_SUCCESS(aws_http2_connection_change_settings(s_tester.connection, &options));
+    ASSERT_SUCCESS(aws_http2_connection_change_settings(
+        s_tester.connection, settings, num_settings, NULL /*user_data*/, NULL /*callback function*/));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* fake peer sends two settings ack back, one for the initial settings, one for the user settings we just sent */
     struct aws_h2_frame *peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
@@ -2462,8 +2460,8 @@ TEST_CASE(h2_client_conn_err_initial_window_size_cause_window_exceed_max) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, stream_window_update));
 
     /* Then we set INITIAL_WINDOW_SIZE to largest - 1, which will not lead to any error */
-    struct aws_h2_frame_setting settings_array[1];
-    settings_array[0].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
+    struct aws_http2_setting settings_array[1];
+    settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
     settings_array[0].value = AWS_H2_WINDOW_UPDATE_MAX - 1;
     struct aws_h2_frame *settings = aws_h2_frame_new_settings(allocator, settings_array, 1, false /*ack*/);
     ASSERT_NOT_NULL(settings);
@@ -2473,7 +2471,7 @@ TEST_CASE(h2_client_conn_err_initial_window_size_cause_window_exceed_max) {
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
 
     /* Finally we set INITIAL_WINDOW_SIZE to largest, which cause the stream window size to exceed the max size */
-    settings_array[0].id = AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE;
+    settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
     settings_array[0].value = AWS_H2_WINDOW_UPDATE_MAX;
     settings = aws_h2_frame_new_settings(allocator, settings_array, 1, false /*ack*/);
     ASSERT_NOT_NULL(settings);
@@ -2961,8 +2959,8 @@ TEST_CASE(h2_client_conn_err_invalid_last_stream_id_goaway) {
 }
 
 static int s_on_settings_ack(void *user_data) {
-    bool *fired = user_data;
-    *fired = true;
+    bool *callback_fired = user_data;
+    *callback_fired = true;
     return AWS_OP_SUCCESS;
 }
 
@@ -2978,18 +2976,11 @@ TEST_CASE(h2_client_change_settings_api) {
 
     /* We disabled the push_promise at the initial setting, let's use user API to enable it. */
     /* Use user API to change HTTP/2 connection settings */
-    struct aws_http2_change_settings_options options;
-    struct aws_h2_frame_setting settings[1];
-    settings[0].id = AWS_H2_SETTINGS_ENABLE_PUSH;
+    struct aws_http2_setting settings[1];
+    settings[0].id = AWS_HTTP2_SETTINGS_ENABLE_PUSH;
     settings[0].value = 1;
-
-    options.num_settings = 1;
-    options.settings_array = settings;
-    options.on_settings_ack = s_on_settings_ack;
-    bool fired = false;
-    options.user_data = &fired;
-
-    ASSERT_SUCCESS(aws_http2_connection_change_settings(s_tester.connection, &options));
+    bool callback_fired = false;
+    ASSERT_SUCCESS(aws_http2_connection_change_settings(s_tester.connection, settings, 1, &callback_fired, s_on_settings_ack));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* check the settings frame is sent */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
@@ -2997,9 +2988,9 @@ TEST_CASE(h2_client_change_settings_api) {
     ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, second_frame->type);
     ASSERT_FALSE(second_frame->ack);
     ASSERT_INT_EQUALS(1, second_frame->settings.length);
-    struct aws_h2_frame_setting setting_received;
+    struct aws_http2_setting setting_received;
     aws_array_list_front(&second_frame->settings, &setting_received);
-    ASSERT_INT_EQUALS(AWS_H2_SETTINGS_ENABLE_PUSH, setting_received.id);
+    ASSERT_INT_EQUALS(AWS_HTTP2_SETTINGS_ENABLE_PUSH, setting_received.id);
     ASSERT_INT_EQUALS(1, setting_received.value);
 
     /* fake peer sends connection preface */
@@ -3009,11 +3000,11 @@ TEST_CASE(h2_client_change_settings_api) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* Check the callback has NOT fired after the first settings ack frame */
-    ASSERT_FALSE(fired);
+    ASSERT_FALSE(callback_fired);
     peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     /* Check the callback has fired after the second settings ack frame */
-    ASSERT_TRUE(fired);
+    ASSERT_TRUE(callback_fired);
 
     /* fake peer sends push_promise, after two settings frames applied, it will be fine */
     struct aws_http_message *request = aws_http_message_new_request(allocator);

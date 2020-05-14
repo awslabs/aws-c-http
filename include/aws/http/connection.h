@@ -228,33 +228,22 @@ struct aws_http_client_connection_options {
     bool manual_window_management;
 };
 
-/**
- * Options for changing the settings for an HTTP/2 connection.
- */
-struct aws_http2_change_settings_options {
-    /**
-     * Required
-     * The data of settings to chagne.
-     */
-    const struct aws_h2_frame_setting *settings_array;
+/* Predefined settings identifiers (RFC-7540 6.5.2) */
+enum aws_http2_settings_id {
+    AWS_HTTP2_SETTINGS_BEGIN_RANGE = 0x1, /* Beginning of known values */
+    AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE = 0x1,
+    AWS_HTTP2_SETTINGS_ENABLE_PUSH = 0x2,
+    AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS = 0x3,
+    AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE = 0x4,
+    AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE = 0x5,
+    AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE = 0x6,
+    AWS_HTTP2_SETTINGS_END_RANGE, /* End of known values */
+};
 
-    /**
-     * Required
-     * The num of settings to change.
-     */
-    size_t num_settings;
-
-    /**
-     * User data for callbacks.
-     * Optional.
-     */
-    void *user_data;
-
-    /**
-     * Invoke when settings ack frame received.
-     * Optional.
-     */
-    aws_http2_on_settings_ack_received *on_settings_ack;
+/* A HTTP/2 setting and its value, used in SETTINGS frame */
+struct aws_http2_setting {
+    enum aws_http2_settings_id id;
+    uint32_t value;
 };
 
 /**
@@ -327,12 +316,17 @@ AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
 
 /**
- *  HTTP/2 specific. Change the HTTP/2 conenction settings.
+ * HTTP/2 specific. Change the HTTP/2 conenction settings.
+ * Settings frame will be sent. If settings ack frame for that settings we sent received, on_settings_ack will be
+ * invoked.
  */
 AWS_HTTP_API
 int aws_http2_connection_change_settings(
     struct aws_http_connection *connection,
-    const struct aws_http2_change_settings_options *opt);
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
+    void *user_data,
+    aws_http2_on_settings_ack_received *on_settings_ack);
 
 AWS_EXTERN_C_END
 

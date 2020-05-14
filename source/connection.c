@@ -239,12 +239,21 @@ void aws_http_connection_update_window(struct aws_http_connection *connection, s
 
 int aws_http2_connection_change_settings(
     struct aws_http_connection *connection,
-    const struct aws_http2_change_settings_options *opt) {
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
+    void *user_data,
+    aws_http2_on_settings_ack_received *on_settings_ack) {
     AWS_ASSERT(connection);
-    AWS_PRECONDITION(connection->vtable->change_settings);
-    AWS_PRECONDITION(opt);
-    AWS_PRECONDITION(opt->settings_array);
-    return connection->vtable->change_settings(connection, opt);
+    AWS_PRECONDITION(connection->vtable);
+    AWS_PRECONDITION(settings_array);
+    if (connection->http_version != AWS_HTTP_VERSION_2) {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
+            (void *)connection);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+    return connection->vtable->change_settings(connection, settings_array, num_settings, user_data, on_settings_ack);
 }
 
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {

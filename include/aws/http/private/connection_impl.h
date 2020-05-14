@@ -54,7 +54,12 @@ struct aws_http_connection_vtable {
     void (*update_window)(struct aws_http_connection *connection, size_t increment_size);
 
     /* HTTP/2 specific functions */
-    int (*change_settings)(struct aws_http_connection *connection, const struct aws_http2_change_settings_options *opt);
+    int (*change_settings)(
+        struct aws_http_connection *connection,
+        const struct aws_http2_setting *settings_array,
+        size_t num_settings,
+        void *user_data,
+        aws_http2_on_settings_ack_received *on_settings_ack);
 };
 
 typedef int(aws_http_proxy_request_transform_fn)(struct aws_http_message *request, void *user_data);

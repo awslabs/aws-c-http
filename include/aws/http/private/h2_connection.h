@@ -45,9 +45,9 @@ struct aws_h2_connection {
         bool is_outgoing_frames_task_active;
 
         /* Settings received from peer, which restricts the message to send */
-        uint32_t settings_peer[AWS_H2_SETTINGS_END_RANGE];
+        uint32_t settings_peer[AWS_HTTP2_SETTINGS_END_RANGE];
         /* My settings to send/sent to peer, which affects the decoding */
-        uint32_t settings_self[AWS_H2_SETTINGS_END_RANGE];
+        uint32_t settings_self[AWS_HTTP2_SETTINGS_END_RANGE];
 
         /* List using aws_h2_pending_settings.node
          * Contains settings waiting to be ACKed by peer and applied */
@@ -135,7 +135,7 @@ struct aws_h2_connection {
 };
 
 struct aws_h2_pending_settings {
-    struct aws_h2_frame_setting *settings_array;
+    struct aws_http2_setting *settings_array;
     size_t num_settings;
     struct aws_linked_list_node node;
     /* user callback */

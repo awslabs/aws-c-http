@@ -82,7 +82,7 @@ struct aws_h2_decoder_vtable {
 
     /* Called once for SETTINGS frame, without ACK flag */
     struct aws_h2err (
-        *on_settings)(const struct aws_h2_frame_setting *settings_array, size_t num_settings, void *userdata);
+        *on_settings)(const struct aws_http2_setting *settings_array, size_t num_settings, void *userdata);
 
     /* For GOAWAY frame: _begin() is called, then 0+ _i() calls, then _end().
      * No other decoder callbacks will occur in this time. */
