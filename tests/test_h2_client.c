@@ -2959,7 +2959,7 @@ TEST_CASE(h2_client_conn_err_invalid_last_stream_id_goaway) {
 }
 
 static void s_on_completed(struct aws_http_connection *connection, int error_code, void *user_data) {
-    (void) connection;
+    (void)connection;
     int *callback_error_code = user_data;
     *callback_error_code = error_code;
 }
