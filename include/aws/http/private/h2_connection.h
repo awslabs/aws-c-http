@@ -53,6 +53,10 @@ struct aws_h2_connection {
          * Contains settings waiting to be ACKed by peer and applied */
         struct aws_linked_list pending_settings_queue;
 
+        /* List using aws_h2_pending_ping.node
+         * PING required by user waiting to the acknowledgment from peer */
+        struct aws_linked_list pending_ping_queue;
+
         /* Most recent stream-id that was initiated by peer */
         uint32_t latest_peer_initiated_stream_id;
 
@@ -115,11 +119,14 @@ struct aws_h2_connection {
         /* New `aws_h2_stream *` that haven't moved to `thread_data` yet */
         struct aws_linked_list pending_stream_list;
 
-        /* New `aws_h2_frames *` created by user that haven't moved to `thread_data` yet */
+        /* New `aws_h2_frames *`, connection control frames created by user that haven't moved to `thread_data` yet */
         struct aws_linked_list pending_frame_list;
 
-        /* New `aws_pending_settings *` created by user that haven't moved to `thread_data` yet */
+        /* New `aws_h2_pending_settings *` created by user that haven't moved to `thread_data` yet */
         struct aws_linked_list pending_settings_list;
+
+        /* New `aws_h2_pending_ping *` created by user that haven't moved to `thread_data` yet */
+        struct aws_linked_list pending_ping_list;
 
         bool is_cross_thread_work_task_scheduled;
 
@@ -139,8 +146,19 @@ struct aws_h2_pending_settings {
     size_t num_settings;
     struct aws_linked_list_node node;
     /* user callback */
-    aws_http2_on_change_settings_complete_fn *on_completed;
     void *user_data;
+    aws_http2_on_change_settings_complete_fn *on_completed;
+};
+
+struct aws_h2_pending_ping {
+    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE];
+    /* The started time stamp for calculating the round-trip time, we set it close to when the ping function called by
+     * user */
+    uint64_t started_time;
+    struct aws_linked_list_node node;
+    /* user callback */
+    void *user_data;
+    aws_http2_on_ping_complete_fn *on_completed;
 };
 
 /**

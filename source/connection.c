@@ -256,6 +256,31 @@ int aws_http2_connection_change_settings(
     return connection->vtable->change_settings(connection, settings_array, num_settings, user_data, on_completed);
 }
 
+int aws_http2_connection_ping(
+    struct aws_http_connection *connection,
+    const uint8_t *opaque_data,
+    size_t data_len,
+    void *user_data,
+    aws_http2_on_ping_complete_fn *on_ack) {
+    AWS_ASSERT(connection);
+    AWS_PRECONDITION(connection->vtable);
+    if(opaque_data && data_len != 8) {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Only 8 bytes opaque data supported for PING in HTTP/2",
+            (void *)connection);
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);        
+    }
+    if (connection->http_version != AWS_HTTP_VERSION_2) {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
+            (void *)connection);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+    return connection->vtable->ping(connection, opaque_data, user_data, on_ack);
+}
+
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     return connection->channel_slot->channel;
