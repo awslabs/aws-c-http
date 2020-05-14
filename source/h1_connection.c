@@ -420,6 +420,17 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
     }
 }
 
+int aws_h1_stream_schedule_outgoing_stream_task(struct aws_http_stream *stream) {
+    AWS_PRECONDITION(stream);
+    struct aws_http_connection *base_connection = stream->owning_connection;
+    AWS_ASSERT(base_connection);
+    struct h1_connection *connection = AWS_CONTAINER_OF(base_connection, struct h1_connection, base);
+    AWS_ASSERT(connection);
+    AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling outgoing stream task.", (void *)&connection->base);
+    aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->outgoing_stream_task);
+    return AWS_OP_SUCCESS;
+}
+
 int aws_h1_stream_activate(struct aws_http_stream *stream) {
     struct aws_h1_stream *h1_stream = AWS_CONTAINER_OF(stream, struct aws_h1_stream, base);
 
@@ -859,6 +870,14 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
         return;
     }
 
+    /* The s_outgoing_stream_task() will be unpaused when a new chunk is added and the stream is paused.
+     * See: h1_connection.c:aws_h1_stream_schedule_outgoing_stream_task()
+     * and h1_stream.c:s_aws_h1_stream_write_chunk(). */
+    if (aws_h1_stream_is_paused(outgoing_stream)) {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Pausing outgoing stream task", (void *)outgoing_stream);
+        return;
+    }
+
     msg = aws_channel_slot_acquire_max_message_for_write(connection->base.channel_slot);
     if (!msg) {
         AWS_LOGF_ERROR(
@@ -874,11 +893,11 @@ static void s_outgoing_stream_task(struct aws_channel_task *task, void *arg, enu
     msg->on_completion = s_on_channel_write_complete;
     msg->user_data = connection;
 
-    /**
+    /*
      * Fill message data from the outgoing stream.
      * Note that we might be resuming work on a stream from a previous run of this task.
      */
-    if (aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
+    if (AWS_OP_SUCCESS != aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
         /* Error sending data, abandon ship */
         goto error;
     }
@@ -922,7 +941,6 @@ error:
     if (msg) {
         aws_mem_release(msg->allocator, msg);
     }
-
     s_shutdown_due_to_error(connection, aws_last_error());
 }
 
