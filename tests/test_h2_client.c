@@ -3151,12 +3151,19 @@ TEST_CASE(h2_client_send_ping_no_ack_received) {
     /* fake peer sends connection preface */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
 
-    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE] = "1234567";
     struct ping_user_data data = {.rtt_ns = 0, .error_code = INT32_MAX};
     /* client request a PING */
-    ASSERT_SUCCESS(
-        aws_http2_connection_ping(s_tester.connection, opaque_data, AWS_H2_PING_DATA_SIZE, &data, on_ping_complete));
+    ASSERT_SUCCESS(aws_http2_connection_ping(s_tester.connection, NULL, 0, &data, on_ping_complete));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* check ping frame received */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *ping_frame =
+        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_PING, 0, NULL);
+    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE];
+    AWS_ZERO_ARRAY(opaque_data);
+    /* Zeroed 8 bytes data received */
+    ASSERT_BIN_ARRAYS_EQUALS(opaque_data, AWS_H2_PING_DATA_SIZE, ping_frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+    ASSERT_FALSE(ping_frame->ack);
 
     /* shutdown the connection */
     h2_fake_peer_clean_up(&s_tester.peer);

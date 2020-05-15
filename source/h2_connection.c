@@ -436,7 +436,6 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
         aws_h2_frame_destroy(frame);
     }
     while (!aws_linked_list_empty(&connection->thread_data.pending_settings_queue)) {
-        /* Some settings are sent, but peer never sends ACK back. It's not an error. We just have to clean it up */
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
         struct aws_h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
         /* fire the user callback with error */
@@ -447,7 +446,6 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
         aws_mem_release(connection->base.alloc, pending_settings);
     }
     while (!aws_linked_list_empty(&connection->thread_data.pending_ping_queue)) {
-        /* Some settings are sent, but peer never sends ACK back. It's not an error. We just have to clean it up */
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_ping_queue);
         struct aws_h2_pending_ping *pending_ping = AWS_CONTAINER_OF(node, struct aws_h2_pending_ping, node);
         /* fire the user callback with error */
@@ -1223,7 +1221,7 @@ static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_H2_PING_DA
     struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_ping_queue);
     struct aws_h2_pending_ping *pending_ping = AWS_CONTAINER_OF(node, struct aws_h2_pending_ping, node);
     /* Check the payload */
-    if (memcmp(opaque_data, pending_ping->opaque_data, AWS_H2_PING_DATA_SIZE) != 0) {
+    if (!aws_array_eq(opaque_data, AWS_H2_PING_DATA_SIZE, pending_ping->opaque_data, AWS_H2_PING_DATA_SIZE)) {
         CONNECTION_LOG(
             ERROR, connection, "Connection error, received PING ACK has different opaque data with our expectation.");
         err = aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);

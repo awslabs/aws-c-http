@@ -66,11 +66,11 @@ typedef void(
     aws_http2_on_change_settings_complete_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
 /**
- * Invoked when the HTTP/2 ping completes, whether ping_ack received or not.
- * If error_code is AWS_ERROR_SUCCESS (0), then the peer has acknowledged the ping and round_trip_time_ns will be the
- * nano seconds of the round trip time for the ping.
- * If error_code is non-zero, then a connection error occurred before the ping get acknowledgment and round_trip_time_ns
- * will be useless.
+ * Invoked when the HTTP/2 PING completes, whether peer has acknowledged it or not.
+ * If error_code is AWS_ERROR_SUCCESS (0), then the peer has acknowledged the PING and round_trip_time_ns will be the
+ * round trip time in nano seconds for the connection.
+ * If error_code is non-zero, then a connection error occurred before the PING get acknowledgment and round_trip_time_ns
+ * will be useless in this case.
  */
 typedef void(aws_http2_on_ping_complete_fn)(
     struct aws_http_connection *connection,
@@ -344,7 +344,7 @@ int aws_http2_connection_change_settings(
     aws_http2_on_change_settings_complete_fn *on_completed);
 
 /**
- * HTTP/2 specific. Send a ping frame with opaque_data as payload.
+ * HTTP/2 specific. Send a PING frame with opaque_data as payload.
  * Opaque_data has to be 8 bytes data or NULL. If opaque_data is NULL, we will send zeroed 8 bytes data.
  * If set, on_completed callback will always be invoked.
  */
