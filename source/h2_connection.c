@@ -107,6 +107,7 @@ static struct aws_h2err s_decoder_on_data_begin(
 static struct aws_h2err s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
 static struct aws_h2err s_decoder_on_end_stream(uint32_t stream_id, void *userdata);
 static struct aws_h2err s_decoder_on_rst_stream(uint32_t stream_id, uint32_t h2_error_code, void *userdata);
+static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
 static struct aws_h2err s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
 static struct aws_h2err s_decoder_on_settings(
     const struct aws_http2_setting *settings_array,
@@ -159,6 +160,7 @@ static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
     .on_data_i = s_decoder_on_data_i,
     .on_end_stream = s_decoder_on_end_stream,
     .on_rst_stream = s_decoder_on_rst_stream,
+    .on_ping_ack = s_decoder_on_ping_ack,
     .on_ping = s_decoder_on_ping,
     .on_settings = s_decoder_on_settings,
     .on_settings_ack = s_decoder_on_settings_ack,
@@ -282,6 +284,7 @@ static struct aws_h2_connection *s_connection_new(
 
     aws_linked_list_init(&connection->thread_data.outgoing_streams_list);
     aws_linked_list_init(&connection->thread_data.pending_settings_queue);
+    aws_linked_list_init(&connection->thread_data.pending_ping_queue);
     aws_linked_list_init(&connection->thread_data.stalled_window_streams_list);
     aws_linked_list_init(&connection->thread_data.outgoing_frames_queue);
 
@@ -417,6 +420,21 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     AWS_ASSERT(
         !aws_hash_table_is_valid(&connection->thread_data.active_streams_map) ||
         aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0);
+
+    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stalled_window_streams_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.outgoing_streams_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_frame_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_settings_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_ping_list));
+
+    /* Clean up any unsent frames and structures */
+    struct aws_linked_list *outgoing_frames_queue = &connection->thread_data.outgoing_frames_queue;
+    while (!aws_linked_list_empty(outgoing_frames_queue)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(outgoing_frames_queue);
+        struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
+        aws_h2_frame_destroy(frame);
+    }
     while (!aws_linked_list_empty(&connection->thread_data.pending_settings_queue)) {
         /* Some settings are sent, but peer never sends ACK back. It's not an error. We just have to clean it up */
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
@@ -428,21 +446,17 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
         }
         aws_mem_release(connection->base.alloc, pending_settings);
     }
-    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stalled_window_streams_list));
-    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.outgoing_streams_list));
-    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
-    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_frame_list));
-    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_settings_list));
-    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_ping_list));
-
-    /* Clean up any unsent frames */
-    struct aws_linked_list *outgoing_frames_queue = &connection->thread_data.outgoing_frames_queue;
-    while (!aws_linked_list_empty(outgoing_frames_queue)) {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(outgoing_frames_queue);
-        struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
-        aws_h2_frame_destroy(frame);
+    while (!aws_linked_list_empty(&connection->thread_data.pending_ping_queue)) {
+        /* Some settings are sent, but peer never sends ACK back. It's not an error. We just have to clean it up */
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_ping_queue);
+        struct aws_h2_pending_ping *pending_ping = AWS_CONTAINER_OF(node, struct aws_h2_pending_ping, node);
+        /* fire the user callback with error */
+        if (pending_ping->on_completed) {
+            pending_ping->on_completed(
+                &connection->base, 0 /*fake rrt*/, AWS_ERROR_HTTP_CONNECTION_CLOSED, pending_ping->user_data);
+        }
+        aws_mem_release(connection->base.alloc, pending_ping);
     }
-
     aws_h2_decoder_destroy(connection->thread_data.decoder);
     aws_h2_frame_encoder_clean_up(&connection->thread_data.encoder);
     aws_hash_table_clean_up(&connection->thread_data.active_streams_map);
@@ -482,7 +496,7 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     return pending_settings;
 }
 
-static struct aws_h2_pending_settings *s_new_pending_ping(
+static struct aws_h2_pending_ping *s_new_pending_ping(
     struct aws_allocator *allocator,
     const uint8_t *opaque_data,
     const uint64_t started_time,
@@ -1199,6 +1213,57 @@ static struct aws_h2err s_decoder_on_rst_stream(uint32_t stream_id, uint32_t h2_
     return AWS_H2ERR_SUCCESS;
 }
 
+static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
+    struct aws_h2_connection *connection = userdata;
+    if (aws_linked_list_empty(&connection->thread_data.pending_ping_queue)) {
+        CONNECTION_LOG(ERROR, connection, "Connection error, received a malicious extra PING acknowledgment");
+        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+    }
+    struct aws_h2err err;
+    struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_ping_queue);
+    struct aws_h2_pending_ping *pending_ping = AWS_CONTAINER_OF(node, struct aws_h2_pending_ping, node);
+    /* Check the payload */
+    if (memcmp(opaque_data, pending_ping->opaque_data, AWS_H2_PING_DATA_SIZE) != 0) {
+        CONNECTION_LOG(
+            ERROR, connection, "Connection error, received PING ACK has different opaque data with our expectation.");
+        err = aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+        goto error;
+    }
+    uint64_t time_stamp;
+    if (aws_sys_clock_get_ticks(&time_stamp)) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Failed getting the time stamp when PING ACK received, error %s",
+            aws_error_name(aws_last_error()));
+        err = aws_h2err_from_last_error();
+        goto error;
+    }
+    uint64_t rtt;
+    if (aws_sub_u64_checked(time_stamp, pending_ping->started_time, &rtt)) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Overflow from time stamp when PING ACK received, error %s",
+            aws_error_name(aws_last_error()));
+        err = aws_h2err_from_last_error();
+        goto error;
+    }
+    CONNECTION_LOGF(TRACE, connection, "Round trip time is %lf ms, approximately", (double)rtt / 1000000);
+    /* fire the callback */
+    if (pending_ping->on_completed) {
+        pending_ping->on_completed(&connection->base, rtt, AWS_ERROR_SUCCESS, pending_ping->user_data);
+    }
+    aws_mem_release(connection->base.alloc, pending_ping);
+    return AWS_H2ERR_SUCCESS;
+error:
+    if (pending_ping->on_completed) {
+        pending_ping->on_completed(&connection->base, 0 /* fake rtt */, err.aws_code, pending_ping->user_data);
+    }
+    aws_mem_release(connection->base.alloc, pending_ping);
+    return err;
+}
+
 static struct aws_h2err s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
@@ -1279,7 +1344,7 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
         return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
     }
     struct aws_h2err err;
-    struct aws_linked_list_node *node = aws_linked_list_front(&connection->thread_data.pending_settings_queue);
+    struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
     struct aws_h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
     struct aws_http2_setting *settings_array = pending_settings->settings_array;
     /* Apply the settings */
@@ -1328,8 +1393,6 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
     if (pending_settings->on_completed) {
         pending_settings->on_completed(&connection->base, AWS_ERROR_SUCCESS, pending_settings->user_data);
     }
-    /* finish applying the settings, remove the front of the queue */
-    aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
     /* clean up the pending_settings */
     aws_mem_release(connection->base.alloc, pending_settings);
     return AWS_H2ERR_SUCCESS;
@@ -1339,7 +1402,6 @@ error:
         pending_settings->on_completed(&connection->base, err.aws_code, pending_settings->user_data);
     }
     /* clean up the pending settings here */
-    aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
     aws_mem_release(connection->base.alloc, pending_settings);
     return err;
 }
@@ -1767,14 +1829,17 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
 
     struct aws_linked_list pending_settings;
     aws_linked_list_init(&pending_settings);
+    struct aws_linked_list pending_ping;
+    aws_linked_list_init(&pending_ping);
 
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
         connection->synced_data.is_cross_thread_work_task_scheduled = false;
 
-        aws_linked_list_swap_contents(&connection->synced_data.pending_stream_list, &pending_streams);
         aws_linked_list_swap_contents(&connection->synced_data.pending_frame_list, &pending_frames);
+        aws_linked_list_swap_contents(&connection->synced_data.pending_stream_list, &pending_streams);
         aws_linked_list_swap_contents(&connection->synced_data.pending_settings_list, &pending_settings);
+        aws_linked_list_swap_contents(&connection->synced_data.pending_ping_list, &pending_ping);
 
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -1806,6 +1871,13 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         }
     }
 
+    /* Move pending PING to thread data */
+    if (!aws_linked_list_empty(&pending_ping)) {
+        while (!aws_linked_list_empty(&pending_ping)) {
+            aws_linked_list_push_back(
+                &connection->thread_data.pending_ping_queue, aws_linked_list_pop_front(&pending_ping));
+        }
+    }
     /* It's likely that frames were queued while processing cross-thread work.
      * If so, try writing them now */
     s_try_write_outgoing_frames(connection);
@@ -2211,8 +2283,7 @@ static void s_finish_shutdown(struct aws_h2_connection *connection) {
         struct aws_h2_pending_ping *ping = AWS_CONTAINER_OF(node, struct aws_h2_pending_ping, node);
         if (ping->on_completed) {
             /* let's save the effort to get the real time stamp, since the round-trip time here is uselss */
-            ping->on_completed(
-                &connection->base, 0 /*fake round_trip_time*/, AWS_ERROR_HTTP_CONNECTION_CLOSED, ping->user_data);
+            ping->on_completed(&connection->base, 0 /*fake rtt*/, AWS_ERROR_HTTP_CONNECTION_CLOSED, ping->user_data);
         }
         aws_mem_release(connection->base.alloc, ping);
     }

@@ -178,7 +178,7 @@ static int s_stream_tester_init(struct client_stream_tester *stream_tester, stru
 }
 
 /* Test that client will automatically send the PING ACK frame back, when the PING frame is received */
-TEST_CASE(h2_client_ping_ack) {
+TEST_CASE(h2_client_auto_ping_ack) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* Connection preface requires that SETTINGS be sent first (RFC-7540 3.5). */
@@ -203,7 +203,7 @@ TEST_CASE(h2_client_ping_ack) {
     return s_tester_clean_up();
 }
 
-TEST_CASE(h2_client_ping_ack_higher_priority) {
+TEST_CASE(h2_client_auto_ping_ack_higher_priority) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* get connection preface and acks out of the way */
@@ -3048,7 +3048,7 @@ TEST_CASE(h2_client_change_settings_succeed) {
     return s_tester_clean_up();
 }
 
-/* Test the user API for changing HTTP/2 connection settings */
+/* Test the user API for changing HTTP/2 connection settings and no settings ACK received from peer */
 TEST_CASE(h2_client_change_settings_failed_no_ack_received) {
 
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
@@ -3081,6 +3081,90 @@ TEST_CASE(h2_client_change_settings_failed_no_ack_received) {
     ASSERT_SUCCESS(testing_channel_clean_up(&s_tester.testing_channel));
     /* Check the callback has fired with error */
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, callback_error_code);
+    /* clean up */
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+struct ping_user_data {
+    uint64_t rtt_ns;
+    int error_code;
+};
+
+static void on_ping_complete(
+    struct aws_http_connection *connection,
+    uint64_t round_trip_time_ns,
+    int error_code,
+    void *user_data) {
+
+    (void)connection;
+    struct ping_user_data *data = user_data;
+    data->error_code = error_code;
+    data->rtt_ns = round_trip_time_ns;
+}
+
+/* Test the user API for PING successfully get the round trip time */
+TEST_CASE(h2_client_send_ping_successfully_receive_ack) {
+
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    /* client sent the preface and first settings */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *first_written_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 0);
+    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, first_written_frame->type);
+    ASSERT_FALSE(first_written_frame->ack);
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+
+    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE] = "1234567";
+    struct ping_user_data data = {.rtt_ns = 0, .error_code = INT32_MAX};
+    /* client request a PING */
+    ASSERT_SUCCESS(
+        aws_http2_connection_ping(s_tester.connection, opaque_data, AWS_H2_PING_DATA_SIZE, &data, on_ping_complete));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* check ping frame received */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *ping_frame =
+        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_PING, 0, NULL);
+    ASSERT_BIN_ARRAYS_EQUALS(opaque_data, AWS_H2_PING_DATA_SIZE, ping_frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+    ASSERT_FALSE(ping_frame->ack);
+
+    /* fake peer send PING ACK */
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_ping(allocator, true /*ACK*/, ping_frame->ping_opaque_data);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* check callback fired, and succeed */
+    ASSERT_INT_EQUALS(0, data.error_code);
+    ASSERT_FALSE(data.rtt_ns == 0);
+    /* clean up */
+    return s_tester_clean_up();
+}
+
+/* Test the user request a PING, but peer never sends PING ACK back */
+TEST_CASE(h2_client_send_ping_no_ack_received) {
+
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    /* client sent the preface and first settings */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *first_written_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 0);
+    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, first_written_frame->type);
+    ASSERT_FALSE(first_written_frame->ack);
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+
+    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE] = "1234567";
+    struct ping_user_data data = {.rtt_ns = 0, .error_code = INT32_MAX};
+    /* client request a PING */
+    ASSERT_SUCCESS(
+        aws_http2_connection_ping(s_tester.connection, opaque_data, AWS_H2_PING_DATA_SIZE, &data, on_ping_complete));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* shutdown the connection */
+    h2_fake_peer_clean_up(&s_tester.peer);
+    aws_http_connection_release(s_tester.connection);
+    ASSERT_SUCCESS(testing_channel_clean_up(&s_tester.testing_channel));
+    /* Check the callback has fired with error */
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, data.error_code);
+    ASSERT_TRUE(data.rtt_ns == 0);
     /* clean up */
     aws_http_library_clean_up();
     return AWS_OP_SUCCESS;

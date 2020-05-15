@@ -264,12 +264,10 @@ int aws_http2_connection_ping(
     aws_http2_on_ping_complete_fn *on_ack) {
     AWS_ASSERT(connection);
     AWS_PRECONDITION(connection->vtable);
-    if(opaque_data && data_len != 8) {
+    if (opaque_data && data_len != 8) {
         AWS_LOGF_WARN(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Only 8 bytes opaque data supported for PING in HTTP/2",
-            (void *)connection);
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);        
+            AWS_LS_HTTP_CONNECTION, "id=%p: Only 8 bytes opaque data supported for PING in HTTP/2", (void *)connection);
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
     if (connection->http_version != AWS_HTTP_VERSION_2) {
         AWS_LOGF_WARN(
