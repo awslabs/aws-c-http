@@ -54,7 +54,7 @@ struct aws_h2_connection {
         struct aws_linked_list pending_settings_queue;
 
         /* List using aws_h2_pending_ping.node
-         * PING required by user waiting to the acknowledgment from peer */
+         * Pings waiting to be ACKed by peer */
         struct aws_linked_list pending_ping_queue;
 
         /* Most recent stream-id that was initiated by peer */
@@ -152,8 +152,7 @@ struct aws_h2_pending_settings {
 
 struct aws_h2_pending_ping {
     uint8_t opaque_data[AWS_H2_PING_DATA_SIZE];
-    /* The started time stamp for calculating the round-trip time, we set it close to when the ping function called by
-     * user */
+    /* For calculating round-trip time */
     uint64_t started_time;
     struct aws_linked_list_node node;
     /* user callback */

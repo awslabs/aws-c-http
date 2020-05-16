@@ -340,8 +340,8 @@ int aws_http2_connection_change_settings(
     struct aws_http_connection *connection,
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
-    void *user_data,
-    aws_http2_on_change_settings_complete_fn *on_completed);
+    aws_http2_on_change_settings_complete_fn *on_completed,
+    void *user_data);
 
 /**
  * HTTP/2 specific. Send a PING frame with opaque_data as payload.
@@ -351,10 +351,9 @@ int aws_http2_connection_change_settings(
 AWS_HTTP_API
 int aws_http2_connection_ping(
     struct aws_http_connection *connection,
-    const uint8_t *opaque_data,
-    size_t data_len,
-    void *user_data,
-    aws_http2_on_ping_complete_fn *on_completed);
+    const struct aws_byte_cursor *optional_opaque_data,
+    aws_http2_on_ping_complete_fn *on_completed,
+    void *user_data);
 
 AWS_EXTERN_C_END
 

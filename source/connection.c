@@ -241,8 +241,8 @@ int aws_http2_connection_change_settings(
     struct aws_http_connection *connection,
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
-    void *user_data,
-    aws_http2_on_change_settings_complete_fn *on_completed) {
+    aws_http2_on_change_settings_complete_fn *on_completed,
+    void *user_data) {
     AWS_ASSERT(connection);
     AWS_PRECONDITION(connection->vtable);
     AWS_PRECONDITION(settings_array);
@@ -253,22 +253,16 @@ int aws_http2_connection_change_settings(
             (void *)connection);
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
-    return connection->vtable->change_settings(connection, settings_array, num_settings, user_data, on_completed);
+    return connection->vtable->change_settings(connection, settings_array, num_settings, on_completed, user_data);
 }
 
 int aws_http2_connection_ping(
     struct aws_http_connection *connection,
-    const uint8_t *opaque_data,
-    size_t data_len,
-    void *user_data,
-    aws_http2_on_ping_complete_fn *on_ack) {
+    const struct aws_byte_cursor *optional_opaque_data,
+    aws_http2_on_ping_complete_fn *on_ack,
+    void *user_data) {
     AWS_ASSERT(connection);
     AWS_PRECONDITION(connection->vtable);
-    if (opaque_data && data_len != 8) {
-        AWS_LOGF_WARN(
-            AWS_LS_HTTP_CONNECTION, "id=%p: Only 8 bytes opaque data supported for PING in HTTP/2", (void *)connection);
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-    }
     if (connection->http_version != AWS_HTTP_VERSION_2) {
         AWS_LOGF_WARN(
             AWS_LS_HTTP_CONNECTION,
@@ -276,7 +270,7 @@ int aws_http2_connection_ping(
             (void *)connection);
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
-    return connection->vtable->ping(connection, opaque_data, user_data, on_ack);
+    return connection->vtable->ping(connection, optional_opaque_data, on_ack, user_data);
 }
 
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {
