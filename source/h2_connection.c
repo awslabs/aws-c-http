@@ -60,6 +60,7 @@ static struct aws_http_stream *s_connection_make_request(
     const struct aws_http_make_request_options *options);
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
+static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
 static int s_connection_change_settings(
     struct aws_http_connection *connection,
     const struct aws_http2_setting *settings_array,
@@ -139,7 +140,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .stream_send_response = NULL,
     .close = s_connection_close,
     .is_open = s_connection_is_open,
-    .update_window = NULL,
+    .update_window = s_connection_update_window,
     .change_settings = s_connection_change_settings,
 };
 
@@ -1090,8 +1091,8 @@ struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_le
         }
     }
 
-    if (payload_len != 0) {
-        /* send a connection window_update frame to automatically maintain the connection self window size */
+    /* if manual_window_management is false, we will automatically mainatain the connection self window size */
+    if (payload_len != 0 && !connection->base.manual_window_management) {
         struct aws_h2_frame *connection_window_update_frame =
             aws_h2_frame_new_window_update(connection->base.alloc, 0, payload_len);
         if (!connection_window_update_frame) {
@@ -1739,6 +1740,8 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
     struct aws_linked_list pending_settings;
     aws_linked_list_init(&pending_settings);
 
+    size_t window_update_size;
+
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
         connection->synced_data.is_cross_thread_work_task_scheduled = false;
@@ -1746,6 +1749,8 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         aws_linked_list_swap_contents(&connection->synced_data.pending_stream_list, &pending_streams);
         aws_linked_list_swap_contents(&connection->synced_data.pending_frame_list, &pending_frames);
         aws_linked_list_swap_contents(&connection->synced_data.pending_settings_list, &pending_settings);
+        window_update_size = connection->synced_data.window_update_size;
+        connection->synced_data.window_update_size = 0;
 
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -1758,6 +1763,9 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
             aws_h2_connection_enqueue_outgoing_frame(connection, frame);
         } while (!aws_linked_list_empty(&pending_frames));
     }
+
+    /* We already enqueued the window_update frame, just apply the change and let our peer check this value. */
+    connection->thread_data.window_size_self += window_update_size;
 
     /* Process new pending_streams */
     if (!aws_linked_list_empty(&pending_streams)) {
@@ -1877,6 +1885,66 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     bool is_open = aws_atomic_load_int(&connection->atomic.is_open);
     return is_open;
+}
+
+static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size) {
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
+    if (!increment_size) {
+        return;
+    }
+    if (!connection_base->manual_window_management) {
+        /* auto-mode, manual udpate window is not supported */
+        CONNECTION_LOG(WARN, connection, "Manual window management is off, update window operations are not supported.");
+        return;
+    }
+    struct aws_h2_frame *connection_window_update_frame =
+        aws_h2_frame_new_window_update(connection->base.alloc, 0, increment_size);
+    if (!connection_window_update_frame) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Failed to create WINDOW_UPDATE frame on connection, error %s",
+            aws_error_name(aws_last_error()));
+        return;
+    }
+
+    int err = 0;
+    bool cross_thread_work_should_schedule = false;
+    size_t added_size;
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+
+        err |= aws_add_size_checked(connection->synced_data.window_update_size, increment_size, added_size);
+        err |= added_size > AWS_H2_WINDOW_UPDATE_MAX;
+
+        if (!err) {
+            cross_thread_work_should_schedule = !connection->synced_data.is_cross_thread_work_task_scheduled;
+            connection->synced_data.is_cross_thread_work_task_scheduled = true;
+            aws_linked_list_push_back(
+                &connection->synced_data.pending_frame_list, &connection_window_update_frame->node);
+            connection->synced_data.window_update_size = added_size;
+        }
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+
+    if (cross_thread_work_should_schedule) {
+        CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
+    }
+
+    if (err) {
+        /* The increment_size is still not 100% safe, since we cannot control the incoming data frame. So just
+         * ruled out the value that is obviously wrong values */
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "The increment size if too big for HTTP/2 connection, is too big for HTTP/2 connection, max flow-control "
+            "window size is 2147483647. We got %zu, which will cause the flow-control window to exceed the maximum",
+            increment_size);
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        aws_h2_frame_destroy(connection_window_update_frame);
+        return;
+    }
 }
 
 static int s_connection_change_settings(

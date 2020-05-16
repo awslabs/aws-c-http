@@ -22,10 +22,11 @@
 #include <aws/io/logging.h>
 
 static void s_stream_destroy(struct aws_http_stream *stream_base);
+static void s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size);
 
 struct aws_http_stream_vtable s_h2_stream_vtable = {
     .destroy = s_stream_destroy,
-    .update_window = NULL,
+    .update_window = s_stream_update_window,
     .activate = aws_h2_stream_activate,
     .http1_write_chunk = NULL,
 };
@@ -225,6 +226,12 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     aws_http_message_release(stream->thread_data.outgoing_message);
 
     aws_mem_release(stream->base.alloc, stream);
+}
+
+static void s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size) {
+    AWS_PRECONDITION(stream_base);
+    struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
+
 }
 
 enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *stream) {
@@ -582,8 +589,9 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
     }
     stream->thread_data.window_size_self -= payload_len;
 
-    if (payload_len != 0 && !end_stream) {
-        /* send a stream window_update frame to automatically maintain the stream self window size */
+    /* send a stream window_update frame to automatically maintain the stream self window size, if
+     * manual_window_management is not set */
+    if (payload_len != 0 && !end_stream && !stream->base.owning_connection->manual_window_management) {
         struct aws_h2_frame *stream_window_update_frame =
             aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, payload_len);
         if (!stream_window_update_frame) {

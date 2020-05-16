@@ -68,6 +68,12 @@ struct aws_h2_stream {
         struct aws_http_message *outgoing_message;
         bool received_main_headers;
     } thread_data;
+
+    /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
+    struct {
+        /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
+        size_t window_update_size;
+    } synced_data;
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);

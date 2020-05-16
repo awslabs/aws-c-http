@@ -123,6 +123,8 @@ struct aws_h2_connection {
 
         bool is_cross_thread_work_task_scheduled;
 
+        /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
+        size_t window_update_size;
     } synced_data;
 
     struct {
