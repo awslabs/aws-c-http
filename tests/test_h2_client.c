@@ -46,7 +46,7 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
     ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc, &options));
 
     s_tester.connection = aws_http_connection_new_http2_client(
-        alloc, true, aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE]);
+        alloc, false, aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE]);
     ASSERT_NOT_NULL(s_tester.connection);
 
     { /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */

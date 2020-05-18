@@ -20,6 +20,7 @@
 #include <aws/http/private/request_response_impl.h>
 
 #include <aws/common/mutex.h>
+#include <aws/io/channel.h>
 
 #include <inttypes.h>
 
@@ -59,6 +60,7 @@ struct aws_h2_stream {
     struct aws_http_stream base;
 
     struct aws_linked_list_node node;
+    struct aws_channel_task cross_thread_work_task;
 
     /* Only the event-loop thread may touch this data */
     struct {
@@ -71,8 +73,12 @@ struct aws_h2_stream {
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
     struct {
+        struct aws_mutex lock;
+        bool is_cross_thread_work_task_scheduled;
         /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
         size_t window_update_size;
+        /* New `aws_h2_frames *` stream control frames created by user that haven't moved to connection `thread_data` yet */
+        struct aws_linked_list pending_frame_list;
     } synced_data;
 };
 

@@ -1894,7 +1894,8 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
     }
     if (!connection_base->manual_window_management) {
         /* auto-mode, manual udpate window is not supported */
-        CONNECTION_LOG(WARN, connection, "Manual window management is off, update window operations are not supported.");
+        CONNECTION_LOG(
+            WARN, connection, "Manual window management is off, update window operations are not supported.");
         return;
     }
     struct aws_h2_frame *connection_window_update_frame =
@@ -1910,19 +1911,20 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
 
     int err = 0;
     bool cross_thread_work_should_schedule = false;
-    size_t added_size;
+    /* The window update size can be atomic, but either way, we will need to lock here. */
+    size_t sum_size;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
 
-        err |= aws_add_size_checked(connection->synced_data.window_update_size, increment_size, added_size);
-        err |= added_size > AWS_H2_WINDOW_UPDATE_MAX;
+        err |= aws_add_size_checked(connection->synced_data.window_update_size, increment_size, &sum_size);
+        err |= sum_size > AWS_H2_WINDOW_UPDATE_MAX;
 
         if (!err) {
             cross_thread_work_should_schedule = !connection->synced_data.is_cross_thread_work_task_scheduled;
             connection->synced_data.is_cross_thread_work_task_scheduled = true;
             aws_linked_list_push_back(
                 &connection->synced_data.pending_frame_list, &connection_window_update_frame->node);
-            connection->synced_data.window_update_size = added_size;
+            connection->synced_data.window_update_size = sum_size;
         }
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -1938,7 +1940,7 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
         CONNECTION_LOGF(
             ERROR,
             connection,
-            "The increment size if too big for HTTP/2 connection, is too big for HTTP/2 connection, max flow-control "
+            "The increment size is too big for HTTP/2 protocol, max flow-control "
             "window size is 2147483647. We got %zu, which will cause the flow-control window to exceed the maximum",
             increment_size);
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);

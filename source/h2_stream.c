@@ -23,6 +23,7 @@
 
 static void s_stream_destroy(struct aws_http_stream *stream_base);
 static void s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size);
+static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 
 struct aws_http_stream_vtable s_h2_stream_vtable = {
     .destroy = s_stream_destroy,
@@ -56,6 +57,18 @@ const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state) {
 
 static struct aws_h2_connection *s_get_h2_connection(const struct aws_h2_stream *stream) {
     return AWS_CONTAINER_OF(stream->base.owning_connection, struct aws_h2_connection, base);
+}
+
+static void s_lock_synced_data(struct aws_h2_stream *stream) {
+    int err = aws_mutex_lock(&stream->synced_data.lock);
+    AWS_ASSERT(!err && "lock failed");
+    (void)err;
+}
+
+static void s_unlock_synced_data(struct aws_h2_stream *stream) {
+    int err = aws_mutex_unlock(&stream->synced_data.lock);
+    AWS_ASSERT(!err && "unlock failed");
+    (void)err;
 }
 
 #define AWS_PRECONDITION_ON_CHANNEL_THREAD(STREAM)                                                                     \
@@ -212,9 +225,54 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
     stream->thread_data.outgoing_message = options->request;
-    aws_http_message_acquire(stream->thread_data.outgoing_message);
 
+    aws_linked_list_init(&stream->synced_data.pending_frame_list);
+    if (aws_mutex_init(&stream->synced_data.lock)) {
+        AWS_H2_STREAM_LOGF(
+            ERROR, stream, "Mutex init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
+        aws_mem_release(stream->base.alloc, stream);
+        return NULL;
+    }
+    aws_http_message_acquire(stream->thread_data.outgoing_message);
+    aws_channel_task_init(
+        &stream->cross_thread_work_task, s_stream_cross_thread_work_task, stream, "HTTP/2 stream cross-thread work");
     return stream;
+}
+
+static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        return;
+    }
+
+    struct aws_h2_stream *stream = arg;
+    struct aws_h2_connection *connection = s_get_h2_connection(stream);
+
+    struct aws_linked_list pending_frames;
+    aws_linked_list_init(&pending_frames);
+
+    size_t window_update_size;
+
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(stream);
+        stream->synced_data.is_cross_thread_work_task_scheduled = false;
+
+        aws_linked_list_swap_contents(&stream->synced_data.pending_frame_list, &pending_frames);
+        window_update_size = stream->synced_data.window_update_size;
+        stream->synced_data.window_update_size = 0;
+
+        s_unlock_synced_data(stream);
+    } /* END CRITICAL SECTION */
+
+    while (!aws_linked_list_empty(&pending_frames)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&pending_frames);
+        struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
+        aws_h2_connection_enqueue_outgoing_frame(connection, frame);
+    }
+    stream->thread_data.window_size_self += window_update_size;
+    /* It's likely that frames were queued while processing cross-thread work.
+     * If so, try writing them now */
+    //s_try_write_outgoing_frames(connection);
 }
 
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
@@ -223,6 +281,12 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
 
     AWS_H2_STREAM_LOG(DEBUG, stream, "Destroying stream");
 
+    while (!aws_linked_list_empty(&stream->synced_data.pending_frame_list)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->synced_data.pending_frame_list);
+        struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
+        aws_h2_frame_destroy(frame);
+    }
+    aws_mutex_clean_up(&stream->synced_data.lock);
     aws_http_message_release(stream->thread_data.outgoing_message);
 
     aws_mem_release(stream->base.alloc, stream);
@@ -231,7 +295,63 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
 static void s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size) {
     AWS_PRECONDITION(stream_base);
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
+    struct aws_h2_connection *connection = s_get_h2_connection(stream);
+    if (!increment_size) {
+        return;
+    }
+    if (!connection->base.manual_window_management) {
+        /* auto-mode, manual udpate window is not supported */
+        AWS_H2_STREAM_LOG(WARN, stream, "Manual window management is off, update window operations are not supported.");
+        return;
+    }
+    struct aws_h2_frame *stream_window_update_frame =
+        aws_h2_frame_new_window_update(connection->base.alloc, stream_base->id, increment_size);
+    if (!stream_window_update_frame) {
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "Failed to create WINDOW_UPDATE frame on connection, error %s",
+            aws_error_name(aws_last_error()));
+        return;
+    }
 
+    int err = 0;
+    bool cross_thread_work_should_schedule = false;
+    /* The window update size can be atomic, but either way, we will need to lock here. */
+    size_t sum_size;
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(stream);
+
+        err |= aws_add_size_checked(stream->synced_data.window_update_size, increment_size, &sum_size);
+        err |= sum_size > AWS_H2_WINDOW_UPDATE_MAX;
+
+        if (!err) {
+            cross_thread_work_should_schedule = !stream->synced_data.is_cross_thread_work_task_scheduled;
+            stream->synced_data.is_cross_thread_work_task_scheduled = true;
+            aws_linked_list_push_back(&stream->synced_data.pending_frame_list, &stream_window_update_frame->node);
+            stream->synced_data.window_update_size = sum_size;
+        }
+        s_unlock_synced_data(stream);
+    } /* END CRITICAL SECTION */
+
+    if (cross_thread_work_should_schedule) {
+        AWS_H2_STREAM_LOG(TRACE, stream, "Scheduling stream cross-thread work task");
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &stream->cross_thread_work_task);
+    }
+
+    if (err) {
+        /* The increment_size is still not 100% safe, since we cannot control the incoming data frame. So just
+         * ruled out the value that is obviously wrong values */
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "The increment size is too big for HTTP/2 protocol, max flow-control "
+            "window size is 2147483647. We got %zu, which will cause the flow-control window to exceed the maximum",
+            increment_size);
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        aws_h2_frame_destroy(stream_window_update_frame);
+        return;
+    }
 }
 
 enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *stream) {
