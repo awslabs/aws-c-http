@@ -1763,8 +1763,8 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         } while (!aws_linked_list_empty(&pending_frames));
     }
 
-    /* We already enqueued the window_update frame, just apply the change and let our peer check this value. No matter
-     * overflow happens or not, peer will detect it for us. */
+    /* We already enqueued the window_update frame, just apply the change and let our peer check this value, no matter
+     * overflow happens or not. Peer will detect it for us. */
     connection->thread_data.window_size_self =
         aws_add_size_saturating(connection->thread_data.window_size_self, window_update_size);
 

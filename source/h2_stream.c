@@ -270,11 +270,9 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
         aws_h2_connection_enqueue_outgoing_frame(connection, frame);
     }
-    /* We already enqueued the window_update frame, just apply the change and let our peer check this value. No matter
-     * overflow happens or not, peer will detect it for us. */
-    if (aws_h2err_failed(aws_h2_stream_window_size_change(stream, (int32_t)window_update_size, true /*self*/))) {
-        stream->thread_data.window_size_self = INT32_MAX;
-    }
+    /* We already enqueued the window_update frame, just apply the change and let our peer check this value, no matter
+     * overflow happens or not. Peer will detect it for us. */
+    stream->thread_data.window_size_self += window_update_size;
 
     /* It's likely that frames were queued while processing cross-thread work.
      * If so, try writing them now */
@@ -400,11 +398,18 @@ static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream
 }
 
 struct aws_h2err aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed, bool self) {
-    int32_t *window_size = self ? &stream->thread_data.window_size_self : &stream->thread_data.window_size_peer;
-    if ((int64_t)*window_size + size_changed > AWS_H2_WINDOW_UPDATE_MAX) {
-        return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
+    if(self) {
+        if (stream->thread_data.window_size_self + size_changed > AWS_H2_WINDOW_UPDATE_MAX) {
+            return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
+        }
+        stream->thread_data.window_size_self += size_changed;
     }
-    *window_size += size_changed;
+    else {
+        if ((int64_t)stream->thread_data.window_size_peer + size_changed > AWS_H2_WINDOW_UPDATE_MAX) {
+            return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
+        }
+        stream->thread_data.window_size_peer += size_changed;        
+    }
     return AWS_H2ERR_SUCCESS;
 }
 
@@ -708,7 +713,7 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
         AWS_H2_STREAM_LOGF(
             ERROR,
             stream,
-            "DATA length=%" PRIu32 " exceeds flow-control window=%" PRIi32,
+            "DATA length=%" PRIu32 " exceeds flow-control window=%" PRIi64,
             payload_len,
             stream->thread_data.window_size_self);
         return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR));
