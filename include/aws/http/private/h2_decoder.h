@@ -72,10 +72,10 @@ struct aws_h2_decoder_vtable {
     struct aws_h2err (*on_rst_stream)(uint32_t stream_id, uint32_t error_code, void *userdata);
 
     /* Called once For PING frame with ACK flag set */
-    struct aws_h2err (*on_ping_ack)(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
+    struct aws_h2err (*on_ping_ack)(uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE], void *userdata);
 
     /* Called once for PING frame (no ACK flag set)*/
-    struct aws_h2err (*on_ping)(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
+    struct aws_h2err (*on_ping)(uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE], void *userdata);
 
     /* Called once for SETTINGS frame with ACK flag */
     struct aws_h2err (*on_settings_ack)(void *userdata);

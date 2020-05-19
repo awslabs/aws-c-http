@@ -985,8 +985,8 @@ static struct aws_h2err s_state_fn_frame_ping(struct aws_h2_decoder *decoder, st
 
     AWS_ASSERT(input->len >= s_state_frame_ping_requires_8_bytes);
 
-    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE] = {0};
-    bool succ = aws_byte_cursor_read(input, &opaque_data, AWS_H2_PING_DATA_SIZE);
+    uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE] = {0};
+    bool succ = aws_byte_cursor_read(input, &opaque_data, AWS_HTTP2_PING_DATA_SIZE);
     AWS_ASSERT(succ);
     (void)succ;
 

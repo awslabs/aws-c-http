@@ -1047,11 +1047,11 @@ struct aws_h2_frame *aws_h2_frame_new_settings(
 struct aws_h2_frame *aws_h2_frame_new_ping(
     struct aws_allocator *allocator,
     bool ack,
-    const uint8_t opaque_data[AWS_H2_PING_DATA_SIZE]) {
+    const uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE]) {
 
     /* PING can be pre-encoded */
     const uint8_t flags = ack ? AWS_H2_FRAME_F_ACK : 0;
-    const size_t payload_len = AWS_H2_PING_DATA_SIZE;
+    const size_t payload_len = AWS_HTTP2_PING_DATA_SIZE;
     const uint32_t stream_id = 0;
 
     struct aws_h2_frame_prebuilt *frame =
@@ -1068,7 +1068,7 @@ struct aws_h2_frame *aws_h2_frame_new_ping(
      * +---------------------------------------------------------------+
      */
     bool writes_ok = true;
-    writes_ok &= aws_byte_buf_write(&frame->encoded_buf, opaque_data, AWS_H2_PING_DATA_SIZE);
+    writes_ok &= aws_byte_buf_write(&frame->encoded_buf, opaque_data, AWS_HTTP2_PING_DATA_SIZE);
     AWS_ASSERT(writes_ok);
 
     /* PING responses SHOULD be given higher priority than any other frame */

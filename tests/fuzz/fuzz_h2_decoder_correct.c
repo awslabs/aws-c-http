@@ -408,8 +408,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             aws_byte_cursor_read_u8(&input, &flags);
             bool ack = flags & AWS_H2_FRAME_F_ACK;
 
-            uint8_t opaque_data[AWS_H2_PING_DATA_SIZE] = {0};
-            size_t copy_len = aws_min_size(input.len, AWS_H2_PING_DATA_SIZE);
+            uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE] = {0};
+            size_t copy_len = aws_min_size(input.len, AWS_HTTP2_PING_DATA_SIZE);
             if (copy_len > 0) {
                 struct aws_byte_cursor copy = aws_byte_cursor_advance(&input, copy_len);
                 memcpy(opaque_data, copy.ptr, copy.len);
