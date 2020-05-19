@@ -77,7 +77,6 @@ static int s_record_closed_stream(
     uint32_t stream_id,
     enum aws_h2_stream_closed_when closed_when);
 static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h2_stream *stream, int error_code);
-static void s_try_write_outgoing_frames(struct aws_h2_connection *connection);
 static void s_write_outgoing_frames(struct aws_h2_connection *connection, bool first_try);
 static void s_finish_shutdown(struct aws_h2_connection *connection);
 
@@ -794,7 +793,7 @@ done:
 }
 
 /* If the outgoing-frames-task isn't scheduled, run it immediately. */
-static void s_try_write_outgoing_frames(struct aws_h2_connection *connection) {
+void aws_h2_try_write_outgoing_frames(struct aws_h2_connection *connection) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
     if (connection->thread_data.is_outgoing_frames_task_active) {
@@ -1477,7 +1476,7 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
         }
     }
     /* Initial settings are already enqueued */
-    s_try_write_outgoing_frames(connection);
+    aws_h2_try_write_outgoing_frames(connection);
 
     return;
 
@@ -1787,7 +1786,7 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
 
     /* It's likely that frames were queued while processing cross-thread work.
      * If so, try writing them now */
-    s_try_write_outgoing_frames(connection);
+    aws_h2_try_write_outgoing_frames(connection);
 }
 
 int aws_h2_stream_activate(struct aws_http_stream *stream) {
@@ -2015,7 +2014,7 @@ static void s_send_goaway(struct aws_h2_connection *connection, enum aws_h2_erro
 
     connection->thread_data.goaway_sent_last_stream_id = last_stream_id;
     aws_h2_connection_enqueue_outgoing_frame(connection, goaway);
-    s_try_write_outgoing_frames(connection);
+    aws_h2_try_write_outgoing_frames(connection);
     return;
 
 error:
@@ -2074,7 +2073,7 @@ clean_up:
     aws_mem_release(message->allocator, message);
 
     /* Flush any outgoing frames that might have been queued as a result of decoder callbacks. */
-    s_try_write_outgoing_frames(connection);
+    aws_h2_try_write_outgoing_frames(connection);
 
     return AWS_OP_SUCCESS;
 }

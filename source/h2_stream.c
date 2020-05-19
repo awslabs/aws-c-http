@@ -272,7 +272,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     stream->thread_data.window_size_self += window_update_size;
     /* It's likely that frames were queued while processing cross-thread work.
      * If so, try writing them now */
-    //s_try_write_outgoing_frames(connection);
+    aws_h2_try_write_outgoing_frames(connection);
 }
 
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
