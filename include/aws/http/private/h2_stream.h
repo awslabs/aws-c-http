@@ -66,7 +66,8 @@ struct aws_h2_stream {
     struct {
         enum aws_h2_stream_state state;
         int32_t window_size_peer;
-        /* The local window size, which can exceed the maximun. If remote peer notify that, they will inform us error happened */
+        /* The local window size, which can exceed the maximun. If remote peer notify that, they will inform us error
+         * happened */
         int64_t window_size_self;
         struct aws_http_message *outgoing_message;
         bool received_main_headers;
