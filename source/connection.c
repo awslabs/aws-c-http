@@ -238,22 +238,40 @@ void aws_http_connection_update_window(struct aws_http_connection *connection, s
 }
 
 int aws_http2_connection_change_settings(
-    struct aws_http_connection *connection,
+    struct aws_http_connection *http2_connection,
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
-    void *user_data,
-    aws_http2_on_change_settings_complete_fn *on_completed) {
-    AWS_ASSERT(connection);
-    AWS_PRECONDITION(connection->vtable);
+    aws_http2_on_change_settings_complete_fn *on_completed,
+    void *user_data) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
     AWS_PRECONDITION(settings_array);
-    if (connection->http_version != AWS_HTTP_VERSION_2) {
+    if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
         AWS_LOGF_WARN(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
-            (void *)connection);
+            (void *)http2_connection);
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
-    return connection->vtable->change_settings(connection, settings_array, num_settings, user_data, on_completed);
+    return http2_connection->vtable->change_settings(
+        http2_connection, settings_array, num_settings, on_completed, user_data);
+}
+
+int aws_http2_connection_ping(
+    struct aws_http_connection *http2_connection,
+    const struct aws_byte_cursor *optional_opaque_data,
+    aws_http2_on_ping_complete_fn *on_ack,
+    void *user_data) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
+            (void *)http2_connection);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+    return http2_connection->vtable->ping(http2_connection, optional_opaque_data, on_ack, user_data);
 }
 
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {

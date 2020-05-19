@@ -84,7 +84,6 @@ struct aws_h2err {
 #define AWS_H2_WINDOW_UPDATE_MAX (0x7FFFFFFF) /* cannot use high bit */
 #define AWS_H2_STREAM_ID_MAX (0x7FFFFFFF)     /* cannot use high bit */
 #define AWS_H2_FRAME_PREFIX_SIZE (9)
-#define AWS_H2_PING_DATA_SIZE (8)
 
 /* Legal min(inclusive) and max(inclusive) for each setting */
 extern const uint32_t aws_h2_settings_bounds[AWS_HTTP2_SETTINGS_END_RANGE][2];
@@ -300,7 +299,7 @@ AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_ping(
     struct aws_allocator *allocator,
     bool ack,
-    const uint8_t opaque_data[AWS_H2_PING_DATA_SIZE]);
+    const uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE]);
 
 AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_goaway(

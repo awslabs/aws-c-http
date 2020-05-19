@@ -2277,7 +2277,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_ping) {
     /* Validate. */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PING, 0x0 /*stream_id*/));
-    ASSERT_BIN_ARRAYS_EQUALS("pingpong", AWS_H2_PING_DATA_SIZE, frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+    ASSERT_BIN_ARRAYS_EQUALS("pingpong", AWS_HTTP2_PING_DATA_SIZE, frame->ping_opaque_data, AWS_HTTP2_PING_DATA_SIZE);
     ASSERT_FALSE(frame->ack);
     return AWS_OP_SUCCESS;
 }
@@ -2303,7 +2303,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_ping_ack) {
     /* Validate. */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PING, 0x0 /*stream_id*/));
-    ASSERT_BIN_ARRAYS_EQUALS("pingpong", AWS_H2_PING_DATA_SIZE, frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+    ASSERT_BIN_ARRAYS_EQUALS("pingpong", AWS_HTTP2_PING_DATA_SIZE, frame->ping_opaque_data, AWS_HTTP2_PING_DATA_SIZE);
     ASSERT_TRUE(frame->ack);
     return AWS_OP_SUCCESS;
 }

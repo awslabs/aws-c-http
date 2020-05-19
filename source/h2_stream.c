@@ -398,17 +398,16 @@ static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream
 }
 
 struct aws_h2err aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed, bool self) {
-    if(self) {
+    if (self) {
         if (stream->thread_data.window_size_self + size_changed > AWS_H2_WINDOW_UPDATE_MAX) {
             return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
         }
         stream->thread_data.window_size_self += size_changed;
-    }
-    else {
+    } else {
         if ((int64_t)stream->thread_data.window_size_peer + size_changed > AWS_H2_WINDOW_UPDATE_MAX) {
             return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
         }
-        stream->thread_data.window_size_peer += size_changed;        
+        stream->thread_data.window_size_peer += size_changed;
     }
     return AWS_H2ERR_SUCCESS;
 }
