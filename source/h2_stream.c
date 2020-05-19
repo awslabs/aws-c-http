@@ -269,7 +269,12 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
         aws_h2_connection_enqueue_outgoing_frame(connection, frame);
     }
-    stream->thread_data.window_size_self += window_update_size;
+    /* We already enqueued the window_update frame, just apply the change and let our peer check this value. No matter
+     * overflow happens or not, peer will dectect it for us. */
+    if (aws_h2err_failed(aws_h2_stream_window_size_change(stream, window_update_size, true /*self*/))) {
+        stream->thread_data.window_size_self = INT32_MAX;
+    }
+
     /* It's likely that frames were queued while processing cross-thread work.
      * If so, try writing them now */
     aws_h2_try_write_outgoing_frames(connection);

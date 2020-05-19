@@ -402,6 +402,7 @@ add_test_case(h2_client_change_settings_failed_no_ack_received)
 add_test_case(h2_client_manual_window_management_disabled_auto_window_update)
 add_test_case(h2_client_manual_window_management_user_send_stream_window_update)
 add_test_case(h2_client_manual_window_management_user_send_conn_window_update)
+#TODO add_test_case(h2_client_manual_window_management_window_overflow) #we cannot ensure the increment_size is safe or not, let our peer detect the overflow. We ruled out the obviously overflow.
 
 add_test_case(server_new_destroy)
 add_test_case(connection_setup_shutdown)
