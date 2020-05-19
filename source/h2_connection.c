@@ -1914,7 +1914,6 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
 
     int err = 0;
     bool cross_thread_work_should_schedule = false;
-    /* The window update size can be atomic, but either way, we will need to lock here. */
     size_t sum_size;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
