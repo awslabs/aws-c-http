@@ -151,7 +151,7 @@ struct aws_h2_pending_settings {
 };
 
 struct aws_h2_pending_ping {
-    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE];
+    uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE];
     /* For calculating round-trip time */
     uint64_t started_time;
     struct aws_linked_list_node node;

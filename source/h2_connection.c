@@ -107,8 +107,8 @@ static struct aws_h2err s_decoder_on_data_begin(
 static struct aws_h2err s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
 static struct aws_h2err s_decoder_on_end_stream(uint32_t stream_id, void *userdata);
 static struct aws_h2err s_decoder_on_rst_stream(uint32_t stream_id, uint32_t h2_error_code, void *userdata);
-static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
-static struct aws_h2err s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
+static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE], void *userdata);
+static struct aws_h2err s_decoder_on_ping(uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE], void *userdata);
 static struct aws_h2err s_decoder_on_settings(
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
@@ -506,7 +506,7 @@ static struct aws_h2_pending_ping *s_new_pending_ping(
         return NULL;
     }
     if (optional_opaque_data) {
-        memcpy(pending_ping->opaque_data, optional_opaque_data->ptr, AWS_H2_PING_DATA_SIZE);
+        memcpy(pending_ping->opaque_data, optional_opaque_data->ptr, AWS_HTTP2_PING_DATA_SIZE);
     }
     pending_ping->started_time = started_time;
     pending_ping->on_completed = on_completed;
@@ -1211,7 +1211,7 @@ static struct aws_h2err s_decoder_on_rst_stream(uint32_t stream_id, uint32_t h2_
     return AWS_H2ERR_SUCCESS;
 }
 
-static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
+static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE], void *userdata) {
     struct aws_h2_connection *connection = userdata;
     if (aws_linked_list_empty(&connection->thread_data.pending_ping_queue)) {
         CONNECTION_LOG(ERROR, connection, "Received extraneous PING ACK.");
@@ -1221,7 +1221,7 @@ static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_H2_PING_DA
     struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_ping_queue);
     struct aws_h2_pending_ping *pending_ping = AWS_CONTAINER_OF(node, struct aws_h2_pending_ping, node);
     /* Check the payload */
-    if (!aws_array_eq(opaque_data, AWS_H2_PING_DATA_SIZE, pending_ping->opaque_data, AWS_H2_PING_DATA_SIZE)) {
+    if (!aws_array_eq(opaque_data, AWS_HTTP2_PING_DATA_SIZE, pending_ping->opaque_data, AWS_HTTP2_PING_DATA_SIZE)) {
         CONNECTION_LOG(ERROR, connection, "Received PING ACK with mismatched opaque-data.");
         err = aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
         goto error;
@@ -1261,7 +1261,7 @@ error:
     return err;
 }
 
-static struct aws_h2err s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
+static struct aws_h2err s_decoder_on_ping(uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE], void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
     /* send a PING frame with the ACK flag set in response, with an identical payload. */

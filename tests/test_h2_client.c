@@ -184,7 +184,7 @@ TEST_CASE(h2_client_auto_ping_ack) {
     /* Connection preface requires that SETTINGS be sent first (RFC-7540 3.5). */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE] = {0, 1, 2, 3, 4, 5, 6, 7};
+    uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE] = {0, 1, 2, 3, 4, 5, 6, 7};
 
     struct aws_h2_frame *frame = aws_h2_frame_new_ping(allocator, false /*ack*/, opaque_data);
     ASSERT_NOT_NULL(frame);
@@ -198,7 +198,7 @@ TEST_CASE(h2_client_auto_ping_ack) {
     struct h2_decoded_frame *latest_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
     ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_PING, latest_frame->type);
     ASSERT_TRUE(latest_frame->ack);
-    ASSERT_BIN_ARRAYS_EQUALS(opaque_data, AWS_H2_PING_DATA_SIZE, latest_frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+    ASSERT_BIN_ARRAYS_EQUALS(opaque_data, AWS_HTTP2_PING_DATA_SIZE, latest_frame->ping_opaque_data, AWS_HTTP2_PING_DATA_SIZE);
 
     return s_tester_clean_up();
 }
@@ -232,7 +232,7 @@ TEST_CASE(h2_client_auto_ping_ack_higher_priority) {
     ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
 
     /* Frames for the request are activated. Fake peer send PING frame now */
-    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE] = {0, 1, 2, 3, 4, 5, 6, 7};
+    uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE] = {0, 1, 2, 3, 4, 5, 6, 7};
 
     struct aws_h2_frame *frame = aws_h2_frame_new_ping(allocator, false /*ack*/, opaque_data);
     ASSERT_NOT_NULL(frame);
@@ -249,7 +249,7 @@ TEST_CASE(h2_client_auto_ping_ack_higher_priority) {
     ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_PING, fastest_frame->type);
     ASSERT_TRUE(fastest_frame->ack);
     ASSERT_BIN_ARRAYS_EQUALS(
-        opaque_data, AWS_H2_PING_DATA_SIZE, fastest_frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+        opaque_data, AWS_HTTP2_PING_DATA_SIZE, fastest_frame->ping_opaque_data, AWS_HTTP2_PING_DATA_SIZE);
 
     /* clean up */
     aws_http_message_release(request);
@@ -3125,7 +3125,7 @@ TEST_CASE(h2_client_send_ping_successfully_receive_ack) {
     struct h2_decoded_frame *ping_frame =
         h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_PING, 0, NULL);
     ASSERT_BIN_ARRAYS_EQUALS(
-        opaque_data.ptr, AWS_H2_PING_DATA_SIZE, ping_frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+        opaque_data.ptr, AWS_HTTP2_PING_DATA_SIZE, ping_frame->ping_opaque_data, AWS_HTTP2_PING_DATA_SIZE);
     ASSERT_FALSE(ping_frame->ack);
 
     /* fake peer send PING ACK */
@@ -3159,10 +3159,10 @@ TEST_CASE(h2_client_send_ping_no_ack_received) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
     struct h2_decoded_frame *ping_frame =
         h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_PING, 0, NULL);
-    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE];
+    uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE];
     AWS_ZERO_ARRAY(opaque_data);
     /* Zeroed 8 bytes data received */
-    ASSERT_BIN_ARRAYS_EQUALS(opaque_data, AWS_H2_PING_DATA_SIZE, ping_frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+    ASSERT_BIN_ARRAYS_EQUALS(opaque_data, AWS_HTTP2_PING_DATA_SIZE, ping_frame->ping_opaque_data, AWS_HTTP2_PING_DATA_SIZE);
     ASSERT_FALSE(ping_frame->ack);
 
     /* shutdown the connection */

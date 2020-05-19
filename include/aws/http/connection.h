@@ -260,7 +260,10 @@ struct aws_http2_setting {
     enum aws_http2_settings_id id;
     uint32_t value;
 };
-
+/**
+ * The size of payload for HTTP/2 PING frame.
+ */
+#define AWS_HTTP2_PING_DATA_SIZE (8)
 /**
  * The max window size for flow control, which is required by HTTP/2 spec.
  */
@@ -337,20 +340,28 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
  */
 AWS_HTTP_API
 int aws_http2_connection_change_settings(
-    struct aws_http_connection *connection,
+    struct aws_http_connection *http2_connection,
     const struct aws_http2_setting *settings_array,
     size_t num_settings,
     aws_http2_on_change_settings_complete_fn *on_completed,
     void *user_data);
 
 /**
- * HTTP/2 specific. Send a PING frame with opaque_data as payload.
- * Opaque_data has to be 8 bytes data or NULL. If opaque_data is NULL, we will send zeroed 8 bytes data.
- * If set, on_completed callback will always be invoked.
+ * Send a PING frame (HTTP/2 only).
+ * Round-trip-time is calculated when PING ACK is received from peer.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param optional_opaque_data Optional payload for PING frame.
+ *      Must be NULL, or exactly 8 bytes (AWS_HTTP2_PING_DATA_SIZE).
+ *      If NULL, the 8 byte payload will be all zeroes.
+ * @param on_completed Optional callback, invoked when PING ACK is received from peer,
+ *      or when a connection error prevents the PING ACK from being received.
+ *      Callback always fires on the connection's event-loop thread.
+ * @param user_data User-data pass to on_completed callback.
  */
 AWS_HTTP_API
 int aws_http2_connection_ping(
-    struct aws_http_connection *connection,
+    struct aws_http_connection *http2_connection,
     const struct aws_byte_cursor *optional_opaque_data,
     aws_http2_on_ping_complete_fn *on_completed,
     void *user_data);

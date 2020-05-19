@@ -99,7 +99,7 @@ struct h2_decoded_frame {
     uint32_t promised_stream_id;                     /* PUSH_PROMISE has this */
     uint32_t goaway_last_stream_id;                  /* GOAWAY has this */
     uint32_t goaway_debug_data_remaining;            /* GOAWAY has this*/
-    uint8_t ping_opaque_data[AWS_H2_PING_DATA_SIZE]; /* PING has this */
+    uint8_t ping_opaque_data[AWS_HTTP2_PING_DATA_SIZE]; /* PING has this */
     uint32_t window_size_increment;                  /* WINDOW_UPDATE has this */
 
     struct aws_http_headers *headers;             /* HEADERS and PUSH_PROMISE have this */
