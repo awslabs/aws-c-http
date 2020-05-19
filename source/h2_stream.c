@@ -258,6 +258,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         stream->synced_data.is_cross_thread_work_task_scheduled = false;
 
         aws_linked_list_swap_contents(&stream->synced_data.pending_frame_list, &pending_frames);
+        /* window_update_size is ensured to be not greater than AWS_H2_WINDOW_UPDATE_MAX */
         window_update_size = stream->synced_data.window_update_size;
         stream->synced_data.window_update_size = 0;
 
@@ -271,7 +272,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     }
     /* We already enqueued the window_update frame, just apply the change and let our peer check this value. No matter
      * overflow happens or not, peer will dectect it for us. */
-    if (aws_h2err_failed(aws_h2_stream_window_size_change(stream, window_update_size, true /*self*/))) {
+    if (aws_h2err_failed(aws_h2_stream_window_size_change(stream, (int32_t)window_update_size, true /*self*/))) {
         stream->thread_data.window_size_self = INT32_MAX;
     }
 
@@ -310,7 +311,7 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
         return;
     }
     struct aws_h2_frame *stream_window_update_frame =
-        aws_h2_frame_new_window_update(connection->base.alloc, stream_base->id, increment_size);
+        aws_h2_frame_new_window_update(connection->base.alloc, stream_base->id, (uint32_t)increment_size);
     if (!stream_window_update_frame) {
         AWS_H2_STREAM_LOGF(
             ERROR,
