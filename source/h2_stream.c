@@ -271,7 +271,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         aws_h2_connection_enqueue_outgoing_frame(connection, frame);
     }
     /* We already enqueued the window_update frame, just apply the change and let our peer check this value. No matter
-     * overflow happens or not, peer will dectect it for us. */
+     * overflow happens or not, peer will detect it for us. */
     if (aws_h2err_failed(aws_h2_stream_window_size_change(stream, (int32_t)window_update_size, true /*self*/))) {
         stream->thread_data.window_size_self = INT32_MAX;
     }
@@ -306,7 +306,7 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
         return;
     }
     if (!connection->base.manual_window_management) {
-        /* auto-mode, manual udpate window is not supported */
+        /* auto-mode, manual update window is not supported */
         AWS_H2_STREAM_LOG(WARN, stream, "Manual window management is off, update window operations are not supported.");
         return;
     }
