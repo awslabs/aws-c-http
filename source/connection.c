@@ -85,7 +85,8 @@ static struct aws_http_connection *s_connection_new(
     bool is_server,
     bool is_using_tls,
     bool manual_window_management,
-    size_t initial_window_size) {
+    size_t initial_window_size,
+    const struct aws_http2_connection_options *http2_options) {
 
     struct aws_channel_slot *connection_slot = NULL;
     struct aws_http_connection *connection = NULL;
@@ -157,9 +158,9 @@ static struct aws_http_connection *s_connection_new(
             break;
         case AWS_HTTP_VERSION_2:
             if (is_server) {
-                connection = aws_http_connection_new_http2_server(alloc, manual_window_management, initial_window_size);
+                connection = aws_http_connection_new_http2_server(alloc, manual_window_management, http2_options);
             } else {
-                connection = aws_http_connection_new_http2_client(alloc, manual_window_management, initial_window_size);
+                connection = aws_http_connection_new_http2_client(alloc, manual_window_management, http2_options);
             }
             break;
         default:
@@ -239,13 +240,11 @@ void aws_http_connection_update_window(struct aws_http_connection *connection, s
 
 int aws_http2_connection_change_settings(
     struct aws_http_connection *http2_connection,
-    const struct aws_http2_setting *settings_array,
-    size_t num_settings,
-    aws_http2_on_change_settings_complete_fn *on_completed,
-    void *user_data) {
+    const struct aws_http2_change_settings_options *opt) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
-    AWS_PRECONDITION(settings_array);
+    AWS_PRECONDITION(opt);
+    AWS_PRECONDITION(opt->settings_array);
     if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
         AWS_LOGF_WARN(
             AWS_LS_HTTP_CONNECTION,
@@ -254,7 +253,7 @@ int aws_http2_connection_change_settings(
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
     return http2_connection->vtable->change_settings(
-        http2_connection, settings_array, num_settings, on_completed, user_data);
+        http2_connection, opt);
 }
 
 int aws_http2_connection_ping(
@@ -339,7 +338,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
         true,
         server->is_using_tls,
         server->manual_window_management,
-        server->initial_window_size);
+        server->initial_window_size,
+        NULL/*http2_connection_options*/);
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
@@ -665,7 +665,8 @@ static void s_client_bootstrap_on_channel_setup(
         false,
         http_bootstrap->is_using_tls,
         http_bootstrap->manual_window_management,
-        http_bootstrap->initial_window_size);
+        http_bootstrap->initial_window_size,
+        &http_bootstrap->http2_options);
     if (!http_bootstrap->connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
@@ -801,6 +802,7 @@ int aws_http_client_connect_internal(
     http_bootstrap->on_setup = options->on_setup;
     http_bootstrap->on_shutdown = options->on_shutdown;
     http_bootstrap->proxy_request_transform = proxy_request_transform;
+    http_bootstrap->http2_options = options->http2_options;
     if (options->monitoring_options) {
         http_bootstrap->monitoring_options = *options->monitoring_options;
     }

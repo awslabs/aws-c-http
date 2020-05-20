@@ -54,12 +54,7 @@ struct aws_http_connection_vtable {
     void (*update_window)(struct aws_http_connection *connection, size_t increment_size);
 
     /* HTTP/2 specific functions */
-    int (*change_settings)(
-        struct aws_http_connection *connection,
-        const struct aws_http2_setting *settings_array,
-        size_t num_settings,
-        aws_http2_on_change_settings_complete_fn *on_completed,
-        void *user_data);
+    int (*change_settings)(struct aws_http_connection *connection, const struct aws_http2_change_settings_options *opt);
     int (*ping)(
         struct aws_http_connection *connection,
         const struct aws_byte_cursor *optional_opaque_data,
@@ -122,6 +117,7 @@ struct aws_http_client_bootstrap {
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
     aws_http_proxy_request_transform_fn *proxy_request_transform;
 
+    struct aws_http2_connection_options http2_options;
     struct aws_http_connection *connection;
 };
 

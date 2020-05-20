@@ -145,6 +145,36 @@ struct aws_http_proxy_options {
 };
 
 /**
+ * Options for changing the settings for an HTTP/2 connection.
+ */
+struct aws_http2_change_settings_options {
+    /**
+     * Required
+     * The data of settings to change. Note: each setting has its boundary.
+     */
+    struct aws_http2_setting *settings_array;
+
+    /**
+     * Required
+     * The num of settings to change.
+     */
+    size_t num_settings;
+
+    /**
+     * Invoked when the HTTP/2 settings change is complete, whether successful or unsuccessful.
+     * Optional.
+     * See `aws_http2_on_change_settings_complete_fn`.
+     */
+    aws_http2_on_change_settings_complete_fn *on_completed;
+
+    /**
+     * User data for on_completed callbacks.
+     * Optional.
+     */
+    void *user_data;
+};
+
+/**
  * Options for creating an HTTP client connection.
  * Initialize with AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT to set default values.
  */
@@ -206,6 +236,8 @@ struct aws_http_client_connection_options {
 
     /**
      * Optional.
+     * The initial connection flow-control window size for HTTP/1 connection.
+     * Ignored by HTTP/2 connection, since the initial connection flow-control window in HTTP/2 is not configurable.
      * A default size is set by AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT.
      */
     size_t initial_window_size;
@@ -241,6 +273,27 @@ struct aws_http_client_connection_options {
      * reaches 0, no further data will be received.
      **/
     bool manual_window_management;
+
+    /**
+     * HTTP/2 specific options.
+     * Optional for HTTP/2 connection. Ignored for HTTP/1 connection.
+     */
+    struct aws_http2_connection_options {
+        /**
+         * Optional.
+         * If set, these settings will be sent to remote peer once the connection set up.
+         * If not set, the local settings will be set as the default initial settings defined by from RFC-7540 6.5.2.
+         * Note: you may want to disable PUSH here, since we don't support server push for now.
+         */
+        struct aws_http2_change_settings_options *initial_settings;
+
+        /**
+         * Optional.
+         * The max number of closed streams we keep, when more streams closed, the oldest one will be forgetten.
+         * A default value will be set as AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS
+         */
+        size_t max_closed_streams;
+    } http2_options;
 };
 
 /* Predefined settings identifiers (RFC-7540 6.5.2) */
@@ -260,19 +313,23 @@ struct aws_http2_setting {
     enum aws_http2_settings_id id;
     uint32_t value;
 };
+
 /**
- * The size of payload for HTTP/2 PING frame.
+ * HTTP/2: Default value for max closed streams we will keep in memory.
+ */
+#define AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS (32)
+/**
+ * HTTP/2: The size of payload for HTTP/2 PING frame.
  */
 #define AWS_HTTP2_PING_DATA_SIZE (8)
-/**
- * The max window size for flow control, which is required by HTTP/2 spec.
- */
-#define AWS_HTTP_MAX_WINDOW_SIZE (0x7FFFFFFF)
 /**
  * Initializes aws_http_client_connection_options with default values.
  */
 #define AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT                                                                        \
-    { .self_size = sizeof(struct aws_http_client_connection_options), .initial_window_size = AWS_HTTP_MAX_WINDOW_SIZE, }
+    {                                                                                                                  \
+        .self_size = sizeof(struct aws_http_client_connection_options), .initial_window_size = SIZE_MAX,               \
+        .http2_options.max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS                                       \
+    }
 
 AWS_EXTERN_C_BEGIN
 
@@ -334,17 +391,16 @@ AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
 
 /**
- * HTTP/2 specific. Change the HTTP/2 conenction settings.
- * Settings frame will be sent. If set, on_completed callback will be always be invoked, if no error is reported then
- * the peer has acknowledged the settings and the change has been applied.
+ * Send a SETTINGS frame (HTTP/2 only).
+ * SETTINGS will be applied locally when SETTINGS ACK is received from peer.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param opt aws_http2_change_settings_options, options for the settings.
  */
 AWS_HTTP_API
 int aws_http2_connection_change_settings(
     struct aws_http_connection *http2_connection,
-    const struct aws_http2_setting *settings_array,
-    size_t num_settings,
-    aws_http2_on_change_settings_complete_fn *on_completed,
-    void *user_data);
+    const struct aws_http2_change_settings_options *opt);
 
 /**
  * Send a PING frame (HTTP/2 only).

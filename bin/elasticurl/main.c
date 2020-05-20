@@ -721,6 +721,14 @@ int main(int argc, char **argv) {
         .keep_alive_interval_sec = 0,
     };
 
+    struct aws_http2_change_settings_options initial_settings;
+    AWS_ZERO_STRUCT(initial_settings);
+    struct aws_http2_setting settings[1];
+    settings[0].id = AWS_HTTP2_SETTINGS_ENABLE_PUSH;
+    settings[0].value = 0;
+    initial_settings.num_settings = 1;
+    initial_settings.settings_array = settings;
+
     struct aws_http_client_connection_options http_client_options = {
         .self_size = sizeof(struct aws_http_client_connection_options),
         .socket_options = &socket_options,
@@ -728,11 +736,13 @@ int main(int argc, char **argv) {
         .port = port,
         .host_name = app_ctx.uri.host_name,
         .bootstrap = bootstrap,
-        .initial_window_size = AWS_HTTP_MAX_WINDOW_SIZE,
+        .initial_window_size = SIZE_MAX,
         .tls_options = tls_options,
         .user_data = &app_ctx,
         .on_setup = s_on_client_connection_setup,
         .on_shutdown = s_on_client_connection_shutdown,
+        .http2_options.initial_settings = &initial_settings,
+        .http2_options.max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
     };
 
     aws_http_client_connect(&http_client_options);

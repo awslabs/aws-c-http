@@ -44,9 +44,17 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
     struct aws_testing_channel_options options = {.clock_fn = aws_high_res_clock_get_ticks};
 
     ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc, &options));
+    struct aws_http2_change_settings_options initial_settings;
+    AWS_ZERO_STRUCT(initial_settings);
+    struct aws_http2_setting settings[1];
+    settings[0].id = AWS_HTTP2_SETTINGS_ENABLE_PUSH;
+    settings[0].value = 0;
+    initial_settings.num_settings = 1;
+    initial_settings.settings_array = settings;
 
-    s_tester.connection = aws_http_connection_new_http2_client(
-        alloc, true, aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE]);
+    struct aws_http2_connection_options http2_options = {.initial_settings = &initial_settings,
+                                                         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS};
+    s_tester.connection = aws_http_connection_new_http2_client(alloc, true, &http2_options);
     ASSERT_NOT_NULL(s_tester.connection);
 
     { /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
@@ -1192,7 +1200,7 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_after_removed_from_cache) {
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
-    enum { NUM_STREAMS = AWS_H2_DEFAULT_MAX_CLOSED_STREAMS + 2 };
+    enum { NUM_STREAMS = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS + 2 };
     /* send request */
     struct aws_http_message *requests[NUM_STREAMS];
 
@@ -2277,13 +2285,15 @@ TEST_CASE(h2_client_stream_err_received_data_flow_control) {
     size_t window_size = 10;
 
     /* change the settings of the initial window size for new stream flow-control window */
+    struct aws_http2_change_settings_options options;
+    AWS_ZERO_STRUCT(options);
     struct aws_http2_setting settings[1];
     settings[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
     settings[0].value = (uint32_t)window_size;
-    size_t num_settings = 1;
+    options.num_settings = 1;
+    options.settings_array = settings;
 
-    ASSERT_SUCCESS(aws_http2_connection_change_settings(
-        s_tester.connection, settings, num_settings, NULL /*callback function*/, NULL /*user_data*/));
+    ASSERT_SUCCESS(aws_http2_connection_change_settings(s_tester.connection, &options));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* fake peer sends two settings ack back, one for the initial settings, one for the user settings we just sent */
     struct aws_h2_frame *peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
@@ -2977,12 +2987,19 @@ TEST_CASE(h2_client_change_settings_succeed) {
 
     /* We disabled the push_promise at the initial setting, let's use user API to enable it. */
     /* Use user API to change HTTP/2 connection settings */
+    struct aws_http2_change_settings_options options;
+    AWS_ZERO_STRUCT(options);
     struct aws_http2_setting settings[1];
     settings[0].id = AWS_HTTP2_SETTINGS_ENABLE_PUSH;
     settings[0].value = 1;
+
+    options.num_settings = 1;
+    options.settings_array = settings;
+    options.on_completed = s_on_completed;
     int callback_error_code = INT32_MAX;
-    ASSERT_SUCCESS(
-        aws_http2_connection_change_settings(s_tester.connection, settings, 1, s_on_completed, &callback_error_code));
+    options.user_data = &callback_error_code;
+
+    ASSERT_SUCCESS(aws_http2_connection_change_settings(s_tester.connection, &options));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* check the settings frame is sent */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
@@ -3060,12 +3077,18 @@ TEST_CASE(h2_client_change_settings_failed_no_ack_received) {
     ASSERT_FALSE(first_written_frame->ack);
 
     /* request changing setting */
+    struct aws_http2_change_settings_options options;
+    AWS_ZERO_STRUCT(options);
     struct aws_http2_setting settings[1];
     settings[0].id = AWS_HTTP2_SETTINGS_ENABLE_PUSH;
     settings[0].value = 1;
+
+    options.num_settings = 1;
+    options.settings_array = settings;
+    options.on_completed = s_on_completed;
     int callback_error_code = INT32_MAX;
-    ASSERT_SUCCESS(
-        aws_http2_connection_change_settings(s_tester.connection, settings, 1, s_on_completed, &callback_error_code));
+    options.user_data = &callback_error_code;
+    ASSERT_SUCCESS(aws_http2_connection_change_settings(s_tester.connection, &options));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* fake peer sends connection preface */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));

@@ -63,10 +63,7 @@ static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static int s_connection_change_settings(
     struct aws_http_connection *connection_base,
-    const struct aws_http2_setting *settings_array,
-    size_t num_settings,
-    aws_http2_on_change_settings_complete_fn *on_completed,
-    void *user_data);
+    const struct aws_http2_change_settings_options *opt);
 static int s_connection_ping(
     struct aws_http_connection *connection_base,
     const struct aws_byte_cursor *optional_opaque_data,
@@ -123,10 +120,7 @@ struct aws_h2err s_decoder_on_goaway_begin(
 
 static struct aws_h2_pending_settings *s_new_pending_settings(
     struct aws_allocator *allocator,
-    const struct aws_http2_setting *settings_array,
-    size_t num_settings,
-    void *user_data,
-    aws_http2_on_change_settings_complete_fn *on_completed);
+    const struct aws_http2_change_settings_options *opt);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
@@ -240,16 +234,10 @@ static void s_shutdown_due_to_write_err(struct aws_h2_connection *connection, in
 static struct aws_h2_connection *s_connection_new(
     struct aws_allocator *alloc,
     bool manual_window_management,
-    size_t initial_window_size,
+    const struct aws_http2_connection_options *http2_options,
     bool server) {
 
-    if (initial_window_size > AWS_H2_WINDOW_UPDATE_MAX) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "Initial window size is too big for HTTP/2 connection, max is 2147483647 but we got %zu",
-            initial_window_size);
-        return NULL;
-    }
+    AWS_PRECONDITION(http2_options);
 
     struct aws_h2_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct aws_h2_connection));
     if (!connection) {
@@ -302,9 +290,8 @@ static struct aws_h2_connection *s_connection_new(
         goto error;
     }
 
-    /* TODO: make the max_items configurable */
     connection->thread_data.closed_streams =
-        aws_cache_new_fifo(alloc, aws_hash_ptr, aws_ptr_eq, NULL, NULL, AWS_H2_DEFAULT_MAX_CLOSED_STREAMS);
+        aws_cache_new_fifo(alloc, aws_hash_ptr, aws_ptr_eq, NULL, NULL, http2_options->max_closed_streams);
     if (!connection->thread_data.closed_streams) {
         CONNECTION_LOGF(
             ERROR, connection, "FIFO cache init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
@@ -341,25 +328,21 @@ static struct aws_h2_connection *s_connection_new(
             ERROR, connection, "Encoder init error %d (%s)", aws_last_error(), aws_error_name(aws_last_error()));
         goto error;
     }
-
-    /* Initial settings with initial window size and disable push promise for the client */
-    struct aws_http2_setting initial_settings[2];
-    size_t iter = 0;
-    if (!server) {
-        initial_settings[iter].id = AWS_HTTP2_SETTINGS_ENABLE_PUSH;
-        initial_settings[iter++].value = 0;
-    }
-    if (initial_window_size != aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE]) {
-        initial_settings[iter].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
-        initial_settings[iter++].value = (uint32_t)initial_window_size;
+    struct aws_http2_change_settings_options initial_settings;
+    AWS_ZERO_STRUCT(initial_settings);
+    if(http2_options->initial_settings) {
+        initial_settings = *http2_options->initial_settings;
     }
     struct aws_h2_pending_settings *init_pending_settings =
-        s_new_pending_settings(connection->base.alloc, initial_settings, iter, NULL, NULL);
+        s_new_pending_settings(connection->base.alloc, &initial_settings);
     if (!init_pending_settings) {
         goto error;
     }
-    struct aws_h2_frame *init_settings_frame =
-        aws_h2_frame_new_settings(connection->base.alloc, initial_settings, iter, false /*ACK*/);
+    struct aws_h2_frame *init_settings_frame = aws_h2_frame_new_settings(
+        connection->base.alloc,
+        initial_settings.settings_array,
+        initial_settings.num_settings,
+        false /*ACK*/);
     if (!init_settings_frame) {
         CONNECTION_LOGF(
             ERROR,
@@ -383,10 +366,9 @@ error:
 struct aws_http_connection *aws_http_connection_new_http2_server(
     struct aws_allocator *allocator,
     bool manual_window_management,
-    size_t initial_window_size) {
+    const struct aws_http2_connection_options *http2_options) {
 
-    struct aws_h2_connection *connection =
-        s_connection_new(allocator, manual_window_management, initial_window_size, true);
+    struct aws_h2_connection *connection = s_connection_new(allocator, manual_window_management, http2_options, true);
     if (!connection) {
         return NULL;
     }
@@ -399,10 +381,9 @@ struct aws_http_connection *aws_http_connection_new_http2_server(
 struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
     bool manual_window_management,
-    size_t initial_window_size) {
+    const struct aws_http2_connection_options *http2_options) {
 
-    struct aws_h2_connection *connection =
-        s_connection_new(allocator, manual_window_management, initial_window_size, false);
+    struct aws_h2_connection *connection = s_connection_new(allocator, manual_window_management, http2_options, false);
     if (!connection) {
         return NULL;
     }
@@ -465,12 +446,9 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
 
 static struct aws_h2_pending_settings *s_new_pending_settings(
     struct aws_allocator *allocator,
-    const struct aws_http2_setting *settings_array,
-    size_t num_settings,
-    void *user_data,
-    aws_http2_on_change_settings_complete_fn *on_completed) {
+    const struct aws_http2_change_settings_options *opt) {
 
-    size_t settings_storage_size = sizeof(struct aws_http2_setting) * num_settings;
+    size_t settings_storage_size = sizeof(struct aws_http2_setting) * opt->num_settings;
     struct aws_h2_pending_settings *pending_settings;
     void *settings_storage;
     if (!aws_mem_acquire_many(
@@ -486,10 +464,10 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     AWS_ZERO_STRUCT(*pending_settings);
     /* We buffer the settings up, incase the caller has freed them when the ACK arrives */
     pending_settings->settings_array = settings_storage;
-    memcpy(pending_settings->settings_array, settings_array, num_settings * sizeof(struct aws_http2_setting));
-    pending_settings->num_settings = num_settings;
-    pending_settings->on_completed = on_completed;
-    pending_settings->user_data = user_data;
+    memcpy(pending_settings->settings_array, opt->settings_array, opt->num_settings * sizeof(struct aws_http2_setting));
+    pending_settings->num_settings = opt->num_settings;
+    pending_settings->on_completed = opt->on_completed;
+    pending_settings->user_data = opt->user_data;
 
     return pending_settings;
 }
@@ -1974,24 +1952,20 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
 
 static int s_connection_change_settings(
     struct aws_http_connection *connection_base,
-    const struct aws_http2_setting *settings_array,
-    size_t num_settings,
-    aws_http2_on_change_settings_complete_fn *on_completed,
-    void *user_data) {
+    const struct aws_http2_change_settings_options *opt) {
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
 
-    if (!num_settings) {
+    if (!opt->num_settings) {
         return AWS_OP_SUCCESS;
     }
 
-    struct aws_h2_pending_settings *pending_settings =
-        s_new_pending_settings(connection->base.alloc, settings_array, num_settings, user_data, on_completed);
+    struct aws_h2_pending_settings *pending_settings = s_new_pending_settings(connection->base.alloc, opt);
     if (!pending_settings) {
         return AWS_OP_ERR;
     }
     struct aws_h2_frame *settings_frame =
-        aws_h2_frame_new_settings(connection->base.alloc, settings_array, num_settings, false /*ACK*/);
+        aws_h2_frame_new_settings(connection->base.alloc, opt->settings_array, opt->num_settings, false /*ACK*/);
     if (!settings_frame) {
         CONNECTION_LOGF(
             ERROR, connection, "Failed to create settings frame, error %s", aws_error_name(aws_last_error()));
