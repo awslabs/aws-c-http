@@ -741,10 +741,9 @@ int main(int argc, char **argv) {
         .user_data = &app_ctx,
         .on_setup = s_on_client_connection_setup,
         .on_shutdown = s_on_client_connection_shutdown,
-        .http2_options.initial_settings = &initial_settings,
-        .http2_options.max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
     };
-
+    http_client_options.http2_options.initial_settings = &initial_settings;
+    http_client_options.http2_options.max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS;
     aws_http_client_connect(&http_client_options);
     aws_mutex_lock(&app_ctx.mutex);
     aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_completion_predicate, &app_ctx);
