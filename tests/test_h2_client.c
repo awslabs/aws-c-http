@@ -52,7 +52,7 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
     initial_settings.num_settings = 1;
     initial_settings.settings_array = settings;
 
-    struct aws_http2_connection_options http2_options = {.initial_settings = &initial_settings,
+    struct aws_http2_connection_options http2_options = {.initial_settings = initial_settings,
                                                          .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS};
     s_tester.connection = aws_http_connection_new_http2_client(alloc, true, &http2_options);
     ASSERT_NOT_NULL(s_tester.connection);

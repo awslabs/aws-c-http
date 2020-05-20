@@ -149,8 +149,10 @@ struct aws_http_proxy_options {
  */
 struct aws_http2_change_settings_options {
     /**
-     * Required
-     * The data of settings to change. Note: each setting has its boundary.
+     * Optional
+     * The data of settings to change.
+     * Note: each setting has its boundary. If settings_array is not set, num_settings has to be 0 to send an empty
+     * SETTINGS frame.
      */
     struct aws_http2_setting *settings_array;
 
@@ -280,17 +282,18 @@ struct aws_http_client_connection_options {
      */
     struct aws_http2_connection_options {
         /**
-         * Optional.
+         * Required.
+         * Settings to change as the initial local settings.
          * If set, these settings will be sent to remote peer once the connection set up.
-         * If not set, the local settings will be set as the default initial settings defined by from RFC-7540 6.5.2.
+         * It can be zero out, no change will made to the default initial settings defined by from RFC-7540 6.5.2.
          * Note: you may want to disable PUSH here, since we don't support server push for now.
          */
-        struct aws_http2_change_settings_options *initial_settings;
+        struct aws_http2_change_settings_options initial_settings;
 
         /**
          * Optional.
          * The max number of closed streams we keep, when more streams closed, the oldest one will be forgetten.
-         * A default value will be set as AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS
+         * A default size is set by AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT.
          */
         size_t max_closed_streams;
     } http2_options;
@@ -395,7 +398,7 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
  * SETTINGS will be applied locally when SETTINGS ACK is received from peer.
  *
  * @param http2_connection HTTP/2 connection.
- * @param opt aws_http2_change_settings_options, options for the settings.
+ * @param opt see `aws_http2_change_settings_options`, options for the settings.
  */
 AWS_HTTP_API
 int aws_http2_connection_change_settings(

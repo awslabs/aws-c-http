@@ -244,7 +244,6 @@ int aws_http2_connection_change_settings(
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
     AWS_PRECONDITION(opt);
-    AWS_PRECONDITION(opt->settings_array);
     if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
         AWS_LOGF_WARN(
             AWS_LS_HTTP_CONNECTION,
@@ -767,9 +766,11 @@ int aws_http_client_connect_internal(
     struct aws_http_client_bootstrap *http_bootstrap = NULL;
     struct aws_string *host_name = NULL;
     int err = 0;
+    const struct aws_http2_change_settings_options *http2_initial_settings = &options->http2_options.initial_settings;
 
     if (!options || options->self_size == 0 || !options->allocator || !options->bootstrap ||
-        options->host_name.len == 0 || !options->socket_options || !options->on_setup) {
+        options->host_name.len == 0 || !options->socket_options || !options->on_setup ||
+        (http2_initial_settings->num_settings && !http2_initial_settings->settings_array)) {
 
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid options, cannot create client connection.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -788,8 +789,14 @@ int aws_http_client_connect_internal(
         goto error;
     }
 
-    http_bootstrap = aws_mem_calloc(options->allocator, 1, sizeof(struct aws_http_client_bootstrap));
-    if (!http_bootstrap) {
+    struct aws_http2_setting *setting_array = NULL;
+    if (!aws_mem_acquire_many(
+            options->allocator,
+            2,
+            &http_bootstrap,
+            sizeof(struct aws_http_client_bootstrap),
+            &setting_array,
+            options->http2_options.initial_settings.num_settings * sizeof(struct aws_http2_setting))) {
         goto error;
     }
 
@@ -802,6 +809,12 @@ int aws_http_client_connect_internal(
     http_bootstrap->on_shutdown = options->on_shutdown;
     http_bootstrap->proxy_request_transform = proxy_request_transform;
     http_bootstrap->http2_options = options->http2_options;
+
+    /* keep a copy of the settings array if it's not NULL */
+    if (http2_initial_settings->settings_array) {
+        memcpy(setting_array, http2_initial_settings->settings_array, http2_initial_settings->num_settings);
+        http_bootstrap->http2_options.initial_settings.settings_array = setting_array;
+    }
     if (options->monitoring_options) {
         http_bootstrap->monitoring_options = *options->monitoring_options;
     }

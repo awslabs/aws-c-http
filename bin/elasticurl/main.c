@@ -742,7 +742,7 @@ int main(int argc, char **argv) {
         .on_setup = s_on_client_connection_setup,
         .on_shutdown = s_on_client_connection_shutdown,
     };
-    http_client_options.http2_options.initial_settings = &initial_settings;
+    http_client_options.http2_options.initial_settings = initial_settings;
     http_client_options.http2_options.max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS;
     aws_http_client_connect(&http_client_options);
     aws_mutex_lock(&app_ctx.mutex);

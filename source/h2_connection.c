@@ -328,18 +328,13 @@ static struct aws_h2_connection *s_connection_new(
             ERROR, connection, "Encoder init error %d (%s)", aws_last_error(), aws_error_name(aws_last_error()));
         goto error;
     }
-    struct aws_http2_change_settings_options initial_settings;
-    AWS_ZERO_STRUCT(initial_settings);
-    if (http2_options->initial_settings) {
-        initial_settings = *http2_options->initial_settings;
-    }
     struct aws_h2_pending_settings *init_pending_settings =
-        s_new_pending_settings(connection->base.alloc, &initial_settings);
+        s_new_pending_settings(connection->base.alloc, &http2_options->initial_settings);
     if (!init_pending_settings) {
         goto error;
     }
     struct aws_h2_frame *init_settings_frame = aws_h2_frame_new_settings(
-        connection->base.alloc, initial_settings.settings_array, initial_settings.num_settings, false /*ACK*/);
+        connection->base.alloc, http2_options->initial_settings.settings_array, http2_options->initial_settings.num_settings, false /*ACK*/);
     if (!init_settings_frame) {
         CONNECTION_LOGF(
             ERROR,
@@ -461,7 +456,12 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     AWS_ZERO_STRUCT(*pending_settings);
     /* We buffer the settings up, incase the caller has freed them when the ACK arrives */
     pending_settings->settings_array = settings_storage;
-    memcpy(pending_settings->settings_array, opt->settings_array, opt->num_settings * sizeof(struct aws_http2_setting));
+    if (opt->settings_array) {
+        memcpy(
+            pending_settings->settings_array,
+            opt->settings_array,
+            opt->num_settings * sizeof(struct aws_http2_setting));
+    }
     pending_settings->num_settings = opt->num_settings;
     pending_settings->on_completed = opt->on_completed;
     pending_settings->user_data = opt->user_data;
@@ -1955,6 +1955,12 @@ static int s_connection_change_settings(
 
     if (!opt->num_settings) {
         return AWS_OP_SUCCESS;
+    }
+
+    if (!opt->settings_array) {
+        CONNECTION_LOG(
+            ERROR, connection, "Invalid change settings options, settings_array is NULL but num_settings is not zero.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
     struct aws_h2_pending_settings *pending_settings = s_new_pending_settings(connection->base.alloc, opt);
