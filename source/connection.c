@@ -812,7 +812,10 @@ int aws_http_client_connect_internal(
 
     /* keep a copy of the settings array if it's not NULL */
     if (http2_initial_settings->settings_array) {
-        memcpy(setting_array, http2_initial_settings->settings_array, http2_initial_settings->num_settings);
+        memcpy(
+            setting_array,
+            http2_initial_settings->settings_array,
+            http2_initial_settings->num_settings * sizeof(struct aws_http2_setting));
         http_bootstrap->http2_options.initial_settings.settings_array = setting_array;
     }
     if (options->monitoring_options) {

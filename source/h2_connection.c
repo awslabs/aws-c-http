@@ -334,7 +334,10 @@ static struct aws_h2_connection *s_connection_new(
         goto error;
     }
     struct aws_h2_frame *init_settings_frame = aws_h2_frame_new_settings(
-        connection->base.alloc, http2_options->initial_settings.settings_array, http2_options->initial_settings.num_settings, false /*ACK*/);
+        connection->base.alloc,
+        http2_options->initial_settings.settings_array,
+        http2_options->initial_settings.num_settings,
+        false /*ACK*/);
     if (!init_settings_frame) {
         CONNECTION_LOGF(
             ERROR,
