@@ -252,8 +252,7 @@ int aws_http2_connection_change_settings(
             (void *)http2_connection);
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
-    return http2_connection->vtable->change_settings(
-        http2_connection, opt);
+    return http2_connection->vtable->change_settings(http2_connection, opt);
 }
 
 int aws_http2_connection_ping(
@@ -339,7 +338,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
         server->is_using_tls,
         server->manual_window_management,
         server->initial_window_size,
-        NULL/*http2_connection_options*/);
+        NULL /*http2_connection_options*/);
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
