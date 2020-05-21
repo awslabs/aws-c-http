@@ -123,6 +123,8 @@ static struct aws_event_loop *s_new_event_loop(
     struct aws_allocator *alloc,
     aws_io_clock_fn *clock,
     void *new_loop_user_data) {
+    (void)new_loop_user_data;
+
     return aws_event_loop_new_default(alloc, clock);
 }
 
@@ -195,6 +197,10 @@ int s_cm_tester_init(struct cm_tester_options *options) {
         .shutdown_complete_callback = s_cm_tester_on_cm_shutdown_complete,
         .max_connection_idle_in_milliseconds = options->max_connection_idle_in_ms,
     };
+
+    if (options->mock_table) {
+        g_aws_http_connection_manager_default_system_vtable_ptr = options->mock_table;
+    }
 
     tester->connection_manager = aws_http_connection_manager_new(tester->allocator, &cm_options);
     ASSERT_NOT_NULL(tester->connection_manager);
@@ -822,12 +828,11 @@ static int s_test_connection_manager_idle_culling_single(struct aws_allocator *a
         .max_connection_idle_in_ms = 1000,
     };
 
-    ASSERT_SUCCESS(s_cm_tester_init(&options));
     uint64_t now = 0;
-    aws_sys_clock_get_ticks(&now);
-
     /* set time to a starting value */
     s_tester_set_mock_time(now);
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
 
     /* add enough fake connections to cover all the acquires */
     s_add_mock_connections(2, AWS_NCRT_SUCCESS, false);
@@ -882,12 +887,11 @@ static int s_test_connection_manager_idle_culling_many(struct aws_allocator *all
         .max_connection_idle_in_ms = 1000,
     };
 
-    ASSERT_SUCCESS(s_cm_tester_init(&options));
     uint64_t now = 0;
-    aws_sys_clock_get_ticks(&now);
-
     /* set time to a starting value */
     s_tester_set_mock_time(now);
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
 
     /* add enough fake connections to cover all the acquires */
     s_add_mock_connections(10, AWS_NCRT_SUCCESS, false);
@@ -942,12 +946,11 @@ static int s_test_connection_manager_idle_culling_mixture(struct aws_allocator *
         .max_connection_idle_in_ms = 1000,
     };
 
-    ASSERT_SUCCESS(s_cm_tester_init(&options));
     uint64_t now = 0;
-    aws_sys_clock_get_ticks(&now);
-
     /* set time to a starting value */
     s_tester_set_mock_time(now);
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
 
     /* add enough fake connections to cover all the acquires */
     s_add_mock_connections(15, AWS_NCRT_SUCCESS, false);
