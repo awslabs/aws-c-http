@@ -296,6 +296,65 @@ struct aws_http_request_handler_options {
     aws_http_on_stream_complete_fn *on_complete;
 };
 
+/**
+ * Signature definition of the function which will be invoked, if provided by the caller, after a chunked transfer
+ *  encoding chunk has been written to an HTTP/1.1 connection.
+ */
+typedef void aws_http1_stream_write_chunk_complete_fn(void *user_data);
+
+/**
+ * HTTP/1.1 chunk extension for chunked encoding.
+ * Note that the underlying strings are not owned by the byte cursors.
+ */
+struct aws_http1_chunk_extension {
+    struct aws_byte_cursor key;
+    struct aws_byte_cursor value;
+};
+
+/**
+ * Encoding options for an HTTP/1.1 chunked transfer encoding chunk.
+ */
+struct aws_http1_chunk_options {
+    /*
+     * The data stream to be sent in a single chunk.
+     * The aws_input_stream must remain valid until on_complete is invoked.
+     *
+     * Note that, for Transfer-Encodings other than "chunked", the data is
+     * expected to already have that encoding applied. For example, if
+     * "Transfer-Encoding: gzip, chunked" then the data from aws_input_stream
+     * should already be in gzip format.
+     */
+    struct aws_input_stream *chunk_data;
+
+    /*
+     * Size of the chunk_data input stream in bytes.
+     */
+    size_t chunk_data_size;
+
+    /**
+     * A pointer to an array of chunked extensions.
+     * The num_extensions must match the length of the array.
+     * This data is copied, it does not need to remain valid on_complete is invoked.
+     */
+    struct aws_http1_chunk_extension *extensions;
+
+    /**
+     * The number of elements defined in the extensions array.
+     */
+    size_t num_extensions;
+
+    /**
+     * A caller provided callback which will be invoked after the chunk has been submitted to the channel for writing
+     * to the underlying HTTP connection.
+     */
+    aws_http1_stream_write_chunk_complete_fn *on_complete;
+
+    /**
+     * User provided data passed to the on_complete callback on its invocation.
+     */
+    void *user_data;
+};
+
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
     { .self_size = sizeof(struct aws_http_request_handler_options), }
 
@@ -545,6 +604,14 @@ struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_
  */
 AWS_HTTP_API
 void aws_http_message_set_body_stream(struct aws_http_message *message, struct aws_input_stream *body_stream);
+
+/**
+ * Submit a stream of data for writing to an outbound HTTP/1.1 stream using chunked transfer encoding.
+ * Note: Everything except the input stream and http stream may be cleaned up after this call returns.
+ * Upon invocation of on_complete, the caller may release or modify the data stream.
+ * On successful submission of the data stream to the HTTP stream, AWS_OP_SUCCESS is returned and AWS_OP_ERR otherwise.
+ */
+AWS_HTTP_API int aws_http1_stream_write_chunk(struct aws_http_stream *stream, struct aws_http1_chunk_options *options);
 
 /**
  * Get the message's aws_http_headers.

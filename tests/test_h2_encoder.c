@@ -312,10 +312,10 @@ TEST_CASE(h2_encoder_rst_stream) {
 TEST_CASE(h2_encoder_settings) {
     (void)ctx;
 
-    struct aws_h2_frame_setting settings[] = {
-        {.id = AWS_H2_SETTINGS_ENABLE_PUSH, .value = 1}, /* real world value */
-        {.id = 0x0000, .value = 0x00000000},             /* min value */
-        {.id = 0xFFFF, .value = 0xFFFFFFFF},             /* max value */
+    struct aws_http2_setting settings[] = {
+        {.id = AWS_HTTP2_SETTINGS_ENABLE_PUSH, .value = 1}, /* real world value */
+        {.id = 0x0000, .value = 0x00000000},                /* min value */
+        {.id = 0xFFFF, .value = 0xFFFFFFFF},                /* max value */
     };
 
     struct aws_h2_frame *frame =
@@ -408,7 +408,7 @@ TEST_CASE(h2_encoder_push_promise) {
 TEST_CASE(h2_encoder_ping) {
     (void)ctx;
 
-    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE] = {0, 1, 2, 3, 4, 5, 6, 7};
+    uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE] = {0, 1, 2, 3, 4, 5, 6, 7};
 
     struct aws_h2_frame *frame = aws_h2_frame_new_ping(allocator, true /*ack*/, opaque_data);
     ASSERT_NOT_NULL(frame);

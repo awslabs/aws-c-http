@@ -16,6 +16,7 @@
  * permissions and limitations under the License.
  */
 
+#include <aws/http/connection.h>
 #include <aws/http/request_response.h>
 
 #include <aws/common/byte_buf.h>
@@ -79,29 +80,17 @@ struct aws_h2err {
 #define AWS_H2ERR_SUCCESS                                                                                              \
     (struct aws_h2err) { .h2_code = 0, .aws_code = 0 }
 
-/* Predefined settings identifiers (RFC-7540 6.5.2) */
-enum aws_h2_settings {
-    AWS_H2_SETTINGS_BEGIN_RANGE = 0x1, /* Beginning of known values */
-    AWS_H2_SETTINGS_HEADER_TABLE_SIZE = 0x1,
-    AWS_H2_SETTINGS_ENABLE_PUSH = 0x2,
-    AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS = 0x3,
-    AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE = 0x4,
-    AWS_H2_SETTINGS_MAX_FRAME_SIZE = 0x5,
-    AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE = 0x6,
-    AWS_H2_SETTINGS_END_RANGE, /* End of known values */
-};
-
 #define AWS_H2_PAYLOAD_MAX (0x00FFFFFF)       /* must fit in 3 bytes */
 #define AWS_H2_WINDOW_UPDATE_MAX (0x7FFFFFFF) /* cannot use high bit */
 #define AWS_H2_STREAM_ID_MAX (0x7FFFFFFF)     /* cannot use high bit */
 #define AWS_H2_FRAME_PREFIX_SIZE (9)
-#define AWS_H2_PING_DATA_SIZE (8)
 
 /* Legal min(inclusive) and max(inclusive) for each setting */
-extern const uint32_t aws_h2_settings_bounds[AWS_H2_SETTINGS_END_RANGE][2];
+extern const uint32_t aws_h2_settings_bounds[AWS_HTTP2_SETTINGS_END_RANGE][2];
 
 /* Initial values for settings RFC-7540 6.5.2 */
-extern const uint32_t aws_h2_settings_initial[AWS_H2_SETTINGS_END_RANGE];
+AWS_HTTP_API
+extern const uint32_t aws_h2_settings_initial[AWS_HTTP2_SETTINGS_END_RANGE];
 
 /* This magic string must be the very first thing a client sends to the server.
  * See RFC-7540 3.5 - HTTP/2 Connection Preface */
@@ -137,12 +126,6 @@ struct aws_h2_frame {
     /* If true, frame will be sent before those with normal priority.
      * Useful for frames like PING ACK where low latency is important. */
     bool high_priority;
-};
-
-/* A h2 setting and its value, used in SETTINGS frame */
-struct aws_h2_frame_setting {
-    uint16_t id; /* aws_h2_settings */
-    uint32_t value;
 };
 
 /* Used to encode a frame */
@@ -296,7 +279,7 @@ struct aws_h2_frame *aws_h2_frame_new_rst_stream(
 AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_settings(
     struct aws_allocator *allocator,
-    const struct aws_h2_frame_setting *settings_array,
+    const struct aws_http2_setting *settings_array,
     size_t num_settings,
     bool ack);
 
@@ -316,7 +299,7 @@ AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_ping(
     struct aws_allocator *allocator,
     bool ack,
-    const uint8_t opaque_data[AWS_H2_PING_DATA_SIZE]);
+    const uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE]);
 
 AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_goaway(

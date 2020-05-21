@@ -17,6 +17,7 @@
  */
 
 #include <aws/common/atomics.h>
+#include <aws/common/fifo_cache.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/mutex.h>
 
@@ -44,13 +45,17 @@ struct aws_h2_connection {
         bool is_outgoing_frames_task_active;
 
         /* Settings received from peer, which restricts the message to send */
-        uint32_t settings_peer[AWS_H2_SETTINGS_END_RANGE];
+        uint32_t settings_peer[AWS_HTTP2_SETTINGS_END_RANGE];
         /* My settings to send/sent to peer, which affects the decoding */
-        uint32_t settings_self[AWS_H2_SETTINGS_END_RANGE];
+        uint32_t settings_self[AWS_HTTP2_SETTINGS_END_RANGE];
 
-        /* List using h2_pending_settings.node
+        /* List using aws_h2_pending_settings.node
          * Contains settings waiting to be ACKed by peer and applied */
         struct aws_linked_list pending_settings_queue;
+
+        /* List using aws_h2_pending_ping.node
+         * Pings waiting to be ACKed by peer */
+        struct aws_linked_list pending_ping_queue;
 
         /* Most recent stream-id that was initiated by peer */
         uint32_t latest_peer_initiated_stream_id;
@@ -75,11 +80,10 @@ struct aws_h2_connection {
          * When queue is empty, then we send DATA frames from the outgoing_streams_list */
         struct aws_linked_list outgoing_frames_queue;
 
-        /* Maps stream-id to aws_h2_stream_closed_when.
-         * Contains data about streams that were recently closed by this end (sent RST_STREAM frame or END_STREAM flag),
-         * but might still receive frames that remote peer sent before learning that the stream was closed.
-         * Entries are removed after a period of time. */
-        struct aws_hash_table closed_streams_where_frames_might_trickle_in;
+        /* FIFO cache for closed stream, key: stream-id, value: aws_h2_stream_closed_when.
+         * Contains data about streams that were recently closed.
+         * The oldest entry will be removed if the cache is full */
+        struct aws_cache *closed_streams;
 
         /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
          * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
@@ -98,6 +102,9 @@ struct aws_h2_connection {
         /* Last-stream-id sent in most recent GOAWAY frame. Defaults to max stream-id. */
         uint32_t goaway_sent_last_stream_id;
 
+        /* Frame we are encoding now. NULL if we are not encoding anything. */
+        struct aws_h2_frame *current_outgoing_frame;
+
         /* Cached channel shutdown values.
          * If possible, we delay shutdown-in-the-write-dir until GOAWAY is written. */
         int channel_shutdown_error_code;
@@ -112,6 +119,15 @@ struct aws_h2_connection {
         /* New `aws_h2_stream *` that haven't moved to `thread_data` yet */
         struct aws_linked_list pending_stream_list;
 
+        /* New `aws_h2_frames *`, connection control frames created by user that haven't moved to `thread_data` yet */
+        struct aws_linked_list pending_frame_list;
+
+        /* New `aws_h2_pending_settings *` created by user that haven't moved to `thread_data` yet */
+        struct aws_linked_list pending_settings_list;
+
+        /* New `aws_h2_pending_ping *` created by user that haven't moved to `thread_data` yet */
+        struct aws_linked_list pending_ping_list;
+
         bool is_cross_thread_work_task_scheduled;
 
     } synced_data;
@@ -125,10 +141,30 @@ struct aws_h2_connection {
     } atomic;
 };
 
+struct aws_h2_pending_settings {
+    struct aws_http2_setting *settings_array;
+    size_t num_settings;
+    struct aws_linked_list_node node;
+    /* user callback */
+    void *user_data;
+    aws_http2_on_change_settings_complete_fn *on_completed;
+};
+
+struct aws_h2_pending_ping {
+    uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE];
+    /* For calculating round-trip time */
+    uint64_t started_time;
+    struct aws_linked_list_node node;
+    /* user callback */
+    void *user_data;
+    aws_http2_on_ping_complete_fn *on_completed;
+};
+
 /**
  * The action which caused the stream to close.
  */
 enum aws_h2_stream_closed_when {
+    AWS_H2_STREAM_CLOSED_UNKNOWN,
     AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM,
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED,
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT,
@@ -143,6 +179,8 @@ enum aws_h2_data_encode_status {
 
 /* When window size is too small to fit the possible padding into it, we stop sending data and wait for WINDOW_UPDATE */
 #define AWS_H2_MIN_WINDOW_SIZE (256)
+/* Default value for max closed streams we will keep in memory. */
+#define AWS_H2_DEFAULT_MAX_CLOSED_STREAMS (32)
 
 /* Private functions called from tests... */
 
@@ -169,12 +207,6 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
 AWS_EXTERN_C_END
 
 /* Private functions called from multiple .c files... */
-
-/* Internal API for changing self settings of the connection */
-int aws_h2_connection_change_settings(
-    struct aws_h2_connection *connection,
-    const struct aws_h2_frame_setting *setting_array,
-    size_t num_settings);
 
 /**
  * Enqueue outgoing frame.
