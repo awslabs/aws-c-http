@@ -152,6 +152,7 @@ int s_cm_tester_init(struct cm_tester_options *options) {
     ASSERT_SUCCESS(
         aws_array_list_init_dynamic(&tester->connections, tester->allocator, 10, sizeof(struct aws_http_connection *)));
 
+    aws_mutex_init(&tester->mock_time_lock);
     s_tester_set_mock_time(options->starting_mock_time);
 
     aws_io_clock_fn *clock_fn = &aws_sys_clock_get_ticks;
@@ -218,9 +219,6 @@ int s_cm_tester_init(struct cm_tester_options *options) {
 
     ASSERT_SUCCESS(aws_array_list_init_dynamic(
         &tester->mock_connections, tester->allocator, 10, sizeof(struct mock_connection *)));
-
-    tester->mock_time = 0;
-    aws_mutex_init(&tester->mock_time_lock);
 
     return AWS_OP_SUCCESS;
 }
