@@ -270,8 +270,8 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
         aws_h2_connection_enqueue_outgoing_frame(connection, frame);
     }
-    /* We already enqueued the window_update frame, just apply the change and let our peer check this value, no matter
-     * overflow happens or not. Peer will detect it for us. */
+    /* The largest legal value will be 2 * max window size, which is way less than INT64_MAX, so if the window_size_self
+     * overflows, remote peer will find it out. So just apply the change and ignore the possible overflow.*/
     stream->thread_data.window_size_self += window_update_size;
 
     /* It's likely that frames were queued while processing cross-thread work.
