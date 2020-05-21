@@ -599,7 +599,7 @@ static void s_aws_http_connection_manager_destroy_final_really_serious(struct aw
     AWS_ASSERT(manager->pending_acquisition_count == 0);
     AWS_ASSERT(manager->open_connection_count == 0);
     AWS_ASSERT(aws_linked_list_empty(&manager->pending_acquisitions));
-    AWS_ASSERT(aws_array_list_length(&manager->connections) == 0);
+    AWS_ASSERT(aws_array_list_length(&manager->idle_connections) == 0);
 
     aws_array_list_clean_up(&manager->idle_connections);
 
