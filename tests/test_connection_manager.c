@@ -979,8 +979,8 @@ static int s_test_connection_manager_idle_culling_mixture(struct aws_allocator *
     for (size_t i = 0; i < 5; ++i) {
         s_tester_set_mock_time(now);
         s_release_connections(1, false); /* this one will get culled */
-        s_tester_set_mock_time(now + one_sec_in_nanos);
-        s_release_connections(1, false); /* this one is safe */
+        s_tester_set_mock_time(now + 1);
+        s_release_connections(1, false); /* this one is safe by a nanosecond */
     }
 
     /* advance fake time enough to cause half of the connections to be culled, also sleep for real to give the cull task
