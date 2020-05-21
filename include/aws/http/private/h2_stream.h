@@ -20,6 +20,7 @@
 #include <aws/http/private/request_response_impl.h>
 
 #include <aws/common/mutex.h>
+#include <aws/io/channel.h>
 
 #include <inttypes.h>
 
@@ -59,15 +60,30 @@ struct aws_h2_stream {
     struct aws_http_stream base;
 
     struct aws_linked_list_node node;
+    struct aws_channel_task cross_thread_work_task;
 
     /* Only the event-loop thread may touch this data */
     struct {
         enum aws_h2_stream_state state;
         int32_t window_size_peer;
-        int32_t window_size_self;
+        /* The local window size.
+         * We allow this value exceed the max window size (int64 can hold much more than 0x7FFFFFFF),
+         * We leave it up to the remote peer to detect whether the max window size has been exceeded. */
+        int64_t window_size_self;
         struct aws_http_message *outgoing_message;
         bool received_main_headers;
     } thread_data;
+
+    /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
+    struct {
+        struct aws_mutex lock;
+        bool is_cross_thread_work_task_scheduled;
+        /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
+        size_t window_update_size;
+        /* New `aws_h2_frames *` stream control frames created by user that haven't moved to connection `thread_data`
+         * yet */
+        struct aws_linked_list pending_frame_list;
+    } synced_data;
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);

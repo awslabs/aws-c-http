@@ -61,6 +61,7 @@ static struct aws_http_stream *s_connection_make_request(
     const struct aws_http_make_request_options *options);
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
+static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
 static int s_connection_change_settings(
     struct aws_http_connection *connection_base,
     const struct aws_http2_setting *settings_array,
@@ -82,7 +83,6 @@ static int s_record_closed_stream(
     uint32_t stream_id,
     enum aws_h2_stream_closed_when closed_when);
 static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h2_stream *stream, int error_code);
-static void s_try_write_outgoing_frames(struct aws_h2_connection *connection);
 static void s_write_outgoing_frames(struct aws_h2_connection *connection, bool first_try);
 static void s_finish_shutdown(struct aws_h2_connection *connection);
 
@@ -146,7 +146,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .stream_send_response = NULL,
     .close = s_connection_close,
     .is_open = s_connection_is_open,
-    .update_window = NULL,
+    .update_window = s_connection_update_window,
     .change_settings = s_connection_change_settings,
     .ping = s_connection_ping,
 };
@@ -834,7 +834,7 @@ done:
 }
 
 /* If the outgoing-frames-task isn't scheduled, run it immediately. */
-static void s_try_write_outgoing_frames(struct aws_h2_connection *connection) {
+void aws_h2_try_write_outgoing_frames(struct aws_h2_connection *connection) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
     if (connection->thread_data.is_outgoing_frames_task_active) {
@@ -1131,8 +1131,8 @@ struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_le
         }
     }
 
-    if (payload_len != 0) {
-        /* send a connection window_update frame to automatically maintain the connection self window size */
+    /* if manual_window_management is false, we will automatically maintain the connection self window size */
+    if (payload_len != 0 && !connection->base.manual_window_management) {
         struct aws_h2_frame *connection_window_update_frame =
             aws_h2_frame_new_window_update(connection->base.alloc, 0, payload_len);
         if (!connection_window_update_frame) {
@@ -1564,7 +1564,7 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
         }
     }
     /* Initial settings are already enqueued */
-    s_try_write_outgoing_frames(connection);
+    aws_h2_try_write_outgoing_frames(connection);
 
     return;
 
@@ -1829,6 +1829,8 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
     struct aws_linked_list pending_ping;
     aws_linked_list_init(&pending_ping);
 
+    size_t window_update_size;
+
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
         connection->synced_data.is_cross_thread_work_task_scheduled = false;
@@ -1837,6 +1839,8 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         aws_linked_list_swap_contents(&connection->synced_data.pending_stream_list, &pending_streams);
         aws_linked_list_swap_contents(&connection->synced_data.pending_settings_list, &pending_settings);
         aws_linked_list_swap_contents(&connection->synced_data.pending_ping_list, &pending_ping);
+        window_update_size = connection->synced_data.window_update_size;
+        connection->synced_data.window_update_size = 0;
 
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -1847,6 +1851,11 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
         aws_h2_connection_enqueue_outgoing_frame(connection, frame);
     }
+
+    /* We already enqueued the window_update frame, just apply the change and let our peer check this value, no matter
+     * overflow happens or not. Peer will detect it for us. */
+    connection->thread_data.window_size_self =
+        aws_add_size_saturating(connection->thread_data.window_size_self, window_update_size);
 
     /* Process new pending_streams */
     if (!aws_linked_list_empty(&pending_streams)) {
@@ -1872,7 +1881,7 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
 
     /* It's likely that frames were queued while processing cross-thread work.
      * If so, try writing them now */
-    s_try_write_outgoing_frames(connection);
+    aws_h2_try_write_outgoing_frames(connection);
 }
 
 int aws_h2_stream_activate(struct aws_http_stream *stream) {
@@ -1970,6 +1979,69 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     bool is_open = aws_atomic_load_int(&connection->atomic.is_open);
     return is_open;
+}
+
+static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size) {
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
+    if (!increment_size) {
+        return;
+    }
+    if (!connection_base->manual_window_management) {
+        /* auto-mode, manual update window is not supported */
+        CONNECTION_LOG(
+            WARN, connection, "Manual window management is off, update window operations are not supported.");
+        return;
+    }
+    /* Type cast the increment size here, if overflow happens, we will detect it later, and the frame will be destroyed
+     */
+    struct aws_h2_frame *connection_window_update_frame =
+        aws_h2_frame_new_window_update(connection->base.alloc, 0, (uint32_t)increment_size);
+    if (!connection_window_update_frame) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Failed to create WINDOW_UPDATE frame on connection, error %s",
+            aws_error_name(aws_last_error()));
+        return;
+    }
+
+    int err = 0;
+    bool cross_thread_work_should_schedule = false;
+    size_t sum_size;
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+
+        err |= aws_add_size_checked(connection->synced_data.window_update_size, increment_size, &sum_size);
+        err |= sum_size > AWS_H2_WINDOW_UPDATE_MAX;
+
+        if (!err) {
+            cross_thread_work_should_schedule = !connection->synced_data.is_cross_thread_work_task_scheduled;
+            connection->synced_data.is_cross_thread_work_task_scheduled = true;
+            aws_linked_list_push_back(
+                &connection->synced_data.pending_frame_list, &connection_window_update_frame->node);
+            connection->synced_data.window_update_size = sum_size;
+        }
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+
+    if (cross_thread_work_should_schedule) {
+        CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
+    }
+
+    if (err) {
+        /* The increment_size is still not 100% safe, since we cannot control the incoming data frame. So just
+         * ruled out the value that is obviously wrong values */
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "The increment size is too big for HTTP/2 protocol, max flow-control "
+            "window size is 2147483647. We got %zu, which will cause the flow-control window to exceed the maximum",
+            increment_size);
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        aws_h2_frame_destroy(connection_window_update_frame);
+        return;
+    }
 }
 
 static int s_connection_change_settings(
@@ -2091,7 +2163,7 @@ static void s_send_goaway(struct aws_h2_connection *connection, enum aws_h2_erro
 
     connection->thread_data.goaway_sent_last_stream_id = last_stream_id;
     aws_h2_connection_enqueue_outgoing_frame(connection, goaway);
-    s_try_write_outgoing_frames(connection);
+    aws_h2_try_write_outgoing_frames(connection);
     return;
 
 error:
@@ -2150,7 +2222,7 @@ clean_up:
     aws_mem_release(message->allocator, message);
 
     /* Flush any outgoing frames that might have been queued as a result of decoder callbacks. */
-    s_try_write_outgoing_frames(connection);
+    aws_h2_try_write_outgoing_frames(connection);
 
     return AWS_OP_SUCCESS;
 }

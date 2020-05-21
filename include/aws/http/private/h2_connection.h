@@ -130,6 +130,8 @@ struct aws_h2_connection {
 
         bool is_cross_thread_work_task_scheduled;
 
+        /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
+        size_t window_update_size;
     } synced_data;
 
     struct {
@@ -238,5 +240,10 @@ int aws_h2_connection_send_rst_and_close_reserved_stream(
     struct aws_h2_connection *connection,
     uint32_t stream_id,
     uint32_t h2_error_code);
+
+/**
+ * Try to write outgoing frames, if the outgoing-frames-task isn't scheduled, run it immediately.
+ */
+void aws_h2_try_write_outgoing_frames(struct aws_h2_connection *connection);
 
 #endif /* AWS_HTTP_H2_CONNECTION_H */
