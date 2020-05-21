@@ -33,6 +33,9 @@
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
 
+/*
+ * Established connections not currently in use are tracked via this structure.
+ */
 struct aws_idle_connection {
     uint64_t cull_timestamp;
     struct aws_http_connection *connection;
@@ -231,7 +234,8 @@ struct aws_http_connection_manager {
     uint64_t max_connection_idle_in_milliseconds;
 
     /*
-     * Periodic task to cull idle connections
+     * Task to cull idle connections.  This task is run periodically on the cull_event_loop if a non-zero
+     * culling time interval is specified.
      */
     struct aws_task *cull_task;
     struct aws_event_loop *cull_event_loop;
@@ -587,7 +591,7 @@ static void s_aws_http_connection_manager_build_transaction(struct aws_connectio
 
 static void s_aws_http_connection_manager_execute_transaction(struct aws_connection_management_transaction *work);
 
-static void s_aws_http_connection_manager_destroy_final_really_serious(struct aws_http_connection_manager *manager) {
+static void s_aws_http_connection_manager_destroy_final(struct aws_http_connection_manager *manager) {
     if (manager == NULL) {
         return;
     }
@@ -613,6 +617,11 @@ static void s_aws_http_connection_manager_destroy_final_really_serious(struct aw
         aws_http_proxy_config_destroy(manager->proxy_config);
     }
 
+    /*
+     * If this task exists then we are actually in the corresponding event loop running the final destruction task.
+     * In that case, we've already cancelled this task and when you cancel, it runs synchronously.  So in that
+     * case the task has run as cancelled, it was not rescheduled, and so we can safely release the memory.
+     */
     if (manager->cull_task) {
         aws_mem_release(manager->allocator, manager->cull_task);
     }
@@ -638,7 +647,7 @@ static void s_final_destruction_task(struct aws_task *task, void *arg, enum aws_
         aws_event_loop_cancel_task(manager->cull_event_loop, manager->cull_task);
     }
 
-    s_aws_http_connection_manager_destroy_final_really_serious(manager);
+    s_aws_http_connection_manager_destroy_final(manager);
 
     aws_mem_release(allocator, task);
 }
@@ -648,13 +657,21 @@ static void s_aws_http_connection_manager_destroy(struct aws_http_connection_man
         return;
     }
 
+    /*
+     * If we have a cull task running then we have to cancel it.  But you can only cancel tasks within the event
+     * loop that the task is scheduled on.  So to solve this case, if there's a cull task, rather than doing
+     * cleanup synchronously, we schedule a final destruction task (on the cull event loop) which cancels the
+     * cull task before going on to release all the memory and notify the shutdown callback.
+     *
+     * If there's no cull task we can just cleanup synchronously.
+     */
     if (manager->cull_event_loop != NULL) {
         AWS_FATAL_ASSERT(manager->cull_task);
         struct aws_task *final_destruction_task = aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_task));
         aws_task_init(final_destruction_task, s_final_destruction_task, manager, "final_scheduled_destruction");
         aws_event_loop_schedule_task_now(manager->cull_event_loop, final_destruction_task);
     } else {
-        s_aws_http_connection_manager_destroy_final_really_serious(manager);
+        s_aws_http_connection_manager_destroy_final(manager);
     }
 }
 
@@ -1268,8 +1285,21 @@ static void s_cull_idle_connections(struct aws_http_connection_manager *manager)
     aws_mutex_lock(&manager->lock);
 
     size_t connection_count = aws_array_list_length(&manager->idle_connections);
+
+    /*
+     * Make sure the connection manager
+     *  (1) isn't shutting down
+     *  (2) has idle connections
+     *  (3) there's enough space in the work unit's release vector to handle the worst case (everything culled)
+     */
     if (manager->state == AWS_HCMST_READY && connection_count > 0 &&
         aws_array_list_ensure_capacity(&work.connections_to_release, connection_count - 1) == AWS_ERROR_SUCCESS) {
+
+        /*
+         * An unpleasant loop where we go back to front, swapping culled connections with the last valid connection
+         * and "shrinking" the array.  This avoids doing any compacting/remove-from-the-middle operations or loop index
+         * mangling that you'd need to do if you went front-to-back or if you didn't swap.
+         */
         size_t last_valid_index = connection_count - 1;
         for (size_t i = 0; i < connection_count; ++i) {
             size_t index = connection_count - i - 1;
@@ -1280,12 +1310,22 @@ static void s_cull_idle_connections(struct aws_http_connection_manager *manager)
             aws_array_list_get_at(&manager->idle_connections, &current_idle_connection, index);
             uint64_t current_expiration_time = current_idle_connection.cull_timestamp;
 
+            /*
+             * If this connection is safe, skip to the next one
+             */
             if (current_expiration_time > now) {
                 continue;
             }
 
+            /*
+             * Sad times, this connection must die
+             */
             aws_array_list_push_back(&work.connections_to_release, &current_idle_connection);
 
+            /*
+             * Swap with the last valid and shrink by one.  If we are currently on the last connection in the
+             * vector, then this ends up being a self-swap and is still correct.
+             */
             aws_array_list_swap(&manager->idle_connections, index, last_valid_index--);
             aws_array_list_pop_back(&manager->idle_connections);
 

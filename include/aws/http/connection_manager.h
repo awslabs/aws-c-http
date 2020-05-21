@@ -72,7 +72,7 @@ struct aws_http_connection_manager_options {
 
     /**
      * If set to a non-zero value, then connections that stay in the pool longer than the specified
-     * timeout will be closed automatically.
+     * timeout will be closed automatically.  This cleaning is executed at a coarse interval.
      */
     uint64_t max_connection_idle_in_milliseconds;
 };
