@@ -32,8 +32,7 @@ static void s_frame_init(
     frame->type = type;
     frame->stream_id = stream_id;
     frame->headers = aws_http_headers_new(alloc);
-    AWS_FATAL_ASSERT(
-        0 == aws_array_list_init_dynamic(&frame->settings, alloc, 16, sizeof(struct aws_h2_frame_setting)));
+    AWS_FATAL_ASSERT(0 == aws_array_list_init_dynamic(&frame->settings, alloc, 16, sizeof(struct aws_http2_setting)));
     AWS_FATAL_ASSERT(0 == aws_byte_buf_init(&frame->data, alloc, 1024));
 }
 
@@ -380,7 +379,7 @@ static struct aws_h2err s_decoder_on_rst_stream(uint32_t stream_id, uint32_t err
 }
 
 static struct aws_h2err s_decoder_on_settings(
-    const struct aws_h2_frame_setting *settings_array,
+    const struct aws_http2_setting *settings_array,
     size_t num_settings,
     void *userdata) {
 
@@ -410,27 +409,27 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
     return AWS_H2ERR_SUCCESS;
 }
 
-static struct aws_h2err s_decoder_on_ping(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
+static struct aws_h2err s_decoder_on_ping(uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE], void *userdata) {
     struct h2_decode_tester *decode_tester = userdata;
     struct h2_decoded_frame *frame;
 
     s_begin_new_frame(decode_tester, AWS_H2_FRAME_T_PING, 0 /*stream_id*/, &frame);
 
     /* Stash data*/
-    memcpy(frame->ping_opaque_data, opaque_data, AWS_H2_PING_DATA_SIZE);
+    memcpy(frame->ping_opaque_data, opaque_data, AWS_HTTP2_PING_DATA_SIZE);
 
     s_end_current_frame(decode_tester, AWS_H2_FRAME_T_PING, 0 /*stream_id*/);
     return AWS_H2ERR_SUCCESS;
 }
 
-static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata) {
+static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE], void *userdata) {
     struct h2_decode_tester *decode_tester = userdata;
     struct h2_decoded_frame *frame;
 
     s_begin_new_frame(decode_tester, AWS_H2_FRAME_T_PING, 0 /*stream_id*/, &frame);
 
     /* Stash data*/
-    memcpy(frame->ping_opaque_data, opaque_data, AWS_H2_PING_DATA_SIZE);
+    memcpy(frame->ping_opaque_data, opaque_data, AWS_HTTP2_PING_DATA_SIZE);
     frame->ack = true;
 
     s_end_current_frame(decode_tester, AWS_H2_FRAME_T_PING, 0 /*stream_id*/);

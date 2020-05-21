@@ -380,7 +380,7 @@ TEST_CASE(message_with_existing_headers) {
 }
 
 /* Do every operation that involves allocating some memory */
-int s_message_handles_oom_attempt(struct aws_http_message *request) {
+static int s_message_handles_oom_attempt(struct aws_http_message *request) {
     ASSERT_NOT_NULL(request);
 
     /* Set, and then overwrite, method and path */

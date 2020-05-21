@@ -57,6 +57,28 @@ typedef void(
     aws_http_on_client_connection_shutdown_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
 
 /**
+ * Invoked when the HTTP/2 settings change is complete, whether successful or unsuccessful.
+ * If error_code is AWS_ERROR_SUCCESS (0), then the peer has acknowledged the settings and the change has been applied.
+ * If error_code is non-zero, then a connection error occurred before the settings could be fully acknowledged and
+ * applied. This is always invoked on the connection's event-loop thread.
+ */
+typedef void(
+    aws_http2_on_change_settings_complete_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
+
+/**
+ * Invoked when the HTTP/2 PING completes, whether peer has acknowledged it or not.
+ * If error_code is AWS_ERROR_SUCCESS (0), then the peer has acknowledged the PING and round_trip_time_ns will be the
+ * round trip time in nano seconds for the connection.
+ * If error_code is non-zero, then a connection error occurred before the PING get acknowledgment and round_trip_time_ns
+ * will be useless in this case.
+ */
+typedef void(aws_http2_on_ping_complete_fn)(
+    struct aws_http_connection *connection,
+    uint64_t round_trip_time_ns,
+    int error_code,
+    void *user_data);
+
+/**
  * Configuration options for connection monitoring
  */
 struct aws_http_connection_monitoring_options {
@@ -221,11 +243,36 @@ struct aws_http_client_connection_options {
     bool manual_window_management;
 };
 
+/* Predefined settings identifiers (RFC-7540 6.5.2) */
+enum aws_http2_settings_id {
+    AWS_HTTP2_SETTINGS_BEGIN_RANGE = 0x1, /* Beginning of known values */
+    AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE = 0x1,
+    AWS_HTTP2_SETTINGS_ENABLE_PUSH = 0x2,
+    AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS = 0x3,
+    AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE = 0x4,
+    AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE = 0x5,
+    AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE = 0x6,
+    AWS_HTTP2_SETTINGS_END_RANGE, /* End of known values */
+};
+
+/* A HTTP/2 setting and its value, used in SETTINGS frame */
+struct aws_http2_setting {
+    enum aws_http2_settings_id id;
+    uint32_t value;
+};
+/**
+ * The size of payload for HTTP/2 PING frame.
+ */
+#define AWS_HTTP2_PING_DATA_SIZE (8)
+/**
+ * The max window size for flow control, which is required by HTTP/2 spec.
+ */
+#define AWS_HTTP_MAX_WINDOW_SIZE (0x7FFFFFFF)
 /**
  * Initializes aws_http_client_connection_options with default values.
  */
 #define AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT                                                                        \
-    { .self_size = sizeof(struct aws_http_client_connection_options), .initial_window_size = SIZE_MAX, }
+    { .self_size = sizeof(struct aws_http_client_connection_options), .initial_window_size = AWS_HTTP_MAX_WINDOW_SIZE, }
 
 AWS_EXTERN_C_BEGIN
 
@@ -285,6 +332,39 @@ enum aws_http_version aws_http_connection_get_version(const struct aws_http_conn
  */
 AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
+
+/**
+ * HTTP/2 specific. Change the HTTP/2 conenction settings.
+ * Settings frame will be sent. If set, on_completed callback will be always be invoked, if no error is reported then
+ * the peer has acknowledged the settings and the change has been applied.
+ */
+AWS_HTTP_API
+int aws_http2_connection_change_settings(
+    struct aws_http_connection *http2_connection,
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
+    aws_http2_on_change_settings_complete_fn *on_completed,
+    void *user_data);
+
+/**
+ * Send a PING frame (HTTP/2 only).
+ * Round-trip-time is calculated when PING ACK is received from peer.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param optional_opaque_data Optional payload for PING frame.
+ *      Must be NULL, or exactly 8 bytes (AWS_HTTP2_PING_DATA_SIZE).
+ *      If NULL, the 8 byte payload will be all zeroes.
+ * @param on_completed Optional callback, invoked when PING ACK is received from peer,
+ *      or when a connection error prevents the PING ACK from being received.
+ *      Callback always fires on the connection's event-loop thread.
+ * @param user_data User-data pass to on_completed callback.
+ */
+AWS_HTTP_API
+int aws_http2_connection_ping(
+    struct aws_http_connection *http2_connection,
+    const struct aws_byte_cursor *optional_opaque_data,
+    aws_http2_on_ping_complete_fn *on_completed,
+    void *user_data);
 
 AWS_EXTERN_C_END
 

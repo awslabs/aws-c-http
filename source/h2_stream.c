@@ -27,6 +27,7 @@ struct aws_http_stream_vtable s_h2_stream_vtable = {
     .destroy = s_stream_destroy,
     .update_window = NULL,
     .activate = aws_h2_stream_activate,
+    .http1_write_chunk = NULL,
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state) {
@@ -304,8 +305,10 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
     }
 
     /* Initialize the flow-control window size */
-    stream->thread_data.window_size_peer = connection->thread_data.settings_peer[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
-    stream->thread_data.window_size_self = connection->thread_data.settings_self[AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE];
+    stream->thread_data.window_size_peer =
+        connection->thread_data.settings_peer[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
+    stream->thread_data.window_size_self =
+        connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
 
     if (has_body_stream) {
         /* If stream has DATA to send, put it in the outgoing_streams_list, and we'll send data later */
@@ -364,7 +367,8 @@ int aws_h2_stream_encode_data_frame(
 
         /* Failed to write DATA, treat it as a Stream Error */
         AWS_H2_STREAM_LOGF(ERROR, stream, "Error encoding stream DATA, %s", aws_error_name(aws_last_error()));
-        return aws_last_error();
+        s_send_rst_and_close_stream(stream, aws_h2err_from_last_error());
+        return AWS_OP_SUCCESS;
     }
 
     if (body_complete) {

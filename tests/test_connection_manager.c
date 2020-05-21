@@ -129,7 +129,7 @@ static struct aws_event_loop *s_new_event_loop(
     return aws_event_loop_new_default(alloc, clock);
 }
 
-int s_cm_tester_init(struct cm_tester_options *options) {
+static int s_cm_tester_init(struct cm_tester_options *options) {
     struct cm_tester *tester = &s_tester;
 
     AWS_ZERO_STRUCT(*tester);
@@ -223,7 +223,7 @@ int s_cm_tester_init(struct cm_tester_options *options) {
     return AWS_OP_SUCCESS;
 }
 
-void s_add_mock_connections(size_t count, enum new_connection_result_type result, bool closed_on_release) {
+static void s_add_mock_connections(size_t count, enum new_connection_result_type result, bool closed_on_release) {
     struct cm_tester *tester = &s_tester;
 
     for (size_t i = 0; i < count; ++i) {
@@ -237,7 +237,7 @@ void s_add_mock_connections(size_t count, enum new_connection_result_type result
     }
 }
 
-int s_release_connections(size_t count, bool close_first) {
+static int s_release_connections(size_t count, bool close_first) {
 
     struct cm_tester *tester = &s_tester;
 
@@ -306,7 +306,7 @@ release:
     return AWS_OP_SUCCESS;
 }
 
-void s_on_acquire_connection(struct aws_http_connection *connection, int error_code, void *user_data) {
+static void s_on_acquire_connection(struct aws_http_connection *connection, int error_code, void *user_data) {
     (void)error_code;
     (void)user_data;
 
@@ -394,7 +394,7 @@ static int s_wait_on_client_bootstrap_shutdown_complete(void) {
     return signal_error;
 }
 
-int s_cm_tester_clean_up(void) {
+static int s_cm_tester_clean_up(void) {
     struct cm_tester *tester = &s_tester;
 
     ASSERT_SUCCESS(s_release_connections(aws_array_list_length(&tester->connections), false));
