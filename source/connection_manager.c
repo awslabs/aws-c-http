@@ -54,8 +54,6 @@ bool aws_http_connection_manager_system_vtable_is_valid(const struct aws_http_co
            table->is_connection_available;
 }
 
-enum aws_http_connection_manager_state_type { AWS_HCMST_UNINITIALIZED, AWS_HCMST_READY, AWS_HCMST_SHUTTING_DOWN };
-
 /**
  * Vocabulary
  *    Acquisition - a request by a user for a connection
@@ -247,18 +245,6 @@ struct aws_http_connection_manager {
      */
     struct aws_task *cull_task;
     struct aws_event_loop *cull_event_loop;
-};
-
-struct aws_http_connection_manager_snapshot {
-    enum aws_http_connection_manager_state_type state;
-
-    size_t idle_connection_count;
-    size_t pending_acquisition_count;
-    size_t pending_connects_count;
-    size_t vended_connection_count;
-    size_t open_connection_count;
-
-    size_t external_ref_count;
 };
 
 /*
@@ -1174,6 +1160,15 @@ release:
     s_aws_http_connection_manager_execute_transaction(&work);
 
     return result;
+}
+
+void aws_http_connection_manager_get_snapshot(struct aws_http_connection_manager *manager, struct aws_http_connection_manager_snapshot *snapshot)
+{
+    aws_mutex_lock(&manager->lock);
+
+    s_aws_http_connection_manager_get_snapshot(manager, snapshot);
+
+    aws_mutex_unlock(&manager->lock);
 }
 
 static void s_aws_http_connection_manager_on_connection_setup(

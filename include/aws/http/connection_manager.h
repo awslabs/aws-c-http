@@ -73,6 +73,20 @@ struct aws_http_connection_manager_options {
     uint64_t max_connection_idle_in_milliseconds;
 };
 
+enum aws_http_connection_manager_state_type { AWS_HCMST_UNINITIALIZED, AWS_HCMST_READY, AWS_HCMST_SHUTTING_DOWN };
+
+struct aws_http_connection_manager_snapshot {
+    enum aws_http_connection_manager_state_type state;
+
+    size_t held_connection_count;
+    size_t pending_acquisition_count;
+    size_t pending_connects_count;
+    size_t vended_connection_count;
+    size_t open_connection_count;
+
+    size_t external_ref_count;
+};
+
 AWS_EXTERN_C_BEGIN
 
 /*
@@ -125,6 +139,9 @@ AWS_HTTP_API
 int aws_http_connection_manager_release_connection(
     struct aws_http_connection_manager *manager,
     struct aws_http_connection *connection);
+
+AWS_HTTP_API
+void aws_http_connection_manager_get_snapshot(struct aws_http_connection_manager *manager, struct aws_http_connection_manager_snapshot *snapshot);
 
 AWS_EXTERN_C_END
 
