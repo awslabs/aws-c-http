@@ -44,6 +44,7 @@ struct cm_tester_options {
     struct aws_http_proxy_options *proxy_options;
     size_t max_connections;
     uint64_t max_connection_idle_in_ms;
+    uint64_t starting_mock_time;
 };
 
 struct cm_tester {
@@ -150,6 +151,8 @@ int s_cm_tester_init(struct cm_tester_options *options) {
 
     ASSERT_SUCCESS(
         aws_array_list_init_dynamic(&tester->connections, tester->allocator, 10, sizeof(struct aws_http_connection *)));
+
+    s_tester_set_mock_time(options->starting_mock_time);
 
     aws_io_clock_fn *clock_fn = &aws_sys_clock_get_ticks;
     if (options->mock_table) {
@@ -821,16 +824,15 @@ static int s_test_connection_manager_idle_culling_single(struct aws_allocator *a
     AWS_ZERO_STRUCT(seen_connections);
     ASSERT_SUCCESS(aws_array_list_init_dynamic(&seen_connections, allocator, 10, sizeof(struct aws_http_connection *)));
 
+    uint64_t now = 0;
+
     struct cm_tester_options options = {
         .allocator = allocator,
         .max_connections = 1,
         .mock_table = &s_idle_mocks,
         .max_connection_idle_in_ms = 1000,
+        .starting_mock_time = now,
     };
-
-    uint64_t now = 0;
-    /* set time to a starting value */
-    s_tester_set_mock_time(now);
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
@@ -880,16 +882,15 @@ static int s_test_connection_manager_idle_culling_many(struct aws_allocator *all
     AWS_ZERO_STRUCT(seen_connections);
     ASSERT_SUCCESS(aws_array_list_init_dynamic(&seen_connections, allocator, 10, sizeof(struct aws_http_connection *)));
 
+    uint64_t now = 0;
+
     struct cm_tester_options options = {
         .allocator = allocator,
         .max_connections = 5,
         .mock_table = &s_idle_mocks,
         .max_connection_idle_in_ms = 1000,
+        .starting_mock_time = now,
     };
-
-    uint64_t now = 0;
-    /* set time to a starting value */
-    s_tester_set_mock_time(now);
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
@@ -939,16 +940,15 @@ static int s_test_connection_manager_idle_culling_mixture(struct aws_allocator *
     AWS_ZERO_STRUCT(seen_connections);
     ASSERT_SUCCESS(aws_array_list_init_dynamic(&seen_connections, allocator, 10, sizeof(struct aws_http_connection *)));
 
+    uint64_t now = 0;
+
     struct cm_tester_options options = {
         .allocator = allocator,
         .max_connections = 10,
         .mock_table = &s_idle_mocks,
         .max_connection_idle_in_ms = 1000,
+        .starting_mock_time = now,
     };
-
-    uint64_t now = 0;
-    /* set time to a starting value */
-    s_tester_set_mock_time(now);
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
