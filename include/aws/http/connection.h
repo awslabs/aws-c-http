@@ -185,7 +185,7 @@ struct aws_http2_connection_options {
      * a connection error, but costs some memory.
      */
     size_t max_closed_streams;
-} http2_options;
+};
 
 /**
  * Options for creating an HTTP client connection.
