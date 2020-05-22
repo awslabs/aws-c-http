@@ -721,13 +721,15 @@ int main(int argc, char **argv) {
         .keep_alive_interval_sec = 0,
     };
 
-    struct aws_http2_change_settings_options initial_settings;
-    AWS_ZERO_STRUCT(initial_settings);
-    struct aws_http2_setting settings[1];
-    settings[0].id = AWS_HTTP2_SETTINGS_ENABLE_PUSH;
-    settings[0].value = 0;
-    initial_settings.num_settings = 1;
-    initial_settings.settings_array = settings;
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_ENABLE_PUSH, .value = 0},
+    };
+
+    struct aws_http2_connection_options http2_options = {
+        .initial_settings_array = settings_array,
+        .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
+        .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
+    };
 
     struct aws_http_client_connection_options http_client_options = {
         .self_size = sizeof(struct aws_http_client_connection_options),
@@ -741,9 +743,8 @@ int main(int argc, char **argv) {
         .user_data = &app_ctx,
         .on_setup = s_on_client_connection_setup,
         .on_shutdown = s_on_client_connection_shutdown,
+        .http2_options = &http2_options,
     };
-    http_client_options.http2_options.initial_settings = initial_settings;
-    http_client_options.http2_options.max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS;
     aws_http_client_connect(&http_client_options);
     aws_mutex_lock(&app_ctx.mutex);
     aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_completion_predicate, &app_ctx);

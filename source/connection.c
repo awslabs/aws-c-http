@@ -240,10 +240,12 @@ void aws_http_connection_update_window(struct aws_http_connection *connection, s
 
 int aws_http2_connection_change_settings(
     struct aws_http_connection *http2_connection,
-    const struct aws_http2_change_settings_options *opt) {
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
+    aws_http2_on_change_settings_complete_fn *on_completed,
+    void *user_data) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
-    AWS_PRECONDITION(opt);
     if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
         AWS_LOGF_WARN(
             AWS_LS_HTTP_CONNECTION,
@@ -251,7 +253,7 @@ int aws_http2_connection_change_settings(
             (void *)http2_connection);
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
-    return http2_connection->vtable->change_settings(http2_connection, opt);
+    return http2_connection->vtable->change_settings(http2_connection, settings_array, num_settings, on_completed, user_data);
 }
 
 int aws_http2_connection_ping(
@@ -766,11 +768,14 @@ int aws_http_client_connect_internal(
     struct aws_http_client_bootstrap *http_bootstrap = NULL;
     struct aws_string *host_name = NULL;
     int err = 0;
-    const struct aws_http2_change_settings_options *http2_initial_settings = &options->http2_options.initial_settings;
+    struct aws_http2_connection_options http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
+    if(options->http2_options) {
+        http2_options = *options->http2_options;
+    }
 
     if (!options || options->self_size == 0 || !options->allocator || !options->bootstrap ||
         options->host_name.len == 0 || !options->socket_options || !options->on_setup ||
-        (http2_initial_settings->num_settings && !http2_initial_settings->settings_array)) {
+        (http2_options.num_initial_settings && !http2_options.initial_settings_array)) {
 
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid options, cannot create client connection.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -796,7 +801,7 @@ int aws_http_client_connect_internal(
             &http_bootstrap,
             sizeof(struct aws_http_client_bootstrap),
             &setting_array,
-            options->http2_options.initial_settings.num_settings * sizeof(struct aws_http2_setting))) {
+            http2_options.num_initial_settings * sizeof(struct aws_http2_setting))) {
         goto error;
     }
 
@@ -808,16 +813,17 @@ int aws_http_client_connect_internal(
     http_bootstrap->on_setup = options->on_setup;
     http_bootstrap->on_shutdown = options->on_shutdown;
     http_bootstrap->proxy_request_transform = proxy_request_transform;
-    http_bootstrap->http2_options = options->http2_options;
+    http_bootstrap->http2_options = http2_options;
 
     /* keep a copy of the settings array if it's not NULL */
-    if (http2_initial_settings->settings_array) {
+    if (http2_options.initial_settings_array) {
         memcpy(
             setting_array,
-            http2_initial_settings->settings_array,
-            http2_initial_settings->num_settings * sizeof(struct aws_http2_setting));
-        http_bootstrap->http2_options.initial_settings.settings_array = setting_array;
+            http2_options.initial_settings_array,
+            http2_options.num_initial_settings * sizeof(struct aws_http2_setting));
+        http_bootstrap->http2_options.initial_settings_array = setting_array;
     }
+
     if (options->monitoring_options) {
         http_bootstrap->monitoring_options = *options->monitoring_options;
     }

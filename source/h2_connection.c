@@ -64,7 +64,10 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
 static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
 static int s_connection_change_settings(
     struct aws_http_connection *connection_base,
-    const struct aws_http2_change_settings_options *opt);
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
+    aws_http2_on_change_settings_complete_fn *on_completed,
+    void *user_data);
 static int s_connection_ping(
     struct aws_http_connection *connection_base,
     const struct aws_byte_cursor *optional_opaque_data,
@@ -120,7 +123,10 @@ struct aws_h2err s_decoder_on_goaway_begin(
 
 static struct aws_h2_pending_settings *s_new_pending_settings(
     struct aws_allocator *allocator,
-    const struct aws_http2_change_settings_options *opt);
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
+    aws_http2_on_change_settings_complete_fn *on_completed,
+    void *user_data);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
@@ -328,15 +334,19 @@ static struct aws_h2_connection *s_connection_new(
             ERROR, connection, "Encoder init error %d (%s)", aws_last_error(), aws_error_name(aws_last_error()));
         goto error;
     }
-    struct aws_h2_pending_settings *init_pending_settings =
-        s_new_pending_settings(connection->base.alloc, &http2_options->initial_settings);
+    struct aws_h2_pending_settings *init_pending_settings = s_new_pending_settings(
+        connection->base.alloc,
+        http2_options->initial_settings_array,
+        http2_options->num_initial_settings,
+        http2_options->on_initial_settings_completed,
+        connection->base.user_data);
     if (!init_pending_settings) {
         goto error;
     }
     struct aws_h2_frame *init_settings_frame = aws_h2_frame_new_settings(
         connection->base.alloc,
-        http2_options->initial_settings.settings_array,
-        http2_options->initial_settings.num_settings,
+        http2_options->initial_settings_array,
+        http2_options->num_initial_settings,
         false /*ACK*/);
     if (!init_settings_frame) {
         CONNECTION_LOGF(
@@ -403,6 +413,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_frame_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_settings_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_ping_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.pending_ping_queue));
 
     /* Clean up any unsent frames and structures */
     struct aws_linked_list *outgoing_frames_queue = &connection->thread_data.outgoing_frames_queue;
@@ -411,25 +422,12 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
         struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
         aws_h2_frame_destroy(frame);
     }
+    /* If connection setup successfully, the pending settings will be cleanup and callback will be invoked as connection shuts down.
+     * But, if connection setup failed, the shutdown process will not be invoke, we will need to cleanup the memory here. */
     while (!aws_linked_list_empty(&connection->thread_data.pending_settings_queue)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
         struct aws_h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
-        /* fire the user callback with error */
-        if (pending_settings->on_completed) {
-            pending_settings->on_completed(
-                &connection->base, AWS_ERROR_HTTP_CONNECTION_CLOSED, pending_settings->user_data);
-        }
         aws_mem_release(connection->base.alloc, pending_settings);
-    }
-    while (!aws_linked_list_empty(&connection->thread_data.pending_ping_queue)) {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_ping_queue);
-        struct aws_h2_pending_ping *pending_ping = AWS_CONTAINER_OF(node, struct aws_h2_pending_ping, node);
-        /* fire the user callback with error */
-        if (pending_ping->on_completed) {
-            pending_ping->on_completed(
-                &connection->base, 0 /*fake rtt*/, AWS_ERROR_HTTP_CONNECTION_CLOSED, pending_ping->user_data);
-        }
-        aws_mem_release(connection->base.alloc, pending_ping);
     }
     aws_h2_decoder_destroy(connection->thread_data.decoder);
     aws_h2_frame_encoder_clean_up(&connection->thread_data.encoder);
@@ -441,9 +439,12 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
 
 static struct aws_h2_pending_settings *s_new_pending_settings(
     struct aws_allocator *allocator,
-    const struct aws_http2_change_settings_options *opt) {
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
+    aws_http2_on_change_settings_complete_fn *on_completed,
+    void *user_data) {
 
-    size_t settings_storage_size = sizeof(struct aws_http2_setting) * opt->num_settings;
+    size_t settings_storage_size = sizeof(struct aws_http2_setting) * num_settings;
     struct aws_h2_pending_settings *pending_settings;
     void *settings_storage;
     if (!aws_mem_acquire_many(
@@ -459,15 +460,12 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     AWS_ZERO_STRUCT(*pending_settings);
     /* We buffer the settings up, incase the caller has freed them when the ACK arrives */
     pending_settings->settings_array = settings_storage;
-    if (opt->settings_array) {
-        memcpy(
-            pending_settings->settings_array,
-            opt->settings_array,
-            opt->num_settings * sizeof(struct aws_http2_setting));
+    if (settings_array) {
+        memcpy(pending_settings->settings_array, settings_array, num_settings * sizeof(struct aws_http2_setting));
     }
-    pending_settings->num_settings = opt->num_settings;
-    pending_settings->on_completed = opt->on_completed;
-    pending_settings->user_data = opt->user_data;
+    pending_settings->num_settings = num_settings;
+    pending_settings->on_completed = on_completed;
+    pending_settings->user_data = user_data;
 
     return pending_settings;
 }
@@ -2024,26 +2022,29 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
 
 static int s_connection_change_settings(
     struct aws_http_connection *connection_base,
-    const struct aws_http2_change_settings_options *opt) {
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
+    aws_http2_on_change_settings_complete_fn *on_completed,
+    void *user_data) {
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
 
-    if (!opt->num_settings) {
+    if (!num_settings) {
         return AWS_OP_SUCCESS;
     }
 
-    if (!opt->settings_array) {
-        CONNECTION_LOG(
-            ERROR, connection, "Invalid change settings options, settings_array is NULL but num_settings is not zero.");
+    if (!settings_array) {
+        CONNECTION_LOG(ERROR, connection, "Settings_array is NULL and num_settings is not zero.");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    struct aws_h2_pending_settings *pending_settings = s_new_pending_settings(connection->base.alloc, opt);
+    struct aws_h2_pending_settings *pending_settings =
+        s_new_pending_settings(connection->base.alloc, settings_array, num_settings, on_completed, user_data);
     if (!pending_settings) {
         return AWS_OP_ERR;
     }
     struct aws_h2_frame *settings_frame =
-        aws_h2_frame_new_settings(connection->base.alloc, opt->settings_array, opt->num_settings, false /*ACK*/);
+        aws_h2_frame_new_settings(connection->base.alloc, settings_array, num_settings, false /*ACK*/);
     if (!settings_frame) {
         CONNECTION_LOGF(
             ERROR, connection, "Failed to create settings frame, error %s", aws_error_name(aws_last_error()));
@@ -2317,6 +2318,7 @@ static void s_finish_shutdown(struct aws_h2_connection *connection) {
         aws_h2_frame_destroy(frame);
     }
 
+    /* invoke pending callbacks moved into thread, and clean up the data */
     while (!aws_linked_list_empty(&connection->synced_data.pending_settings_list)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->synced_data.pending_settings_list);
         struct aws_h2_pending_settings *settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
@@ -2334,7 +2336,27 @@ static void s_finish_shutdown(struct aws_h2_connection *connection) {
         }
         aws_mem_release(connection->base.alloc, ping);
     }
-
+    /* invoke pending callbacks moved into thread, and clean up the data */
+    while (!aws_linked_list_empty(&connection->thread_data.pending_settings_queue)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
+        struct aws_h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
+        /* fire the user callback with error */
+        if (pending_settings->on_completed) {
+            pending_settings->on_completed(
+                &connection->base, AWS_ERROR_HTTP_CONNECTION_CLOSED, pending_settings->user_data);
+        }
+        aws_mem_release(connection->base.alloc, pending_settings);
+    }
+    while (!aws_linked_list_empty(&connection->thread_data.pending_ping_queue)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_ping_queue);
+        struct aws_h2_pending_ping *pending_ping = AWS_CONTAINER_OF(node, struct aws_h2_pending_ping, node);
+        /* fire the user callback with error */
+        if (pending_ping->on_completed) {
+            pending_ping->on_completed(
+                &connection->base, 0 /*fake rtt*/, AWS_ERROR_HTTP_CONNECTION_CLOSED, pending_ping->user_data);
+        }
+        aws_mem_release(connection->base.alloc, pending_ping);
+    }
     aws_channel_slot_on_handler_shutdown_complete(
         connection->base.channel_slot,
         AWS_CHANNEL_DIR_WRITE,
