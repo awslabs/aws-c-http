@@ -253,7 +253,8 @@ int aws_http2_connection_change_settings(
             (void *)http2_connection);
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
-    return http2_connection->vtable->change_settings(http2_connection, settings_array, num_settings, on_completed, user_data);
+    return http2_connection->vtable->change_settings(
+        http2_connection, settings_array, num_settings, on_completed, user_data);
 }
 
 int aws_http2_connection_ping(
@@ -769,7 +770,7 @@ int aws_http_client_connect_internal(
     struct aws_string *host_name = NULL;
     int err = 0;
     struct aws_http2_connection_options http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
-    if(options->http2_options) {
+    if (options->http2_options) {
         http2_options = *options->http2_options;
     }
 

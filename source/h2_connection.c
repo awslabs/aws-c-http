@@ -422,8 +422,9 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
         struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
         aws_h2_frame_destroy(frame);
     }
-    /* If connection setup successfully, the pending settings will be cleanup and callback will be invoked as connection shuts down.
-     * But, if connection setup failed, the shutdown process will not be invoke, we will need to cleanup the memory here. */
+    /* If connection setup successfully, the pending settings will be cleanup and callback will be invoked as connection
+     * shuts down. But, if connection setup failed, the shutdown process will not be invoke, we will need to cleanup the
+     * memory here. Don't invoke user callback here, since the connection may not in a valid state. */
     while (!aws_linked_list_empty(&connection->thread_data.pending_settings_queue)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
         struct aws_h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
