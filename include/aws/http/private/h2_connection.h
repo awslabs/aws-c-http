@@ -108,6 +108,9 @@ struct aws_h2_connection {
         /* Frame we are encoding now. NULL if we are not encoding anything. */
         struct aws_h2_frame *current_outgoing_frame;
 
+        /* Pointer to initial pending settings. If ACKed by peer, it will be NULL. */
+        struct aws_h2_pending_settings *init_pending_settings;
+
         /* Cached channel shutdown values.
          * If possible, we delay shutdown-in-the-write-dir until GOAWAY is written. */
         int channel_shutdown_error_code;
