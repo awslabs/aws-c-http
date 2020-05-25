@@ -444,7 +444,7 @@ TEST_CASE(h2_client_close) {
     struct h2_decoded_frame *goaway =
         h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
     ASSERT_NOT_NULL(goaway);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_NO_ERROR, goaway->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_NO_ERROR, goaway->error_code);
     ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
 
     /* clean up */
@@ -620,7 +620,7 @@ TEST_CASE(h2_client_stream_err_malformed_header) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
     struct h2_decoded_frame *rst_stream_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
     ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
 
     /* clean up */
     aws_http_headers_release(response_headers);
@@ -698,7 +698,7 @@ TEST_CASE(h2_client_stream_err_state_forbids_frame) {
     struct h2_decoded_frame *rst_stream_frame =
         h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
     ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_STREAM_CLOSED, rst_stream_frame->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_STREAM_CLOSED, rst_stream_frame->error_code);
 
     /* clean up */
     aws_http_headers_release(response_headers);
@@ -739,7 +739,7 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_for_idle_stream) {
     struct h2_decoded_frame *goaway =
         h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
     ASSERT_NOT_NULL(goaway);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, goaway->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, goaway->error_code);
     ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
 
     /* clean up */
@@ -791,7 +791,7 @@ TEST_CASE(h2_client_stream_ignores_some_frames_received_soon_after_closing) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
 
     /* fake peer sends RST_STREAM */
-    peer_frame = aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_H2_ERR_ENHANCE_YOUR_CALM);
+    peer_frame = aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_HTTP2_ERR_ENHANCE_YOUR_CALM);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
 
     /* validate that stream completed successfully.
@@ -937,7 +937,7 @@ TEST_CASE(h2_client_stream_err_receive_info_headers_after_main) {
     struct h2_decoded_frame *rst_stream_frame =
         h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
     ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
 
     /* clean up */
     aws_http_headers_release(response_headers);
@@ -1059,7 +1059,7 @@ TEST_CASE(h2_client_stream_err_receive_trailing_before_main) {
     struct h2_decoded_frame *rst_stream_frame =
         h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
     ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
 
     /* clean up */
     aws_http_headers_release(response_trailer);
@@ -1122,7 +1122,7 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_soon_after_closing) {
     struct h2_decoded_frame *goaway =
         h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
     ASSERT_NOT_NULL(goaway);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_STREAM_CLOSED, goaway->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_STREAM_CLOSED, goaway->error_code);
     ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
 
     /* clean up */
@@ -1157,7 +1157,7 @@ TEST_CASE(h2_client_stream_err_stream_frames_received_soon_after_rst_stream_rece
     uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
 
     /* fake peer sends RST_STREAM */
-    struct aws_h2_frame *peer_frame = aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_H2_ERR_ENHANCE_YOUR_CALM);
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_HTTP2_ERR_ENHANCE_YOUR_CALM);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     struct aws_http_headers *response_headers;
     /* fake peer try sending complete response */
@@ -1182,7 +1182,7 @@ TEST_CASE(h2_client_stream_err_stream_frames_received_soon_after_rst_stream_rece
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
     struct h2_decoded_frame *rst_stream_frame =
         h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_STREAM_CLOSED, rst_stream_frame->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_STREAM_CLOSED, rst_stream_frame->error_code);
     /* clean up */
     aws_http_headers_release(response_headers);
     aws_http_message_release(request);
@@ -1218,7 +1218,7 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_after_removed_from_cache) {
         testing_channel_drain_queued_tasks(&s_tester.testing_channel);
         /* close the streams immediately */
         struct aws_h2_frame *peer_frame = aws_h2_frame_new_rst_stream(
-            allocator, aws_http_stream_get_id(stream_tester[i].stream), AWS_H2_ERR_ENHANCE_YOUR_CALM);
+            allocator, aws_http_stream_get_id(stream_tester[i].stream), AWS_HTTP2_ERR_ENHANCE_YOUR_CALM);
         ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
         testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     }
@@ -1249,7 +1249,7 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_after_removed_from_cache) {
     struct h2_decoded_frame *goaway =
         h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
     ASSERT_NOT_NULL(goaway);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, goaway->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, goaway->error_code);
 
     /* clean up */
     aws_http_headers_release(response_headers);
@@ -1360,7 +1360,7 @@ TEST_CASE(h2_client_stream_err_receive_data_before_headers) {
     struct h2_decoded_frame *rst_stream_frame =
         h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
     ASSERT_INT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, rst_stream_frame->error_code);
 
     /* clean up */
     aws_http_message_release(request);
@@ -2345,11 +2345,11 @@ TEST_CASE(h2_client_stream_err_received_data_flow_control) {
     /* a stream error should not affect the connection */
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
 
-    /* validate that stream sent RST_STREAM with AWS_H2_ERR_FLOW_CONTROL_ERROR */
+    /* validate that stream sent RST_STREAM with AWS_HTTP2_ERR_FLOW_CONTROL_ERROR */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
     struct h2_decoded_frame *rst_stream_frame =
         h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_FLOW_CONTROL_ERROR, rst_stream_frame->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR, rst_stream_frame->error_code);
 
     /* clean up */
     aws_byte_buf_clean_up(&response_body_bufs);
@@ -2470,7 +2470,7 @@ TEST_CASE(h2_client_conn_err_received_data_flow_control) {
     struct h2_decoded_frame *goaway =
         h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
     ASSERT_NOT_NULL(goaway);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_FLOW_CONTROL_ERROR, goaway->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR, goaway->error_code);
     ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
 
     /* clean up */
@@ -2487,7 +2487,7 @@ static int s_invalid_window_update(
     struct aws_allocator *allocator,
     void *ctx,
     uint32_t window_update_size,
-    enum aws_h2_error_code h2_error_code) {
+    enum aws_http2_error_code h2_error_code) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* fake peer sends connection preface */
@@ -2555,12 +2555,12 @@ static int s_invalid_window_update(
 
 /* Window update cause window to exceed max size will lead to FLOW_CONTROL_ERROR */
 TEST_CASE(h2_client_conn_err_window_update_exceed_max) {
-    return s_invalid_window_update(allocator, ctx, AWS_H2_WINDOW_UPDATE_MAX, AWS_H2_ERR_FLOW_CONTROL_ERROR);
+    return s_invalid_window_update(allocator, ctx, AWS_H2_WINDOW_UPDATE_MAX, AWS_HTTP2_ERR_FLOW_CONTROL_ERROR);
 }
 
 /* Window update with zero update size will lead to PROTOCOL_ERROR */
 TEST_CASE(h2_client_conn_err_window_update_size_zero) {
-    return s_invalid_window_update(allocator, ctx, 0, AWS_H2_ERR_PROTOCOL_ERROR);
+    return s_invalid_window_update(allocator, ctx, 0, AWS_HTTP2_ERR_PROTOCOL_ERROR);
 }
 
 /* SETTINGS_INITIAL_WINDOW_SIZE cause stream window to exceed the max size is a Connection ERROR... */
@@ -2621,7 +2621,7 @@ TEST_CASE(h2_client_conn_err_initial_window_size_cause_window_exceed_max) {
     struct h2_decoded_frame *goaway =
         h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
     ASSERT_NOT_NULL(goaway);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_FLOW_CONTROL_ERROR, goaway->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR, goaway->error_code);
     ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
 
     /* clean up */
@@ -2759,7 +2759,7 @@ TEST_CASE(h2_client_stream_receive_end_stream_and_rst_before_done_sending) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
 
     /* fake peer sends RST_STREAM with error-code NO_ERROR */
-    response_frame = aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_H2_ERR_NO_ERROR);
+    response_frame = aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_HTTP2_ERR_NO_ERROR);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
 
     /* validate the client request completes successfully */
@@ -2816,7 +2816,7 @@ TEST_CASE(h2_client_stream_err_input_stream_failure) {
     /* validate that stream sent RST_STREAM */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
     struct h2_decoded_frame *rst_stream_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
-    ASSERT_INT_EQUALS(AWS_H2_ERR_INTERNAL_ERROR, rst_stream_frame->error_code);
+    ASSERT_INT_EQUALS(AWS_HTTP2_ERR_INTERNAL_ERROR, rst_stream_frame->error_code);
     /* clean up */
     client_stream_tester_clean_up(&stream_tester);
     aws_http_message_release(request);
@@ -2850,7 +2850,7 @@ TEST_CASE(h2_client_stream_err_receive_rst_stream) {
     uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
 
     /* fake peer sends RST_STREAM */
-    struct aws_h2_frame *rst_stream = aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_H2_ERR_HTTP_1_1_REQUIRED);
+    struct aws_h2_frame *rst_stream = aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_HTTP2_ERR_HTTP_1_1_REQUIRED);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, rst_stream));
 
     /* validate that stream completed with error */
@@ -3013,7 +3013,7 @@ TEST_CASE(h2_client_conn_receive_goaway) {
     uint32_t stream_id = aws_http_stream_get_id(stream_testers[0].stream);
     struct aws_byte_cursor debug_info;
     AWS_ZERO_STRUCT(debug_info);
-    struct aws_h2_frame *peer_frame = aws_h2_frame_new_goaway(allocator, stream_id, AWS_H2_ERR_NO_ERROR, debug_info);
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_goaway(allocator, stream_id, AWS_HTTP2_ERR_NO_ERROR, debug_info);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
@@ -3069,10 +3069,10 @@ TEST_CASE(h2_client_conn_err_invalid_last_stream_id_goaway) {
     AWS_ZERO_STRUCT(debug_info);
     /* First on with last_stream_id as AWS_H2_STREAM_ID_MAX */
     struct aws_h2_frame *peer_frame =
-        aws_h2_frame_new_goaway(allocator, AWS_H2_STREAM_ID_MAX, AWS_H2_ERR_NO_ERROR, debug_info);
+        aws_h2_frame_new_goaway(allocator, AWS_H2_STREAM_ID_MAX, AWS_HTTP2_ERR_NO_ERROR, debug_info);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     /* Second one with last_stream_id as 1 and some error */
-    peer_frame = aws_h2_frame_new_goaway(allocator, 1, AWS_H2_ERR_FLOW_CONTROL_ERROR, debug_info);
+    peer_frame = aws_h2_frame_new_goaway(allocator, 1, AWS_HTTP2_ERR_FLOW_CONTROL_ERROR, debug_info);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
@@ -3080,7 +3080,7 @@ TEST_CASE(h2_client_conn_err_invalid_last_stream_id_goaway) {
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
 
     /* Another GOAWAY with higher last stream id will cause connection closed with an error */
-    peer_frame = aws_h2_frame_new_goaway(allocator, 3, AWS_H2_ERR_FLOW_CONTROL_ERROR, debug_info);
+    peer_frame = aws_h2_frame_new_goaway(allocator, 3, AWS_HTTP2_ERR_FLOW_CONTROL_ERROR, debug_info);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
@@ -3305,11 +3305,11 @@ TEST_CASE(h2_client_manual_window_management_disabled_auto_window_update) {
     /* a stream error should not affect the connection */
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
 
-    /* validate that stream sent RST_STREAM with AWS_H2_ERR_FLOW_CONTROL_ERROR */
+    /* validate that stream sent RST_STREAM with AWS_HTTP2_ERR_FLOW_CONTROL_ERROR */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
     struct h2_decoded_frame *rst_stream_frame =
         h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_FLOW_CONTROL_ERROR, rst_stream_frame->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR, rst_stream_frame->error_code);
 
     /* clean up */
     aws_byte_buf_clean_up(&response_body_bufs);
@@ -3652,7 +3652,7 @@ TEST_CASE(h2_client_conn_err_extraneous_ping_ack_received) {
     struct h2_decoded_frame *goaway =
         h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
     ASSERT_NOT_NULL(goaway);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, goaway->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, goaway->error_code);
     ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
 
     /* clean up */
@@ -3690,7 +3690,7 @@ TEST_CASE(h2_client_conn_err_mismatched_ping_ack_received) {
     struct h2_decoded_frame *goaway =
         h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
     ASSERT_NOT_NULL(goaway);
-    ASSERT_UINT_EQUALS(AWS_H2_ERR_PROTOCOL_ERROR, goaway->error_code);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, goaway->error_code);
     ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
 
     /* clean up */

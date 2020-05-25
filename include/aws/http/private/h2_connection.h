@@ -30,6 +30,9 @@ struct aws_h2_stream;
 struct aws_h2_connection {
     struct aws_http_connection base;
 
+    aws_http2_on_goaway_received_fn *on_goaway_received;
+    aws_http2_on_remote_settings_change_fn *on_remote_settings_change;
+
     struct aws_channel_task cross_thread_work_task;
     struct aws_channel_task outgoing_frames_task;
 
