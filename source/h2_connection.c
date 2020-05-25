@@ -334,32 +334,17 @@ static struct aws_h2_connection *s_connection_new(
             ERROR, connection, "Encoder init error %d (%s)", aws_last_error(), aws_error_name(aws_last_error()));
         goto error;
     }
-    struct aws_h2_pending_settings *init_pending_settings = s_new_pending_settings(
+    /* User data from connection base is not ready until the handler installed */
+    connection->thread_data.init_pending_settings = s_new_pending_settings(
         connection->base.alloc,
         http2_options->initial_settings_array,
         http2_options->num_initial_settings,
         http2_options->on_initial_settings_completed,
-        connection->base.user_data);
-    if (!init_pending_settings) {
+        NULL /*user_data*/);
+    if (!connection->thread_data.init_pending_settings) {
         goto error;
     }
-    struct aws_h2_frame *init_settings_frame = aws_h2_frame_new_settings(
-        connection->base.alloc,
-        http2_options->initial_settings_array,
-        http2_options->num_initial_settings,
-        false /*ACK*/);
-    if (!init_settings_frame) {
-        CONNECTION_LOGF(
-            ERROR,
-            connection,
-            "Failed to create the initial settings frame, error %s",
-            aws_error_name(aws_last_error()));
-        aws_mem_release(connection->base.alloc, init_pending_settings);
-        goto error;
-    }
-    /* enqueue the initial settings here */
-    aws_linked_list_push_back(&connection->thread_data.outgoing_frames_queue, &init_settings_frame->node);
-    aws_linked_list_push_back(&connection->thread_data.pending_settings_queue, &init_pending_settings->node);
+    /* We enqueue the inital settings when handler get installed */
     return connection;
 
 error:
@@ -414,6 +399,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_settings_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_ping_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.pending_ping_queue));
+    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.pending_settings_queue));
 
     /* Clean up any unsent frames and structures */
     struct aws_linked_list *outgoing_frames_queue = &connection->thread_data.outgoing_frames_queue;
@@ -422,13 +408,9 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
         struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
         aws_h2_frame_destroy(frame);
     }
-    /* If connection setup successfully, the pending settings will be cleanup and callback will be invoked as connection
-     * shuts down. But, if connection setup failed, the shutdown process will not be invoke, we will need to cleanup the
-     * memory here. Don't invoke user callback here, since the connection may not in a valid state. */
-    while (!aws_linked_list_empty(&connection->thread_data.pending_settings_queue)) {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
-        struct aws_h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
-        aws_mem_release(connection->base.alloc, pending_settings);
+    if (connection->thread_data.init_pending_settings) {
+        /* if initial settings is not ACKed by peer, we need to clear the memory here */
+        aws_mem_release(connection->base.alloc, connection->thread_data.init_pending_settings);
     }
     aws_h2_decoder_destroy(connection->thread_data.decoder);
     aws_h2_frame_encoder_clean_up(&connection->thread_data.encoder);
@@ -1313,13 +1295,21 @@ static struct aws_h2err s_decoder_on_settings(
 
 static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
     struct aws_h2_connection *connection = userdata;
-    if (aws_linked_list_empty(&connection->thread_data.pending_settings_queue)) {
+    if (aws_linked_list_empty(&connection->thread_data.pending_settings_queue) &&
+        !connection->thread_data.init_pending_settings) {
         CONNECTION_LOG(ERROR, connection, "Received a malicious extra SETTINGS acknowledgment");
         return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
     }
     struct aws_h2err err;
-    struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
-    struct aws_h2_pending_settings *pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
+    struct aws_h2_pending_settings *pending_settings = NULL;
+    if (connection->thread_data.init_pending_settings) {
+        pending_settings = connection->thread_data.init_pending_settings;
+        /* Mark the init_pending_settings is processed & will be released here */
+        connection->thread_data.init_pending_settings = NULL;
+    } else {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
+        pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
+    }
     struct aws_http2_setting *settings_array = pending_settings->settings_array;
     /* Apply the settings */
     struct aws_h2_decoder *decoder = connection->thread_data.decoder;
@@ -1540,9 +1530,28 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
             goto error;
         }
     }
-    /* Initial settings are already enqueued */
-    aws_h2_try_write_outgoing_frames(connection);
+    struct aws_h2_pending_settings *init_pending_settings = connection->thread_data.init_pending_settings;
+    /* Set user_data here, the user_data is valid now */
+    init_pending_settings->user_data = connection->base.user_data;
 
+    struct aws_h2_frame *init_settings_frame = aws_h2_frame_new_settings(
+        connection->base.alloc,
+        init_pending_settings->settings_array,
+        init_pending_settings->num_settings,
+        false /*ACK*/);
+    if (!init_settings_frame) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Failed to create the initial settings frame, error %s",
+            aws_error_name(aws_last_error()));
+        aws_mem_release(connection->base.alloc, init_pending_settings);
+        goto error;
+    }
+    /* enqueue the initial settings frame here */
+    aws_linked_list_push_back(&connection->thread_data.outgoing_frames_queue, &init_settings_frame->node);
+
+    aws_h2_try_write_outgoing_frames(connection);
     return;
 
 error:
