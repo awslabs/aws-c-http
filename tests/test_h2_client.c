@@ -27,12 +27,55 @@
 #define DEFINE_HEADER(NAME, VALUE)                                                                                     \
     { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
 
+struct connection_user_data {
+    int initial_settings_error_code;
+    uint32_t last_stream_id;
+    enum aws_http2_error_code http2_error;
+    struct aws_http2_setting remote_settings_array[10];
+    size_t num_settings;
+};
+
+static void s_on_initial_settings_completed(
+    struct aws_http_connection *http2_connection,
+    int error_code,
+    void *user_data) {
+
+    (void)http2_connection;
+    struct connection_user_data *data = user_data;
+    data->initial_settings_error_code = error_code;
+}
+
+static void s_on_goaway_received(
+    struct aws_http_connection *http2_connection,
+    uint32_t last_stream_id,
+    enum aws_http2_error_code http2_error,
+    void *user_data) {
+
+    (void)http2_connection;
+    struct connection_user_data *data = user_data;
+    data->last_stream_id = last_stream_id;
+    data->http2_error = http2_error;
+}
+
+static void s_on_remote_settings_change(
+    struct aws_http_connection *http2_connection,
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
+    void *user_data) {
+
+    (void)http2_connection;
+    struct connection_user_data *data = user_data;
+    memcpy(data->remote_settings_array, settings_array, num_settings*sizeof(struct aws_http2_setting));
+    data->num_settings = num_settings;
+}
+
 /* Singleton used by tests in this file */
 struct tester {
     struct aws_allocator *alloc;
     struct aws_http_connection *connection;
     struct testing_channel testing_channel;
     struct h2_fake_peer peer;
+    struct connection_user_data user_data;
 } s_tester;
 
 static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
@@ -51,12 +94,20 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
     struct aws_http2_connection_options http2_options = {
         .initial_settings_array = settings_array,
         .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
+        .on_initial_settings_completed = s_on_initial_settings_completed,
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
+        .on_goaway_received = s_on_goaway_received,
+        .on_remote_settings_change = s_on_remote_settings_change,
     };
-    s_tester.connection = aws_http_connection_new_http2_client(alloc, false, &http2_options);
+
+    s_tester.connection =
+        aws_http_connection_new_http2_client(alloc, false /* manual window management */, &http2_options);
     ASSERT_NOT_NULL(s_tester.connection);
 
-    { /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
+    {
+        /* set connection user_data (handled by http-bootstrap in real world) */
+        s_tester.connection->user_data = &s_tester.user_data;
+        /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
         struct aws_channel_slot *slot = aws_channel_slot_new(s_tester.testing_channel.channel);
         ASSERT_NOT_NULL(slot);
         ASSERT_SUCCESS(aws_channel_slot_insert_end(s_tester.testing_channel.channel, slot));
@@ -266,7 +317,8 @@ TEST_CASE(h2_client_auto_ping_ack_higher_priority) {
     return s_tester_clean_up();
 }
 
-TEST_CASE(h2_client_setting_ack) {
+/* Test client can automatically send SETTINGs ACK */
+TEST_CASE(h2_client_auto_settings_ack) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* Connection preface requires that SETTINGS be sent first (RFC-7540 3.5). */
@@ -455,7 +507,7 @@ TEST_CASE(h2_client_close) {
 
 /* Test that client automatically sends the HTTP/2 Connection Preface (magic string, followed by initial SETTINGS frame,
  * which we disabled the push_promise) And it will not be applied until the SETTINGS ack is received */
-TEST_CASE(h2_client_connection_init_setting_applied_after_ack_by_peer) {
+TEST_CASE(h2_client_connection_init_settings_applied_after_ack_by_peer) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* send request */
@@ -1157,7 +1209,8 @@ TEST_CASE(h2_client_stream_err_stream_frames_received_soon_after_rst_stream_rece
     uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
 
     /* fake peer sends RST_STREAM */
-    struct aws_h2_frame *peer_frame = aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_HTTP2_ERR_ENHANCE_YOUR_CALM);
+    struct aws_h2_frame *peer_frame =
+        aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_HTTP2_ERR_ENHANCE_YOUR_CALM);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     struct aws_http_headers *response_headers;
     /* fake peer try sending complete response */
@@ -2566,8 +2619,21 @@ TEST_CASE(h2_client_conn_err_window_update_size_zero) {
     return s_invalid_window_update(allocator, ctx, 0, AWS_HTTP2_ERR_PROTOCOL_ERROR);
 }
 
+static int s_compare_settings_array(const struct aws_http2_setting *expected, const struct aws_http2_setting *got, int num_settings) {
+
+    for (size_t i = 0; i < num_settings; ++i) {
+        struct aws_http2_setting expected_settings = expected[i];
+        struct aws_http2_setting got_settings = got[i];
+
+        ASSERT_INT_EQUALS(expected_settings.id, got_settings.id);
+        ASSERT_INT_EQUALS(expected_settings.value, got_settings.value);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 /* SETTINGS_INITIAL_WINDOW_SIZE cause stream window to exceed the max size is a Connection ERROR... */
-TEST_CASE(h2_client_conn_err_initial_window_size_cause_window_exceed_max) {
+TEST_CASE(h2_client_conn_err_initial_window_size_settings_cause_window_exceed_max) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* fake peer sends connection preface */
@@ -2604,8 +2670,11 @@ TEST_CASE(h2_client_conn_err_initial_window_size_cause_window_exceed_max) {
     ASSERT_NOT_NULL(settings);
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface(&s_tester.peer, settings));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    /* validate connection is still open */
+    /* validate connection is still open and callback invoked */
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_INT_EQUALS(s_tester.user_data.num_settings, AWS_ARRAY_SIZE(settings_array));
+    ASSERT_SUCCESS(s_compare_settings_array(settings_array, s_tester.user_data.remote_settings_array, AWS_ARRAY_SIZE(settings_array)));
+    s_tester.user_data.num_settings = 0;
 
     /* Finally we set INITIAL_WINDOW_SIZE to largest, which cause the stream window size to exceed the max size */
     settings_array[0].value = AWS_H2_WINDOW_UPDATE_MAX;
@@ -2613,6 +2682,8 @@ TEST_CASE(h2_client_conn_err_initial_window_size_cause_window_exceed_max) {
     ASSERT_NOT_NULL(settings);
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface(&s_tester.peer, settings));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* validate callback is not invoked, num_settings is still 0 */
+    ASSERT_INT_EQUALS(0, s_tester.user_data.num_settings);
 
     /* validate the connection completed with error */
     ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
@@ -2853,7 +2924,8 @@ TEST_CASE(h2_client_stream_err_receive_rst_stream) {
     uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
 
     /* fake peer sends RST_STREAM */
-    struct aws_h2_frame *rst_stream = aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_HTTP2_ERR_HTTP_1_1_REQUIRED);
+    struct aws_h2_frame *rst_stream =
+        aws_h2_frame_new_rst_stream(allocator, stream_id, AWS_HTTP2_ERR_HTTP_1_1_REQUIRED);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, rst_stream));
 
     /* validate that stream completed with error */
@@ -2973,7 +3045,7 @@ TEST_CASE(h2_client_push_promise_automatically_rejected) {
 }
 
 /* Test client receives the GOAWAY frame, stop creating new stream and complete the streams whose id are higher than the
- * last stream id included in GOAWAY frame */
+ * last stream id included in GOAWAY frame, and callback invoked */
 TEST_CASE(h2_client_conn_receive_goaway) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
@@ -3020,6 +3092,10 @@ TEST_CASE(h2_client_conn_receive_goaway) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
+    /* validate the callback invoked and the information recorded during callback */
+    ASSERT_INT_EQUALS(s_tester.user_data.http2_error, AWS_HTTP2_ERR_NO_ERROR);
+    ASSERT_INT_EQUALS(s_tester.user_data.last_stream_id, stream_id);
+
     /* validate the connection is still open, and the second request finished with GOAWAY_RECEIVED */
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
     ASSERT_FALSE(stream_testers[0].complete);
@@ -3057,8 +3133,8 @@ TEST_CASE(h2_client_conn_receive_goaway) {
     return s_tester_clean_up();
 }
 
-/* Test client receives the GOAWAY frame, stop creating new stream and complete the streams whose id are higher than the
- * last stream id included in GOAWAY frame */
+/* Test client receives the GOAWAY frame with invalid last stream id and connection error happened, and callback will
+ * not be invoked for the invalid GOAWAY frame */
 TEST_CASE(h2_client_conn_err_invalid_last_stream_id_goaway) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
@@ -3074,19 +3150,28 @@ TEST_CASE(h2_client_conn_err_invalid_last_stream_id_goaway) {
     struct aws_h2_frame *peer_frame =
         aws_h2_frame_new_goaway(allocator, AWS_H2_STREAM_ID_MAX, AWS_HTTP2_ERR_NO_ERROR, debug_info);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    /* validate the callback invoked and the information recorded during callback */
+    ASSERT_INT_EQUALS(s_tester.user_data.http2_error, AWS_HTTP2_ERR_NO_ERROR);
+    ASSERT_INT_EQUALS(s_tester.user_data.last_stream_id, AWS_H2_STREAM_ID_MAX);
+
+    int last_stream_id = 1;
     /* Second one with last_stream_id as 1 and some error */
-    peer_frame = aws_h2_frame_new_goaway(allocator, 1, AWS_HTTP2_ERR_FLOW_CONTROL_ERROR, debug_info);
+    peer_frame = aws_h2_frame_new_goaway(allocator, last_stream_id, AWS_HTTP2_ERR_FLOW_CONTROL_ERROR, debug_info);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_INT_EQUALS(s_tester.user_data.http2_error, AWS_HTTP2_ERR_FLOW_CONTROL_ERROR);
+    ASSERT_INT_EQUALS(s_tester.user_data.last_stream_id, last_stream_id);
 
     /* validate the connection is still open, everything is fine */
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
 
     /* Another GOAWAY with higher last stream id will cause connection closed with an error */
-    peer_frame = aws_h2_frame_new_goaway(allocator, 3, AWS_HTTP2_ERR_FLOW_CONTROL_ERROR, debug_info);
+    peer_frame = aws_h2_frame_new_goaway(allocator, last_stream_id + 1, AWS_HTTP2_ERR_FLOW_CONTROL_ERROR, debug_info);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-
+    /* validate the callback is not invoked and the information is still the same as the second one */
+    ASSERT_INT_EQUALS(s_tester.user_data.http2_error, AWS_HTTP2_ERR_FLOW_CONTROL_ERROR);
+    ASSERT_INT_EQUALS(s_tester.user_data.last_stream_id, last_stream_id);
     ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
     ASSERT_INT_EQUALS(
         AWS_ERROR_HTTP_PROTOCOL_ERROR, testing_channel_get_shutdown_error_code(&s_tester.testing_channel));

@@ -64,8 +64,10 @@ typedef void(
  * If error_code is non-zero, then a connection error occurred before the settings could be fully acknowledged and
  * applied. This is always invoked on the connection's event-loop thread.
  */
-typedef void(
-    aws_http2_on_change_settings_complete_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
+typedef void(aws_http2_on_change_settings_complete_fn)(
+    struct aws_http_connection *http2_connection,
+    int error_code,
+    void *user_data);
 
 /**
  * Invoked when the HTTP/2 PING completes, whether peer has acknowledged it or not.
@@ -75,7 +77,7 @@ typedef void(
  * will be useless in this case.
  */
 typedef void(aws_http2_on_ping_complete_fn)(
-    struct aws_http_connection *connection,
+    struct aws_http_connection *http2_connection,
     uint64_t round_trip_time_ns,
     int error_code,
     void *user_data);
@@ -84,7 +86,7 @@ typedef void(aws_http2_on_ping_complete_fn)(
  * Invoked when the HTTP/2 GOAWAY frame received.
  * It implies peer started shutdown the connection, and no more new streams should be created.
  * Last_stream_id is the last one peer processed/will process. Every stream has higher ID than that should safely be
- * retried on new connection. http2_error is the reason peer shutdown the connection.
+ * retried on new connection. http2_error is the reason peer shutdown the connection, type of enum aws_http2_error_code.
  */
 typedef void(aws_http2_on_goaway_received_fn)(
     struct aws_http_connection *http2_connection,
@@ -212,7 +214,7 @@ struct aws_http2_connection_options {
 
     /**
      * Optional.
-     * Invoked when GOAWAY frame received.
+     * Invoked when a valid GOAWAY frame received.
      * See `aws_http2_on_goaway_received_fn`.
      */
     aws_http2_on_goaway_received_fn *on_goaway_received;

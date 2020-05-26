@@ -53,7 +53,7 @@ static const size_t s_decoder_cookie_buffer_initial_size = 512;
                     ERROR,                                                                                             \
                     decoder,                                                                                           \
                     "Error from callback " #fn ", %s->%s",                                                             \
-                    aws_http2_error_code_to_str(vtable_err.h2_code),                                                      \
+                    aws_http2_error_code_to_str(vtable_err.h2_code),                                                   \
                     aws_error_name(vtable_err.aws_code));                                                              \
                 return vtable_err;                                                                                     \
             }                                                                                                          \
@@ -69,7 +69,7 @@ static const size_t s_decoder_cookie_buffer_initial_size = 512;
                     ERROR,                                                                                             \
                     decoder,                                                                                           \
                     "Error from callback " #fn ", %s->%s",                                                             \
-                    aws_http2_error_code_to_str(vtable_err.h2_code),                                                      \
+                    aws_http2_error_code_to_str(vtable_err.h2_code),                                                   \
                     aws_error_name(vtable_err.aws_code));                                                              \
                 return vtable_err;                                                                                     \
             }                                                                                                          \
