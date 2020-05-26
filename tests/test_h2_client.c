@@ -2596,10 +2596,11 @@ TEST_CASE(h2_client_conn_err_initial_window_size_cause_window_exceed_max) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, stream_window_update));
 
     /* Then we set INITIAL_WINDOW_SIZE to largest - 1, which will not lead to any error */
-    struct aws_http2_setting settings_array[1];
-    settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
-    settings_array[0].value = AWS_H2_WINDOW_UPDATE_MAX - 1;
-    struct aws_h2_frame *settings = aws_h2_frame_new_settings(allocator, settings_array, 1, false /*ack*/);
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE, .value = AWS_H2_WINDOW_UPDATE_MAX - 1},
+    };
+    struct aws_h2_frame *settings =
+        aws_h2_frame_new_settings(allocator, settings_array, AWS_ARRAY_SIZE(settings_array), false /*ack*/);
     ASSERT_NOT_NULL(settings);
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface(&s_tester.peer, settings));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -2607,9 +2608,8 @@ TEST_CASE(h2_client_conn_err_initial_window_size_cause_window_exceed_max) {
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
 
     /* Finally we set INITIAL_WINDOW_SIZE to largest, which cause the stream window size to exceed the max size */
-    settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
     settings_array[0].value = AWS_H2_WINDOW_UPDATE_MAX;
-    settings = aws_h2_frame_new_settings(allocator, settings_array, 1, false /*ack*/);
+    settings = aws_h2_frame_new_settings(allocator, settings_array, AWS_ARRAY_SIZE(settings_array), false /*ack*/);
     ASSERT_NOT_NULL(settings);
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface(&s_tester.peer, settings));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
