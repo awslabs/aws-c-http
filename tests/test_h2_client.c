@@ -65,7 +65,7 @@ static void s_on_remote_settings_change(
 
     (void)http2_connection;
     struct connection_user_data *data = user_data;
-    memcpy(data->remote_settings_array, settings_array, num_settings*sizeof(struct aws_http2_setting));
+    memcpy(data->remote_settings_array, settings_array, num_settings * sizeof(struct aws_http2_setting));
     data->num_settings = num_settings;
 }
 
@@ -2619,7 +2619,10 @@ TEST_CASE(h2_client_conn_err_window_update_size_zero) {
     return s_invalid_window_update(allocator, ctx, 0, AWS_HTTP2_ERR_PROTOCOL_ERROR);
 }
 
-static int s_compare_settings_array(const struct aws_http2_setting *expected, const struct aws_http2_setting *got, int num_settings) {
+static int s_compare_settings_array(
+    const struct aws_http2_setting *expected,
+    const struct aws_http2_setting *got,
+    int num_settings) {
 
     for (size_t i = 0; i < num_settings; ++i) {
         struct aws_http2_setting expected_settings = expected[i];
@@ -2673,7 +2676,8 @@ TEST_CASE(h2_client_conn_err_initial_window_size_settings_cause_window_exceed_ma
     /* validate connection is still open and callback invoked */
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
     ASSERT_INT_EQUALS(s_tester.user_data.num_settings, AWS_ARRAY_SIZE(settings_array));
-    ASSERT_SUCCESS(s_compare_settings_array(settings_array, s_tester.user_data.remote_settings_array, AWS_ARRAY_SIZE(settings_array)));
+    ASSERT_SUCCESS(s_compare_settings_array(
+        settings_array, s_tester.user_data.remote_settings_array, AWS_ARRAY_SIZE(settings_array)));
     s_tester.user_data.num_settings = 0;
 
     /* Finally we set INITIAL_WINDOW_SIZE to largest, which cause the stream window size to exceed the max size */
