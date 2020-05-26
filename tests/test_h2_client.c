@@ -1697,10 +1697,11 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_stream_window_size) {
 
     /* get connection preface and acks out of the way */
     /* fake peer sends setting with 5 initial window size */
-    struct aws_http2_setting settings_array[1];
-    settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
-    settings_array[0].value = 5;
-    struct aws_h2_frame *settings = aws_h2_frame_new_settings(allocator, settings_array, 1, false /*ack*/);
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE, .value = 5},
+    };
+    struct aws_h2_frame *settings =
+        aws_h2_frame_new_settings(allocator, settings_array, AWS_ARRAY_SIZE(settings_array), false /*ack*/);
     ASSERT_NOT_NULL(settings);
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface(&s_tester.peer, settings));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -1779,10 +1780,11 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_negative_stream_window_size) 
 
     /* get connection preface and acks out of the way */
     /* fake peer sends setting with 300 initial window size */
-    struct aws_http2_setting settings_array[1];
-    settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
-    settings_array[0].value = 300;
-    struct aws_h2_frame *settings = aws_h2_frame_new_settings(allocator, settings_array, 1, false /*ack*/);
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE, .value = 300},
+    };
+    struct aws_h2_frame *settings =
+        aws_h2_frame_new_settings(allocator, settings_array, AWS_ARRAY_SIZE(settings_array), false /*ack*/);
     ASSERT_NOT_NULL(settings);
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface(&s_tester.peer, settings));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -1832,7 +1834,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_negative_stream_window_size) 
 
     /* fake peer set new INITIAL_WINDOW_SIZE to 0 to make stream window size to be negative,which should be -300 */
     settings_array[0].value = 0;
-    settings = aws_h2_frame_new_settings(allocator, settings_array, 1, false /*ack*/);
+    settings = aws_h2_frame_new_settings(allocator, settings_array, AWS_ARRAY_SIZE(settings_array), false /*ack*/);
     ASSERT_NOT_NULL(settings);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, settings));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -2073,10 +2075,11 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
     size_t frames_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
 
     /* fake peer set new INITIAL_WINDOW_SIZE to 0 to set window size for rest stream to be 0 */
-    struct aws_http2_setting settings_array[1];
-    settings_array[0].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
-    settings_array[0].value = 0;
-    struct aws_h2_frame *settings = aws_h2_frame_new_settings(allocator, settings_array, 1, false /*ack*/);
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE, .value = 0},
+    };
+    struct aws_h2_frame *settings =
+        aws_h2_frame_new_settings(allocator, settings_array, AWS_ARRAY_SIZE(settings_array), false /*ack*/);
     ASSERT_NOT_NULL(settings);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, settings));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
