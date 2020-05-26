@@ -2328,6 +2328,15 @@ static void s_finish_shutdown(struct aws_h2_connection *connection) {
         aws_h2_frame_destroy(frame);
     }
 
+    if (connection->thread_data.init_pending_settings) {
+        struct aws_h2_pending_settings *settings = connection->thread_data.init_pending_settings;
+        if (settings->on_completed) {
+            settings->on_completed(&connection->base, AWS_ERROR_HTTP_CONNECTION_CLOSED, settings->user_data);
+        }
+        aws_mem_release(connection->base.alloc, settings);
+        connection->thread_data.init_pending_settings = NULL;
+    }
+
     /* invoke pending callbacks moved into thread, and clean up the data */
     while (!aws_linked_list_empty(&connection->synced_data.pending_settings_list)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->synced_data.pending_settings_list);
