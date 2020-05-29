@@ -506,7 +506,8 @@ TEST_CASE(h2_client_close) {
 }
 
 /* Test that client automatically sends the HTTP/2 Connection Preface (magic string, followed by initial SETTINGS frame,
- * which we disabled the push_promise) And it will not be applied until the SETTINGS ack is received */
+ * which we disabled the push_promise) And it will not be applied until the SETTINGS ack is received. Once SETTINGS ack
+ * received, the initial settings will be applied and callback will be invoked */
 TEST_CASE(h2_client_connection_init_settings_applied_after_ack_by_peer) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
@@ -558,9 +559,14 @@ TEST_CASE(h2_client_connection_init_settings_applied_after_ack_by_peer) {
     /* validate the connection is still open */
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
 
+    /* set initial_settings_error_code as AWS_ERROR_UNKNOWN to make sure callback invoked later */
+    s_tester.user_data.initial_settings_error_code = AWS_ERROR_UNKNOWN;
     /* fake peer sends setting ack */
     struct aws_h2_frame *settings_ack_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, settings_ack_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* validate the callback invoked */
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, s_tester.user_data.initial_settings_error_code);
     /* fake peer sends another push_promise again, after setting applied, connection will be closed */
     peer_frame = aws_h2_frame_new_push_promise(allocator, stream_id, promised_stream_id + 2, push_request_headers, 0);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
@@ -3305,9 +3311,10 @@ TEST_CASE(h2_client_change_settings_failed_no_ack_received) {
     /* shutdown the connection */
     h2_fake_peer_clean_up(&s_tester.peer);
     aws_http_connection_release(s_tester.connection);
-    ASSERT_SUCCESS(testing_channel_clean_up(&s_tester.testing_channel));
-    /* Check the callback has fired with error */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Check the callback has fired with error, after connection shutdown */
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, callback_error_code);
+    ASSERT_SUCCESS(testing_channel_clean_up(&s_tester.testing_channel));
     /* clean up */
     aws_http_library_clean_up();
     return AWS_OP_SUCCESS;
@@ -3787,4 +3794,92 @@ TEST_CASE(h2_client_conn_err_mismatched_ping_ack_received) {
 
     /* clean up */
     return s_tester_clean_up();
+}
+
+TEST_CASE(h2_client_empty_initial_settings) {
+    (void)ctx;
+    aws_http_library_init(allocator);
+
+    s_tester.alloc = allocator;
+
+    struct aws_testing_channel_options options = {.clock_fn = aws_high_res_clock_get_ticks};
+
+    ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, allocator, &options));
+
+    /* empty initial settings */
+    struct aws_http2_connection_options http2_options = {
+        .on_initial_settings_completed = s_on_initial_settings_completed,
+        .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
+        .on_goaway_received = s_on_goaway_received,
+        .on_remote_settings_change = s_on_remote_settings_change,
+    };
+
+    s_tester.connection =
+        aws_http_connection_new_http2_client(allocator, false /* manual window management */, &http2_options);
+    ASSERT_NOT_NULL(s_tester.connection);
+
+    {
+        /* set connection user_data (handled by http-bootstrap in real world) */
+        s_tester.connection->user_data = &s_tester.user_data;
+        /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
+        struct aws_channel_slot *slot = aws_channel_slot_new(s_tester.testing_channel.channel);
+        ASSERT_NOT_NULL(slot);
+        ASSERT_SUCCESS(aws_channel_slot_insert_end(s_tester.testing_channel.channel, slot));
+        ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &s_tester.connection->channel_handler));
+        s_tester.connection->vtable->on_channel_handler_installed(&s_tester.connection->channel_handler, slot);
+    }
+
+    struct h2_fake_peer_options peer_options = {
+        .alloc = allocator,
+        .testing_channel = &s_tester.testing_channel,
+        .is_server = true,
+    };
+    ASSERT_SUCCESS(h2_fake_peer_init(&s_tester.peer, &peer_options));
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* shutdown the connection */
+    h2_fake_peer_clean_up(&s_tester.peer);
+    aws_http_connection_release(s_tester.connection);
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Check the callback has fired with error, after connection shutdown */
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, s_tester.user_data.initial_settings_error_code);
+    ASSERT_SUCCESS(testing_channel_clean_up(&s_tester.testing_channel));
+    /* clean up */
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h2_client_conn_failed_initial_settings_completed_not_invoked) {
+    (void)ctx;
+    aws_http_library_init(allocator);
+
+    s_tester.alloc = allocator;
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_ENABLE_PUSH, .value = 0},
+    };
+
+    struct aws_http2_connection_options http2_options = {
+        .initial_settings_array = settings_array,
+        .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
+        .on_initial_settings_completed = s_on_initial_settings_completed,
+        .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
+        .on_goaway_received = s_on_goaway_received,
+        .on_remote_settings_change = s_on_remote_settings_change,
+    };
+    s_tester.connection =
+        aws_http_connection_new_http2_client(allocator, false /* manual window management */, &http2_options);
+    ASSERT_NOT_NULL(s_tester.connection);
+    s_tester.user_data.initial_settings_error_code = INT32_MAX;
+    {
+        /* set connection user_data (handled by http-bootstrap in real world) */
+        s_tester.connection->user_data = &s_tester.user_data;
+        /* pretent the connection failed, and destroy the handler (handled by http-bootstrap in real world)  */
+        aws_channel_handler_destroy(&s_tester.connection->channel_handler);
+    }
+    /* Check callback has not fired and the error code is still INT32_MAX */
+    ASSERT_INT_EQUALS(INT32_MAX, s_tester.user_data.initial_settings_error_code);
+    /* clean up */
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
 }
