@@ -412,7 +412,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
         aws_h2_frame_destroy(frame);
     }
     if (connection->thread_data.init_pending_settings) {
-        /* if initial settings is not ACKed by peer, we need to clear the memory here */
+        /* if initial settings were never sent, we need to clear the memory here */
         aws_mem_release(connection->base.alloc, connection->thread_data.init_pending_settings);
     }
     aws_h2_decoder_destroy(connection->thread_data.decoder);
