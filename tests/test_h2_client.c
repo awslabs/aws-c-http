@@ -3243,12 +3243,12 @@ TEST_CASE(h2_client_change_settings_succeed) {
     /* Check empty settings can be sent */
     callback_error_code = INT32_MAX;
 
-    ASSERT_SUCCESS(aws_http2_connection_change_settings(
-        s_tester.connection, NULL, 0, s_on_completed, &callback_error_code));
+    ASSERT_SUCCESS(
+        aws_http2_connection_change_settings(s_tester.connection, NULL, 0, s_on_completed, &callback_error_code));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* check the empty settings frame is sent */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *second_settings = h2_decode_tester_latest_frame (&s_tester.peer.decode);
+    struct h2_decoded_frame *second_settings = h2_decode_tester_latest_frame(&s_tester.peer.decode);
     ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, second_settings->type);
     ASSERT_FALSE(second_settings->ack);
     ASSERT_INT_EQUALS(0, second_settings->settings.length);

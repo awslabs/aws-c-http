@@ -1327,7 +1327,7 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
     struct aws_h2_pending_settings *pending_settings = NULL;
     struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
     pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
-    
+
     struct aws_http2_setting *settings_array = pending_settings->settings_array;
     /* Apply the settings */
     struct aws_h2_decoder *decoder = connection->thread_data.decoder;
