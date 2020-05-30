@@ -343,7 +343,7 @@ static struct aws_h2_connection *s_connection_new(
         http2_options->initial_settings_array,
         http2_options->num_initial_settings,
         http2_options->on_initial_settings_completed,
-        NULL /*user_data*/);
+        NULL /* user_data is set later... */);
     if (!connection->thread_data.init_pending_settings) {
         goto error;
     }
@@ -1319,21 +1319,15 @@ error:
 
 static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
     struct aws_h2_connection *connection = userdata;
-    if (aws_linked_list_empty(&connection->thread_data.pending_settings_queue) &&
-        !connection->thread_data.init_pending_settings) {
+    if (aws_linked_list_empty(&connection->thread_data.pending_settings_queue)) {
         CONNECTION_LOG(ERROR, connection, "Received a malicious extra SETTINGS acknowledgment");
         return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
     }
     struct aws_h2err err;
     struct aws_h2_pending_settings *pending_settings = NULL;
-    if (connection->thread_data.init_pending_settings) {
-        pending_settings = connection->thread_data.init_pending_settings;
-        /* Mark the init_pending_settings is processed & will be released here */
-        connection->thread_data.init_pending_settings = NULL;
-    } else {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
-        pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
-    }
+    struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_settings_queue);
+    pending_settings = AWS_CONTAINER_OF(node, struct aws_h2_pending_settings, node);
+    
     struct aws_http2_setting *settings_array = pending_settings->settings_array;
     /* Apply the settings */
     struct aws_h2_decoder *decoder = connection->thread_data.decoder;
@@ -1560,6 +1554,8 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
         }
     }
     struct aws_h2_pending_settings *init_pending_settings = connection->thread_data.init_pending_settings;
+    aws_linked_list_push_back(&connection->thread_data.pending_settings_queue, &init_pending_settings->node);
+    connection->thread_data.init_pending_settings = NULL;
     /* Set user_data here, the user_data is valid now */
     init_pending_settings->user_data = connection->base.user_data;
 
@@ -2068,11 +2064,7 @@ static int s_connection_change_settings(
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
 
-    if (!num_settings) {
-        return AWS_OP_SUCCESS;
-    }
-
-    if (!settings_array) {
+    if (!settings_array && num_settings) {
         CONNECTION_LOG(ERROR, connection, "Settings_array is NULL and num_settings is not zero.");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
@@ -2355,15 +2347,6 @@ static void s_finish_shutdown(struct aws_h2_connection *connection) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->synced_data.pending_frame_list);
         struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
         aws_h2_frame_destroy(frame);
-    }
-
-    if (connection->thread_data.init_pending_settings) {
-        struct aws_h2_pending_settings *settings = connection->thread_data.init_pending_settings;
-        if (settings->on_completed) {
-            settings->on_completed(&connection->base, AWS_ERROR_HTTP_CONNECTION_CLOSED, settings->user_data);
-        }
-        aws_mem_release(connection->base.alloc, settings);
-        connection->thread_data.init_pending_settings = NULL;
     }
 
     /* invoke pending callbacks moved into thread, and clean up the data */

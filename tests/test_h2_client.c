@@ -3240,7 +3240,23 @@ TEST_CASE(h2_client_change_settings_succeed) {
     /* Check the callback has fired after the second settings ack frame, the error code we got is NO_ERROR(0) */
     ASSERT_INT_EQUALS(0, callback_error_code);
 
-    /* fake peer sends push_promise, after two settings frames applied, it will be fine */
+    /* Check empty settings can be sent */
+    callback_error_code = INT32_MAX;
+
+    ASSERT_SUCCESS(aws_http2_connection_change_settings(
+        s_tester.connection, NULL, 0, s_on_completed, &callback_error_code));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* check the empty settings frame is sent */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *second_settings = h2_decode_tester_latest_frame (&s_tester.peer.decode);
+    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, second_settings->type);
+    ASSERT_FALSE(second_settings->ack);
+    ASSERT_INT_EQUALS(0, second_settings->settings.length);
+    peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    /* Check the callback has fired after the second settings ack frame, the error code we got is NO_ERROR(0) */
+    ASSERT_INT_EQUALS(0, callback_error_code);
+
     struct aws_http_message *request = aws_http_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
