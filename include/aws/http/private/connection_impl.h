@@ -122,6 +122,7 @@ struct aws_http_client_bootstrap {
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
     aws_http_proxy_request_transform_fn *proxy_request_transform;
 
+    struct aws_http2_connection_options http2_options;
     struct aws_http_connection *connection;
 };
 

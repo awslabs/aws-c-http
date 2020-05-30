@@ -105,6 +105,9 @@ struct aws_h2_connection {
         /* Frame we are encoding now. NULL if we are not encoding anything. */
         struct aws_h2_frame *current_outgoing_frame;
 
+        /* Pointer to initial pending settings. If ACKed by peer, it will be NULL. */
+        struct aws_h2_pending_settings *init_pending_settings;
+
         /* Cached channel shutdown values.
          * If possible, we delay shutdown-in-the-write-dir until GOAWAY is written. */
         int channel_shutdown_error_code;
@@ -181,8 +184,6 @@ enum aws_h2_data_encode_status {
 
 /* When window size is too small to fit the possible padding into it, we stop sending data and wait for WINDOW_UPDATE */
 #define AWS_H2_MIN_WINDOW_SIZE (256)
-/* Default value for max closed streams we will keep in memory. */
-#define AWS_H2_DEFAULT_MAX_CLOSED_STREAMS (32)
 
 /* Private functions called from tests... */
 
@@ -192,13 +193,13 @@ AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http2_server(
     struct aws_allocator *allocator,
     bool manual_window_management,
-    size_t initial_window_size);
+    const struct aws_http2_connection_options *http2_options);
 
 AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
     bool manual_window_management,
-    size_t initial_window_size);
+    const struct aws_http2_connection_options *http2_options);
 
 /* Transform the request to h2 style headers */
 AWS_HTTP_API
