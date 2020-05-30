@@ -399,7 +399,6 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
  * @param http2_connection HTTP/2 connection.
  * @param settings_array The array of settings to change. Note: each setting has its boundary.
  * @param num_settings The num of settings to change in settings_array.
- *      If it's zero, we will just do nothing, no frame will be sent. And callback will be ignored.
  * @param on_completed Optional callback, see `aws_http2_on_change_settings_complete_fn`.
  * @param user_data User-data pass to on_completed callback.
  */
