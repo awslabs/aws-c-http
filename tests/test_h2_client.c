@@ -90,28 +90,18 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
     struct aws_http2_setting settings_array[] = {
         {.id = AWS_HTTP2_SETTINGS_ENABLE_PUSH, .value = 0},
     };
-<<<<<<< HEAD
 
     struct aws_http2_connection_options http2_options = {
         .initial_settings_array = settings_array,
         .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
+        .on_initial_settings_completed = s_on_initial_settings_completed,
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
+        .on_goaway_received = s_on_goaway_received,
+        .on_remote_settings_change = s_on_remote_settings_change,
     };
-    s_tester.connection = aws_http_connection_new_http2_client(alloc, false, &http2_options);
-    == == == =
-
-                 struct aws_http2_connection_options http2_options = {
-                     .initial_settings_array = settings_array,
-                     .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
-                     .on_initial_settings_completed = s_on_initial_settings_completed,
-                     .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
-                     .on_goaway_received = s_on_goaway_received,
-                     .on_remote_settings_change = s_on_remote_settings_change,
-                 };
 
     s_tester.connection =
         aws_http_connection_new_http2_client(alloc, false /* manual window management */, &http2_options);
->>>>>>> callbacks
     ASSERT_NOT_NULL(s_tester.connection);
 
     {
