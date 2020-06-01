@@ -36,7 +36,7 @@
 /*
  * Established connections not currently in use are tracked via this structure.
  */
-struct aws_idle_connection2 {
+struct aws_idle_connection {
     struct aws_allocator *allocator;
     struct aws_linked_list_node node;
     uint64_t cull_timestamp;
@@ -167,7 +167,7 @@ struct aws_http_connection_manager {
      * The set of all available, ready-to-be-used connections
      * This is a list of aws_idle_connection structs
      */
-    struct aws_linked_list idle_connections2;
+    struct aws_linked_list idle_connections;
 
     /*
      * The set of all incomplete connection acquisition requests
@@ -498,7 +498,7 @@ struct aws_connection_management_transaction {
     struct aws_allocator *allocator;
     struct aws_linked_list completions;
     struct aws_http_connection *connection_to_release;
-    struct aws_linked_list connections_to_release2; /* <struct aws_idle_connection> */
+    struct aws_linked_list connections_to_release; /* <struct aws_idle_connection> */
     struct aws_http_connection_manager_snapshot snapshot;
     size_t new_connections;
     bool should_destroy_manager;
@@ -509,14 +509,14 @@ static void s_aws_connection_management_transaction_init(
     struct aws_http_connection_manager *manager) {
     AWS_ZERO_STRUCT(*work);
 
-    aws_linked_list_init(&work->connections_to_release2);
+    aws_linked_list_init(&work->connections_to_release);
     aws_linked_list_init(&work->completions);
     work->manager = manager;
     work->allocator = manager->allocator;
 }
 
 static void s_aws_connection_management_transaction_clean_up(struct aws_connection_management_transaction *work) {
-    AWS_FATAL_ASSERT(aws_linked_list_empty(&work->connections_to_release2));
+    AWS_FATAL_ASSERT(aws_linked_list_empty(&work->connections_to_release));
     AWS_FATAL_ASSERT(aws_linked_list_empty(&work->completions));
 }
 
@@ -527,7 +527,7 @@ static void s_aws_http_connection_manager_build_transaction(struct aws_connectio
         /*
          * Step 1 - If there's free connections, complete acquisition requests
          */
-        while (!aws_linked_list_empty(&manager->idle_connections2) > 0 && manager->pending_acquisition_count > 0) {
+        while (!aws_linked_list_empty(&manager->idle_connections) > 0 && manager->pending_acquisition_count > 0) {
             AWS_FATAL_ASSERT(manager->idle_connection_count >= 1);
             /*
              * It is absolutely critical that this is pop_back and not front.  By making the idle connections
@@ -536,8 +536,8 @@ static void s_aws_http_connection_manager_build_transaction(struct aws_connectio
              * It also means that when we cull connections, we can quit the loop as soon as we find a connection
              * whose timestamp is greater than the current timestamp.
              */
-            struct aws_linked_list_node *node = aws_linked_list_pop_back(&manager->idle_connections2);
-            struct aws_idle_connection2 *idle_connection = AWS_CONTAINER_OF(node, struct aws_idle_connection2, node);
+            struct aws_linked_list_node *node = aws_linked_list_pop_back(&manager->idle_connections);
+            struct aws_idle_connection *idle_connection = AWS_CONTAINER_OF(node, struct aws_idle_connection, node);
             struct aws_http_connection *connection = idle_connection->connection;
 
             AWS_LOGF_DEBUG(
@@ -573,8 +573,8 @@ static void s_aws_http_connection_manager_build_transaction(struct aws_connectio
         /*
          * swap our internal connection set with the empty work set
          */
-        AWS_FATAL_ASSERT(aws_linked_list_empty(&work->connections_to_release2));
-        aws_linked_list_swap_contents(&manager->idle_connections2, &work->connections_to_release2);
+        AWS_FATAL_ASSERT(aws_linked_list_empty(&work->connections_to_release));
+        aws_linked_list_swap_contents(&manager->idle_connections, &work->connections_to_release);
         manager->idle_connection_count = 0;
 
         /*
@@ -616,7 +616,7 @@ static void s_aws_http_connection_manager_destroy_final(struct aws_http_connecti
     AWS_FATAL_ASSERT(manager->pending_acquisition_count == 0);
     AWS_FATAL_ASSERT(manager->open_connection_count == 0);
     AWS_FATAL_ASSERT(aws_linked_list_empty(&manager->pending_acquisitions));
-    AWS_FATAL_ASSERT(aws_linked_list_empty(&manager->idle_connections2));
+    AWS_FATAL_ASSERT(aws_linked_list_empty(&manager->idle_connections));
 
     aws_string_destroy(manager->host);
     if (manager->tls_connection_options) {
@@ -710,11 +710,11 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
     }
 
     uint64_t cull_task_time = 0;
-    const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections2);
-    struct aws_linked_list_node *oldest_node = aws_linked_list_begin(&manager->idle_connections2);
+    const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections);
+    struct aws_linked_list_node *oldest_node = aws_linked_list_begin(&manager->idle_connections);
     if (oldest_node != end) {
-        struct aws_idle_connection2 *oldest_idle_connection =
-            AWS_CONTAINER_OF(oldest_node, struct aws_idle_connection2, node);
+        struct aws_idle_connection *oldest_idle_connection =
+            AWS_CONTAINER_OF(oldest_node, struct aws_idle_connection, node);
         cull_task_time = oldest_idle_connection->cull_timestamp;
     } else {
         uint64_t now = 0;
@@ -767,7 +767,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         goto on_error;
     }
 
-    aws_linked_list_init(&manager->idle_connections2);
+    aws_linked_list_init(&manager->idle_connections);
     aws_linked_list_init(&manager->pending_acquisitions);
 
     manager->host = aws_string_new_from_array(allocator, options->host.ptr, options->host.len);
@@ -924,9 +924,9 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
     /*
      * Step 2 - Perform any requested connection releases
      */
-    while (!aws_linked_list_empty(&work->connections_to_release2)) {
-        struct aws_linked_list_node *node = aws_linked_list_pop_back(&work->connections_to_release2);
-        struct aws_idle_connection2 *idle_connection = AWS_CONTAINER_OF(node, struct aws_idle_connection2, node);
+    while (!aws_linked_list_empty(&work->connections_to_release)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_back(&work->connections_to_release);
+        struct aws_idle_connection *idle_connection = AWS_CONTAINER_OF(node, struct aws_idle_connection, node);
 
         AWS_LOGF_INFO(
             AWS_LS_HTTP_CONNECTION_MANAGER,
@@ -1077,8 +1077,8 @@ void aws_http_connection_manager_acquire_connection(
 }
 
 static int s_idle_connection(struct aws_http_connection_manager *manager, struct aws_http_connection *connection) {
-    struct aws_idle_connection2 *idle_connection =
-        aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_idle_connection2));
+    struct aws_idle_connection *idle_connection =
+        aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_idle_connection));
     if (idle_connection == NULL) {
         return AWS_OP_ERR;
     }
@@ -1096,7 +1096,7 @@ static int s_idle_connection(struct aws_http_connection_manager *manager, struct
         aws_timestamp_convert(
             manager->max_connection_idle_in_milliseconds, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
 
-    aws_linked_list_push_back(&manager->idle_connections2, &idle_connection->node);
+    aws_linked_list_push_back(&manager->idle_connections, &idle_connection->node);
     ++manager->idle_connection_count;
 
     return AWS_OP_SUCCESS;
@@ -1251,11 +1251,10 @@ static void s_aws_http_connection_manager_on_connection_shutdown(
     /*
      * Find and, if found, remove it from idle connections
      */
-    const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections2);
-    for (struct aws_linked_list_node *node = aws_linked_list_begin(&manager->idle_connections2); node != end;
+    const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections);
+    for (struct aws_linked_list_node *node = aws_linked_list_begin(&manager->idle_connections); node != end;
          node = aws_linked_list_next(node)) {
-        struct aws_idle_connection2 *current_idle_connection =
-            AWS_CONTAINER_OF(node, struct aws_idle_connection2, node);
+        struct aws_idle_connection *current_idle_connection = AWS_CONTAINER_OF(node, struct aws_idle_connection, node);
         if (current_idle_connection->connection == connection) {
             aws_linked_list_remove(node);
             work.connection_to_release = connection;
@@ -1291,19 +1290,19 @@ static void s_cull_idle_connections(struct aws_http_connection_manager *manager)
 
     /* Only if we're not shutting down */
     if (manager->state == AWS_HCMST_READY) {
-        const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections2);
-        struct aws_linked_list_node *current_node = aws_linked_list_begin(&manager->idle_connections2);
+        const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections);
+        struct aws_linked_list_node *current_node = aws_linked_list_begin(&manager->idle_connections);
         while (current_node != end) {
             struct aws_linked_list_node *node = current_node;
-            struct aws_idle_connection2 *current_idle_connection =
-                AWS_CONTAINER_OF(node, struct aws_idle_connection2, node);
+            struct aws_idle_connection *current_idle_connection =
+                AWS_CONTAINER_OF(node, struct aws_idle_connection, node);
             if (current_idle_connection->cull_timestamp > now) {
                 break;
             }
 
             current_node = aws_linked_list_next(current_node);
             aws_linked_list_remove(node);
-            aws_linked_list_push_back(&work.connections_to_release2, node);
+            aws_linked_list_push_back(&work.connections_to_release, node);
             --manager->idle_connection_count;
 
             AWS_LOGF_DEBUG(
