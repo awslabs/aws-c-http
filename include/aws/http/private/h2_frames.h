@@ -46,34 +46,15 @@ enum aws_h2_frame_flag {
     AWS_H2_FRAME_F_PRIORITY = 0x20,
 };
 
-/* Error codes that may be present in RST_STREAM and GOAWAY frames (RFC-7540 7). */
-enum aws_h2_error_code {
-    AWS_H2_ERR_NO_ERROR = 0x00,
-    AWS_H2_ERR_PROTOCOL_ERROR = 0x01,
-    AWS_H2_ERR_INTERNAL_ERROR = 0x02,
-    AWS_H2_ERR_FLOW_CONTROL_ERROR = 0x03,
-    AWS_H2_ERR_SETTINGS_TIMEOUT = 0x04,
-    AWS_H2_ERR_STREAM_CLOSED = 0x05,
-    AWS_H2_ERR_FRAME_SIZE_ERROR = 0x06,
-    AWS_H2_ERR_REFUSED_STREAM = 0x07,
-    AWS_H2_ERR_CANCEL = 0x08,
-    AWS_H2_ERR_COMPRESSION_ERROR = 0x09,
-    AWS_H2_ERR_CONNECT_ERROR = 0x0A,
-    AWS_H2_ERR_ENHANCE_YOUR_CALM = 0x0B,
-    AWS_H2_ERR_INADEQUATE_SECURITY = 0x0C,
-    AWS_H2_ERR_HTTP_1_1_REQUIRED = 0x0D,
-    AWS_H2_ERR_COUNT,
-};
-
 /* Pairs the AWS_ERROR_* to show our API user,
- * along with the AWS_H2_ERR_* that should
+ * along with the AWS_HTTP2_ERR_* that should
  * be sent to the peer via RST_STREAM or GOAWAY.
  *
  * Used in place of normal error handling in functions that may result
  * in an HTTP/2 Connection Error or Stream Error.
  */
 struct aws_h2err {
-    enum aws_h2_error_code h2_code;
+    enum aws_http2_error_code h2_code;
     int aws_code;
 };
 
@@ -162,7 +143,7 @@ AWS_HTTP_API
 const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type);
 
 AWS_HTTP_API
-const char *aws_h2_error_code_to_str(enum aws_h2_error_code h2_error_code);
+const char *aws_http2_error_code_to_str(enum aws_http2_error_code h2_error_code);
 
 /**
  * Specify which HTTP/2 error-code will be sent to the peer in a GOAWAY or RST_STREAM frame.
@@ -170,7 +151,7 @@ const char *aws_h2_error_code_to_str(enum aws_h2_error_code h2_error_code);
  * The AWS_ERROR reported to the API user will be AWS_ERROR_HTTP_PROTOCOL_ERROR.
  */
 AWS_HTTP_API
-struct aws_h2err aws_h2err_from_h2_code(enum aws_h2_error_code h2_error_code);
+struct aws_h2err aws_h2err_from_h2_code(enum aws_http2_error_code h2_error_code);
 
 /**
  * Specify which AWS_ERROR will be reported to the API user.
