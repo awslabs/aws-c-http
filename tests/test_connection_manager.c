@@ -49,7 +49,6 @@ struct cm_tester_options {
 
 struct cm_tester {
     struct aws_allocator *allocator;
-    struct aws_logger logger;
     struct aws_event_loop_group event_loop_group;
     struct aws_host_resolver host_resolver;
 
@@ -141,21 +140,13 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     ASSERT_SUCCESS(aws_mutex_init(&tester->lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->signal));
 
-    struct aws_logger_standard_options logger_options = {
-        .level = AWS_LOG_LEVEL_TRACE,
-        .file = stderr,
-    };
-
-    ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->allocator, &logger_options));
-    aws_logger_set(&tester->logger);
-
     ASSERT_SUCCESS(
         aws_array_list_init_dynamic(&tester->connections, tester->allocator, 10, sizeof(struct aws_http_connection *)));
 
     aws_mutex_init(&tester->mock_time_lock);
     s_tester_set_mock_time(options->starting_mock_time);
 
-    aws_io_clock_fn *clock_fn = &aws_sys_clock_get_ticks;
+    aws_io_clock_fn *clock_fn = &aws_high_res_clock_get_ticks;
     if (options->mock_table) {
         clock_fn = options->mock_table->get_system_time;
     }
@@ -433,8 +424,6 @@ static int s_cm_tester_clean_up(void) {
 
     aws_http_library_clean_up();
 
-    aws_logger_clean_up(&tester->logger);
-
     return AWS_OP_SUCCESS;
 }
 
@@ -646,7 +635,7 @@ static struct aws_http_connection_manager_system_vtable s_synchronous_mocks = {
     .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
     .close_connection = s_aws_http_connection_manager_close_connection_sync_mock,
     .is_connection_open = s_aws_http_connection_manager_is_connection_open_sync_mock,
-    .get_system_time = aws_sys_clock_get_ticks,
+    .get_system_time = aws_high_res_clock_get_ticks,
     .connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
     .is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
 };
@@ -964,25 +953,17 @@ static int s_test_connection_manager_idle_culling_mixture(struct aws_allocator *
     /*
      * release the connections
      * Previous tests created situations where the entire block of idle connections end up getting culled.  We also
-     * want to create a situation where just some of the connections get culled, ideally in a way that interleaves
-     * safe and doomed connections (exercise the swap and shrink part of the cull function).
-     *
-     * So in this test, we set up a situation where every other idle connection is cullable
-     * (i.e, 1st, 3rd, 5th, 7th, 9th)
-     *
-     * Because a connection's cull timestamp is calculated at the time it is released, we set up this pattern
-     * by releasing all the connections, swapping mocked time back and forth as we go.
-     * */
+     * want to create a situation where just some of the connections get culled.
+     */
+    s_release_connections(5, false);
+    s_tester_set_mock_time(now + 1);
+    s_release_connections(5, false);
+    s_tester_set_mock_time(now);
     uint64_t one_sec_in_nanos = aws_timestamp_convert(1, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL);
-    for (size_t i = 0; i < 5; ++i) {
-        s_tester_set_mock_time(now);
-        s_release_connections(1, false); /* this one will get culled */
-        s_tester_set_mock_time(now + 1);
-        s_release_connections(1, false); /* this one is safe by a nanosecond */
-    }
 
-    /* advance fake time enough to cause half of the connections to be culled, also sleep for real to give the cull task
-     * a chance to run in the real event loop
+    /*
+     * advance fake time enough to cause half of the connections to be culled, also sleep for real to give the cull task
+     * a chance to run in the real event loop.
      */
     s_tester_set_mock_time(now + one_sec_in_nanos);
     aws_thread_current_sleep(2 * one_sec_in_nanos);
