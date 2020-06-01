@@ -1186,7 +1186,7 @@ static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_HTTP2_PING
         goto error;
     }
     uint64_t time_stamp;
-    if (aws_sys_clock_get_ticks(&time_stamp)) {
+    if (aws_high_res_clock_get_ticks(&time_stamp)) {
         CONNECTION_LOGF(
             ERROR,
             connection,
@@ -2086,7 +2086,7 @@ static int s_connection_ping(
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
     uint64_t time_stamp;
-    if (aws_sys_clock_get_ticks(&time_stamp)) {
+    if (aws_high_res_clock_get_ticks(&time_stamp)) {
         CONNECTION_LOGF(
             ERROR,
             connection,
