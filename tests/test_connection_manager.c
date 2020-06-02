@@ -148,7 +148,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
 
     aws_io_clock_fn *clock_fn = &aws_high_res_clock_get_ticks;
     if (options->mock_table) {
-        clock_fn = options->mock_table->get_system_time;
+        clock_fn = options->mock_table->get_monotonic_time;
     }
     ASSERT_SUCCESS(
         aws_event_loop_group_init(&tester->event_loop_group, tester->allocator, clock_fn, 1, s_new_event_loop, NULL));
@@ -635,7 +635,7 @@ static struct aws_http_connection_manager_system_vtable s_synchronous_mocks = {
     .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
     .close_connection = s_aws_http_connection_manager_close_connection_sync_mock,
     .is_connection_open = s_aws_http_connection_manager_is_connection_open_sync_mock,
-    .get_system_time = aws_high_res_clock_get_ticks,
+    .get_monotonic_time = aws_high_res_clock_get_ticks,
     .connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
     .is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
 };
@@ -759,7 +759,7 @@ static struct aws_http_connection_manager_system_vtable s_idle_mocks = {
     .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
     .close_connection = s_aws_http_connection_manager_close_connection_sync_mock,
     .is_connection_open = s_aws_http_connection_manager_is_connection_open_sync_mock,
-    .get_system_time = s_tester_get_mock_time,
+    .get_monotonic_time = s_tester_get_mock_time,
     .connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
     .is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
 };

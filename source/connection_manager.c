@@ -51,7 +51,7 @@ static struct aws_http_connection_manager_system_vtable s_default_system_vtable 
     .release_connection = aws_http_connection_release,
     .close_connection = aws_http_connection_close,
     .is_connection_open = aws_http_connection_is_open,
-    .get_system_time = aws_high_res_clock_get_ticks,
+    .get_monotonic_time = aws_high_res_clock_get_ticks,
     .is_callers_thread = aws_channel_thread_is_callers_thread,
     .connection_get_channel = aws_http_connection_get_channel,
 };
@@ -610,7 +610,16 @@ static void s_aws_http_connection_manager_build_transaction(struct aws_connectio
 
 static void s_aws_http_connection_manager_execute_transaction(struct aws_connection_management_transaction *work);
 
-static void s_aws_http_connection_manager_destroy_final(struct aws_http_connection_manager *manager) {
+/*
+ * The final last gasp of a connection manager where memory is cleaned up.  Destruction is split up into two parts,
+ * a begin and a finish.  Idle connection culling requires a scheduled task on an arbitrary event loop.  If idle
+ * connection culling is on then this task must be cancelled before destruction can finish, but you can only cancel
+ * a task from the same event loop that it is scheduled on.  To resolve this, when using idle connection culling,
+ * we schedule a finish destruction task on the event loop that the culling task is on.  This finish task
+ * cancels the culling task and then calls this function.  If we are not using idle connection culling, we can
+ * call this function immediately from the start of destruction.
+ */
+static void s_aws_http_connection_manager_finish_destroy(struct aws_http_connection_manager *manager) {
     if (manager == NULL) {
         return;
     }
@@ -664,12 +673,12 @@ static void s_final_destruction_task(struct aws_task *task, void *arg, enum aws_
         aws_event_loop_cancel_task(manager->cull_event_loop, manager->cull_task);
     }
 
-    s_aws_http_connection_manager_destroy_final(manager);
+    s_aws_http_connection_manager_finish_destroy(manager);
 
     aws_mem_release(allocator, task);
 }
 
-static void s_aws_http_connection_manager_destroy(struct aws_http_connection_manager *manager) {
+static void s_aws_http_connection_manager_begin_destroy(struct aws_http_connection_manager *manager) {
     if (manager == NULL) {
         return;
     }
@@ -688,7 +697,7 @@ static void s_aws_http_connection_manager_destroy(struct aws_http_connection_man
         aws_task_init(final_destruction_task, s_final_destruction_task, manager, "final_scheduled_destruction");
         aws_event_loop_schedule_task_now(manager->cull_event_loop, final_destruction_task);
     } else {
-        s_aws_http_connection_manager_destroy_final(manager);
+        s_aws_http_connection_manager_finish_destroy(manager);
     }
 }
 
@@ -719,12 +728,20 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
     const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections);
     struct aws_linked_list_node *oldest_node = aws_linked_list_begin(&manager->idle_connections);
     if (oldest_node != end) {
+        /*
+         * Since the connections are in LIFO order in the list, the front of the list has the closest
+         * cull time.
+         */
         struct aws_idle_connection *oldest_idle_connection =
             AWS_CONTAINER_OF(oldest_node, struct aws_idle_connection, node);
         cull_task_time = oldest_idle_connection->cull_timestamp;
     } else {
+        /*
+         * There are no connections in the list, so the absolute minimum anything could be culled is the full
+         * culling interval from now.
+         */
         uint64_t now = 0;
-        if (manager->system_vtable->get_system_time(&now)) {
+        if (manager->system_vtable->get_monotonic_time(&now)) {
             goto on_error;
         }
         cull_task_time =
@@ -820,7 +837,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
 
 on_error:
 
-    s_aws_http_connection_manager_destroy(manager);
+    s_aws_http_connection_manager_begin_destroy(manager);
 
     return NULL;
 }
@@ -1030,7 +1047,7 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
      * Step 5 - destroy the manager if necessary
      */
     if (should_destroy) {
-        s_aws_http_connection_manager_destroy(manager);
+        s_aws_http_connection_manager_begin_destroy(manager);
     }
 
     /*
@@ -1093,7 +1110,7 @@ static int s_idle_connection(struct aws_http_connection_manager *manager, struct
     idle_connection->connection = connection;
 
     uint64_t idle_start_timestamp = 0;
-    if (manager->system_vtable->get_system_time(&idle_start_timestamp)) {
+    if (manager->system_vtable->get_monotonic_time(&idle_start_timestamp)) {
         goto on_error;
     }
 
@@ -1285,7 +1302,7 @@ static void s_cull_idle_connections(struct aws_http_connection_manager *manager)
     }
 
     uint64_t now = 0;
-    if (manager->system_vtable->get_system_time(&now)) {
+    if (manager->system_vtable->get_monotonic_time(&now)) {
         return;
     }
 

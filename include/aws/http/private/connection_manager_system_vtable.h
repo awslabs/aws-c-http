@@ -36,7 +36,7 @@ struct aws_http_connection_manager_system_vtable {
     aws_http_connection_manager_close_connection_fn *close_connection;
     aws_http_connection_manager_release_connection_fn *release_connection;
     aws_http_connection_manager_is_connection_open_fn *is_connection_open;
-    aws_io_clock_fn *get_system_time;
+    aws_io_clock_fn *get_monotonic_time;
     aws_http_connection_manager_is_callers_thread_fn *is_callers_thread;
     aws_http_connection_manager_connection_get_channel_fn *connection_get_channel;
 };
