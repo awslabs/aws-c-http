@@ -85,7 +85,8 @@ static struct aws_http_connection *s_connection_new(
     bool is_server,
     bool is_using_tls,
     bool manual_window_management,
-    size_t initial_window_size) {
+    size_t initial_window_size,
+    const struct aws_http2_connection_options *http2_options) {
 
     struct aws_channel_slot *connection_slot = NULL;
     struct aws_http_connection *connection = NULL;
@@ -157,9 +158,9 @@ static struct aws_http_connection *s_connection_new(
             break;
         case AWS_HTTP_VERSION_2:
             if (is_server) {
-                connection = aws_http_connection_new_http2_server(alloc, manual_window_management, initial_window_size);
+                connection = aws_http_connection_new_http2_server(alloc, manual_window_management, http2_options);
             } else {
-                connection = aws_http_connection_new_http2_client(alloc, manual_window_management, initial_window_size);
+                connection = aws_http_connection_new_http2_client(alloc, manual_window_management, http2_options);
             }
             break;
         default:
@@ -245,7 +246,6 @@ int aws_http2_connection_change_settings(
     void *user_data) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
-    AWS_PRECONDITION(settings_array);
     if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
         AWS_LOGF_WARN(
             AWS_LS_HTTP_CONNECTION,
@@ -339,7 +339,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
         true,
         server->is_using_tls,
         server->manual_window_management,
-        server->initial_window_size);
+        server->initial_window_size,
+        NULL /*http2_connection_options*/);
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
@@ -665,7 +666,8 @@ static void s_client_bootstrap_on_channel_setup(
         false,
         http_bootstrap->is_using_tls,
         http_bootstrap->manual_window_management,
-        http_bootstrap->initial_window_size);
+        http_bootstrap->initial_window_size,
+        &http_bootstrap->http2_options);
     if (!http_bootstrap->connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
@@ -767,9 +769,14 @@ int aws_http_client_connect_internal(
     struct aws_http_client_bootstrap *http_bootstrap = NULL;
     struct aws_string *host_name = NULL;
     int err = 0;
+    struct aws_http2_connection_options http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
+    if (options->http2_options) {
+        http2_options = *options->http2_options;
+    }
 
     if (!options || options->self_size == 0 || !options->allocator || !options->bootstrap ||
-        options->host_name.len == 0 || !options->socket_options || !options->on_setup) {
+        options->host_name.len == 0 || !options->socket_options || !options->on_setup ||
+        (http2_options.num_initial_settings && !http2_options.initial_settings_array)) {
 
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid options, cannot create client connection.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -788,8 +795,14 @@ int aws_http_client_connect_internal(
         goto error;
     }
 
-    http_bootstrap = aws_mem_calloc(options->allocator, 1, sizeof(struct aws_http_client_bootstrap));
-    if (!http_bootstrap) {
+    struct aws_http2_setting *setting_array = NULL;
+    if (!aws_mem_acquire_many(
+            options->allocator,
+            2,
+            &http_bootstrap,
+            sizeof(struct aws_http_client_bootstrap),
+            &setting_array,
+            http2_options.num_initial_settings * sizeof(struct aws_http2_setting))) {
         goto error;
     }
 
@@ -801,6 +814,17 @@ int aws_http_client_connect_internal(
     http_bootstrap->on_setup = options->on_setup;
     http_bootstrap->on_shutdown = options->on_shutdown;
     http_bootstrap->proxy_request_transform = proxy_request_transform;
+    http_bootstrap->http2_options = http2_options;
+
+    /* keep a copy of the settings array if it's not NULL */
+    if (http2_options.initial_settings_array) {
+        memcpy(
+            setting_array,
+            http2_options.initial_settings_array,
+            http2_options.num_initial_settings * sizeof(struct aws_http2_setting));
+        http_bootstrap->http2_options.initial_settings_array = setting_array;
+    }
+
     if (options->monitoring_options) {
         http_bootstrap->monitoring_options = *options->monitoring_options;
     }
