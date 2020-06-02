@@ -728,13 +728,12 @@ int main(int argc, char **argv) {
         .port = port,
         .host_name = app_ctx.uri.host_name,
         .bootstrap = bootstrap,
-        .initial_window_size = AWS_HTTP_MAX_WINDOW_SIZE,
+        .initial_window_size = SIZE_MAX,
         .tls_options = tls_options,
         .user_data = &app_ctx,
         .on_setup = s_on_client_connection_setup,
         .on_shutdown = s_on_client_connection_shutdown,
     };
-
     aws_http_client_connect(&http_client_options);
     aws_mutex_lock(&app_ctx.mutex);
     aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_completion_predicate, &app_ctx);
