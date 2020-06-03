@@ -611,7 +611,7 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
  * Upon invocation of on_complete, the caller may release or modify the data stream.
  * On successful submission of the data stream to the HTTP stream, AWS_OP_SUCCESS is returned and AWS_OP_ERR otherwise.
  */
-AWS_HTTP_API int aws_http1_stream_write_chunk(struct aws_http_stream *stream, struct aws_http1_chunk_options *options);
+AWS_HTTP_API int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, struct aws_http1_chunk_options *options);
 
 /**
  * Get the message's aws_http_headers.
@@ -750,12 +750,21 @@ AWS_HTTP_API
 void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 
 /**
- * Gets the Http/2 id associated with a stream.  Even h1 streams have an id (using the same allocation procedure
+ * Gets the HTTP/2 id associated with a stream.  Even h1 streams have an id (using the same allocation procedure
  * as http/2) for easier tracking purposes. For client streams, this will only be non-zero after a successful call
  * to aws_http_stream_activate()
  */
 AWS_HTTP_API
 uint32_t aws_http_stream_get_id(const struct aws_http_stream *stream);
+
+/**
+ * Asynchronously request to reset the HTTP/2 stream. (HTTP/2 only)
+ * 
+ * @param http2_stream HTTP/2 stream.
+ * @param http2_error aws_http2_error_code. Reason to reset the stream.
+ */
+AWS_HTTP_API
+int aws_http2_stream_reset(struct aws_http_stream *http2_stream, enum aws_http2_error_code http2_error);
 
 AWS_EXTERN_C_END
 

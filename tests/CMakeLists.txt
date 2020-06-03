@@ -413,6 +413,8 @@ add_test_case(h2_client_empty_initial_settings)
 add_test_case(h2_client_conn_failed_initial_settings_completed_not_invoked)
 #TODO add_test_case(h2_client_send_multiple_goaway)
 #TODO add_test_case(h2_client_send_goaway_failed_after_connection_begin_shutdown)
+#TODO add_test_case(h2_client_get_sent_goaway)
+#TODO add_test_case(h2_client_get_sent_goaway_failed_none_has_been_sent)
 
 add_test_case(server_new_destroy)
 add_test_case(connection_setup_shutdown)

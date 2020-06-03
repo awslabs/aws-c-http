@@ -77,13 +77,30 @@ struct aws_h2_stream {
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
     struct {
         struct aws_mutex lock;
+
         bool is_cross_thread_work_task_scheduled;
+
         /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
         size_t window_update_size;
+    
         /* New `aws_h2_frames *` stream control frames created by user that haven't moved to connection `thread_data`
          * yet */
         struct aws_linked_list pending_frame_list;
+
+        /* The aws_http2_error_code user requested to remote peer via rst_stream. Set to AWS_HTTP2_ERR_COUNT if no
+         * rst_stream has been requested so far. */
+        enum aws_http2_error_code requested_reset_error_code;
+        
+        /* True, if stream has been activated by user. */
+        bool is_activated;
     } synced_data;
+
+    struct {
+
+        /* The aws_http2_error_code we received from remote peer via rst_stream. Set to AWS_HTTP2_ERR_COUNT if no
+         * rst_stream received. */
+        struct aws_atomic_var received_reset_error_code;
+    } atomic;
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);

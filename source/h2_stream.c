@@ -23,13 +23,17 @@
 
 static void s_stream_destroy(struct aws_http_stream *stream_base);
 static void s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size);
+static int s_stream_reset_stream(struct aws_http_stream *stream_base, enum aws_http2_error_code http2_error);
+
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
+static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error);
 
 struct aws_http_stream_vtable s_h2_stream_vtable = {
     .destroy = s_stream_destroy,
     .update_window = s_stream_update_window,
     .activate = aws_h2_stream_activate,
     .http1_write_chunk = NULL,
+    .http2_reset_stream = s_stream_reset_stream,
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state) {
@@ -226,6 +230,10 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
     stream->thread_data.outgoing_message = options->request;
 
+    aws_atomic_init_int(&stream->atomic.received_reset_error_code, AWS_HTTP2_ERR_COUNT);
+
+    stream->synced_data.requested_reset_error_code = AWS_HTTP2_ERR_COUNT;
+    stream->synced_data.is_activated = false;
     aws_linked_list_init(&stream->synced_data.pending_frame_list);
     if (aws_mutex_init(&stream->synced_data.lock)) {
         AWS_H2_STREAM_LOGF(
@@ -248,10 +256,20 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     struct aws_h2_stream *stream = arg;
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
 
+    if (aws_h2_stream_get_state(stream) == AWS_H2_STREAM_STATE_CLOSED) {
+        /* stream is closed, silently ignoring the requests from user */
+        aws_http_stream_release(&stream->base);
+        return;
+    }
+
+    /* Not sending window update at half closed remote state */
+    bool ignore_window_udpate = aws_h2_stream_get_state(stream) == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE;
+
     struct aws_linked_list pending_frames;
     aws_linked_list_init(&pending_frames);
 
     size_t window_update_size;
+    enum aws_http2_error_code requested_reset_error_code;
 
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream);
@@ -261,6 +279,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         /* window_update_size is ensured to be not greater than AWS_H2_WINDOW_UPDATE_MAX */
         window_update_size = stream->synced_data.window_update_size;
         stream->synced_data.window_update_size = 0;
+        requested_reset_error_code = stream->synced_data.requested_reset_error_code;
 
         s_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
@@ -268,15 +287,25 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     while (!aws_linked_list_empty(&pending_frames)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&pending_frames);
         struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
+        if (ignore_window_udpate && (frame->type == AWS_H2_FRAME_T_WINDOW_UPDATE)) {
+            /* Do not send the window udpate frame and clean it up */
+            aws_h2_frame_destroy(frame);
+            continue;
+        }
         aws_h2_connection_enqueue_outgoing_frame(connection, frame);
     }
     /* The largest legal value will be 2 * max window size, which is way less than INT64_MAX, so if the window_size_self
      * overflows, remote peer will find it out. So just apply the change and ignore the possible overflow.*/
     stream->thread_data.window_size_self += window_update_size;
 
+    if(requested_reset_error_code != AWS_HTTP2_ERR_COUNT) {
+        s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(requested_reset_error_code));
+    }
+
     /* It's likely that frames were queued while processing cross-thread work.
      * If so, try writing them now */
     aws_h2_try_write_outgoing_frames(connection);
+    aws_http_stream_release(&stream->base);
 }
 
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
@@ -320,6 +349,7 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
     }
 
     int err = 0;
+    bool stream_is_activated;
     bool cross_thread_work_should_schedule = false;
     /* The window update size can be atomic, but either way, we will need to lock here. */
     size_t sum_size;
@@ -328,8 +358,9 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
 
         err |= aws_add_size_checked(stream->synced_data.window_update_size, increment_size, &sum_size);
         err |= sum_size > AWS_H2_WINDOW_UPDATE_MAX;
+        stream_is_activated = stream->synced_data.is_activated;
 
-        if (!err) {
+        if (!err && stream_is_activated) {
             cross_thread_work_should_schedule = !stream->synced_data.is_cross_thread_work_task_scheduled;
             stream->synced_data.is_cross_thread_work_task_scheduled = true;
             aws_linked_list_push_back(&stream->synced_data.pending_frame_list, &stream_window_update_frame->node);
@@ -340,7 +371,21 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
 
     if (cross_thread_work_should_schedule) {
         AWS_H2_STREAM_LOG(TRACE, stream, "Scheduling stream cross-thread work task");
+        /* increment the refcount of stream to keep it alive until the task runs */
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
         aws_channel_schedule_task_now(connection->base.channel_slot->channel, &stream->cross_thread_work_task);
+        return;
+    }
+
+    if (!stream_is_activated) {
+        /* stream has not ben activated yet, it's invalid to update the stream window. */
+        AWS_H2_STREAM_LOG(
+            ERROR,
+            stream,
+            "Stream update window failed. Stream has not activated yet, please call aws_http_stream_activate first");
+        aws_raise_error(AWS_ERROR_INVALID_STATE);
+        aws_h2_frame_destroy(stream_window_update_frame);
+        return;
     }
 
     if (err) {
@@ -356,6 +401,51 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
         aws_h2_frame_destroy(stream_window_update_frame);
         return;
     }
+}
+
+static int s_stream_reset_stream(struct aws_http_stream *stream_base, enum aws_http2_error_code http2_error) {
+
+    struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
+    struct aws_h2_connection *connection = s_get_h2_connection(stream);
+    int err = 0;
+    bool stream_is_activated;
+    bool cross_thread_work_should_schedule = false;
+
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(stream);
+
+        err |= stream->synced_data.requested_reset_error_code == AWS_HTTP2_ERR_COUNT;
+        stream_is_activated = stream->synced_data.is_activated;
+        if (!err && stream_is_activated) {
+            cross_thread_work_should_schedule = !stream->synced_data.is_cross_thread_work_task_scheduled;
+            stream->synced_data.requested_reset_error_code = http2_error;
+        }
+        s_unlock_synced_data(stream);
+    } /* END CRITICAL SECTION */
+
+    if (cross_thread_work_should_schedule) {
+        AWS_H2_STREAM_LOG(TRACE, stream, "Scheduling stream cross-thread work task");
+        /* increment the refcount of stream to keep it alive until the task runs */
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &stream->cross_thread_work_task);
+        return AWS_OP_SUCCESS;
+    }
+
+    if (!stream_is_activated) {
+        /* stream has not ben activated yet, it's invalid to update the stream window. */
+        AWS_H2_STREAM_LOG(
+            ERROR,
+            stream,
+            "Request to reset stream failed. Stream has not activated yet, please call aws_http_stream_activate first");
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    if (err) {
+        AWS_H2_STREAM_LOG(ERROR, stream, "Request to reset stream failed. Reset stream has been already requested.");
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    return AWS_OP_SUCCESS;
 }
 
 enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *stream) {
