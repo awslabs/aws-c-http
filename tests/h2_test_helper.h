@@ -30,7 +30,7 @@ struct aws_input_stream;
                 PRINT_FAIL_INTERNAL0(                                                                                  \
                     "Expected success at %s; got aws_h2err{%s, %s}\n",                                                 \
                     #condition,                                                                                        \
-                    aws_h2_error_code_to_str(assert_rv.h2_code),                                                       \
+                    aws_http2_error_code_to_str(assert_rv.h2_code),                                                    \
                     aws_error_name(assert_rv.aws_code));                                                               \
             }                                                                                                          \
             POSTFAIL_INTERNAL();                                                                                       \
@@ -55,7 +55,7 @@ struct aws_input_stream;
             if (!PRINT_FAIL_INTERNAL0(__VA_ARGS__)) {                                                                  \
                 PRINT_FAIL_INTERNAL0(                                                                                  \
                     "Expected %s failure at %s; got AWS_H2ERR_SUCCESS\n",                                              \
-                    aws_h2_error_code_to_str(h2_error),                                                                \
+                    aws_http2_error_code_to_str(h2_error),                                                             \
                     #condition);                                                                                       \
             }                                                                                                          \
             POSTFAIL_INTERNAL();                                                                                       \
@@ -63,9 +63,9 @@ struct aws_input_stream;
         if (assert_rv.h2_code != h2_error) {                                                                           \
             PRINT_FAIL_INTERNAL0(                                                                                      \
                 "Expected %s failure at %s; got aws_h2err{%s, %s}\n",                                                  \
-                aws_h2_error_code_to_str(h2_error),                                                                    \
+                aws_http2_error_code_to_str(h2_error),                                                                 \
                 #condition,                                                                                            \
-                aws_h2_error_code_to_str(assert_rv.h2_code),                                                           \
+                aws_http2_error_code_to_str(assert_rv.h2_code),                                                        \
                 aws_error_name(assert_rv.aws_code));                                                                   \
         }                                                                                                              \
     } while (0)
