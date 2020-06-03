@@ -30,7 +30,7 @@
 struct connection_user_data {
     int initial_settings_error_code;
     uint32_t last_stream_id;
-    enum aws_http2_error_code http2_error;
+    uint32_t http2_error;
     struct aws_http2_setting remote_settings_array[10];
     size_t num_settings;
 };
@@ -48,7 +48,7 @@ static void s_on_initial_settings_completed(
 static void s_on_goaway_received(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
-    enum aws_http2_error_code http2_error,
+    uint32_t http2_error,
     void *user_data) {
 
     (void)http2_connection;
