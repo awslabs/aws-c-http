@@ -93,6 +93,16 @@ static int s_record_closed_stream(
 static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h2_stream *stream, int error_code);
 static void s_write_outgoing_frames(struct aws_h2_connection *connection, bool first_try);
 static void s_finish_shutdown(struct aws_h2_connection *connection);
+static void s_send_goaway(
+    struct aws_h2_connection *connection,
+    enum aws_http2_error_code h2_error_code,
+    const struct aws_byte_cursor *optional_debug_data);
+static struct aws_h2_pending_settings *s_new_pending_settings(
+    struct aws_allocator *allocator,
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
+    aws_http2_on_change_settings_complete_fn *on_completed,
+    void *user_data);
 
 static struct aws_h2err s_decoder_on_headers_begin(uint32_t stream_id, void *userdata);
 static struct aws_h2err s_decoder_on_headers_i(
@@ -128,13 +138,6 @@ struct aws_h2err s_decoder_on_goaway_begin(
     uint32_t error_code,
     uint32_t debug_data_length,
     void *userdata);
-
-static struct aws_h2_pending_settings *s_new_pending_settings(
-    struct aws_allocator *allocator,
-    const struct aws_http2_setting *settings_array,
-    size_t num_settings,
-    aws_http2_on_change_settings_complete_fn *on_completed,
-    void *user_data);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
@@ -1983,7 +1986,7 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
 
     if (!connection_open) {
         CONNECTION_LOGF(
-            ERROR, connection, "Failed to activate the stream id=%p, connection is closed or closing.", stream);
+            ERROR, connection, "Failed to activate the stream id=%p, connection is closed or closing.", (void *)stream);
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
