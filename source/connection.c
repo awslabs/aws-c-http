@@ -238,6 +238,19 @@ void aws_http_connection_update_window(struct aws_http_connection *connection, s
     connection->vtable->update_window(connection, increment_size);
 }
 
+static int s_check_http2_connection(struct aws_http_connection *http2_connection) {
+    if (http2_connection->http_version == AWS_HTTP_VERSION_2) {
+        return AWS_OP_SUCCESS; 
+    }
+    else {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
+            (void *)http2_connection);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+}
+
 int aws_http2_connection_change_settings(
     struct aws_http_connection *http2_connection,
     const struct aws_http2_setting *settings_array,
@@ -246,12 +259,8 @@ int aws_http2_connection_change_settings(
     void *user_data) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
-    if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
-        AWS_LOGF_WARN(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
-            (void *)http2_connection);
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
     }
     return http2_connection->vtable->change_settings(
         http2_connection, settings_array, num_settings, on_completed, user_data);
@@ -264,14 +273,34 @@ int aws_http2_connection_ping(
     void *user_data) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
-    if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
-        AWS_LOGF_WARN(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
-            (void *)http2_connection);
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
     }
-    return http2_connection->vtable->ping(http2_connection, optional_opaque_data, on_ack, user_data);
+    return http2_connection->vtable->send_ping(http2_connection, optional_opaque_data, on_ack, user_data);
+}
+
+int aws_http2_connection_send_goaway(
+    struct aws_http_connection *http2_connection,
+    enum aws_http2_error_code http2_error,
+    const struct aws_byte_cursor *optional_debug_data) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    return http2_connection->vtable->send_goaway(http2_connection, http2_error, optional_debug_data);
+}
+
+int aws_http2_connection_get_sent_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t *last_stream_id,
+    enum aws_http2_error_code *http2_error) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    return http2_connection->vtable->get_sent_goaway(http2_connection, last_stream_id, http2_error);
 }
 
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {
