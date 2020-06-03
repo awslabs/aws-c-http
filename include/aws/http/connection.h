@@ -83,21 +83,29 @@ typedef void(aws_http2_on_ping_complete_fn)(
     void *user_data);
 
 /**
- * Invoked when the HTTP/2 GOAWAY frame received.
- * It implies peer started shutdown the connection, and no more new streams should be created.
- * Last_stream_id is the last one peer processed/will process. Every stream has higher ID than that should safely be
- * retried on new connection. http2_error is the reason peer shutdown the connection, type of enum aws_http2_error_code.
+ * Invoked when an HTTP/2 GOAWAY frame is received from peer.
+ * Implies that the peer has initiated shutdown, or encountered a serious error.
+ * Once a GOAWAY is received, no further streams may be created on this connection.
+ *
+ * @param http2_connection This HTTP/2 connection.
+ * @param last_stream_id ID of the last locally-initiated stream that peer will
+ *      process. Any locally-initiated streams with a higher ID are ignored by
+ *      peer, and are safe to retry on another connection.
+ * @param http2_error_code The HTTP/2 error code (RFC-7540 section 7) sent by peer.
+ *      `enum aws_http2_error_code` lists official codes.
+ * @param user_data User-data passed to the callback.
  */
+
 typedef void(aws_http2_on_goaway_received_fn)(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
-    enum aws_http2_error_code http2_error,
+    uint32_t http2_error_code,
     void *user_data);
 
 /**
- * Invoked when the HTTP/2 SETTINGS frame received from peer, changes from peer successfully applied.
+ * Invoked when new HTTP/2 settings from peer have been applied.
  * Settings_array is the array of aws_http2_settings that contains all the settings we just changed in the order we
- * applied (the order settings arrived). Num_settings is the number of elements in that array
+ * applied (the order settings arrived). Num_settings is the number of elements in that array.
  */
 typedef void(aws_http2_on_remote_settings_change_fn)(
     struct aws_http_connection *http2_connection,
@@ -221,7 +229,7 @@ struct aws_http2_connection_options {
 
     /**
      * Optional.
-     * Invoked when new settings from peer has been applied.
+     * Invoked when new settings from peer have been applied.
      * See `aws_http2_on_remote_settings_change_fn`.
      */
     aws_http2_on_remote_settings_change_fn *on_remote_settings_change;

@@ -57,7 +57,7 @@ enum aws_http_errors {
     AWS_ERROR_HTTP_END_RANGE = AWS_ERROR_ENUM_END_RANGE(AWS_C_HTTP_PACKAGE_ID)
 };
 
-/* Error codes that may be present in RST_STREAM and GOAWAY frames (RFC-7540 7). */
+/* Error codes that may be present in HTTP/2 RST_STREAM and GOAWAY frames (RFC-7540 7). */
 enum aws_http2_error_code {
     AWS_HTTP2_ERR_NO_ERROR = 0x00,
     AWS_HTTP2_ERR_PROTOCOL_ERROR = 0x01,
