@@ -108,43 +108,43 @@ const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type) {
     }
 }
 
-const char *aws_h2_error_code_to_str(enum aws_h2_error_code h2_error_code) {
+const char *aws_http2_error_code_to_str(enum aws_http2_error_code h2_error_code) {
     switch (h2_error_code) {
-        case AWS_H2_ERR_NO_ERROR:
+        case AWS_HTTP2_ERR_NO_ERROR:
             return "NO_ERROR";
-        case AWS_H2_ERR_PROTOCOL_ERROR:
+        case AWS_HTTP2_ERR_PROTOCOL_ERROR:
             return "PROTOCOL_ERROR";
-        case AWS_H2_ERR_INTERNAL_ERROR:
+        case AWS_HTTP2_ERR_INTERNAL_ERROR:
             return "INTERNAL_ERROR";
-        case AWS_H2_ERR_FLOW_CONTROL_ERROR:
+        case AWS_HTTP2_ERR_FLOW_CONTROL_ERROR:
             return "FLOW_CONTROL_ERROR";
-        case AWS_H2_ERR_SETTINGS_TIMEOUT:
+        case AWS_HTTP2_ERR_SETTINGS_TIMEOUT:
             return "SETTINGS_TIMEOUT";
-        case AWS_H2_ERR_STREAM_CLOSED:
+        case AWS_HTTP2_ERR_STREAM_CLOSED:
             return "STREAM_CLOSED";
-        case AWS_H2_ERR_FRAME_SIZE_ERROR:
+        case AWS_HTTP2_ERR_FRAME_SIZE_ERROR:
             return "FRAME_SIZE_ERROR";
-        case AWS_H2_ERR_REFUSED_STREAM:
+        case AWS_HTTP2_ERR_REFUSED_STREAM:
             return "REFUSED_STREAM";
-        case AWS_H2_ERR_CANCEL:
+        case AWS_HTTP2_ERR_CANCEL:
             return "CANCEL";
-        case AWS_H2_ERR_COMPRESSION_ERROR:
+        case AWS_HTTP2_ERR_COMPRESSION_ERROR:
             return "COMPRESSION_ERROR";
-        case AWS_H2_ERR_CONNECT_ERROR:
+        case AWS_HTTP2_ERR_CONNECT_ERROR:
             return "CONNECT_ERROR";
-        case AWS_H2_ERR_ENHANCE_YOUR_CALM:
+        case AWS_HTTP2_ERR_ENHANCE_YOUR_CALM:
             return "ENHANCE_YOUR_CALM";
-        case AWS_H2_ERR_INADEQUATE_SECURITY:
+        case AWS_HTTP2_ERR_INADEQUATE_SECURITY:
             return "INADEQUATE_SECURITY";
-        case AWS_H2_ERR_HTTP_1_1_REQUIRED:
+        case AWS_HTTP2_ERR_HTTP_1_1_REQUIRED:
             return "HTTP_1_1_REQUIRED";
         default:
             return "UNKNOWN_ERROR";
     }
 }
 
-struct aws_h2err aws_h2err_from_h2_code(enum aws_h2_error_code h2_error_code) {
-    AWS_PRECONDITION(h2_error_code > AWS_H2_ERR_NO_ERROR && h2_error_code < AWS_H2_ERR_COUNT);
+struct aws_h2err aws_h2err_from_h2_code(enum aws_http2_error_code h2_error_code) {
+    AWS_PRECONDITION(h2_error_code > AWS_HTTP2_ERR_NO_ERROR && h2_error_code < AWS_HTTP2_ERR_COUNT);
 
     return (struct aws_h2err){
         .h2_code = h2_error_code,
@@ -156,7 +156,7 @@ struct aws_h2err aws_h2err_from_aws_code(int aws_error_code) {
     AWS_PRECONDITION(aws_error_code != 0);
 
     return (struct aws_h2err){
-        .h2_code = AWS_H2_ERR_INTERNAL_ERROR,
+        .h2_code = AWS_HTTP2_ERR_INTERNAL_ERROR,
         .aws_code = aws_error_code,
     };
 }

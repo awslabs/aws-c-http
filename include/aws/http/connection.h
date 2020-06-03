@@ -21,6 +21,7 @@
 struct aws_client_bootstrap;
 struct aws_socket_options;
 struct aws_tls_connection_options;
+struct aws_http2_setting;
 
 /**
  * An HTTP connection.
@@ -63,8 +64,10 @@ typedef void(
  * If error_code is non-zero, then a connection error occurred before the settings could be fully acknowledged and
  * applied. This is always invoked on the connection's event-loop thread.
  */
-typedef void(
-    aws_http2_on_change_settings_complete_fn)(struct aws_http_connection *connection, int error_code, void *user_data);
+typedef void(aws_http2_on_change_settings_complete_fn)(
+    struct aws_http_connection *http2_connection,
+    int error_code,
+    void *user_data);
 
 /**
  * Invoked when the HTTP/2 PING completes, whether peer has acknowledged it or not.
@@ -74,9 +77,40 @@ typedef void(
  * will be useless in this case.
  */
 typedef void(aws_http2_on_ping_complete_fn)(
-    struct aws_http_connection *connection,
+    struct aws_http_connection *http2_connection,
     uint64_t round_trip_time_ns,
     int error_code,
+    void *user_data);
+
+/**
+ * Invoked when an HTTP/2 GOAWAY frame is received from peer.
+ * Implies that the peer has initiated shutdown, or encountered a serious error.
+ * Once a GOAWAY is received, no further streams may be created on this connection.
+ *
+ * @param http2_connection This HTTP/2 connection.
+ * @param last_stream_id ID of the last locally-initiated stream that peer will
+ *      process. Any locally-initiated streams with a higher ID are ignored by
+ *      peer, and are safe to retry on another connection.
+ * @param http2_error_code The HTTP/2 error code (RFC-7540 section 7) sent by peer.
+ *      `enum aws_http2_error_code` lists official codes.
+ * @param user_data User-data passed to the callback.
+ */
+
+typedef void(aws_http2_on_goaway_received_fn)(
+    struct aws_http_connection *http2_connection,
+    uint32_t last_stream_id,
+    uint32_t http2_error_code,
+    void *user_data);
+
+/**
+ * Invoked when new HTTP/2 settings from peer have been applied.
+ * Settings_array is the array of aws_http2_settings that contains all the settings we just changed in the order we
+ * applied (the order settings arrived). Num_settings is the number of elements in that array.
+ */
+typedef void(aws_http2_on_remote_settings_change_fn)(
+    struct aws_http_connection *http2_connection,
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
     void *user_data);
 
 /**
@@ -185,6 +219,20 @@ struct aws_http2_connection_options {
      * a connection error, but costs some memory.
      */
     size_t max_closed_streams;
+
+    /**
+     * Optional.
+     * Invoked when a valid GOAWAY frame received.
+     * See `aws_http2_on_goaway_received_fn`.
+     */
+    aws_http2_on_goaway_received_fn *on_goaway_received;
+
+    /**
+     * Optional.
+     * Invoked when new settings from peer have been applied.
+     * See `aws_http2_on_remote_settings_change_fn`.
+     */
+    aws_http2_on_remote_settings_change_fn *on_remote_settings_change;
 };
 
 /**

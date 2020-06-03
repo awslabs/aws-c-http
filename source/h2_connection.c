@@ -260,6 +260,9 @@ static struct aws_h2_connection *s_connection_new(
     connection->base.next_stream_id = (server ? 2 : 1);
     connection->base.manual_window_management = manual_window_management;
 
+    connection->on_goaway_received = http2_options->on_goaway_received;
+    connection->on_remote_settings_change = http2_options->on_remote_settings_change;
+
     aws_channel_task_init(
         &connection->cross_thread_work_task, s_cross_thread_work_task, connection, "HTTP/2 cross-thread work");
 
@@ -841,7 +844,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
             "Illegal to receive %s frame on stream id=%" PRIu32 " state=IDLE",
             aws_h2_frame_type_to_str(frame_type),
             stream_id);
-        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
     }
 
     if (peer_initiated_stream && stream_id > connection->thread_data.goaway_sent_last_stream_id) {
@@ -890,7 +893,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
                         aws_h2_frame_type_to_str(frame_type),
                         stream_id);
 
-                    return aws_h2err_from_h2_code(AWS_H2_ERR_STREAM_CLOSED);
+                    return aws_h2err_from_h2_code(AWS_HTTP2_ERR_STREAM_CLOSED);
                 }
                 break;
             case AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED:
@@ -903,7 +906,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
                     aws_h2_frame_type_to_str(frame_type),
                     stream_id);
                 struct aws_h2_frame *rst_stream =
-                    aws_h2_frame_new_rst_stream(connection->base.alloc, stream_id, AWS_H2_ERR_STREAM_CLOSED);
+                    aws_h2_frame_new_rst_stream(connection->base.alloc, stream_id, AWS_HTTP2_ERR_STREAM_CLOSED);
                 if (!rst_stream) {
                     CONNECTION_LOGF(
                         ERROR, connection, "Error creating RST_STREAM frame, %s", aws_error_name(aws_last_error()));
@@ -926,7 +929,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
             default:
                 CONNECTION_LOGF(
                     ERROR, connection, "Invalid state fo cached closed stream, stream id=%" PRIu32, stream_id);
-                return aws_h2err_from_h2_code(AWS_H2_ERR_INTERNAL_ERROR);
+                return aws_h2err_from_h2_code(AWS_HTTP2_ERR_INTERNAL_ERROR);
                 break;
         }
     }
@@ -944,7 +947,7 @@ struct aws_h2err s_get_active_stream_for_incoming_frame(
         aws_h2_frame_type_to_str(frame_type),
         stream_id);
 
-    return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+    return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
 }
 
 /* Decoder callbacks */
@@ -1037,7 +1040,7 @@ struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised
             "Newly promised stream ID %" PRIu32 " must be higher than previously established ID %" PRIu32,
             promised_stream_id,
             connection->thread_data.latest_peer_initiated_stream_id);
-        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
     }
     connection->thread_data.latest_peer_initiated_stream_id = promised_stream_id;
 
@@ -1074,7 +1077,7 @@ struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_le
             "DATA length %" PRIu32 " exceeds flow-control window %zu",
             payload_len,
             connection->thread_data.window_size_self);
-        return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
+        return aws_h2err_from_h2_code(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR);
     }
 
     struct aws_h2_stream *stream;
@@ -1174,7 +1177,7 @@ static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_HTTP2_PING
     struct aws_h2_connection *connection = userdata;
     if (aws_linked_list_empty(&connection->thread_data.pending_ping_queue)) {
         CONNECTION_LOG(ERROR, connection, "Received extraneous PING ACK.");
-        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
     }
     struct aws_h2err err;
     struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.pending_ping_queue);
@@ -1182,7 +1185,7 @@ static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_HTTP2_PING
     /* Check the payload */
     if (!aws_array_eq(opaque_data, AWS_HTTP2_PING_DATA_SIZE, pending_ping->opaque_data, AWS_HTTP2_PING_DATA_SIZE)) {
         CONNECTION_LOG(ERROR, connection, "Received PING ACK with mismatched opaque-data.");
-        err = aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+        err = aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
         goto error;
     }
     uint64_t time_stamp;
@@ -1251,7 +1254,19 @@ static struct aws_h2err s_decoder_on_settings(
         return aws_h2err_from_last_error();
     }
     aws_h2_connection_enqueue_outgoing_frame(connection, settings_ack_frame);
-    /* Store the change to encoder and connection after enqueue the setting ACK frame */
+
+    /* Allocate a block of memory for settings_array in callback, which will only includes the settings we changed,
+     * freed once the callback finished */
+    struct aws_http2_setting *callback_array = NULL;
+    if (num_settings) {
+        callback_array = aws_mem_acquire(connection->base.alloc, num_settings * sizeof(struct aws_http2_setting));
+        if (!callback_array) {
+            return aws_h2err_from_last_error();
+        }
+    }
+    size_t callback_array_num = 0;
+
+    /* Apply the change to encoder and connection */
     struct aws_h2_frame_encoder *encoder = &connection->thread_data.encoder;
     for (size_t i = 0; i < num_settings; i++) {
         if (connection->thread_data.settings_peer[settings_array[i].id] == settings_array[i].value) {
@@ -1278,7 +1293,7 @@ static struct aws_h2err s_decoder_on_settings(
                             connection,
                             "Connection error, change to SETTINGS_INITIAL_WINDOW_SIZE caused a stream's flow-control "
                             "window to exceed the maximum size");
-                        return err;
+                        goto error;
                     }
                 }
             } break;
@@ -1289,15 +1304,24 @@ static struct aws_h2err s_decoder_on_settings(
                 break;
         }
         connection->thread_data.settings_peer[settings_array[i].id] = settings_array[i].value;
+        callback_array[callback_array_num++] = settings_array[i];
     }
+    if (connection->on_remote_settings_change) {
+        connection->on_remote_settings_change(
+            &connection->base, callback_array, callback_array_num, connection->base.user_data);
+    }
+    aws_mem_release(connection->base.alloc, callback_array);
     return AWS_H2ERR_SUCCESS;
+error:
+    aws_mem_release(connection->base.alloc, callback_array);
+    return err;
 }
 
 static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
     struct aws_h2_connection *connection = userdata;
     if (aws_linked_list_empty(&connection->thread_data.pending_settings_queue)) {
         CONNECTION_LOG(ERROR, connection, "Received a malicious extra SETTINGS acknowledgment");
-        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
     }
     struct aws_h2err err;
     struct aws_h2_pending_settings *pending_settings = NULL;
@@ -1372,7 +1396,7 @@ static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t 
         if (window_size_increment == 0) {
             /* flow-control window increment of 0 MUST be treated as error (RFC7540 6.9.1) */
             CONNECTION_LOG(ERROR, connection, "Window update frame with 0 increment size")
-            return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+            return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
         }
         if (connection->thread_data.window_size_peer + window_size_increment > AWS_H2_WINDOW_UPDATE_MAX) {
             /* We MUST NOT allow a flow-control window to exceed the max */
@@ -1380,7 +1404,7 @@ static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t 
                 ERROR,
                 connection,
                 "Window update frame causes the connection flow-control window exceeding the maximum size")
-            return aws_h2err_from_h2_code(AWS_H2_ERR_FLOW_CONTROL_ERROR);
+            return aws_h2err_from_h2_code(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR);
         }
         if (connection->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE) {
             CONNECTION_LOGF(
@@ -1437,7 +1461,7 @@ struct aws_h2err s_decoder_on_goaway_begin(
             "Received GOAWAY with invalid last-stream-id=%" PRIu32 ", must not exceed previous last-stream-id=%" PRIu32,
             last_stream,
             connection->thread_data.goaway_received_last_stream_id);
-        return aws_h2err_from_h2_code(AWS_H2_ERR_PROTOCOL_ERROR);
+        return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
     }
     /* stop sending any new stream and making new request */
     aws_atomic_store_int(&connection->atomic.new_stream_error_code, AWS_ERROR_HTTP_GOAWAY_RECEIVED);
@@ -1446,7 +1470,7 @@ struct aws_h2err s_decoder_on_goaway_begin(
         DEBUG,
         connection,
         "Received GOAWAY error-code=%s(0x%x) last-stream-id=%" PRIu32,
-        aws_h2_error_code_to_str(error_code),
+        aws_http2_error_code_to_str(error_code),
         error_code,
         last_stream);
     /* Complete activated streams whose id is higher than last_stream, since they will not process by peer. We should
@@ -1465,7 +1489,12 @@ struct aws_h2err s_decoder_on_goaway_begin(
         }
     }
 
-    /* #TODO inform our user about the error_code and debug data by fire some kind of API */
+    /* #TODO inform user about debug data by fire some kind of API. We buffer it at connection? Or we do a sperate
+     * callback on each part of it */
+    if (connection->on_goaway_received) {
+        /* Inform user about goaway received and the error code. */
+        connection->on_goaway_received(&connection->base, last_stream, error_code, connection->base.user_data);
+    }
     return AWS_H2ERR_SUCCESS;
 }
 
@@ -2128,7 +2157,7 @@ static int s_connection_ping(
 }
 
 /* Send a GOAWAY with the lowest possible last-stream-id */
-static void s_send_goaway(struct aws_h2_connection *connection, enum aws_h2_error_code h2_error_code) {
+static void s_send_goaway(struct aws_h2_connection *connection, enum aws_http2_error_code h2_error_code) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
     uint32_t last_stream_id = aws_min_u32(
@@ -2177,7 +2206,7 @@ static int s_handler_process_read_message(
             connection,
             "Failure while receiving frames, %s. Sending GOAWAY %s(0x%x) and closing connection",
             aws_error_name(err.aws_code),
-            aws_h2_error_code_to_str(err.h2_code),
+            aws_http2_error_code_to_str(err.h2_code),
             err.h2_code);
         goto shutdown;
     }
@@ -2255,7 +2284,7 @@ static int s_handler_shutdown(
         /* Send GOAWAY if none have been sent so far,
          * or if we've only sent a "graceful shutdown warning" that didn't name a last-stream-id */
         if (connection->thread_data.goaway_sent_last_stream_id == AWS_H2_STREAM_ID_MAX) {
-            s_send_goaway(connection, error_code ? AWS_H2_ERR_INTERNAL_ERROR : AWS_H2_ERR_NO_ERROR);
+            s_send_goaway(connection, error_code ? AWS_HTTP2_ERR_INTERNAL_ERROR : AWS_HTTP2_ERR_NO_ERROR);
         }
 
         aws_channel_slot_on_handler_shutdown_complete(
