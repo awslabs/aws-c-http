@@ -69,6 +69,12 @@ struct aws_http_connection_manager_options {
      * If set to true, the read back pressure mechanism will be enabled.
      */
     bool enable_read_back_pressure;
+
+    /**
+     * If set to a non-zero value, then connections that stay in the pool longer than the specified
+     * timeout will be closed automatically.
+     */
+    uint64_t max_connection_idle_in_milliseconds;
 };
 
 AWS_EXTERN_C_BEGIN
