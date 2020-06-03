@@ -459,7 +459,7 @@ int aws_http2_connection_change_settings(
     void *user_data);
 
 /**
- * Send a PING frame (HTTP/2 only).
+ * Asynchronously request to send a PING frame (HTTP/2 only).
  * Round-trip-time is calculated when PING ACK is received from peer.
  *
  * @param http2_connection HTTP/2 connection.
@@ -477,6 +477,35 @@ int aws_http2_connection_ping(
     const struct aws_byte_cursor *optional_opaque_data,
     aws_http2_on_ping_complete_fn *on_completed,
     void *user_data);
+
+/**
+ * Asynchronously request to send a GOAWAY frame. (HTTP/2 only).
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param http2_error aws_http2_error_code. Error code to send to remote peer.
+ * @param optional_debug_data Optional debug data. Debug data to send to remote peer, information about the error
+ * happened locally.
+ */
+AWS_HTTP_API
+int aws_http2_connection_send_goaway(
+    struct aws_http_connection *http2_connection,
+    enum aws_http2_error_code http2_error,
+    const struct aws_byte_cursor *optional_debug_data);
+
+/**
+ * If goaway has been sent from local implementation, either by user or by internal error, get the last-stream-id and
+ * http2_error_code sent in the latest GOAWAY frame. If no GOAWAY has been sent so far,
+ * AWS_ERROR_HTTP_DATA_NOT_AVAILABLE will be raised. (HTTP/2 only).
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param last_stream_id Store the last_stream_id sent in most recent GOAWAY frame.
+ * @param http2_error Store the aws_http2_error_code sent in most recent GOAWAY frame.
+ */
+AWS_HTTP_API
+int aws_http2_connection_get_sent_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t *last_stream_id,
+    enum aws_http2_error_code *http2_error);
 
 AWS_EXTERN_C_END
 

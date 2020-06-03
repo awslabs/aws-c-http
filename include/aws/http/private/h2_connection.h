@@ -134,18 +134,27 @@ struct aws_h2_connection {
         /* New `aws_h2_pending_ping *` created by user that haven't moved to `thread_data` yet */
         struct aws_linked_list pending_ping_list;
 
+        /* New `aws_h2_pending_goaway *` created by user that haven't sent yet */
+        struct aws_linked_list pending_goaway_list;
+
         bool is_cross_thread_work_task_scheduled;
 
         /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
         size_t window_update_size;
+
+        /* For checking status from outside the event-loop thread. */
+        bool is_open;
     } synced_data;
 
     struct {
-        /* For checking status from outside the event-loop thread. */
-        struct aws_atomic_var is_open;
-
         /* If non-zero, reason to immediately reject new streams. (ex: closing) */
         struct aws_atomic_var new_stream_error_code;
+
+        /* Last-stream-id sent in most recent GOAWAY frame. */
+        struct aws_atomic_var goaway_sent_last_stream_id;
+        /* aws_http2_error_code sent in most recent GOAWAY frame. Defaults to AWS_HTTP2_ERR_COUNT indicates no GOAWAY
+         * has been sent so far. */
+        struct aws_atomic_var goaway_sent_http2_error_code;
     } atomic;
 };
 
@@ -166,6 +175,12 @@ struct aws_h2_pending_ping {
     /* user callback */
     void *user_data;
     aws_http2_on_ping_complete_fn *on_completed;
+};
+
+struct aws_h2_pending_goaway {
+    enum aws_http2_error_code http2_error;
+    struct aws_byte_cursor debug_data;
+    struct aws_linked_list_node node;
 };
 
 /**
