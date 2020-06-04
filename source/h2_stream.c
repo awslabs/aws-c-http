@@ -249,11 +249,12 @@ struct aws_h2_stream *aws_h2_stream_new_request(
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
     (void)task;
-    if (status != AWS_TASK_STATUS_RUN_READY) {
-        return;
-    }
 
     struct aws_h2_stream *stream = arg;
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        goto end;
+    }
+
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
 
     if (aws_h2_stream_get_state(stream) == AWS_H2_STREAM_STATE_CLOSED) {
@@ -262,8 +263,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
             DEBUG,
             stream,
             "Stream closed before cross thread work task runs, ignoring everything was requested by user.");
-        aws_http_stream_release(&stream->base);
-        return;
+        goto end;
     }
 
     /* Not sending window update at half closed remote state */
@@ -310,6 +310,8 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     /* It's likely that frames were queued while processing cross-thread work.
      * If so, try writing them now */
     aws_h2_try_write_outgoing_frames(connection);
+
+end:
     aws_http_stream_release(&stream->base);
 }
 
