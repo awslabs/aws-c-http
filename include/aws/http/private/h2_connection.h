@@ -150,7 +150,7 @@ struct aws_h2_connection {
         /* If non-zero, reason to immediately reject new streams. (ex: closing) */
         struct aws_atomic_var new_stream_error_code;
 
-        /* Last-stream-id sent in most recent GOAWAY frame. */
+        /* Last-stream-id sent in most recent GOAWAY frame. Defaults to -1 indicates no GOAWAY has been sent so far.*/
         struct aws_atomic_var goaway_sent_last_stream_id;
         /* aws_http2_error_code sent in most recent GOAWAY frame. Defaults to AWS_HTTP2_ERR_COUNT indicates no GOAWAY
          * has been sent so far. */
@@ -178,6 +178,7 @@ struct aws_h2_pending_ping {
 };
 
 struct aws_h2_pending_goaway {
+    bool allow_more_streams;
     enum aws_http2_error_code http2_error;
     struct aws_byte_cursor debug_data;
     struct aws_linked_list_node node;

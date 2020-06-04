@@ -240,9 +240,8 @@ void aws_http_connection_update_window(struct aws_http_connection *connection, s
 
 static int s_check_http2_connection(struct aws_http_connection *http2_connection) {
     if (http2_connection->http_version == AWS_HTTP_VERSION_2) {
-        return AWS_OP_SUCCESS; 
-    }
-    else {
+        return AWS_OP_SUCCESS;
+    } else {
         AWS_LOGF_WARN(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
@@ -282,13 +281,15 @@ int aws_http2_connection_ping(
 int aws_http2_connection_send_goaway(
     struct aws_http_connection *http2_connection,
     enum aws_http2_error_code http2_error,
+    bool allow_more_streams,
     const struct aws_byte_cursor *optional_debug_data) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
     if (s_check_http2_connection(http2_connection)) {
         return AWS_OP_ERR;
     }
-    return http2_connection->vtable->send_goaway(http2_connection, http2_error, optional_debug_data);
+    return http2_connection->vtable->send_goaway(
+        http2_connection, http2_error, allow_more_streams, optional_debug_data);
 }
 
 int aws_http2_connection_get_sent_goaway(
@@ -296,6 +297,8 @@ int aws_http2_connection_get_sent_goaway(
     uint32_t *last_stream_id,
     enum aws_http2_error_code *http2_error) {
     AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(last_stream_id);
+    AWS_PRECONDITION(http2_error);
     AWS_PRECONDITION(http2_connection->vtable);
     if (s_check_http2_connection(http2_connection)) {
         return AWS_OP_ERR;

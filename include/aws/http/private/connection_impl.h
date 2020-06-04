@@ -68,6 +68,7 @@ struct aws_http_connection_vtable {
     int (*send_goaway)(
         struct aws_http_connection *http2_connection,
         enum aws_http2_error_code http2_error,
+        bool allow_more_streams,
         const struct aws_byte_cursor *optional_debug_data);
     int (*get_sent_goaway)(
         struct aws_http_connection *http2_connection,

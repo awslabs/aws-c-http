@@ -483,13 +483,18 @@ int aws_http2_connection_ping(
  *
  * @param http2_connection HTTP/2 connection.
  * @param http2_error aws_http2_error_code. Error code to send to remote peer.
+ * @param allow_more_streams If set, the graceful shutdown warning will be sent, new streams from peer will be allowed
+ *      until the connection shuts down. Note: If set, the sent http2_error will be set to AWS_HTTP2_ERR_NO_ERROR
+ *      regardless what error code has passed in and if another GOAWAY has been sent with lower last stream ID, we will
+ *      do nothing.
  * @param optional_debug_data Optional debug data. Debug data to send to remote peer, information about the error
- * happened locally.
+ *      happened locally.
  */
 AWS_HTTP_API
 int aws_http2_connection_send_goaway(
     struct aws_http_connection *http2_connection,
     enum aws_http2_error_code http2_error,
+    bool allow_more_streams,
     const struct aws_byte_cursor *optional_debug_data);
 
 /**

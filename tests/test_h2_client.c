@@ -65,7 +65,9 @@ static void s_on_remote_settings_change(
 
     (void)http2_connection;
     struct connection_user_data *data = user_data;
-    memcpy(data->remote_settings_array, settings_array, num_settings * sizeof(struct aws_http2_setting));
+    if (num_settings) {
+        memcpy(data->remote_settings_array, settings_array, num_settings * sizeof(struct aws_http2_setting));
+    }
     data->num_settings = num_settings;
 }
 
@@ -3662,13 +3664,9 @@ static void on_ping_complete(
 TEST_CASE(h2_client_send_ping_successfully_receive_ack) {
 
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
-    /* client sent the preface and first settings */
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *first_written_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 0);
-    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, first_written_frame->type);
-    ASSERT_FALSE(first_written_frame->ack);
-    /* fake peer sends connection preface */
+    /* get connection preface and acks out of the way */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     struct aws_byte_cursor opaque_data = aws_byte_cursor_from_c_str("12345678");
     struct ping_user_data data = {.rtt_ns = 0, .error_code = INT32_MAX};
@@ -3698,13 +3696,9 @@ TEST_CASE(h2_client_send_ping_successfully_receive_ack) {
 TEST_CASE(h2_client_send_ping_no_ack_received) {
 
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
-    /* client sent the preface and first settings */
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *first_written_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 0);
-    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, first_written_frame->type);
-    ASSERT_FALSE(first_written_frame->ack);
-    /* fake peer sends connection preface */
+    /* get connection preface and acks out of the way */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     struct ping_user_data data = {.rtt_ns = 0, .error_code = INT32_MAX};
     /* client request a PING */
@@ -3737,13 +3731,9 @@ TEST_CASE(h2_client_send_ping_no_ack_received) {
 TEST_CASE(h2_client_conn_err_extraneous_ping_ack_received) {
 
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
-    /* client sent the preface and first settings */
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *first_written_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 0);
-    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, first_written_frame->type);
-    ASSERT_FALSE(first_written_frame->ack);
-    /* fake peer sends connection preface */
+    /* get connection preface and acks out of the way */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     struct aws_byte_cursor opaque_data = aws_byte_cursor_from_c_str("12345678");
     /* client request a PING */
@@ -3778,13 +3768,9 @@ TEST_CASE(h2_client_conn_err_extraneous_ping_ack_received) {
 TEST_CASE(h2_client_conn_err_mismatched_ping_ack_received) {
 
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
-    /* client sent the preface and first settings */
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *first_written_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 0);
-    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, first_written_frame->type);
-    ASSERT_FALSE(first_written_frame->ack);
-    /* fake peer sends connection preface */
+    /* get connection preface and acks out of the way */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     struct aws_byte_cursor opaque_data = aws_byte_cursor_from_c_str("12345678");
     /* client request a PING with all zero opaque_data */
@@ -3898,4 +3884,126 @@ TEST_CASE(h2_client_conn_failed_initial_settings_completed_not_invoked) {
     /* clean up */
     aws_http_library_clean_up();
     return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h2_client_send_multiple_goaway) {
+
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct aws_byte_buf info_buf = aws_byte_buf_from_c_str("this is a debug info");
+    struct aws_byte_cursor debug_info = aws_byte_cursor_from_buf(&info_buf);
+
+    /* First graceful shutdown warning */
+    ASSERT_SUCCESS(aws_http2_connection_send_goaway(
+        s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, true /*allow_more_streams*/, &debug_info /*debug_data*/));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Check the goaway frame received */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *latest_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_NO_ERROR, latest_frame->error_code);
+    ASSERT_UINT_EQUALS(AWS_H2_STREAM_ID_MAX, latest_frame->goaway_last_stream_id);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&latest_frame->data, "this is a debug info"));
+
+    /* Real GOAWAY */
+    ASSERT_SUCCESS(aws_http2_connection_send_goaway(
+        s_tester.connection, AWS_HTTP2_ERR_PROTOCOL_ERROR, false /*allow_more_streams*/, &debug_info));
+    /* It is fine to free the buffer right after the call, since we keep it in the connection's memory */
+    aws_byte_buf_clean_up(&info_buf);
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Check the goaway frame received */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    latest_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, latest_frame->error_code);
+    ASSERT_UINT_EQUALS(0, latest_frame->goaway_last_stream_id);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&latest_frame->data, "this is a debug info"));
+    size_t frames_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
+
+    /* Graceful shutdown warning after real GOAWAY will be ignored */
+    ASSERT_SUCCESS(aws_http2_connection_send_goaway(
+        s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, true /*allow_more_streams*/, NULL /*debug_data*/));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Check the goaway frame received */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    ASSERT_UINT_EQUALS(frames_count, h2_decode_tester_frame_count(&s_tester.peer.decode));
+
+    /* clean up */
+    return s_tester_clean_up();
+}
+
+TEST_CASE(h2_client_get_sent_goaway) {
+
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    uint32_t last_stream_id;
+    uint32_t http2_error;
+    ASSERT_FAILS(aws_http2_connection_get_sent_goaway(s_tester.connection, &last_stream_id, &http2_error));
+
+    /* First graceful shutdown warning */
+    ASSERT_SUCCESS(aws_http2_connection_send_goaway(
+        s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, true /*allow_more_streams*/, NULL /*debug_data*/));
+    /* User send goaway asynchronously, you are not able to get the sent goaway right after the call */
+    ASSERT_FAILS(aws_http2_connection_get_sent_goaway(s_tester.connection, &last_stream_id, &http2_error));
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(aws_http2_connection_get_sent_goaway(s_tester.connection, &last_stream_id, &http2_error));
+    ASSERT_UINT_EQUALS(AWS_H2_STREAM_ID_MAX, last_stream_id);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_NO_ERROR, http2_error);
+
+    struct aws_byte_cursor opaque_data = aws_byte_cursor_from_c_str("12345678");
+    /* peer send extra ping ack will lead to a connection error and goaway will be sent */
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_ping(allocator, true /*ACK*/, opaque_data.ptr);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Check the sent goaway */
+    ASSERT_SUCCESS(aws_http2_connection_get_sent_goaway(s_tester.connection, &last_stream_id, &http2_error));
+    ASSERT_UINT_EQUALS(0, last_stream_id);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, http2_error);
+
+    /* clean up */
+    return s_tester_clean_up();
+}
+
+/* User apis that want to add stuff into connection.synced_data will fail after connection shutdown starts */
+TEST_CASE(h2_client_request_apis_failed_after_connection_begin_shutdown) {
+
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
+    ASSERT_NOT_NULL(stream);
+    /* close the connection */
+    aws_http_connection_close(s_tester.connection);
+
+    /* validate all those user apis to add stuff into synced data will fail */
+    ASSERT_FAILS(aws_http2_connection_send_goaway(
+        s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, false /*allow_more_streams*/, NULL /*debug_data*/));
+    ASSERT_FAILS(aws_http_stream_activate(stream));
+    ASSERT_FAILS(aws_http2_connection_change_settings(
+        s_tester.connection, NULL, 0, NULL /*callback function*/, NULL /*user_data*/));
+    ASSERT_FAILS(aws_http2_connection_ping(s_tester.connection, NULL, NULL /*callback function*/, NULL /*user_data*/));
+
+    /* clean up */
+    aws_http_message_release(request);
+    aws_http_stream_release(stream);
+    return s_tester_clean_up();
 }
