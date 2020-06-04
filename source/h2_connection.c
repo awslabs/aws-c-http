@@ -294,7 +294,7 @@ static struct aws_h2_connection *s_connection_new(
     aws_atomic_init_int(&connection->atomic.new_stream_error_code, 0);
     size_t max_stream_id = AWS_H2_STREAM_ID_MAX;
     aws_atomic_init_int(&connection->atomic.goaway_sent_last_stream_id, max_stream_id + 1);
-    aws_atomic_init_int(&connection->atomic.goaway_sent_http2_error_code, AWS_HTTP2_ERR_COUNT);
+    aws_atomic_init_int(&connection->atomic.goaway_sent_http2_error_code, 0);
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
     aws_linked_list_init(&connection->synced_data.pending_frame_list);
     aws_linked_list_init(&connection->synced_data.pending_settings_list);
@@ -425,6 +425,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_frame_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_settings_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_ping_list));
+    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_goaway_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.pending_ping_queue));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.pending_settings_queue));
 
@@ -1970,30 +1971,28 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
         s_lock_synced_data(connection);
 
         connection_open = connection->synced_data.is_open;
-        if (connection_open) {
-            if (stream->id) {
-                /* stream has already been activated. */
-                s_unlock_synced_data(connection);
-                return AWS_OP_SUCCESS;
-            }
-
-            stream->id = aws_http_connection_get_next_stream_id(base_connection);
-
-            if (stream->id) {
-                was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
-                connection->synced_data.is_cross_thread_work_task_scheduled = true;
-
-                aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &h2_stream->node);
-            }
+        if (!connection_open) {
+            s_unlock_synced_data(connection);
+            goto closed;
         }
+
+        if (stream->id) {
+            /* stream has already been activated. */
+            s_unlock_synced_data(connection);
+            return AWS_OP_SUCCESS;
+        }
+
+        stream->id = aws_http_connection_get_next_stream_id(base_connection);
+
+        if (stream->id) {
+            was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
+            connection->synced_data.is_cross_thread_work_task_scheduled = true;
+
+            aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &h2_stream->node);
+        }
+
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
-
-    if (!connection_open) {
-        CONNECTION_LOGF(
-            ERROR, connection, "Failed to activate the stream id=%p, connection is closed or closing.", (void *)stream);
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
-    }
 
     if (!stream->id) {
         /* aws_http_connection_get_next_stream_id() raises its own error. */
@@ -2009,6 +2008,10 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
     }
 
     return AWS_OP_SUCCESS;
+closed:
+    CONNECTION_LOGF(
+        ERROR, connection, "Failed to activate the stream id=%p, connection is closed or closing.", (void *)stream);
+    return aws_raise_error(AWS_ERROR_INVALID_STATE);
 }
 
 static struct aws_http_stream *s_connection_make_request(

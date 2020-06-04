@@ -153,8 +153,8 @@ struct aws_h2_connection {
         /* Last-stream-id sent in most recent GOAWAY frame. Defaults to AWS_H2_STREAM_ID_MAX + 1 indicates no GOAWAY has
          * been sent so far.*/
         struct aws_atomic_var goaway_sent_last_stream_id;
-        /* aws_http2_error_code sent in most recent GOAWAY frame. Defaults to AWS_HTTP2_ERR_COUNT indicates no GOAWAY
-         * has been sent so far. */
+        /* aws_http2_error_code sent in most recent GOAWAY frame. Defaults to 0, check goaway_sent_last_stream_id for
+         * any GOAWAY has sent or not */
         struct aws_atomic_var goaway_sent_http2_error_code;
     } atomic;
 };
