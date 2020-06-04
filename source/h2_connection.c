@@ -2362,13 +2362,13 @@ static int s_connection_get_sent_goaway(
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     size_t sent_last_stream_id = aws_atomic_load_int(&connection->atomic.goaway_sent_last_stream_id);
     size_t max_stream_id = AWS_H2_STREAM_ID_MAX;
-    uint32_t sent_http2_error = aws_atomic_load_int(&connection->atomic.goaway_sent_http2_error_code);
+    size_t sent_http2_error = aws_atomic_load_int(&connection->atomic.goaway_sent_http2_error_code);
     if (sent_last_stream_id == max_stream_id + 1) {
         /* No GOAWAY has been sent so far. */
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
-    *last_stream_id = sent_last_stream_id;
-    *http2_error = sent_http2_error;
+    *last_stream_id = (uint32_t)sent_last_stream_id;
+    *http2_error = (uint32_t)sent_http2_error;
     return AWS_OP_SUCCESS;
 }
 
