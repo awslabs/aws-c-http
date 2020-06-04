@@ -1944,6 +1944,7 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
 
         err = aws_mutex_unlock(&h2_stream->synced_data.lock);
         AWS_ASSERT(!err && "unlock failed");
+        (void) err;
     } /* END CRITICAL SECTION */
 
     return AWS_OP_SUCCESS;

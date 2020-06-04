@@ -82,7 +82,7 @@ struct aws_h2_stream {
 
         /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
         size_t window_update_size;
-    
+
         /* New `aws_h2_frames *` stream control frames created by user that haven't moved to connection `thread_data`
          * yet */
         struct aws_linked_list pending_frame_list;
@@ -90,7 +90,7 @@ struct aws_h2_stream {
         /* The aws_http2_error_code user requested to remote peer via rst_stream. Set to AWS_HTTP2_ERR_COUNT if no
          * rst_stream has been requested so far. */
         enum aws_http2_error_code requested_reset_error_code;
-        
+
         /* True, if stream has been activated by user. */
         bool is_activated;
     } synced_data;
