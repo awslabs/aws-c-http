@@ -67,13 +67,13 @@ struct aws_http_connection_vtable {
         void *user_data);
     int (*send_goaway)(
         struct aws_http_connection *http2_connection,
-        enum aws_http2_error_code http2_error,
+        uint32_t http2_error,
         bool allow_more_streams,
         const struct aws_byte_cursor *optional_debug_data);
     int (*get_sent_goaway)(
         struct aws_http_connection *http2_connection,
         uint32_t *last_stream_id,
-        enum aws_http2_error_code *http2_error);
+        uint32_t *http2_error);
 };
 
 typedef int(aws_http_proxy_request_transform_fn)(struct aws_http_message *request, void *user_data);

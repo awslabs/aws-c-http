@@ -482,7 +482,8 @@ int aws_http2_connection_ping(
  * Asynchronously request to send a GOAWAY frame. (HTTP/2 only).
  *
  * @param http2_connection HTTP/2 connection.
- * @param http2_error aws_http2_error_code. Error code to send to remote peer.
+ * @param http2_error The HTTP/2 error code (RFC-7540 section 7) sent by peer.
+ *      `enum aws_http2_error_code` lists official codes.
  * @param allow_more_streams If set, the graceful shutdown warning will be sent, new streams from peer will be allowed
  *      until the connection shuts down. Note: If set, the sent http2_error will be set to AWS_HTTP2_ERR_NO_ERROR
  *      regardless what error code has passed in and if another GOAWAY has been sent with lower last stream ID, we will
@@ -493,7 +494,7 @@ int aws_http2_connection_ping(
 AWS_HTTP_API
 int aws_http2_connection_send_goaway(
     struct aws_http_connection *http2_connection,
-    enum aws_http2_error_code http2_error,
+    uint32_t http2_error,
     bool allow_more_streams,
     const struct aws_byte_cursor *optional_debug_data);
 
@@ -504,13 +505,13 @@ int aws_http2_connection_send_goaway(
  *
  * @param http2_connection HTTP/2 connection.
  * @param last_stream_id Store the last_stream_id sent in most recent GOAWAY frame.
- * @param http2_error Store the aws_http2_error_code sent in most recent GOAWAY frame.
+ * @param http2_error Store the HTTP/2 error code sent in most recent GOAWAY frame.
  */
 AWS_HTTP_API
 int aws_http2_connection_get_sent_goaway(
     struct aws_http_connection *http2_connection,
     uint32_t *last_stream_id,
-    enum aws_http2_error_code *http2_error);
+    uint32_t *http2_error);
 
 AWS_EXTERN_C_END
 

@@ -179,7 +179,7 @@ struct aws_h2_pending_ping {
 
 struct aws_h2_pending_goaway {
     bool allow_more_streams;
-    enum aws_http2_error_code http2_error;
+    uint32_t http2_error;
     struct aws_byte_cursor debug_data;
     struct aws_linked_list_node node;
 };

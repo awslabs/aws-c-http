@@ -280,7 +280,7 @@ int aws_http2_connection_ping(
 
 int aws_http2_connection_send_goaway(
     struct aws_http_connection *http2_connection,
-    enum aws_http2_error_code http2_error,
+    uint32_t http2_error,
     bool allow_more_streams,
     const struct aws_byte_cursor *optional_debug_data) {
     AWS_ASSERT(http2_connection);
@@ -295,7 +295,7 @@ int aws_http2_connection_send_goaway(
 int aws_http2_connection_get_sent_goaway(
     struct aws_http_connection *http2_connection,
     uint32_t *last_stream_id,
-    enum aws_http2_error_code *http2_error) {
+    uint32_t *http2_error) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(last_stream_id);
     AWS_PRECONDITION(http2_error);

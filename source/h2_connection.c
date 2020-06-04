@@ -75,13 +75,13 @@ static int s_connection_send_ping(
     void *user_data);
 static int s_connection_send_goaway(
     struct aws_http_connection *connection_base,
-    enum aws_http2_error_code http2_error,
+    uint32_t http2_error,
     bool allow_more_streams,
     const struct aws_byte_cursor *optional_debug_data);
 static int s_connection_get_sent_goaway(
     struct aws_http_connection *connection_base,
     uint32_t *last_stream_id,
-    enum aws_http2_error_code *http2_error);
+    uint32_t *http2_error);
 
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
@@ -96,7 +96,7 @@ static void s_write_outgoing_frames(struct aws_h2_connection *connection, bool f
 static void s_finish_shutdown(struct aws_h2_connection *connection);
 static void s_send_goaway(
     struct aws_h2_connection *connection,
-    enum aws_http2_error_code h2_error_code,
+    uint32_t h2_error_code,
     bool allow_more_streams,
     const struct aws_byte_cursor *optional_debug_data);
 static struct aws_h2_pending_settings *s_new_pending_settings(
@@ -501,7 +501,7 @@ static struct aws_h2_pending_ping *s_new_pending_ping(
 
 static struct aws_h2_pending_goaway *s_new_pending_goaway(
     struct aws_allocator *allocator,
-    enum aws_http2_error_code http2_error,
+    uint32_t http2_error,
     bool allow_more_streams,
     const struct aws_byte_cursor *optional_debug_data) {
 
@@ -2269,7 +2269,7 @@ closed:
 
 static int s_connection_send_goaway(
     struct aws_http_connection *connection_base,
-    enum aws_http2_error_code http2_error,
+    uint32_t http2_error,
     bool allow_more_streams,
     const struct aws_byte_cursor *optional_debug_data) {
 
@@ -2311,11 +2311,11 @@ closed:
 /* Send a GOAWAY with the lowest possible last-stream-id or graceful shutdown warning */
 static void s_send_goaway(
     struct aws_h2_connection *connection,
-    enum aws_http2_error_code h2_error_code,
+    uint32_t h2_error_code,
     bool allow_more_streams,
     const struct aws_byte_cursor *optional_debug_data) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
-    AWS_PRECONDITION(!allow_more_streams || (h2_error_code==AWS_HTTP2_ERR_NO_ERROR));
+    AWS_PRECONDITION(!allow_more_streams || (h2_error_code == AWS_HTTP2_ERR_NO_ERROR));
 
     uint32_t last_stream_id = allow_more_streams ? AWS_H2_STREAM_ID_MAX
                                                  : aws_min_u32(
@@ -2356,11 +2356,11 @@ error:
 static int s_connection_get_sent_goaway(
     struct aws_http_connection *connection_base,
     uint32_t *last_stream_id,
-    enum aws_http2_error_code *http2_error) {
+    uint32_t *http2_error) {
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     int sent_last_stream_id = aws_atomic_load_int(&connection->atomic.goaway_sent_last_stream_id);
-    enum aws_http2_error_code sent_http2_error = aws_atomic_load_int(&connection->atomic.goaway_sent_http2_error_code);
+    uint32_t sent_http2_error = aws_atomic_load_int(&connection->atomic.goaway_sent_http2_error_code);
     if (sent_last_stream_id == -1) {
         /* No GOAWAY has been sent so far. */
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
