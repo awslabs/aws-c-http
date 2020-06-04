@@ -4084,11 +4084,11 @@ TEST_CASE(h2_client_stream_keeps_alive_for_cross_thread_task) {
     /* Before the cross thread task runs, release the stream */
     aws_http_stream_release(stream_tester.stream);
 
-    /* validate that stream completed with protocol error */
+    /* Task should finish without error */
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_TRUE(stream_tester.complete);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
-    /* validate that stream no RST_STREAM sent */
+    /* validate that no RST_STREAM sent */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
     struct h2_decoded_frame *client_sent_rst_stream =
         h2_decode_tester_find_stream_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, stream_id, 0, NULL);
