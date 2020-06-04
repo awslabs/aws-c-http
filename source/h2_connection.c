@@ -292,7 +292,8 @@ static struct aws_h2_connection *s_connection_new(
     aws_atomic_init_int(&connection->base.refcount, 1);
 
     aws_atomic_init_int(&connection->atomic.new_stream_error_code, 0);
-    aws_atomic_init_int(&connection->atomic.goaway_sent_last_stream_id, -1);
+    size_t max_stream_id = AWS_H2_STREAM_ID_MAX;
+    aws_atomic_init_int(&connection->atomic.goaway_sent_last_stream_id, max_stream_id + 1);
     aws_atomic_init_int(&connection->atomic.goaway_sent_http2_error_code, AWS_HTTP2_ERR_COUNT);
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
     aws_linked_list_init(&connection->synced_data.pending_frame_list);
@@ -2359,9 +2360,10 @@ static int s_connection_get_sent_goaway(
     uint32_t *http2_error) {
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
-    int sent_last_stream_id = aws_atomic_load_int(&connection->atomic.goaway_sent_last_stream_id);
+    size_t sent_last_stream_id = aws_atomic_load_int(&connection->atomic.goaway_sent_last_stream_id);
+    size_t max_stream_id = AWS_H2_STREAM_ID_MAX;
     uint32_t sent_http2_error = aws_atomic_load_int(&connection->atomic.goaway_sent_http2_error_code);
-    if (sent_last_stream_id == -1) {
+    if (sent_last_stream_id == max_stream_id + 1) {
         /* No GOAWAY has been sent so far. */
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
