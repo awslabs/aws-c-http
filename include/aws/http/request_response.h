@@ -772,6 +772,28 @@ uint32_t aws_http_stream_get_id(const struct aws_http_stream *stream);
 AWS_HTTP_API
 int aws_http2_stream_reset(struct aws_http_stream *http2_stream, enum aws_http2_error_code http2_error);
 
+/**
+ * Get the error code received in rst_stream. Valid after stream completed with AWS_ERROR_HTTP_RST_STREAM_RECEIVED.
+ * Note: it's possible we received rst_stream and stream completed with AWS_ERROR_SUCCESS, only in the case
+ * AWS_HTTP2_ERR_NO_ERROR has received.
+ *
+ * @param http2_stream HTTP/2 stream.
+ * @param http2_error Store the http2 error code received in rst_stream.
+ */
+AWS_HTTP_API
+int aws_http2_stream_get_received_reset_error_code(struct aws_http_stream *http2_stream, uint32_t *http2_error);
+
+/**
+ * Get the error code we sent in rst_stream. Valid after stream completed with error expect
+ * AWS_ERROR_HTTP_RST_STREAM_RECEIVED and AWS_ERROR_SUCCESS. Note: it's possible we sent rst_stream and stream completed
+ * with AWS_ERROR_SUCCESS, in this case AWS_HTTP2_ERR_NO_ERROR has been sent.
+ *
+ * @param http2_stream HTTP/2 stream.
+ * @param http2_error Store the http2 error code sent in rst_stream.
+ */
+AWS_HTTP_API
+int aws_http2_stream_get_sent_reset_error_code(struct aws_http_stream *http2_stream, uint32_t *http2_error);
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_REQUEST_RESPONSE_H */

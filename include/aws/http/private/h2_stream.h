@@ -96,9 +96,11 @@ struct aws_h2_stream {
     } synced_data;
 
     struct {
-
-        /* The aws_http2_error_code we received from remote peer via rst_stream. Set to AWS_HTTP2_ERR_COUNT if no
-         * rst_stream received. */
+        /* The aws_http2_error_code we sent to remote peer via rst_stream. Set to AWS_HTTP2_ERR_NO_ERROR if no
+         * rst_stream sent, or rst_stream with no error sent. */
+        struct aws_atomic_var sent_reset_error_code;
+        /* The aws_http2_error_code we received from remote peer via rst_stream. Set to AWS_HTTP2_ERR_NO_ERROR if no
+         * rst_stream received, or rst_stream with no error received. */
         struct aws_atomic_var received_reset_error_code;
     } atomic;
 };

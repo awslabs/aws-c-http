@@ -121,6 +121,8 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
     .activate = aws_h1_stream_activate,
     .http1_write_chunk = s_aws_h1_stream_write_chunk,
     .http2_reset_stream = NULL,
+    .http2_get_received_error_code = NULL,
+    .http2_get_sent_error_code = NULL,
 };
 
 static struct aws_h1_stream *s_stream_new_common(

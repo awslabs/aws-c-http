@@ -773,3 +773,31 @@ int aws_http2_stream_reset(struct aws_http_stream *http2_stream, enum aws_http2_
     }
     return http2_stream->vtable->http2_reset_stream(http2_stream, http2_error);
 }
+
+int aws_http2_stream_get_received_reset_error_code(struct aws_http_stream *http2_stream, uint32_t *http2_error){
+    AWS_PRECONDITION(http2_stream);
+    AWS_PRECONDITION(http2_stream->vtable);
+    AWS_PRECONDITION(http2_error);
+    if (!http2_stream->vtable->http2_get_received_error_code) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: HTTP/2 stream only function invoked on other stream, igoring call.",
+            (void *)http2_stream);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+    return http2_stream->vtable->http2_get_received_error_code(http2_stream, http2_error);
+}
+
+int aws_http2_stream_get_sent_reset_error_code(struct aws_http_stream *http2_stream, uint32_t *http2_error){
+    AWS_PRECONDITION(http2_stream);
+    AWS_PRECONDITION(http2_stream->vtable);
+    AWS_PRECONDITION(http2_error);
+    if (!http2_stream->vtable->http2_get_sent_error_code) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: HTTP/2 stream only function invoked on other stream, igoring call.",
+            (void *)http2_stream);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+    return http2_stream->vtable->http2_get_sent_error_code(http2_stream, http2_error);
+}

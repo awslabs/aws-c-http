@@ -24,6 +24,8 @@
 static void s_stream_destroy(struct aws_http_stream *stream_base);
 static void s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size);
 static int s_stream_reset_stream(struct aws_http_stream *stream_base, enum aws_http2_error_code http2_error);
+static int s_stream_get_received_error_code(struct aws_http_stream *stream_base, uint32_t *http2_error);
+static int s_stream_get_sent_error_code(struct aws_http_stream *stream_base, uint32_t *http2_error);
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error);
@@ -34,6 +36,8 @@ struct aws_http_stream_vtable s_h2_stream_vtable = {
     .activate = aws_h2_stream_activate,
     .http1_write_chunk = NULL,
     .http2_reset_stream = s_stream_reset_stream,
+    .http2_get_received_error_code = s_stream_get_received_error_code,
+    .http2_get_sent_error_code = s_stream_get_sent_error_code,
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state) {
@@ -230,7 +234,8 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
     stream->thread_data.outgoing_message = options->request;
 
-    aws_atomic_init_int(&stream->atomic.received_reset_error_code, AWS_HTTP2_ERR_COUNT);
+    aws_atomic_init_int(&stream->atomic.received_reset_error_code, AWS_HTTP2_ERR_NO_ERROR);
+    aws_atomic_init_int(&stream->atomic.sent_reset_error_code, AWS_HTTP2_ERR_NO_ERROR);
 
     stream->synced_data.requested_reset_error_code = AWS_HTTP2_ERR_COUNT;
     stream->synced_data.is_activated = false;
@@ -455,6 +460,29 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, enum aws_h
     return AWS_OP_SUCCESS;
 }
 
+
+static int s_stream_get_received_error_code(struct aws_http_stream *stream_base, uint32_t *http2_error) {
+    struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
+    size_t received_error_code = aws_atomic_load_int(&stream->atomic.received_reset_error_code);
+    if(received_error_code == AWS_HTTP2_ERR_NO_ERROR) {
+        /* It is possible we received NO_ERROR in rst_stream, but this function is not designed for that */
+        return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
+    }
+    *http2_error = (uint32_t) received_error_code;
+    return AWS_OP_SUCCESS;
+}
+
+static int s_stream_get_sent_error_code(struct aws_http_stream *stream_base, uint32_t *http2_error){
+    struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
+    size_t sent_error_code = aws_atomic_load_int(&stream->atomic.sent_reset_error_code);
+    if(sent_error_code == AWS_HTTP2_ERR_NO_ERROR) {
+        /* It is possible we sent NO_ERROR in rst_stream, but this function is not designed for that */
+        return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
+    }
+    *http2_error = (uint32_t) sent_error_code;
+    return AWS_OP_SUCCESS;
+}
+
 enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *stream) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
     return stream->thread_data.state;
@@ -484,7 +512,8 @@ static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream
         return aws_h2err_from_last_error();
     }
     aws_h2_connection_enqueue_outgoing_frame(connection, rst_stream_frame); /* connection takes ownership of frame */
-
+    aws_atomic_store_int(&stream->atomic.sent_reset_error_code, stream_error.h2_code);
+    
     /* Tell connection that stream is now closed */
     if (aws_h2_connection_on_stream_closed(
             connection, stream, AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT, stream_error.aws_code)) {
@@ -945,10 +974,8 @@ struct aws_h2err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *strea
             aws_http2_error_code_to_str(h2_error_code));
     }
 
-    /* #TODO some way for users to learn h2_error_code value. A callback? A queryable property on the stream?
-     * Specific AWS_ERROR_ per known code doesn't work because what if user wants to use their own magic numbers */
-
     stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
+    aws_atomic_store_int(&stream->atomic.received_reset_error_code, h2_error_code);
 
     AWS_H2_STREAM_LOGF(
         TRACE,
