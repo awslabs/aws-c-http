@@ -274,6 +274,38 @@ int aws_http2_connection_ping(
     return http2_connection->vtable->ping(http2_connection, optional_opaque_data, on_ack, user_data);
 }
 
+int aws_http2_connection_get_local_settings(
+    const struct aws_http_connection *http2_connection,
+    struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
+            (void *)http2_connection);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+    http2_connection->vtable->get_local_settings(http2_connection, settings);
+    return AWS_OP_SUCCESS;
+}
+
+int aws_http2_connection_get_remote_settings(
+    const struct aws_http_connection *http2_connection,
+    struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
+            (void *)http2_connection);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+    http2_connection->vtable->get_remote_settings(http2_connection, settings);
+    return AWS_OP_SUCCESS;
+}
+
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     return connection->channel_slot->channel;

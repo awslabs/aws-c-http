@@ -2677,7 +2677,7 @@ TEST_CASE(h2_client_conn_err_initial_window_size_settings_cause_window_exceed_ma
     struct aws_h2_frame *settings =
         aws_h2_frame_new_settings(allocator, settings_array, AWS_ARRAY_SIZE(settings_array), false /*ack*/);
     ASSERT_NOT_NULL(settings);
-    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface(&s_tester.peer, settings));
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, settings));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* validate connection is still open and callback invoked */
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
@@ -2690,7 +2690,7 @@ TEST_CASE(h2_client_conn_err_initial_window_size_settings_cause_window_exceed_ma
     settings_array[0].value = AWS_H2_WINDOW_UPDATE_MAX;
     settings = aws_h2_frame_new_settings(allocator, settings_array, AWS_ARRAY_SIZE(settings_array), false /*ack*/);
     ASSERT_NOT_NULL(settings);
-    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface(&s_tester.peer, settings));
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, settings));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* validate callback is not invoked, num_settings is still 0 */
     ASSERT_INT_EQUALS(0, s_tester.user_data.num_settings);
@@ -3898,4 +3898,116 @@ TEST_CASE(h2_client_conn_failed_initial_settings_completed_not_invoked) {
     /* clean up */
     aws_http_library_clean_up();
     return AWS_OP_SUCCESS;
+}
+
+static void s_default_settings(struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    for (int i = AWS_HTTP2_SETTINGS_BEGIN_RANGE; i < AWS_HTTP2_SETTINGS_END_RANGE; i++) {
+        /* settings range begin with 1, store them into 0-based array of aws_http2_setting */
+        settings[i - 1].id = i;
+        settings[i - 1].value = aws_h2_settings_initial[i];
+    }
+}
+
+static int s_apply_changed_settings(
+    struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT],
+    struct aws_http2_setting *settings_to_change,
+    int number_settings_to_change) {
+
+    for (int i = 0; i < number_settings_to_change; i++) {
+        struct aws_http2_setting setting = settings_to_change[i];
+        ASSERT_UINT_EQUALS(settings[setting.id - 1].id, setting.id);
+        settings[setting.id - 1].value = setting.value;
+    }
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h2_client_get_local_settings) {
+
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    struct aws_http2_setting settings_get[AWS_HTTP2_SETTINGS_COUNT];
+    struct aws_http2_setting settings_expected[AWS_HTTP2_SETTINGS_COUNT];
+    s_default_settings(settings_expected);
+    ASSERT_SUCCESS(aws_http2_connection_get_local_settings(s_tester.connection, settings_get));
+    /* Altough we disabled the push_promise at the initial settings, but without the settings ACK from peer, the
+     * settings we are using locally is still the default settings */
+    ASSERT_SUCCESS(s_compare_settings_array(settings_expected, settings_get, AWS_HTTP2_SETTINGS_COUNT));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    /* fake peer sends settings ack back for the initial settings. */
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Set expected setting */
+    settings_expected[AWS_HTTP2_SETTINGS_ENABLE_PUSH - 1].value = false;
+    /* Initial settings got ACK by peer, know we will get the settings with push_promise disabled */
+    ASSERT_SUCCESS(aws_http2_connection_get_local_settings(s_tester.connection, settings_get));
+    ASSERT_SUCCESS(s_compare_settings_array(settings_expected, settings_get, AWS_HTTP2_SETTINGS_COUNT));
+
+    /* Request to change the local settings */
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_ENABLE_PUSH, .value = 1},
+        {.id = AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE, .value = 0},
+        {.id = AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE, .value = 1000},
+        {.id = AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, .value = 1},
+        {.id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE, .value = 1},
+        {.id = AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE, .value = AWS_H2_PAYLOAD_MAX},
+        {.id = AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE, .value = 1},
+    };
+
+    ASSERT_SUCCESS(aws_http2_connection_change_settings(
+        s_tester.connection, settings_array, AWS_ARRAY_SIZE(settings_array), NULL/*call_back*/, NULL/*user_data*/));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Settings sent, but not ACKed, still the same settings, we will get */
+    ASSERT_SUCCESS(aws_http2_connection_get_local_settings(s_tester.connection, settings_get));
+    ASSERT_SUCCESS(s_compare_settings_array(settings_expected, settings_get, AWS_HTTP2_SETTINGS_COUNT));
+
+    /* Peer ACKed the settings */
+    peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);  
+    /* Set expected setting */
+    ASSERT_SUCCESS(s_apply_changed_settings(settings_expected, settings_array, AWS_ARRAY_SIZE(settings_array)));
+    ASSERT_SUCCESS(aws_http2_connection_get_local_settings(s_tester.connection, settings_get));
+    ASSERT_SUCCESS(s_compare_settings_array(settings_expected, settings_get, AWS_HTTP2_SETTINGS_COUNT));
+
+    /* clean up */
+    return s_tester_clean_up();
+}
+
+TEST_CASE(h2_client_get_remote_settings) {
+
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    struct aws_http2_setting settings_get[AWS_HTTP2_SETTINGS_COUNT];
+    struct aws_http2_setting settings_expected[AWS_HTTP2_SETTINGS_COUNT];
+    s_default_settings(settings_expected);
+    /* Once connection setup and no settings from peer, remote settings will be default init settings */
+    ASSERT_SUCCESS(aws_http2_connection_get_remote_settings(s_tester.connection, settings_get));
+    ASSERT_SUCCESS(s_compare_settings_array(settings_expected, settings_get, AWS_HTTP2_SETTINGS_COUNT));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    /* fake peer sends settings and change the remote settings */
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_ENABLE_PUSH, .value = 1},
+        {.id = AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE, .value = 0},
+        {.id = AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE, .value = 1000},
+        {.id = AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, .value = 1},
+        {.id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE, .value = 1},
+        {.id = AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE, .value = AWS_H2_PAYLOAD_MAX},
+        {.id = AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE, .value = 1},
+    };
+
+    struct aws_h2_frame *settings_frame =
+        aws_h2_frame_new_settings(allocator, settings_array, AWS_ARRAY_SIZE(settings_array), false /*ack*/);
+    ASSERT_NOT_NULL(settings_frame);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, settings_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);  
+    /* Set expected setting */
+    ASSERT_SUCCESS(s_apply_changed_settings(settings_expected, settings_array, AWS_ARRAY_SIZE(settings_array)));
+    ASSERT_SUCCESS(aws_http2_connection_get_remote_settings(s_tester.connection, settings_get));
+    ASSERT_SUCCESS(s_compare_settings_array(settings_expected, settings_get, AWS_HTTP2_SETTINGS_COUNT));
+
+    /* clean up */
+    return s_tester_clean_up();
 }

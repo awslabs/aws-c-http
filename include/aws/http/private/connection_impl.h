@@ -65,6 +65,12 @@ struct aws_http_connection_vtable {
         const struct aws_byte_cursor *optional_opaque_data,
         aws_http2_on_ping_complete_fn *on_completed,
         void *user_data);
+    void (*get_local_settings)(
+        const struct aws_http_connection *http2_connection,
+        struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT]);
+    void (*get_remote_settings)(
+        const struct aws_http_connection *http2_connection,
+        struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT]);
 };
 
 typedef int(aws_http_proxy_request_transform_fn)(struct aws_http_message *request, void *user_data);

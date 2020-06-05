@@ -411,6 +411,8 @@ add_test_case(h2_client_conn_err_extraneous_ping_ack_received)
 add_test_case(h2_client_conn_err_mismatched_ping_ack_received)
 add_test_case(h2_client_empty_initial_settings)
 add_test_case(h2_client_conn_failed_initial_settings_completed_not_invoked)
+add_test_case(h2_client_get_local_settings)
+add_test_case(h2_client_get_remote_settings)
 
 add_test_case(server_new_destroy)
 add_test_case(connection_setup_shutdown)

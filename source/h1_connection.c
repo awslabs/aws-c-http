@@ -102,6 +102,8 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .update_window = s_connection_update_window,
     .change_settings = NULL,
     .ping = NULL,
+    .get_local_settings = NULL,
+    .get_remote_settings = NULL,
 };
 
 static const struct aws_h1_decoder_vtable s_h1_decoder_vtable = {
