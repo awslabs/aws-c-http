@@ -460,26 +460,25 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, enum aws_h
     return AWS_OP_SUCCESS;
 }
 
-
 static int s_stream_get_received_error_code(struct aws_http_stream *stream_base, uint32_t *http2_error) {
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     size_t received_error_code = aws_atomic_load_int(&stream->atomic.received_reset_error_code);
-    if(received_error_code == AWS_HTTP2_ERR_NO_ERROR) {
+    if (received_error_code == AWS_HTTP2_ERR_NO_ERROR) {
         /* It is possible we received NO_ERROR in rst_stream, but this function is not designed for that */
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
-    *http2_error = (uint32_t) received_error_code;
+    *http2_error = (uint32_t)received_error_code;
     return AWS_OP_SUCCESS;
 }
 
-static int s_stream_get_sent_error_code(struct aws_http_stream *stream_base, uint32_t *http2_error){
+static int s_stream_get_sent_error_code(struct aws_http_stream *stream_base, uint32_t *http2_error) {
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     size_t sent_error_code = aws_atomic_load_int(&stream->atomic.sent_reset_error_code);
-    if(sent_error_code == AWS_HTTP2_ERR_NO_ERROR) {
+    if (sent_error_code == AWS_HTTP2_ERR_NO_ERROR) {
         /* It is possible we sent NO_ERROR in rst_stream, but this function is not designed for that */
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
-    *http2_error = (uint32_t) sent_error_code;
+    *http2_error = (uint32_t)sent_error_code;
     return AWS_OP_SUCCESS;
 }
 
@@ -513,7 +512,7 @@ static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream
     }
     aws_h2_connection_enqueue_outgoing_frame(connection, rst_stream_frame); /* connection takes ownership of frame */
     aws_atomic_store_int(&stream->atomic.sent_reset_error_code, stream_error.h2_code);
-    
+
     /* Tell connection that stream is now closed */
     if (aws_h2_connection_on_stream_closed(
             connection, stream, AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT, stream_error.aws_code)) {
