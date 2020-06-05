@@ -403,7 +403,8 @@ add_test_case(h2_client_manual_window_management_disabled_auto_window_update)
 add_test_case(h2_client_manual_window_management_user_send_stream_window_update)
 add_test_case(h2_client_manual_window_management_user_send_conn_window_update)
 # Build these when we address window_update() differences in H1 vs H2
-#TODO add_test_case(h2_client_manual_updated_window_ignored_when_automatical_on) 
+#TODO add_test_case(h2_client_manual_updated_window_ignored_when_automatical_on)
+#TODO add_test_case(h2_client_manual_stream_updated_window_ignored_invalid_state) 
 #TODO add_test_case(h2_client_manual_window_management_window_overflow) #we cannot ensure the increment_size is safe or not, let our peer detect the maximun exceed or not. But we can test the obviously overflows here.
 add_test_case(h2_client_send_ping_successfully_receive_ack)
 add_test_case(h2_client_send_ping_no_ack_received)
