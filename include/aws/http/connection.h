@@ -484,7 +484,7 @@ int aws_http2_connection_ping(
 
 /**
  * Get the local settings we are using to affect the decoding.
- * 
+ *
  * @param http2_connection HTTP/2 connection.
  * @param settings fixed size array of aws_http2_setting to store the local settings
  */
@@ -495,7 +495,7 @@ int aws_http2_connection_get_local_settings(
 
 /**
  * Get the settings received from remote peer, which we are using to restricts the message to send.
- * 
+ *
  * @param http2_connection HTTP/2 connection.
  * @param settings fixed size array of aws_http2_setting to store the remote settings
  */

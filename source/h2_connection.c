@@ -2207,8 +2207,8 @@ static void s_get_settings_general(
     } /* END CRITICAL SECTION */
     for (int i = AWS_HTTP2_SETTINGS_BEGIN_RANGE; i < AWS_HTTP2_SETTINGS_END_RANGE; i++) {
         /* settings range begin with 1, store them into 0-based array of aws_http2_setting */
-        settings[i-1].id = i;
-        settings[i-1].value = synced_settings[i];
+        settings[i - 1].id = i;
+        settings[i - 1].value = synced_settings[i];
     }
     return;
 }

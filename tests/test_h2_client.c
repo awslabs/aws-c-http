@@ -3956,7 +3956,7 @@ TEST_CASE(h2_client_get_local_settings) {
     };
 
     ASSERT_SUCCESS(aws_http2_connection_change_settings(
-        s_tester.connection, settings_array, AWS_ARRAY_SIZE(settings_array), NULL/*call_back*/, NULL/*user_data*/));
+        s_tester.connection, settings_array, AWS_ARRAY_SIZE(settings_array), NULL /*call_back*/, NULL /*user_data*/));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* Settings sent, but not ACKed, still the same settings, we will get */
     ASSERT_SUCCESS(aws_http2_connection_get_local_settings(s_tester.connection, settings_get));
@@ -3965,7 +3965,7 @@ TEST_CASE(h2_client_get_local_settings) {
     /* Peer ACKed the settings */
     peer_frame = aws_h2_frame_new_settings(allocator, NULL, 0, true);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);  
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* Set expected setting */
     ASSERT_SUCCESS(s_apply_changed_settings(settings_expected, settings_array, AWS_ARRAY_SIZE(settings_array)));
     ASSERT_SUCCESS(aws_http2_connection_get_local_settings(s_tester.connection, settings_get));
@@ -4002,7 +4002,7 @@ TEST_CASE(h2_client_get_remote_settings) {
         aws_h2_frame_new_settings(allocator, settings_array, AWS_ARRAY_SIZE(settings_array), false /*ack*/);
     ASSERT_NOT_NULL(settings_frame);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, settings_frame));
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);  
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* Set expected setting */
     ASSERT_SUCCESS(s_apply_changed_settings(settings_expected, settings_array, AWS_ARRAY_SIZE(settings_array)));
     ASSERT_SUCCESS(aws_http2_connection_get_remote_settings(s_tester.connection, settings_get));
