@@ -91,6 +91,7 @@ static int s_setup_proxy_test(
     struct aws_byte_cursor host,
     enum proxy_tester_test_mode test_mode) {
     struct aws_http_proxy_options proxy_options = {
+        .connection_type = test_mode == PTTM_HTTP_FORWARD ? AWS_HPCT_HTTP_FORWARD : AWS_HPCT_HTTP_TUNNEL,
         .host = aws_byte_cursor_from_c_str("127.0.0.1"),
         .port = 3128,
     };
@@ -99,7 +100,7 @@ static int s_setup_proxy_test(
         .alloc = allocator,
         .proxy_options = &proxy_options,
         .host = host,
-        .port = test_mode == PTTM_HTTP ? 80 : 443,
+        .port = test_mode == PTTM_HTTPS_TUNNEL ? 443 : 80,
         .test_mode = test_mode,
         .failure_type = PTFT_NONE,
     };
@@ -165,7 +166,7 @@ static int s_do_proxy_request_test(
 static int s_test_http_proxy_connection_new_destroy(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, aws_byte_cursor_from_c_str("example.org"), PTTM_HTTP));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, aws_byte_cursor_from_c_str("example.org"), PTTM_HTTP_FORWARD));
     ASSERT_TRUE(tester.wait_result == AWS_ERROR_SUCCESS);
 
     ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
@@ -180,7 +181,7 @@ static int s_test_http_proxy_connection_get(struct aws_allocator *allocator, voi
     return s_do_proxy_request_test(
         allocator,
         aws_byte_cursor_from_c_str("example.org"),
-        PTTM_HTTP,
+        PTTM_HTTP_FORWARD,
         aws_byte_cursor_from_c_str("GET"),
         aws_byte_cursor_from_c_str("/"));
 }
@@ -189,7 +190,7 @@ AWS_TEST_CASE(test_http_proxy_connection_get, s_test_http_proxy_connection_get);
 static int s_test_https_proxy_connection_new_destroy(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, aws_byte_cursor_from_c_str("aws.amazon.com"), PTTM_HTTPS));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, aws_byte_cursor_from_c_str("aws.amazon.com"), PTTM_HTTPS_TUNNEL));
     ASSERT_TRUE(tester.wait_result == AWS_ERROR_SUCCESS);
 
     ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
@@ -204,7 +205,7 @@ static int s_test_https_proxy_connection_get(struct aws_allocator *allocator, vo
     return s_do_proxy_request_test(
         allocator,
         aws_byte_cursor_from_c_str("aws.amazon.com"),
-        PTTM_HTTPS,
+        PTTM_HTTPS_TUNNEL,
         aws_byte_cursor_from_c_str("GET"),
         aws_byte_cursor_from_c_str("/"));
 }
@@ -216,7 +217,7 @@ static int s_test_http_proxy_connection_options_star(struct aws_allocator *alloc
     return s_do_proxy_request_test(
         allocator,
         aws_byte_cursor_from_c_str("example.org"),
-        PTTM_HTTP,
+        PTTM_HTTP_FORWARD,
         aws_byte_cursor_from_c_str("OPTIONS"),
         aws_byte_cursor_from_c_str("*"));
 }

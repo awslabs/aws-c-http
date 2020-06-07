@@ -132,6 +132,29 @@ struct aws_http_connection_monitoring_options {
 };
 
 /**
+ * Supported proxy connection types
+ */
+enum aws_http_proxy_connection_type {
+    /**
+     * Use the proxy to forward http requests.  Attempting to use both this mode and TLS on the tunnel destination
+     * is a configuration error.
+     */
+    AWS_HPCT_HTTP_FORWARD = 0,
+
+    /**
+     * Use the proxy to establish an http connection via a CONNECT request to the proxy.  Works for both plaintext and
+     * tls connections.
+     */
+    AWS_HPCT_HTTP_TUNNEL,
+
+    /**
+     * Establish an http(s) connection through a socks5 proxy.
+     * Socks5 proxies are not yet supported
+     */
+    AWS_HPCT_SOCKS5,
+};
+
+/**
  * Supported proxy authentication modes
  */
 enum aws_http_proxy_authentication_type {
@@ -145,7 +168,12 @@ enum aws_http_proxy_authentication_type {
 struct aws_http_proxy_options {
 
     /**
-     * Proxy host to connect to, in lieu of actual target
+     * Type of proxy connection to make
+     */
+    enum aws_http_proxy_connection_type connection_type;
+
+    /**
+     * Proxy host to connect to
      */
     struct aws_byte_cursor host;
 
@@ -477,6 +505,12 @@ int aws_http2_connection_ping(
     const struct aws_byte_cursor *optional_opaque_data,
     aws_http2_on_ping_complete_fn *on_completed,
     void *user_data);
+
+/**
+ * Checks http proxy options for correctness
+ */
+AWS_HTTP_API
+int aws_http_options_validate_proxy_configuration(const struct aws_http_client_connection_options *options);
 
 AWS_EXTERN_C_END
 

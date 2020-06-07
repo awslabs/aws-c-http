@@ -125,14 +125,6 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
 
     ASSERT_SUCCESS(aws_byte_buf_init(&tester->connection_host_name, tester->alloc, 128));
 
-    struct aws_logger_standard_options logger_options = {
-        .level = AWS_LOG_LEVEL_TRACE,
-        .file = stderr,
-    };
-
-    ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->alloc, &logger_options));
-    aws_logger_set(&tester->logger);
-
     ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
 
@@ -155,7 +147,7 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
     tester->client_bootstrap = aws_client_bootstrap_new(tester->alloc, &bootstrap_options);
     ASSERT_NOT_NULL(tester->client_bootstrap);
 
-    bool use_tls = options->test_mode == PTTM_HTTPS;
+    bool use_tls = options->test_mode == PTTM_HTTPS_TUNNEL;
     if (use_tls) {
         aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, tester->alloc);
         aws_tls_ctx_options_set_alpn_list(&tester->tls_ctx_options, "http/1.1");
@@ -228,7 +220,6 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
     }
 
     aws_http_library_clean_up();
-    aws_logger_clean_up(&tester->logger);
 
     aws_byte_buf_clean_up(&tester->connection_host_name);
 

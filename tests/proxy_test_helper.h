@@ -29,8 +29,9 @@ struct testing_channel;
 typedef void(aws_http_release_connection_fn)(struct aws_http_connection *connection);
 
 enum proxy_tester_test_mode {
-    PTTM_HTTP = 0,
-    PTTM_HTTPS,
+    PTTM_HTTP_FORWARD = 0,
+    PTTM_HTTP_TUNNEL,
+    PTTM_HTTPS_TUNNEL,
 };
 
 enum proxy_tester_failure_type {
@@ -52,7 +53,6 @@ struct proxy_tester_options {
 
 struct proxy_tester {
     struct aws_allocator *alloc;
-    struct aws_logger logger;
     struct aws_event_loop_group event_loop_group;
     struct aws_host_resolver host_resolver;
     struct aws_client_bootstrap *client_bootstrap;
