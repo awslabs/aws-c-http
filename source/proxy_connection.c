@@ -420,7 +420,10 @@ static void s_on_origin_server_tls_negotation_result(
 /*
  * Stream done callback for the CONNECT request made during tls proxy connections
  */
-static void s_aws_http_on_stream_complete_tunnel_proxy(struct aws_http_stream *stream, int error_code, void *user_data) {
+static void s_aws_http_on_stream_complete_tunnel_proxy(
+    struct aws_http_stream *stream,
+    int error_code,
+    void *user_data) {
     struct aws_http_proxy_user_data *context = user_data;
     AWS_FATAL_ASSERT(stream == context->connect_stream);
 
