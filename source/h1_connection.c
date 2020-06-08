@@ -441,10 +441,17 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
     struct aws_http_connection *base_connection = stream->owning_connection;
     struct h1_connection *connection = AWS_CONTAINER_OF(base_connection, struct h1_connection, base);
 
+    bool connection_open;
     bool should_schedule_task = false;
 
     { /* BEGIN CRITICAL SECTION */
         s_h1_connection_lock_synced_data(connection);
+
+        connection_open = connection->synced_data.is_open;
+        if (!connection_open) {
+            s_h1_connection_unlock_synced_data(connection);
+            goto closed;
+        }
 
         if (stream->id) {
             /* stream has already been activated. */
@@ -479,6 +486,14 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
     }
 
     return AWS_OP_SUCCESS;
+closed:
+
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Failed to activate the stream id=%p, connection is closed or closing.",
+        (void *)&connection->base,
+        (void *)stream);
+    return aws_raise_error(AWS_ERROR_INVALID_STATE);
 }
 
 struct aws_http_stream *s_make_request(
