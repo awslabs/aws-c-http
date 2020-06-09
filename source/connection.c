@@ -225,6 +225,11 @@ bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
     return connection->vtable->is_open(connection);
 }
 
+bool aws_http_connection_new_requests_allowed(const struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    return connection->vtable->new_requests_allowed(connection);
+}
+
 bool aws_http_connection_is_client(const struct aws_http_connection *connection) {
     return connection->client_data;
 }

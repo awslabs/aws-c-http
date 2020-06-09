@@ -67,6 +67,7 @@ static struct aws_http_stream *s_new_server_request_handler_stream(
 static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response);
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
+static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
 static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
 static int s_decoder_on_request(
     enum aws_http_method method_enum,
@@ -99,6 +100,7 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .stream_send_response = s_stream_send_response,
     .close = s_connection_close,
     .is_open = s_connection_is_open,
+    .new_requests_allowed = s_connection_new_requests_allowed,
     .update_window = s_connection_update_window,
     .change_settings = NULL,
     .ping = NULL,
@@ -181,12 +183,14 @@ struct h1_connection {
         /* For checking status from outside the event-loop thread. */
         bool is_open;
 
-        /* If non-zero, reason to immediately reject new streams. (ex: closing, switched protocols) */
-        int new_stream_error_code;
-
         /* If non-zero, then window_update_task is scheduled */
         size_t window_update_size;
     } synced_data;
+
+    struct {
+        /* If non-zero, reason to immediately reject new streams. (ex: closing) */
+        struct aws_atomic_var new_stream_error_code;
+    } atomic;
 };
 
 static void s_h1_connection_lock_synced_data(struct h1_connection *connection) {
@@ -232,12 +236,11 @@ static void s_stop(
 
         /* Even if we're not scheduling shutdown just yet (ex: sent final request but waiting to read final response)
          * we don't consider the connection "open" anymore so user can't create more streams */
-        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
         connection->synced_data.is_open = false;
 
         s_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
-
+    aws_atomic_store_int(&connection->atomic.new_stream_error_code, AWS_ERROR_HTTP_CONNECTION_CLOSED);
     if (schedule_shutdown) {
         AWS_LOGF_INFO(
             AWS_LS_HTTP_CONNECTION,
@@ -288,6 +291,12 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
     } /* END CRITICAL SECTION */
 
     return is_open;
+}
+
+static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base) {
+    struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
+    int new_stream_error_code = (int)aws_atomic_load_int(&connection->atomic.new_stream_error_code);
+    return new_stream_error_code == 0;
 }
 
 static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response) {
@@ -497,16 +506,7 @@ struct aws_http_stream *s_make_request(
     struct h1_connection *connection = AWS_CONTAINER_OF(client_connection, struct h1_connection, base);
 
     /* Insert new stream into pending list, and schedule outgoing_stream_task if it's not already running. */
-    int new_stream_error_code = AWS_ERROR_SUCCESS;
-
-    { /* BEGIN CRITICAL SECTION */
-        s_h1_connection_lock_synced_data(connection);
-        if (connection->synced_data.new_stream_error_code) {
-            new_stream_error_code = connection->synced_data.new_stream_error_code;
-        }
-        s_h1_connection_unlock_synced_data(connection);
-    } /* END CRITICAL SECTION */
-
+    int new_stream_error_code = (int)aws_atomic_load_int(&connection->atomic.new_stream_error_code);
     if (new_stream_error_code) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
@@ -1123,11 +1123,7 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
 
             connection->thread_data.has_switched_protocols = true;
 
-            { /* BEGIN CRITICAL SECTION */
-                s_h1_connection_lock_synced_data(connection);
-                connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_SWITCHED_PROTOCOLS;
-                s_h1_connection_unlock_synced_data(connection);
-            } /* END CRITICAL SECTION */
+            aws_atomic_store_int(&connection->atomic.new_stream_error_code, AWS_ERROR_HTTP_SWITCHED_PROTOCOLS);
         }
     }
 

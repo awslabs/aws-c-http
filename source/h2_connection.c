@@ -61,6 +61,7 @@ static struct aws_http_stream *s_connection_make_request(
     const struct aws_http_make_request_options *options);
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
+static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
 static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
 static int s_connection_change_settings(
     struct aws_http_connection *connection_base,
@@ -146,6 +147,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .stream_send_response = NULL,
     .close = s_connection_close,
     .is_open = s_connection_is_open,
+    .new_requests_allowed = s_connection_new_requests_allowed,
     .update_window = s_connection_update_window,
     .change_settings = s_connection_change_settings,
     .ping = s_connection_ping,
@@ -1990,6 +1992,12 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     bool is_open = aws_atomic_load_int(&connection->atomic.is_open);
     return is_open;
+}
+
+static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base) {
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
+    int new_stream_error_code = (int)aws_atomic_load_int(&connection->atomic.new_stream_error_code);
+    return new_stream_error_code == 0;
 }
 
 static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size) {
