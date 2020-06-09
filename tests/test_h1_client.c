@@ -2922,6 +2922,7 @@ static int s_switch_protocols(struct protocol_switcher *switcher) {
 }
 
 H1_CLIENT_TEST_CASE(h1_client_new_request_allowed) {
+    (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
