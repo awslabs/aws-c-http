@@ -609,7 +609,8 @@ static void s_aws_http_connection_manager_close_connection_sync_mock(struct aws_
     (void)connection;
 }
 
-static bool s_aws_http_connection_manager_is_connection_aviable_sync_mock(const struct aws_http_connection *connection) {
+static bool s_aws_http_connection_manager_is_connection_aviable_sync_mock(
+    const struct aws_http_connection *connection) {
     (void)connection;
 
     struct mock_connection *proxy = (struct mock_connection *)(void *)connection;
