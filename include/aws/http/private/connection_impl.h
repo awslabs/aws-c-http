@@ -74,6 +74,10 @@ struct aws_http_connection_vtable {
         struct aws_http_connection *http2_connection,
         uint32_t *out_http2_error,
         uint32_t *out_last_stream_id);
+    int (*get_received_goaway)(
+        struct aws_http_connection *http2_connection,
+        uint32_t *out_http2_error,
+        uint32_t *out_last_stream_id);
 };
 
 typedef int(aws_http_proxy_request_transform_fn)(struct aws_http_message *request, void *user_data);

@@ -164,6 +164,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .send_ping = s_connection_send_ping,
     .send_goaway = s_connection_send_goaway,
     .get_sent_goaway = s_connection_get_sent_goaway,
+    .get_received_goaway = s_connection_get_received_goaway,
 };
 
 static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
@@ -291,9 +292,9 @@ static struct aws_h2_connection *s_connection_new(
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
 
-    size_t max_stream_id = AWS_H2_STREAM_ID_MAX;
-    aws_atomic_init_int(&connection->atomic.goaway_sent_last_stream_id, max_stream_id + 1);
-    aws_atomic_init_int(&connection->atomic.goaway_sent_http2_error_code, 0);
+    connection->synced_data.goaway_sent_last_stream_id = AWS_H2_STREAM_ID_MAX + 1;
+    connection->synced_data.goaway_received_last_stream_id = AWS_H2_STREAM_ID_MAX + 1;
+
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
     aws_linked_list_init(&connection->synced_data.pending_frame_list);
     aws_linked_list_init(&connection->synced_data.pending_settings_list);
@@ -1518,7 +1519,11 @@ struct aws_h2err s_decoder_on_goaway_begin(
     /* stop sending any new stream and making new request */
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
+
         connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_GOAWAY_RECEIVED;
+        connection->synced_data.goaway_received_last_stream_id = last_stream;
+        connection->synced_data.goaway_received_http2_error_code = error_code;
+
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
     connection->thread_data.goaway_received_last_stream_id = last_stream;
@@ -2361,8 +2366,12 @@ static void s_send_goaway(
     }
 
     connection->thread_data.goaway_sent_last_stream_id = last_stream_id;
-    aws_atomic_store_int(&connection->atomic.goaway_sent_last_stream_id, last_stream_id);
-    aws_atomic_store_int(&connection->atomic.goaway_sent_http2_error_code, h2_error_code);
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+        connection->synced_data.goaway_sent_last_stream_id = last_stream_id;
+        connection->synced_data.goaway_sent_http2_error_code = h2_error_code;
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
     aws_h2_connection_enqueue_outgoing_frame(connection, goaway);
     return;
 
@@ -2376,15 +2385,47 @@ static int s_connection_get_sent_goaway(
     uint32_t *out_last_stream_id) {
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
-    size_t sent_last_stream_id = aws_atomic_load_int(&connection->atomic.goaway_sent_last_stream_id);
-    size_t max_stream_id = AWS_H2_STREAM_ID_MAX;
-    size_t sent_http2_error = aws_atomic_load_int(&connection->atomic.goaway_sent_http2_error_code);
-    if (sent_last_stream_id == max_stream_id + 1) {
-        /* No GOAWAY has been sent so far. */
-        return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
+    uint32_t sent_last_stream_id;
+    uint32_t sent_http2_error;
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+        sent_last_stream_id = connection->synced_data.goaway_sent_last_stream_id;
+        sent_http2_error = connection->synced_data.goaway_sent_http2_error_code;
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+
+    if (sent_last_stream_id == AWS_H2_STREAM_ID_MAX + 1) {
+        CONNECTION_LOG(ERROR, connection, "No GOAWAY has been sent so far.");
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
-    *out_http2_error = (uint32_t)sent_http2_error;
-    *out_last_stream_id = (uint32_t)sent_last_stream_id;
+
+    *out_http2_error = sent_http2_error;
+    *out_last_stream_id = sent_last_stream_id;
+    return AWS_OP_SUCCESS;
+}
+
+static int s_connection_get_received_goaway(
+    struct aws_http_connection *connection_base,
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id) {
+
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
+    uint32_t received_last_stream_id;
+    uint32_t received_http2_error;
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+        received_last_stream_id = connection->synced_data.goaway_received_last_stream_id;
+        received_http2_error = connection->synced_data.goaway_received_http2_error_code;
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+
+    if (received_last_stream_id == AWS_H2_STREAM_ID_MAX + 1) {
+        CONNECTION_LOG(ERROR, connection, "No GOAWAY has been received so far.");
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    *out_http2_error = received_http2_error;
+    *out_last_stream_id = received_last_stream_id;
     return AWS_OP_SUCCESS;
 }
 

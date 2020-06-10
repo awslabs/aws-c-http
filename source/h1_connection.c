@@ -104,6 +104,7 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .send_ping = NULL,
     .send_goaway = NULL,
     .get_sent_goaway = NULL,
+    .get_received_goaway = NULL,
 };
 
 static const struct aws_h1_decoder_vtable s_h1_decoder_vtable = {

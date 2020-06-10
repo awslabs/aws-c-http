@@ -147,16 +147,21 @@ struct aws_h2_connection {
 
         /* If non-zero, reason to immediately reject new streams. (ex: closing) */
         int new_stream_error_code;
-    } synced_data;
 
-    struct {
         /* Last-stream-id sent in most recent GOAWAY frame. Defaults to AWS_H2_STREAM_ID_MAX + 1 indicates no GOAWAY has
          * been sent so far.*/
-        struct aws_atomic_var goaway_sent_last_stream_id;
+        uint32_t goaway_sent_last_stream_id;
         /* aws_http2_error_code sent in most recent GOAWAY frame. Defaults to 0, check goaway_sent_last_stream_id for
          * any GOAWAY has sent or not */
-        struct aws_atomic_var goaway_sent_http2_error_code;
-    } atomic;
+        uint32_t goaway_sent_http2_error_code;
+
+        /* Last-stream-id received in most recent GOAWAY frame. Defaults to AWS_H2_STREAM_ID_MAX + 1 indicates no GOAWAY
+         * has been received so far.*/
+        uint32_t goaway_received_last_stream_id;
+        /* aws_http2_error_code received in most recent GOAWAY frame. Defaults to 0, check
+         * goaway_received_last_stream_id for any GOAWAY has received or not */
+        uint32_t goaway_received_http2_error_code;
+    } synced_data;
 };
 
 struct aws_h2_pending_settings {

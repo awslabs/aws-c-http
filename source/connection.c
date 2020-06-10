@@ -306,6 +306,20 @@ int aws_http2_connection_get_sent_goaway(
     return http2_connection->vtable->get_sent_goaway(http2_connection, out_http2_error, out_last_stream_id);
 }
 
+int aws_http2_connection_get_received_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(out_http2_error);
+    AWS_PRECONDITION(out_last_stream_id);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    return http2_connection->vtable->get_received_goaway(http2_connection, out_http2_error, out_last_stream_id);
+}
+
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     return connection->channel_slot->channel;
