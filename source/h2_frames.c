@@ -144,11 +144,11 @@ const char *aws_http2_error_code_to_str(enum aws_http2_error_code h2_error_code)
 }
 
 struct aws_h2err aws_h2err_from_h2_code(enum aws_http2_error_code h2_error_code) {
-    AWS_PRECONDITION(h2_error_code >= AWS_HTTP2_ERR_NO_ERROR && h2_error_code < AWS_HTTP2_ERR_COUNT);
+    AWS_PRECONDITION(h2_error_code > AWS_HTTP2_ERR_NO_ERROR && h2_error_code < AWS_HTTP2_ERR_COUNT);
 
     return (struct aws_h2err){
         .h2_code = h2_error_code,
-        .aws_code = h2_error_code == AWS_HTTP2_ERR_NO_ERROR ? AWS_ERROR_SUCCESS : AWS_ERROR_HTTP_PROTOCOL_ERROR,
+        .aws_code = AWS_ERROR_HTTP_PROTOCOL_ERROR,
     };
 }
 

@@ -115,7 +115,10 @@ static struct aws_error_info s_errors[] = {
         "Peer sent GOAWAY to initiate connection shutdown. Establish a new connection to retry the streams."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_RST_STREAM_RECEIVED,
-        "Peer sent RST_STREAM to terminate stream"),
+        "Peer sent RST_STREAM to terminate stream."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_RST_STREAM_SENT,
+        "RST_STREAM has sent from local implementation and stream has been terminated."),
 };
 /* clang-format on */
 

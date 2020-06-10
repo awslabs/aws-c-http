@@ -56,6 +56,13 @@ enum aws_h2_stream_state {
     AWS_H2_STREAM_STATE_COUNT,
 };
 
+/* simplified stream state for API implementation */
+enum aws_h2_stream_api_state {
+    AWS_H2_STREAM_API_STATE_INIT,
+    AWS_H2_STREAM_API_STATE_ACTIVATED,
+    AWS_H2_STREAM_API_STATE_COMPLETE,
+};
+
 struct aws_h2_stream {
     struct aws_http_stream base;
 
@@ -87,22 +94,20 @@ struct aws_h2_stream {
          * yet */
         struct aws_linked_list pending_frame_list;
 
-        /* The aws_http2_error_code user requested to remote peer via rst_stream. Set to AWS_HTTP2_ERR_COUNT if no
-         * rst_stream has been requested so far. */
-        enum aws_http2_error_code requested_reset_error_code;
+        /* The aws_http2_error_code user wanted to send to remote peer via rst_stream. */
+        uint32_t user_reset_error_code;
 
-        /* True, if stream has been activated by user. */
-        bool is_activated;
+        bool reset_called;
+
+        /* Simplified stream state. */
+        enum aws_h2_stream_api_state api_state;
     } synced_data;
 
-    struct {
-        /* The aws_http2_error_code we sent to remote peer via rst_stream. Set to AWS_HTTP2_ERR_NO_ERROR if no
-         * rst_stream sent, or rst_stream with no error sent. */
-        struct aws_atomic_var sent_reset_error_code;
-        /* The aws_http2_error_code we received from remote peer via rst_stream. Set to AWS_HTTP2_ERR_NO_ERROR if no
-         * rst_stream received, or rst_stream with no error received. */
-        struct aws_atomic_var received_reset_error_code;
-    } atomic;
+    /* Store the sent reset HTTP/2 error code, set to -1, if none has sent so far */
+    int64_t sent_reset_error_code;
+
+    /* Store the received reset HTTP/2 error code, set to -1, if none has received so far */
+    int64_t received_reset_error_code;
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);

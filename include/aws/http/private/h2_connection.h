@@ -246,6 +246,11 @@ int aws_h2_connection_send_rst_and_close_reserved_stream(
     uint32_t h2_error_code);
 
 /**
+ * Error happens while writing into channel, shutdown the connection.
+ */
+void aws_h2_connection_shutdown_due_to_write_err(struct aws_h2_connection *connection, int error_code);
+
+/**
  * Try to write outgoing frames, if the outgoing-frames-task isn't scheduled, run it immediately.
  */
 void aws_h2_try_write_outgoing_frames(struct aws_h2_connection *connection);

@@ -14,6 +14,7 @@
  */
 
 #include <aws/http/private/h2_connection.h>
+#include <aws/http/private/h2_stream.h>
 
 #include <aws/http/private/h2_decoder.h>
 #include <aws/http/private/h2_stream.h>
@@ -224,7 +225,7 @@ static void s_stop(
     }
 }
 
-static void s_shutdown_due_to_write_err(struct aws_h2_connection *connection, int error_code) {
+void aws_h2_connection_shutdown_due_to_write_err(struct aws_h2_connection *connection, int error_code) {
     AWS_PRECONDITION(error_code);
 
     if (connection->thread_data.channel_shutdown_waiting_for_goaway_to_be_written) {
@@ -513,7 +514,7 @@ static void s_on_channel_write_complete(
 
     if (err_code) {
         CONNECTION_LOGF(ERROR, connection, "Message did not write to network, error %s", aws_error_name(err_code));
-        s_shutdown_due_to_write_err(connection, err_code);
+        aws_h2_connection_shutdown_due_to_write_err(connection, err_code);
         return;
     }
 
@@ -649,7 +650,7 @@ error:;
         aws_mem_release(msg->allocator, msg);
     }
 
-    s_shutdown_due_to_write_err(connection, error_code);
+    aws_h2_connection_shutdown_due_to_write_err(connection, error_code);
 }
 
 /* Write as many frames from outgoing_frames_queue as possible (contains all non-DATA frames) */
@@ -1580,7 +1581,7 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
     return;
 
 error:
-    s_shutdown_due_to_write_err(connection, aws_last_error());
+    aws_h2_connection_shutdown_due_to_write_err(connection, aws_last_error());
 }
 
 static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h2_stream *stream, int error_code) {
@@ -1940,7 +1941,7 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
         int err = aws_mutex_lock(&h2_stream->synced_data.lock);
         AWS_ASSERT(!err && "lock failed");
 
-        h2_stream->synced_data.is_activated = true;
+        h2_stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_ACTIVATED;
 
         err = aws_mutex_unlock(&h2_stream->synced_data.lock);
         AWS_ASSERT(!err && "unlock failed");
@@ -2191,7 +2192,7 @@ static void s_send_goaway(struct aws_h2_connection *connection, enum aws_http2_e
     return;
 
 error:
-    s_shutdown_due_to_write_err(connection, aws_last_error());
+    aws_h2_connection_shutdown_due_to_write_err(connection, aws_last_error());
 }
 
 static int s_handler_process_read_message(
