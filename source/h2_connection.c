@@ -80,8 +80,8 @@ static int s_connection_send_goaway(
     const struct aws_byte_cursor *optional_debug_data);
 static int s_connection_get_sent_goaway(
     struct aws_http_connection *connection_base,
-    uint32_t *last_stream_id,
-    uint32_t *http2_error);
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id);
 
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
@@ -224,9 +224,9 @@ static void s_stop(
 
     /* Even if we're not scheduling shutdown just yet (ex: sent final request but waiting to read final response)
      * we don't consider the connection "open" anymore so user can't create more streams */
-    aws_atomic_store_int(&connection->atomic.new_stream_error_code, AWS_ERROR_HTTP_CONNECTION_CLOSED);
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
+        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
         connection->synced_data.is_open = false;
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -291,7 +291,6 @@ static struct aws_h2_connection *s_connection_new(
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
 
-    aws_atomic_init_int(&connection->atomic.new_stream_error_code, 0);
     size_t max_stream_id = AWS_H2_STREAM_ID_MAX;
     aws_atomic_init_int(&connection->atomic.goaway_sent_last_stream_id, max_stream_id + 1);
     aws_atomic_init_int(&connection->atomic.goaway_sent_http2_error_code, 0);
@@ -340,6 +339,7 @@ static struct aws_h2_connection *s_connection_new(
     connection->thread_data.goaway_sent_last_stream_id = AWS_H2_STREAM_ID_MAX;
 
     connection->synced_data.is_open = true;
+    connection->synced_data.new_stream_error_code = AWS_ERROR_SUCCESS;
 
     /* Create a new decoder */
     struct aws_h2_decoder_params params = {
@@ -1516,7 +1516,11 @@ struct aws_h2err s_decoder_on_goaway_begin(
         return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
     }
     /* stop sending any new stream and making new request */
-    aws_atomic_store_int(&connection->atomic.new_stream_error_code, AWS_ERROR_HTTP_GOAWAY_RECEIVED);
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_GOAWAY_RECEIVED;
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
     connection->thread_data.goaway_received_last_stream_id = last_stream;
     CONNECTION_LOGF(
         DEBUG,
@@ -1897,7 +1901,7 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
     aws_linked_list_init(&pending_goaway);
 
     size_t window_update_size;
-
+    int new_stream_error_code;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
         connection->synced_data.is_cross_thread_work_task_scheduled = false;
@@ -1909,6 +1913,7 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         aws_linked_list_swap_contents(&connection->synced_data.pending_goaway_list, &pending_goaway);
         window_update_size = connection->synced_data.window_update_size;
         connection->synced_data.window_update_size = 0;
+        new_stream_error_code = connection->synced_data.new_stream_error_code;
 
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
@@ -1926,13 +1931,10 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         aws_add_size_saturating(connection->thread_data.window_size_self, window_update_size);
 
     /* Process new pending_streams */
-    if (!aws_linked_list_empty(&pending_streams)) {
-        int new_stream_error_code = (int)aws_atomic_load_int(&connection->atomic.new_stream_error_code);
-        do {
-            struct aws_linked_list_node *node = aws_linked_list_pop_front(&pending_streams);
-            struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
-            s_move_stream_to_thread(connection, stream, new_stream_error_code);
-        } while (!aws_linked_list_empty(&pending_streams));
+    while (!aws_linked_list_empty(&pending_streams)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&pending_streams);
+        struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
+        s_move_stream_to_thread(connection, stream, new_stream_error_code);
     }
 
     /* Move pending settings to thread data */
@@ -2034,7 +2036,12 @@ static struct aws_http_stream *s_connection_make_request(
         return NULL;
     }
 
-    int new_stream_error_code = (int)aws_atomic_load_int(&connection->atomic.new_stream_error_code);
+    int new_stream_error_code;
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+        new_stream_error_code = connection->synced_data.new_stream_error_code;
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
     if (new_stream_error_code) {
         aws_raise_error(new_stream_error_code);
         CONNECTION_LOGF(
@@ -2359,8 +2366,8 @@ error:
 
 static int s_connection_get_sent_goaway(
     struct aws_http_connection *connection_base,
-    uint32_t *last_stream_id,
-    uint32_t *http2_error) {
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id) {
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     size_t sent_last_stream_id = aws_atomic_load_int(&connection->atomic.goaway_sent_last_stream_id);
@@ -2370,8 +2377,8 @@ static int s_connection_get_sent_goaway(
         /* No GOAWAY has been sent so far. */
         return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
     }
-    *last_stream_id = (uint32_t)sent_last_stream_id;
-    *http2_error = (uint32_t)sent_http2_error;
+    *out_http2_error = (uint32_t)sent_http2_error;
+    *out_last_stream_id = (uint32_t)sent_last_stream_id;
     return AWS_OP_SUCCESS;
 }
 

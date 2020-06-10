@@ -144,12 +144,12 @@ struct aws_h2_connection {
 
         /* For checking status from outside the event-loop thread. */
         bool is_open;
+
+        /* If non-zero, reason to immediately reject new streams. (ex: closing) */
+        int new_stream_error_code;
     } synced_data;
 
     struct {
-        /* If non-zero, reason to immediately reject new streams. (ex: closing) */
-        struct aws_atomic_var new_stream_error_code;
-
         /* Last-stream-id sent in most recent GOAWAY frame. Defaults to AWS_H2_STREAM_ID_MAX + 1 indicates no GOAWAY has
          * been sent so far.*/
         struct aws_atomic_var goaway_sent_last_stream_id;
