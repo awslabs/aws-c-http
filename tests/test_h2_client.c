@@ -3969,6 +3969,43 @@ TEST_CASE(h2_client_get_sent_goaway) {
     return s_tester_clean_up();
 }
 
+TEST_CASE(h2_client_get_received_goaway) {
+
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    uint32_t last_stream_id;
+    uint32_t http2_error;
+    ASSERT_FAILS(aws_http2_connection_get_sent_goaway(s_tester.connection, &http2_error, &last_stream_id));
+
+    /* you are not able to get the received goaway if no GOAWAY received */
+    ASSERT_FAILS(aws_http2_connection_get_sent_goaway(s_tester.connection, &http2_error, &last_stream_id));
+    
+    /* fake peer send goaway */
+    struct aws_byte_cursor debug_info;
+    AWS_ZERO_STRUCT(debug_info);
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_goaway(allocator, AWS_H2_STREAM_ID_MAX, AWS_HTTP2_ERR_NO_ERROR, debug_info);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Try to get the received goaway */
+    ASSERT_SUCCESS(aws_http2_connection_get_received_goaway(s_tester.connection, &http2_error, &last_stream_id));
+    ASSERT_UINT_EQUALS(AWS_H2_STREAM_ID_MAX, last_stream_id);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_NO_ERROR, http2_error);
+
+    peer_frame = aws_h2_frame_new_goaway(allocator, 0, AWS_HTTP2_ERR_PROTOCOL_ERROR, debug_info);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Check the sent goaway */
+    ASSERT_SUCCESS(aws_http2_connection_get_received_goaway(s_tester.connection, &http2_error, &last_stream_id));
+    ASSERT_UINT_EQUALS(0, last_stream_id);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, http2_error);
+
+    /* clean up */
+    return s_tester_clean_up();
+}
+
 /* User apis that want to add stuff into connection.synced_data will fail after connection shutdown starts */
 TEST_CASE(h2_client_request_apis_failed_after_connection_begin_shutdown) {
 
