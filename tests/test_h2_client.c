@@ -4076,7 +4076,7 @@ TEST_CASE(h2_client_stream_keeps_alive_for_cross_thread_task) {
 
     struct aws_h2_frame *response_frame =
         aws_h2_frame_new_headers(allocator, stream_id, response_headers, true /*end_stream*/, 0, NULL);
-    
+
     /* User reset the stream */
     ASSERT_SUCCESS(aws_http2_stream_reset(stream_tester.stream, AWS_HTTP2_ERR_ENHANCE_YOUR_CALM));
     /* Before the async call finishes, the stream completes */
