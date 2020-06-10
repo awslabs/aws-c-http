@@ -13,7 +13,7 @@ This library is licensed under the Apache 2.0 License.
 If you are building on Linux, you will need to build s2n before being able to build aws-c-io, which is a dependency for aws-c-http.  For our CRT's, we build s2n at a specific commit, and recommend doing the same when using it with this library.  That commit hash can be found [here](https://github.com/awslabs/aws-crt-cpp/tree/master/aws-common-runtime).  The commands below will build s2n using OpenSSL 1.1.1.  For using other versions of OpenSSL, there is additional information in the [s2n Usage Guide](https://github.com/awslabs/s2n/blob/master/docs/USAGE-GUIDE.md).
 
 ```
-git clone https://github.com/awslabs/s2n.git
+git clone git@github.com:awslabs/s2n.git
 cd s2n
 git checkout <s2n-commit-hash-used-by-aws-crt-cpp>
 
