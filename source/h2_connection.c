@@ -82,6 +82,10 @@ static int s_connection_get_sent_goaway(
     struct aws_http_connection *connection_base,
     uint32_t *out_http2_error,
     uint32_t *out_last_stream_id);
+static int s_connection_get_received_goaway(
+    struct aws_http_connection *connection_base,
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id);
 
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
@@ -291,9 +295,9 @@ static struct aws_h2_connection *s_connection_new(
 
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
-
-    connection->synced_data.goaway_sent_last_stream_id = AWS_H2_STREAM_ID_MAX + 1;
-    connection->synced_data.goaway_received_last_stream_id = AWS_H2_STREAM_ID_MAX + 1;
+    uint32_t max_stream_id = AWS_H2_STREAM_ID_MAX;
+    connection->synced_data.goaway_sent_last_stream_id = max_stream_id + 1;
+    connection->synced_data.goaway_received_last_stream_id = max_stream_id + 1;
 
     aws_linked_list_init(&connection->synced_data.pending_stream_list);
     aws_linked_list_init(&connection->synced_data.pending_frame_list);
@@ -2394,7 +2398,8 @@ static int s_connection_get_sent_goaway(
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
-    if (sent_last_stream_id == AWS_H2_STREAM_ID_MAX + 1) {
+    uint32_t max_stream_id = AWS_H2_STREAM_ID_MAX;
+    if (sent_last_stream_id == max_stream_id + 1) {
         CONNECTION_LOG(ERROR, connection, "No GOAWAY has been sent so far.");
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
@@ -2419,7 +2424,8 @@ static int s_connection_get_received_goaway(
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
-    if (received_last_stream_id == AWS_H2_STREAM_ID_MAX + 1) {
+    uint32_t max_stream_id = AWS_H2_STREAM_ID_MAX;
+    if (received_last_stream_id == max_stream_id + 1) {
         CONNECTION_LOG(ERROR, connection, "No GOAWAY has been received so far.");
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
