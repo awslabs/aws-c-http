@@ -459,7 +459,7 @@ int aws_http2_connection_change_settings(
     void *user_data);
 
 /**
- * Asynchronously request to send a PING frame (HTTP/2 only).
+ * Send a PING frame (HTTP/2 only).
  * Round-trip-time is calculated when PING ACK is received from peer.
  *
  * @param http2_connection HTTP/2 connection.
@@ -479,18 +479,25 @@ int aws_http2_connection_ping(
     void *user_data);
 
 /**
- * Asynchronously request to send a GOAWAY frame. (HTTP/2 only).
+ * Send a custom GOAWAY frame (HTTP/2 only).
+ *
+ * Note that the connection automatically attempts to send a GOAWAY during
+ * shutdown (unless a GOAWAY with a valid Last-Stream-ID has already been sent).
+ *
+ * This call can be used to gracefully warn the peer of an impending shutdown
+ * (http2_error=0, allow_more_streams=true), or to customize the final GOAWAY
+ * frame that is sent by this connection.
  *
  * @param http2_connection HTTP/2 connection.
- * @param http2_error The HTTP/2 error code (RFC-7540 section 7) sent by peer.
+ * @param http2_error The HTTP/2 error code (RFC-7540 section 7) to send.
  *      `enum aws_http2_error_code` lists official codes.
- * @param allow_more_streams If set, the graceful shutdown warning will be sent, new streams from peer will be allowed
- *      until the connection shuts down. Note: If set, the sent http2_error will be set to AWS_HTTP2_ERR_NO_ERROR
- *      regardless what error code has passed in and if another GOAWAY has been sent with lower last stream ID, we will
- *      do nothing.
- * @param optional_debug_data Optional debug data. Debug data to send to remote peer, information about the error
- *      happened locally.
+ * @param allow_more_streams If true, new peer-initiated streams will continue
+ *      to be acknowledged and the GOAWAY's Last-Stream-ID will be set to a max value.
+ *      If false, new peer-initiated streams will be ignored and the GOAWAY's
+ *      Last-Stream-ID will be set to the latest acknowledged stream.
+ * @param optional_debug_data Optional debug data to send. Size must not exceed 16KB.
  */
+
 AWS_HTTP_API
 int aws_http2_connection_send_goaway(
     struct aws_http_connection *http2_connection,
@@ -499,19 +506,20 @@ int aws_http2_connection_send_goaway(
     const struct aws_byte_cursor *optional_debug_data);
 
 /**
- * If goaway has been sent from local implementation, either by user or by internal error, get the last-stream-id and
- * http2_error_code sent in the latest GOAWAY frame. If no GOAWAY has been sent so far,
- * AWS_ERROR_HTTP_DATA_NOT_AVAILABLE will be raised. (HTTP/2 only).
+ * Get data about the latest GOAWAY frame sent to peer (HTTP/2 only).
+ * If no GOAWAY has been sent, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE will be raised.
+ * Note that GOAWAY frames are typically sent automatically by the connection
+ * during shutdown.
  *
  * @param http2_connection HTTP/2 connection.
- * @param last_stream_id Store the last_stream_id sent in most recent GOAWAY frame.
- * @param http2_error Store the HTTP/2 error code sent in most recent GOAWAY frame.
+ * @param out_http2_error Gets set to HTTP/2 error code sent in most recent GOAWAY.
+ * @param out_last_stream_id Gets set to Last-Stream-ID sent in most recent GOAWAY.
  */
 AWS_HTTP_API
 int aws_http2_connection_get_sent_goaway(
     struct aws_http_connection *http2_connection,
-    uint32_t *last_stream_id,
-    uint32_t *http2_error);
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id);
 
 AWS_EXTERN_C_END
 

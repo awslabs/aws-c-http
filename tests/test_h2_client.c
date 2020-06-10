@@ -3942,16 +3942,16 @@ TEST_CASE(h2_client_get_sent_goaway) {
 
     uint32_t last_stream_id;
     uint32_t http2_error;
-    ASSERT_FAILS(aws_http2_connection_get_sent_goaway(s_tester.connection, &last_stream_id, &http2_error));
+    ASSERT_FAILS(aws_http2_connection_get_sent_goaway(s_tester.connection, &http2_error, &last_stream_id));
 
     /* First graceful shutdown warning */
     ASSERT_SUCCESS(aws_http2_connection_send_goaway(
         s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, true /*allow_more_streams*/, NULL /*debug_data*/));
     /* User send goaway asynchronously, you are not able to get the sent goaway right after the call */
-    ASSERT_FAILS(aws_http2_connection_get_sent_goaway(s_tester.connection, &last_stream_id, &http2_error));
+    ASSERT_FAILS(aws_http2_connection_get_sent_goaway(s_tester.connection, &http2_error, &last_stream_id));
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    ASSERT_SUCCESS(aws_http2_connection_get_sent_goaway(s_tester.connection, &last_stream_id, &http2_error));
+    ASSERT_SUCCESS(aws_http2_connection_get_sent_goaway(s_tester.connection, &http2_error, &last_stream_id));
     ASSERT_UINT_EQUALS(AWS_H2_STREAM_ID_MAX, last_stream_id);
     ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_NO_ERROR, http2_error);
 
@@ -3961,7 +3961,7 @@ TEST_CASE(h2_client_get_sent_goaway) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* Check the sent goaway */
-    ASSERT_SUCCESS(aws_http2_connection_get_sent_goaway(s_tester.connection, &last_stream_id, &http2_error));
+    ASSERT_SUCCESS(aws_http2_connection_get_sent_goaway(s_tester.connection, &http2_error, &last_stream_id));
     ASSERT_UINT_EQUALS(0, last_stream_id);
     ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, http2_error);
 

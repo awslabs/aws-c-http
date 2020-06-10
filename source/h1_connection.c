@@ -441,22 +441,22 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
     struct aws_http_connection *base_connection = stream->owning_connection;
     struct h1_connection *connection = AWS_CONTAINER_OF(base_connection, struct h1_connection, base);
 
-    bool connection_open;
+    int err;
     bool should_schedule_task = false;
 
     { /* BEGIN CRITICAL SECTION */
         s_h1_connection_lock_synced_data(connection);
 
-        connection_open = connection->synced_data.is_open;
-        if (!connection_open) {
-            s_h1_connection_unlock_synced_data(connection);
-            goto closed;
-        }
-
         if (stream->id) {
             /* stream has already been activated. */
             s_h1_connection_unlock_synced_data(connection);
             return AWS_OP_SUCCESS;
+        }
+
+        err = connection->synced_data.new_stream_error_code;
+        if (err) {
+            s_h1_connection_unlock_synced_data(connection);
+            goto error;
         }
 
         stream->id = aws_http_connection_get_next_stream_id(base_connection);
@@ -486,14 +486,16 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
     }
 
     return AWS_OP_SUCCESS;
-closed:
 
+error:
     AWS_LOGF_ERROR(
         AWS_LS_HTTP_CONNECTION,
-        "id=%p: Failed to activate the stream id=%p, connection is closed or closing.",
+        "id=%p: Failed to activate the stream id=%p, new streams are not allowed now. error %d (%s)",
         (void *)&connection->base,
-        (void *)stream);
-    return aws_raise_error(AWS_ERROR_INVALID_STATE);
+        (void *)stream,
+        err,
+        aws_error_name(err));
+    return aws_raise_error(err);
 }
 
 struct aws_http_stream *s_make_request(
