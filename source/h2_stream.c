@@ -310,10 +310,9 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     if (reset_called) {
         /* TODO:: It's possible that server sends a rst_stream with NO_ERROR, after full response has been sent. In this
          * case the aws_code here should be AWS_ERROR_HTTP_SUCCESS */
-        const struct aws_h2err h2err = {
-            .h2_code = user_reset_error_code,
-            .aws_code = AWS_ERROR_HTTP_RST_STREAM_SENT,
-        };
+        struct aws_h2err h2err;
+        h2err.h2_code = user_reset_error_code;
+        h2err.aws_code = AWS_ERROR_HTTP_RST_STREAM_SENT;
         struct aws_h2err returned_h2err = s_send_rst_and_close_stream(stream, h2err);
         if (aws_h2err_failed(returned_h2err)) {
             aws_h2_connection_shutdown_due_to_write_err(connection, returned_h2err.aws_code);
