@@ -3982,11 +3982,12 @@ TEST_CASE(h2_client_get_received_goaway) {
 
     /* you are not able to get the received goaway if no GOAWAY received */
     ASSERT_FAILS(aws_http2_connection_get_sent_goaway(s_tester.connection, &http2_error, &last_stream_id));
-    
+
     /* fake peer send goaway */
     struct aws_byte_cursor debug_info;
     AWS_ZERO_STRUCT(debug_info);
-    struct aws_h2_frame *peer_frame = aws_h2_frame_new_goaway(allocator, AWS_H2_STREAM_ID_MAX, AWS_HTTP2_ERR_NO_ERROR, debug_info);
+    struct aws_h2_frame *peer_frame =
+        aws_h2_frame_new_goaway(allocator, AWS_H2_STREAM_ID_MAX, AWS_HTTP2_ERR_NO_ERROR, debug_info);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* Try to get the received goaway */
