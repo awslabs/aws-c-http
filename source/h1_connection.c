@@ -101,7 +101,10 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .is_open = s_connection_is_open,
     .update_window = s_connection_update_window,
     .change_settings = NULL,
-    .ping = NULL,
+    .send_ping = NULL,
+    .send_goaway = NULL,
+    .get_sent_goaway = NULL,
+    .get_received_goaway = NULL,
     .get_local_settings = NULL,
     .get_remote_settings = NULL,
 };
@@ -441,6 +444,7 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
     struct aws_http_connection *base_connection = stream->owning_connection;
     struct h1_connection *connection = AWS_CONTAINER_OF(base_connection, struct h1_connection, base);
 
+    int err;
     bool should_schedule_task = false;
 
     { /* BEGIN CRITICAL SECTION */
@@ -450,6 +454,12 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
             /* stream has already been activated. */
             s_h1_connection_unlock_synced_data(connection);
             return AWS_OP_SUCCESS;
+        }
+
+        err = connection->synced_data.new_stream_error_code;
+        if (err) {
+            s_h1_connection_unlock_synced_data(connection);
+            goto error;
         }
 
         stream->id = aws_http_connection_get_next_stream_id(base_connection);
@@ -479,6 +489,16 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
     }
 
     return AWS_OP_SUCCESS;
+
+error:
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Failed to activate the stream id=%p, new streams are not allowed now. error %d (%s)",
+        (void *)&connection->base,
+        (void *)stream,
+        err,
+        aws_error_name(err));
+    return aws_raise_error(err);
 }
 
 struct aws_http_stream *s_make_request(
