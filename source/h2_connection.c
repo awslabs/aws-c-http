@@ -201,6 +201,20 @@ static void s_unlock_synced_data(struct aws_h2_connection *connection) {
     (void)err;
 }
 
+static void s_acquire_stream_and_connection_lock(struct aws_h2_stream *stream, struct aws_h2_connection *connection) {
+    int err = aws_mutex_lock(&stream->synced_data.lock);
+    err = aws_mutex_lock(&connection->synced_data.lock);
+    AWS_ASSERT(!err && "lock connection and stream failed");
+    (void)err;
+}
+
+static void s_release_stream_and_connection_lock(struct aws_h2_stream *stream, struct aws_h2_connection *connection) {
+    int err = aws_mutex_unlock(&connection->synced_data.lock);
+    err = aws_mutex_unlock(&stream->synced_data.lock);
+    AWS_ASSERT(!err && "unlock connection and stream failed");
+    (void)err;
+}
+
 /**
  * Internal function for bringing connection to a stop.
  * Invoked multiple times, including when:
@@ -1980,17 +1994,17 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
     int err;
     bool was_cross_thread_work_scheduled = false;
     { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(connection);
+        s_acquire_stream_and_connection_lock(stream, connection);
 
         if (stream->id) {
             /* stream has already been activated. */
-            s_unlock_synced_data(connection);
+            s_release_stream_and_connection_lock(stream, connection);
             return AWS_OP_SUCCESS;
         }
 
         err = connection->synced_data.new_stream_error_code;
         if (err) {
-            s_unlock_synced_data(connection);
+            s_release_stream_and_connection_lock(stream, connection);
             goto error;
         }
 
@@ -2003,7 +2017,8 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
             aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &h2_stream->node);
         }
 
-        s_unlock_synced_data(connection);
+        h2_stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_ACTIVE;
+        s_release_stream_and_connection_lock(stream, connection);
     } /* END CRITICAL SECTION */
 
     if (!stream->id) {
@@ -2024,7 +2039,6 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
         int err = aws_mutex_lock(&h2_stream->synced_data.lock);
         AWS_ASSERT(!err && "lock failed");
 
-        h2_stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_ACTIVATED;
 
         err = aws_mutex_unlock(&h2_stream->synced_data.lock);
         AWS_ASSERT(!err && "unlock failed");

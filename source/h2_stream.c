@@ -270,7 +270,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     }
 
     /* Not sending window update at half closed remote state */
-    bool ignore_window_udpate = aws_h2_stream_get_state(stream) == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE;
+    bool ignore_window_update = aws_h2_stream_get_state(stream) == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE;
 
     struct aws_linked_list pending_frames;
     aws_linked_list_init(&pending_frames);
@@ -296,8 +296,8 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     while (!aws_linked_list_empty(&pending_frames)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&pending_frames);
         struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
-        if (ignore_window_udpate && (frame->type == AWS_H2_FRAME_T_WINDOW_UPDATE)) {
-            /* Do not send the window udpate frame and clean it up */
+        if (ignore_window_update && (frame->type == AWS_H2_FRAME_T_WINDOW_UPDATE)) {
+            /* Do not send the window update frame and clean it up */
             aws_h2_frame_destroy(frame);
             continue;
         }
@@ -368,7 +368,7 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
     }
 
     int err = 0;
-    bool stream_is_activating;
+    bool stream_is_active;
     bool cross_thread_work_should_schedule = false;
     /* The window update size can be atomic, but either way, we will need to lock here. */
     size_t sum_size;
@@ -377,9 +377,9 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
 
         err |= aws_add_size_checked(stream->synced_data.window_update_size, increment_size, &sum_size);
         err |= sum_size > AWS_H2_WINDOW_UPDATE_MAX;
-        stream_is_activating = stream->synced_data.api_state == AWS_H2_STREAM_API_STATE_ACTIVATED;
+        stream_is_active = stream->synced_data.api_state == AWS_H2_STREAM_API_STATE_ACTIVE;
 
-        if (!err && stream_is_activating) {
+        if (!err && stream_is_active) {
             cross_thread_work_should_schedule = !stream->synced_data.is_cross_thread_work_task_scheduled;
             stream->synced_data.is_cross_thread_work_task_scheduled = true;
             aws_linked_list_push_back(&stream->synced_data.pending_frame_list, &stream_window_update_frame->node);
@@ -396,7 +396,7 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
         return;
     }
 
-    if (!stream_is_activating) {
+    if (!stream_is_active) {
         AWS_H2_STREAM_LOG(
             ERROR,
             stream,
@@ -426,15 +426,15 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t h
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
     bool reset_called;
-    bool stream_is_activating;
+    bool stream_is_active;
     bool cross_thread_work_should_schedule = false;
 
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream);
 
         reset_called = stream->synced_data.reset_called;
-        stream_is_activating = stream->synced_data.api_state == AWS_H2_STREAM_API_STATE_ACTIVATED;
-        if (!reset_called && stream_is_activating) {
+        stream_is_active = stream->synced_data.api_state == AWS_H2_STREAM_API_STATE_ACTIVE;
+        if (!reset_called && stream_is_active) {
             cross_thread_work_should_schedule = !stream->synced_data.is_cross_thread_work_task_scheduled;
             stream->synced_data.reset_called = true;
             stream->synced_data.user_reset_error_code = http2_error;
@@ -450,7 +450,7 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t h
         return AWS_OP_SUCCESS;
     }
 
-    if (!stream_is_activating) {
+    if (!stream_is_active) {
         AWS_H2_STREAM_LOG(
             ERROR, stream, "Reset stream failed. State for the stream doesn't allow RST_STREAM to send. (closed/idle)");
         return aws_raise_error(AWS_ERROR_INVALID_STATE);

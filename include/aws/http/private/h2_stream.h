@@ -59,7 +59,7 @@ enum aws_h2_stream_state {
 /* simplified stream state for API implementation */
 enum aws_h2_stream_api_state {
     AWS_H2_STREAM_API_STATE_INIT,
-    AWS_H2_STREAM_API_STATE_ACTIVATED,
+    AWS_H2_STREAM_API_STATE_ACTIVE,
     AWS_H2_STREAM_API_STATE_COMPLETE,
 };
 
