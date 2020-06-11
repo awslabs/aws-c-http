@@ -1994,17 +1994,17 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
     int err;
     bool was_cross_thread_work_scheduled = false;
     { /* BEGIN CRITICAL SECTION */
-        s_acquire_stream_and_connection_lock(stream, connection);
+        s_acquire_stream_and_connection_lock(h2_stream, connection);
 
         if (stream->id) {
             /* stream has already been activated. */
-            s_release_stream_and_connection_lock(stream, connection);
+            s_release_stream_and_connection_lock(h2_stream, connection);
             return AWS_OP_SUCCESS;
         }
 
         err = connection->synced_data.new_stream_error_code;
         if (err) {
-            s_release_stream_and_connection_lock(stream, connection);
+            s_release_stream_and_connection_lock(h2_stream, connection);
             goto error;
         }
 
@@ -2018,7 +2018,7 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
         }
 
         h2_stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_ACTIVE;
-        s_release_stream_and_connection_lock(stream, connection);
+        s_release_stream_and_connection_lock(h2_stream, connection);
     } /* END CRITICAL SECTION */
 
     if (!stream->id) {
