@@ -1371,7 +1371,7 @@ static int s_encode_header_field(
     /* Else, Literal header field... */
 
     /* determine exactly which type of literal header-field to encode. */
-    enum aws_hpack_entry_type literal_entry_type;
+    enum aws_hpack_entry_type literal_entry_type = AWS_HPACK_ENTRY_TYPE_COUNT;
     if (s_convert_http_compression_to_literal_entry_type(header->compression, &literal_entry_type)) {
         goto error;
     }
