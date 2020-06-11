@@ -88,10 +88,10 @@ static int s_connection_get_received_goaway(
     uint32_t *out_last_stream_id);
 static void s_connection_get_local_settings(
     const struct aws_http_connection *connection_base,
-    struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT]);
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
 static void s_connection_get_remote_settings(
     const struct aws_http_connection *connection_base,
-    struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT]);
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
 
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
@@ -2378,7 +2378,7 @@ closed:
 
 static void s_get_settings_general(
     const struct aws_http_connection *connection_base,
-    struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT],
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT],
     bool local) {
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
@@ -2396,22 +2396,22 @@ static void s_get_settings_general(
     } /* END CRITICAL SECTION */
     for (int i = AWS_HTTP2_SETTINGS_BEGIN_RANGE; i < AWS_HTTP2_SETTINGS_END_RANGE; i++) {
         /* settings range begin with 1, store them into 0-based array of aws_http2_setting */
-        settings[i - 1].id = i;
-        settings[i - 1].value = synced_settings[i];
+        out_settings[i - 1].id = i;
+        out_settings[i - 1].value = synced_settings[i];
     }
     return;
 }
 
 static void s_connection_get_local_settings(
     const struct aws_http_connection *connection_base,
-    struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT]) {
-    s_get_settings_general(connection_base, settings, true /*local*/);
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    s_get_settings_general(connection_base, out_settings, true /*local*/);
 }
 
 static void s_connection_get_remote_settings(
     const struct aws_http_connection *connection_base,
-    struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT]) {
-    s_get_settings_general(connection_base, settings, false /*local*/);
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    s_get_settings_general(connection_base, out_settings, false /*local*/);
 }
 
 /* Send a GOAWAY with the lowest possible last-stream-id or graceful shutdown warning */

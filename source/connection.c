@@ -322,33 +322,25 @@ int aws_http2_connection_get_received_goaway(
 
 int aws_http2_connection_get_local_settings(
     const struct aws_http_connection *http2_connection,
-    struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
-    if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
-        AWS_LOGF_WARN(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
-            (void *)http2_connection);
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
     }
-    http2_connection->vtable->get_local_settings(http2_connection, settings);
+    http2_connection->vtable->get_local_settings(http2_connection, out_settings);
     return AWS_OP_SUCCESS;
 }
 
 int aws_http2_connection_get_remote_settings(
     const struct aws_http_connection *http2_connection,
-    struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
-    if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
-        AWS_LOGF_WARN(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
-            (void *)http2_connection);
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
     }
-    http2_connection->vtable->get_remote_settings(http2_connection, settings);
+    http2_connection->vtable->get_remote_settings(http2_connection, out_settings);
     return AWS_OP_SUCCESS;
 }
 
