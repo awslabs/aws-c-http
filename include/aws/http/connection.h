@@ -503,7 +503,7 @@ int aws_http2_connection_get_remote_settings(
     const struct aws_http_connection *http2_connection,
     struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
 
-/**    
+/**
  * Send a custom GOAWAY frame (HTTP/2 only).
  *
  * Note that the connection automatically attempts to send a GOAWAY during
