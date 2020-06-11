@@ -3955,6 +3955,14 @@ TEST_CASE(h2_client_get_sent_goaway) {
     ASSERT_UINT_EQUALS(AWS_H2_STREAM_ID_MAX, last_stream_id);
     ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_NO_ERROR, http2_error);
 
+    /* Second graceful shutdown warning, with non-zero error. Well it's not against the law, just do what user wants */
+    ASSERT_SUCCESS(aws_http2_connection_send_goaway(
+        s_tester.connection, AWS_HTTP2_ERR_ENHANCE_YOUR_CALM, true /*allow_more_streams*/, NULL /*debug_data*/));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(aws_http2_connection_get_sent_goaway(s_tester.connection, &http2_error, &last_stream_id));
+    ASSERT_UINT_EQUALS(AWS_H2_STREAM_ID_MAX, last_stream_id);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_ENHANCE_YOUR_CALM, http2_error);
+
     struct aws_byte_cursor opaque_data = aws_byte_cursor_from_c_str("12345678");
     /* peer send extra ping ack will lead to a connection error and goaway will be sent */
     struct aws_h2_frame *peer_frame = aws_h2_frame_new_ping(allocator, true /*ACK*/, opaque_data.ptr);

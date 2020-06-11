@@ -528,7 +528,7 @@ static struct aws_h2_pending_goaway *s_new_pending_goaway(
         debug_data.ptr = debug_data_storage;
     }
     pending_goaway->debug_data = debug_data;
-    pending_goaway->http2_error = allow_more_streams ? AWS_HTTP2_ERR_NO_ERROR : http2_error;
+    pending_goaway->http2_error = http2_error;
     pending_goaway->allow_more_streams = allow_more_streams;
     return pending_goaway;
 }
@@ -2302,7 +2302,9 @@ static int s_connection_send_goaway(
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     struct aws_h2_pending_goaway *pending_goaway =
         s_new_pending_goaway(connection->base.alloc, http2_error, allow_more_streams, optional_debug_data);
+
     if (!pending_goaway) {
+        /* error happened during acquire memory. Error code raised there and skip logging. */
         return AWS_OP_ERR;
     }
 
@@ -2321,6 +2323,15 @@ static int s_connection_send_goaway(
         aws_linked_list_push_back(&connection->synced_data.pending_goaway_list, &pending_goaway->node);
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
+
+    if (allow_more_streams && (http2_error != AWS_HTTP2_ERR_NO_ERROR)) {
+        CONNECTION_LOGF(
+            DEBUG,
+            connection,
+            "Send goaway with allow more streams on and non-zero error code %s(0x%x)",
+            aws_http2_error_code_to_str(http2_error),
+            http2_error);
+    }
 
     if (!was_cross_thread_work_scheduled) {
         CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
@@ -2341,7 +2352,6 @@ static void s_send_goaway(
     bool allow_more_streams,
     const struct aws_byte_cursor *optional_debug_data) {
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
-    AWS_PRECONDITION(!allow_more_streams || (h2_error_code == AWS_HTTP2_ERR_NO_ERROR));
 
     uint32_t last_stream_id = allow_more_streams ? AWS_H2_STREAM_ID_MAX
                                                  : aws_min_u32(
