@@ -424,12 +424,6 @@ bool aws_http_connection_is_open(const struct aws_http_connection *connection);
 AWS_HTTP_API
 bool aws_http_connection_is_client(const struct aws_http_connection *connection);
 
-/**
- * Increments the connection-wide read window by the value specified.
- */
-AWS_HTTP_API
-void aws_http_connection_update_window(struct aws_http_connection *connection, size_t increment_size);
-
 AWS_HTTP_API
 enum aws_http_version aws_http_connection_get_version(const struct aws_http_connection *connection);
 
@@ -439,6 +433,15 @@ enum aws_http_version aws_http_connection_get_version(const struct aws_http_conn
  */
 AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
+
+/**
+ * Increments the connection-wide read window by the value specified (HTTP/2 only).
+ * 
+ * @param http2_connection HTTP/2 connection.
+ * @param increment_size Size to increment
+ */
+AWS_HTTP_API
+int aws_http2_connection_update_window(struct aws_http_connection *http2_connection, size_t increment_size);
 
 /**
  * Send a SETTINGS frame (HTTP/2 only).

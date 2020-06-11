@@ -233,11 +233,6 @@ bool aws_http_connection_is_server(const struct aws_http_connection *connection)
     return connection->server_data;
 }
 
-void aws_http_connection_update_window(struct aws_http_connection *connection, size_t increment_size) {
-    AWS_ASSERT(connection);
-    connection->vtable->update_window(connection, increment_size);
-}
-
 static int s_check_http2_connection(struct aws_http_connection *http2_connection) {
     if (http2_connection->http_version == AWS_HTTP_VERSION_2) {
         return AWS_OP_SUCCESS;
@@ -248,6 +243,14 @@ static int s_check_http2_connection(struct aws_http_connection *http2_connection
             (void *)http2_connection);
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
+}
+
+int aws_http2_connection_update_window(struct aws_http_connection *http2_connection, size_t increment_size) {
+    AWS_ASSERT(http2_connection);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    return http2_connection->vtable->h2_update_window(http2_connection, increment_size);
 }
 
 int aws_http2_connection_change_settings(

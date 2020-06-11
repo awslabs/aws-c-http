@@ -51,9 +51,9 @@ struct aws_http_connection_vtable {
     int (*stream_send_response)(struct aws_http_stream *stream, struct aws_http_message *response);
     void (*close)(struct aws_http_connection *connection);
     bool (*is_open)(const struct aws_http_connection *connection);
-    void (*update_window)(struct aws_http_connection *connection, size_t increment_size);
 
     /* HTTP/2 specific functions */
+    int (*h2_update_window)(struct aws_http_connection *http2_connection, size_t increment_size);
     int (*change_settings)(
         struct aws_http_connection *http2_connection,
         const struct aws_http2_setting *settings_array,

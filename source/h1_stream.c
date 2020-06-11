@@ -12,6 +12,7 @@
  * express or implied. See the License for the specific language governing
  * permissions and limitations under the License.
  */
+#include <aws/http/private/h1_connection.h>
 #include <aws/http/private/h1_stream.h>
 
 #include <aws/http/private/connection_impl.h>
@@ -30,7 +31,46 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
 }
 
 static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
-    aws_http_connection_update_window(stream->owning_connection, increment_size);
+    struct aws_http_connection *connection_base = stream->owning_connection;
+    struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
+
+    if (increment_size == 0) {
+        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Ignoring window update of size 0.", (void *)&connection->base);
+        return;
+    }
+
+    volatile bool should_schedule_task;
+    /* If task is already scheduled, just increase size to be updated */
+    { /* BEGIN CRITICAL SECTION */
+        int err = aws_mutex_lock(&connection->synced_data.lock);
+        AWS_ASSERT(!err);
+
+        /* if this is not volatile, gcc-4x will load window_update_size's address into a register
+         * and then read it as should_schedule_task down below, which will invert its meaning */
+        should_schedule_task = (connection->synced_data.window_update_size == 0);
+        connection->synced_data.window_update_size =
+            aws_add_size_saturating(connection->synced_data.window_update_size, increment_size);
+
+        err = aws_mutex_unlock(&connection->synced_data.lock);
+        AWS_ASSERT(!err);
+        (void)err;
+    } /* END CRITICAL SECTION */
+
+    if (should_schedule_task) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Scheduling task for window update of %zu.",
+            (void *)&connection->base,
+            increment_size);
+
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->window_update_task);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Window update must already scheduled, increased scheduled size by %zu.",
+            (void *)&connection->base,
+            increment_size);
+    }
 }
 
 static int s_body_chunks_init(struct aws_h1_stream *stream) {

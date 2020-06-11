@@ -67,7 +67,6 @@ static struct aws_http_stream *s_new_server_request_handler_stream(
 static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response);
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
-static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
 static int s_decoder_on_request(
     enum aws_http_method method_enum,
     const struct aws_byte_cursor *method_str,
@@ -99,7 +98,7 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .stream_send_response = s_stream_send_response,
     .close = s_connection_close,
     .is_open = s_connection_is_open,
-    .update_window = s_connection_update_window,
+    .h2_update_window = NULL,
     .change_settings = NULL,
     .send_ping = NULL,
     .send_goaway = NULL,
@@ -113,83 +112,6 @@ static const struct aws_h1_decoder_vtable s_h1_decoder_vtable = {
     .on_header = s_decoder_on_header,
     .on_body = s_decoder_on_body,
     .on_done = s_decoder_on_done,
-};
-
-struct h1_connection {
-    struct aws_http_connection base;
-
-    size_t initial_window_size;
-
-    /* Single task used repeatedly for sending data from streams. */
-    struct aws_channel_task outgoing_stream_task;
-
-    /* Single task used for issuing window updates from off-thread */
-    struct aws_channel_task window_update_task;
-
-    /* Only the event-loop thread may touch this data */
-    struct {
-        /* List of streams being worked on. */
-        struct aws_linked_list stream_list;
-
-        /* Points to the stream whose data is currently being sent.
-         * This stream is ALWAYS in the `stream_list`.
-         * HTTP pipelining is supported, so once the stream is completely written
-         * we'll start working on the next stream in the list */
-        struct aws_h1_stream *outgoing_stream;
-
-        /* Points to the stream being decoded.
-         * This stream is ALWAYS in the `stream_list`. */
-        struct aws_h1_stream *incoming_stream;
-        struct aws_h1_decoder *incoming_stream_decoder;
-
-        /* Used to encode requests and responses */
-        struct aws_h1_encoder encoder;
-
-        /* Amount to let read-window shrink after a channel message has been processed. */
-        size_t incoming_message_window_shrink_size;
-
-        /* Messages received after the connection has switched protocols.
-         * These are passed downstream to the next handler. */
-        struct aws_linked_list midchannel_read_messages;
-
-        /* True when read and/or writing has stopped, whether due to errors or normal channel shutdown. */
-        bool is_reading_stopped;
-        bool is_writing_stopped;
-
-        /* If true, the connection has upgraded to another protocol.
-         * It will pass data to adjacent channel handlers without altering it.
-         * The connection can no longer service request/response streams. */
-        bool has_switched_protocols;
-
-        /* Server-only. Request-handler streams can only be created while this is true. */
-        bool can_create_request_handler_stream;
-
-        struct aws_crt_statistics_http1_channel stats;
-
-        uint64_t outgoing_stream_timestamp_ns;
-        uint64_t incoming_stream_timestamp_ns;
-
-    } thread_data;
-
-    /* Any thread may touch this data, but the lock must be held */
-    struct {
-        struct aws_mutex lock;
-
-        /* New client streams that have not been moved to `stream_list` yet.
-         * This list is not used on servers. */
-        struct aws_linked_list new_client_stream_list;
-
-        bool is_outgoing_stream_task_active;
-
-        /* For checking status from outside the event-loop thread. */
-        bool is_open;
-
-        /* If non-zero, reason to immediately reject new streams. (ex: closing, switched protocols) */
-        int new_stream_error_code;
-
-        /* If non-zero, then window_update_task is scheduled */
-        size_t window_update_size;
-    } synced_data;
 };
 
 static void s_h1_connection_lock_synced_data(struct h1_connection *connection) {
@@ -371,57 +293,6 @@ static void s_update_window_action(struct h1_connection *connection, size_t incr
             aws_error_name(aws_last_error()));
 
         s_shutdown_due_to_error(connection, aws_last_error());
-    }
-}
-
-static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size) {
-    struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
-
-    if (increment_size == 0) {
-        AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Ignoring window update of size 0.", (void *)&connection->base);
-        return;
-    }
-
-    /* If we're on the thread, just do it. */
-    if (aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel)) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Issuing immediate window update of %zu.",
-            (void *)&connection->base,
-            increment_size);
-        s_update_window_action(connection, increment_size);
-        return;
-    }
-
-    /* Otherwise, schedule a task to do it.
-     * If task is already scheduled, just increase size to be updated */
-
-    /* BEGIN CRITICAL SECTION */
-    s_h1_connection_lock_synced_data(connection);
-
-    /* if this is not volatile, gcc-4x will load window_update_size's address into a register
-     * and then read it as should_schedule_task down below, which will invert its meaning */
-    volatile bool should_schedule_task = (connection->synced_data.window_update_size == 0);
-    connection->synced_data.window_update_size =
-        aws_add_size_saturating(connection->synced_data.window_update_size, increment_size);
-
-    s_h1_connection_unlock_synced_data(connection);
-    /* END CRITICAL SECTION */
-
-    if (should_schedule_task) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Scheduling task for window update of %zu.",
-            (void *)&connection->base,
-            increment_size);
-
-        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->window_update_task);
-    } else {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Window update must already scheduled, increased scheduled size by %zu.",
-            (void *)&connection->base,
-            increment_size);
     }
 }
 
