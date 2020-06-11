@@ -204,6 +204,27 @@ static struct aws_h2err s_check_state_allows_frame_type(
     return aws_h2err_from_h2_code(h2_error_code);
 }
 
+static int s_stream_send_update_window_frame(struct aws_h2_stream *stream, size_t increment_size) {
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+    AWS_PRECONDITION(increment_size <= AWS_H2_WINDOW_UPDATE_MAX);
+
+    struct aws_h2_connection *connection = s_get_h2_connection(stream);
+    struct aws_h2_frame *stream_window_update_frame =
+        aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, (uint32_t)increment_size);
+
+    if (!stream_window_update_frame) {
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "Failed to create WINDOW_UPDATE frame on connection, error %s",
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+    aws_h2_connection_enqueue_outgoing_frame(connection, stream_window_update_frame);
+
+    return AWS_OP_SUCCESS;
+}
+
 struct aws_h2_stream *aws_h2_stream_new_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options) {
@@ -239,7 +260,6 @@ struct aws_h2_stream *aws_h2_stream_new_request(
 
     stream->synced_data.user_reset_error_code = AWS_HTTP2_ERR_COUNT;
     stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_INIT;
-    aws_linked_list_init(&stream->synced_data.pending_frame_list);
     if (aws_mutex_init(&stream->synced_data.lock)) {
         AWS_H2_STREAM_LOGF(
             ERROR, stream, "Mutex init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
@@ -270,11 +290,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     }
 
     /* Not sending window update at half closed remote state */
-    bool ignore_window_update = aws_h2_stream_get_state(stream) == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE;
-
-    struct aws_linked_list pending_frames;
-    aws_linked_list_init(&pending_frames);
-
+    bool ignore_window_update = (aws_h2_stream_get_state(stream) == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE);
     bool reset_called;
     size_t window_update_size;
     uint32_t user_reset_error_code;
@@ -283,7 +299,6 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         s_lock_synced_data(stream);
         stream->synced_data.is_cross_thread_work_task_scheduled = false;
 
-        aws_linked_list_swap_contents(&stream->synced_data.pending_frame_list, &pending_frames);
         /* window_update_size is ensured to be not greater than AWS_H2_WINDOW_UPDATE_MAX */
         window_update_size = stream->synced_data.window_update_size;
         stream->synced_data.window_update_size = 0;
@@ -293,16 +308,13 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         s_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
 
-    while (!aws_linked_list_empty(&pending_frames)) {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(&pending_frames);
-        struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
-        if (ignore_window_update && (frame->type == AWS_H2_FRAME_T_WINDOW_UPDATE)) {
-            /* Do not send the window update frame and clean it up */
-            aws_h2_frame_destroy(frame);
-            continue;
+    if (window_update_size > 0 && !ignore_window_update) {
+        if (s_stream_send_update_window_frame(stream, window_update_size)) {
+            /* Treat this as a connection error */
+            aws_h2_connection_shutdown_due_to_write_err(connection, aws_last_error());
         }
-        aws_h2_connection_enqueue_outgoing_frame(connection, frame);
     }
+
     /* The largest legal value will be 2 * max window size, which is way less than INT64_MAX, so if the window_size_self
      * overflows, remote peer will find it out. So just apply the change and ignore the possible overflow.*/
     stream->thread_data.window_size_self += window_update_size;
@@ -332,12 +344,6 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
 
     AWS_H2_STREAM_LOG(DEBUG, stream, "Destroying stream");
-
-    while (!aws_linked_list_empty(&stream->synced_data.pending_frame_list)) {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->synced_data.pending_frame_list);
-        struct aws_h2_frame *frame = AWS_CONTAINER_OF(node, struct aws_h2_frame, node);
-        aws_h2_frame_destroy(frame);
-    }
     aws_mutex_clean_up(&stream->synced_data.lock);
     aws_http_message_release(stream->thread_data.outgoing_message);
 
@@ -356,16 +362,6 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
         AWS_H2_STREAM_LOG(WARN, stream, "Manual window management is off, update window operations are not supported.");
         return;
     }
-    struct aws_h2_frame *stream_window_update_frame =
-        aws_h2_frame_new_window_update(connection->base.alloc, stream_base->id, (uint32_t)increment_size);
-    if (!stream_window_update_frame) {
-        AWS_H2_STREAM_LOGF(
-            ERROR,
-            stream,
-            "Failed to create WINDOW_UPDATE frame on connection, error %s",
-            aws_error_name(aws_last_error()));
-        return;
-    }
 
     int err = 0;
     bool stream_is_active;
@@ -382,7 +378,6 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
         if (!err && stream_is_active) {
             cross_thread_work_should_schedule = !stream->synced_data.is_cross_thread_work_task_scheduled;
             stream->synced_data.is_cross_thread_work_task_scheduled = true;
-            aws_linked_list_push_back(&stream->synced_data.pending_frame_list, &stream_window_update_frame->node);
             stream->synced_data.window_update_size = sum_size;
         }
         s_unlock_synced_data(stream);
@@ -402,7 +397,6 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
             stream,
             "Stream update window failed. State for the stream doesn't allow WINDOW_UPDATE to send. (closed/idle)");
         aws_raise_error(AWS_ERROR_INVALID_STATE);
-        aws_h2_frame_destroy(stream_window_update_frame);
         return;
     }
 
@@ -416,7 +410,6 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
             "window size is 2147483647. We got %zu, which will cause the flow-control window to exceed the maximum",
             increment_size);
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        aws_h2_frame_destroy(stream_window_update_frame);
         return;
     }
 }
