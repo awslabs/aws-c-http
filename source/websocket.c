@@ -274,7 +274,7 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
 
     websocket->channel_slot = slot;
 
-    websocket->initial_window_size = options->initial_window_size;
+    websocket->initial_window_size = options->manual_window_update ? options->initial_window_size : SIZE_MAX;
     websocket->manual_window_update = options->manual_window_update;
 
     websocket->user_data = options->user_data;
