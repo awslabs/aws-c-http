@@ -2034,17 +2034,6 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
         aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
     }
 
-    /* set stream's activated flag, make sure stream's cross thread work will be scheduled after connection's */
-    { /* BEGIN CRITICAL SECTION */
-        int err = aws_mutex_lock(&h2_stream->synced_data.lock);
-        AWS_ASSERT(!err && "lock failed");
-
-
-        err = aws_mutex_unlock(&h2_stream->synced_data.lock);
-        AWS_ASSERT(!err && "unlock failed");
-        (void)err;
-    } /* END CRITICAL SECTION */
-
     return AWS_OP_SUCCESS;
 
 error:
