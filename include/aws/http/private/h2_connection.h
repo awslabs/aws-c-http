@@ -49,7 +49,7 @@ struct aws_h2_connection {
 
         /* Settings received from peer, which restricts the message to send */
         uint32_t settings_peer[AWS_HTTP2_SETTINGS_END_RANGE];
-        /* My settings to send/sent to peer, which affects the decoding */
+        /* Local settings to send/sent to peer, which affects the decoding */
         uint32_t settings_self[AWS_HTTP2_SETTINGS_END_RANGE];
 
         /* List using aws_h2_pending_settings.node
@@ -161,6 +161,11 @@ struct aws_h2_connection {
         /* aws_http2_error_code received in most recent GOAWAY frame. Defaults to 0, check
          * goaway_received_last_stream_id for any GOAWAY has received or not */
         uint32_t goaway_received_http2_error_code;
+
+        /* For checking settings received from peer from outside the event-loop thread. */
+        uint32_t settings_peer[AWS_HTTP2_SETTINGS_END_RANGE];
+        /* For checking local settings to send/sent to peer from outside the event-loop thread. */
+        uint32_t settings_self[AWS_HTTP2_SETTINGS_END_RANGE];
     } synced_data;
 };
 

@@ -86,6 +86,12 @@ static int s_connection_get_received_goaway(
     struct aws_http_connection *connection_base,
     uint32_t *out_http2_error,
     uint32_t *out_last_stream_id);
+static void s_connection_get_local_settings(
+    const struct aws_http_connection *connection_base,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
+static void s_connection_get_remote_settings(
+    const struct aws_http_connection *connection_base,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
 
 static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_outgoing_frames_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
@@ -169,6 +175,8 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .send_goaway = s_connection_send_goaway,
     .get_sent_goaway = s_connection_get_sent_goaway,
     .get_received_goaway = s_connection_get_received_goaway,
+    .get_local_settings = s_connection_get_local_settings,
+    .get_remote_settings = s_connection_get_remote_settings,
 };
 
 static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
@@ -336,6 +344,9 @@ static struct aws_h2_connection *s_connection_new(
     /* Initialize the value of settings */
     memcpy(connection->thread_data.settings_peer, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
     memcpy(connection->thread_data.settings_self, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
+
+    memcpy(connection->synced_data.settings_peer, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
+    memcpy(connection->synced_data.settings_self, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
 
     connection->thread_data.window_size_peer = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
     connection->thread_data.window_size_self = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
@@ -1367,6 +1378,16 @@ static struct aws_h2err s_decoder_on_settings(
         connection->on_remote_settings_change(
             &connection->base, callback_array, callback_array_num, connection->base.user_data);
     }
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+
+        memcpy(
+            connection->synced_data.settings_peer,
+            connection->thread_data.settings_peer,
+            sizeof(connection->thread_data.settings_peer));
+
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
     aws_mem_release(connection->base.alloc, callback_array);
     return AWS_H2ERR_SUCCESS;
 error:
@@ -1432,6 +1453,16 @@ static struct aws_h2err s_decoder_on_settings_ack(void *userdata) {
     if (pending_settings->on_completed) {
         pending_settings->on_completed(&connection->base, AWS_ERROR_SUCCESS, pending_settings->user_data);
     }
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+
+        memcpy(
+            connection->synced_data.settings_self,
+            connection->thread_data.settings_self,
+            sizeof(connection->thread_data.settings_self));
+
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
     /* clean up the pending_settings */
     aws_mem_release(connection->base.alloc, pending_settings);
     return AWS_H2ERR_SUCCESS;
@@ -2343,6 +2374,44 @@ closed:
     CONNECTION_LOG(ERROR, connection, "Failed to send goaway, connection is closed or closing.");
     aws_mem_release(connection->base.alloc, pending_goaway);
     return aws_raise_error(AWS_ERROR_INVALID_STATE);
+}
+
+static void s_get_settings_general(
+    const struct aws_http_connection *connection_base,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT],
+    bool local) {
+
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
+    uint32_t synced_settings[AWS_HTTP2_SETTINGS_END_RANGE];
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+        if (local) {
+            memcpy(
+                synced_settings, connection->synced_data.settings_self, sizeof(connection->synced_data.settings_self));
+        } else {
+            memcpy(
+                synced_settings, connection->synced_data.settings_peer, sizeof(connection->synced_data.settings_peer));
+        }
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+    for (int i = AWS_HTTP2_SETTINGS_BEGIN_RANGE; i < AWS_HTTP2_SETTINGS_END_RANGE; i++) {
+        /* settings range begin with 1, store them into 0-based array of aws_http2_setting */
+        out_settings[i - 1].id = i;
+        out_settings[i - 1].value = synced_settings[i];
+    }
+    return;
+}
+
+static void s_connection_get_local_settings(
+    const struct aws_http_connection *connection_base,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    s_get_settings_general(connection_base, out_settings, true /*local*/);
+}
+
+static void s_connection_get_remote_settings(
+    const struct aws_http_connection *connection_base,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    s_get_settings_general(connection_base, out_settings, false /*local*/);
 }
 
 /* Send a GOAWAY with the lowest possible last-stream-id or graceful shutdown warning */
