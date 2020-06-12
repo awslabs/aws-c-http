@@ -3909,11 +3909,13 @@ TEST_CASE(h2_client_stream_reset_stream) {
     struct client_stream_tester stream_tester;
     ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    size_t frames_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
 
     /* reset stream with no error */
     ASSERT_SUCCESS(aws_http2_stream_reset(stream_tester.stream, AWS_HTTP2_ERR_NO_ERROR));
-    /* stream can only be reset once */
-    ASSERT_FAILS(aws_http2_stream_reset(stream_tester.stream, AWS_HTTP2_ERR_CANCEL));
+    /* stream can only be reset once, the second reset will not fail but will be ignored */
+    ASSERT_SUCCESS(aws_http2_stream_reset(stream_tester.stream, AWS_HTTP2_ERR_CANCEL));
 
     /* validate that stream completed with error. */
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -3921,10 +3923,11 @@ TEST_CASE(h2_client_stream_reset_stream) {
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_RST_STREAM_SENT, stream_tester.on_complete_error_code);
     /* a stream error should not affect the connection */
     ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
-    /* validate that stream sent RST_STREAM */
+    /* validate that stream sent only the first RST_STREAM */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *rst_stream_frame =
-        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, 0, NULL);
+    ASSERT_TRUE(frames_count + 1 == h2_decode_tester_frame_count(&s_tester.peer.decode));
+    struct h2_decoded_frame *rst_stream_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
+    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_RST_STREAM, rst_stream_frame->type);
     ASSERT_INT_EQUALS(AWS_HTTP2_ERR_NO_ERROR, rst_stream_frame->error_code);
 
     /* clean up */
