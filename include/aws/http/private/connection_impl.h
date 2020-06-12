@@ -56,16 +56,35 @@ struct aws_http_connection_vtable {
 
     /* HTTP/2 specific functions */
     int (*change_settings)(
-        struct aws_http_connection *connection,
+        struct aws_http_connection *http2_connection,
         const struct aws_http2_setting *settings_array,
         size_t num_settings,
         aws_http2_on_change_settings_complete_fn *on_completed,
         void *user_data);
-    int (*ping)(
-        struct aws_http_connection *connection,
+    int (*send_ping)(
+        struct aws_http_connection *http2_connection,
         const struct aws_byte_cursor *optional_opaque_data,
         aws_http2_on_ping_complete_fn *on_completed,
         void *user_data);
+    int (*send_goaway)(
+        struct aws_http_connection *http2_connection,
+        uint32_t http2_error,
+        bool allow_more_streams,
+        const struct aws_byte_cursor *optional_debug_data);
+    int (*get_sent_goaway)(
+        struct aws_http_connection *http2_connection,
+        uint32_t *out_http2_error,
+        uint32_t *out_last_stream_id);
+    int (*get_received_goaway)(
+        struct aws_http_connection *http2_connection,
+        uint32_t *out_http2_error,
+        uint32_t *out_last_stream_id);
+    void (*get_local_settings)(
+        const struct aws_http_connection *http2_connection,
+        struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
+    void (*get_remote_settings)(
+        const struct aws_http_connection *http2_connection,
+        struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
 };
 
 typedef int(aws_http_proxy_request_transform_fn)(struct aws_http_message *request, void *user_data);
