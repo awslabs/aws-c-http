@@ -196,9 +196,8 @@ struct aws_websocket_client_connection_options {
 
     /**
      * Initial window size for websocket.
-     * Only applies if manual_window_management is set true.
-     * Set to 0 to prevent any incoming websocket frames until
-     * aws_websocket_increment_read_window() is called or a downstream handler is installed.
+     * Required.
+     * Set to 0 to prevent any incoming websocket frames until aws_websocket_increment_read_window() is called.
      */
     size_t initial_window_size;
 
@@ -251,8 +250,7 @@ struct aws_websocket_client_connection_options {
     /**
      * Set to true to manually manage the read window size.
      *
-     * If this is false, the connection will manage its window so that no
-     * back-pressure is applied and data arrives as fast as possible.
+     * If this is false, the connection will maintain a constant window size.
      *
      * If this is true, the caller must manually increment the window size using aws_websocket_increment_read_window().
      * If the window is not incremented, it will shrink by the amount of payload data received. If the window size

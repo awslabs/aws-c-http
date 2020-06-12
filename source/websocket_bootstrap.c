@@ -199,7 +199,10 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     http_options.tls_options = options->tls_options;
     http_options.proxy_options = options->proxy_options;
     http_options.initial_window_size = 1024; /* Adequate space for response data to trickle in */
-    http_options.manual_window_management = options->manual_window_management;
+
+    /* TODO: websockets has issues if back-pressure is disabled on the whole channel. This should be fixed. */
+    http_options.manual_window_management = true;
+
     http_options.user_data = ws_bootstrap;
     http_options.on_setup = s_ws_bootstrap_on_http_setup;
     http_options.on_shutdown = s_ws_bootstrap_on_http_shutdown;
