@@ -320,11 +320,15 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     stream->thread_data.window_size_self += window_update_size;
 
     if (reset_called) {
-        /* TODO:: It's possible that server sends a rst_stream with NO_ERROR, after full response has been sent. In this
-         * case the aws_code here should be AWS_ERROR_HTTP_SUCCESS */
         struct aws_h2err h2err;
         h2err.h2_code = user_reset_error_code;
-        h2err.aws_code = AWS_ERROR_HTTP_RST_STREAM_SENT;
+        if (stream->base.server_data && stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL) {
+            /* (RFC-7540 8.1) A server MAY request that the client abort transmission of a request without error by
+             * sending a RST_STREAM with an error code of NO_ERROR after sending a complete response */
+            h2err.aws_code = AWS_ERROR_SUCCESS;
+        } else {
+            h2err.aws_code = AWS_ERROR_HTTP_RST_STREAM_SENT;
+        }
         struct aws_h2err returned_h2err = s_send_rst_and_close_stream(stream, h2err);
         if (aws_h2err_failed(returned_h2err)) {
             aws_h2_connection_shutdown_due_to_write_err(connection, returned_h2err.aws_code);
