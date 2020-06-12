@@ -78,6 +78,12 @@ struct aws_http_connection_vtable {
         struct aws_http_connection *http2_connection,
         uint32_t *out_http2_error,
         uint32_t *out_last_stream_id);
+    void (*get_local_settings)(
+        const struct aws_http_connection *http2_connection,
+        struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
+    void (*get_remote_settings)(
+        const struct aws_http_connection *http2_connection,
+        struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
 };
 
 typedef int(aws_http_proxy_request_transform_fn)(struct aws_http_message *request, void *user_data);
