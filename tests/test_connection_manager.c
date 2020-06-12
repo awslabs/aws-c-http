@@ -609,7 +609,7 @@ static void s_aws_http_connection_manager_close_connection_sync_mock(struct aws_
     (void)connection;
 }
 
-static bool s_aws_http_connection_manager_is_connection_aviable_sync_mock(
+static bool s_aws_http_connection_manager_is_connection_available_sync_mock(
     const struct aws_http_connection *connection) {
     (void)connection;
 
@@ -635,7 +635,7 @@ static struct aws_http_connection_manager_system_vtable s_synchronous_mocks = {
     .create_connection = s_aws_http_connection_manager_create_connection_sync_mock,
     .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
     .close_connection = s_aws_http_connection_manager_close_connection_sync_mock,
-    .is_connection_aviable = s_aws_http_connection_manager_is_connection_aviable_sync_mock,
+    .is_connection_available = s_aws_http_connection_manager_is_connection_available_sync_mock,
     .get_monotonic_time = aws_high_res_clock_get_ticks,
     .connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
     .is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
@@ -759,7 +759,7 @@ static struct aws_http_connection_manager_system_vtable s_idle_mocks = {
     .create_connection = s_aws_http_connection_manager_create_connection_sync_mock,
     .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
     .close_connection = s_aws_http_connection_manager_close_connection_sync_mock,
-    .is_connection_aviable = s_aws_http_connection_manager_is_connection_aviable_sync_mock,
+    .is_connection_available = s_aws_http_connection_manager_is_connection_available_sync_mock,
     .get_monotonic_time = s_tester_get_mock_time,
     .connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
     .is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,

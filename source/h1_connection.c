@@ -336,7 +336,9 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
             h1_stream->synced_data.has_outgoing_response = true;
             h1_stream->encoder_message = encoder_message;
             if (encoder_message.has_connection_close_header) {
+                /* This will be the last stream connection will process, new streams will be rejected */
                 h1_stream->is_final_stream = true;
+                connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
             }
 
             if (!connection->synced_data.is_outgoing_stream_task_active) {
@@ -1083,6 +1085,11 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
                 (void *)&incoming_stream->base);
 
             incoming_stream->is_final_stream = true;
+            { /* BEGIN CRITICAL SECTION */
+                s_h1_connection_lock_synced_data(connection);
+                connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
+                s_h1_connection_unlock_synced_data(connection);
+            } /* END CRITICAL SECTION */
         }
     }
 
