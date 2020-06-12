@@ -364,18 +364,17 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
     }
 
     int err = 0;
-    bool stream_is_active;
+    bool stream_is_init;
     bool cross_thread_work_should_schedule = false;
-    /* The window update size can be atomic, but either way, we will need to lock here. */
     size_t sum_size;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream);
 
         err |= aws_add_size_checked(stream->synced_data.window_update_size, increment_size, &sum_size);
         err |= sum_size > AWS_H2_WINDOW_UPDATE_MAX;
-        stream_is_active = stream->synced_data.api_state == AWS_H2_STREAM_API_STATE_ACTIVE;
+        stream_is_init = stream->synced_data.api_state == AWS_H2_STREAM_API_STATE_INIT;
 
-        if (!err && stream_is_active) {
+        if (!err && !stream_is_init) {
             cross_thread_work_should_schedule = !stream->synced_data.is_cross_thread_work_task_scheduled;
             stream->synced_data.is_cross_thread_work_task_scheduled = true;
             stream->synced_data.window_update_size = sum_size;
@@ -391,11 +390,11 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
         return;
     }
 
-    if (!stream_is_active) {
+    if (stream_is_init) {
         AWS_H2_STREAM_LOG(
             ERROR,
             stream,
-            "Stream update window failed. State for the stream doesn't allow WINDOW_UPDATE to send. (closed/idle)");
+            "Stream update window failed. Stream is in initialized state, please activate the stream first.");
         aws_raise_error(AWS_ERROR_INVALID_STATE);
         return;
     }
@@ -419,15 +418,15 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t h
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
     bool reset_called;
-    bool stream_is_active;
+    bool stream_is_init;
     bool cross_thread_work_should_schedule = false;
 
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream);
 
         reset_called = stream->synced_data.reset_called;
-        stream_is_active = stream->synced_data.api_state == AWS_H2_STREAM_API_STATE_ACTIVE;
-        if (!reset_called && stream_is_active) {
+        stream_is_init = stream->synced_data.api_state == AWS_H2_STREAM_API_STATE_INIT;
+        if (!reset_called && !stream_is_init) {
             cross_thread_work_should_schedule = !stream->synced_data.is_cross_thread_work_task_scheduled;
             stream->synced_data.reset_called = true;
             stream->synced_data.user_reset_error_code = http2_error;
@@ -443,15 +442,14 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t h
         return AWS_OP_SUCCESS;
     }
 
-    if (!stream_is_active) {
+    if (stream_is_init) {
         AWS_H2_STREAM_LOG(
-            ERROR, stream, "Reset stream failed. State for the stream doesn't allow RST_STREAM to send. (closed/idle)");
+            ERROR, stream, "Reset stream failed. Stream is in initialized state, please activate the stream first.");
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
     if (reset_called) {
-        AWS_H2_STREAM_LOG(ERROR, stream, "Reset stream failed. Reset stream has been called before.");
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+        AWS_H2_STREAM_LOG(DEBUG, stream, "Reset stream ignored. Reset stream has been called already.");
     }
 
     return AWS_OP_SUCCESS;
