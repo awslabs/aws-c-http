@@ -423,6 +423,13 @@ AWS_HTTP_API
 bool aws_http_connection_is_open(const struct aws_http_connection *connection);
 
 /**
+ * Return whether the connection can make a new requests.
+ * If false, then a new connection must be established to make further requests.
+ */
+AWS_HTTP_API
+bool aws_http_connection_new_requests_allowed(const struct aws_http_connection *connection);
+
+/**
  * Returns true if this is a client connection.
  */
 AWS_HTTP_API
