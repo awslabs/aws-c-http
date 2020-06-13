@@ -42,10 +42,19 @@ struct aws_h1_stream {
     /* Buffer for incoming data that needs to stick around. */
     struct aws_byte_buf incoming_storage_buf;
 
+    /* Single task used for issuing window updates from off-thread */
+    struct aws_channel_task window_update_task;
+
+    /* The flow-control window size for stream */
+    size_t stream_window_size;
+
     /* Any thread may touch this data, but the lock must be held */
     struct {
         /* Whether a "request handler" stream has a response to send. */
         bool has_outgoing_response;
+
+        /* If non-zero, then window_update_task is scheduled */
+        size_t window_update_size;
     } synced_data;
 };
 

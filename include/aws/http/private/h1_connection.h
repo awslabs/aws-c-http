@@ -23,13 +23,11 @@
 struct h1_connection {
     struct aws_http_connection base;
 
+    /* Initial window size for new streams */
     size_t initial_window_size;
 
     /* Single task used repeatedly for sending data from streams. */
     struct aws_channel_task outgoing_stream_task;
-
-    /* Single task used for issuing window updates from off-thread */
-    struct aws_channel_task window_update_task;
 
     /* Only the event-loop thread may touch this data */
     struct {
@@ -52,6 +50,9 @@ struct h1_connection {
 
         /* Amount to let read-window shrink after a channel message has been processed. */
         size_t incoming_message_window_shrink_size;
+
+        /* The flow-control window size for connection */
+        size_t connection_window_size;
 
         /* Messages received after the connection has switched protocols.
          * These are passed downstream to the next handler. */
@@ -91,11 +92,11 @@ struct h1_connection {
 
         /* If non-zero, reason to immediately reject new streams. (ex: closing, switched protocols) */
         int new_stream_error_code;
-
-        /* If non-zero, then window_update_task is scheduled */
-        size_t window_update_size;
     } synced_data;
 };
+
+/* Action to update window, only called from event-loop thread */
+void aws_h1_update_window_action(struct h1_connection *connection, size_t increment_size);
 
 AWS_EXTERN_C_BEGIN
 

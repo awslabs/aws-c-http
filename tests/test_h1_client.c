@@ -2192,10 +2192,43 @@ H1_CLIENT_TEST_CASE(h1_client_window_shrinks_if_user_says_so) {
     return AWS_OP_SUCCESS;
 }
 
-/* Stop window from fully re-opening, then open it manually afterwards*/
-static int s_window_update(struct aws_allocator *allocator, bool on_thread) {
+static int s_manual_window_update_tester_init(struct tester *tester, struct aws_allocator *alloc) {
+    aws_http_library_init(alloc);
+
+    AWS_ZERO_STRUCT(*tester);
+
+    tester->alloc = alloc;
+
+    struct aws_logger_standard_options logger_options = {
+        .level = AWS_LOG_LEVEL_TRACE,
+        .file = stderr,
+    };
+    ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->alloc, &logger_options));
+    aws_logger_set(&tester->logger);
+
+    struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
+    ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc, &test_channel_options));
+
+    /* Use small window so that we can observe it opening in tests.
+     * Channel may wait until the window is small before issuing the increment command. */
+    tester->connection = aws_http_connection_new_http1_1_client(alloc, true, 10);
+    ASSERT_NOT_NULL(tester->connection);
+
+    struct aws_channel_slot *slot = aws_channel_slot_new(tester->testing_channel.channel);
+    ASSERT_NOT_NULL(slot);
+    ASSERT_SUCCESS(aws_channel_slot_insert_end(tester->testing_channel.channel, slot));
+    ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &tester->connection->channel_handler));
+    tester->connection->vtable->on_channel_handler_installed(&tester->connection->channel_handler, slot);
+
+    testing_channel_drain_queued_tasks(&tester->testing_channel);
+
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_window_manual_update) {
+    (void)ctx;
     struct tester tester;
-    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+    ASSERT_SUCCESS(s_manual_window_update_tester_init(&tester, allocator));
 
     /* send request */
     struct aws_http_message *request = s_new_default_get_request(allocator);
@@ -2209,45 +2242,27 @@ static int s_window_update(struct aws_allocator *allocator, bool on_thread) {
     aws_http_message_destroy(request);
 
     /* send response */
-    const char *response_str = "HTTP/1.1 200 OK\r\n"
-                               "Content-Length: 9\r\n"
-                               "\r\n"
-                               "Call Momo";
-    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, response_str));
+    ASSERT_SUCCESS(testing_channel_push_read_str(
+        &tester.testing_channel,
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 9\r\n"
+        "\r\n"
+        "Call Momo"));
 
-    /* drain the task queue, in case there's an update window task in there from the headers */
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     /* check result */
-    if (!on_thread) {
-        testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
-    }
-
-    aws_http_stream_update_window(stream_tester.stream, 9);
-
-    if (!on_thread) {
-        testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
-    }
-
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    size_t window_update = testing_channel_last_window_update(&tester.testing_channel);
-    ASSERT_INT_EQUALS(9, window_update);
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
+    ASSERT_INT_EQUALS(200, stream_tester.response_status);
+    ASSERT_UINT_EQUALS(1, aws_http_headers_count(stream_tester.response_headers));
+    ASSERT_SUCCESS(s_check_header(stream_tester.response_headers, 0, "Content-Length", "9"));
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&stream_tester.response_body, "Call Momo"));
 
     /* clean up */
     client_stream_tester_clean_up(&stream_tester);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
-}
-
-H1_CLIENT_TEST_CASE(h1_client_window_manual_update) {
-    (void)ctx;
-    return s_window_update(allocator, true);
-}
-
-H1_CLIENT_TEST_CASE(h1_client_window_manual_update_off_thread) {
-    (void)ctx;
-    return s_window_update(allocator, false);
 }
 
 static void s_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {

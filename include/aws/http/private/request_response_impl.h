@@ -40,8 +40,6 @@ struct aws_http_stream {
 
     uint32_t id;
 
-    bool manual_window_management;
-
     void *user_data;
     aws_http_on_incoming_headers_fn *on_incoming_headers;
     aws_http_on_incoming_header_block_done_fn *on_incoming_header_block_done;

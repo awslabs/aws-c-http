@@ -284,7 +284,8 @@ response_error:
     return AWS_OP_ERR;
 }
 
-static void s_update_window_action(struct h1_connection *connection, size_t increment_size) {
+void aws_h1_update_window_action(struct h1_connection *connection, size_t increment_size) {
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
     int err = aws_channel_slot_increment_read_window(connection->base.channel_slot, increment_size);
     if (err) {
         AWS_LOGF_ERROR(
@@ -296,6 +297,7 @@ static void s_update_window_action(struct h1_connection *connection, size_t incr
 
         s_shutdown_due_to_error(connection, aws_last_error());
     }
+    connection->thread_data.connection_window_size += increment_size;
 }
 
 int aws_h1_stream_schedule_outgoing_stream_task(struct aws_http_stream *stream) {
@@ -435,31 +437,6 @@ error:
     return NULL;
 }
 
-static void s_update_window_task(struct aws_channel_task *channel_task, void *arg, enum aws_task_status status) {
-    (void)channel_task;
-    struct h1_connection *connection = arg;
-
-    if (status != AWS_TASK_STATUS_RUN_READY) {
-        return;
-    }
-
-    /* BEGIN CRITICAL SECTION */
-    s_h1_connection_lock_synced_data(connection);
-
-    size_t window_update_size = connection->synced_data.window_update_size;
-    AWS_LOGF_TRACE(
-        AWS_LS_HTTP_CONNECTION,
-        "id=%p: Zeroing window update size, was %zu",
-        (void *)&connection->base,
-        window_update_size);
-    connection->synced_data.window_update_size = 0;
-
-    s_h1_connection_unlock_synced_data(connection);
-    /* END CRITICAL SECTION */
-
-    s_update_window_action(connection, window_update_size);
-}
-
 static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     struct h1_connection *connection = AWS_CONTAINER_OF(stream->base.owning_connection, struct h1_connection, base);
 
@@ -549,6 +526,17 @@ static void s_set_incoming_stream_ptr(struct h1_connection *connection, struct a
             connection->thread_data.incoming_stream_timestamp_ns,
             now_ns,
             &connection->thread_data.stats.pending_incoming_stream_ms);
+    }
+
+    if (next_incoming_stream) {
+        /* new incoming stream, update the connection window, if needed */
+        size_t new_window = aws_min_size(connection->initial_window_size, next_incoming_stream->stream_window_size);
+        /* connection thread_data will be less or equal to initial_window_size, and stream_window_size for new stream
+         * will alway greater or equal to initial_window_size */
+        if (new_window > connection->thread_data.connection_window_size) {
+            aws_h1_update_window_action(connection, new_window - connection->thread_data.connection_window_size);
+        }
+        AWS_ASSERT(new_window == connection->thread_data.connection_window_size);
     }
 
     connection->thread_data.incoming_stream = next_incoming_stream;
@@ -1064,8 +1052,12 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
         AWS_LS_HTTP_STREAM, "id=%p: Incoming body: %zu bytes received.", (void *)&incoming_stream->base, data->len);
 
     /* If the user wishes to manually increment windows, by default shrink the window by the amount of data read. */
-    if (incoming_stream->base.manual_window_management) {
-        connection->thread_data.incoming_message_window_shrink_size += data->len;
+    if (connection->base.manual_window_management) {
+        if (data->len > incoming_stream->stream_window_size) {
+            /* something is wrong, flow control error... */
+            return AWS_OP_ERR;
+        }
+        incoming_stream->stream_window_size -= data->len;
     }
 
     if (incoming_stream->base.on_incoming_body) {
@@ -1089,6 +1081,15 @@ static int s_decoder_on_done(void *user_data) {
     struct h1_connection *connection = user_data;
     struct aws_h1_stream *incoming_stream = connection->thread_data.incoming_stream;
     AWS_ASSERT(incoming_stream);
+
+    /* finished decoding, update the connection window, if needed */
+    size_t new_window = aws_min_size(connection->initial_window_size, incoming_stream->stream_window_size);
+    if (connection->thread_data.connection_window_size > new_window) {
+        connection->thread_data.incoming_message_window_shrink_size +=
+            connection->thread_data.connection_window_size - new_window;
+        connection->thread_data.connection_window_size = new_window;
+    }
+    AWS_ASSERT(new_window == connection->thread_data.connection_window_size);
 
     /* Ensure head was marked done */
     int err = s_mark_head_done(incoming_stream);
@@ -1180,13 +1181,13 @@ static struct h1_connection *s_connection_new(
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
 
-    connection->initial_window_size = initial_window_size;
+    connection->initial_window_size = manual_window_management? initial_window_size : SIZE_MAX;
+    connection->thread_data.connection_window_size = initial_window_size;
 
     aws_h1_encoder_init(&connection->thread_data.encoder, alloc);
 
     aws_channel_task_init(
         &connection->outgoing_stream_task, s_outgoing_stream_task, connection, "http1_outgoing_stream");
-    aws_channel_task_init(&connection->window_update_task, s_update_window_task, connection, "http1_update_window");
     aws_linked_list_init(&connection->thread_data.stream_list);
     aws_linked_list_init(&connection->thread_data.midchannel_read_messages);
     aws_crt_statistics_http1_channel_init(&connection->thread_data.stats);

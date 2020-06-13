@@ -30,8 +30,25 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     aws_mem_release(stream->base.alloc, stream);
 }
 
-static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
-    struct aws_http_connection *connection_base = stream->owning_connection;
+static void s_h1_stream_lock_synced_data(struct aws_h1_stream *stream) {
+    struct aws_http_connection *connection_base = stream->base.owning_connection;
+    struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
+    int err = aws_mutex_lock(&connection->synced_data.lock);
+    AWS_ASSERT(!err);
+    (void)err;
+}
+
+static void s_h1_stream_unlock_synced_data(struct aws_h1_stream *stream) {
+    struct aws_http_connection *connection_base = stream->base.owning_connection;
+    struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
+    int err = aws_mutex_unlock(&connection->synced_data.lock);
+    AWS_ASSERT(!err);
+    (void)err;
+}
+
+static void s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size) {
+    struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
+    struct aws_http_connection *connection_base = stream_base->owning_connection;
     struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
 
     if (increment_size == 0) {
@@ -42,18 +59,15 @@ static void s_stream_update_window(struct aws_http_stream *stream, size_t increm
     volatile bool should_schedule_task;
     /* If task is already scheduled, just increase size to be updated */
     { /* BEGIN CRITICAL SECTION */
-        int err = aws_mutex_lock(&connection->synced_data.lock);
-        AWS_ASSERT(!err);
+        s_h1_stream_lock_synced_data(stream);
 
         /* if this is not volatile, gcc-4x will load window_update_size's address into a register
          * and then read it as should_schedule_task down below, which will invert its meaning */
-        should_schedule_task = (connection->synced_data.window_update_size == 0);
-        connection->synced_data.window_update_size =
-            aws_add_size_saturating(connection->synced_data.window_update_size, increment_size);
+        should_schedule_task = (stream->synced_data.window_update_size == 0);
+        stream->synced_data.window_update_size =
+            aws_add_size_saturating(stream->synced_data.window_update_size, increment_size);
 
-        err = aws_mutex_unlock(&connection->synced_data.lock);
-        AWS_ASSERT(!err);
-        (void)err;
+        s_h1_stream_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
 
     if (should_schedule_task) {
@@ -62,8 +76,9 @@ static void s_stream_update_window(struct aws_http_stream *stream, size_t increm
             "id=%p: Scheduling task for window update of %zu.",
             (void *)&connection->base,
             increment_size);
-
-        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->window_update_task);
+        /* keep stream alive until the task runs */
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &stream->window_update_task);
     } else {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
@@ -71,6 +86,39 @@ static void s_stream_update_window(struct aws_http_stream *stream, size_t increm
             (void *)&connection->base,
             increment_size);
     }
+}
+
+static void s_update_window_task(struct aws_channel_task *channel_task, void *arg, enum aws_task_status status) {
+    (void)channel_task;
+    struct aws_h1_stream *stream = arg;
+    struct aws_http_connection *connection_base = stream->base.owning_connection;
+    struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
+
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        goto end;
+    }
+
+    size_t window_update_size;
+    { /* BEGIN CRITICAL SECTION */
+        s_h1_stream_lock_synced_data(stream);
+
+        window_update_size = stream->synced_data.window_update_size;
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Zeroing window update size, was %zu",
+            (void *)&stream->base,
+            window_update_size);
+        stream->synced_data.window_update_size = 0;
+
+        s_h1_stream_unlock_synced_data(stream);
+    } /* END CRITICAL SECTION */
+
+    if (stream == connection->thread_data.incoming_stream &&
+        connection->thread_data.connection_window_size == stream->stream_window_size) {
+        aws_h1_update_window_action(connection, window_update_size);
+    }
+end:
+    aws_http_stream_release(&stream->base);
 }
 
 static int s_body_chunks_init(struct aws_h1_stream *stream) {
@@ -164,7 +212,6 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
 
 static struct aws_h1_stream *s_stream_new_common(
     struct aws_http_connection *owning_connection,
-    bool manual_window_management,
     void *user_data,
     aws_http_on_incoming_headers_fn *on_incoming_headers,
     aws_http_on_incoming_header_block_done_fn *on_incoming_header_block_done,
@@ -179,15 +226,20 @@ static struct aws_h1_stream *s_stream_new_common(
     stream->base.vtable = &s_stream_vtable;
     stream->base.alloc = owning_connection->alloc;
     stream->base.owning_connection = owning_connection;
-    stream->base.manual_window_management = manual_window_management;
     stream->base.user_data = user_data;
     stream->base.on_incoming_headers = on_incoming_headers;
     stream->base.on_incoming_header_block_done = on_incoming_header_block_done;
     stream->base.on_incoming_body = on_incoming_body;
     stream->base.on_complete = on_complete;
 
+    aws_channel_task_init(&stream->window_update_task, s_update_window_task, stream, "http1_update_window");
     /* Stream refcount starts at 1 for user and is incremented upon activation for the connection */
     aws_atomic_init_int(&stream->base.refcount, 1);
+
+    /* initialize the h1 specific stuff */
+
+    struct h1_connection *connection = AWS_CONTAINER_OF(owning_connection, struct h1_connection, base);
+    stream->stream_window_size = connection->initial_window_size;
 
     return stream;
 }
@@ -198,7 +250,6 @@ struct aws_h1_stream *aws_h1_stream_new_request(
 
     struct aws_h1_stream *stream = s_stream_new_common(
         client_connection,
-        client_connection->manual_window_management,
         options->user_data,
         options->on_response_headers,
         options->on_response_header_block_done,
@@ -250,7 +301,6 @@ error:
 struct aws_h1_stream *aws_h1_stream_new_request_handler(const struct aws_http_request_handler_options *options) {
     struct aws_h1_stream *stream = s_stream_new_common(
         options->server_connection,
-        options->server_connection->manual_window_management,
         options->user_data,
         options->on_request_headers,
         options->on_request_header_block_done,
