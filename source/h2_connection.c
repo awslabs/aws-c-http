@@ -110,12 +110,6 @@ static void s_send_goaway(
     uint32_t h2_error_code,
     bool allow_more_streams,
     const struct aws_byte_cursor *optional_debug_data);
-static struct aws_h2_pending_settings *s_new_pending_settings(
-    struct aws_allocator *allocator,
-    const struct aws_http2_setting *settings_array,
-    size_t num_settings,
-    aws_http2_on_change_settings_complete_fn *on_completed,
-    void *user_data);
 
 static struct aws_h2err s_decoder_on_headers_begin(uint32_t stream_id, void *userdata);
 static struct aws_h2err s_decoder_on_headers_i(
@@ -270,10 +264,53 @@ static void s_shutdown_due_to_write_err(struct aws_h2_connection *connection, in
     }
 }
 
+static struct aws_h2_pending_settings *s_new_pending_settings(
+    struct aws_allocator *allocator,
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
+    size_t initial_window_size,
+    aws_http2_on_change_settings_complete_fn *on_completed,
+    void *user_data) {
+
+    bool extra_window_size_setting = initial_window_size <= AWS_H2_WINDOW_UPDATE_MAX;
+
+    size_t settings_storage_size =
+        sizeof(struct aws_http2_setting) * (extra_window_size_setting ? (num_settings + 1) : num_settings);
+    struct aws_h2_pending_settings *pending_settings;
+    void *settings_storage;
+    if (!aws_mem_acquire_many(
+            allocator,
+            2,
+            &pending_settings,
+            sizeof(struct aws_h2_pending_settings),
+            &settings_storage,
+            settings_storage_size)) {
+        return NULL;
+    }
+
+    AWS_ZERO_STRUCT(*pending_settings);
+    /* We buffer the settings up, incase the caller has freed them when the ACK arrives */
+    pending_settings->settings_array = settings_storage;
+    if (settings_array) {
+        memcpy(pending_settings->settings_array, settings_array, num_settings * sizeof(struct aws_http2_setting));
+    }
+    if (extra_window_size_setting) {
+        /* create an extra setting for the window size from option */
+        pending_settings->settings_array[num_settings].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
+        pending_settings->settings_array[num_settings].value = initial_window_size;
+    }
+    pending_settings->num_settings = extra_window_size_setting ? (num_settings + 1) : num_settings;
+    pending_settings->on_completed = on_completed;
+    pending_settings->user_data = user_data;
+
+    return pending_settings;
+}
+
 /* Common new() logic for server & client */
 static struct aws_h2_connection *s_connection_new(
     struct aws_allocator *alloc,
     bool manual_window_management,
+    size_t initial_window_size,
     const struct aws_http2_connection_options *http2_options,
     bool server) {
 
@@ -384,6 +421,7 @@ static struct aws_h2_connection *s_connection_new(
         connection->base.alloc,
         http2_options->initial_settings_array,
         http2_options->num_initial_settings,
+        manual_window_management ? initial_window_size : SIZE_MAX,
         http2_options->on_initial_settings_completed,
         NULL /* user_data is set later... */);
     if (!connection->thread_data.init_pending_settings) {
@@ -401,9 +439,11 @@ error:
 struct aws_http_connection *aws_http_connection_new_http2_server(
     struct aws_allocator *allocator,
     bool manual_window_management,
+    size_t initial_window_size,
     const struct aws_http2_connection_options *http2_options) {
 
-    struct aws_h2_connection *connection = s_connection_new(allocator, manual_window_management, http2_options, true);
+    struct aws_h2_connection *connection =
+        s_connection_new(allocator, manual_window_management, initial_window_size, http2_options, true);
     if (!connection) {
         return NULL;
     }
@@ -416,9 +456,11 @@ struct aws_http_connection *aws_http_connection_new_http2_server(
 struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
     bool manual_window_management,
+    size_t initial_window_size,
     const struct aws_http2_connection_options *http2_options) {
 
-    struct aws_h2_connection *connection = s_connection_new(allocator, manual_window_management, http2_options, false);
+    struct aws_h2_connection *connection =
+        s_connection_new(allocator, manual_window_management, initial_window_size, http2_options, false);
     if (!connection) {
         return NULL;
     }
@@ -464,39 +506,6 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     aws_cache_destroy(connection->thread_data.closed_streams);
     aws_mutex_clean_up(&connection->synced_data.lock);
     aws_mem_release(connection->base.alloc, connection);
-}
-
-static struct aws_h2_pending_settings *s_new_pending_settings(
-    struct aws_allocator *allocator,
-    const struct aws_http2_setting *settings_array,
-    size_t num_settings,
-    aws_http2_on_change_settings_complete_fn *on_completed,
-    void *user_data) {
-
-    size_t settings_storage_size = sizeof(struct aws_http2_setting) * num_settings;
-    struct aws_h2_pending_settings *pending_settings;
-    void *settings_storage;
-    if (!aws_mem_acquire_many(
-            allocator,
-            2,
-            &pending_settings,
-            sizeof(struct aws_h2_pending_settings),
-            &settings_storage,
-            settings_storage_size)) {
-        return NULL;
-    }
-
-    AWS_ZERO_STRUCT(*pending_settings);
-    /* We buffer the settings up, incase the caller has freed them when the ACK arrives */
-    pending_settings->settings_array = settings_storage;
-    if (settings_array) {
-        memcpy(pending_settings->settings_array, settings_array, num_settings * sizeof(struct aws_http2_setting));
-    }
-    pending_settings->num_settings = num_settings;
-    pending_settings->on_completed = on_completed;
-    pending_settings->user_data = user_data;
-
-    return pending_settings;
 }
 
 static struct aws_h2_pending_ping *s_new_pending_ping(
@@ -2228,8 +2237,13 @@ static int s_connection_change_settings(
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    struct aws_h2_pending_settings *pending_settings =
-        s_new_pending_settings(connection->base.alloc, settings_array, num_settings, on_completed, user_data);
+    struct aws_h2_pending_settings *pending_settings = s_new_pending_settings(
+        connection->base.alloc,
+        settings_array,
+        num_settings,
+        SIZE_MAX /* window size for initial settings, SIZE_MAX will disable it */,
+        on_completed,
+        user_data);
     if (!pending_settings) {
         return AWS_OP_ERR;
     }

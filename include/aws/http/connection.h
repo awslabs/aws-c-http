@@ -297,8 +297,9 @@ struct aws_http_client_connection_options {
 
     /**
      * Optional.
-     * The initial connection flow-control window size for HTTP/1 connection.
-     * Ignored by HTTP/2 connection, since the initial connection flow-control window in HTTP/2 is not configurable.
+     * The initial stream flow-control window size for HTTP/1 connection.
+     * If set for HTTP/2 connection with manual_window_management on, it will replace the initial settings in h2 options.
+     * Note: the max window size in HTTP/2 is defined ...
      * A default size is set by AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT.
      */
     size_t initial_window_size;
