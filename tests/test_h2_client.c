@@ -3886,6 +3886,59 @@ TEST_CASE(h2_client_conn_failed_initial_settings_completed_not_invoked) {
     return AWS_OP_SUCCESS;
 }
 
+TEST_CASE(h2_client_new_request_allowed) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    /* prepare request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header headers[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":authority", "veryblackpage.com"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
+
+    struct aws_http_make_request_options options = {
+        .self_size = sizeof(options),
+        .request = request,
+    };
+
+    /* validate the new request is allowed for now */
+    ASSERT_TRUE(aws_http_connection_new_requests_allowed(s_tester.connection));
+
+    /* fake peer send a GOAWAY frame */
+    uint32_t stream_id = 0;
+    struct aws_byte_cursor debug_info;
+    AWS_ZERO_STRUCT(debug_info);
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_goaway(allocator, stream_id, AWS_HTTP2_ERR_NO_ERROR, debug_info);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* validate the new request is not allowed anymore when goaway received */
+    ASSERT_FALSE(aws_http_connection_new_requests_allowed(s_tester.connection));
+    /* Make new request will fail */
+    ASSERT_NULL(aws_http_connection_make_request(s_tester.connection, &options));
+    ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_GOAWAY_RECEIVED, aws_last_error());
+
+    /* close connection */
+    aws_http_connection_close(s_tester.connection);
+    /* Make new request will fail */
+    ASSERT_NULL(aws_http_connection_make_request(s_tester.connection, &options));
+    ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, aws_last_error());
+
+    /* clean up */
+    aws_http_message_release(request);
+    return s_tester_clean_up();
+}
+
 static void s_default_settings(struct aws_http2_setting settings[AWS_HTTP2_SETTINGS_COUNT]) {
     for (int i = AWS_HTTP2_SETTINGS_BEGIN_RANGE; i < AWS_HTTP2_SETTINGS_END_RANGE; i++) {
         /* settings range begin with 1, store them into 0-based array of aws_http2_setting */
