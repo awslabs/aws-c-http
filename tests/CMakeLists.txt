@@ -383,9 +383,9 @@ add_test_case(h2_client_stream_send_data_controlled_by_stream_window_size)
 add_test_case(h2_client_stream_send_data_controlled_by_negative_stream_window_size)
 add_test_case(h2_client_stream_send_data_controlled_by_connection_window_size)
 add_test_case(h2_client_stream_send_data_controlled_by_connection_and_stream_window_size)
-add_test_case(h2_client_stream_send_window_update)
+add_test_case(h2_client_stream_auto_window_update_frame_sent) #it runs for about 10 secs to test the connection window update.
 add_test_case(h2_client_stream_err_received_data_flow_control)
-add_test_case(h2_client_conn_err_received_data_flow_control)
+# add_test_case(h2_client_conn_err_received_data_flow_control) As we keep connection window wide open, this will never happen.
 add_test_case(h2_client_conn_err_window_update_exceed_max)
 add_test_case(h2_client_conn_err_window_update_size_zero)
 add_test_case(h2_client_conn_err_initial_window_size_settings_cause_window_exceed_max)
@@ -399,9 +399,8 @@ add_test_case(h2_client_conn_err_invalid_last_stream_id_goaway)
 #TODO add_test_case(h2_client_send_goaway_with_push_promises) id of 1st should be in GOAWAY 2nd should be ignored
 add_test_case(h2_client_change_settings_succeed)
 add_test_case(h2_client_change_settings_failed_no_ack_received)
-add_test_case(h2_client_manual_window_management_disabled_auto_window_update)
+# add_test_case(h2_client_manual_window_management_disabled_auto_window_update)
 add_test_case(h2_client_manual_window_management_user_send_stream_window_update)
-add_test_case(h2_client_manual_window_management_user_send_conn_window_update)
 # Build these when we address window_update() differences in H1 vs H2
 #TODO add_test_case(h2_client_manual_updated_window_ignored_when_automatical_on) 
 #TODO add_test_case(h2_client_manual_window_management_window_overflow) #we cannot ensure the increment_size is safe or not, let our peer detect the maximun exceed or not. But we can test the obviously overflows here.

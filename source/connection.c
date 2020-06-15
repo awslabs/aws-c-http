@@ -252,14 +252,6 @@ static int s_check_http2_connection(const struct aws_http_connection *http2_conn
     }
 }
 
-int aws_http2_connection_update_window(struct aws_http_connection *http2_connection, size_t increment_size) {
-    AWS_ASSERT(http2_connection);
-    if (s_check_http2_connection(http2_connection)) {
-        return AWS_OP_ERR;
-    }
-    return http2_connection->vtable->h2_update_window(http2_connection, increment_size);
-}
-
 int aws_http2_connection_change_settings(
     struct aws_http_connection *http2_connection,
     const struct aws_http2_setting *settings_array,

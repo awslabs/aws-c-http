@@ -447,15 +447,6 @@ AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
 
 /**
- * Increments the connection-wide read window by the value specified (HTTP/2 only).
- * 
- * @param http2_connection HTTP/2 connection.
- * @param increment_size Size to increment
- */
-AWS_HTTP_API
-int aws_http2_connection_update_window(struct aws_http_connection *http2_connection, size_t increment_size);
-
-/**
  * Send a SETTINGS frame (HTTP/2 only).
  * SETTINGS will be applied locally when SETTINGS ACK is received from peer.
  *

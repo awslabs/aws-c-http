@@ -1455,17 +1455,17 @@ TEST_CASE(h2_client_stream_send_data) {
 
     uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
 
-    /* validate sent request (client should have sent SETTINGS, HEADERS, DATA (END_STREAM) */
+    /* validate sent request (client should have sent SETTINGS, WINDOW_UPDATE, HEADERS, DATA (END_STREAM) */
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    ASSERT_UINT_EQUALS(3, h2_decode_tester_frame_count(&s_tester.peer.decode));
+    ASSERT_UINT_EQUALS(4, h2_decode_tester_frame_count(&s_tester.peer.decode));
 
-    struct h2_decoded_frame *sent_headers_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 1);
+    struct h2_decoded_frame *sent_headers_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 2);
     ASSERT_INT_EQUALS(AWS_H2_FRAME_T_HEADERS, sent_headers_frame->type);
     ASSERT_SUCCESS(s_compare_headers(aws_http_message_get_headers(request), sent_headers_frame->headers));
     ASSERT_FALSE(sent_headers_frame->end_stream);
 
-    struct h2_decoded_frame *sent_data_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 2);
+    struct h2_decoded_frame *sent_data_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 3);
     ASSERT_INT_EQUALS(AWS_H2_FRAME_T_DATA, sent_data_frame->type);
     ASSERT_TRUE(sent_data_frame->end_stream);
     ASSERT_TRUE(aws_byte_buf_eq_c_str(&sent_data_frame->data, body_src));
@@ -1913,7 +1913,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_negative_stream_window_size) 
     ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator, stream_id, 300 + AWS_H2_MIN_WINDOW_SIZE, NULL, 0, false /*end_stream*/, false /*skip_check_data*/));
 
-    /* Release one more bytes, rest of the data will be sent */
+    /* Release one more byte, rest of the data will be sent */
     ASSERT_SUCCESS(s_fake_peer_window_update_check(
         allocator, stream_id, 1, body_src, 100, true /*end_stream*/, false /*skip_check_data*/));
 
@@ -2274,13 +2274,24 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
     return s_tester_clean_up();
 }
 
-/* Test receiving a response with DATA frames, the window update frame will be sent */
-TEST_CASE(h2_client_stream_send_window_update) {
+/* Test receiving a response with DATA frames, the stream window update frame will be sent in automatic mode for stream,
+ * and the connection window update frame will be sent when the connection window is lower than half of the max_size */
+TEST_CASE(h2_client_stream_auto_window_update_frame_sent) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* fake peer sends connection preface */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    /* Check the first connection window update was sent to make connection window wide open */
+    uint32_t max_size = AWS_H2_WINDOW_UPDATE_MAX;
+    struct h2_decoded_frame *connection_window_update_frame = h2_decode_tester_find_stream_frame(
+        &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, 0 /*stream_id*/, 0 /*idx*/, NULL);
+    ASSERT_NOT_NULL(connection_window_update_frame);
+    ASSERT_UINT_EQUALS(
+        max_size - aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE],
+        connection_window_update_frame->window_size_increment);
 
     /* send request */
     struct aws_http_message *request = aws_http_message_new_request(allocator);
@@ -2311,27 +2322,42 @@ TEST_CASE(h2_client_stream_send_window_update) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
 
     /* fake peer sends 1 DATA frame */
-    const char *body_src = "hello";
-    ASSERT_SUCCESS(h2_fake_peer_send_data_frame_str(&s_tester.peer, stream_id, body_src, false /*end_stream*/));
+    uint32_t body_size = 15000;
+    struct aws_byte_buf body_buf;
+    ASSERT_SUCCESS(aws_byte_buf_init(&body_buf, allocator, body_size));
+    ASSERT_TRUE(aws_byte_buf_write_u8_n(&body_buf, (uint8_t)('a'), body_size));
+    struct aws_byte_cursor body_cursor = aws_byte_cursor_from_buf(&body_buf);
 
-    /* check that 2 WINDOW_UPDATE frames have been sent.
-     * 1 for the connection, and 1 for the stream */
+    ASSERT_SUCCESS(h2_fake_peer_send_data_frame(&s_tester.peer, stream_id, body_cursor, false /*end_stream*/));
+
+    /* check that stream WINDOW_UPDATE frame has been sent. */
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     struct h2_decoded_frame *stream_window_update_frame = h2_decode_tester_find_stream_frame(
         &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id, 0 /*idx*/, NULL);
     ASSERT_NOT_NULL(stream_window_update_frame);
-    ASSERT_UINT_EQUALS(5, stream_window_update_frame->window_size_increment);
+    ASSERT_UINT_EQUALS(body_size, stream_window_update_frame->window_size_increment);
 
-    struct h2_decoded_frame *connection_window_update_frame = h2_decode_tester_find_stream_frame(
-        &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, 0 /*stream_id*/, 0 /*idx*/, NULL);
-    ASSERT_NOT_NULL(connection_window_update_frame);
-    ASSERT_UINT_EQUALS(5, connection_window_update_frame->window_size_increment);
-
+    size_t frames_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
+    /* Test after we sent enough data to make the connection window lower than half of the max size, the connection
+     * window update will be sent */
+    uint32_t sum = (max_size / 2) / body_size;
+    for (int i = 0; i < sum - 1; i++) {
+        h2_fake_peer_send_data_frame(&s_tester.peer, stream_id, body_cursor, false /*end_stream*/);
+    }
+    /* complete the stream */
+    h2_fake_peer_send_data_frame(&s_tester.peer, stream_id, body_cursor, true /*end_stream*/);
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *new_connection_window_update_frame = h2_decode_tester_find_stream_frame(
+        &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, 0 /*stream_id*/, frames_count /*idx*/, NULL);
+    ASSERT_NOT_NULL(new_connection_window_update_frame);
+    ASSERT_UINT_EQUALS((sum + 1) * body_size, new_connection_window_update_frame->window_size_increment);
     /* clean up */
     aws_http_headers_release(response_headers);
     aws_http_message_release(request);
+    aws_byte_buf_clean_up(&body_buf);
     client_stream_tester_clean_up(&stream_tester);
     return s_tester_clean_up();
 }
@@ -2443,8 +2469,8 @@ static int s_manual_window_management_tester_init(struct aws_allocator *alloc, s
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
     };
 
-    s_tester.connection =
-        aws_http_connection_new_http2_client(alloc, true /* manual window management */, initial_window_size, &http2_options);
+    s_tester.connection = aws_http_connection_new_http2_client(
+        alloc, true /* manual window management */, initial_window_size, &http2_options);
     ASSERT_NOT_NULL(s_tester.connection);
 
     { /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
@@ -3202,12 +3228,8 @@ static void s_on_completed(struct aws_http_connection *connection, int error_cod
 TEST_CASE(h2_client_change_settings_succeed) {
 
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
-    /* client sent the preface and first settings */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *first_written_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 0);
-    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, first_written_frame->type);
-    ASSERT_FALSE(first_written_frame->ack);
-
+    size_t frames_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
     /* We disabled the push_promise at the initial setting, let's use user API to enable it. */
     /* Use user API to change HTTP/2 connection settings */
 
@@ -3221,12 +3243,13 @@ TEST_CASE(h2_client_change_settings_succeed) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* check the settings frame is sent */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct h2_decoded_frame *second_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 1);
-    ASSERT_UINT_EQUALS(AWS_H2_FRAME_T_SETTINGS, second_frame->type);
-    ASSERT_FALSE(second_frame->ack);
-    ASSERT_INT_EQUALS(1, second_frame->settings.length);
+    struct h2_decoded_frame *settings_frame = h2_decode_tester_find_stream_frame(
+        &s_tester.peer.decode, AWS_H2_FRAME_T_SETTINGS, 0 /*stream_id*/, frames_count /*idx*/, NULL);
+    ASSERT_NOT_NULL(settings_frame);
+    ASSERT_FALSE(settings_frame->ack);
+    ASSERT_INT_EQUALS(1, settings_frame->settings.length);
     struct aws_http2_setting setting_received;
-    aws_array_list_front(&second_frame->settings, &setting_received);
+    aws_array_list_front(&settings_frame->settings, &setting_received);
     ASSERT_INT_EQUALS(AWS_HTTP2_SETTINGS_ENABLE_PUSH, setting_received.id);
     ASSERT_INT_EQUALS(1, setting_received.value);
 
@@ -3341,7 +3364,7 @@ TEST_CASE(h2_client_change_settings_failed_no_ack_received) {
 
 /* Test manual window management for connection successfully disabled the automatically window update */
 TEST_CASE(h2_client_manual_window_management_disabled_auto_window_update) {
-    
+
     size_t window_size = 10;
     ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, window_size, ctx));
     /* fake peer sends connection preface */
@@ -3393,8 +3416,6 @@ TEST_CASE(h2_client_manual_window_management_disabled_auto_window_update) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
     ASSERT_NULL(h2_decode_tester_find_stream_frame(
         &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id, 0 /*idx*/, NULL));
-    ASSERT_NULL(h2_decode_tester_find_stream_frame(
-        &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, 0 /*stream_id*/, 0 /*idx*/, NULL));
 
     /* validate that stream is still open */
     ASSERT_FALSE(stream_tester.complete);
@@ -3478,8 +3499,6 @@ TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
     ASSERT_NULL(h2_decode_tester_find_stream_frame(
         &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id, 0 /*idx*/, NULL));
-    ASSERT_NULL(h2_decode_tester_find_stream_frame(
-        &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, 0 /*stream_id*/, 0 /*idx*/, NULL));
 
     /* call API to update the stream window */
     aws_http_stream_update_window(stream_tester.stream, window_size);
@@ -3516,102 +3535,6 @@ TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update) {
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
 
-    return s_tester_clean_up();
-}
-
-/* Test connection window update when manual window management is on */
-TEST_CASE(h2_client_manual_window_management_user_send_conn_window_update) {
-
-    ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, SIZE_MAX, ctx));
-
-    /* get connection preface and acks out of the way */
-    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-
-    /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
-    ASSERT_NOT_NULL(request);
-
-    struct aws_http_header request_headers_src[] = {
-        DEFINE_HEADER(":method", "GET"),
-        DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":path", "/"),
-    };
-    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
-
-    struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    uint32_t stream_id = aws_http_stream_get_id(stream_tester.stream);
-
-    /* fake peer sends response headers */
-    struct aws_http_header response_headers_src[] = {
-        DEFINE_HEADER(":status", "200"),
-    };
-
-    struct aws_http_headers *response_headers = aws_http_headers_new(allocator);
-    aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
-
-    struct aws_h2_frame *response_frame =
-        aws_h2_frame_new_headers(allocator, stream_id, response_headers, false /*end_stream*/, 0, NULL);
-    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, response_frame));
-
-    struct aws_byte_buf response_body_bufs;
-
-    /* The max body size here is limited. So we need to send multiple bodies to get the flow-control error */
-    size_t body_size =
-        aws_max_size(aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE], g_aws_channel_max_fragment_size) -
-        AWS_H2_FRAME_PREFIX_SIZE;
-    /* fake peer sends a DATA frame larger than the window size we have */
-    ASSERT_SUCCESS(aws_byte_buf_init(&response_body_bufs, allocator, body_size));
-    ASSERT_TRUE(aws_byte_buf_write_u8_n(&response_body_bufs, (uint8_t)'a', body_size));
-    struct aws_byte_cursor body_cursor = aws_byte_cursor_from_buf(&response_body_bufs);
-    /* number of bodies peer will send, just to ensure the connection flow-control window will not be blocked when we
-     * manually update it */
-    size_t body_number = 2 * aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] / body_size;
-    for (int i = 0; i < body_number; i++) {
-        if (i == body_number - 1) {
-            ASSERT_SUCCESS(h2_fake_peer_send_data_frame(&s_tester.peer, stream_id, body_cursor, true /*end_stream*/));
-        } else {
-            ASSERT_SUCCESS(h2_fake_peer_send_data_frame(&s_tester.peer, stream_id, body_cursor, false /*end_stream*/));
-        }
-        /* manually update the stream and connection flow-control window. */
-        aws_http_stream_update_window(stream_tester.stream, body_size);
-        ASSERT_SUCCESS(aws_http2_connection_update_window(s_tester.connection, body_size));
-        testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-        ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-
-        struct h2_decoded_frame *stream_window_update_frame = h2_decode_tester_find_stream_frame(
-            &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id, 0 /*idx*/, NULL);
-        ASSERT_NOT_NULL(stream_window_update_frame);
-        ASSERT_UINT_EQUALS(body_size, stream_window_update_frame->window_size_increment);
-
-        struct h2_decoded_frame *connection_window_update_frame = h2_decode_tester_find_stream_frame(
-            &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, 0 /*stream_id*/, 0 /*idx*/, NULL);
-        ASSERT_NOT_NULL(connection_window_update_frame);
-        ASSERT_UINT_EQUALS(body_size, connection_window_update_frame->window_size_increment);
-    }
-    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
-    /* validate that stream received complete response */
-    struct aws_byte_buf expected_body;
-    ASSERT_SUCCESS(aws_byte_buf_init(&expected_body, allocator, body_number * body_size));
-    ASSERT_TRUE(aws_byte_buf_write_u8_n(&expected_body, (uint8_t)'a', body_number * body_size));
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    ASSERT_TRUE(stream_tester.complete);
-    ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester.on_complete_error_code);
-    ASSERT_INT_EQUALS(200, stream_tester.response_status);
-    ASSERT_SUCCESS(s_compare_headers(response_headers, stream_tester.response_headers));
-    ASSERT_TRUE(aws_byte_buf_eq(&stream_tester.response_body, &expected_body));
-
-    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
-
-    /* clean up */
-    aws_byte_buf_clean_up(&response_body_bufs);
-    aws_byte_buf_clean_up(&expected_body);
-    aws_http_headers_release(response_headers);
-    aws_http_message_release(request);
-    client_stream_tester_clean_up(&stream_tester);
     return s_tester_clean_up();
 }
 

@@ -93,10 +93,10 @@ struct aws_h2_connection {
          * connection */
         size_t window_size_peer;
 
-        /* Flow-control of connection for this side.
+        /* Flow-control of connection for the local side.
          * Reduce the space after receiving a flow-controlled frame. Increment after sending WINDOW_UPDATE for
          * connection */
-        size_t window_size_self;
+        uint32_t window_size_self;
 
         /* Highest self-initiated stream-id that peer might have processed.
          * Defaults to max stream-id, may be lowered when GOAWAY frame received. */
@@ -138,9 +138,6 @@ struct aws_h2_connection {
         struct aws_linked_list pending_goaway_list;
 
         bool is_cross_thread_work_task_scheduled;
-
-        /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
-        size_t window_update_size;
 
         /* For checking status from outside the event-loop thread. */
         bool is_open;

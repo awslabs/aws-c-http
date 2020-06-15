@@ -100,7 +100,6 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .close = s_connection_close,
     .is_open = s_connection_is_open,
     .new_requests_allowed = s_connection_new_requests_allowed,
-    .h2_update_window = NULL,
     .change_settings = NULL,
     .send_ping = NULL,
     .send_goaway = NULL,
