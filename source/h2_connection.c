@@ -295,7 +295,7 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     if (extra_window_size_setting) {
         /* create an extra setting for the window size from option */
         pending_settings->settings_array[num_settings].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
-        pending_settings->settings_array[num_settings].value = initial_window_size;
+        pending_settings->settings_array[num_settings].value = (uint32_t)initial_window_size;
     }
     pending_settings->num_settings = extra_window_size_setting ? (num_settings + 1) : num_settings;
     pending_settings->on_completed = on_completed;

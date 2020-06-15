@@ -1194,7 +1194,7 @@ static struct h1_connection *s_connection_new(
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
 
-    connection->initial_window_size = manual_window_management? initial_window_size : SIZE_MAX;
+    connection->initial_window_size = manual_window_management ? initial_window_size : SIZE_MAX;
     connection->thread_data.connection_window_size = initial_window_size;
 
     aws_h1_encoder_init(&connection->thread_data.encoder, alloc);
