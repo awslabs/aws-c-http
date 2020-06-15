@@ -2343,7 +2343,7 @@ TEST_CASE(h2_client_stream_auto_window_update_frame_sent) {
     /* Test after we sent enough data to make the connection window lower than half of the max size, the connection
      * window update will be sent */
     uint32_t sum = (max_size / 2) / body_size;
-    for (int i = 0; i < sum - 1; i++) {
+    for (uint32_t i = 0; i < sum - 1; i++) {
         h2_fake_peer_send_data_frame(&s_tester.peer, stream_id, body_cursor, false /*end_stream*/);
     }
     /* complete the stream */
