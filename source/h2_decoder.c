@@ -707,6 +707,7 @@ static struct aws_h2err s_state_fn_padding_len(struct aws_h2_decoder *decoder, s
     decoder->frame_in_progress.payload_len -= reduce_payload;
 
     DECODER_LOGF(TRACE, decoder, "Padding length of frame: %" PRIu32, decoder->frame_in_progress.padding_len);
+    DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data_padding_len, decoder->frame_in_progress.padding_len);
 
     if (decoder->frame_in_progress.flags.priority) {
         /* Read the stream dependency and weight if PRIORITY is set */

@@ -399,11 +399,9 @@ add_test_case(h2_client_conn_err_invalid_last_stream_id_goaway)
 #TODO add_test_case(h2_client_send_goaway_with_push_promises) id of 1st should be in GOAWAY 2nd should be ignored
 add_test_case(h2_client_change_settings_succeed)
 add_test_case(h2_client_change_settings_failed_no_ack_received)
-# add_test_case(h2_client_manual_window_management_disabled_auto_window_update)
 add_test_case(h2_client_manual_window_management_user_send_stream_window_update)
-# Build these when we address window_update() differences in H1 vs H2
-#TODO add_test_case(h2_client_manual_updated_window_ignored_when_automatical_on) 
-#TODO add_test_case(h2_client_manual_window_management_window_overflow) #we cannot ensure the increment_size is safe or not, let our peer detect the maximun exceed or not. But we can test the obviously overflows here.
+add_test_case(h2_client_manual_window_management_padding_size_updated)
+# add_test_case(h2_client_manual_window_management_window_overflow)
 add_test_case(h2_client_send_ping_successfully_receive_ack)
 add_test_case(h2_client_send_ping_no_ack_received)
 add_test_case(h2_client_conn_err_extraneous_ping_ack_received)

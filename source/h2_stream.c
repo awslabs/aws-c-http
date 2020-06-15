@@ -686,6 +686,23 @@ struct aws_h2err aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *str
     return AWS_H2ERR_SUCCESS;
 }
 
+static int s_stream_update_window_action(struct aws_h2_stream *stream, uint32_t increment_len) {
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+    struct aws_h2_frame *stream_window_update_frame =
+        aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, increment_len);
+    if (!stream_window_update_frame) {
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "WINDOW_UPDATE frame on stream failed to be sent, error %s",
+            aws_error_name(aws_last_error()));
+        return aws_last_error();
+    }
+    aws_h2_connection_enqueue_outgoing_frame(s_get_h2_connection(stream), stream_window_update_frame);
+    stream->thread_data.window_size_self += increment_len;
+    return AWS_OP_SUCCESS;
+}
+
 struct aws_h2err aws_h2_stream_on_decoder_data_begin(
     struct aws_h2_stream *stream,
     uint32_t payload_len,
@@ -722,21 +739,30 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
     /* send a stream window_update frame to automatically maintain the stream self window size, if
      * manual_window_management is not set */
     if (payload_len != 0 && !end_stream && !stream->base.owning_connection->manual_window_management) {
-        struct aws_h2_frame *stream_window_update_frame =
-            aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, payload_len);
-        if (!stream_window_update_frame) {
-            AWS_H2_STREAM_LOGF(
-                ERROR,
-                stream,
-                "WINDOW_UPDATE frame on stream failed to be sent, error %s",
-                aws_error_name(aws_last_error()));
-            return aws_h2err_from_last_error();
+        int err = s_stream_update_window_action(stream, payload_len);
+        if (err) {
+            return aws_h2err_from_aws_code(err);
         }
-
-        aws_h2_connection_enqueue_outgoing_frame(s_get_h2_connection(stream), stream_window_update_frame);
-        stream->thread_data.window_size_self += payload_len;
     }
 
+    return AWS_H2ERR_SUCCESS;
+}
+
+struct aws_h2err aws_h2_stream_on_decoder_data_padding_len(struct aws_h2_stream *stream, uint8_t padding_len) {
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+
+    /* Not calling s_check_state_allows_frame_type() here because we already checked at start of DATA frame in
+     * aws_h2_stream_on_decoder_data_begin() */
+    if (!stream->base.owning_connection->manual_window_management) {
+        /* If manual window management is off, the padding len will be included when the stream window updated in
+         * on_data_begin(). So, we don't need to do anything. */
+        return AWS_H2ERR_SUCCESS;
+    }
+    /* update the stream window by the length of padding and one byte for the Pad Length field */
+    int err = s_stream_update_window_action(stream, padding_len + 1);
+    if (err) {
+        return aws_h2err_from_aws_code(err);
+    }
     return AWS_H2ERR_SUCCESS;
 }
 

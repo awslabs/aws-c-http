@@ -231,7 +231,18 @@ int h2_fake_peer_decode_messages_from_testing_channel(struct h2_fake_peer *peer)
 int h2_fake_peer_send_frame(struct h2_fake_peer *peer, struct aws_h2_frame *frame);
 
 /**
- * Encode the entire byte cursor into a single DATA frame.
+ * Encode the entire byte cursor into a single DATA frame, with configurable padding len.
+ * Fails if the cursor is too large for this to work.
+ */
+int h2_fake_peer_send_data_frame_with_padding(
+    struct h2_fake_peer *peer,
+    uint32_t stream_id,
+    struct aws_byte_cursor data,
+    uint8_t padding_len,
+    bool end_stream);
+
+/**
+ * Encode the entire byte cursor into a single DATA frame, without any padding.
  * Fails if the cursor is too large for this to work.
  */
 int h2_fake_peer_send_data_frame(

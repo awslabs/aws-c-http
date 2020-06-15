@@ -131,6 +131,7 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
     struct aws_h2_stream *stream,
     uint32_t payload_len,
     bool end_stream);
+struct aws_h2err aws_h2_stream_on_decoder_data_padding_len(struct aws_h2_stream *stream, uint8_t padding_len);
 struct aws_h2err aws_h2_stream_on_decoder_data_i(struct aws_h2_stream *stream, struct aws_byte_cursor data);
 struct aws_h2err aws_h2_stream_on_decoder_window_update(
     struct aws_h2_stream *stream,

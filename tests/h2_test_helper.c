@@ -601,6 +601,45 @@ int h2_fake_peer_send_frame(struct h2_fake_peer *peer, struct aws_h2_frame *fram
     return AWS_OP_SUCCESS;
 }
 
+int h2_fake_peer_send_data_frame_with_padding(
+    struct h2_fake_peer *peer,
+    uint32_t stream_id,
+    struct aws_byte_cursor data,
+    uint8_t padding_len,
+    bool end_stream) {
+
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(peer->alloc, &data);
+    ASSERT_NOT_NULL(body_stream);
+
+    struct aws_io_message *msg = aws_channel_acquire_message_from_pool(
+        peer->testing_channel->channel, AWS_IO_MESSAGE_APPLICATION_DATA, g_aws_channel_max_fragment_size);
+    ASSERT_NOT_NULL(msg);
+
+    bool body_complete;
+    bool body_stalled;
+    int32_t stream_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
+    size_t connection_window_size_peer = AWS_H2_WINDOW_UPDATE_MAX;
+    ASSERT_SUCCESS(aws_h2_encode_data_frame(
+        &peer->encoder,
+        stream_id,
+        body_stream,
+        end_stream,
+        padding_len,
+        &stream_window_size_peer,
+        &connection_window_size_peer,
+        &msg->message_data,
+        &body_complete,
+        &body_stalled));
+
+    ASSERT_TRUE(body_complete);
+    ASSERT_FALSE(body_stalled);
+    ASSERT_TRUE(msg->message_data.len != 0);
+
+    ASSERT_SUCCESS(testing_channel_push_read_message(peer->testing_channel, msg));
+    aws_input_stream_destroy(body_stream);
+    return AWS_OP_SUCCESS;
+}
+
 int h2_fake_peer_send_data_frame(
     struct h2_fake_peer *peer,
     uint32_t stream_id,
