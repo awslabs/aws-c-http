@@ -538,7 +538,7 @@ static void s_set_incoming_stream_ptr(struct h1_connection *connection, struct a
             &connection->thread_data.stats.pending_incoming_stream_ms);
     }
 
-    if (next_incoming_stream) {
+    if (next_incoming_stream && connection->base.manual_window_management) {
         /* new incoming stream, update the connection window, if needed */
         size_t new_window = aws_min_size(connection->initial_window_size, next_incoming_stream->stream_window_size);
         /* connection thread_data will be less or equal to initial_window_size, and stream_window_size for new stream
@@ -546,7 +546,6 @@ static void s_set_incoming_stream_ptr(struct h1_connection *connection, struct a
         if (new_window > connection->thread_data.connection_window_size) {
             aws_h1_update_window_action(connection, new_window - connection->thread_data.connection_window_size);
         }
-        AWS_ASSERT(new_window == connection->thread_data.connection_window_size);
     }
 
     connection->thread_data.incoming_stream = next_incoming_stream;
@@ -1067,10 +1066,7 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
 
     /* If the user wishes to manually increment windows, by default shrink the window by the amount of data read. */
     if (connection->base.manual_window_management) {
-        if (data->len > incoming_stream->stream_window_size) {
-            /* something is wrong, flow control error... */
-            return AWS_OP_ERR;
-        }
+        AWS_PRECONDITION(data->len <= incoming_stream->stream_window_size);
         incoming_stream->stream_window_size -= data->len;
         /* update the connection window, if needed */
         size_t new_window = aws_min_size(connection->initial_window_size, incoming_stream->stream_window_size);

@@ -271,7 +271,7 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     size_t initial_window_size,
     aws_http2_on_change_settings_complete_fn *on_completed,
     void *user_data) {
-
+    /* If the initial_window_size from user is larger than the MAX window size, ignore it */
     bool extra_window_size_setting = initial_window_size <= AWS_H2_WINDOW_UPDATE_MAX;
 
     size_t settings_storage_size =
@@ -294,12 +294,13 @@ static struct aws_h2_pending_settings *s_new_pending_settings(
     if (settings_array) {
         memcpy(pending_settings->settings_array, settings_array, num_settings * sizeof(struct aws_http2_setting));
     }
+    pending_settings->num_settings = num_settings;
     if (extra_window_size_setting) {
         /* create an extra setting for the window size from option */
         pending_settings->settings_array[num_settings].id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
         pending_settings->settings_array[num_settings].value = (uint32_t)initial_window_size;
+        pending_settings->num_settings += 1;
     }
-    pending_settings->num_settings = extra_window_size_setting ? (num_settings + 1) : num_settings;
     pending_settings->on_completed = on_completed;
     pending_settings->user_data = user_data;
 

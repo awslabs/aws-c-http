@@ -62,13 +62,13 @@ static int s_stream_update_window(struct aws_http_stream *stream_base, size_t in
             (void *)&connection->base);
         return AWS_OP_SUCCESS;
     }
+    /* if this is not volatile, gcc-4x will load window_update_size's address into a register
+     * and then read it as should_schedule_task down below, which will invert its meaning */
     volatile bool should_schedule_task;
     /* If task is already scheduled, just increase size to be updated */
     { /* BEGIN CRITICAL SECTION */
         s_h1_stream_lock_synced_data(stream);
 
-        /* if this is not volatile, gcc-4x will load window_update_size's address into a register
-         * and then read it as should_schedule_task down below, which will invert its meaning */
         should_schedule_task = (stream->synced_data.window_update_size == 0);
         stream->synced_data.window_update_size =
             aws_add_size_saturating(stream->synced_data.window_update_size, increment_size);

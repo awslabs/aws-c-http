@@ -2276,7 +2276,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
 
 /* Test receiving a response with DATA frames, the stream window update frame will be sent in automatic mode for stream,
  * and the connection window update frame will be sent when the connection window is lower than half of the max_size */
-TEST_CASE(h2_client_stream_auto_window_update_frame_sent) {
+TEST_CASE(h2_client_auto_window_update_frame_sent) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* fake peer sends connection preface */
