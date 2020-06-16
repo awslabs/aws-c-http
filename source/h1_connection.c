@@ -1071,9 +1071,14 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
             /* something is wrong, flow control error... */
             return AWS_OP_ERR;
         }
-        connection->thread_data.incoming_message_window_shrink_size += data->len;
-        connection->thread_data.connection_window_size -= data->len;
         incoming_stream->stream_window_size -= data->len;
+        /* update the connection window, if needed */
+        size_t new_window = aws_min_size(connection->initial_window_size, incoming_stream->stream_window_size);
+        if (connection->thread_data.connection_window_size > new_window) {
+            connection->thread_data.incoming_message_window_shrink_size +=
+                connection->thread_data.connection_window_size - new_window;
+            connection->thread_data.connection_window_size = new_window;
+        }
     }
 
     if (incoming_stream->base.on_incoming_body) {
@@ -1097,15 +1102,6 @@ static int s_decoder_on_done(void *user_data) {
     struct h1_connection *connection = user_data;
     struct aws_h1_stream *incoming_stream = connection->thread_data.incoming_stream;
     AWS_ASSERT(incoming_stream);
-
-    /* finished decoding, update the connection window, if needed */
-    size_t new_window = aws_min_size(connection->initial_window_size, incoming_stream->stream_window_size);
-    if (connection->thread_data.connection_window_size > new_window) {
-        connection->thread_data.incoming_message_window_shrink_size +=
-            connection->thread_data.connection_window_size - new_window;
-        connection->thread_data.connection_window_size = new_window;
-    }
-    AWS_ASSERT(new_window == connection->thread_data.connection_window_size);
 
     /* Ensure head was marked done */
     int err = s_mark_head_done(incoming_stream);

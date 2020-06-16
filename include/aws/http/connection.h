@@ -298,9 +298,10 @@ struct aws_http_client_connection_options {
     /**
      * Optional.
      * The initial stream flow-control window size for HTTP/1 connection.
-     * If set for HTTP/2 connection with manual_window_management on, it will replace the initial settings in h2
-     * options. Note: the max window size in HTTP/2 is defined ... A default size is set by
-     * AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT.
+     * If set for HTTP/2 connection with manual_window_management on, it will replace the SETTINGS_INITIAL_WINDOW_SIZE
+     * entry from initial settings in aws_http2_connection_options. Note: if the value is larger than the defined max
+     * value for window size in HTTP/2, this will be ignored for HTTP/2 connection.
+     * A default size is set by AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT.
      */
     size_t initial_window_size;
 
@@ -331,8 +332,8 @@ struct aws_http_client_connection_options {
      * If this is false, the connection will maintain a constant window size.
      *
      * If this is true, the caller must manually increment the window size using aws_http_stream_update_window().
-     * If the window is not incremented, it will shrink by the amount of body data received. If the window size
-     * reaches 0, no further data will be received.
+     * If the window is not incremented, it will shrink by the amount of body data (excludes the possible padding and
+     * Pad Length byte for HTTP/2) received. If the window size reaches 0, no further data will be received.
      **/
     bool manual_window_management;
 
