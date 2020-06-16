@@ -2243,8 +2243,8 @@ H1_CLIENT_TEST_CASE(h1_client_window_manual_update) {
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     const char reponse_str_headers[] = "HTTP/1.1 200 OK\r\n"
-                                 "Content-Length: 110\r\n"
-                                 "\r\n";
+                                       "Content-Length: 110\r\n"
+                                       "\r\n";
 
     /* send response */
     ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, reponse_str_headers));

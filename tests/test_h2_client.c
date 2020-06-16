@@ -3480,14 +3480,15 @@ TEST_CASE(h2_client_manual_window_management_window_overflow) {
 
     /* The initial window is max right now, but the window update will still be allowed, and we let the peer to detect
      * the overflow */
-    ASSERT_SUCCESS(aws_http_stream_update_window(stream_tester.stream, max_size-2));
-    /* But before the WINDOW_UPDATE frame is sent, the amount size to update is larger than the max size will be rejected */
+    ASSERT_SUCCESS(aws_http_stream_update_window(stream_tester.stream, max_size - 2));
+    /* But before the WINDOW_UPDATE frame is sent, the amount size to update is larger than the max size will be
+     * rejected */
     ASSERT_FAILS(aws_http_stream_update_window(stream_tester.stream, 3));
     ASSERT_SUCCESS(aws_http_stream_update_window(stream_tester.stream, 2));
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    
+
     /* Validate the WINDOW_UPDATE frame has sent */
     struct h2_decoded_frame *window_update_frame = h2_decode_tester_find_stream_frame(
         &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, stream_id, 0 /*idx*/, NULL);
