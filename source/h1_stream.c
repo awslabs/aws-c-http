@@ -46,16 +46,22 @@ static void s_h1_stream_unlock_synced_data(struct aws_h1_stream *stream) {
     (void)err;
 }
 
-static void s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size) {
+static int s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size) {
     struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
     struct aws_http_connection *connection_base = stream_base->owning_connection;
     struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
 
     if (increment_size == 0) {
         AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Ignoring window update of size 0.", (void *)&connection->base);
-        return;
+        return AWS_OP_SUCCESS;
     }
-
+    if (!connection->base.manual_window_management) {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Manual window management is off, ignoring window update.",
+            (void *)&connection->base);
+        return AWS_OP_SUCCESS;
+    }
     volatile bool should_schedule_task;
     /* If task is already scheduled, just increase size to be updated */
     { /* BEGIN CRITICAL SECTION */
@@ -86,6 +92,7 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
             (void *)&connection->base,
             increment_size);
     }
+    return AWS_OP_SUCCESS;
 }
 
 static void s_update_window_task(struct aws_channel_task *channel_task, void *arg, enum aws_task_status status) {
@@ -116,6 +123,7 @@ static void s_update_window_task(struct aws_channel_task *channel_task, void *ar
     if (stream == connection->thread_data.incoming_stream &&
         connection->thread_data.connection_window_size == stream->stream_window_size) {
         aws_h1_update_window_action(connection, window_update_size);
+        stream->stream_window_size += window_update_size;
     }
 end:
     aws_http_stream_release(&stream->base);

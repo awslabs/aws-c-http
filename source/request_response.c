@@ -746,8 +746,8 @@ int aws_http_stream_get_incoming_request_uri(const struct aws_http_stream *strea
     return AWS_OP_SUCCESS;
 }
 
-void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
-    stream->vtable->update_window(stream, increment_size);
+int aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
+    return stream->vtable->update_window(stream, increment_size);
 }
 
 uint32_t aws_http_stream_get_id(const struct aws_http_stream *stream) {

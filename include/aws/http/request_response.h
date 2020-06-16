@@ -747,7 +747,7 @@ int aws_http_stream_send_response(struct aws_http_stream *stream, struct aws_htt
  * See aws_http_make_request_options.manual_window_management for details on letting the window shrink.
  */
 AWS_HTTP_API
-void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
+int aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 
 /**
  * Gets the Http/2 id associated with a stream.  Even h1 streams have an id (using the same allocation procedure

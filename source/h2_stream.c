@@ -22,7 +22,7 @@
 #include <aws/io/logging.h>
 
 static void s_stream_destroy(struct aws_http_stream *stream_base);
-static void s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size);
+static int s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size);
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 
 struct aws_http_stream_vtable s_h2_stream_vtable = {
@@ -296,17 +296,18 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     aws_mem_release(stream->base.alloc, stream);
 }
 
-static void s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size) {
+static int s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size) {
     AWS_PRECONDITION(stream_base);
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
     if (!increment_size) {
-        return;
+        AWS_H2_STREAM_LOG(TRACE, stream, "Ignoring window update of size 0.");
+        return AWS_OP_SUCCESS;
     }
     if (!connection->base.manual_window_management) {
         /* auto-mode, manual update window is not supported */
-        AWS_H2_STREAM_LOG(WARN, stream, "Manual window management is off, update window operations are not supported.");
-        return;
+        AWS_H2_STREAM_LOG(WARN, stream, "Manual window management is off, ignoring window update.");
+        return AWS_OP_SUCCESS;
     }
     struct aws_h2_frame *stream_window_update_frame =
         aws_h2_frame_new_window_update(connection->base.alloc, stream_base->id, (uint32_t)increment_size);
@@ -316,7 +317,7 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
             stream,
             "Failed to create WINDOW_UPDATE frame on connection, error %s",
             aws_error_name(aws_last_error()));
-        return;
+        return aws_last_error();
     }
 
     int err = 0;
@@ -352,10 +353,11 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
             "The increment size is too big for HTTP/2 protocol, max flow-control "
             "window size is 2147483647. We got %zu, which will cause the flow-control window to exceed the maximum",
             increment_size);
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         aws_h2_frame_destroy(stream_window_update_frame);
-        return;
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
+
+    return AWS_OP_SUCCESS;
 }
 
 enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *stream) {

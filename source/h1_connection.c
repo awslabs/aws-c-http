@@ -309,6 +309,7 @@ void aws_h1_update_window_action(struct h1_connection *connection, size_t increm
             aws_error_name(aws_last_error()));
 
         s_shutdown_due_to_error(connection, aws_last_error());
+        return;
     }
     connection->thread_data.connection_window_size += increment_size;
 }
@@ -1070,6 +1071,8 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
             /* something is wrong, flow control error... */
             return AWS_OP_ERR;
         }
+        connection->thread_data.incoming_message_window_shrink_size += data->len;
+        connection->thread_data.connection_window_size -= data->len;
         incoming_stream->stream_window_size -= data->len;
     }
 
