@@ -385,7 +385,6 @@ add_test_case(h2_client_stream_send_data_controlled_by_connection_window_size)
 add_test_case(h2_client_stream_send_data_controlled_by_connection_and_stream_window_size)
 add_test_case(h2_client_stream_auto_window_update_frame_sent) #it runs for about 10 secs to test the connection window update.
 add_test_case(h2_client_stream_err_received_data_flow_control)
-# add_test_case(h2_client_conn_err_received_data_flow_control) As we keep connection window wide open, this will never happen.
 add_test_case(h2_client_conn_err_window_update_exceed_max)
 add_test_case(h2_client_conn_err_window_update_size_zero)
 add_test_case(h2_client_conn_err_initial_window_size_settings_cause_window_exceed_max)
