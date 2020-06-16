@@ -334,7 +334,7 @@ struct aws_http_client_connection_options {
      * If this is true. The initial flow-control window size for each stream is controlled by
      * `aws_http_connection_options.initial_window_size`.
      * As body data arrives on each stream, the flow-control window shrinks by that amount (headers and paddings do not
-     * affect the flow-control window). 
+     * affect the flow-control window).
      * If the flow-control window reaches zero, no more data can be received.
      * `aws_http_stream_update_window()` must be called to increment the window and keep data flowing.
      **/
