@@ -478,6 +478,63 @@ int aws_http2_connection_ping(
     aws_http2_on_ping_complete_fn *on_completed,
     void *user_data);
 
+/**
+ * Send a custom GOAWAY frame (HTTP/2 only).
+ *
+ * Note that the connection automatically attempts to send a GOAWAY during
+ * shutdown (unless a GOAWAY with a valid Last-Stream-ID has already been sent).
+ *
+ * This call can be used to gracefully warn the peer of an impending shutdown
+ * (http2_error=0, allow_more_streams=true), or to customize the final GOAWAY
+ * frame that is sent by this connection.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param http2_error The HTTP/2 error code (RFC-7540 section 7) to send.
+ *      `enum aws_http2_error_code` lists official codes.
+ * @param allow_more_streams If true, new peer-initiated streams will continue
+ *      to be acknowledged and the GOAWAY's Last-Stream-ID will be set to a max value.
+ *      If false, new peer-initiated streams will be ignored and the GOAWAY's
+ *      Last-Stream-ID will be set to the latest acknowledged stream.
+ * @param optional_debug_data Optional debug data to send. Size must not exceed 16KB.
+ */
+
+AWS_HTTP_API
+int aws_http2_connection_send_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t http2_error,
+    bool allow_more_streams,
+    const struct aws_byte_cursor *optional_debug_data);
+
+/**
+ * Get data about the latest GOAWAY frame sent to peer (HTTP/2 only).
+ * If no GOAWAY has been sent, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE will be raised.
+ * Note that GOAWAY frames are typically sent automatically by the connection
+ * during shutdown.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param out_http2_error Gets set to HTTP/2 error code sent in most recent GOAWAY.
+ * @param out_last_stream_id Gets set to Last-Stream-ID sent in most recent GOAWAY.
+ */
+AWS_HTTP_API
+int aws_http2_connection_get_sent_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id);
+
+/**
+ * Get data about the latest GOAWAY frame received from peer (HTTP/2 only).
+ * If no GOAWAY has been received, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE will be raised.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param out_http2_error Gets set to HTTP/2 error code received in most recent GOAWAY.
+ * @param out_last_stream_id Gets set to Last-Stream-ID received in most recent GOAWAY.
+ */
+AWS_HTTP_API
+int aws_http2_connection_get_received_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id);
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_CONNECTION_H */
