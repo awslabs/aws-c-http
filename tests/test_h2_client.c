@@ -2512,7 +2512,7 @@ TEST_CASE(h2_client_conn_err_received_data_flow_control) {
     ASSERT_SUCCESS(aws_byte_buf_init(&response_body_bufs, allocator, body_size));
     ASSERT_TRUE(aws_byte_buf_write_u8_n(&response_body_bufs, (uint8_t)'a', body_size));
     struct aws_byte_cursor body_cursor = aws_byte_cursor_from_buf(&response_body_bufs);
-    for (int i = 0; i < aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] / body_size; i++) {
+    for (uint32_t i = 0; i < aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] / body_size; i++) {
         ASSERT_SUCCESS(h2_fake_peer_send_data_frame(&s_tester.peer, stream_id, body_cursor, false /*end_stream*/));
         /* manually update the stream flow-control window, ensure that stream window is available all the time */
         aws_http_stream_update_window(stream_tester.stream, body_size);
@@ -2630,7 +2630,7 @@ static int s_compare_settings_array(
     const struct aws_http2_setting *got,
     int num_settings) {
 
-    for (size_t i = 0; i < num_settings; ++i) {
+    for (int i = 0; i < num_settings; ++i) {
         struct aws_http2_setting expected_settings = expected[i];
         struct aws_http2_setting got_settings = got[i];
 
@@ -3596,7 +3596,7 @@ TEST_CASE(h2_client_manual_window_management_user_send_conn_window_update) {
     /* number of bodies peer will send, just to ensure the connection flow-control window will not be blocked when we
      * manually update it */
     size_t body_number = 2 * aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] / body_size;
-    for (int i = 0; i < body_number; i++) {
+    for (size_t i = 0; i < body_number; i++) {
         if (i == body_number - 1) {
             ASSERT_SUCCESS(h2_fake_peer_send_data_frame(&s_tester.peer, stream_id, body_cursor, true /*end_stream*/));
         } else {
