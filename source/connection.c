@@ -22,6 +22,7 @@
 
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#    pragma warning(disable : 4232) /* function pointer to dll symbol */
 #endif
 
 static struct aws_http_connection_system_vtable s_default_system_vtable = {
