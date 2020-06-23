@@ -506,6 +506,7 @@ int aws_http2_connection_get_local_settings(
  * @param http2_connection HTTP/2 connection.
  * @param out_settings fixed size array of aws_http2_setting gets set to  the remote settings
  */
+AWS_HTTP_API
 int aws_http2_connection_get_remote_settings(
     const struct aws_http_connection *http2_connection,
     struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
