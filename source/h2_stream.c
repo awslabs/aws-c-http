@@ -285,7 +285,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     if (aws_h2_stream_get_state(stream) == AWS_H2_STREAM_STATE_CLOSED) {
         /* stream is closed, silently ignoring the requests from user */
         AWS_H2_STREAM_LOG(
-            DEBUG, stream, "Stream closed before cross thread work task runs, ignoring everything was sent by user.");
+            TRACE, stream, "Stream closed before cross thread work task runs, ignoring everything was sent by user.");
         goto end;
     }
 

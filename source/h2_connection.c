@@ -203,14 +203,14 @@ static void s_unlock_synced_data(struct aws_h2_connection *connection) {
 
 static void s_acquire_stream_and_connection_lock(struct aws_h2_stream *stream, struct aws_h2_connection *connection) {
     int err = aws_mutex_lock(&stream->synced_data.lock);
-    err = aws_mutex_lock(&connection->synced_data.lock);
+    err |= aws_mutex_lock(&connection->synced_data.lock);
     AWS_ASSERT(!err && "lock connection and stream failed");
     (void)err;
 }
 
 static void s_release_stream_and_connection_lock(struct aws_h2_stream *stream, struct aws_h2_connection *connection) {
     int err = aws_mutex_unlock(&connection->synced_data.lock);
-    err = aws_mutex_unlock(&stream->synced_data.lock);
+    err |= aws_mutex_unlock(&stream->synced_data.lock);
     AWS_ASSERT(!err && "unlock connection and stream failed");
     (void)err;
 }
@@ -2011,13 +2011,14 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
         stream->id = aws_http_connection_get_next_stream_id(base_connection);
 
         if (stream->id) {
+            /* success */
             was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
             connection->synced_data.is_cross_thread_work_task_scheduled = true;
 
             aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &h2_stream->node);
+            h2_stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_ACTIVE;
         }
 
-        h2_stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_ACTIVE;
         s_release_stream_and_connection_lock(h2_stream, connection);
     } /* END CRITICAL SECTION */
 
