@@ -225,6 +225,11 @@ bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
     return connection->vtable->is_open(connection);
 }
 
+bool aws_http_connection_new_requests_allowed(const struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    return connection->vtable->new_requests_allowed(connection);
+}
+
 bool aws_http_connection_is_client(const struct aws_http_connection *connection) {
     return connection->client_data;
 }
@@ -238,7 +243,7 @@ void aws_http_connection_update_window(struct aws_http_connection *connection, s
     connection->vtable->update_window(connection, increment_size);
 }
 
-static int s_check_http2_connection(struct aws_http_connection *http2_connection) {
+static int s_check_http2_connection(const struct aws_http_connection *http2_connection) {
     if (http2_connection->http_version == AWS_HTTP_VERSION_2) {
         return AWS_OP_SUCCESS;
     } else {
@@ -318,6 +323,30 @@ int aws_http2_connection_get_received_goaway(
         return AWS_OP_ERR;
     }
     return http2_connection->vtable->get_received_goaway(http2_connection, out_http2_error, out_last_stream_id);
+}
+
+int aws_http2_connection_get_local_settings(
+    const struct aws_http_connection *http2_connection,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    http2_connection->vtable->get_local_settings(http2_connection, out_settings);
+    return AWS_OP_SUCCESS;
+}
+
+int aws_http2_connection_get_remote_settings(
+    const struct aws_http_connection *http2_connection,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    http2_connection->vtable->get_remote_settings(http2_connection, out_settings);
+    return AWS_OP_SUCCESS;
 }
 
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {

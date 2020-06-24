@@ -51,6 +51,7 @@ struct aws_http_connection_vtable {
     int (*stream_send_response)(struct aws_http_stream *stream, struct aws_http_message *response);
     void (*close)(struct aws_http_connection *connection);
     bool (*is_open)(const struct aws_http_connection *connection);
+    bool (*new_requests_allowed)(const struct aws_http_connection *connection);
     void (*update_window)(struct aws_http_connection *connection, size_t increment_size);
 
     /* HTTP/2 specific functions */
@@ -78,6 +79,12 @@ struct aws_http_connection_vtable {
         struct aws_http_connection *http2_connection,
         uint32_t *out_http2_error,
         uint32_t *out_last_stream_id);
+    void (*get_local_settings)(
+        const struct aws_http_connection *http2_connection,
+        struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
+    void (*get_remote_settings)(
+        const struct aws_http_connection *http2_connection,
+        struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
 };
 
 typedef int(aws_http_proxy_request_transform_fn)(struct aws_http_message *request, void *user_data);

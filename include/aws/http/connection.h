@@ -371,6 +371,10 @@ struct aws_http2_setting {
  */
 #define AWS_HTTP2_PING_DATA_SIZE (8)
 /**
+ * HTTP/2: The number of known settings.
+ */
+#define AWS_HTTP2_SETTINGS_COUNT (6)
+/**
  * Initializes aws_http2_connection_options with default values.
  */
 #define AWS_HTTP2_CONNECTION_OPTIONS_INIT                                                                              \
@@ -417,6 +421,13 @@ void aws_http_connection_close(struct aws_http_connection *connection);
  */
 AWS_HTTP_API
 bool aws_http_connection_is_open(const struct aws_http_connection *connection);
+
+/**
+ * Return whether the connection can make a new requests.
+ * If false, then a new connection must be established to make further requests.
+ */
+AWS_HTTP_API
+bool aws_http_connection_new_requests_allowed(const struct aws_http_connection *connection);
 
 /**
  * Returns true if this is a client connection.
@@ -477,6 +488,28 @@ int aws_http2_connection_ping(
     const struct aws_byte_cursor *optional_opaque_data,
     aws_http2_on_ping_complete_fn *on_completed,
     void *user_data);
+
+/**
+ * Get the local settings we are using to affect the decoding.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param out_settings fixed size array of aws_http2_setting gets set to the local settings
+ */
+AWS_HTTP_API
+int aws_http2_connection_get_local_settings(
+    const struct aws_http_connection *http2_connection,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
+
+/**
+ * Get the settings received from remote peer, which we are using to restricts the message to send.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param out_settings fixed size array of aws_http2_setting gets set to  the remote settings
+ */
+AWS_HTTP_API
+int aws_http2_connection_get_remote_settings(
+    const struct aws_http_connection *http2_connection,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
 
 /**
  * Send a custom GOAWAY frame (HTTP/2 only).

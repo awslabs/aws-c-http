@@ -50,7 +50,7 @@ static struct aws_http_connection_manager_system_vtable s_default_system_vtable 
     .create_connection = aws_http_client_connect,
     .release_connection = aws_http_connection_release,
     .close_connection = aws_http_connection_close,
-    .is_connection_open = aws_http_connection_is_open,
+    .is_connection_available = aws_http_connection_new_requests_allowed,
     .get_monotonic_time = aws_high_res_clock_get_ticks,
     .is_callers_thread = aws_channel_thread_is_callers_thread,
     .connection_get_channel = aws_http_connection_get_channel,
@@ -61,7 +61,7 @@ const struct aws_http_connection_manager_system_vtable *g_aws_http_connection_ma
 
 bool aws_http_connection_manager_system_vtable_is_valid(const struct aws_http_connection_manager_system_vtable *table) {
     return table->create_connection && table->close_connection && table->release_connection &&
-           table->is_connection_open;
+           table->is_connection_available;
 }
 
 enum aws_http_connection_manager_state_type { AWS_HCMST_UNINITIALIZED, AWS_HCMST_READY, AWS_HCMST_SHUTTING_DOWN };
@@ -1139,7 +1139,7 @@ int aws_http_connection_manager_release_connection(
     s_aws_connection_management_transaction_init(&work, manager);
 
     int result = AWS_OP_ERR;
-    bool should_release_connection = !manager->system_vtable->is_connection_open(connection);
+    bool should_release_connection = !manager->system_vtable->is_connection_available(connection);
 
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Releasing connection (id=%p)", (void *)manager, (void *)connection);
