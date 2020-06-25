@@ -568,12 +568,19 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
     message->body_stream = body_stream;
 }
 
-int aws_http1_stream_write_chunk(struct aws_http_stream *stream, struct aws_http1_chunk_options *options) {
-    AWS_PRECONDITION(stream);
-    AWS_PRECONDITION(stream->vtable);
-    AWS_PRECONDITION(stream->vtable->http1_write_chunk);
+int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, struct aws_http1_chunk_options *options) {
+    AWS_PRECONDITION(http1_stream);
+    AWS_PRECONDITION(http1_stream->vtable);
     AWS_PRECONDITION(options);
-    return stream->vtable->http1_write_chunk(stream, options);
+    if (!http1_stream->vtable->http1_write_chunk) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: HTTP/1 stream only function invoked on other stream, ignoring call.",
+            (void *)http1_stream);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    return http1_stream->vtable->http1_write_chunk(http1_stream, options);
 }
 
 struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_message *message) {
@@ -752,4 +759,45 @@ void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increm
 
 uint32_t aws_http_stream_get_id(const struct aws_http_stream *stream) {
     return stream->id;
+}
+
+int aws_http2_stream_reset(struct aws_http_stream *http2_stream, uint32_t http2_error) {
+    AWS_PRECONDITION(http2_stream);
+    AWS_PRECONDITION(http2_stream->vtable);
+    if (!http2_stream->vtable->http2_reset_stream) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: HTTP/2 stream only function invoked on other stream, ignoring call.",
+            (void *)http2_stream);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+    return http2_stream->vtable->http2_reset_stream(http2_stream, http2_error);
+}
+
+int aws_http2_stream_get_received_reset_error_code(struct aws_http_stream *http2_stream, uint32_t *out_http2_error) {
+    AWS_PRECONDITION(http2_stream);
+    AWS_PRECONDITION(http2_stream->vtable);
+    AWS_PRECONDITION(out_http2_error);
+    if (!http2_stream->vtable->http2_get_received_error_code) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: HTTP/2 stream only function invoked on other stream, ignoring call.",
+            (void *)http2_stream);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+    return http2_stream->vtable->http2_get_received_error_code(http2_stream, out_http2_error);
+}
+
+int aws_http2_stream_get_sent_reset_error_code(struct aws_http_stream *http2_stream, uint32_t *out_http2_error) {
+    AWS_PRECONDITION(http2_stream);
+    AWS_PRECONDITION(http2_stream->vtable);
+    AWS_PRECONDITION(out_http2_error);
+    if (!http2_stream->vtable->http2_get_sent_error_code) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: HTTP/2 stream only function invoked on other stream, ignoring call.",
+            (void *)http2_stream);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+    return http2_stream->vtable->http2_get_sent_error_code(http2_stream, out_http2_error);
 }

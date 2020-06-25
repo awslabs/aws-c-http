@@ -56,6 +56,13 @@ enum aws_h2_stream_state {
     AWS_H2_STREAM_STATE_COUNT,
 };
 
+/* simplified stream state for API implementation */
+enum aws_h2_stream_api_state {
+    AWS_H2_STREAM_API_STATE_INIT,
+    AWS_H2_STREAM_API_STATE_ACTIVE,
+    AWS_H2_STREAM_API_STATE_COMPLETE,
+};
+
 struct aws_h2_stream {
     struct aws_http_stream base;
 
@@ -77,13 +84,26 @@ struct aws_h2_stream {
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
     struct {
         struct aws_mutex lock;
+
         bool is_cross_thread_work_task_scheduled;
+
         /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
         size_t window_update_size;
-        /* New `aws_h2_frames *` stream control frames created by user that haven't moved to connection `thread_data`
-         * yet */
-        struct aws_linked_list pending_frame_list;
+
+        /* The aws_http2_error_code user wanted to send to remote peer via rst_stream. */
+        uint32_t user_reset_error_code;
+
+        bool reset_called;
+
+        /* Simplified stream state. */
+        enum aws_h2_stream_api_state api_state;
     } synced_data;
+
+    /* Store the sent reset HTTP/2 error code, set to -1, if none has sent so far */
+    int64_t sent_reset_error_code;
+
+    /* Store the received reset HTTP/2 error code, set to -1, if none has received so far */
+    int64_t received_reset_error_code;
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);
