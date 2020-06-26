@@ -37,7 +37,7 @@ make install
 
 # Build s2n
 cd ../../../
-cmake -DCMAKE_PREFIX_PATH=<install-path> -DCMAKE_INSTALL_PREFIX=<install-path> -S s2n -B s2n/build
+cmake -DCMAKE_PREFIX_PATH=<install-path> -DCMAKE_INSTALL_PREFIX=./s2n/libcrypto-root -S s2n -B s2n/build
 cmake --build s2n/build --target install
 ```
 
