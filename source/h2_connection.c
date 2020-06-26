@@ -126,9 +126,9 @@ static struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t p
 static struct aws_h2err s_decoder_on_data_begin(
     uint32_t stream_id,
     uint32_t payload_len,
+    uint8_t padding_len,
     bool end_stream,
     void *userdata);
-static struct aws_h2err s_decoder_on_data_padding_len(uint32_t stream_id, uint8_t padding_len, void *userdata);
 static struct aws_h2err s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
 static struct aws_h2err s_decoder_on_end_stream(uint32_t stream_id, void *userdata);
 static struct aws_h2err s_decoder_on_rst_stream(uint32_t stream_id, uint32_t h2_error_code, void *userdata);
@@ -180,7 +180,6 @@ static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
     .on_headers_end = s_decoder_on_headers_end,
     .on_push_promise_begin = s_decoder_on_push_promise,
     .on_data_begin = s_decoder_on_data_begin,
-    .on_data_padding_len = s_decoder_on_data_padding_len,
     .on_data_i = s_decoder_on_data_i,
     .on_end_stream = s_decoder_on_end_stream,
     .on_rst_stream = s_decoder_on_rst_stream,
@@ -1175,7 +1174,12 @@ struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised
     return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, bool end_stream, void *userdata) {
+struct aws_h2err s_decoder_on_data_begin(
+    uint32_t stream_id,
+    uint32_t payload_len,
+    uint8_t padding_len,
+    bool end_stream,
+    void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
     /* A receiver that receives a flow-controlled frame MUST always account for its contribution against the connection
@@ -1198,7 +1202,7 @@ struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_le
     }
 
     if (stream) {
-        err = aws_h2_stream_on_decoder_data_begin(stream, payload_len, end_stream);
+        err = aws_h2_stream_on_decoder_data_begin(stream, payload_len, padding_len, end_stream);
         if (aws_h2err_failed(err)) {
             return err;
         }
@@ -1211,25 +1215,6 @@ struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_le
             return err;
         }
     }
-    return AWS_H2ERR_SUCCESS;
-}
-
-static struct aws_h2err s_decoder_on_data_padding_len(uint32_t stream_id, uint8_t padding_len, void *userdata) {
-    struct aws_h2_connection *connection = userdata;
-    /* Pass data to stream */
-    struct aws_h2_stream *stream;
-    struct aws_h2err err = s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_DATA, &stream);
-    if (aws_h2err_failed(err)) {
-        return err;
-    }
-
-    if (stream) {
-        err = aws_h2_stream_on_decoder_data_padding_len(stream, padding_len);
-        if (aws_h2err_failed(err)) {
-            return err;
-        }
-    }
-
     return AWS_H2ERR_SUCCESS;
 }
 

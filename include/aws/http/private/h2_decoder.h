@@ -58,10 +58,10 @@ struct aws_h2_decoder_vtable {
         void *userdata);
     struct aws_h2err (*on_push_promise_end)(uint32_t stream_id, bool malformed, void *userdata);
 
-    /* For DATA frame: _begin() is called, then 0 or 1 _padding_len() calls, then 0+ _i() calls, then _end().
+    /* For DATA frame: _begin() is called, then 0+ _i() calls, then _end().
      * No other decoder callbacks will occur in this time */
-    struct aws_h2err (*on_data_begin)(uint32_t stream_id, uint32_t payload_len, bool end_stream, void *userdata);
-    struct aws_h2err (*on_data_padding_len)(uint32_t stream_id, uint8_t padding_len, void *userdata);
+    struct aws_h2err (
+        *on_data_begin)(uint32_t stream_id, uint32_t payload_len, uint8_t padding_len, bool end_stream, void *userdata);
     struct aws_h2err (*on_data_i)(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
     struct aws_h2err (*on_data_end)(uint32_t stream_id, void *userdata);
 

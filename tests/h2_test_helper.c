@@ -304,6 +304,7 @@ static struct aws_h2err s_decoder_on_push_promise_end(uint32_t stream_id, bool m
 static struct aws_h2err s_decoder_on_data_begin(
     uint32_t stream_id,
     uint32_t payload_len,
+    uint8_t padding_len,
     bool end_stream,
     void *userdata) {
 
@@ -312,6 +313,7 @@ static struct aws_h2err s_decoder_on_data_begin(
     s_begin_new_frame(decode_tester, AWS_H2_FRAME_T_DATA, stream_id, &frame);
 
     frame->data_payload_len = payload_len;
+    frame->data_padding_len = padding_len;
     frame->data_end_stream = end_stream;
 
     return AWS_H2ERR_SUCCESS;

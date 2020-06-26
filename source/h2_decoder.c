@@ -161,7 +161,8 @@ DEFINE_STATE(header_block_loop, 0);
 DEFINE_STATE(header_block_entry, 1); /* requires 1 byte, but may consume more */
 
 /* Frame-specific states */
-DEFINE_STATE(frame_data, 0);
+DEFINE_STATE(frame_data_begin, 0);
+DEFINE_STATE(frame_data_block, 0);
 DEFINE_STATE(frame_headers, 0);
 DEFINE_STATE(frame_priority, 0);
 DEFINE_STATE(frame_rst_stream, 4);
@@ -181,7 +182,7 @@ DEFINE_STATE(connection_preface_string, 1); /* requires 1 byte but may consume m
 
 /* Helper for states that need to transition to frame-type states */
 static const struct decoder_state *s_state_frames[AWS_H2_FRAME_TYPE_COUNT] = {
-    [AWS_H2_FRAME_T_DATA] = &s_state_frame_data,
+    [AWS_H2_FRAME_T_DATA] = &s_state_frame_data_begin,
     [AWS_H2_FRAME_T_HEADERS] = &s_state_frame_headers,
     [AWS_H2_FRAME_T_PRIORITY] = &s_state_frame_priority,
     [AWS_H2_FRAME_T_RST_STREAM] = &s_state_frame_rst_stream,
@@ -224,6 +225,7 @@ struct aws_h2_decoder {
         uint8_t padding_len;
 
         struct {
+            bool padded;
             bool ack;
             bool end_stream;
             bool end_headers;
@@ -592,7 +594,7 @@ static struct aws_h2err s_state_fn_prefix(struct aws_h2_decoder *decoder, struct
      * Flags that have no defined semantics for a particular frame type MUST be ignored (RFC-7540 4.1) */
     const uint8_t flags = raw_flags & s_acceptable_flags_for_frame[decoder->frame_in_progress.type];
 
-    bool is_padded = flags & AWS_H2_FRAME_F_PADDED;
+    decoder->frame_in_progress.flags.padded = flags & AWS_H2_FRAME_F_PADDED;
     decoder->frame_in_progress.flags.ack = flags & AWS_H2_FRAME_F_ACK;
     decoder->frame_in_progress.flags.end_stream = flags & AWS_H2_FRAME_F_END_STREAM;
     decoder->frame_in_progress.flags.end_headers = flags & AWS_H2_FRAME_F_END_HEADERS;
@@ -666,11 +668,7 @@ static struct aws_h2err s_state_fn_prefix(struct aws_h2_decoder *decoder, struct
         frame->stream_id,
         frame->payload_len);
 
-    if (decoder->frame_in_progress.type == AWS_H2_FRAME_T_DATA) {
-        /* We invoke the on_data_begin here to report the whole payload size */
-        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data_begin, frame->payload_len, frame->flags.end_stream);
-    }
-    if (is_padded) {
+    if (frame->flags.padded) {
         /* Read padding length if necessary */
         return s_decoder_switch_state(decoder, &s_state_padding_len);
 
@@ -707,7 +705,6 @@ static struct aws_h2err s_state_fn_padding_len(struct aws_h2_decoder *decoder, s
     decoder->frame_in_progress.payload_len -= reduce_payload;
 
     DECODER_LOGF(TRACE, decoder, "Padding length of frame: %" PRIu32, decoder->frame_in_progress.padding_len);
-    DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data_padding_len, decoder->frame_in_progress.padding_len);
 
     if (decoder->frame_in_progress.flags.priority) {
         /* Read the stream dependency and weight if PRIORITY is set */
@@ -756,7 +753,21 @@ static struct aws_h2err s_state_fn_priority_block(struct aws_h2_decoder *decoder
     return s_decoder_switch_to_frame_state(decoder);
 }
 
-static struct aws_h2err s_state_fn_frame_data(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+static struct aws_h2err s_state_fn_frame_data_begin(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
+    (void)input;
+    struct aws_frame_in_progress *frame = &decoder->frame_in_progress;
+    /* The frame->payload_len is the actual length of data here. */
+    uint32_t original_payload_len = frame->flags.padded
+                                        ? frame->payload_len + frame->padding_len + s_state_padding_len_requires_1_bytes
+                                        : frame->payload_len;
+
+    DECODER_CALL_VTABLE_STREAM_ARGS(
+        decoder, on_data_begin, original_payload_len, frame->padding_len, frame->flags.end_stream);
+
+    return s_decoder_switch_state(decoder, &s_state_frame_data_block);
+}
+
+static struct aws_h2err s_state_fn_frame_data_block(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
 
     const struct aws_byte_cursor body_data = s_decoder_get_payload(decoder, input);
 
@@ -777,6 +788,7 @@ static struct aws_h2err s_state_fn_frame_data(struct aws_h2_decoder *decoder, st
 
     return AWS_H2ERR_SUCCESS;
 }
+
 static struct aws_h2err s_state_fn_frame_headers(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 
@@ -790,6 +802,7 @@ static struct aws_h2err s_state_fn_frame_headers(struct aws_h2_decoder *decoder,
     /* Read the header-block fragment */
     return s_decoder_switch_state(decoder, &s_state_header_block_loop);
 }
+
 static struct aws_h2err s_state_fn_frame_priority(struct aws_h2_decoder *decoder, struct aws_byte_cursor *input) {
     (void)input;
 

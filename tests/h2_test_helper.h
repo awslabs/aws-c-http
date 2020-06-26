@@ -108,6 +108,7 @@ struct h2_decoded_frame {
     struct aws_array_list settings;               /* contains aws_http2_setting, SETTINGS has this */
     struct aws_byte_buf data;                     /* DATA has this */
     uint32_t data_payload_len;                    /* DATA has this */
+    uint32_t data_padding_len;                    /* DATA has this */
     bool data_end_stream;                         /* DATA has this */
 };
 
