@@ -31,13 +31,13 @@ cd `tar ztf openssl-1.1.1-latest.tar.gz | head -n1 | cut -f1 -d/`
          no-hw no-mdc2 no-seed no-idea enable-ec_nistp_64_gcc_128 no-camellia\
          no-bf no-ripemd no-dsa no-ssl2 no-ssl3 no-capieng                  \
          -DSSL_FORBID_ENULL -DOPENSSL_NO_DTLS1 -DOPENSSL_NO_HEARTBEATS      \
-         --prefix=`pwd`/../../libcrypto-root/
+         --prefix=<install-path>
 make
 make install
 
 # Build s2n
 cd ../../../
-cmake -DCMAKE_PREFIX_PATH=<install-path> -DCMAKE_INSTALL_PREFIX=./s2n/libcrypto-root -S s2n -B s2n/build
+cmake -DCMAKE_PREFIX_PATH=<install-path> -DCMAKE_INSTALL_PREFIX=<install-path> -S s2n -B s2n/build
 cmake --build s2n/build --target install
 ```
 
