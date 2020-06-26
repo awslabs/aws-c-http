@@ -120,11 +120,8 @@ static void s_update_window_task(struct aws_channel_task *channel_task, void *ar
         s_h1_stream_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
 
-    if (stream == connection->thread_data.incoming_stream &&
-        connection->thread_data.connection_window_size == stream->stream_window_size) {
-        aws_h1_update_window_action(connection, window_update_size);
-    }
-    stream->stream_window_size += window_update_size;
+    stream->stream_window_size = aws_add_size_saturating(stream->stream_window_size, window_update_size);
+    aws_h1_update_connection_window(connection);
 end:
     aws_http_stream_release(&stream->base);
 }

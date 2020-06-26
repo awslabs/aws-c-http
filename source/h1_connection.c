@@ -297,8 +297,16 @@ response_error:
     return AWS_OP_ERR;
 }
 
-void aws_h1_update_window_action(struct h1_connection *connection, size_t increment_size) {
+void aws_h1_update_connection_window(struct h1_connection *connection) {
     AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+    struct aws_h1_stream *incoming_stream = connection->thread_data.incoming_stream;
+    if (!incoming_stream) {
+        return;
+    }
+    size_t new_window = aws_min_size(connection->initial_window_size, incoming_stream->stream_window_size);
+    /* The connection window will always be smaller to equal to the min of stream window and the initial window */
+    AWS_ASSERT(new_window >= connection->thread_data.connection_window_size);
+    size_t increment_size = new_window - connection->thread_data.connection_window_size;
     int err = aws_channel_slot_increment_read_window(connection->base.channel_slot, increment_size);
     if (err) {
         AWS_LOGF_ERROR(
@@ -537,18 +545,11 @@ static void s_set_incoming_stream_ptr(struct h1_connection *connection, struct a
             now_ns,
             &connection->thread_data.stats.pending_incoming_stream_ms);
     }
+    connection->thread_data.incoming_stream = next_incoming_stream;
 
     if (next_incoming_stream && connection->base.manual_window_management) {
-        /* new incoming stream, update the connection window, if needed */
-        size_t new_window = aws_min_size(connection->initial_window_size, next_incoming_stream->stream_window_size);
-        /* connection thread_data will be less or equal to initial_window_size, and stream_window_size for new stream
-         * will alway greater or equal to initial_window_size */
-        if (new_window > connection->thread_data.connection_window_size) {
-            aws_h1_update_window_action(connection, new_window - connection->thread_data.connection_window_size);
-        }
+        aws_h1_update_connection_window(connection);
     }
-
-    connection->thread_data.incoming_stream = next_incoming_stream;
 }
 
 /**

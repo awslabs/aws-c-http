@@ -95,8 +95,8 @@ struct h1_connection {
     } synced_data;
 };
 
-/* Action to update window, only called from event-loop thread */
-void aws_h1_update_window_action(struct h1_connection *connection, size_t increment_size);
+/* Action to increase the connection window if needed, only called from event-loop thread */
+void aws_h1_update_connection_window(struct h1_connection *connection);
 
 AWS_EXTERN_C_BEGIN
 
