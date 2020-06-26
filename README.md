@@ -24,14 +24,14 @@ cd libcrypto-build
 curl -LO https://www.openssl.org/source/openssl-1.1.1-latest.tar.gz
 tar -xzvf openssl-1.1.1-latest.tar.gz
 
-# Build openssl libcrypto
+# Build openssl libcrypto.  Note that the install path specified here must be absolute.
 cd `tar ztf openssl-1.1.1-latest.tar.gz | head -n1 | cut -f1 -d/`
 ./config -fPIC no-shared              \
          no-md2 no-rc5 no-rfc3779 no-sctp no-ssl-trace no-zlib     \
          no-hw no-mdc2 no-seed no-idea enable-ec_nistp_64_gcc_128 no-camellia\
          no-bf no-ripemd no-dsa no-ssl2 no-ssl3 no-capieng                  \
          -DSSL_FORBID_ENULL -DOPENSSL_NO_DTLS1 -DOPENSSL_NO_HEARTBEATS      \
-         --prefix=<install-path>
+         --prefix=<absolute-install-path>
 make
 make install
 
