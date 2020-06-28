@@ -75,6 +75,16 @@ struct h1_connection {
         uint64_t outgoing_stream_timestamp_ns;
         uint64_t incoming_stream_timestamp_ns;
 
+        struct {
+            /* only used when manual window management is true and the stream window is smaller
+             * than the channel window */
+            /* Buffer for body data */
+            struct aws_byte_buf buffer;
+            /* The capcity of body buffer. */
+            size_t capcity;
+            /* The length of data has been consumed by user */
+            size_t consumed_len;
+        } body_buffer;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
@@ -94,6 +104,11 @@ struct h1_connection {
         int new_stream_error_code;
     } synced_data;
 };
+
+/* Initialize the body buffer with a small number, the buffer will grow if needed. */
+#define AWS_H1_BODY_BUFFER_INIT_CAPCITY 256
+/* Default capcity of the body buffer */
+#define AWS_H1_BODY_BUFFER_DEFAULT_CAPCITY 1024
 
 /* Action to increase the connection window if needed, only called from event-loop thread */
 void aws_h1_update_connection_window(struct h1_connection *connection);

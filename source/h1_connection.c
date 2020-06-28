@@ -303,7 +303,7 @@ void aws_h1_update_connection_window(struct h1_connection *connection) {
     if (!incoming_stream) {
         return;
     }
-    size_t new_window = aws_min_size(connection->initial_window_size, incoming_stream->stream_window_size);
+    size_t new_window = aws_min_size(connection->thread_data.body_buffer.capcity, incoming_stream->stream_window_size);
     /* The connection window will always be smaller to equal to the min of stream window and the initial window */
     AWS_ASSERT(new_window >= connection->thread_data.connection_window_size);
     size_t increment_size = new_window - connection->thread_data.connection_window_size;
@@ -548,7 +548,12 @@ static void s_set_incoming_stream_ptr(struct h1_connection *connection, struct a
     connection->thread_data.incoming_stream = next_incoming_stream;
 
     if (next_incoming_stream && connection->base.manual_window_management) {
-        aws_h1_update_connection_window(connection);
+        /* Reset the body buffer, it might still have data from last incoming stream, and throw those data away */
+        aws_byte_buf_reset(&connection->thread_data.body_buffer.buffer, false /*zero_contents*/);
+        connection->thread_data.body_buffer.consumed_len = 0;
+        if (connection->thread_data.connection_window_size < next_incoming_stream->stream_window_size) {
+            aws_h1_update_connection_window(connection);
+        }
     }
 }
 
@@ -1062,24 +1067,42 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
         return AWS_OP_SUCCESS;
     }
 
+    struct aws_byte_cursor data_cursor = *data;
+
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM, "id=%p: Incoming body: %zu bytes received.", (void *)&incoming_stream->base, data->len);
 
     /* If the user wishes to manually increment windows, by default shrink the window by the amount of data read. */
     if (connection->base.manual_window_management) {
-        AWS_PRECONDITION(data->len <= incoming_stream->stream_window_size);
-        incoming_stream->stream_window_size -= data->len;
-        /* update the connection window, if needed */
-        size_t new_window = aws_min_size(connection->initial_window_size, incoming_stream->stream_window_size);
-        if (connection->thread_data.connection_window_size > new_window) {
-            connection->thread_data.incoming_message_window_shrink_size +=
-                connection->thread_data.connection_window_size - new_window;
-            connection->thread_data.connection_window_size = new_window;
+        if (data->len > incoming_stream->stream_window_size) {
+            /* pass the first stream_window_size bytes of data to user, put the rest of the data into buffer. */
+            /* copy the rest data into buffer */
+            data_cursor.ptr += incoming_stream->stream_window_size;
+            data_cursor.len = data->len - incoming_stream->stream_window_size;
+            if (aws_byte_buf_append_dynamic(&connection->thread_data.body_buffer.buffer, &data_cursor)) {
+                /* TODO: Error handling */
+            }
+            /* shrink the connection window by the amount of data read. */
+            connection->thread_data.incoming_message_window_shrink_size = data->len;
+            connection->thread_data.connection_window_size -= data->len;
+
+            /* set data_cursor to the the first stream_window_size bytes of data */
+            data_cursor.ptr = data->ptr;
+            data_cursor.len = incoming_stream->stream_window_size;
+        } else {
+            incoming_stream->stream_window_size -= data->len;
+            /* update the connection window, if needed */
+            if (connection->thread_data.connection_window_size > incoming_stream->stream_window_size) {
+                connection->thread_data.incoming_message_window_shrink_size +=
+                    connection->thread_data.connection_window_size - incoming_stream->stream_window_size;
+                connection->thread_data.connection_window_size = incoming_stream->stream_window_size;
+            }
         }
     }
 
     if (incoming_stream->base.on_incoming_body) {
-        err = incoming_stream->base.on_incoming_body(&incoming_stream->base, data, incoming_stream->base.user_data);
+        err = incoming_stream->base.on_incoming_body(
+            &incoming_stream->base, &data_cursor, incoming_stream->base.user_data);
         if (err) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_STREAM,
@@ -1233,8 +1256,19 @@ static struct h1_connection *s_connection_new(
         goto error_decoder;
     }
 
+    if (manual_window_management) {
+        /* don't even initialize the buffer when manual window management is false. And never touch it in that case. */
+        if (aws_byte_buf_init(&connection->thread_data.body_buffer.buffer, alloc, AWS_H1_BODY_BUFFER_INIT_CAPCITY)) {
+            goto error_buffer;
+        }
+        /* TODO: Configurable capcity? */
+        connection->thread_data.body_buffer.capcity = AWS_H1_BODY_BUFFER_DEFAULT_CAPCITY;
+        connection->thread_data.body_buffer.consumed_len = 0;
+    }
     return connection;
 
+error_buffer:
+    aws_byte_buf_clean_up(&connection->thread_data.body_buffer.buffer);
 error_decoder:
     aws_mutex_clean_up(&connection->synced_data.lock);
 error_mutex:
@@ -1282,7 +1316,9 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.midchannel_read_messages));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stream_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.new_client_stream_list));
-
+    if (connection->base.manual_window_management) {
+        aws_byte_buf_clean_up(&connection->thread_data.body_buffer.buffer);
+    }
     aws_h1_decoder_destroy(connection->thread_data.incoming_stream_decoder);
     aws_h1_encoder_clean_up(&connection->thread_data.encoder);
     aws_mutex_clean_up(&connection->synced_data.lock);

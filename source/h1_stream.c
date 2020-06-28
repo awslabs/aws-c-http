@@ -95,6 +95,47 @@ static int s_stream_update_window(struct aws_http_stream *stream_base, size_t in
     return AWS_OP_SUCCESS;
 }
 
+static int s_h1_stream_update_window(struct aws_h1_stream *stream, struct h1_connection *connection) {
+
+    if (stream != connection->thread_data.incoming_stream) {
+        /* stream window already updated nothing to do. */
+        return AWS_OP_SUCCESS;
+    }
+    /* if the stream is current incoming stream, window get updated, we need to check if the  */
+    struct aws_byte_cursor buff_cursor = aws_byte_cursor_from_buf(&connection->thread_data.body_buffer.buffer);
+    /* consumed_len must be lower or equal to the amount len of data in the buffer */
+    AWS_ASSERT(connection->thread_data.body_buffer.consumed_len <= buff_cursor.len);
+    size_t len_to_consume =
+        aws_min_size(buff_cursor.len - connection->thread_data.body_buffer.consumed_len, stream->stream_window_size);
+    if (len_to_consume) {
+        /* cosume the data from buffer */
+        if (stream->base.on_incoming_body) {
+            /* move the cursor, fire the user callback */
+            buff_cursor.ptr += connection->thread_data.body_buffer.consumed_len;
+            buff_cursor.len = len_to_consume;
+            if (stream->base.on_incoming_body(&stream->base, &buff_cursor, stream->base.user_data)) {
+                AWS_LOGF_TRACE(
+                    AWS_LS_HTTP_STREAM,
+                    "id=%p: Incoming body callback raised error %d (%s).",
+                    (void *)&stream->base,
+                    aws_last_error(),
+                    aws_error_name(aws_last_error()));
+                return AWS_OP_ERR;
+            }
+        }
+        /* Mark those data has been consumed, and shrink the stream window */
+        connection->thread_data.body_buffer.consumed_len += len_to_consume;
+        stream->stream_window_size -= len_to_consume;
+    }
+
+    if (stream->stream_window_size) {
+        /* The data from buffer is not enough for the new stream window.
+         * Update the connection window to allow more data */
+        aws_h1_update_connection_window(connection);
+    }
+    return AWS_OP_SUCCESS;
+}
+
 static void s_update_window_task(struct aws_channel_task *channel_task, void *arg, enum aws_task_status status) {
     (void)channel_task;
     struct aws_h1_stream *stream = arg;
@@ -121,7 +162,9 @@ static void s_update_window_task(struct aws_channel_task *channel_task, void *ar
     } /* END CRITICAL SECTION */
 
     stream->stream_window_size = aws_add_size_saturating(stream->stream_window_size, window_update_size);
-    aws_h1_update_connection_window(connection);
+    if(s_h1_stream_update_window(stream, connection)) {
+        /* TODO: Error from callback, we need to shutdown the connection? */
+    }
 end:
     aws_http_stream_release(&stream->base);
 }
