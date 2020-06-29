@@ -303,7 +303,9 @@ void aws_h1_update_connection_window(struct h1_connection *connection) {
     if (!incoming_stream) {
         return;
     }
-    size_t new_window = aws_min_size(connection->thread_data.body_buffer.capcity, incoming_stream->stream_window_size);
+    size_t new_window = aws_min_size(
+        aws_max_size(connection->initial_window_size, connection->thread_data.body_buffer.capcity),
+        incoming_stream->stream_window_size);
     /* The connection window will always be smaller to equal to the min of stream window and the initial window */
     AWS_ASSERT(new_window >= connection->thread_data.connection_window_size);
     size_t increment_size = new_window - connection->thread_data.connection_window_size;
@@ -495,6 +497,11 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
             (void *)&connection->base);
 
         s_connection_close(&connection->base);
+    }
+
+    if (connection->thread_data.body_buffer.buffer.len > connection->thread_data.body_buffer.consumed_len) {
+        /* Wait wait, still get body data not consumed yet. It's not finished for user, if user still hold the refcount. */
+        /* TODO: What should happen? */
     }
 
     /* Invoke callback and clean up stream. */
@@ -1089,6 +1096,8 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
             /* set data_cursor to the the first stream_window_size bytes of data */
             data_cursor.ptr = data->ptr;
             data_cursor.len = incoming_stream->stream_window_size;
+            /* shrink stream window to 0 */
+            incoming_stream->stream_window_size = 0;
         } else {
             incoming_stream->stream_window_size -= data->len;
             /* update the connection window, if needed */

@@ -2449,19 +2449,17 @@ H1_CLIENT_TEST_CASE(h1_client_window_manual_update_not_affecting_next_stream_win
         ASSERT_SUCCESS(s_stream_tester_init(&stream_tester[i], &tester, request));
     }
 
-    /* Update the stream window in advance should work as HTTP/2 stream window */
-    size_t remaining_bytes = 10;
-    ASSERT_SUCCESS(aws_http_stream_update_window(stream_tester[0].stream, window_size));
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-    /* The first stream window is window_size + remaining_bytes and the second one is 2*window_size + remaining_bytes
-     * now */
     /* Create buffer */
     struct aws_byte_buf body_buf;
-    ASSERT_SUCCESS(aws_byte_buf_init(&body_buf, allocator, 2 * window_size + remaining_bytes));
-    ASSERT_TRUE(aws_byte_buf_write_u8_n(&body_buf, (uint8_t)'a', 2 * window_size + remaining_bytes));
+    ASSERT_SUCCESS(aws_byte_buf_init(&body_buf, allocator, 2 * window_size));
+    ASSERT_TRUE(aws_byte_buf_write_u8_n(&body_buf, (uint8_t)'a', 2 * window_size));
     struct aws_byte_cursor body_cursor = aws_byte_cursor_from_buf(&body_buf);
 
-    /* Send first response */
+    /* Update the first stream window to 2*window_size */
+    ASSERT_SUCCESS(aws_http_stream_update_window(stream_tester[0].stream, window_size));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Send first response, no body included */
     const char reponse_str_headers[] = "HTTP/1.1 200 OK\r\n"
                                        "\r\n";
 
@@ -2472,20 +2470,27 @@ H1_CLIENT_TEST_CASE(h1_client_window_manual_update_not_affecting_next_stream_win
     ASSERT_TRUE(stream_tester[0].complete);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester[0].on_complete_error_code);
 
-    /* Send Second response */
+    /* Send second response */
     const char reponse_str_headers_2[] = "HTTP/1.1 200 OK\r\n"
                                          "Content-Length: 150\r\n"
                                          "\r\n";
-
     /* send response headers */
     ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, reponse_str_headers_2));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    /* However, if user updated the window for the streams that are not incoming stream at that time, the channel window
-     * will still be initial window size. */
     body_cursor.len = 150;
     ASSERT_SUCCESS(testing_channel_push_read_data(&tester.testing_channel, body_cursor));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
+    /* The stream window should still be window size, the remaining bytes will be stored in the body buffer. The length
+     * of received body should be equal to the initial window size */
+    ASSERT_UINT_EQUALS(window_size, stream_tester[1].response_body.len);
+    /* Update the stream window size */
+    ASSERT_SUCCESS(aws_http_stream_update_window(stream_tester[1].stream, 10));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    ASSERT_UINT_EQUALS(window_size + 10, stream_tester[1].response_body.len);
+    /* Update the stream window size */
+    ASSERT_SUCCESS(aws_http_stream_update_window(stream_tester[1].stream, 60));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+    ASSERT_UINT_EQUALS(150, stream_tester[1].response_body.len);
 
     ASSERT_TRUE(stream_tester[1].complete);
     ASSERT_INT_EQUALS(AWS_ERROR_SUCCESS, stream_tester[1].on_complete_error_code);
