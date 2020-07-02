@@ -806,6 +806,8 @@ int aws_http_client_connect_internal(
         goto error;
     }
 
+    AWS_ZERO_STRUCT(*http_bootstrap);
+
     http_bootstrap->alloc = options->allocator;
     http_bootstrap->is_using_tls = options->tls_options != NULL;
     http_bootstrap->manual_window_management = options->manual_window_management;
