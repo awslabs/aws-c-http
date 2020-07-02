@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/testing/aws_test_harness.h>
@@ -609,7 +599,8 @@ static void s_aws_http_connection_manager_close_connection_sync_mock(struct aws_
     (void)connection;
 }
 
-static bool s_aws_http_connection_manager_is_connection_open_sync_mock(const struct aws_http_connection *connection) {
+static bool s_aws_http_connection_manager_is_connection_available_sync_mock(
+    const struct aws_http_connection *connection) {
     (void)connection;
 
     struct mock_connection *proxy = (struct mock_connection *)(void *)connection;
@@ -634,7 +625,7 @@ static struct aws_http_connection_manager_system_vtable s_synchronous_mocks = {
     .create_connection = s_aws_http_connection_manager_create_connection_sync_mock,
     .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
     .close_connection = s_aws_http_connection_manager_close_connection_sync_mock,
-    .is_connection_open = s_aws_http_connection_manager_is_connection_open_sync_mock,
+    .is_connection_available = s_aws_http_connection_manager_is_connection_available_sync_mock,
     .get_monotonic_time = aws_high_res_clock_get_ticks,
     .connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
     .is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
@@ -758,7 +749,7 @@ static struct aws_http_connection_manager_system_vtable s_idle_mocks = {
     .create_connection = s_aws_http_connection_manager_create_connection_sync_mock,
     .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
     .close_connection = s_aws_http_connection_manager_close_connection_sync_mock,
-    .is_connection_open = s_aws_http_connection_manager_is_connection_open_sync_mock,
+    .is_connection_available = s_aws_http_connection_manager_is_connection_available_sync_mock,
     .get_monotonic_time = s_tester_get_mock_time,
     .connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
     .is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,

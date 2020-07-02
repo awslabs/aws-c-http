@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 #include <aws/common/clock.h>
 #include <aws/common/math.h>
@@ -67,6 +57,7 @@ static struct aws_http_stream *s_new_server_request_handler_stream(
 static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response);
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
+static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
 static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
 static int s_decoder_on_request(
     enum aws_http_method method_enum,
@@ -99,9 +90,15 @@ static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .stream_send_response = s_stream_send_response,
     .close = s_connection_close,
     .is_open = s_connection_is_open,
+    .new_requests_allowed = s_connection_new_requests_allowed,
     .update_window = s_connection_update_window,
     .change_settings = NULL,
-    .ping = NULL,
+    .send_ping = NULL,
+    .send_goaway = NULL,
+    .get_sent_goaway = NULL,
+    .get_received_goaway = NULL,
+    .get_local_settings = NULL,
+    .get_remote_settings = NULL,
 };
 
 static const struct aws_h1_decoder_vtable s_h1_decoder_vtable = {
@@ -181,11 +178,11 @@ struct h1_connection {
         /* For checking status from outside the event-loop thread. */
         bool is_open;
 
-        /* If non-zero, reason to immediately reject new streams. (ex: closing, switched protocols) */
-        int new_stream_error_code;
-
         /* If non-zero, then window_update_task is scheduled */
         size_t window_update_size;
+
+        /* If non-zero, reason to immediately reject new streams. (ex: closing) */
+        int new_stream_error_code;
     } synced_data;
 };
 
@@ -232,12 +229,11 @@ static void s_stop(
 
         /* Even if we're not scheduling shutdown just yet (ex: sent final request but waiting to read final response)
          * we don't consider the connection "open" anymore so user can't create more streams */
-        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
         connection->synced_data.is_open = false;
+        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
 
         s_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
-
     if (schedule_shutdown) {
         AWS_LOGF_INFO(
             AWS_LS_HTTP_CONNECTION,
@@ -290,6 +286,17 @@ static bool s_connection_is_open(const struct aws_http_connection *connection_ba
     return is_open;
 }
 
+static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base) {
+    struct h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct h1_connection, base);
+    int new_stream_error_code;
+    { /* BEGIN CRITICAL SECTION */
+        s_h1_connection_lock_synced_data(connection);
+        new_stream_error_code = connection->synced_data.new_stream_error_code;
+        s_h1_connection_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+    return new_stream_error_code == 0;
+}
+
 static int s_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response) {
     AWS_PRECONDITION(stream);
     AWS_PRECONDITION(response);
@@ -319,7 +326,9 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
             h1_stream->synced_data.has_outgoing_response = true;
             h1_stream->encoder_message = encoder_message;
             if (encoder_message.has_connection_close_header) {
+                /* This will be the last stream connection will process, new streams will be rejected */
                 h1_stream->is_final_stream = true;
+                connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
             }
 
             if (!connection->synced_data.is_outgoing_stream_task_active) {
@@ -439,6 +448,7 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
     struct aws_http_connection *base_connection = stream->owning_connection;
     struct h1_connection *connection = AWS_CONTAINER_OF(base_connection, struct h1_connection, base);
 
+    int err;
     bool should_schedule_task = false;
 
     { /* BEGIN CRITICAL SECTION */
@@ -448,6 +458,12 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
             /* stream has already been activated. */
             s_h1_connection_unlock_synced_data(connection);
             return AWS_OP_SUCCESS;
+        }
+
+        err = connection->synced_data.new_stream_error_code;
+        if (err) {
+            s_h1_connection_unlock_synced_data(connection);
+            goto error;
         }
 
         stream->id = aws_http_connection_get_next_stream_id(base_connection);
@@ -477,6 +493,16 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
     }
 
     return AWS_OP_SUCCESS;
+
+error:
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Failed to activate the stream id=%p, new streams are not allowed now. error %d (%s)",
+        (void *)&connection->base,
+        (void *)stream,
+        err,
+        aws_error_name(err));
+    return aws_raise_error(err);
 }
 
 struct aws_http_stream *s_make_request(
@@ -497,16 +523,12 @@ struct aws_http_stream *s_make_request(
     struct h1_connection *connection = AWS_CONTAINER_OF(client_connection, struct h1_connection, base);
 
     /* Insert new stream into pending list, and schedule outgoing_stream_task if it's not already running. */
-    int new_stream_error_code = AWS_ERROR_SUCCESS;
-
+    int new_stream_error_code;
     { /* BEGIN CRITICAL SECTION */
         s_h1_connection_lock_synced_data(connection);
-        if (connection->synced_data.new_stream_error_code) {
-            new_stream_error_code = connection->synced_data.new_stream_error_code;
-        }
+        new_stream_error_code = connection->synced_data.new_stream_error_code;
         s_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
-
     if (new_stream_error_code) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
@@ -1053,6 +1075,11 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
                 (void *)&incoming_stream->base);
 
             incoming_stream->is_final_stream = true;
+            { /* BEGIN CRITICAL SECTION */
+                s_h1_connection_lock_synced_data(connection);
+                connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
+                s_h1_connection_unlock_synced_data(connection);
+            } /* END CRITICAL SECTION */
         }
     }
 
@@ -1122,7 +1149,6 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
                 (void *)&connection->base);
 
             connection->thread_data.has_switched_protocols = true;
-
             { /* BEGIN CRITICAL SECTION */
                 s_h1_connection_lock_synced_data(connection);
                 connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_SWITCHED_PROTOCOLS;

@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include "stream_test_helper.h"
@@ -2918,6 +2908,45 @@ static int s_switch_protocols(struct protocol_switcher *switcher) {
     /* cleanup */
     aws_byte_buf_clean_up(&sending_buf);
     aws_http_stream_release(upgrade_stream);
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_new_request_allowed) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* prepare request */
+    struct aws_http_make_request_options options = {
+        .self_size = sizeof(options),
+        .request = s_new_default_get_request(allocator),
+    };
+
+    /* validate the new request is allowed for now */
+    ASSERT_TRUE(aws_http_connection_new_requests_allowed(tester.connection));
+
+    /* switch protocols */
+    struct protocol_switcher switcher = {
+        .tester = &tester,
+        .install_downstream_handler = true,
+    };
+    ASSERT_SUCCESS(s_switch_protocols(&switcher));
+
+    /* validate the new request is not allowed anymore when goaway received */
+    ASSERT_FALSE(aws_http_connection_new_requests_allowed(tester.connection));
+    /* Make new request will fail */
+    ASSERT_NULL(aws_http_connection_make_request(tester.connection, &options));
+    ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_SWITCHED_PROTOCOLS, aws_last_error());
+
+    /* close connection */
+    aws_http_connection_close(tester.connection);
+    /* Make new request will fail */
+    ASSERT_NULL(aws_http_connection_make_request(tester.connection, &options));
+    ASSERT_UINT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, aws_last_error());
+
+    /* clean up */
+    aws_http_message_destroy(options.request);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
 

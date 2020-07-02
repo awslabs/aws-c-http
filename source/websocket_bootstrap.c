@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/common/logging.h>
@@ -199,6 +189,10 @@ int aws_websocket_client_connect(const struct aws_websocket_client_connection_op
     http_options.tls_options = options->tls_options;
     http_options.proxy_options = options->proxy_options;
     http_options.initial_window_size = 1024; /* Adequate space for response data to trickle in */
+
+    /* TODO: websockets has issues if back-pressure is disabled on the whole channel. This should be fixed. */
+    http_options.manual_window_management = true;
+
     http_options.user_data = ws_bootstrap;
     http_options.on_setup = s_ws_bootstrap_on_http_setup;
     http_options.on_shutdown = s_ws_bootstrap_on_http_shutdown;

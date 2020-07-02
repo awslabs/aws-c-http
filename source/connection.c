@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/private/connection_impl.h>
@@ -225,6 +215,11 @@ bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
     return connection->vtable->is_open(connection);
 }
 
+bool aws_http_connection_new_requests_allowed(const struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    return connection->vtable->new_requests_allowed(connection);
+}
+
 bool aws_http_connection_is_client(const struct aws_http_connection *connection) {
     return connection->client_data;
 }
@@ -238,6 +233,18 @@ void aws_http_connection_update_window(struct aws_http_connection *connection, s
     connection->vtable->update_window(connection, increment_size);
 }
 
+static int s_check_http2_connection(const struct aws_http_connection *http2_connection) {
+    if (http2_connection->http_version == AWS_HTTP_VERSION_2) {
+        return AWS_OP_SUCCESS;
+    } else {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
+            (void *)http2_connection);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+}
+
 int aws_http2_connection_change_settings(
     struct aws_http_connection *http2_connection,
     const struct aws_http2_setting *settings_array,
@@ -246,12 +253,8 @@ int aws_http2_connection_change_settings(
     void *user_data) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
-    if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
-        AWS_LOGF_WARN(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
-            (void *)http2_connection);
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
     }
     return http2_connection->vtable->change_settings(
         http2_connection, settings_array, num_settings, on_completed, user_data);
@@ -264,14 +267,76 @@ int aws_http2_connection_ping(
     void *user_data) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
-    if (http2_connection->http_version != AWS_HTTP_VERSION_2) {
-        AWS_LOGF_WARN(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
-            (void *)http2_connection);
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
     }
-    return http2_connection->vtable->ping(http2_connection, optional_opaque_data, on_ack, user_data);
+    return http2_connection->vtable->send_ping(http2_connection, optional_opaque_data, on_ack, user_data);
+}
+
+int aws_http2_connection_send_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t http2_error,
+    bool allow_more_streams,
+    const struct aws_byte_cursor *optional_debug_data) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    return http2_connection->vtable->send_goaway(
+        http2_connection, http2_error, allow_more_streams, optional_debug_data);
+}
+
+int aws_http2_connection_get_sent_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(out_http2_error);
+    AWS_PRECONDITION(out_last_stream_id);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    return http2_connection->vtable->get_sent_goaway(http2_connection, out_http2_error, out_last_stream_id);
+}
+
+int aws_http2_connection_get_received_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(out_http2_error);
+    AWS_PRECONDITION(out_last_stream_id);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    return http2_connection->vtable->get_received_goaway(http2_connection, out_http2_error, out_last_stream_id);
+}
+
+int aws_http2_connection_get_local_settings(
+    const struct aws_http_connection *http2_connection,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    http2_connection->vtable->get_local_settings(http2_connection, out_settings);
+    return AWS_OP_SUCCESS;
+}
+
+int aws_http2_connection_get_remote_settings(
+    const struct aws_http_connection *http2_connection,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    http2_connection->vtable->get_remote_settings(http2_connection, out_settings);
+    return AWS_OP_SUCCESS;
 }
 
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {
