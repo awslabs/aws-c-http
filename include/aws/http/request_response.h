@@ -319,7 +319,7 @@ struct aws_http1_chunk_options {
     /*
      * Size of the chunk_data input stream in bytes.
      */
-    size_t chunk_data_size;
+    uint64_t chunk_data_size;
 
     /**
      * A pointer to an array of chunked extensions.
