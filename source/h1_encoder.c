@@ -362,6 +362,102 @@ int aws_h1_encoder_start_message(
     return AWS_OP_SUCCESS;
 }
 
+static bool s_write_crlf(struct aws_byte_buf *dst) {
+    AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
+    struct aws_byte_cursor crlf_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("\r\n");
+    return aws_byte_buf_write_from_whole_cursor(dst, crlf_cursor);
+}
+
+static bool s_write_chunk_size(struct aws_byte_buf *dst, uint64_t chunk_size) {
+    AWS_PRECONDITION(dst);
+    AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
+    char ascii_hex_chunk_size_str[MAX_ASCII_HEX_CHUNK_STR_SIZE] = {0};
+    snprintf(ascii_hex_chunk_size_str, sizeof(ascii_hex_chunk_size_str), "%" PRIX64, chunk_size);
+    return aws_byte_buf_write_from_whole_cursor(dst, aws_byte_cursor_from_c_str(ascii_hex_chunk_size_str));
+}
+
+static bool s_write_chunk_extension(struct aws_byte_buf *dst, struct aws_http1_chunk_extension *chunk_extension) {
+    AWS_PRECONDITION(chunk_extension);
+    AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
+    bool wrote_all = true;
+    wrote_all &= aws_byte_buf_write_u8(dst, ';');
+    wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, chunk_extension->key);
+    wrote_all &= aws_byte_buf_write_u8(dst, '=');
+    wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, chunk_extension->value);
+    return wrote_all;
+}
+
+/* Clean up chunk, removing it from whatever list it was in, and firing completion callback. */
+void aws_h1_chunk_destroy(struct aws_h1_chunk *chunk) {
+    AWS_PRECONDITION(chunk);
+
+    aws_http1_stream_write_chunk_complete_fn *on_complete = chunk->on_complete;
+    void *user_data = chunk->user_data;
+
+    /* Clean up before firing callback */
+    aws_linked_list_remove(&chunk->node);
+    aws_byte_buf_clean_up(&chunk->chunk_line);
+    aws_mem_release(chunk->allocator, chunk);
+
+    if (NULL != on_complete) {
+        on_complete(user_data);
+    }
+}
+
+static void s_clean_up_current_chunk(struct aws_h1_encoder *encoder) {
+    AWS_PRECONDITION(encoder->current_chunk);
+
+    aws_h1_chunk_destroy(encoder->current_chunk);
+    encoder->current_chunk = NULL;
+}
+static size_t s_calculate_chunk_line_size(struct aws_http1_chunk_options *options) {
+    size_t chunk_line_size = MAX_ASCII_HEX_CHUNK_STR_SIZE + CRLF_SIZE;
+    for (size_t i = 0; i < options->num_extensions; ++i) {
+        struct aws_http1_chunk_extension *chunk_extension = options->extensions + i;
+        chunk_line_size += sizeof(';');
+        chunk_line_size += chunk_extension->key.len;
+        chunk_line_size += sizeof('=');
+        chunk_line_size += chunk_extension->value.len;
+    }
+    return chunk_line_size;
+}
+
+static bool s_populate_chunk_line_buffer(struct aws_byte_buf *chunk_line, struct aws_http1_chunk_options *options) {
+    bool wrote_chunk_line = true;
+    wrote_chunk_line &= s_write_chunk_size(chunk_line, options->chunk_data_size);
+    for (size_t i = 0; i < options->num_extensions; ++i) {
+        wrote_chunk_line &= s_write_chunk_extension(chunk_line, options->extensions + i);
+    }
+    wrote_chunk_line &= s_write_crlf(chunk_line);
+    return wrote_chunk_line;
+}
+
+int aws_chunk_line_from_options(struct aws_http1_chunk_options *options, struct aws_byte_buf *chunk_line) {
+    size_t chunk_line_size = s_calculate_chunk_line_size(options);
+    if (AWS_OP_SUCCESS != aws_byte_buf_init(chunk_line, options->chunk_data->allocator, chunk_line_size)) {
+        return AWS_OP_ERR;
+    }
+    if (AWS_UNLIKELY(!s_populate_chunk_line_buffer(chunk_line, options))) {
+        AWS_ASSERT(0);
+    }
+    return AWS_OP_SUCCESS;
+}
+
+/* Write as much as possible from src_buf to dst, using encoder->progress_len to track progress.
+ * Returns true if the entire src_buf has been copied */
+static bool s_encode_buf(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst, const struct aws_byte_buf *src) {
+
+    /* advance src_cursor to current position in src_buf */
+    struct aws_byte_cursor src_cursor = aws_byte_cursor_from_buf(src);
+    aws_byte_cursor_advance(&src_cursor, (size_t)encoder->progress_bytes);
+
+    /* write as much as possible to dst, src_cursor is advanced as write occurs */
+    struct aws_byte_cursor written = aws_byte_buf_write_to_capacity(dst, &src_cursor);
+    encoder->progress_bytes += written.len;
+
+    return src_cursor.len == 0;
+}
+
 /* Write as much body stream as possible into dst buffer.
  * Increments encoder->progress_bytes to track progress */
 static int s_encode_stream(
@@ -443,102 +539,6 @@ static int s_encode_stream(
     }
 
     /* Not done streaming data out yet */
-    return AWS_OP_SUCCESS;
-}
-
-/* Write as much as possible from src_buf to dst, using encoder->progress_len to track progress.
- * Returns true if the entire src_buf has been copied */
-static bool s_encode_buf(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst, const struct aws_byte_buf *src) {
-
-    /* advance src_cursor to current position in src_buf */
-    struct aws_byte_cursor src_cursor = aws_byte_cursor_from_buf(src);
-    aws_byte_cursor_advance(&src_cursor, (size_t)encoder->progress_bytes);
-
-    /* write as much as possible to dst, src_cursor is advanced as write occurs */
-    struct aws_byte_cursor written = aws_byte_buf_write_to_capacity(dst, &src_cursor);
-    encoder->progress_bytes += written.len;
-
-    return src_cursor.len == 0;
-}
-
-static bool s_write_crlf(struct aws_byte_buf *dst) {
-    AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
-    struct aws_byte_cursor crlf_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("\r\n");
-    return aws_byte_buf_write_from_whole_cursor(dst, crlf_cursor);
-}
-
-static bool s_write_chunk_size(struct aws_byte_buf *dst, uint64_t chunk_size) {
-    AWS_PRECONDITION(dst);
-    AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
-    char ascii_hex_chunk_size_str[MAX_ASCII_HEX_CHUNK_STR_SIZE] = {0};
-    snprintf(ascii_hex_chunk_size_str, sizeof(ascii_hex_chunk_size_str), "%" PRIX64, chunk_size);
-    return aws_byte_buf_write_from_whole_cursor(dst, aws_byte_cursor_from_c_str(ascii_hex_chunk_size_str));
-}
-
-static bool s_write_chunk_extension(struct aws_byte_buf *dst, struct aws_http1_chunk_extension *chunk_extension) {
-    AWS_PRECONDITION(chunk_extension);
-    AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
-    bool wrote_all = true;
-    wrote_all &= aws_byte_buf_write_u8(dst, ';');
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, chunk_extension->key);
-    wrote_all &= aws_byte_buf_write_u8(dst, '=');
-    wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, chunk_extension->value);
-    return wrote_all;
-}
-
-/* Clean up chunk, removing it from whatever list it was in, and firing completion callback. */
-void aws_h1_chunk_destroy(struct aws_h1_chunk *chunk) {
-    AWS_PRECONDITION(chunk);
-
-    aws_http1_stream_write_chunk_complete_fn *on_complete = chunk->on_complete;
-    void *user_data = chunk->user_data;
-
-    /* Clean up before firing callback */
-    aws_linked_list_remove(&chunk->node);
-    aws_byte_buf_clean_up(&chunk->chunk_line);
-    aws_mem_release(chunk->allocator, chunk);
-
-    if (NULL != on_complete) {
-        on_complete(user_data);
-    }
-}
-
-static void s_clean_up_current_chunk(struct aws_h1_encoder *encoder) {
-    AWS_PRECONDITION(encoder->current_chunk);
-
-    aws_h1_chunk_destroy(encoder->current_chunk);
-    encoder->current_chunk = NULL;
-}
-static size_t s_calculate_chunk_line_size(struct aws_http1_chunk_options *options) {
-    size_t chunk_line_size = MAX_ASCII_HEX_CHUNK_STR_SIZE + CRLF_SIZE;
-    for (size_t i = 0; i < options->num_extensions; ++i) {
-        struct aws_http1_chunk_extension *chunk_extension = options->extensions + i;
-        chunk_line_size += sizeof(';');
-        chunk_line_size += chunk_extension->key.len;
-        chunk_line_size += sizeof('=');
-        chunk_line_size += chunk_extension->value.len;
-    }
-    return chunk_line_size;
-}
-
-static bool s_populate_chunk_line_buffer(struct aws_byte_buf *chunk_line, struct aws_http1_chunk_options *options) {
-    bool wrote_chunk_line = true;
-    wrote_chunk_line &= s_write_chunk_size(chunk_line, options->chunk_data_size);
-    for (size_t i = 0; i < options->num_extensions; ++i) {
-        wrote_chunk_line &= s_write_chunk_extension(chunk_line, options->extensions + i);
-    }
-    wrote_chunk_line &= s_write_crlf(chunk_line);
-    return wrote_chunk_line;
-}
-
-int aws_chunk_line_from_options(struct aws_http1_chunk_options *options, struct aws_byte_buf *chunk_line) {
-    size_t chunk_line_size = s_calculate_chunk_line_size(options);
-    if (AWS_OP_SUCCESS != aws_byte_buf_init(chunk_line, options->chunk_data->allocator, chunk_line_size)) {
-        return AWS_OP_ERR;
-    }
-    if (AWS_UNLIKELY(!s_populate_chunk_line_buffer(chunk_line, options))) {
-        AWS_ASSERT(0);
-    }
     return AWS_OP_SUCCESS;
 }
 
