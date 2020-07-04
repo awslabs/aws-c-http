@@ -362,21 +362,6 @@ int aws_h1_encoder_start_message(
     return AWS_OP_SUCCESS;
 }
 
-/* Write as much as possible from src_buf to dst, using encoder->progress_len to track progress.
- * Returns true if the entire src_buf has been copied */
-static bool s_encode_buf(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst, const struct aws_byte_buf *src) {
-
-    /* advance src_cursor to current position in src_buf */
-    struct aws_byte_cursor src_cursor = aws_byte_cursor_from_buf(src);
-    aws_byte_cursor_advance(&src_cursor, (size_t)encoder->progress_bytes);
-
-    /* write as much as possible to dst, src_cursor is advanced as write occurs */
-    struct aws_byte_cursor written = aws_byte_buf_write_to_capacity(dst, &src_cursor);
-    encoder->progress_bytes += written.len;
-
-    return src_cursor.len == 0;
-}
-
 /* Write as much body stream as possible into dst buffer.
  * Increments encoder->progress_bytes to track progress */
 static int s_encode_stream(
@@ -459,6 +444,21 @@ static int s_encode_stream(
 
     /* Not done streaming data out yet */
     return AWS_OP_SUCCESS;
+}
+
+/* Write as much as possible from src_buf to dst, using encoder->progress_len to track progress.
+ * Returns true if the entire src_buf has been copied */
+static bool s_encode_buf(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst, const struct aws_byte_buf *src) {
+
+    /* advance src_cursor to current position in src_buf */
+    struct aws_byte_cursor src_cursor = aws_byte_cursor_from_buf(src);
+    aws_byte_cursor_advance(&src_cursor, (size_t)encoder->progress_bytes);
+
+    /* write as much as possible to dst, src_cursor is advanced as write occurs */
+    struct aws_byte_cursor written = aws_byte_buf_write_to_capacity(dst, &src_cursor);
+    encoder->progress_bytes += written.len;
+
+    return src_cursor.len == 0;
 }
 
 static bool s_write_crlf(struct aws_byte_buf *dst) {
