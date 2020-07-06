@@ -303,7 +303,11 @@ void aws_h1_update_connection_window(struct h1_connection *connection) {
     if (!incoming_stream) {
         return;
     }
-    size_t new_window = aws_min_size(connection->initial_window_size, incoming_stream->stream_window_size);
+    /* if the initial window size for the stream is larger than the capcity, we can ignore the buffer, and keep
+     * forwarding data to the stream */
+    size_t new_window = aws_min_size(
+        aws_max_size(connection->initial_window_size, AWS_H1_BUFFER_DEFAULT_CAPCITY),
+        incoming_stream->stream_window_size);
     /* The connection window will always be smaller to equal to the min of stream window and the initial window */
     AWS_ASSERT(new_window >= connection->thread_data.connection_window_size);
     size_t increment_size = new_window - connection->thread_data.connection_window_size;
@@ -548,7 +552,16 @@ static void s_set_incoming_stream_ptr(struct h1_connection *connection, struct a
     connection->thread_data.incoming_stream = next_incoming_stream;
 
     if (next_incoming_stream && connection->base.manual_window_management) {
-        aws_h1_update_connection_window(connection);
+        /* It might still have data from last incoming stream, which is not needed by user anymore. Throw those data
+         * away */
+        if (connection->thread_data.message_buffer) {
+            aws_mem_release(connection->thread_data.message_buffer->allocator, connection->thread_data.message_buffer);
+            connection->thread_data.message_buffer = NULL;
+        }
+        if (connection->thread_data.connection_window_size < next_incoming_stream->stream_window_size) {
+            /* We don't need to update the window when the connection window is larger or  */
+            aws_h1_update_connection_window(connection);
+        }
     }
 }
 
@@ -1566,6 +1579,15 @@ static int s_handler_process_read_message(
             aws_h1_decoder_set_body_headers_ignored(
                 connection->thread_data.incoming_stream_decoder, body_headers_ignored);
 
+            size_t reserved_len = 0;
+            size_t proccess_len = incoming_message_size;
+            if (message_cursor.len > connection->thread_data.incoming_stream->stream_window_size) {
+                /* feed the first stream window size bytes of data to decoder */
+                reserved_len = message_cursor.len - connection->thread_data.incoming_stream->stream_window_size;
+                message_cursor.len = connection->thread_data.incoming_stream->stream_window_size;
+                proccess_len = message_cursor.len;
+            }
+
             /* Decoder will stop once it hits the end of the request/response OR the end of the message data. */
             err = aws_h1_decode(connection->thread_data.incoming_stream_decoder, &message_cursor);
             if (err) {
@@ -1577,6 +1599,24 @@ static int s_handler_process_read_message(
                     aws_error_name(aws_last_error()));
 
                 goto shutdown;
+            }
+            if (reserved_len) {
+                /*  */
+            }
+            /* The read window to increment */
+            if (incoming_message_size > connection->thread_data.incoming_message_window_shrink_size) {
+                size_t increment = incoming_message_size - connection->thread_data.incoming_message_window_shrink_size;
+                err = aws_channel_slot_increment_read_window(slot, increment);
+                if (err) {
+                    AWS_LOGF_ERROR(
+                        AWS_LS_HTTP_CONNECTION,
+                        "id=%p: Failed to increment read window, error %d (%s). Closing connection.",
+                        (void *)&connection->base,
+                        aws_last_error(),
+                        aws_error_name(aws_last_error()));
+
+                    goto shutdown;
+                }
             }
         }
     }

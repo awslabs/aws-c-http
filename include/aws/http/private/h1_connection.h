@@ -75,6 +75,9 @@ struct h1_connection {
         uint64_t outgoing_stream_timestamp_ns;
         uint64_t incoming_stream_timestamp_ns;
 
+        /* The buffer to keep, when the stream window size is not enough to fully process the body part of the message.
+         * Instead of copying from the aws_io_message, we can keep it alive until we finish processing it. */
+        struct aws_io_message *message_buffer;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
@@ -94,6 +97,9 @@ struct h1_connection {
         int new_stream_error_code;
     } synced_data;
 };
+
+/* Default capcity of the buffer */
+#define AWS_H1_BUFFER_DEFAULT_CAPCITY 1024
 
 /* Action to increase the connection window if needed, only called from event-loop thread */
 void aws_h1_update_connection_window(struct h1_connection *connection);
