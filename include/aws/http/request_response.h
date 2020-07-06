@@ -324,7 +324,8 @@ struct aws_http1_chunk_options {
     /**
      * A pointer to an array of chunked extensions.
      * The num_extensions must match the length of the array.
-     * This data is copied, it does not need to remain valid on_complete is invoked.
+     * This data is deep-copied by aws_http1_stream_write_chunk(),
+     * it does not need to remain valid until on_complete is invoked.
      */
     struct aws_http1_chunk_extension *extensions;
 

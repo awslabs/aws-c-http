@@ -136,6 +136,12 @@ static int s_scan_outgoing_headers(
     return AWS_OP_SUCCESS;
 }
 
+static bool s_write_crlf(struct aws_byte_buf *dst) {
+    AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
+    struct aws_byte_cursor crlf_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("\r\n");
+    return aws_byte_buf_write_from_whole_cursor(dst, crlf_cursor);
+}
+
 static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_message *message) {
 
     const size_t num_headers = aws_http_message_get_header_count(message);
@@ -150,8 +156,7 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_mess
         wrote_all &= aws_byte_buf_write_u8(dst, ':');
         wrote_all &= aws_byte_buf_write_u8(dst, ' ');
         wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.value);
-        wrote_all &= aws_byte_buf_write_u8(dst, '\r');
-        wrote_all &= aws_byte_buf_write_u8(dst, '\n');
+        wrote_all &= s_write_crlf(dst);
     }
     AWS_ASSERT(wrote_all);
 }
@@ -221,13 +226,11 @@ int aws_h1_encoder_message_init_from_request(
     wrote_all &= aws_byte_buf_write_from_whole_cursor(&message->outgoing_head_buf, uri);
     wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, ' ');
     wrote_all &= aws_byte_buf_write_from_whole_cursor(&message->outgoing_head_buf, version);
-    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\r');
-    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\n');
+    wrote_all &= s_write_crlf(&message->outgoing_head_buf);
 
     s_write_headers(&message->outgoing_head_buf, request);
 
-    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\r');
-    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\n');
+    wrote_all &= s_write_crlf(&message->outgoing_head_buf);
     (void)wrote_all;
     AWS_ASSERT(wrote_all);
 
@@ -308,13 +311,11 @@ int aws_h1_encoder_message_init_from_response(
     wrote_all &= aws_byte_buf_write_from_whole_cursor(&message->outgoing_head_buf, status_code);
     wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, ' ');
     wrote_all &= aws_byte_buf_write_from_whole_cursor(&message->outgoing_head_buf, status_text);
-    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\r');
-    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\n');
+    wrote_all &= s_write_crlf(&message->outgoing_head_buf);
 
     s_write_headers(&message->outgoing_head_buf, response);
 
-    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\r');
-    wrote_all &= aws_byte_buf_write_u8(&message->outgoing_head_buf, '\n');
+    wrote_all &= s_write_crlf(&message->outgoing_head_buf);
     (void)wrote_all;
     AWS_ASSERT(wrote_all);
 
@@ -360,12 +361,6 @@ int aws_h1_encoder_start_message(
     encoder->message = message;
 
     return AWS_OP_SUCCESS;
-}
-
-static bool s_write_crlf(struct aws_byte_buf *dst) {
-    AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
-    struct aws_byte_cursor crlf_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("\r\n");
-    return aws_byte_buf_write_from_whole_cursor(dst, crlf_cursor);
 }
 
 static bool s_write_chunk_size(struct aws_byte_buf *dst, uint64_t chunk_size) {
@@ -507,7 +502,7 @@ static int s_encode_stream(
         total_length);
 
     /* Return if we're done sending stream */
-    if (encoder->progress_bytes == encoder->message->content_length) {
+    if (encoder->progress_bytes == total_length) {
         *out_done = true;
         return AWS_OP_SUCCESS;
     }
@@ -661,7 +656,7 @@ static int s_state_fn_chunk_line(struct aws_h1_encoder *encoder, struct aws_byte
 /* Write out data for current chunk */
 static int s_state_fn_chunk_body(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
     bool done;
-    if (s_encode_stream(encoder, dst, encoder->message->body, encoder->message->content_length, &done)) {
+    if (s_encode_stream(encoder, dst, encoder->current_chunk->data, encoder->current_chunk->data_size, &done)) {
         return AWS_OP_ERR;
     }
     if (!done) {
