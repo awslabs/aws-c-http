@@ -128,6 +128,8 @@ AWS_EXTERN_C_END
 
 /* DO NOT export functions below. They're only used by other .c files in this library */
 
+/* TODO: introduce naming conventions for private header functions */
+
 void aws_h1_connection_lock_synced_data(struct aws_h1_connection *connection);
 void aws_h1_connection_unlock_synced_data(struct aws_h1_connection *connection);
 

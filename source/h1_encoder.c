@@ -167,6 +167,8 @@ int aws_h1_encoder_message_init_from_request(
     const struct aws_http_message *request,
     struct aws_linked_list *chunk_list) {
 
+    AWS_PRECONDITION(aws_linked_list_is_valid(chunk_list));
+
     AWS_ZERO_STRUCT(*message);
 
     message->body = aws_http_message_get_body_stream(request);
@@ -247,6 +249,8 @@ int aws_h1_encoder_message_init_from_response(
     const struct aws_http_message *response,
     bool body_headers_ignored,
     struct aws_linked_list *chunk_list) {
+
+    AWS_PRECONDITION(aws_linked_list_is_valid(chunk_list));
 
     AWS_ZERO_STRUCT(*message);
 
@@ -427,8 +431,7 @@ struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const str
     return chunk;
 }
 
-/* Free memory without */
-void aws_h1_chunk_simply_destroy(struct aws_h1_chunk *chunk) {
+void aws_h1_chunk_destroy(struct aws_h1_chunk *chunk) {
     AWS_PRECONDITION(chunk);
     aws_mem_release(chunk->allocator, chunk);
 }
@@ -440,7 +443,7 @@ void aws_h1_chunk_complete_and_destroy(struct aws_h1_chunk *chunk, int error_cod
     void *user_data = chunk->user_data;
 
     /* Clean up before firing callback */
-    aws_h1_chunk_simply_destroy(chunk);
+    aws_h1_chunk_destroy(chunk);
 
     if (NULL != on_complete) {
         on_complete(error_code, user_data);
@@ -628,7 +631,6 @@ static int s_state_fn_unchunked_body(struct aws_h1_encoder *encoder, struct aws_
  * Encoder is essentially "paused" here if no chunks are available. */
 static int s_state_fn_chunk_next(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
     (void)dst;
-    AWS_ASSERT(encoder->message->chunk_list); /* we let this be NULL in tests, but not in real world */
 
     if (aws_linked_list_empty(encoder->message->chunk_list)) {
         /* Remain in this state until more chunks arrive */

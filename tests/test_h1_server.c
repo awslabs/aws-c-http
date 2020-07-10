@@ -1559,7 +1559,7 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
     ASSERT_SUCCESS(
         s_create_response(&response, 200, headers, AWS_ARRAY_SIZE(headers), &error_from_outgoing_body_stream));
 
-    /* send_respones() may succeed or fail, depending on when things shut down */
+    /* send_response() may succeed or fail, depending on when things shut down */
     aws_http_stream_send_response(request->request_handler, response);
 
     testing_channel_drain_queued_tasks(&error_tester.testing_channel);

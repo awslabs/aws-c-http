@@ -120,36 +120,36 @@ static int s_stream_write_chunk(struct aws_http_stream *stream_base, const struc
     int error_code = 0;
     bool should_schedule_task = false;
 
-    /* BEGIN CRITICAL SECTION */
-    s_stream_lock_synced_data(stream);
+    { /* BEGIN CRITICAL SECTION */
+        s_stream_lock_synced_data(stream);
 
-    /* Can only add chunks while stream is active. */
-    if (stream->synced_data.api_state != AWS_H1_STREAM_API_STATE_ACTIVE) {
-        error_code = (stream->synced_data.api_state == AWS_H1_STREAM_API_STATE_INIT)
-                         ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
-                         : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
-        goto unlock;
-    }
+        /* Can only add chunks while stream is active. */
+        if (stream->synced_data.api_state != AWS_H1_STREAM_API_STATE_ACTIVE) {
+            error_code = (stream->synced_data.api_state == AWS_H1_STREAM_API_STATE_INIT)
+                             ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
+                             : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
+            goto unlock;
+        }
 
-    /* Prevent user trying to submit chunks without having set the required headers.
-     * This check also prevents a server-user submitting chunks before the response has been submitted. */
-    if (!stream->synced_data.using_chunked_encoding) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_STREAM,
-            "id=%p: Cannot write chunks without 'transfer-encoding: chunked' header.",
-            (void *)stream_base);
-        error_code = AWS_ERROR_INVALID_STATE;
-        goto unlock;
-    }
+        /* Prevent user trying to submit chunks without having set the required headers.
+         * This check also prevents a server-user submitting chunks before the response has been submitted. */
+        if (!stream->synced_data.using_chunked_encoding) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Cannot write chunks without 'transfer-encoding: chunked' header.",
+                (void *)stream_base);
+            error_code = AWS_ERROR_INVALID_STATE;
+            goto unlock;
+        }
 
-    /* success */
-    aws_linked_list_push_back(&stream->synced_data.chunk_list, &chunk->node);
-    should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
-    stream->synced_data.is_cross_thread_work_task_scheduled = true;
+        /* success */
+        aws_linked_list_push_back(&stream->synced_data.chunk_list, &chunk->node);
+        should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
+        stream->synced_data.is_cross_thread_work_task_scheduled = true;
 
-unlock:
-    s_stream_unlock_synced_data(stream);
-    /* END CRITICAL SECTION */
+    unlock:
+        s_stream_unlock_synced_data(stream);
+    } /* END CRITICAL SECTION */
 
     if (error_code) {
         AWS_LOGF_ERROR(
@@ -159,7 +159,7 @@ unlock:
             error_code,
             aws_error_name(error_code));
 
-        aws_h1_chunk_simply_destroy(chunk);
+        aws_h1_chunk_destroy(chunk);
         return aws_raise_error(error_code);
     }
 
@@ -327,6 +327,9 @@ int aws_h1_stream_send_response(struct aws_h1_stream *stream, struct aws_http_me
             if (encoder_message.has_connection_close_header) {
                 /* This will be the last stream connection will process, new streams will be rejected */
                 stream->is_final_stream = true;
+
+                /* Note: We're touching the connection's synced_data, which is OK
+                 * because an h1_connection and all its h1_streams share a single lock. */
                 connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
             }
             stream->synced_data.using_chunked_encoding = stream->encoder_message.has_chunked_encoding_header;
@@ -334,7 +337,7 @@ int aws_h1_stream_send_response(struct aws_h1_stream *stream, struct aws_http_me
             should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
             stream->synced_data.is_cross_thread_work_task_scheduled = true;
         }
-        aws_h1_connection_unlock_synced_data(connection);
+        s_stream_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
     if (error_code) {

@@ -298,6 +298,8 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
     bool should_schedule_task = false;
 
     { /* BEGIN CRITICAL SECTION */
+        /* Note: We're touching both the connection's and stream's synced_data in this section,
+         * which is OK because an h1_connection and all its h1_streams share a single lock. */
         aws_h1_connection_lock_synced_data(connection);
 
         if (stream->id) {
@@ -494,6 +496,8 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     }
 
     { /* BEGIN CRITICAL SECTION */
+        /* Note: We're touching the stream's synced_data here, which is OK
+         * because an h1_connection and all its h1_streams share a single lock. */
         aws_h1_connection_lock_synced_data(connection);
 
         /* Mark stream complete */
@@ -644,6 +648,8 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
     if (!current && !connection->thread_data.is_writing_stopped) {
 
         /* ----- BEGIN CRITICAL SECTION ----- */
+        /* Note: We're touching both the connection's and stream's synced_data in this section,
+         * which is OK because an h1_connection and all its h1_streams share a single lock. */
         aws_h1_connection_lock_synced_data(connection);
 
         /* Move any streams from new_client_stream_list to stream_list.
