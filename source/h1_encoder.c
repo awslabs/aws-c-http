@@ -165,14 +165,14 @@ int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *request,
-    struct aws_linked_list *chunk_list) {
+    struct aws_linked_list *pending_chunk_list) {
 
-    AWS_PRECONDITION(aws_linked_list_is_valid(chunk_list));
+    AWS_PRECONDITION(aws_linked_list_is_valid(pending_chunk_list));
 
     AWS_ZERO_STRUCT(*message);
 
     message->body = aws_http_message_get_body_stream(request);
-    message->chunk_list = chunk_list;
+    message->pending_chunk_list = pending_chunk_list;
 
     struct aws_byte_cursor method;
     int err = aws_http_message_get_request_method(request, &method);
@@ -248,14 +248,14 @@ int aws_h1_encoder_message_init_from_response(
     struct aws_allocator *allocator,
     const struct aws_http_message *response,
     bool body_headers_ignored,
-    struct aws_linked_list *chunk_list) {
+    struct aws_linked_list *pending_chunk_list) {
 
-    AWS_PRECONDITION(aws_linked_list_is_valid(chunk_list));
+    AWS_PRECONDITION(aws_linked_list_is_valid(pending_chunk_list));
 
     AWS_ZERO_STRUCT(*message);
 
     message->body = aws_http_message_get_body_stream(response);
-    message->chunk_list = chunk_list;
+    message->pending_chunk_list = pending_chunk_list;
 
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
 
@@ -452,7 +452,7 @@ void aws_h1_chunk_complete_and_destroy(struct aws_h1_chunk *chunk, int error_cod
 
 static void s_clean_up_current_chunk(struct aws_h1_encoder *encoder, int error_code) {
     AWS_PRECONDITION(encoder->current_chunk);
-    AWS_PRECONDITION(&encoder->current_chunk->node == aws_linked_list_front(encoder->message->chunk_list));
+    AWS_PRECONDITION(&encoder->current_chunk->node == aws_linked_list_front(encoder->message->pending_chunk_list));
 
     aws_linked_list_remove(&encoder->current_chunk->node);
     aws_h1_chunk_complete_and_destroy(encoder->current_chunk, error_code);
@@ -632,14 +632,14 @@ static int s_state_fn_unchunked_body(struct aws_h1_encoder *encoder, struct aws_
 static int s_state_fn_chunk_next(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
     (void)dst;
 
-    if (aws_linked_list_empty(encoder->message->chunk_list)) {
+    if (aws_linked_list_empty(encoder->message->pending_chunk_list)) {
         /* Remain in this state until more chunks arrive */
         ENCODER_LOG(TRACE, encoder, "No chunks ready to send, waiting for more...");
         return AWS_OP_SUCCESS;
     }
 
     /* Set next chunk and go to next state */
-    struct aws_linked_list_node *node = aws_linked_list_front(encoder->message->chunk_list);
+    struct aws_linked_list_node *node = aws_linked_list_front(encoder->message->pending_chunk_list);
     encoder->current_chunk = AWS_CONTAINER_OF(node, struct aws_h1_chunk, node);
     encoder->chunk_count++;
     ENCODER_LOGF(
@@ -775,5 +775,6 @@ bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder)
 }
 
 bool aws_h1_encoder_is_waiting_for_chunks(const struct aws_h1_encoder *encoder) {
-    return encoder->state == AWS_H1_ENCODER_STATE_CHUNK_NEXT && aws_linked_list_empty(encoder->message->chunk_list);
+    return encoder->state == AWS_H1_ENCODER_STATE_CHUNK_NEXT &&
+           aws_linked_list_empty(encoder->message->pending_chunk_list);
 }

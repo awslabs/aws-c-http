@@ -34,7 +34,7 @@ struct aws_h1_encoder_message {
      * Encoder completes/frees/pops front chunk when it's done sending.
      * If list goes empty, encoder waits for more chunks to arrive.
      * A chunk with data_size=0 means "final chunk" */
-    struct aws_linked_list *chunk_list;
+    struct aws_linked_list *pending_chunk_list;
 
     /* If non-zero, length of unchunked body to send */
     uint64_t content_length;
@@ -88,14 +88,14 @@ int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *request,
-    struct aws_linked_list *chunk_list);
+    struct aws_linked_list *pending_chunk_list);
 
 int aws_h1_encoder_message_init_from_response(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *response,
     bool body_headers_ignored,
-    struct aws_linked_list *chunk_list);
+    struct aws_linked_list *pending_chunk_list);
 
 AWS_HTTP_API
 void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message);

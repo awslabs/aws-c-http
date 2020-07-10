@@ -508,14 +508,14 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
         stream->synced_data.api_state = AWS_H1_STREAM_API_STATE_COMPLETE;
 
         /* Move chunks out of synced data */
-        aws_linked_list_move_all_back(&stream->thread_data.chunk_list, &stream->synced_data.chunk_list);
+        aws_linked_list_move_all_back(&stream->thread_data.pending_chunk_list, &stream->synced_data.pending_chunk_list);
 
         aws_h1_connection_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
     /* Complete any leftover chunks */
-    while (!aws_linked_list_empty(&stream->thread_data.chunk_list)) {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.chunk_list);
+    while (!aws_linked_list_empty(&stream->thread_data.pending_chunk_list)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.pending_chunk_list);
         aws_h1_chunk_complete_and_destroy(
             AWS_CONTAINER_OF(node, struct aws_h1_chunk, node), AWS_ERROR_HTTP_STREAM_HAS_COMPLETED);
     }
@@ -651,19 +651,6 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
     /* If current stream is NULL, look for more work. */
     if (!current && !connection->thread_data.is_writing_stopped) {
 
-        /* ----- BEGIN CRITICAL SECTION ----- */
-        /* Note: We're touching both the connection's and stream's synced_data in this section,
-         * which is OK because an h1_connection and all its h1_streams share a single lock. */
-        aws_h1_connection_lock_synced_data(connection);
-
-        /* Move any streams from new_client_stream_list to stream_list.
-         * NOTE: Can't just swap lists because stream_list might not be empty. */
-        while (!aws_linked_list_empty(&connection->synced_data.new_client_stream_list)) {
-            aws_linked_list_push_back(
-                &connection->thread_data.stream_list,
-                aws_linked_list_pop_front(&connection->synced_data.new_client_stream_list));
-        }
-
         /* Look for next stream we can work on. */
         for (struct aws_linked_list_node *node = aws_linked_list_begin(&connection->thread_data.stream_list);
              node != aws_linked_list_end(&connection->thread_data.stream_list);
@@ -679,7 +666,7 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
             /* STOP if we're a server, and this stream's response isn't ready to send.
              * It's not like we can skip this and start on the next stream because responses must be sent in order.
              * Don't need a check like this for clients because their streams always start with data to send. */
-            if (connection->base.server_data && !stream->synced_data.has_outgoing_response) {
+            if (connection->base.server_data && !stream->thread_data.has_outgoing_response) {
                 break;
             }
 
@@ -688,9 +675,6 @@ static struct aws_h1_stream *s_update_outgoing_stream_ptr(struct aws_h1_connecti
             current_changed = true;
             break;
         }
-
-        aws_h1_connection_unlock_synced_data(connection);
-        /* ----- END CRITICAL SECTION ----- */
     }
 
     /* Update current incoming and outgoing streams. */

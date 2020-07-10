@@ -19,8 +19,8 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
         stream->synced_data.api_state != AWS_H1_STREAM_API_STATE_ACTIVE &&
         "Stream should be complete (or never-activated) when stream destroyed");
     AWS_ASSERT(
-        aws_linked_list_empty(&stream->thread_data.chunk_list) &&
-        aws_linked_list_empty(&stream->synced_data.chunk_list) &&
+        aws_linked_list_empty(&stream->thread_data.pending_chunk_list) &&
+        aws_linked_list_empty(&stream->synced_data.pending_chunk_list) &&
         "Chunks should be marked complete before stream destroyed");
 
     aws_h1_encoder_message_clean_up(&stream->encoder_message);
@@ -56,8 +56,8 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
 
     int api_state = stream->synced_data.api_state;
 
-    bool found_chunks = !aws_linked_list_empty(&stream->synced_data.chunk_list);
-    aws_linked_list_move_all_back(&stream->thread_data.chunk_list, &stream->synced_data.chunk_list);
+    bool found_chunks = !aws_linked_list_empty(&stream->synced_data.pending_chunk_list);
+    aws_linked_list_move_all_back(&stream->thread_data.pending_chunk_list, &stream->synced_data.pending_chunk_list);
 
     bool has_outgoing_response = stream->synced_data.has_outgoing_response;
 
@@ -134,7 +134,7 @@ static int s_stream_write_chunk(struct aws_http_stream *stream_base, const struc
         }
 
         /* success */
-        aws_linked_list_push_back(&stream->synced_data.chunk_list, &chunk->node);
+        aws_linked_list_push_back(&stream->synced_data.pending_chunk_list, &chunk->node);
         should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
         stream->synced_data.is_cross_thread_work_task_scheduled = true;
 
@@ -211,8 +211,8 @@ static struct aws_h1_stream *s_stream_new_common(
     aws_channel_task_init(
         &stream->cross_thread_work_task, s_stream_cross_thread_work_task, stream, "http1_stream_cross_thread_work");
 
-    aws_linked_list_init(&stream->thread_data.chunk_list);
-    aws_linked_list_init(&stream->synced_data.chunk_list);
+    aws_linked_list_init(&stream->thread_data.pending_chunk_list);
+    aws_linked_list_init(&stream->synced_data.pending_chunk_list);
 
     /* Stream refcount starts at 1 for user and is incremented upon activation for the connection */
     aws_atomic_init_int(&stream->base.refcount, 1);
@@ -248,7 +248,10 @@ struct aws_h1_stream *aws_h1_stream_new_request(
 
     /* Validate request and cache info that the encoder will eventually need */
     if (aws_h1_encoder_message_init_from_request(
-            &stream->encoder_message, client_connection->alloc, options->request, &stream->thread_data.chunk_list)) {
+            &stream->encoder_message,
+            client_connection->alloc,
+            options->request,
+            &stream->thread_data.pending_chunk_list)) {
         goto error;
     }
 
@@ -306,7 +309,11 @@ int aws_h1_stream_send_response(struct aws_h1_stream *stream, struct aws_http_me
     struct aws_h1_encoder_message encoder_message;
     bool body_headers_ignored = stream->base.request_method == AWS_HTTP_METHOD_HEAD;
     if (aws_h1_encoder_message_init_from_response(
-            &encoder_message, stream->base.alloc, response, body_headers_ignored, &stream->thread_data.chunk_list)) {
+            &encoder_message,
+            stream->base.alloc,
+            response,
+            body_headers_ignored,
+            &stream->thread_data.pending_chunk_list)) {
         error_code = aws_last_error();
         goto error;
     }

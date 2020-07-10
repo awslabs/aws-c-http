@@ -145,7 +145,7 @@ void aws_h1_connection_unlock_synced_data(struct aws_h1_connection *connection);
  * If task is already active, nothing happens.
  * If there's nothing to do, the task will immediately stop itself.
  * Call this whenever the user provides new outgoing data (ex: new stream, new chunk).
- * MUST be called from the connection's thread.
+ * MUST be called from the connection's event-loop thread.
  */
 void aws_h1_connection_try_write_outgoing_stream(struct aws_h1_connection *connection);
 

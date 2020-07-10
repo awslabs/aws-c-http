@@ -60,7 +60,7 @@ struct aws_h1_stream {
 
         /* List of `struct aws_h1_chunk`, used for chunked encoding.
          * Encoder completes/frees/pops front chunk when it's done sending. */
-        struct aws_linked_list chunk_list;
+        struct aws_linked_list pending_chunk_list;
 
         /* Whether a "request handler" stream has a response to send.
          * Has mirror variable in synced_data */
@@ -72,8 +72,8 @@ struct aws_h1_stream {
      * to have more than one stream at a time. */
     struct {
         /* List of `struct aws_h1_chunk` which have been submitted by user,
-         * but haven't yet moved to encoder_message.chunk_list where the encoder will find them. */
-        struct aws_linked_list chunk_list;
+         * but haven't yet moved to encoder_message.pending_chunk_list where the encoder will find them. */
+        struct aws_linked_list pending_chunk_list;
 
         enum aws_h1_stream_api_state api_state;
 
