@@ -40,15 +40,6 @@ static void s_stream_unlock_synced_data(struct aws_h1_stream *stream) {
     aws_h1_connection_unlock_synced_data(s_get_h1_connection(stream));
 }
 
-static void s_stream_schedule_cross_thread_work_task(struct aws_h1_stream *stream) {
-    AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Scheduling stream cross-thread work task.", (void *)&stream->base);
-
-    /* Keep stream alive until task completes */
-    aws_atomic_fetch_add(&stream->base.refcount, 1);
-    aws_channel_schedule_task_now(
-        stream->base.owning_connection->channel_slot->channel, &stream->cross_thread_work_task);
-}
-
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
     (void)task;
     struct aws_h1_stream *stream = arg;
@@ -170,7 +161,14 @@ static int s_stream_write_chunk(struct aws_http_stream *stream_base, const struc
         options->chunk_data_size);
 
     if (should_schedule_task) {
-        s_stream_schedule_cross_thread_work_task(stream);
+        /* Keep stream alive until task completes */
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Scheduling stream cross-thread work task.", (void *)stream_base);
+        aws_channel_schedule_task_now(
+            stream->base.owning_connection->channel_slot->channel, &stream->cross_thread_work_task);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM, "id=%p: Stream cross-thread work task was already scheduled.", (void *)stream_base);
     }
 
     return AWS_OP_SUCCESS;
@@ -337,7 +335,7 @@ int aws_h1_stream_send_response(struct aws_h1_stream *stream, struct aws_http_me
             should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
             stream->synced_data.is_cross_thread_work_task_scheduled = true;
         }
-        s_stream_unlock_synced_data(connection);
+        s_stream_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
 
     if (error_code) {
@@ -349,7 +347,14 @@ int aws_h1_stream_send_response(struct aws_h1_stream *stream, struct aws_http_me
         AWS_LS_HTTP_STREAM, "id=%p: Created response on connection=%p: ", (void *)stream, (void *)connection);
 
     if (should_schedule_task) {
-        s_stream_schedule_cross_thread_work_task(stream);
+        /* Keep stream alive until task completes */
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Scheduling stream cross-thread work task.", (void *)&stream->base);
+        aws_channel_schedule_task_now(
+            stream->base.owning_connection->channel_slot->channel, &stream->cross_thread_work_task);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM, "id=%p: Stream cross-thread work task was already scheduled.", (void *)&stream->base);
     }
 
     return AWS_OP_SUCCESS;

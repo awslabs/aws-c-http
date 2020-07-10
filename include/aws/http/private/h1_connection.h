@@ -35,7 +35,14 @@ struct aws_h1_connection {
 
     /* Task that removes items from `synced_data` and does their on-thread work.
      * Runs once and wait until it's scheduled again.
-     * `synced_data.is_cross_thread_work_scheduled` tells whether the task is scheduled. */
+     * Any function that wants to schedule this task MUST:
+     * - acquire the synced_data.lock
+     * - check whether `synced_data.is_cross_thread_work_scheduled` was true or false.
+     * - set `synced_data.is_cross_thread_work_scheduled = true`
+     * - release synced_data.lock
+     * - ONLY IF `synced_data.is_cross_thread_work_scheduled` CHANGED from false to true:
+     *   - then schedule the task
+     */
     struct aws_channel_task cross_thread_work_task;
 
     /* Only the event-loop thread may touch this data */

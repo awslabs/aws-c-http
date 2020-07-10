@@ -226,16 +226,6 @@ static int s_stream_send_response(struct aws_http_stream *stream, struct aws_htt
     return aws_h1_stream_send_response(h1_stream, response);
 }
 
-/* Schedule the cross-thread work task.
- * `connection->synced_data.is_cross_thread_work_task_scheduled` must be set to true
- * (while holding the lock) before calling this function. Do NOT call this if
- * `is_cross_thread_work_task_scheduled` was ALREADY true */
-static void s_schedule_cross_thread_work_task(struct aws_h1_connection *connection) {
-    AWS_LOGF_TRACE(
-        AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling connection cross-thread work task.", (void *)&connection->base);
-    aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
-}
-
 static void s_update_window_action(struct aws_h1_connection *connection, size_t increment_size) {
     int err = aws_channel_slot_increment_read_window(connection->base.channel_slot, increment_size);
     if (err) {
@@ -285,7 +275,14 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
     /* END CRITICAL SECTION */
 
     if (should_schedule_task) {
-        s_schedule_cross_thread_work_task(connection);
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling connection cross-thread work task.", (void *)connection_base);
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Connection cross-thread work task was already scheduled",
+            (void *)connection_base);
     }
 }
 
@@ -343,7 +340,14 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
     aws_atomic_fetch_add(&stream->refcount, 1);
 
     if (should_schedule_task) {
-        s_schedule_cross_thread_work_task(connection);
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION, "id=%p: Scheduling connection cross-thread work task.", (void *)base_connection);
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Connection cross-thread work task was already scheduled",
+            (void *)base_connection);
     }
 
     return AWS_OP_SUCCESS;
