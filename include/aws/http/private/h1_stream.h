@@ -10,6 +10,10 @@
 #include <aws/http/private/request_response_impl.h>
 #include <aws/io/channel.h>
 
+#ifdef _MSC_VER
+#    pragma warning(disable : 4214) /* nonstandard extension used: bit field types other than int */
+#endif
+
 /* Simple view of stream's state.
  * Used to determine whether it's safe for a user to call functions that alter state. */
 enum aws_h1_stream_api_state {

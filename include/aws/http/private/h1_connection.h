@@ -11,6 +11,10 @@
 #include <aws/http/private/h1_encoder.h>
 #include <aws/http/statistics.h>
 
+#ifdef _MSC_VER
+#    pragma warning(disable : 4214) /* nonstandard extension used: bit field types other than int */
+#endif
+
 struct aws_h1_connection {
     struct aws_http_connection base;
 
