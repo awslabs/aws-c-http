@@ -29,7 +29,8 @@ static struct aws_http_message *s_new_default_get_request(struct aws_allocator *
     return request;
 }
 
-static void s_destroy_stream_on_complete(void *user_data) {
+static void s_destroy_stream_on_complete(int error_code, void *user_data) {
+    (void)error_code;
     struct aws_input_stream *stream = user_data;
     aws_input_stream_destroy(stream);
 }
@@ -44,11 +45,13 @@ static struct aws_http1_chunk_options s_default_chunk_options(struct aws_input_s
     return options;
 }
 
-static void write_termination_chunk(struct aws_allocator *allocator, struct aws_http_stream *stream) {
+static int s_write_termination_chunk(struct aws_allocator *allocator, struct aws_http_stream *stream) {
     static const struct aws_byte_cursor empty_str = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("");
     struct aws_input_stream *termination_marker = aws_input_stream_new_from_cursor(allocator, &empty_str);
+    ASSERT_NOT_NULL(termination_marker);
     struct aws_http1_chunk_options options = s_default_chunk_options(termination_marker, empty_str.len);
-    aws_http1_stream_write_chunk(stream, &options);
+    ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
+    return AWS_OP_SUCCESS;
 }
 
 static struct aws_http_message *s_new_default_chunked_put_request(struct aws_allocator *allocator) {
@@ -60,9 +63,11 @@ static struct aws_http_message *s_new_default_chunked_put_request(struct aws_all
     };
 
     struct aws_http_message *request = aws_http_message_new_request(allocator);
-    aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT"));
-    aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt"));
-    aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
+    AWS_FATAL_ASSERT(request);
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
+    AWS_FATAL_ASSERT(
+        AWS_OP_SUCCESS == aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
 
     return request;
 }
@@ -148,7 +153,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_1liner) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -192,7 +197,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_headers) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -249,7 +254,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
                            "Content-Length: 16\r\n"
                            "\r\n"
                            "write more tests";
-    ASSERT_SUCCESS(testing_channel_check_written_message_str(&tester.testing_channel, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
 
     /* clean up */
     aws_input_stream_destroy(body_stream);
@@ -278,9 +283,9 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body_transfer_encoding_chunked) {
     static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
     struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
     struct aws_http1_chunk_options options = s_default_chunk_options(body_stream, body.len);
-    aws_http1_stream_write_chunk(stream, &options);
-    write_termination_chunk(allocator, stream);
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
+    ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
+    ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -294,7 +299,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body_transfer_encoding_chunked) {
                            "0\r\n"
                            "\r\n";
 
-    ASSERT_SUCCESS(testing_channel_check_written_message_str(&tester.testing_channel, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
 
     /* clean up */
     aws_http_message_destroy(request);
@@ -317,6 +322,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body_transfer_encoding_chunked_extens
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     /* Initialize and send the stream chunks */
     static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
@@ -332,7 +338,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body_transfer_encoding_chunked_extens
     };
     options.extensions = (struct aws_http1_chunk_extension *)&single_extension;
     options.num_extensions = AWS_ARRAY_SIZE(single_extension);
-    aws_http1_stream_write_chunk(stream, &options);
+    ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
 
     /* create a chunk with a multiple_single extensions */
     static const struct aws_byte_cursor multi_ext_body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
@@ -350,13 +356,12 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body_transfer_encoding_chunked_extens
     };
     multi_ext_opts.extensions = (struct aws_http1_chunk_extension *)&multi_extension;
     multi_ext_opts.num_extensions = AWS_ARRAY_SIZE(multi_extension);
-    aws_http1_stream_write_chunk(stream, &multi_ext_opts);
+    ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &multi_ext_opts));
 
     /* terminate the stream */
-    write_termination_chunk(allocator, stream);
+    ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream));
 
     /* Run it! */
-    aws_http_stream_activate(stream);
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     /* check result */
@@ -372,7 +377,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body_transfer_encoding_chunked_extens
                            "0\r\n"
                            "\r\n";
 
-    ASSERT_SUCCESS(testing_channel_check_written_message_str(&tester.testing_channel, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
 
     /* clean up */
     aws_http_message_destroy(request);
@@ -404,7 +409,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_waits_for_data) {
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
     /* activate stream *before* sending any data. */
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     char *payloads[] = {"write more tests", "write more tests", ""};
     struct chunk_writer_data chunk_data = {.num_chunks = sizeof(payloads) / sizeof(payloads[0]),
@@ -421,7 +426,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_waits_for_data) {
         /* sleep to cause a pause between writes */
         aws_thread_current_sleep(chunk_data.delay_between_writes_ns);
         testing_channel_drain_queued_tasks(&tester.testing_channel);
-        aws_http1_stream_write_chunk(stream, &options);
+        ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
     }
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -474,7 +479,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_content_length_0_ok) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -492,7 +497,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_content_length_0_ok) {
 
     stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -522,9 +527,9 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_0_ok) {
 
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
-    write_termination_chunk(allocator, stream);
+    ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     /* check result */
     const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
@@ -533,7 +538,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_0_ok) {
                            "0\r\n"
                            "\r\n";
 
-    ASSERT_SUCCESS(testing_channel_check_written_message_str(&tester.testing_channel, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
 
     /* clean up */
     aws_http_message_destroy(request);
@@ -557,7 +562,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_extensions_0_ok) {
 
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     static const struct aws_byte_cursor empty_str = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("");
     struct aws_input_stream *termination_marker = aws_input_stream_new_from_cursor(allocator, &empty_str);
@@ -574,7 +579,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_extensions_0_ok) {
     };
     options.extensions = (struct aws_http1_chunk_extension *)&single_extension;
     options.num_extensions = AWS_ARRAY_SIZE(single_extension);
-    aws_http1_stream_write_chunk(stream, &options);
+    ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
     /* check result */
@@ -584,7 +589,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_extensions_0_ok) {
                            "0;foo=bar;baz=cux\r\n"
                            "\r\n";
 
-    ASSERT_SUCCESS(testing_channel_check_written_message_str(&tester.testing_channel, expected));
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
 
     /* clean up */
     aws_http_message_destroy(request);
@@ -634,7 +639,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     /* check result */
     const char *expected_head_fmt = "PUT /large.txt HTTP/1.1\r\n"
@@ -787,6 +792,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body_transfer_encoding_chunked)
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     /* Initialize and send the stream chunks */
     /* send request with large body full of data */
@@ -802,11 +808,10 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body_transfer_encoding_chunked)
     struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
     struct aws_http1_chunk_options options = s_default_chunk_options(body_stream, body.len);
 
-    aws_http_stream_activate(stream);
-    aws_http1_stream_write_chunk(stream, &options);
+    ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
     /* this call will trigger a pause/wake internally after a large write */
     testing_channel_drain_queued_tasks(&tester.testing_channel);
-    write_termination_chunk(allocator, stream);
+    ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream));
 
     /* check result */
     const char expected_head_fmt[] = "PUT /large.txt HTTP/1.1\r\n"
@@ -858,6 +863,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_write_large_chunk_extens
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     /* Initialize and send the stream chunks */
     /* send request with large body full of data */
@@ -889,11 +895,10 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_write_large_chunk_extens
     options.extensions = (struct aws_http1_chunk_extension *)&extensions;
     options.num_extensions = AWS_ARRAY_SIZE(extensions);
 
-    aws_http_stream_activate(stream);
-    aws_http1_stream_write_chunk(stream, &options);
+    ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
     /* this call will trigger a pause/wake internally after a large write */
     testing_channel_drain_queued_tasks(&tester.testing_channel);
-    write_termination_chunk(allocator, stream);
+    ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream));
 
     /* check result */
     const char expected_head_fmt[] = "PUT /large.txt HTTP/1.1\r\n"
@@ -979,7 +984,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_head) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     /* check result */
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -1013,7 +1018,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_multiple) {
     for (size_t i = 0; i < num_streams; ++i) {
         streams[i] = aws_http_connection_make_request(tester.connection, &opt);
         ASSERT_NOT_NULL(streams[i]);
-        aws_http_stream_activate(streams[i]);
+        ASSERT_SUCCESS(aws_http_stream_activate(streams[i]));
     }
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -1059,7 +1064,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_multiple_chunked_encoding) {
         ASSERT_NOT_NULL(streams[i]);
         ASSERT_SUCCESS(aws_byte_buf_init(&index_strs[i], allocator, 4));
         index_strs[i].len = snprintf((char *)index_strs[i].buffer, index_strs[i].capacity, "%03zu", i);
-        aws_http_stream_activate(streams[i]);
+        ASSERT_SUCCESS(aws_http_stream_activate(streams[i]));
     }
 
     /* All streams will pause and wait for data */
@@ -1076,9 +1081,9 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_multiple_chunked_encoding) {
         struct aws_http1_chunk_options options_1 = s_default_chunk_options(body_stream, body.len);
         struct aws_http1_chunk_options options_2 = s_default_chunk_options(index_stream, index_str_cursor.len);
 
-        aws_http1_stream_write_chunk(streams[i], &options_1);
-        aws_http1_stream_write_chunk(streams[i], &options_2);
-        write_termination_chunk(allocator, streams[i]);
+        ASSERT_SUCCESS(aws_http1_stream_write_chunk(streams[i], &options_1));
+        ASSERT_SUCCESS(aws_http1_stream_write_chunk(streams[i], &options_2));
+        ASSERT_SUCCESS(s_write_termination_chunk(allocator, streams[i]));
     }
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -1724,8 +1729,8 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_transfer_encoded_request_d
 
     struct aws_http1_chunk_options options = s_default_chunk_options(&body_stream, body_sender.cursor.len);
     options.on_complete = NULL; /* The stream_tester takes care of the stream deletion */
-    aws_http1_stream_write_chunk(stream_tester.stream, &options);
-    write_termination_chunk(allocator, stream_tester.stream);
+    ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream_tester.stream, &options));
+    ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream_tester.stream));
 
     /* Ensure the request can be destroyed after request is sent */
     aws_http_message_destroy(request);
@@ -2072,8 +2077,8 @@ H1_CLIENT_TEST_CASE(h1_client_request_close_header_with_chunked_encoding_and_pip
         static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
         struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
         struct aws_http1_chunk_options options = s_default_chunk_options(body_stream, body.len);
-        aws_http1_stream_write_chunk(stream_testers[i].stream, &options);
-        write_termination_chunk(allocator, stream_testers[i].stream);
+        ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream_testers[i].stream, &options));
+        ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream_testers[i].stream));
     }
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
@@ -2282,7 +2287,7 @@ static int s_test_content_length_mismatch_is_error(
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     /* check result */
@@ -2331,12 +2336,12 @@ static int s_test_chunk_length_mismatch_is_error(
 
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     /* Initialize with an off by one body length */
     struct aws_http1_chunk_options options = s_default_chunk_options(body_stream, wrong_length);
-    aws_http1_stream_write_chunk(stream, &options);
-    write_termination_chunk(allocator, stream);
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
+    ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -2353,7 +2358,7 @@ static int s_test_chunk_length_mismatch_is_error(
 
 H1_CLIENT_TEST_CASE(h1_client_request_chunked_encoding_too_small_is_error) {
     (void)ctx;
-    return s_test_chunk_length_mismatch_is_error(allocator, "I am very long", 999);
+    return s_test_chunk_length_mismatch_is_error(allocator, "I am very long", 2);
 }
 
 H1_CLIENT_TEST_CASE(h1_client_request_chunked_encoding_too_large_is_error) {
@@ -2378,17 +2383,17 @@ H1_CLIENT_TEST_CASE(h1_client_request_chunked_encoding_cancelled_by_channel_shut
 
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
     const struct aws_byte_cursor body_cur = aws_byte_cursor_from_c_str("write more tests");
     struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body_cur);
 
     /* This will "pause" the connection loop as there is an empty stream. */
-    aws_http_stream_activate(stream);
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     /* Now write 2 chunks. The chunk memory should be automatically released when the http stream is destroyed. */
     struct aws_http1_chunk_options options = s_default_chunk_options(body_stream, body_cur.len);
-    aws_http1_stream_write_chunk(stream, &options);
-    write_termination_chunk(allocator, stream);
+    ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
+    ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream));
 
     /* Ensure the request can be destroyed after request is sent */
     aws_http_message_destroy(opt.request);
@@ -2424,7 +2429,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_cancelled_by_channel_shutdown) {
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -2465,7 +2470,7 @@ H1_CLIENT_TEST_CASE(h1_client_multiple_requests_cancelled_by_channel_shutdown) {
         opt.user_data = &completion_error_codes[i];
         streams[i] = aws_http_connection_make_request(tester.connection, &opt);
         ASSERT_NOT_NULL(streams[i]);
-        aws_http_stream_activate(streams[i]);
+        ASSERT_SUCCESS(aws_http_stream_activate(streams[i]));
     }
 
     /* 2 streams are now in-progress */
@@ -2475,7 +2480,7 @@ H1_CLIENT_TEST_CASE(h1_client_multiple_requests_cancelled_by_channel_shutdown) {
     opt.user_data = &completion_error_codes[2];
     streams[2] = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(streams[2]);
-    aws_http_stream_activate(streams[2]);
+    ASSERT_SUCCESS(aws_http_stream_activate(streams[2]));
 
     /* shutdown channel */
     aws_channel_shutdown(tester.testing_channel.channel, AWS_ERROR_SUCCESS);
@@ -2671,7 +2676,7 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
 
     struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
     ASSERT_NOT_NULL(stream);
-    aws_http_stream_activate(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
@@ -2867,7 +2872,7 @@ static int s_switch_protocols(struct protocol_switcher *switcher) {
     struct aws_http_stream *upgrade_stream =
         aws_http_connection_make_request(switcher->tester->connection, &upgrade_request);
     ASSERT_NOT_NULL(upgrade_stream);
-    aws_http_stream_activate(upgrade_stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(upgrade_stream));
     testing_channel_drain_queued_tasks(&switcher->tester->testing_channel);
 
     /* Ensure the request can be destroyed after request is sent */

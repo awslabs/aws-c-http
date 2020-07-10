@@ -558,7 +558,7 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
     message->body_stream = body_stream;
 }
 
-int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, struct aws_http1_chunk_options *options) {
+int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, const struct aws_http1_chunk_options *options) {
     AWS_PRECONDITION(http1_stream);
     AWS_PRECONDITION(http1_stream->vtable);
     AWS_PRECONDITION(options);

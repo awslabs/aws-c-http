@@ -8,14 +8,25 @@
 #include <aws/http/private/h1_encoder.h>
 #include <aws/http/private/http_impl.h>
 #include <aws/http/private/request_response_impl.h>
+#include <aws/io/channel.h>
+
+/* Simple view of stream's state.
+ * Used to determine whether it's safe for a user to call functions that alter state. */
+enum aws_h1_stream_api_state {
+    AWS_H1_STREAM_API_STATE_INIT,
+    AWS_H1_STREAM_API_STATE_ACTIVE,
+    AWS_H1_STREAM_API_STATE_COMPLETE,
+};
 
 struct aws_h1_stream {
     struct aws_http_stream base;
 
     struct aws_linked_list_node node;
 
-    /* Contains linked list of aws_input_streams to be encoded on the same connection via transfer encoding chunked */
-    struct aws_http1_chunks body_chunks;
+    /* Task that removes items from `synced_data` and does their on-thread work.
+     * Runs and then waits until it's scheduled again.
+     * `synced_data.is_cross_thread_work_scheduled` tells whether the task is scheduled. */
+    struct aws_channel_task cross_thread_work_task;
 
     /* Message (derived from outgoing request or response) to be submitted to encoder */
     struct aws_h1_encoder_message encoder_message;
@@ -32,32 +43,50 @@ struct aws_h1_stream {
     /* Buffer for incoming data that needs to stick around. */
     struct aws_byte_buf incoming_storage_buf;
 
-    /* Any thread may touch this data, but the lock must be held */
     struct {
-        /* Whether a "request handler" stream has a response to send. */
-        bool has_outgoing_response;
+        /* TODO: move most other members in here */
+
+        /* List of `struct aws_h1_chunk`, used for chunked encoding.
+         * Encoder completes/frees/pops front chunk when it's done sending. */
+        struct aws_linked_list chunk_list;
+
+        /* Whether a "request handler" stream has a response to send.
+         * Has mirror variable in synced_data */
+        bool has_outgoing_response : 1;
+    } thread_data;
+
+    /* Any thread may touch this data, but the connection's lock must be held.
+     * Sharing a lock is fine because it's rare for an HTTP/1 connection
+     * to have more than one stream at a time. */
+    struct {
+        /* List of `struct aws_h1_chunk` which have been submitted by user,
+         * but haven't yet moved to encoder_message.chunk_list where the encoder will find them. */
+        struct aws_linked_list chunk_list;
+
+        enum aws_h1_stream_api_state api_state;
+
+        /* See `cross_thread_work_task` */
+        bool is_cross_thread_work_task_scheduled : 1;
+
+        /* Whether a "request handler" stream has a response to send.
+         * Has mirror variable in thread_data */
+        bool has_outgoing_response : 1;
+
+        /* Whether the outgoing message is using chunked encoding */
+        bool using_chunked_encoding : 1;
     } synced_data;
 };
 
-AWS_EXTERN_C_BEGIN
+/* DO NOT export functions below. They're only used by other .c files in this library */
 
-AWS_HTTP_API
 struct aws_h1_stream *aws_h1_stream_new_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options);
 
-AWS_HTTP_API
 struct aws_h1_stream *aws_h1_stream_new_request_handler(const struct aws_http_request_handler_options *options);
 
-AWS_EXTERN_C_END
-
-/* we don't want these exported. We just want it to have external linkage between h1_stream and h1_connection
- * compilation units. it is defined in h1_connection.c */
 int aws_h1_stream_activate(struct aws_http_stream *stream);
-int aws_h1_stream_schedule_outgoing_stream_task(struct aws_http_stream *stream);
 
-void aws_h1_stream_release_chunk(struct aws_http1_stream_chunk *chunk);
-void aws_h1_stream_body_chunks_clean_up(struct aws_h1_stream *stream);
-bool aws_h1_stream_is_paused(struct aws_h1_stream *stream);
+int aws_h1_stream_send_response(struct aws_h1_stream *stream, struct aws_http_message *response);
 
 #endif /* AWS_HTTP_H1_STREAM_H */

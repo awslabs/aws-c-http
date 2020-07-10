@@ -28,11 +28,14 @@ struct aws_h1_encoder_message {
     struct aws_byte_buf outgoing_head_buf;
     /* Single stream used for unchunked body */
     struct aws_input_stream *body;
-    /* List of `struct aws_h1_chunk`, used only for chunked encoding.
+
+    /* Pointer to list of `struct aws_h1_chunk`, used for chunked encoding.
+     * List is owned by aws_h1_stream.
      * Encoder completes/frees/pops front chunk when it's done sending.
      * If list goes empty, encoder waits for more chunks to arrive.
      * A chunk with data_size=0 means "final chunk" */
-    struct aws_linked_list chunk_list;
+    struct aws_linked_list *chunk_list;
+
     /* If non-zero, length of unchunked body to send */
     uint64_t content_length;
     bool has_connection_close_header;
@@ -67,8 +70,13 @@ struct aws_h1_encoder {
     const void *logging_id;
 };
 
-/* Destroy chunk, removing it from whatever list it was in, and firing its completion callback. */
-void aws_h1_chunk_destroy(struct aws_h1_chunk *chunk);
+struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const struct aws_http1_chunk_options *options);
+
+/* Just destroy the chunk (don't fire callback) */
+void aws_h1_chunk_simply_destroy(struct aws_h1_chunk *chunk);
+
+/* Destroy chunk and fire its completion callback */
+void aws_h1_chunk_complete_and_destroy(struct aws_h1_chunk *chunk, int error_code);
 
 int aws_chunk_line_from_options(struct aws_http1_chunk_options *options, struct aws_byte_buf *chunk_line);
 
@@ -79,13 +87,15 @@ AWS_HTTP_API
 int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
-    const struct aws_http_message *request);
+    const struct aws_http_message *request,
+    struct aws_linked_list *chunk_list);
 
 int aws_h1_encoder_message_init_from_response(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *response,
-    bool body_headers_ignored);
+    bool body_headers_ignored,
+    struct aws_linked_list *chunk_list);
 
 AWS_HTTP_API
 void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message);
@@ -107,6 +117,10 @@ int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *
 
 AWS_HTTP_API
 bool aws_h1_encoder_is_message_in_progress(const struct aws_h1_encoder *encoder);
+
+/* Return true if the encoder is stuck waiting for more chunks to be added to the current message */
+AWS_HTTP_API
+bool aws_h1_encoder_is_waiting_for_chunks(const struct aws_h1_encoder *encoder);
 
 AWS_EXTERN_C_END
 

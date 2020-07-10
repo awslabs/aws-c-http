@@ -1558,7 +1558,10 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
     struct aws_http_message *response;
     ASSERT_SUCCESS(
         s_create_response(&response, 200, headers, AWS_ARRAY_SIZE(headers), &error_from_outgoing_body_stream));
-    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, response));
+
+    /* send_respones() may succeed or fail, depending on when things shut down */
+    aws_http_stream_send_response(request->request_handler, response);
+
     testing_channel_drain_queued_tasks(&error_tester.testing_channel);
     /* check that callbacks were invoked before error_at, but not after */
     for (int i = 0; i < REQUEST_HANDLER_CALLBACK_COMPLETE; ++i) {
