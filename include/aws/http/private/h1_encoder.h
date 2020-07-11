@@ -66,8 +66,8 @@ struct aws_h1_encoder {
     struct aws_h1_chunk *current_chunk;
     /* Number of chunks sent, just used for logging */
     size_t chunk_count;
-    /* Encoder logs with this stream ptr as the ID */
-    const void *logging_id;
+    /* Encoder logs with this stream ptr as the ID, and passes this ptr to the chunk_complete callback */
+    struct aws_http_stream *current_stream;
 };
 
 struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const struct aws_http1_chunk_options *options);
@@ -76,7 +76,7 @@ struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const str
 void aws_h1_chunk_destroy(struct aws_h1_chunk *chunk);
 
 /* Destroy chunk and fire its completion callback */
-void aws_h1_chunk_complete_and_destroy(struct aws_h1_chunk *chunk, int error_code);
+void aws_h1_chunk_complete_and_destroy(struct aws_h1_chunk *chunk, struct aws_http_stream *http_stream, int error_code);
 
 int aws_chunk_line_from_options(struct aws_http1_chunk_options *options, struct aws_byte_buf *chunk_line);
 
@@ -110,7 +110,7 @@ AWS_HTTP_API
 int aws_h1_encoder_start_message(
     struct aws_h1_encoder *encoder,
     struct aws_h1_encoder_message *message,
-    void *log_as_stream);
+    struct aws_http_stream *stream);
 
 AWS_HTTP_API
 int aws_h1_encoder_process(struct aws_h1_encoder *encoder, struct aws_byte_buf *out_buf);

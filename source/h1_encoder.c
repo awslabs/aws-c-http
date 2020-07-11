@@ -11,7 +11,7 @@
 #include <inttypes.h>
 
 #define ENCODER_LOGF(level, encoder, text, ...)                                                                        \
-    AWS_LOGF_##level(AWS_LS_HTTP_STREAM, "id=%p: " text, encoder->logging_id, __VA_ARGS__)
+    AWS_LOGF_##level(AWS_LS_HTTP_STREAM, "id=%p: " text, (void *)encoder->current_stream, __VA_ARGS__)
 #define ENCODER_LOG(level, encoder, text) ENCODER_LOGF(level, encoder, "%s", text)
 
 #define MAX_ASCII_HEX_CHUNK_STR_SIZE (sizeof(uint64_t) * 2 + 1)
@@ -350,7 +350,7 @@ void aws_h1_encoder_clean_up(struct aws_h1_encoder *encoder) {
 int aws_h1_encoder_start_message(
     struct aws_h1_encoder *encoder,
     struct aws_h1_encoder_message *message,
-    void *log_as_stream) {
+    struct aws_http_stream *stream) {
 
     AWS_PRECONDITION(encoder);
     AWS_PRECONDITION(message);
@@ -360,7 +360,7 @@ int aws_h1_encoder_start_message(
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
-    encoder->logging_id = log_as_stream;
+    encoder->current_stream = stream;
     encoder->message = message;
 
     return AWS_OP_SUCCESS;
@@ -436,7 +436,11 @@ void aws_h1_chunk_destroy(struct aws_h1_chunk *chunk) {
     aws_mem_release(chunk->allocator, chunk);
 }
 
-void aws_h1_chunk_complete_and_destroy(struct aws_h1_chunk *chunk, int error_code) {
+void aws_h1_chunk_complete_and_destroy(
+    struct aws_h1_chunk *chunk,
+    struct aws_http_stream *http_stream,
+    int error_code) {
+
     AWS_PRECONDITION(chunk);
 
     aws_http1_stream_write_chunk_complete_fn *on_complete = chunk->on_complete;
@@ -446,7 +450,7 @@ void aws_h1_chunk_complete_and_destroy(struct aws_h1_chunk *chunk, int error_cod
     aws_h1_chunk_destroy(chunk);
 
     if (NULL != on_complete) {
-        on_complete(error_code, user_data);
+        on_complete(http_stream, error_code, user_data);
     }
 }
 
@@ -455,7 +459,7 @@ static void s_clean_up_current_chunk(struct aws_h1_encoder *encoder, int error_c
     AWS_PRECONDITION(&encoder->current_chunk->node == aws_linked_list_front(encoder->message->pending_chunk_list));
 
     aws_linked_list_remove(&encoder->current_chunk->node);
-    aws_h1_chunk_complete_and_destroy(encoder->current_chunk, error_code);
+    aws_h1_chunk_complete_and_destroy(encoder->current_chunk, encoder->current_stream, error_code);
     encoder->current_chunk = NULL;
 }
 

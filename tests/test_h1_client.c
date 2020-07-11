@@ -29,10 +29,11 @@ static struct aws_http_message *s_new_default_get_request(struct aws_allocator *
     return request;
 }
 
-static void s_destroy_stream_on_complete(int error_code, void *user_data) {
+static void s_destroy_stream_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)stream;
     (void)error_code;
-    struct aws_input_stream *stream = user_data;
-    aws_input_stream_destroy(stream);
+    struct aws_input_stream *data_stream = user_data;
+    aws_input_stream_destroy(data_stream);
 }
 
 static struct aws_http1_chunk_options s_default_chunk_options(struct aws_input_stream *stream, size_t stream_size) {
@@ -265,7 +266,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_request_send_body_transfer_encoding_chunked) {
+H1_CLIENT_TEST_CASE(h1_client_request_send_body_chunked) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
@@ -309,7 +310,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body_transfer_encoding_chunked) {
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_request_send_body_transfer_encoding_chunked_extensions) {
+H1_CLIENT_TEST_CASE(h1_client_request_send_chunked_extensions) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
@@ -395,7 +396,7 @@ struct chunk_writer_data {
     long delay_between_writes_ns;
 };
 
-H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_waits_for_data) {
+H1_CLIENT_TEST_CASE(h1_client_request_waits_for_chunks) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
@@ -420,15 +421,21 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_waits_for_data) {
 
     /* write and pause, in a loop. This exercises the rescheduling path. */
     for (size_t i = 0; i < chunk_data.num_chunks; ++i) {
+        testing_channel_drain_queued_tasks(&tester.testing_channel);
+        ASSERT_FALSE(
+            aws_task_scheduler_has_tasks(&tester.testing_channel.loop_impl->scheduler, NULL),
+            "Everything should be paused when no chunks are pending");
+
         struct aws_byte_cursor body = aws_byte_cursor_from_c_str(chunk_data.payloads[i]);
         struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(chunk_data.allocator, &body);
         struct aws_http1_chunk_options options = s_default_chunk_options(body_stream, body.len);
-        /* sleep to cause a pause between writes */
-        aws_thread_current_sleep(chunk_data.delay_between_writes_ns);
-        testing_channel_drain_queued_tasks(&tester.testing_channel);
         ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
+
+        testing_channel_drain_queued_tasks(&tester.testing_channel);
+        ASSERT_FALSE(
+            aws_task_scheduler_has_tasks(&tester.testing_channel.loop_impl->scheduler, NULL),
+            "Everything should be paused when no chunks are pending");
     }
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     /* check result */
     const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
@@ -446,6 +453,156 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_waits_for_data) {
     /* check result */
     ASSERT_SUCCESS(testing_channel_check_written_messages(
         &tester.testing_channel, allocator, aws_byte_cursor_from_c_str(expected)));
+
+    /* clean up */
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+struct chunk_that_writes_another {
+    struct aws_allocator *allocator;
+    struct aws_input_stream *body_data;
+};
+
+static void s_on_chunk_complete_write_another_chunk(struct aws_http_stream *stream, int error_code, void *user_data) {
+    AWS_FATAL_ASSERT(0 == error_code);
+    struct chunk_that_writes_another *chunk = user_data;
+
+    aws_input_stream_destroy(chunk->body_data);
+
+    const struct aws_byte_cursor chunk2_body = aws_byte_cursor_from_c_str("chunk 2.");
+    struct aws_input_stream *chunk2_body_stream = aws_input_stream_new_from_cursor(chunk->allocator, &chunk2_body);
+    AWS_FATAL_ASSERT(chunk2_body_stream != NULL);
+
+    struct aws_http1_chunk_options chunk2_options = s_default_chunk_options(chunk2_body_stream, chunk2_body.len);
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http1_stream_write_chunk(stream, &chunk2_options));
+}
+
+/* Test that it's safe to start a new chunk from the chunk-complete callback */
+H1_CLIENT_TEST_CASE(h1_client_request_send_chunk_from_chunk_complete_callback) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* send request with Transfer-Encoding: chunked and body stream */
+    struct aws_http_message *request = s_new_default_chunked_put_request(allocator);
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+
+    /* activate stream *before* sending any data. */
+    aws_http_stream_activate(stream);
+
+    /* write chunk 1 */
+    const struct aws_byte_cursor chunk1_body = aws_byte_cursor_from_c_str("chunk 1.");
+    struct aws_input_stream *chunk1_body_stream = aws_input_stream_new_from_cursor(allocator, &chunk1_body);
+    ASSERT_NOT_NULL(chunk1_body_stream);
+
+    struct chunk_that_writes_another chunk1_userdata = {
+        .allocator = allocator,
+        .body_data = chunk1_body_stream,
+    };
+
+    struct aws_http1_chunk_options chunk1_options = {
+        .chunk_data = chunk1_body_stream,
+        .chunk_data_size = chunk1_body.len,
+        .on_complete = s_on_chunk_complete_write_another_chunk,
+        .user_data = &chunk1_userdata,
+    };
+
+    ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &chunk1_options));
+
+    /* run tasks, the 1st chunk should complete, which writes the 2nd chunk,
+     * which should also complete */
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
+                           "Transfer-Encoding: chunked\r\n"
+                           "\r\n"
+                           "8\r\n"
+                           "chunk 1."
+                           "\r\n"
+                           "8\r\n"
+                           "chunk 2."
+                           "\r\n";
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
+
+    /* clean up */
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+/* Regression test: Once upon a time there was a bug where the outgoing_stream_task got double-scheduled.
+ * The situation was:
+ * - An aws_io_message had been written to the channel, but not yet completed.
+ * - The encoder was paused, waiting for more chunks.
+ * Then at more-or-less the same time:
+ * - The aws_io_message finished writing, which resulted in the outgoing_stream_task getting rescheduled.
+ * - A new chunk was added, which resulted in the outgoing_stream_task getting rescheduled.
+ * And then the task's linked_list_node got all screwed up and we crashed iterating a list. */
+H1_CLIENT_TEST_CASE(h1_client_request_write_chunk_as_write_completes_regression) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    /* To repro this bug, testing channel must wait to mark aws_io_messages complete */
+    testing_channel_complete_written_messages_immediately(&tester.testing_channel, false, 0);
+
+    /* Send request */
+    struct aws_http_message *request = s_new_default_chunked_put_request(allocator);
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
+
+    /* Drain tasks. The head of the request gets written to aws_io_message and sent down channel.
+     * The outgoing_stream_task should be paused waiting for more chunks. */
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* Write a chunk. When bug occurred, this would reschedule the outgoing_stream_task */
+    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
+    struct aws_http1_chunk_options options = s_default_chunk_options(body_stream, body.len);
+    ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
+    ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream));
+
+    /* Have the previously sent aws_io_message complete.
+     * When bug occurred, this would ALSO reschedule the outgoing_stream_task */
+    struct aws_linked_list *written_msgs = testing_channel_get_written_message_queue(&tester.testing_channel);
+    for (struct aws_linked_list_node *node = aws_linked_list_begin(written_msgs);
+         node != aws_linked_list_end(written_msgs);
+         node = aws_linked_list_next(node)) {
+
+        struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
+        msg->on_completion(tester.testing_channel.channel, msg, 0, msg->user_data);
+        msg->on_completion = NULL;
+    }
+
+    /* Run the scheduler. When bug occurred, this would crash */
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
+                           "Transfer-Encoding: chunked\r\n"
+                           "\r\n"
+                           "10\r\n"
+                           "write more tests"
+                           "\r\n"
+                           "0\r\n"
+                           "\r\n";
+
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
 
     /* clean up */
     aws_http_message_destroy(request);
@@ -513,7 +670,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_content_length_0_ok) {
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_0_ok) {
+H1_CLIENT_TEST_CASE(h1_client_request_send_chunk_size_0_ok) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
@@ -548,7 +705,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_0_ok) {
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_extensions_0_ok) {
+H1_CLIENT_TEST_CASE(h1_client_request_send_chunk_size_0_with_extensions_ok) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
@@ -768,7 +925,7 @@ static int s_can_parse_as_chunked_encoding(
 }
 
 /* Send a request whose body doesn't fit in a single aws_io_message using chunked transfer encoding*/
-H1_CLIENT_TEST_CASE(h1_client_request_send_large_body_transfer_encoding_chunked) {
+H1_CLIENT_TEST_CASE(h1_client_request_send_large_body_chunked) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
@@ -839,7 +996,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body_transfer_encoding_chunked)
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_request_transfer_encoding_write_large_chunk_extensions) {
+H1_CLIENT_TEST_CASE(h1_client_request_send_large_chunk_extensions) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
@@ -1693,7 +1850,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
 }
 
 /* It should be fine to receive a response before the request has finished sending */
-H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_transfer_encoded_request_done_sending_is_ok) {
+H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_chunks_done_sending_is_ok) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
@@ -2356,17 +2513,17 @@ static int s_test_chunk_length_mismatch_is_error(
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_request_chunked_encoding_too_small_is_error) {
+H1_CLIENT_TEST_CASE(h1_client_request_chunk_size_too_small_is_error) {
     (void)ctx;
     return s_test_chunk_length_mismatch_is_error(allocator, "I am very long", 2);
 }
 
-H1_CLIENT_TEST_CASE(h1_client_request_chunked_encoding_too_large_is_error) {
+H1_CLIENT_TEST_CASE(h1_client_request_chunk_size_too_large_is_error) {
     (void)ctx;
     return s_test_chunk_length_mismatch_is_error(allocator, "I am very short", 999);
 }
 
-H1_CLIENT_TEST_CASE(h1_client_request_chunked_encoding_cancelled_by_channel_shutdown) {
+H1_CLIENT_TEST_CASE(h1_client_request_chunks_cancelled_by_channel_shutdown) {
     (void)ctx;
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
