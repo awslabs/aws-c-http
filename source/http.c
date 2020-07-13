@@ -99,16 +99,22 @@ static struct aws_error_info s_errors[] = {
         "Protocol rules violated by peer"),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_STREAM_IDS_EXHAUSTED,
-        "Connection exhausted all possible stream IDs. Establish a new connection for new streams."),
+        "Connection exhausted all possible HTTP-stream IDs. Establish a new connection for new streams."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_GOAWAY_RECEIVED,
-        "Peer sent GOAWAY to initiate connection shutdown. Establish a new connection to retry the streams."),
+        "Peer sent GOAWAY to initiate connection shutdown. Establish a new connection to retry the HTTP-streams."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_RST_STREAM_RECEIVED,
-        "Peer sent RST_STREAM to terminate stream."),
+        "Peer sent RST_STREAM to terminate HTTP-stream."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_RST_STREAM_SENT,
-        "RST_STREAM has sent from local implementation and stream has been terminated."),
+        "RST_STREAM has sent from local implementation and HTTP-stream has been terminated."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED,
+        "HTTP-stream must be activated before use."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_HAS_COMPLETED,
+        "HTTP-stream has completed, action cannot be performed."),
 };
 /* clang-format on */
 
