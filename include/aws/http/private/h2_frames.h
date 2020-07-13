@@ -65,6 +65,7 @@ extern const uint32_t aws_h2_settings_initial[AWS_HTTP2_SETTINGS_END_RANGE];
 
 /* This magic string must be the very first thing a client sends to the server.
  * See RFC-7540 3.5 - HTTP/2 Connection Preface */
+AWS_HTTP_API
 extern const struct aws_byte_cursor aws_h2_connection_preface_client_string;
 
 /**
