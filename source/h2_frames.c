@@ -23,7 +23,6 @@
 
 #define ENCODER_LOG(level, encoder, text) ENCODER_LOGF(level, encoder, "%s", text)
 
-/* exported for tests */
 const struct aws_byte_cursor aws_h2_connection_preface_client_string =
     AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 
