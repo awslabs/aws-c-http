@@ -838,7 +838,7 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
         if (aws_channel_slot_send_message(connection->base.channel_slot, msg, AWS_CHANNEL_DIR_WRITE)) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
-                "id=%p: Failed to send message up channel, error %d (%s). Closing connection.",
+                "id=%p: Failed to send message in write direction, error %d (%s). Closing connection.",
                 (void *)&connection->base,
                 aws_last_error(),
                 aws_error_name(aws_last_error()));
@@ -1368,12 +1368,11 @@ static int s_try_process_next_midchannel_read_message(struct aws_h1_connection *
     /* Note that copy_mark is used to mark the progress of partially sent messages. */
     AWS_ASSERT(queued_msg->message_data.len > queued_msg->copy_mark);
     size_t sending_bytes = aws_min_size(queued_msg->message_data.len - queued_msg->copy_mark, downstream_window);
-    AWS_ASSERT(sending_bytes != 0);
 
     /* If we can't send the whole entire queued_msg, copy its data into a new aws_io_message and send that. */
     if (sending_bytes != queued_msg->message_data.len) {
         sending_msg = aws_channel_acquire_message_from_pool(
-            connection->base.channel_slot->channel, AWS_IO_MESSAGE_APPLICATION_DATA, downstream_window);
+            connection->base.channel_slot->channel, AWS_IO_MESSAGE_APPLICATION_DATA, sending_bytes);
         if (!sending_msg) {
             goto error;
         }
@@ -1418,7 +1417,7 @@ static int s_try_process_next_midchannel_read_message(struct aws_h1_connection *
     if (err) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "id=%p: Failed to send message, error %d (%s).",
+            "id=%p: Failed to send message in read direction, error %d (%s).",
             (void *)&connection->base,
             aws_last_error(),
             aws_error_name(aws_last_error()));
