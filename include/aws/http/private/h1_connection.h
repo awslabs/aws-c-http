@@ -64,12 +64,16 @@ struct aws_h1_connection {
         /* Used to encode requests and responses */
         struct aws_h1_encoder encoder;
 
-        /* Amount to let read-window shrink after a channel message has been processed. */
-        size_t incoming_message_window_shrink_size;
+        size_t body_bytes_decoded;
 
-        /* Messages received after the connection has switched protocols.
-         * These are passed downstream to the next handler. */
-        struct aws_linked_list midchannel_read_messages;
+        /* All aws_io_messages arriving in the read direction are queued here before processing.
+         * The downstream window (window of next handler, or window of incoming stream)
+         * determines how much data can be processed. The `copy_mark` is used to
+         * track progress on partially processed messages at the front of the queue. */
+        struct {
+            struct aws_linked_list messages;
+            /* TODO: more variables will go in this struct in the near-future */
+        } read_buffer;
 
         struct aws_crt_statistics_http1_channel stats;
 
