@@ -69,6 +69,8 @@ static int s_decoder_on_done(void *user_data);
 static void s_reset_statistics(struct aws_channel_handler *handler);
 static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_array_list *stats);
 static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool first_try);
+static int s_try_process_read_messages(struct aws_h1_connection *connection);
+static int s_try_process_next_stream_read_message(struct aws_h1_connection *connection);
 
 static struct aws_http_connection_vtable s_h1_connection_vtable = {
     .channel_handler_vtable =
@@ -836,7 +838,7 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
         if (aws_channel_slot_send_message(connection->base.channel_slot, msg, AWS_CHANNEL_DIR_WRITE)) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
-                "id=%p: Failed to send message down channel, error %d (%s). Closing connection.",
+                "id=%p: Failed to send message up channel, error %d (%s). Closing connection.",
                 (void *)&connection->base,
                 aws_last_error(),
                 aws_error_name(aws_last_error()));
@@ -993,7 +995,7 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
             &incoming_stream->base, header_block, &deliver, 1, incoming_stream->base.user_data);
 
         if (err) {
-            AWS_LOGF_TRACE(
+            AWS_LOGF_ERROR(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Incoming header callback raised error %d (%s).",
                 (void *)&incoming_stream->base,
@@ -1062,7 +1064,7 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
         int err = incoming_stream->base.on_incoming_header_block_done(
             &incoming_stream->base, header_block, incoming_stream->base.user_data);
         if (err) {
-            AWS_LOGF_TRACE(
+            AWS_LOGF_ERROR(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Incoming-header-block-done callback raised error %d (%s).",
                 (void *)&incoming_stream->base,
@@ -1096,15 +1098,12 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM, "id=%p: Incoming body: %zu bytes received.", (void *)&incoming_stream->base, data->len);
 
-    /* If the user wishes to manually increment windows, by default shrink the window by the amount of data read. */
-    if (incoming_stream->base.manual_window_management) {
-        connection->thread_data.incoming_message_window_shrink_size += data->len;
-    }
+    connection->thread_data.body_bytes_decoded += data->len;
 
     if (incoming_stream->base.on_incoming_body) {
         err = incoming_stream->base.on_incoming_body(&incoming_stream->base, data, incoming_stream->base.user_data);
         if (err) {
-            AWS_LOGF_TRACE(
+            AWS_LOGF_ERROR(
                 AWS_LS_HTTP_STREAM,
                 "id=%p: Incoming body callback raised error %d (%s).",
                 (void *)&incoming_stream->base,
@@ -1156,7 +1155,7 @@ static int s_decoder_on_done(void *user_data) {
         if (on_request_done) {
             err = on_request_done(&incoming_stream->base, incoming_stream->base.user_data);
             if (err) {
-                AWS_LOGF_TRACE(
+                AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,
                     "id=%p: Incoming request done callback raised error %d (%s).",
                     (void *)&incoming_stream->base,
@@ -1225,7 +1224,7 @@ static struct aws_h1_connection *s_connection_new(
         connection,
         "http1_connection_cross_thread_work");
     aws_linked_list_init(&connection->thread_data.stream_list);
-    aws_linked_list_init(&connection->thread_data.midchannel_read_messages);
+    aws_linked_list_init(&connection->thread_data.read_buffer.messages);
     aws_crt_statistics_http1_channel_init(&connection->thread_data.stats);
 
     int err = aws_mutex_init(&connection->synced_data.lock);
@@ -1307,9 +1306,15 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Destroying connection.", (void *)&connection->base);
 
-    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.midchannel_read_messages));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stream_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.new_client_stream_list));
+
+    /* Clean up any buffered read messages. */
+    while (!aws_linked_list_empty(&connection->thread_data.read_buffer.messages)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&connection->thread_data.read_buffer.messages);
+        struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
+        aws_mem_release(msg->allocator, msg);
+    }
 
     aws_h1_decoder_destroy(connection->thread_data.incoming_stream_decoder);
     aws_h1_encoder_clean_up(&connection->thread_data.encoder);
@@ -1326,11 +1331,15 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
     aws_channel_acquire_hold(slot->channel);
 }
 
-static void s_connection_try_send_read_messages(struct aws_h1_connection *connection) {
+/* Try to send the next queued aws_io_message to the downstream handler.
+ * This can only be called after the connection has switched protocols and becoming a midchannel handler. */
+static int s_try_process_next_midchannel_read_message(struct aws_h1_connection *connection, bool *out_stop_processing) {
     AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
     AWS_ASSERT(connection->thread_data.has_switched_protocols);
     AWS_ASSERT(!connection->thread_data.is_reading_stopped);
+    AWS_ASSERT(!aws_linked_list_empty(&connection->thread_data.read_buffer.messages));
 
+    *out_stop_processing = false;
     struct aws_io_message *sending_msg = NULL;
 
     if (!connection->base.channel_slot->adj_right) {
@@ -1339,87 +1348,90 @@ static void s_connection_try_send_read_messages(struct aws_h1_connection *connec
             "id=%p: Connection has switched protocols, but no handler is installed to deal with this data.",
             (void *)connection);
 
-        aws_raise_error(AWS_ERROR_HTTP_SWITCHED_PROTOCOLS);
-        goto error;
+        return aws_raise_error(AWS_ERROR_HTTP_SWITCHED_PROTOCOLS);
     }
 
-    /* Send messages until none remain, or downstream window reaches zero */
-    while (!aws_linked_list_empty(&connection->thread_data.midchannel_read_messages)) {
-        sending_msg = NULL;
+    size_t downstream_window = aws_channel_slot_downstream_read_window(connection->base.channel_slot);
+    if (downstream_window == 0) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Downstream window is 0, cannot send switched-protocol message now.",
+            (void *)&connection->base);
 
-        size_t downstream_window = aws_channel_slot_downstream_read_window(connection->base.channel_slot);
-        if (!downstream_window) {
-            break;
+        *out_stop_processing = true;
+        return AWS_OP_SUCCESS;
+    }
+
+    struct aws_linked_list_node *queued_msg_node = aws_linked_list_front(&connection->thread_data.read_buffer.messages);
+    struct aws_io_message *queued_msg = AWS_CONTAINER_OF(queued_msg_node, struct aws_io_message, queueing_handle);
+
+    /* Note that copy_mark is used to mark the progress of partially sent messages. */
+    AWS_ASSERT(queued_msg->message_data.len > queued_msg->copy_mark);
+    size_t sending_bytes = aws_min_size(queued_msg->message_data.len - queued_msg->copy_mark, downstream_window);
+    AWS_ASSERT(sending_bytes != 0);
+
+    /* If we can't send the whole entire queued_msg, copy its data into a new aws_io_message and send that. */
+    if (sending_bytes != queued_msg->message_data.len) {
+        sending_msg = aws_channel_acquire_message_from_pool(
+            connection->base.channel_slot->channel, AWS_IO_MESSAGE_APPLICATION_DATA, downstream_window);
+        if (!sending_msg) {
+            goto error;
         }
 
-        struct aws_linked_list_node *queued_msg_node =
-            aws_linked_list_front(&connection->thread_data.midchannel_read_messages);
-        struct aws_io_message *queued_msg = AWS_CONTAINER_OF(queued_msg_node, struct aws_io_message, queueing_handle);
+        aws_byte_buf_write(
+            &sending_msg->message_data, queued_msg->message_data.buffer + queued_msg->copy_mark, sending_bytes);
 
-        /* If we can't send the whole entire queued_msg, copy its data into a new aws_io_message and send that.
-         * Note that copy_mark is used to mark the progress of partially sent messages. */
-        if (queued_msg->copy_mark || queued_msg->message_data.len > downstream_window) {
-            sending_msg = aws_channel_acquire_message_from_pool(
-                connection->base.channel_slot->channel, AWS_IO_MESSAGE_APPLICATION_DATA, downstream_window);
-            if (!sending_msg) {
-                goto error;
-            }
+        queued_msg->copy_mark += sending_bytes;
 
-            AWS_ASSERT(queued_msg->message_data.len > queued_msg->copy_mark);
-            size_t sending_bytes = queued_msg->message_data.len - queued_msg->copy_mark;
-            if (sending_msg->message_data.capacity < sending_bytes) {
-                sending_bytes = sending_msg->message_data.capacity;
-            }
-
-            aws_byte_buf_write(
-                &sending_msg->message_data, queued_msg->message_data.buffer + queued_msg->copy_mark, sending_bytes);
-
-            queued_msg->copy_mark += sending_bytes;
-
+        /* If the last of queued_msg has been copied, it can be deleted now. */
+        if (queued_msg->copy_mark == queued_msg->message_data.len) {
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION,
-                "id=%p: Sending partial (%zu/%zu) switched-protocol message to next handler.",
+                "id=%p: Sending remainder (%zu/%zu) of switched-protocol message to downstream handler.",
                 (void *)&connection->base,
                 sending_bytes,
                 queued_msg->message_data.len);
 
-            /* If the last of queued_msg has been copied, it can be deleted now. */
-            if (queued_msg->copy_mark == queued_msg->message_data.len) {
-                aws_linked_list_remove(queued_msg_node);
-                aws_mem_release(queued_msg->allocator, queued_msg);
-            }
-
+            aws_linked_list_remove(queued_msg_node);
+            aws_mem_release(queued_msg->allocator, queued_msg);
         } else {
-            /* Sending all of queued_msg along. */
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION,
-                "id=%p: Sending full switched-protocol message of size %zu to next handler.",
+                "id=%p: Sending partial (%zu/%zu) switched-protocol message to downstream handler.",
                 (void *)&connection->base,
+                sending_bytes,
                 queued_msg->message_data.len);
-
-            aws_linked_list_remove(queued_msg_node);
-            sending_msg = queued_msg;
         }
+    } else {
+        /* Sending all of queued_msg along. */
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Sending full switched-protocol message of size %zu to downstream handler.",
+            (void *)&connection->base,
+            queued_msg->message_data.len);
 
-        int err = aws_channel_slot_send_message(connection->base.channel_slot, sending_msg, AWS_CHANNEL_DIR_READ);
-        if (err) {
-            AWS_LOGF_ERROR(
-                AWS_LS_HTTP_CONNECTION,
-                "id=%p: Failed to send message, error %d (%s).",
-                (void *)&connection->base,
-                aws_last_error(),
-                aws_error_name(aws_last_error()));
-            goto error;
-        }
+        aws_linked_list_remove(queued_msg_node);
+        sending_msg = queued_msg;
     }
 
-    return;
+    int err = aws_channel_slot_send_message(connection->base.channel_slot, sending_msg, AWS_CHANNEL_DIR_READ);
+    if (err) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Failed to send message, error %d (%s).",
+            (void *)&connection->base,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        goto error;
+    }
+
+    return AWS_OP_SUCCESS;
 
 error:
     if (sending_msg) {
         aws_mem_release(sending_msg->allocator, sending_msg);
     }
-    s_shutdown_due_to_error(connection, aws_last_error());
+    return AWS_OP_ERR;
 }
 
 static struct aws_http_stream *s_new_server_request_handler_stream(
@@ -1499,146 +1511,170 @@ static int s_handler_process_read_message(
     struct aws_channel_slot *slot,
     struct aws_io_message *message) {
 
+    (void)slot;
     struct aws_h1_connection *connection = handler->impl;
-    int err;
-
-    const size_t incoming_message_size = message->message_data.len;
-
-    /* By default, after processing message, we will increment the read window by the same amount we just read in. */
-    connection->thread_data.incoming_message_window_shrink_size = 0;
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,
-        "id=%p: Begin processing message of size %zu.",
+        "id=%p: Incoming message of size %zu.",
         (void *)&connection->base,
         message->message_data.len);
 
-    /* Run decoder until all message data is processed */
-    struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
-    while (message_cursor.len > 0) {
+    aws_linked_list_push_back(&connection->thread_data.read_buffer.messages, &message->queueing_handle);
+
+    if (s_try_process_read_messages(connection)) {
+        goto shutdown;
+    }
+
+    return AWS_OP_SUCCESS;
+
+shutdown:
+    /* Kill connection, but still return AWS_OP_SUCCESS because we took ownership of aws_io_message */
+    s_shutdown_due_to_error(connection, aws_last_error());
+    return AWS_OP_SUCCESS;
+}
+
+static int s_try_process_read_messages(struct aws_h1_connection *connection) {
+    while (!aws_linked_list_empty(&connection->thread_data.read_buffer.messages)) {
         if (connection->thread_data.is_reading_stopped) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
                 "id=%p: Cannot process message because connection is shutting down.",
                 (void *)&connection->base);
 
-            aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
-            goto shutdown;
+            return aws_raise_error(AWS_ERROR_HTTP_CONNECTION_CLOSED);
         }
 
+        bool stop_processing = false;
+
         /* When connection has switched protocols, messages are processed very differently.
-         * They're queued and sent along whenever the downstream read-window can accommodate them.
-         *
          * We need to do this check in the middle of the normal processing loop,
          * in case the switch happens in the middle of processing a message. */
         if (connection->thread_data.has_switched_protocols) {
-            size_t bytes_processed = message->message_data.len - message_cursor.len;
-            size_t bytes_to_be_processed = message_cursor.len;
-
-            /* Don't auto-increment read window for parts of message using the new protocol. */
-            connection->thread_data.incoming_message_window_shrink_size += bytes_to_be_processed;
-
-            /* Use the copy_mark to indicate how much of this message was already processed. */
-            message->copy_mark = bytes_processed;
-
-            /* Queue the message, then try to send it (and any others that might be queued) */
-            aws_linked_list_push_back(&connection->thread_data.midchannel_read_messages, &message->queueing_handle);
-            s_connection_try_send_read_messages(connection);
-
-            /* Don't let the message be freed later in this function. It will be freed when it's finally sent. */
-            message = NULL;
-
-            /* Note that we break out of the loop. */
-            break;
-
-        } else {
-            /* Else processing message as normal HTTP data. */
-            if (!connection->thread_data.incoming_stream) {
-                if (aws_http_connection_is_client(&connection->base)) {
-                    /* Client side */
-                    AWS_LOGF_ERROR(
-                        AWS_LS_HTTP_CONNECTION,
-                        "id=%p: Cannot process message because no requests are currently awaiting response, closing "
-                        "connection.",
-                        (void *)&connection->base);
-
-                    aws_raise_error(AWS_ERROR_INVALID_STATE);
-                    goto shutdown;
-
-                } else {
-                    /* Server side.
-                     * Invoke on-incoming-request callback. The user MUST create a new stream from this callback.
-                     * The new stream becomes the current incoming stream */
-                    s_set_incoming_stream_ptr(connection, s_server_invoke_on_incoming_request(connection));
-                    if (!connection->thread_data.incoming_stream) {
-                        AWS_LOGF_ERROR(
-                            AWS_LS_HTTP_CONNECTION,
-                            "id=%p: Incoming request callback failed to provide a new stream, last error %d (%s). "
-                            "Closing connection.",
-                            (void *)&connection->base,
-                            aws_last_error(),
-                            aws_error_name(aws_last_error()));
-
-                        goto shutdown;
-                    }
-                }
+            if (s_try_process_next_midchannel_read_message(connection, &stop_processing)) {
+                return AWS_OP_ERR;
             }
-
-            /* Decoder will invoke the internal s_decoder_X callbacks, which in turn invoke user callbacks */
-            aws_h1_decoder_set_logging_id(
-                connection->thread_data.incoming_stream_decoder, connection->thread_data.incoming_stream);
-
-            /* Tell the decoder about the request method, and let it know whether no body is needed or not */
-            bool body_headers_ignored =
-                connection->thread_data.incoming_stream->base.request_method == AWS_HTTP_METHOD_HEAD;
-            aws_h1_decoder_set_body_headers_ignored(
-                connection->thread_data.incoming_stream_decoder, body_headers_ignored);
-
-            /* Decoder will stop once it hits the end of the request/response OR the end of the message data. */
-            err = aws_h1_decode(connection->thread_data.incoming_stream_decoder, &message_cursor);
-            if (err) {
-                AWS_LOGF_ERROR(
-                    AWS_LS_HTTP_CONNECTION,
-                    "id=%p: Message processing failed, error %d (%s). Closing connection.",
-                    (void *)&connection->base,
-                    aws_last_error(),
-                    aws_error_name(aws_last_error()));
-
-                goto shutdown;
+        } else {
+            if (s_try_process_next_stream_read_message(connection)) {
+                return AWS_OP_ERR;
             }
         }
-    }
 
-    AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "id=%p: Done processing message.", (void *)&connection->base);
-    if (message) {
-        /* release message back to pool before re-opening window */
-        aws_mem_release(message->allocator, message);
-        message = NULL;
-    }
-
-    /* Increment read window */
-    if (incoming_message_size > connection->thread_data.incoming_message_window_shrink_size) {
-        size_t increment = incoming_message_size - connection->thread_data.incoming_message_window_shrink_size;
-        err = aws_channel_slot_increment_read_window(slot, increment);
-        if (err) {
-            AWS_LOGF_ERROR(
-                AWS_LS_HTTP_CONNECTION,
-                "id=%p: Failed to increment read window, error %d (%s). Closing connection.",
-                (void *)&connection->base,
-                aws_last_error(),
-                aws_error_name(aws_last_error()));
-
-            goto shutdown;
+        /* Break out of loop if we can't process any more data */
+        if (stop_processing) {
+            break;
         }
     }
 
     return AWS_OP_SUCCESS;
+}
 
-shutdown:
-    if (message) {
-        aws_mem_release(message->allocator, message);
+/* Try to process the next queued aws_io_message as normal HTTP data for an aws_http_stream.
+ * This MUST NOT be called if the connection has switched protocols and become a midchannel handler. */
+static int s_try_process_next_stream_read_message(struct aws_h1_connection *connection) {
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+    AWS_ASSERT(!connection->thread_data.has_switched_protocols);
+    AWS_ASSERT(!connection->thread_data.is_reading_stopped);
+    AWS_ASSERT(!aws_linked_list_empty(&connection->thread_data.read_buffer.messages));
+
+    /* Ensure that an incoming stream exists to receive the data */
+    if (!connection->thread_data.incoming_stream) {
+        if (aws_http_connection_is_client(&connection->base)) {
+            /* Client side */
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION,
+                "id=%p: Cannot process message because no requests are currently awaiting response, closing "
+                "connection.",
+                (void *)&connection->base);
+
+            return aws_raise_error(AWS_ERROR_INVALID_STATE);
+
+        } else {
+            /* Server side.
+             * Invoke on-incoming-request callback. The user MUST create a new stream from this callback.
+             * The new stream becomes the current incoming stream */
+            s_set_incoming_stream_ptr(connection, s_server_invoke_on_incoming_request(connection));
+            if (!connection->thread_data.incoming_stream) {
+                AWS_LOGF_ERROR(
+                    AWS_LS_HTTP_CONNECTION,
+                    "id=%p: Incoming request callback failed to provide a new stream, last error %d (%s). "
+                    "Closing connection.",
+                    (void *)&connection->base,
+                    aws_last_error(),
+                    aws_error_name(aws_last_error()));
+
+                return AWS_OP_ERR;
+            }
+        }
     }
-    s_shutdown_due_to_error(connection, aws_last_error());
+
+    struct aws_linked_list_node *queued_msg_node = aws_linked_list_front(&connection->thread_data.read_buffer.messages);
+    struct aws_io_message *queued_msg = AWS_CONTAINER_OF(queued_msg_node, struct aws_io_message, queueing_handle);
+
+    /* Note that copy_mark is used to mark the progress of partially decoded messages */
+    struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&queued_msg->message_data);
+    aws_byte_cursor_advance(&message_cursor, queued_msg->copy_mark);
+
+    /* Track how much data is processed */
+    const size_t prev_cursor_len = message_cursor.len;
+    connection->thread_data.body_bytes_decoded = 0; /* this is incremented by on_body callback */
+
+    /* Set some decoder state, based on current stream */
+    aws_h1_decoder_set_logging_id(
+        connection->thread_data.incoming_stream_decoder, connection->thread_data.incoming_stream);
+
+    bool body_headers_ignored = connection->thread_data.incoming_stream->base.request_method == AWS_HTTP_METHOD_HEAD;
+    aws_h1_decoder_set_body_headers_ignored(connection->thread_data.incoming_stream_decoder, body_headers_ignored);
+
+    /* As decoder runs, it invokes the internal s_decoder_X callbacks, which in turn invoke user callbacks.
+     * The decoder will stop once it hits the end of the request/response OR the end of the message data. */
+    if (aws_h1_decode(connection->thread_data.incoming_stream_decoder, &message_cursor)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Message processing failed, error %d (%s). Closing connection.",
+            (void *)&connection->base,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
+        return AWS_OP_ERR;
+    }
+
+    size_t bytes_processed = prev_cursor_len - message_cursor.len;
+    queued_msg->copy_mark += bytes_processed;
+
+    /* If the last of queued_msg has been processed, it can be deleted now.
+     * Otherwise, it remains in the queue for further processing later. */
+    if (queued_msg->copy_mark == queued_msg->message_data.len) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Decoded to end of message (%zu/%zu).",
+            (void *)&connection->base,
+            bytes_processed,
+            queued_msg->message_data.len);
+
+        aws_linked_list_remove(&queued_msg->queueing_handle);
+        aws_mem_release(queued_msg->allocator, queued_msg);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Decoded partial message (%zu/%zu).",
+            (void *)&connection->base,
+            bytes_processed,
+            queued_msg->message_data.len);
+    }
+
+    /* Only body data (not headers, etc) should count against our flow-control window.
+     * (unless manual_window_management is turned off, in which case NOTHING should
+     * count against our flow-control window) */
+    size_t window_increment_size = bytes_processed;
+    if (connection->base.manual_window_management) {
+        AWS_ASSERT(window_increment_size >= connection->thread_data.body_bytes_decoded);
+        window_increment_size -= connection->thread_data.body_bytes_decoded;
+    }
+    if (window_increment_size > 0) {
+        aws_channel_slot_increment_read_window(connection->base.channel_slot, window_increment_size);
+    }
+
     return AWS_OP_SUCCESS;
 }
 
@@ -1707,7 +1743,9 @@ static int s_handler_increment_read_window(
         size);
 
     /* If there are any queued messages, send them along. */
-    s_connection_try_send_read_messages(connection);
+    if (s_try_process_read_messages(connection)) {
+        goto error;
+    }
 
     aws_channel_slot_increment_read_window(slot, size);
     return AWS_OP_SUCCESS;
@@ -1745,14 +1783,6 @@ static int s_handler_shutdown(
     if (dir == AWS_CHANNEL_DIR_READ) {
         /* This call ensures that no further streams will be created or worked on. */
         s_stop(connection, true /*stop_reading*/, false /*stop_writing*/, false /*schedule_shutdown*/, error_code);
-
-        /* Clean up any queued midchannel read messages. */
-        while (!aws_linked_list_empty(&connection->thread_data.midchannel_read_messages)) {
-            struct aws_linked_list_node *node =
-                aws_linked_list_pop_front(&connection->thread_data.midchannel_read_messages);
-            struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
-            aws_mem_release(msg->allocator, msg);
-        }
     } else /* dir == AWS_CHANNEL_DIR_WRITE */ {
 
         s_stop(connection, false /*stop_reading*/, true /*stop_writing*/, false /*schedule_shutdown*/, error_code);

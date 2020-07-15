@@ -2722,7 +2722,9 @@ static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct
     (void)dest;
 
     struct error_from_callback_tester *error_tester = body->impl;
-    ASSERT_SUCCESS(s_error_from_callback_common(error_tester, REQUEST_CALLBACK_OUTGOING_BODY));
+    if (s_error_from_callback_common(error_tester, REQUEST_CALLBACK_OUTGOING_BODY)) {
+        return AWS_OP_ERR;
+    }
 
     /* If the common fn was successful, write out some data and end the stream */
     ASSERT_TRUE(aws_byte_buf_write(dest, (const uint8_t *)"abcd", 4));
