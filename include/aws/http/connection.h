@@ -149,7 +149,7 @@ struct aws_http_proxy_options {
      * TLS configuration for the Local <-> Proxy connection
      * Must be distinct from the the TLS options in the parent aws_http_connection_options struct
      */
-    struct aws_tls_connection_options *tls_options;
+    const struct aws_tls_connection_options *tls_options;
 
     /**
      * What type of proxy authentication to use, if any
