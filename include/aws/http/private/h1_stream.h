@@ -62,6 +62,10 @@ struct aws_h1_stream {
          * Encoder completes/frees/pops front chunk when it's done sending. */
         struct aws_linked_list pending_chunk_list;
 
+        /* Size of stream's flow-control window.
+         * Only body data (not headers, etc) counts against the stream's flow-control window. */
+        uint64_t window_size;
+
         /* Whether a "request handler" stream has a response to send.
          * Has mirror variable in synced_data */
         bool has_outgoing_response : 1;
@@ -76,6 +80,9 @@ struct aws_h1_stream {
         struct aws_linked_list pending_chunk_list;
 
         enum aws_h1_stream_api_state api_state;
+
+        /* Sum of all aws_http_stream_update_window() calls that haven't yet moved to thread_data.window_size */
+        uint64_t pending_window_update;
 
         /* See `cross_thread_work_task` */
         bool is_cross_thread_work_task_scheduled : 1;

@@ -18,7 +18,7 @@
 struct aws_h1_connection {
     struct aws_http_connection base;
 
-    size_t initial_window_size;
+    size_t initial_stream_window_size;
 
     /* Task responsible for sending data.
      * As long as there is data available to send, the task will be "active" and repeatedly:
@@ -64,15 +64,19 @@ struct aws_h1_connection {
         /* Used to encode requests and responses */
         struct aws_h1_encoder encoder;
 
-        size_t body_bytes_decoded;
+        /* The connection's current window size. */
+        size_t window_size;
 
         /* All aws_io_messages arriving in the read direction are queued here before processing.
          * The downstream window (window of next handler, or window of incoming stream)
          * determines how much data can be processed. The `copy_mark` is used to
-         * track progress on partially processed messages at the front of the queue. */
+         * track progress on partially processed messages at the front of the queue.
+         * `unprocessed_bytes` is the sum of all unprocessed bytes across all queued messages.
+         * `capacity` is the limit for how many unprocessed bytes we'd like in the queue */
         struct {
             struct aws_linked_list messages;
-            /* TODO: more variables will go in this struct in the near-future */
+            size_t unprocessed_bytes;
+            size_t capacity;
         } read_buffer;
 
         struct aws_crt_statistics_http1_channel stats;
@@ -94,6 +98,8 @@ struct aws_h1_connection {
 
         /* see `outgoing_stream_task` */
         bool is_outgoing_stream_task_active : 1;
+
+        bool is_processing_read_messages : 1;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
@@ -152,5 +158,16 @@ void aws_h1_connection_unlock_synced_data(struct aws_h1_connection *connection);
  * MUST be called from the connection's event-loop thread.
  */
 void aws_h1_connection_try_write_outgoing_stream(struct aws_h1_connection *connection);
+
+/**
+ * If any read messages are queued, and the downstream window is non-zero,
+ * process data and send it downstream. Then calculate the connection's
+ * desired window size and increment it if necessary.
+ *
+ * During normal operations "downstream" means the current incoming stream.
+ * If the connection has switched protocols "downstream" means the next
+ * channel handler in the read direction.
+ */
+void aws_h1_connection_try_process_read_messages(struct aws_h1_connection *connection);
 
 #endif /* AWS_HTTP_H1_CONNECTION_H */

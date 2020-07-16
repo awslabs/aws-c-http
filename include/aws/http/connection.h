@@ -286,10 +286,24 @@ struct aws_http_client_connection_options {
     const struct aws_http_connection_monitoring_options *monitoring_options;
 
     /**
-     * Optional.
-     * The initial connection flow-control window size for HTTP/1 connection.
-     * Ignored by HTTP/2 connection, since the initial connection flow-control window in HTTP/2 is not configurable.
-     * A default size is set by AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT.
+     * Set to true to manually manage the flow-control window of each stream.
+     *
+     * If false, the connection will maintain its flow-control windows such that
+     * no back-pressure is applied and data arrives as fast as possible.
+     *
+     * If true, the flow-control window of each stream will shrink as body data
+     * is received (headers, padding, and other metadata do not affect the window).
+     * `initial_window_size` determines the starting size of each stream's window.
+     * If a stream's flow-control window reaches 0, no further data will be received.
+     * The user must call aws_http_stream_update_window() to increment the stream's
+     * window and keep data flowing.
+     */
+    bool manual_window_management;
+
+    /**
+     * The starting size of each HTTP stream's flow-control window.
+     * Required if `manual_window_management` is true,
+     * ignored if `manual_window_management` is false.
      */
     size_t initial_window_size;
 
@@ -313,17 +327,6 @@ struct aws_http_client_connection_options {
      * See `aws_http_on_client_connection_shutdown_fn`.
      */
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
-
-    /**
-     * Set to true to manually manage the read window size.
-     *
-     * If this is false, the connection will maintain a constant window size.
-     *
-     * If this is true, the caller must manually increment the window size using aws_http_stream_update_window().
-     * If the window is not incremented, it will shrink by the amount of body data received. If the window size
-     * reaches 0, no further data will be received.
-     **/
-    bool manual_window_management;
 
     /**
      * HTTP/2 connection specific options.
@@ -426,7 +429,8 @@ AWS_HTTP_API
 bool aws_http_connection_is_client(const struct aws_http_connection *connection);
 
 /**
- * Increments the connection-wide read window by the value specified.
+ * DEPRECATED
+ * TODO: Delete once this is removed from H2.
  */
 AWS_HTTP_API
 void aws_http_connection_update_window(struct aws_http_connection *connection, size_t increment_size);
