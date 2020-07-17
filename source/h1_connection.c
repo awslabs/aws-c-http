@@ -1908,6 +1908,9 @@ static void s_pull_up_stats_timestamps(struct aws_h1_connection *connection) {
 static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_array_list *stats) {
     struct aws_h1_connection *connection = handler->impl;
 
+    /* TODO: Need update the way we calculate statistics, to account for user-controlled pauses.
+     * If user is adding chunks 1 by 1, there can naturally be a gap in the upload.
+     * If the user lets the stream-window go to zero, there can naturally be a gap in the download. */
     s_pull_up_stats_timestamps(connection);
 
     void *stats_base = &connection->thread_data.stats;
