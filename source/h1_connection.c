@@ -1688,8 +1688,10 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
 
     /* Don't process more data than the stream's window can accept.
      *
-     * OPTIMIZATION IDEA: Let the decoder know about stream-window size so it can stop itself,
+     * TODO: Let the decoder know about stream-window size so it can stop itself,
      * instead of limiting the amount of data we feed into the decoder at a time.
+     * This would be more optimal, AND avoid an edge-case where the stream-window goes
+     * to 0 as the body ends, and the connection can't proceed to the trailing headers.
      */
     message_cursor.len = (size_t)aws_min_u64(message_cursor.len, stream_window);
 
