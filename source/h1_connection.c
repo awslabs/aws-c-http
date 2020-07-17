@@ -13,6 +13,8 @@
 #include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 
+#include <inttypes.h>
+
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
@@ -273,10 +275,23 @@ static size_t s_calculate_stream_mode_desired_connection_window(struct aws_h1_co
      * Also, small-ish numbers numbers would hamper performance, since we'd never accept
      * more than that at any one time, even if the stream later increased its window.
      * Therefore, we will buffer up to N bytes of aws_io_messages. */
+    AWS_ASSERT(connection->thread_data.read_buffer.unprocessed_bytes <= connection->thread_data.read_buffer.capacity);
     const size_t buffer_space_available =
         connection->thread_data.read_buffer.capacity - connection->thread_data.read_buffer.unprocessed_bytes;
 
-    return aws_max_size(acceptable_stream_window, buffer_space_available);
+    const size_t desired_connection_window = aws_max_size(acceptable_stream_window, buffer_space_available);
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Window stats: connection=%zu+%zu stream=%" PRIu64 " buffer=%zu/%zu",
+        (void *)&connection->base,
+        connection->thread_data.window_size,
+        desired_connection_window - connection->thread_data.window_size /*increment_size*/,
+        current_stream_window,
+        connection->thread_data.read_buffer.unprocessed_bytes,
+        connection->thread_data.read_buffer.capacity);
+
+    return desired_connection_window;
 }
 
 /* Increment connection window, if necessary */
@@ -1111,6 +1126,12 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
         /* Let stream window shrink by amount of body data received */
         AWS_ASSERT(incoming_stream->thread_data.window_size >= data->len); /* TODO: assert or real check?*/
         incoming_stream->thread_data.window_size -= data->len;
+        if (incoming_stream->thread_data.window_size == 0) {
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Flow-control window has reached 0. No more data can be received until window is updated.",
+                (void *)&incoming_stream->base);
+        }
     }
 
     if (incoming_stream->base.on_incoming_body) {
@@ -1412,24 +1433,17 @@ static int s_try_process_next_midchannel_read_message(struct aws_h1_connection *
 
         queued_msg->copy_mark += sending_bytes;
 
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Sending %zu bytes switched-protocol message to downstream handler, %zu bytes remain.",
+            (void *)&connection->base,
+            sending_bytes,
+            queued_msg->message_data.len - queued_msg->copy_mark);
+
         /* If the last of queued_msg has been copied, it can be deleted now. */
         if (queued_msg->copy_mark == queued_msg->message_data.len) {
-            AWS_LOGF_TRACE(
-                AWS_LS_HTTP_CONNECTION,
-                "id=%p: Sending remainder (%zu/%zu) of switched-protocol message to downstream handler.",
-                (void *)&connection->base,
-                sending_bytes,
-                queued_msg->message_data.len);
-
             aws_linked_list_remove(queued_msg_node);
             aws_mem_release(queued_msg->allocator, queued_msg);
-        } else {
-            AWS_LOGF_TRACE(
-                AWS_LS_HTTP_CONNECTION,
-                "id=%p: Sending partial (%zu/%zu) switched-protocol message to downstream handler.",
-                (void *)&connection->base,
-                sending_bytes,
-                queued_msg->message_data.len);
         }
     } else {
         /* Sending all of queued_msg along. */
@@ -1704,25 +1718,18 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
     AWS_ASSERT(connection->thread_data.read_buffer.unprocessed_bytes >= bytes_processed);
     connection->thread_data.read_buffer.unprocessed_bytes -= bytes_processed;
 
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Decoded %zu bytes of message, %zu bytes remain.",
+        (void *)&connection->base,
+        bytes_processed,
+        queued_msg->message_data.len - queued_msg->copy_mark);
+
     /* If the last of queued_msg has been processed, it can be deleted now.
      * Otherwise, it remains in the queue for further processing later. */
     if (queued_msg->copy_mark == queued_msg->message_data.len) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Decoded to end of message (%zu/%zu).",
-            (void *)&connection->base,
-            bytes_processed,
-            queued_msg->message_data.len);
-
         aws_linked_list_remove(&queued_msg->queueing_handle);
         aws_mem_release(queued_msg->allocator, queued_msg);
-    } else {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Decoded partial message (%zu/%zu).",
-            (void *)&connection->base,
-            bytes_processed,
-            queued_msg->message_data.len);
     }
 
     return AWS_OP_SUCCESS;
@@ -1918,7 +1925,7 @@ struct aws_h1_window_stats aws_h1_connection_window_stats(struct aws_http_connec
         .buffer_capacity = connection->thread_data.read_buffer.capacity,
         .buffer_unprocessed_bytes = connection->thread_data.read_buffer.unprocessed_bytes,
         .recent_window_increments = connection->thread_data.recent_window_increments,
-        .has_incoming_stream = (bool)connection->thread_data.incoming_stream,
+        .has_incoming_stream = connection->thread_data.incoming_stream != NULL,
         .stream_window = connection->thread_data.incoming_stream
                              ? connection->thread_data.incoming_stream->thread_data.window_size
                              : 0,

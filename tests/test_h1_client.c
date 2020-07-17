@@ -2348,8 +2348,8 @@ H1_CLIENT_TEST_CASE(h1_client_respects_stream_window) {
 
     struct aws_http_message *request = s_new_default_get_request(allocator);
 
-    struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+    struct client_stream_tester stream_tester1;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester1, &tester, request));
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     /* send response whose body is 2X the initial_stream_window_size */
@@ -2361,19 +2361,19 @@ H1_CLIENT_TEST_CASE(h1_client_respects_stream_window) {
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
     /* stream window should reach 0 before entire body has been received */
-    ASSERT_BIN_ARRAYS_EQUALS("01234", 5, stream_tester.response_body.buffer, stream_tester.response_body.len);
+    ASSERT_BIN_ARRAYS_EQUALS("01234", 5, stream_tester1.response_body.buffer, stream_tester1.response_body.len);
     struct aws_h1_window_stats window_stats = aws_h1_connection_window_stats(tester.connection);
     ASSERT_TRUE(window_stats.has_incoming_stream);
     ASSERT_UINT_EQUALS(0, window_stats.stream_window);
 
     /* open window just enough to get the rest of the body */
-    aws_http_stream_update_window(stream_tester.stream, 5);
+    aws_http_stream_update_window(stream_tester1.stream, 5);
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
-    ASSERT_BIN_ARRAYS_EQUALS("0123456789", 10, stream_tester.response_body.buffer, stream_tester.response_body.len);
-    ASSERT_TRUE(stream_tester.complete);
-    ASSERT_SUCCESS(stream_tester.on_complete_error_code);
-    client_stream_tester_clean_up(&stream_tester);
+    ASSERT_BIN_ARRAYS_EQUALS("0123456789", 10, stream_tester1.response_body.buffer, stream_tester1.response_body.len);
+    ASSERT_TRUE(stream_tester1.complete);
+    ASSERT_SUCCESS(stream_tester1.on_complete_error_code);
+    client_stream_tester_clean_up(&stream_tester1);
 
     /**
      * Stream 2.
@@ -2433,107 +2433,96 @@ H1_CLIENT_TEST_CASE(h1_client_respects_stream_window) {
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
-#if 0
-/* The user's body reading callback can prevent the window from fully re-opening. */
-H1_CLIENT_TEST_CASE(h1_client_window_shrinks_if_user_says_so) {
+
+/* This tests the specifics of the (incredibly complicated) way that HTTP/1 manages its connection window.
+ * If this is ever failing, read comments in s_calculate_stream_mode_desired_connection_window()
+ * for details on how all these numbers work.
+ * My sincerest apologies to anyone diagnosing a failure here in the future, I owe you a beer - graebm */
+H1_CLIENT_TEST_CASE(h1_client_connection_window_with_buffer) {
     (void)ctx;
+
     struct tester_options tester_opts = {
         .manual_window_management = true,
-        .initial_window_size = 256,
-        .read_buffer_capacity = 256,
+        .initial_stream_window_size = 0,
+        .read_buffer_capacity = 100,
     };
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init_ex(&tester, allocator, &tester_opts));
 
-    /* send request */
     struct aws_http_message *request = s_new_default_get_request(allocator);
-
     struct client_stream_tester stream_tester;
     ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
-
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
-    /* Ensure the request can be destroyed after request is sent */
-    aws_http_message_destroy(request);
-
-    /* send response */
-    const char *response_str = "HTTP/1.1 200 OK\r\n"
-                               "Content-Length: 9\r\n"
-                               "\r\n"
-                               "Call Momo";
-    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, response_str));
-
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    /* check result */
+    /* confirm starting stats before any data received.
+     * connection window should match buffer capacity. */
     struct aws_h1_window_stats window_stats = aws_h1_connection_window_stats(tester.connection);
-    size_t message_sans_body = strlen(response_str) - 9;
-    ASSERT_UINT_EQUALS(message_sans_body, window_stats.recent_window_increments);
+    ASSERT_UINT_EQUALS(100, window_stats.buffer_capacity);
+    ASSERT_UINT_EQUALS(0, window_stats.buffer_unprocessed_bytes);
+    ASSERT_UINT_EQUALS(100, window_stats.connection_window);
+    ASSERT_UINT_EQUALS(0, window_stats.recent_window_increments);
 
-    /* clean up */
-    client_stream_tester_clean_up(&stream_tester);
-    ASSERT_SUCCESS(s_tester_clean_up(&tester));
-    return AWS_OP_SUCCESS;
-}
-
-/* Stop window from fully re-opening, then open it manually afterwards*/
-static int s_window_update(struct aws_allocator *allocator, bool on_thread) {
-    struct tester tester;
-    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
-
-    /* send request */
-    struct aws_http_message *request = s_new_default_get_request(allocator);
-
-    struct client_stream_tester stream_tester;
-    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
-
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    /* Ensure the request can be destroyed after request is sent */
-    aws_http_message_destroy(request);
-
-    /* send response */
-    const char *response_str = "HTTP/1.1 200 OK\r\n"
-                               "Content-Length: 9\r\n"
-                               "\r\n"
-                               "Call Momo";
-    ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, response_str));
-
-    /* drain the task queue, in case there's an update window task in there from the headers */
-    testing_channel_drain_queued_tasks(&tester.testing_channel);
-
-    /* check result */
-    if (!on_thread) {
-        testing_channel_set_is_on_users_thread(&tester.testing_channel, false);
+    if (window_stats.has_incoming_stream) {
+        /* It's an implementation detail whether the incoming stream ptr is set at this point,
+         * but if it is, it should use initial-window-size*/
+        ASSERT_UINT_EQUALS(0, window_stats.stream_window);
     }
 
+    /* send 49 byte response 1 byte at a time, so we can see the message queue in action */
+    const char *response_str = "HTTP/1.1 200 OK\r\n"
+                               "Content-Length: 10\r\n"
+                               "\r\n"
+                               "0123456789";
+    struct aws_byte_cursor response_cursor = aws_byte_cursor_from_c_str(response_str);
+    while (response_cursor.len > 0) {
+        struct aws_byte_cursor one_byte = aws_byte_cursor_advance(&response_cursor, 1);
+        ASSERT_SUCCESS(testing_channel_push_read_data(&tester.testing_channel, one_byte));
+    }
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* The stream should not have received any body, since its initial-window-size is zero.
+     * At time of writing, the connection would not process headers if stream window was zero,
+     * but that might change in the future, so not testing window stats here. */
+    ASSERT_UINT_EQUALS(0, stream_tester.response_body.len);
+
+    /* Open the stream window by 1 byte and check stats.
+     * 40 bytes should be processed: 39 bytes of headers and metadata + 1 byte of body data */
+    aws_http_stream_update_window(stream_tester.stream, 1);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    ASSERT_UINT_EQUALS(1, stream_tester.response_body.len);
+
+    window_stats = aws_h1_connection_window_stats(tester.connection);
+    ASSERT_UINT_EQUALS(
+        40, window_stats.recent_window_increments); /* window incremented to account for processed data */
+    ASSERT_UINT_EQUALS(100, window_stats.buffer_capacity);
+    ASSERT_UINT_EQUALS(9, window_stats.buffer_unprocessed_bytes);
+    ASSERT_UINT_EQUALS(91, window_stats.connection_window);
+    ASSERT_TRUE(window_stats.has_incoming_stream);
+    ASSERT_UINT_EQUALS(0, window_stats.stream_window);
+
+    /* Open stream window enough to finish */
     aws_http_stream_update_window(stream_tester.stream, 9);
-
-    if (!on_thread) {
-        testing_channel_set_is_on_users_thread(&tester.testing_channel, true);
-    }
-
     testing_channel_drain_queued_tasks(&tester.testing_channel);
 
-    struct aws_h1_window_stats window_stats = aws_h1_connection_window_stats(tester.connection);
-    ASSERT_INT_EQUALS(9, window_stats.recent_window_increments);
+    ASSERT_UINT_EQUALS(10, stream_tester.response_body.len);
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_SUCCESS(stream_tester.on_complete_error_code);
+
+    window_stats = aws_h1_connection_window_stats(tester.connection);
+    ASSERT_UINT_EQUALS(9, window_stats.recent_window_increments); /* window incremented to account for processed data */
+    ASSERT_UINT_EQUALS(100, window_stats.buffer_capacity);
+    ASSERT_UINT_EQUALS(0, window_stats.buffer_unprocessed_bytes);
+    ASSERT_UINT_EQUALS(100, window_stats.connection_window);
+    ASSERT_FALSE(window_stats.has_incoming_stream);
 
     /* clean up */
     client_stream_tester_clean_up(&stream_tester);
+    aws_http_message_release(request);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
 
-H1_CLIENT_TEST_CASE(h1_client_window_manual_update) {
-    (void)ctx;
-    return s_window_update(allocator, true);
-}
-
-H1_CLIENT_TEST_CASE(h1_client_window_manual_update_off_thread) {
-    (void)ctx;
-    return s_window_update(allocator, false);
-}
-#endif
 static void s_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     (void)stream;
     int *completion_error_code = user_data;
