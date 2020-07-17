@@ -2455,7 +2455,7 @@ H1_CLIENT_TEST_CASE(h1_client_connection_window_with_buffer) {
      * connection window should match buffer capacity. */
     struct aws_h1_window_stats window_stats = aws_h1_connection_window_stats(tester.connection);
     ASSERT_UINT_EQUALS(100, window_stats.buffer_capacity);
-    ASSERT_UINT_EQUALS(0, window_stats.buffer_unprocessed_bytes);
+    ASSERT_UINT_EQUALS(0, window_stats.buffer_pending_bytes);
     ASSERT_UINT_EQUALS(100, window_stats.connection_window);
     ASSERT_UINT_EQUALS(0, window_stats.recent_window_increments);
 
@@ -2493,7 +2493,7 @@ H1_CLIENT_TEST_CASE(h1_client_connection_window_with_buffer) {
     ASSERT_UINT_EQUALS(
         40, window_stats.recent_window_increments); /* window incremented to account for processed data */
     ASSERT_UINT_EQUALS(100, window_stats.buffer_capacity);
-    ASSERT_UINT_EQUALS(9, window_stats.buffer_unprocessed_bytes);
+    ASSERT_UINT_EQUALS(9, window_stats.buffer_pending_bytes);
     ASSERT_UINT_EQUALS(91, window_stats.connection_window);
     ASSERT_TRUE(window_stats.has_incoming_stream);
     ASSERT_UINT_EQUALS(0, window_stats.stream_window);
@@ -2509,7 +2509,7 @@ H1_CLIENT_TEST_CASE(h1_client_connection_window_with_buffer) {
     window_stats = aws_h1_connection_window_stats(tester.connection);
     ASSERT_UINT_EQUALS(9, window_stats.recent_window_increments); /* window incremented to account for processed data */
     ASSERT_UINT_EQUALS(100, window_stats.buffer_capacity);
-    ASSERT_UINT_EQUALS(0, window_stats.buffer_unprocessed_bytes);
+    ASSERT_UINT_EQUALS(0, window_stats.buffer_pending_bytes);
     ASSERT_UINT_EQUALS(100, window_stats.connection_window);
     ASSERT_FALSE(window_stats.has_incoming_stream);
 

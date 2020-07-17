@@ -84,7 +84,8 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
 
     /* Add to window size using saturated sum to prevent overflow.
      * Saturating is fine because it's a u64, the stream could never receive that much data. */
-    stream->thread_data.window_size = aws_add_u64_saturating(stream->thread_data.window_size, pending_window_update);
+    stream->thread_data.stream_window =
+        aws_add_u64_saturating(stream->thread_data.stream_window, pending_window_update);
     if ((pending_window_update > 0) && (api_state == AWS_H1_STREAM_API_STATE_ACTIVE)) {
         /* Now that stream window is larger, connection might have buffered
          * data to send, or might need to increment its own window */
@@ -264,7 +265,7 @@ static struct aws_h1_stream *s_stream_new_common(
     aws_linked_list_init(&stream->thread_data.pending_chunk_list);
     aws_linked_list_init(&stream->synced_data.pending_chunk_list);
 
-    stream->thread_data.window_size = connection->initial_stream_window_size;
+    stream->thread_data.stream_window = connection->initial_stream_window_size;
 
     /* Stream refcount starts at 1 for user and is incremented upon activation for the connection */
     aws_atomic_init_int(&stream->base.refcount, 1);

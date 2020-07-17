@@ -70,17 +70,23 @@ struct aws_h1_connection {
          * and process the data later when HTTP-stream's window opens or the next stream begins.
          *
          * The `aws_io_message.copy_mark` is used to track progress on partially processed messages.
-         * `unprocessed_bytes` is the sum of all unprocessed bytes across all queued messages.
+         * `pending_bytes` is the sum of all unprocessed bytes across all queued messages.
          * `capacity` is the limit for how many unprocessed bytes we'd like in the queue.
          */
         struct {
             struct aws_linked_list messages;
-            size_t unprocessed_bytes;
+            size_t pending_bytes;
             size_t capacity;
         } read_buffer;
 
-        /* The connection's current window size. */
-        size_t window_size;
+        /**
+         * The connection's current window size.
+         * We use this variable, instead of the existing `aws_channel_slot.window_size`,
+         * because that variable is not updated immediately, the channel uses a task to update it.
+         * Since we use the difference between current and desired window size when deciding
+         * how much to increment, we need the most up-to-date values possible.
+         */
+        size_t connection_window;
 
         /* Only used by tests. Sum of window_increments issued by this slot. Resets each time it's queried */
         size_t recent_window_increments;
@@ -136,7 +142,7 @@ struct aws_h1_window_stats {
     size_t connection_window;
     size_t recent_window_increments; /* Resets to 0 each time window stats are queried*/
     size_t buffer_capacity;
-    size_t buffer_unprocessed_bytes;
+    size_t buffer_pending_bytes;
     uint64_t stream_window;
     bool has_incoming_stream;
 };

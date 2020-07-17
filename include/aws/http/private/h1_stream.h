@@ -64,7 +64,7 @@ struct aws_h1_stream {
 
         /* Size of stream's flow-control window.
          * Only body data (not headers, etc) counts against the stream's flow-control window. */
-        uint64_t window_size;
+        uint64_t stream_window;
 
         /* Whether a "request handler" stream has a response to send.
          * Has mirror variable in synced_data */
@@ -81,7 +81,7 @@ struct aws_h1_stream {
 
         enum aws_h1_stream_api_state api_state;
 
-        /* Sum of all aws_http_stream_update_window() calls that haven't yet moved to thread_data.window_size */
+        /* Sum of all aws_http_stream_update_window() calls that haven't yet moved to thread_data.stream_window */
         uint64_t pending_window_update;
 
         /* See `cross_thread_work_task` */
