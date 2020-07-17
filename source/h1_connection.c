@@ -241,14 +241,7 @@ static size_t s_calculate_midchannel_desired_connection_window(struct aws_h1_con
     return aws_channel_slot_downstream_read_window(connection->base.channel_slot);
 }
 
-/**
- * Calculate the desired window size for a connection that is processing data for aws_http_streams.
- *
- * This is complicated because our API has users controlling each aws_http_stream's
- * window, but HTTP/1 does not have the concept of a "stream window". In reality,
- * we can only apply flow-control (aka back-pressure) by controlling the window
- * of the connection's slot in the aws_channel.
- */
+/* Calculate the desired window size for a connection that is processing data for aws_http_streams. */
 static size_t s_calculate_stream_mode_desired_connection_window(struct aws_h1_connection *connection) {
     AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
     AWS_ASSERT(!connection->thread_data.has_switched_protocols);
@@ -257,29 +250,10 @@ static size_t s_calculate_stream_mode_desired_connection_window(struct aws_h1_co
         return SIZE_MAX;
     }
 
-    /* Get window size of current incoming stream.
-     * If no current stream, use the size that the next stream will start with. */
-    const struct aws_h1_stream *incoming_stream = connection->thread_data.incoming_stream;
-    const uint64_t current_stream_window =
-        incoming_stream ? incoming_stream->thread_data.window_size : connection->initial_stream_window_size;
-
-    /* Don't accept more than the initial_stream_window_size.
-     * Even if the stream has a huge window, it may complete before that window is consumed,
-     * and we don't want the connection left with more data than the next stream can possibly accept. */
-    const size_t acceptable_stream_window =
-        (size_t)aws_min_u64(connection->initial_stream_window_size, current_stream_window);
-
-    /* Account for read buffer.
-     * If connection never accepted more than initial_stream_window_size, then things
-     * just wouldn't work if it was 0, which something a user might reasonably want.
-     * Also, small-ish numbers numbers would hamper performance, since we'd never accept
-     * more than that at any one time, even if the stream later increased its window.
-     * Therefore, we will buffer up to N bytes of aws_io_messages. */
+    /* Connection window should match the available space in the read-buffer */
     AWS_ASSERT(connection->thread_data.read_buffer.unprocessed_bytes <= connection->thread_data.read_buffer.capacity);
-    const size_t buffer_space_available =
+    const size_t desired_connection_window =
         connection->thread_data.read_buffer.capacity - connection->thread_data.read_buffer.unprocessed_bytes;
-
-    const size_t desired_connection_window = aws_max_size(acceptable_stream_window, buffer_space_available);
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,
@@ -287,7 +261,7 @@ static size_t s_calculate_stream_mode_desired_connection_window(struct aws_h1_co
         (void *)&connection->base,
         connection->thread_data.window_size,
         desired_connection_window - connection->thread_data.window_size /*increment_size*/,
-        current_stream_window,
+        connection->thread_data.incoming_stream ? connection->thread_data.incoming_stream->thread_data.window_size : 0,
         connection->thread_data.read_buffer.unprocessed_bytes,
         connection->thread_data.read_buffer.capacity);
 
@@ -1248,11 +1222,14 @@ static struct aws_h1_connection *s_connection_new(
     aws_atomic_init_int(&connection->base.refcount, 1);
 
     if (manual_window_management) {
+        /* Window should match available space in buffer */
         connection->initial_stream_window_size = initial_window_size;
+
         connection->thread_data.read_buffer.capacity =
             aws_max_size(http1_options->read_buffer_capacity, initial_window_size);
+
         connection->thread_data.window_size = connection->thread_data.read_buffer.capacity;
-        AWS_ASSERT(connection->thread_data.window_size != 0);
+        AWS_ASSERT(connection->thread_data.window_size != 0); /* this should be guaranteed by earlier code */
     } else {
         /* No backpressure, keep connection window at SIZE_MAX */
         connection->initial_stream_window_size = SIZE_MAX;

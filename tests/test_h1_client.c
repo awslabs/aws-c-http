@@ -2434,10 +2434,7 @@ H1_CLIENT_TEST_CASE(h1_client_respects_stream_window) {
     return AWS_OP_SUCCESS;
 }
 
-/* This tests the specifics of the (incredibly complicated) way that HTTP/1 manages its connection window.
- * If this is ever failing, read comments in s_calculate_stream_mode_desired_connection_window()
- * for details on how all these numbers work.
- * My sincerest apologies to anyone diagnosing a failure here in the future, I owe you a beer - graebm */
+/* This tests the specific way that HTTP/1 manages its connection window. */
 H1_CLIENT_TEST_CASE(h1_client_connection_window_with_buffer) {
     (void)ctx;
 

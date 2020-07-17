@@ -64,23 +64,26 @@ struct aws_h1_connection {
         /* Used to encode requests and responses */
         struct aws_h1_encoder encoder;
 
-        /* The connection's current window size. */
-        size_t window_size;
-
-        /* Only used by tests. Sum of window_increments issued by this slot. Resets each time it's queried */
-        size_t recent_window_increments;
-
-        /* All aws_io_messages arriving in the read direction are queued here before processing.
-         * The downstream window (window of next handler, or window of incoming stream)
-         * determines how much data can be processed. The `copy_mark` is used to
-         * track progress on partially processed messages at the front of the queue.
+        /**
+         * All aws_io_messages arriving in the read direction are queued here before processing.
+         * This allows the connection to receive more data than the the current HTTP-stream might allow,
+         * and process the data later when HTTP-stream's window opens or the next stream begins.
+         *
+         * The `aws_io_message.copy_mark` is used to track progress on partially processed messages.
          * `unprocessed_bytes` is the sum of all unprocessed bytes across all queued messages.
-         * `capacity` is the limit for how many unprocessed bytes we'd like in the queue */
+         * `capacity` is the limit for how many unprocessed bytes we'd like in the queue.
+         */
         struct {
             struct aws_linked_list messages;
             size_t unprocessed_bytes;
             size_t capacity;
         } read_buffer;
+
+        /* The connection's current window size. */
+        size_t window_size;
+
+        /* Only used by tests. Sum of window_increments issued by this slot. Resets each time it's queried */
+        size_t recent_window_increments;
 
         struct aws_crt_statistics_http1_channel stats;
 
