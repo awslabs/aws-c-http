@@ -170,7 +170,22 @@ struct aws_http_proxy_options {
 };
 
 /**
- * HTTP/2 connection options.
+ * Options specific to HTTP/1.x connections.
+ * Initialize with AWS_HTTP1_CONNECTION_OPTIONS_INIT to set default values.
+ */
+struct aws_http1_connection_options {
+    /**
+     * Allow an HTTP/1.x connection to read more than `initial_window_size` bytes at once off the wire.
+     * May speed up connections with a low `initial_window_size`.
+     * Ignored if less than than `initial_window_size`.
+     * Ignored if `manual_window_management` is false.
+     * Must be greater than zero if `initial_window_size` is zero and `manual_window_management` is true.
+     */
+    size_t read_buffer_capacity;
+};
+
+/**
+ * Options specific to HTTP/2 connections.
  * Initialize with AWS_HTTP2_CONNECTION_OPTIONS_INIT to set default values.
  */
 struct aws_http2_connection_options {
@@ -329,12 +344,20 @@ struct aws_http_client_connection_options {
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
 
     /**
-     * HTTP/2 connection specific options.
+     * Options specific to HTTP/1.x connections.
      * Optional.
-     * If HTTP/2 connection created, we will use this for some configurations in HTTP/2 connection.
-     * If other protocol connection created, this will be ignored.
+     * Ignored if connection is not HTTP/1.x.
+     * If connection is HTTP/1.x and options were not specified, default values are used.
      */
-    struct aws_http2_connection_options *http2_options;
+    const struct aws_http1_connection_options *http1_options;
+
+    /**
+     * Options specific to HTTP/2 connections.
+     * Optional.
+     * Ignored if connection is not HTTP/2.
+     * If connection is HTTP/2 and options were not specified, default values are used.
+     */
+    const struct aws_http2_connection_options *http2_options;
 };
 
 /* Predefined settings identifiers (RFC-7540 6.5.2) */
@@ -355,18 +378,29 @@ struct aws_http2_setting {
     uint32_t value;
 };
 
+#define AWS_HTTP1_CONNECTION_DEFAULT_READ_BUFFER_CAPACITY (/* 512KB */ 512 * 1024)
+
+/**
+ * Initializes aws_http1_connection_options with default values.
+ */
+#define AWS_HTTP1_CONNECTION_OPTIONS_INIT                                                                              \
+    { .read_buffer_capacity = AWS_HTTP1_CONNECTION_DEFAULT_READ_BUFFER_CAPACITY }
+
 /**
  * HTTP/2: Default value for max closed streams we will keep in memory.
  */
 #define AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS (32)
+
 /**
  * HTTP/2: The size of payload for HTTP/2 PING frame.
  */
 #define AWS_HTTP2_PING_DATA_SIZE (8)
+
 /**
  * HTTP/2: The number of known settings.
  */
 #define AWS_HTTP2_SETTINGS_COUNT (6)
+
 /**
  * Initializes aws_http2_connection_options with default values.
  */

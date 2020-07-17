@@ -293,7 +293,9 @@ static int s_update_connection_window(struct aws_h1_connection *connection) {
 
     const size_t increment_size = aws_sub_size_saturating(desired_size, connection->thread_data.window_size);
     if (increment_size > 0) {
-        connection->thread_data.window_size = desired_size;
+        connection->thread_data.window_size += increment_size;
+        connection->thread_data.recent_window_increments =
+            aws_add_size_saturating(connection->thread_data.recent_window_increments, increment_size);
         if (aws_channel_slot_increment_read_window(connection->base.channel_slot, increment_size)) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
@@ -1202,6 +1204,7 @@ static struct aws_h1_connection *s_connection_new(
     struct aws_allocator *alloc,
     bool manual_window_management,
     size_t initial_window_size,
+    const struct aws_http1_connection_options *http1_options,
     bool server) {
 
     struct aws_h1_connection *connection = aws_mem_calloc(alloc, 1, sizeof(struct aws_h1_connection));
@@ -1223,15 +1226,16 @@ static struct aws_h1_connection *s_connection_new(
     /* 1 refcount for user */
     aws_atomic_init_int(&connection->base.refcount, 1);
 
-    connection->thread_data.read_buffer.capacity = 256 * 1024 * 1024; /* TODO: customizable */
-
     if (manual_window_management) {
         connection->initial_stream_window_size = initial_window_size;
-        connection->thread_data.window_size =
-            aws_max_size(connection->initial_stream_window_size, connection->thread_data.read_buffer.capacity);
+        connection->thread_data.read_buffer.capacity =
+            aws_max_size(http1_options->read_buffer_capacity, initial_window_size);
+        connection->thread_data.window_size = connection->thread_data.read_buffer.capacity;
+        AWS_ASSERT(connection->thread_data.window_size != 0);
     } else {
-        /* No backpressure, keep window sizes at SIZE_MAX */
+        /* No backpressure, keep connection window at SIZE_MAX */
         connection->initial_stream_window_size = SIZE_MAX;
+        connection->thread_data.read_buffer.capacity = SIZE_MAX;
         connection->thread_data.window_size = SIZE_MAX;
     }
 
@@ -1293,10 +1297,11 @@ error_connection_alloc:
 struct aws_http_connection *aws_http_connection_new_http1_1_server(
     struct aws_allocator *allocator,
     bool manual_window_management,
-    size_t initial_window_size) {
+    size_t initial_window_size,
+    const struct aws_http1_connection_options *http1_options) {
 
     struct aws_h1_connection *connection =
-        s_connection_new(allocator, manual_window_management, initial_window_size, true);
+        s_connection_new(allocator, manual_window_management, initial_window_size, http1_options, true /*is_server*/);
     if (!connection) {
         return NULL;
     }
@@ -1309,10 +1314,11 @@ struct aws_http_connection *aws_http_connection_new_http1_1_server(
 struct aws_http_connection *aws_http_connection_new_http1_1_client(
     struct aws_allocator *allocator,
     bool manual_window_management,
-    size_t initial_window_size) {
+    size_t initial_window_size,
+    const struct aws_http1_connection_options *http1_options) {
 
     struct aws_h1_connection *connection =
-        s_connection_new(allocator, manual_window_management, initial_window_size, false);
+        s_connection_new(allocator, manual_window_management, initial_window_size, http1_options, false /*is_server*/);
     if (!connection) {
         return NULL;
     }
@@ -1903,4 +1909,23 @@ struct aws_crt_statistics_http1_channel *aws_h1_connection_get_statistics(struct
     struct aws_h1_connection *h1_conn = (void *)connection;
 
     return &h1_conn->thread_data.stats;
+}
+
+struct aws_h1_window_stats aws_h1_connection_window_stats(struct aws_http_connection *connection_base) {
+    struct aws_h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h1_connection, base);
+    struct aws_h1_window_stats stats = {
+        .connection_window = connection->thread_data.window_size,
+        .buffer_capacity = connection->thread_data.read_buffer.capacity,
+        .buffer_unprocessed_bytes = connection->thread_data.read_buffer.unprocessed_bytes,
+        .recent_window_increments = connection->thread_data.recent_window_increments,
+        .has_incoming_stream = (bool)connection->thread_data.incoming_stream,
+        .stream_window = connection->thread_data.incoming_stream
+                             ? connection->thread_data.incoming_stream->thread_data.window_size
+                             : 0,
+    };
+
+    /* Resets each time it's queried */
+    connection->thread_data.recent_window_increments = 0;
+
+    return stats;
 }

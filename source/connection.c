@@ -76,6 +76,7 @@ static struct aws_http_connection *s_connection_new(
     bool is_using_tls,
     bool manual_window_management,
     size_t initial_window_size,
+    const struct aws_http1_connection_options *http1_options,
     const struct aws_http2_connection_options *http2_options) {
 
     struct aws_channel_slot *connection_slot = NULL;
@@ -139,11 +140,11 @@ static struct aws_http_connection *s_connection_new(
     switch (version) {
         case AWS_HTTP_VERSION_1_1:
             if (is_server) {
-                connection =
-                    aws_http_connection_new_http1_1_server(alloc, manual_window_management, initial_window_size);
+                connection = aws_http_connection_new_http1_1_server(
+                    alloc, manual_window_management, initial_window_size, http1_options);
             } else {
-                connection =
-                    aws_http_connection_new_http1_1_client(alloc, manual_window_management, initial_window_size);
+                connection = aws_http_connection_new_http1_1_client(
+                    alloc, manual_window_management, initial_window_size, http1_options);
             }
             break;
         case AWS_HTTP_VERSION_2:
@@ -398,6 +399,9 @@ static void s_server_bootstrap_on_accept_channel_setup(
         goto error;
     }
     /* Create connection */
+    /* TODO: expose http1/2 options to server API */
+    struct aws_http1_connection_options http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+    struct aws_http2_connection_options http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
     connection = s_connection_new(
         server->alloc,
         channel,
@@ -405,7 +409,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
         server->is_using_tls,
         server->manual_window_management,
         server->initial_window_size,
-        NULL /*http2_connection_options*/);
+        &http1_options,
+        &http2_options);
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
@@ -732,6 +737,7 @@ static void s_client_bootstrap_on_channel_setup(
         http_bootstrap->is_using_tls,
         http_bootstrap->manual_window_management,
         http_bootstrap->initial_window_size,
+        &http_bootstrap->http1_options,
         &http_bootstrap->http2_options);
     if (!http_bootstrap->connection) {
         AWS_LOGF_ERROR(
@@ -834,6 +840,10 @@ int aws_http_client_connect_internal(
     struct aws_http_client_bootstrap *http_bootstrap = NULL;
     struct aws_string *host_name = NULL;
     int err = 0;
+    struct aws_http1_connection_options http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+    if (options->http1_options) {
+        http1_options = *options->http1_options;
+    }
     struct aws_http2_connection_options http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
     if (options->http2_options) {
         http2_options = *options->http2_options;
@@ -844,6 +854,16 @@ int aws_http_client_connect_internal(
         (http2_options.num_initial_settings && !http2_options.initial_settings_array)) {
 
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid options, cannot create client connection.");
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        goto error;
+    }
+
+    if (options->manual_window_management && options->initial_window_size == 0 &&
+        http1_options.read_buffer_capacity == 0) {
+
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Invalid HTTP/1 options. read_buffer_size and initial_window_size cannot both be zero.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         goto error;
     }
@@ -881,6 +901,7 @@ int aws_http_client_connect_internal(
     http_bootstrap->on_setup = options->on_setup;
     http_bootstrap->on_shutdown = options->on_shutdown;
     http_bootstrap->proxy_request_transform = proxy_request_transform;
+    http_bootstrap->http1_options = http1_options;
     http_bootstrap->http2_options = http2_options;
 
     /* keep a copy of the settings array if it's not NULL */

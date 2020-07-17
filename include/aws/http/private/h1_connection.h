@@ -67,6 +67,9 @@ struct aws_h1_connection {
         /* The connection's current window size. */
         size_t window_size;
 
+        /* Only used by tests. Sum of window_increments issued by this slot. Resets each time it's queried */
+        size_t recent_window_increments;
+
         /* All aws_io_messages arriving in the read direction are queued here before processing.
          * The downstream window (window of next handler, or window of incoming stream)
          * determines how much data can be processed. The `copy_mark` is used to
@@ -125,6 +128,16 @@ struct aws_h1_connection {
     } synced_data;
 };
 
+/* Allow tests to check current window stats */
+struct aws_h1_window_stats {
+    size_t connection_window;
+    size_t recent_window_increments; /* Resets to 0 each time window stats are queried*/
+    size_t buffer_capacity;
+    size_t buffer_unprocessed_bytes;
+    uint64_t stream_window;
+    bool has_incoming_stream;
+};
+
 AWS_EXTERN_C_BEGIN
 
 /* The functions below are exported so they can be accessed from tests. */
@@ -133,13 +146,19 @@ AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http1_1_server(
     struct aws_allocator *allocator,
     bool manual_window_management,
-    size_t initial_window_size);
+    size_t initial_window_size,
+    const struct aws_http1_connection_options *http1_options);
 
 AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http1_1_client(
     struct aws_allocator *allocator,
     bool manual_window_management,
-    size_t initial_window_size);
+    size_t initial_window_size,
+    const struct aws_http1_connection_options *http1_options);
+
+/* Allow tests to check current window stats */
+AWS_HTTP_API
+struct aws_h1_window_stats aws_h1_connection_window_stats(struct aws_http_connection *connection_base);
 
 AWS_EXTERN_C_END
 
