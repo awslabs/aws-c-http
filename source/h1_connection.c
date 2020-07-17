@@ -1688,7 +1688,11 @@ static int s_try_process_next_stream_read_message(struct aws_h1_connection *conn
     struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&queued_msg->message_data);
     aws_byte_cursor_advance(&message_cursor, queued_msg->copy_mark);
 
-    /* Don't process more data than the stream's window can accept. */
+    /* Don't process more data than the stream's window can accept.
+     *
+     * OPTIMIZATION IDEA: Let the decoder know about stream-window size so it can stop itself,
+     * instead of limiting the amount of data we feed into the decoder at a time.
+     */
     message_cursor.len = (size_t)aws_min_u64(message_cursor.len, stream_window);
 
     const size_t prev_cursor_len = message_cursor.len;

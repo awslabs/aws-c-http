@@ -378,7 +378,7 @@ struct aws_http2_setting {
     uint32_t value;
 };
 
-#define AWS_HTTP1_CONNECTION_DEFAULT_READ_BUFFER_CAPACITY (/* 512KB */ 512 * 1024)
+#define AWS_HTTP1_CONNECTION_DEFAULT_READ_BUFFER_CAPACITY (/* 256KB */ 256 * 1024)
 
 /**
  * Initializes aws_http1_connection_options with default values.
