@@ -825,33 +825,74 @@ static void s_client_bootstrap_on_channel_shutdown(
     aws_mem_release(http_bootstrap->alloc, http_bootstrap);
 }
 
-int aws_http_client_connect_internal(
-    const struct aws_http_client_connection_options *options,
-    aws_http_proxy_request_transform_fn *proxy_request_transform) {
+static int s_validate_http_client_connection_options(const struct aws_http_client_connection_options *options) {
+    if (!options) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: http connection options are null.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
 
-    AWS_FATAL_ASSERT(options->proxy_options == NULL);
-
-    struct aws_http_client_bootstrap *http_bootstrap = NULL;
-    struct aws_string *host_name = NULL;
-    int err = 0;
     struct aws_http2_connection_options http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
     if (options->http2_options) {
         http2_options = *options->http2_options;
     }
 
-    if (!options || options->self_size == 0 || !options->allocator || !options->bootstrap ||
-        options->host_name.len == 0 || !options->socket_options || !options->on_setup ||
-        (http2_options.num_initial_settings && !http2_options.initial_settings_array)) {
+    if (options->self_size == 0) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, self size not initialized");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
 
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid options, cannot create client connection.");
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        goto error;
+    if (!options->allocator) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, no allocator supplied");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (options->host_name.len == 0) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, empty host name.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (!options->socket_options) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, socket options are null.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (!options->on_setup) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, setup callback is null");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (http2_options.num_initial_settings && !http2_options.initial_settings_array) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Invalid connection options, h2 settings count is non-zero but settings array is null");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
     if (options->monitoring_options && !aws_http_connection_monitoring_options_is_valid(options->monitoring_options)) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: invalid monitoring options");
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, invalid monitoring options");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+int aws_http_client_connect_internal(
+    const struct aws_http_client_connection_options *options,
+    aws_http_proxy_request_transform_fn *proxy_request_transform) {
+
+    struct aws_http_client_bootstrap *http_bootstrap = NULL;
+    struct aws_string *host_name = NULL;
+    int err = 0;
+
+    if (s_validate_http_client_connection_options(options)) {
         goto error;
+    }
+
+    AWS_FATAL_ASSERT(options->proxy_options == NULL);
+
+    struct aws_http2_connection_options http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
+    if (options->http2_options) {
+        http2_options = *options->http2_options;
     }
 
     /* bootstrap_new() functions requires a null-terminated c-str */
