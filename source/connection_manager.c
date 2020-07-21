@@ -1162,8 +1162,9 @@ release:
     return result;
 }
 
-void aws_http_connection_manager_get_snapshot(struct aws_http_connection_manager *manager, struct aws_http_connection_manager_snapshot *snapshot)
-{
+void aws_http_connection_manager_get_snapshot(
+    struct aws_http_connection_manager *manager,
+    struct aws_http_connection_manager_snapshot *snapshot) {
     aws_mutex_lock(&manager->lock);
 
     s_aws_http_connection_manager_get_snapshot(manager, snapshot);
@@ -1203,17 +1204,12 @@ static void s_aws_http_connection_manager_on_connection_setup(
     --manager->pending_connects_count;
 
     if (connection != NULL) {
-        if (!is_shutting_down) {
-            /* We reserved enough room for max_connections, this should never fail */
-            AWS_FATAL_ASSERT(aws_array_list_push_back(&manager->connections, &connection) == AWS_OP_SUCCESS);
-
-            if (manager->on_connection_created_callback) {
-                manager->on_connection_created_callback(connection, manager->on_connection_created_user_data);
-            }
+        if (!is_shutting_down && manager->on_connection_created_callback) {
+            manager->on_connection_created_callback(connection, manager->on_connection_created_user_data);
         }
 
         if (is_shutting_down || s_idle_connection(manager, connection)) {
-            /*
+            /*∂∂
              * release it immediately
              */
             AWS_LOGF_DEBUG(

@@ -78,7 +78,7 @@ enum aws_http_connection_manager_state_type { AWS_HCMST_UNINITIALIZED, AWS_HCMST
 struct aws_http_connection_manager_snapshot {
     enum aws_http_connection_manager_state_type state;
 
-    size_t held_connection_count;
+    size_t idle_connection_count;
     size_t pending_acquisition_count;
     size_t pending_connects_count;
     size_t vended_connection_count;
