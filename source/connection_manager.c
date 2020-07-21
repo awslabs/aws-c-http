@@ -1209,7 +1209,7 @@ static void s_aws_http_connection_manager_on_connection_setup(
         }
 
         if (is_shutting_down || s_idle_connection(manager, connection)) {
-            /*∂∂
+            /*
              * release it immediately
              */
             AWS_LOGF_DEBUG(
