@@ -902,8 +902,8 @@ int aws_http_client_connect_internal(
         options.http1_options = &default_http1_options;
     }
 
-    if (!options || options->self_size == 0 || !options->allocator || !options->bootstrap ||
-        options->host_name.len == 0 || !options->socket_options || !options->on_setup ||
+    const struct aws_http2_connection_options default_http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
+    if (options.http2_options == NULL) {
         options.http2_options = &default_http2_options;
     }
 
