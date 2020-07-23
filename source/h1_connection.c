@@ -1235,14 +1235,20 @@ static struct aws_h1_connection *s_connection_new(
     aws_atomic_init_int(&connection->base.refcount, 1);
 
     if (manual_window_management) {
-        /* Window should match available space in buffer */
         connection->initial_stream_window_size = initial_window_size;
 
-        connection->thread_data.read_buffer.capacity =
-            aws_max_size(http1_options->read_buffer_capacity, initial_window_size);
+        if (http1_options->read_buffer_capacity > 0) {
+            connection->thread_data.read_buffer.capacity = http1_options->read_buffer_capacity;
+        } else {
+            /* User did not set capacity, choose something reasonable based on initial_window_size */
+            /* NOTE: These values are currently guesses, we should test to find good values */
+            const size_t clamp_min = aws_min_size(g_aws_channel_max_fragment_size * 4, /*256KB*/ 256 * 1024);
+            const size_t clamp_max = /*1MB*/ 1 * 1024 * 1024;
+            connection->thread_data.read_buffer.capacity =
+                aws_max_size(clamp_min, aws_min_size(clamp_max, initial_window_size));
+        }
 
         connection->thread_data.connection_window = connection->thread_data.read_buffer.capacity;
-        AWS_ASSERT(connection->thread_data.connection_window != 0); /* this should be guaranteed by earlier code */
     } else {
         /* No backpressure, keep connection window at SIZE_MAX */
         connection->initial_stream_window_size = SIZE_MAX;

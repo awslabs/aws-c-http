@@ -175,11 +175,16 @@ struct aws_http_proxy_options {
  */
 struct aws_http1_connection_options {
     /**
-     * Allow an HTTP/1.x connection to read more than `initial_window_size` bytes at once off the wire.
-     * May speed up connections with a low `initial_window_size`.
-     * Ignored if less than than `initial_window_size`.
+     * Optional
+     * Capacity in bytes of the HTTP/1 connection's read buffer.
+     * The buffer grows if the flow-control window of the incoming HTTP-stream
+     * reaches zero. If the buffer reaches capacity, no further socket data is
+     * read until the HTTP-stream's window opens again, allowing data to resume flowing.
+     *
      * Ignored if `manual_window_management` is false.
-     * Must be greater than zero if `initial_window_size` is zero and `manual_window_management` is true.
+     * If zero is specified (the default) then a default capacity is chosen.
+     * A capacity that is too small may hinder throughput.
+     * A capacity that is too big may waste memory without helping throughput.
      */
     size_t read_buffer_capacity;
 };
@@ -378,13 +383,11 @@ struct aws_http2_setting {
     uint32_t value;
 };
 
-#define AWS_HTTP1_CONNECTION_DEFAULT_READ_BUFFER_CAPACITY (/* 256KB */ 256 * 1024)
-
 /**
  * Initializes aws_http1_connection_options with default values.
  */
 #define AWS_HTTP1_CONNECTION_OPTIONS_INIT                                                                              \
-    { .read_buffer_capacity = AWS_HTTP1_CONNECTION_DEFAULT_READ_BUFFER_CAPACITY }
+    { .read_buffer_capacity = 0 }
 
 /**
  * HTTP/2: Default value for max closed streams we will keep in memory.

@@ -2520,6 +2520,91 @@ H1_CLIENT_TEST_CASE(h1_client_connection_window_with_buffer) {
     return AWS_OP_SUCCESS;
 }
 
+/* Test a connection with read_buffer_capacity < initial_window_size */
+H1_CLIENT_TEST_CASE(h1_client_connection_window_with_small_buffer) {
+    (void)ctx;
+
+    struct tester_options tester_opts = {
+        .manual_window_management = true,
+        .initial_stream_window_size = 10,
+        .read_buffer_capacity = 5,
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init_ex(&tester, allocator, &tester_opts));
+
+    struct aws_http_message *request = s_new_default_get_request(allocator);
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* can't send response all at once because channel-window is too small. */
+    const char *response_head_str = "HTTP/1.1 200 OK\r\n"
+                                    "Content-Length: 20\r\n"
+                                    "\r\n";
+    const char *response_body_str = "0123456789"
+                                    "ABCDEFGHIJ";
+
+    /* send response head in little increments, it should flow through to the stream no problem */
+    struct aws_byte_cursor response_cursor = aws_byte_cursor_from_c_str(response_head_str);
+    while (response_cursor.len > 0) {
+        struct aws_byte_cursor one_byte = aws_byte_cursor_advance(&response_cursor, 1);
+        ASSERT_SUCCESS(testing_channel_push_read_data(&tester.testing_channel, one_byte));
+        testing_channel_drain_queued_tasks(&tester.testing_channel);
+    }
+
+    ASSERT_UINT_EQUALS(0, stream_tester.response_body.len);
+
+    /* send enough body data that stream's window is reduced to zero. */
+    response_cursor = aws_byte_cursor_from_c_str(response_body_str);
+    for (int i = 0; i < 10; ++i) {
+        struct aws_byte_cursor one_byte = aws_byte_cursor_advance(&response_cursor, 1);
+        ASSERT_SUCCESS(testing_channel_push_read_data(&tester.testing_channel, one_byte));
+        testing_channel_drain_queued_tasks(&tester.testing_channel);
+    }
+
+    ASSERT_UINT_EQUALS(10, stream_tester.response_body.len);
+
+    struct aws_h1_window_stats window_stats = aws_h1_connection_window_stats(tester.connection);
+    ASSERT_UINT_EQUALS(0, window_stats.stream_window);
+    ASSERT_UINT_EQUALS(0, window_stats.buffer_pending_bytes);
+    ASSERT_UINT_EQUALS(5, window_stats.buffer_capacity);
+
+    /* now that stream's window is 0, further data should fill the connection's read-buffer */
+    for (int i = 0; i < 5; ++i) {
+        struct aws_byte_cursor one_byte = aws_byte_cursor_advance(&response_cursor, 1);
+        ASSERT_SUCCESS(testing_channel_push_read_data(&tester.testing_channel, one_byte));
+    }
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    window_stats = aws_h1_connection_window_stats(tester.connection);
+    ASSERT_UINT_EQUALS(5, window_stats.buffer_pending_bytes);
+
+    /* open the stream's window enough to finish the response, the buffered bytes should be consumed */
+    aws_http_stream_update_window(stream_tester.stream, SIZE_MAX);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    ASSERT_UINT_EQUALS(15, stream_tester.response_body.len);
+
+    window_stats = aws_h1_connection_window_stats(tester.connection);
+    ASSERT_UINT_EQUALS(0, window_stats.buffer_pending_bytes);
+
+    /* send the remainder of the response */
+    while (response_cursor.len > 0) {
+        struct aws_byte_cursor one_byte = aws_byte_cursor_advance(&response_cursor, 1);
+        ASSERT_SUCCESS(testing_channel_push_read_data(&tester.testing_channel, one_byte));
+        testing_channel_drain_queued_tasks(&tester.testing_channel);
+    }
+    ASSERT_UINT_EQUALS(20, stream_tester.response_body.len);
+    ASSERT_TRUE(stream_tester.complete);
+    ASSERT_UINT_EQUALS(0, stream_tester.on_complete_error_code);
+
+    /* clean up */
+    client_stream_tester_clean_up(&stream_tester);
+    aws_http_message_release(request);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 static void s_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     (void)stream;
     int *completion_error_code = user_data;

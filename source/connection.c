@@ -857,14 +857,6 @@ static int s_validate_http_client_connection_options(const struct aws_http_clien
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    /* http1_options cannot be NULL here, calling function adds them if they were missing */
-    if (options->http1_options->read_buffer_capacity == 0 && options->initial_window_size == 0) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "static: Invalid connection options, initial window size and read buffer capacity cannot both be 0");
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-    }
-
     /* http2_options cannot be NULL here, calling function adds them if they were missing */
     if (options->http2_options->num_initial_settings > 0 && options->http2_options->initial_settings_array) {
         AWS_LOGF_ERROR(
