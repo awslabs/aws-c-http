@@ -497,7 +497,11 @@ static int s_encode_stream(
     /* Read from stream */
     ENCODER_LOG(TRACE, encoder, "Reading from body stream.");
     const size_t prev_len = dst->len;
+    
+    AWS_TRACE_EVENT_BEGIN("aws-http", "http1_read_body_stream");
     int err = aws_input_stream_read(stream, dst);
+    AWS_TRACE_EVENT_END("aws-http", "http1_read_body_stream");
+
     const size_t amount_read = dst->len - prev_len;
 
     if (err) {

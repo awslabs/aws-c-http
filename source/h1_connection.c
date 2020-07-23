@@ -289,6 +289,8 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
 }
 
 int aws_h1_stream_activate(struct aws_http_stream *stream) {
+    AWS_TRACE_EVENT_BEGIN("aws-http", "http1_stream_activate");
+
     struct aws_h1_stream *h1_stream = AWS_CONTAINER_OF(stream, struct aws_h1_stream, base);
 
     struct aws_http_connection *base_connection = stream->owning_connection;
@@ -304,6 +306,8 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
         if (stream->id) {
             /* stream has already been activated. */
             aws_h1_connection_unlock_synced_data(connection);
+        AWS_TRACE_EVENT_END("aws-http", "http1_stream_activate");
+
             return AWS_OP_SUCCESS;
         }
 
@@ -316,12 +320,16 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
                 (void *)stream,
                 connection->synced_data.new_stream_error_code,
                 aws_error_name(connection->synced_data.new_stream_error_code));
+                        AWS_TRACE_EVENT_END("aws-http", "http1_stream_activate");
+
             return aws_raise_error(connection->synced_data.new_stream_error_code);
         }
 
         stream->id = aws_http_connection_get_next_stream_id(base_connection);
         if (!stream->id) {
             aws_h1_connection_unlock_synced_data(connection);
+            AWS_TRACE_EVENT_END("aws-http", "http1_stream_activate");
+
             /* aws_http_connection_get_next_stream_id() raises its own error. */
             return AWS_OP_ERR;
         }
@@ -351,6 +359,7 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
             "id=%p: Connection cross-thread work task was already scheduled",
             (void *)base_connection);
     }
+    AWS_TRACE_EVENT_END("aws-http", "http1_stream_activate");
 
     return AWS_OP_SUCCESS;
 }
@@ -358,6 +367,8 @@ int aws_h1_stream_activate(struct aws_http_stream *stream) {
 struct aws_http_stream *s_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options) {
+    AWS_TRACE_EVENT_BEGIN("aws-http", "http1_make_request");
+
     struct aws_h1_stream *stream = aws_h1_stream_new_request(client_connection, options);
     if (!stream) {
         AWS_LOGF_ERROR(
@@ -366,6 +377,7 @@ struct aws_http_stream *s_make_request(
             (void *)client_connection,
             aws_last_error(),
             aws_error_name(aws_last_error()));
+    AWS_TRACE_EVENT_END("aws-http", "http1_make_request");
 
         return NULL;
     }
@@ -405,12 +417,15 @@ struct aws_http_stream *s_make_request(
         AWS_BYTE_CURSOR_PRI(method),
         AWS_BYTE_CURSOR_PRI(path),
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->base.http_version)));
+    AWS_TRACE_EVENT_END("aws-http", "http1_make_request");
 
     return &stream->base;
 
 error:
     /* Force destruction of the stream, avoiding ref counting */
     stream->base.vtable->destroy(&stream->base);
+    AWS_TRACE_EVENT_END("aws-http", "http1_make_request");
+
     return NULL;
 }
 
@@ -523,9 +538,14 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     }
 
     /* Invoke callback and clean up stream. */
+    AWS_TRACE_EVENT_BEGIN("aws-http", "http1_on_complete");
+
     if (stream->base.on_complete) {
+        
         stream->base.on_complete(&stream->base, error_code, stream->base.user_data);
     }
+    AWS_TRACE_EVENT_END("aws-http", "http1_on_complete");
+
 
     aws_http_stream_release(&stream->base);
 }
@@ -823,10 +843,15 @@ static void s_write_outgoing_stream(struct aws_h1_connection *connection, bool f
      * Fill message data from the outgoing stream.
      * Note that we might be resuming work on a stream from a previous run of this task.
      */
+    AWS_TRACE_EVENT_BEGIN("aws-http", "http1_encoder");
+
     if (AWS_OP_SUCCESS != aws_h1_encoder_process(&connection->thread_data.encoder, &msg->message_data)) {
         /* Error sending data, abandon ship */
+        AWS_TRACE_EVENT_END("aws-http", "http1_encoder");
+
         goto error;
     }
+    AWS_TRACE_EVENT_END("aws-http", "http1_encoder");
 
     if (msg->message_data.len > 0) {
         AWS_LOGF_TRACE(
@@ -990,9 +1015,11 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
             .name = header->name_data,
             .value = header->value_data,
         };
+        AWS_TRACE_EVENT_BEGIN("aws-http", "http1_on_headers");
 
         int err = incoming_stream->base.on_incoming_headers(
             &incoming_stream->base, header_block, &deliver, 1, incoming_stream->base.user_data);
+        AWS_TRACE_EVENT_END("aws-http", "http1_on_headers");
 
         if (err) {
             AWS_LOGF_ERROR(
@@ -1061,8 +1088,12 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
 
     /* Invoke user cb */
     if (incoming_stream->base.on_incoming_header_block_done) {
+                AWS_TRACE_EVENT_BEGIN("aws-http", "http1_on_header_block_done");
+
         int err = incoming_stream->base.on_incoming_header_block_done(
             &incoming_stream->base, header_block, incoming_stream->base.user_data);
+                AWS_TRACE_EVENT_END("aws-http", "http1_on_header_block_done");
+
         if (err) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_STREAM,
@@ -1101,7 +1132,11 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
     connection->thread_data.body_bytes_decoded += data->len;
 
     if (incoming_stream->base.on_incoming_body) {
+         AWS_TRACE_EVENT_BEGIN("aws-http", "http1_on_body");
+
         err = incoming_stream->base.on_incoming_body(&incoming_stream->base, data, incoming_stream->base.user_data);
+        AWS_TRACE_EVENT_END("aws-http", "http1_on_body");
+
         if (err) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_STREAM,
@@ -1166,6 +1201,7 @@ static int s_decoder_on_done(void *user_data) {
         }
         if (incoming_stream->is_outgoing_message_done) {
             AWS_ASSERT(&incoming_stream->node == aws_linked_list_begin(&connection->thread_data.stream_list));
+            
             s_stream_complete(incoming_stream, AWS_ERROR_SUCCESS);
         }
         s_set_incoming_stream_ptr(connection, NULL);
@@ -1509,7 +1545,7 @@ static int s_handler_process_read_message(
     struct aws_channel_handler *handler,
     struct aws_channel_slot *slot,
     struct aws_io_message *message) {
-
+    AWS_TRACE_EVENT_BEGIN("aws-http", "http1_read_message");
     (void)slot;
     struct aws_h1_connection *connection = handler->impl;
 
@@ -1524,12 +1560,15 @@ static int s_handler_process_read_message(
     if (s_try_process_read_messages(connection)) {
         goto shutdown;
     }
+    AWS_TRACE_EVENT_END("aws-http", "http1_read_message");
 
     return AWS_OP_SUCCESS;
 
 shutdown:
     /* Kill connection, but still return AWS_OP_SUCCESS because we took ownership of aws_io_message */
     s_shutdown_due_to_error(connection, aws_last_error());
+    AWS_TRACE_EVENT_END("aws-http", "http1_read_message");
+
     return AWS_OP_SUCCESS;
 }
 
