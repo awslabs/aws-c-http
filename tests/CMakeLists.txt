@@ -437,7 +437,7 @@ add_test_case(connection_setup_shutdown)
 #add_test_case(connection_server_shutting_down_new_connection_setup_fail)
 
 # connection manager tests
-# unit tests where connections are mocked
+# while the connections are mocked, we still use real tls which may generate some network activity
 add_net_test_case(test_connection_manager_setup_shutdown)
 add_net_test_case(test_connection_manager_acquire_release_mix_synchronous)
 add_net_test_case(test_connection_manager_connect_callback_failure)
@@ -453,7 +453,6 @@ add_net_test_case(test_connection_manager_many_connections)
 add_net_test_case(test_connection_manager_acquire_release)
 add_net_test_case(test_connection_manager_close_and_release)
 add_net_test_case(test_connection_manager_acquire_release_mix)
-
 
 add_test_case(h1_server_sanity_check)
 add_test_case(h1_server_receive_1line_request)
@@ -501,12 +500,12 @@ add_test_case(test_http_proxy_uri_rewrite)
 add_test_case(test_http_proxy_uri_rewrite_options_star)
 
 # integration  tests that require a locally-installed proxy server
-if (ENABLE_PROXY_INTEGRATION_TESTS)
-    add_test_case(test_http_proxy_connection_options_star)
-    add_test_case(test_http_proxy_connection_new_destroy)
-    add_test_case(test_http_proxy_connection_get)
-    add_test_case(test_https_proxy_connection_new_destroy)
-    add_test_case(test_https_proxy_connection_get)
+if(DEFINED ENV{ENABLE_PROXY_INTEGRATION_TESTS})
+    add_net_test_case(test_http_proxy_connection_options_star)
+    add_net_test_case(test_http_proxy_connection_new_destroy)
+    add_net_test_case(test_http_proxy_connection_get)
+    add_net_test_case(test_https_proxy_connection_new_destroy)
+    add_net_test_case(test_https_proxy_connection_get)
 endif()
 
 add_test_case(test_http_connection_monitor_options_is_valid)
