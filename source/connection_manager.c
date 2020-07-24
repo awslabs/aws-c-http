@@ -23,6 +23,10 @@
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4232) /* function pointer to dll symbol */
+#endif
+
 /*
  * Established connections not currently in use are tracked via this structure.
  */
