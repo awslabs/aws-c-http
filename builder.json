@@ -1,5 +1,8 @@
 {
     "name": "aws-c-http",
+    "imports": [
+        "squid"
+    ],
     "targets": {
         "android": {
             "enabled": false,
