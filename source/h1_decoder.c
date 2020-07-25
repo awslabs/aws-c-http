@@ -714,6 +714,9 @@ struct aws_h1_decoder *aws_h1_decoder_new(struct aws_h1_decoder_params *params) 
 }
 
 void aws_h1_decoder_destroy(struct aws_h1_decoder *decoder) {
+    if (!decoder) {
+        return;
+    }
     aws_byte_buf_clean_up(&decoder->scratch_space);
     aws_mem_release(decoder->alloc, decoder);
 }
