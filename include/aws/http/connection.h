@@ -170,7 +170,27 @@ struct aws_http_proxy_options {
 };
 
 /**
- * HTTP/2 connection options.
+ * Options specific to HTTP/1.x connections.
+ * Initialize with AWS_HTTP1_CONNECTION_OPTIONS_INIT to set default values.
+ */
+struct aws_http1_connection_options {
+    /**
+     * Optional
+     * Capacity in bytes of the HTTP/1 connection's read buffer.
+     * The buffer grows if the flow-control window of the incoming HTTP-stream
+     * reaches zero. If the buffer reaches capacity, no further socket data is
+     * read until the HTTP-stream's window opens again, allowing data to resume flowing.
+     *
+     * Ignored if `manual_window_management` is false.
+     * If zero is specified (the default) then a default capacity is chosen.
+     * A capacity that is too small may hinder throughput.
+     * A capacity that is too big may waste memory without helping throughput.
+     */
+    size_t read_buffer_capacity;
+};
+
+/**
+ * Options specific to HTTP/2 connections.
  * Initialize with AWS_HTTP2_CONNECTION_OPTIONS_INIT to set default values.
  */
 struct aws_http2_connection_options {
@@ -286,10 +306,24 @@ struct aws_http_client_connection_options {
     const struct aws_http_connection_monitoring_options *monitoring_options;
 
     /**
-     * Optional.
-     * The initial connection flow-control window size for HTTP/1 connection.
-     * Ignored by HTTP/2 connection, since the initial connection flow-control window in HTTP/2 is not configurable.
-     * A default size is set by AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT.
+     * Set to true to manually manage the flow-control window of each stream.
+     *
+     * If false, the connection will maintain its flow-control windows such that
+     * no back-pressure is applied and data arrives as fast as possible.
+     *
+     * If true, the flow-control window of each stream will shrink as body data
+     * is received (headers, padding, and other metadata do not affect the window).
+     * `initial_window_size` determines the starting size of each stream's window.
+     * If a stream's flow-control window reaches 0, no further data will be received.
+     * The user must call aws_http_stream_update_window() to increment the stream's
+     * window and keep data flowing.
+     */
+    bool manual_window_management;
+
+    /**
+     * The starting size of each HTTP stream's flow-control window.
+     * Required if `manual_window_management` is true,
+     * ignored if `manual_window_management` is false.
      */
     size_t initial_window_size;
 
@@ -315,23 +349,20 @@ struct aws_http_client_connection_options {
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
 
     /**
-     * Set to true to manually manage the read window size.
-     *
-     * If this is false, the connection will maintain a constant window size.
-     *
-     * If this is true, the caller must manually increment the window size using aws_http_stream_update_window().
-     * If the window is not incremented, it will shrink by the amount of body data received. If the window size
-     * reaches 0, no further data will be received.
-     **/
-    bool manual_window_management;
+     * Options specific to HTTP/1.x connections.
+     * Optional.
+     * Ignored if connection is not HTTP/1.x.
+     * If connection is HTTP/1.x and options were not specified, default values are used.
+     */
+    const struct aws_http1_connection_options *http1_options;
 
     /**
-     * HTTP/2 connection specific options.
+     * Options specific to HTTP/2 connections.
      * Optional.
-     * If HTTP/2 connection created, we will use this for some configurations in HTTP/2 connection.
-     * If other protocol connection created, this will be ignored.
+     * Ignored if connection is not HTTP/2.
+     * If connection is HTTP/2 and options were not specified, default values are used.
      */
-    struct aws_http2_connection_options *http2_options;
+    const struct aws_http2_connection_options *http2_options;
 };
 
 /* Predefined settings identifiers (RFC-7540 6.5.2) */
@@ -353,17 +384,26 @@ struct aws_http2_setting {
 };
 
 /**
+ * Initializes aws_http1_connection_options with default values.
+ */
+#define AWS_HTTP1_CONNECTION_OPTIONS_INIT                                                                              \
+    { .read_buffer_capacity = 0 }
+
+/**
  * HTTP/2: Default value for max closed streams we will keep in memory.
  */
 #define AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS (32)
+
 /**
  * HTTP/2: The size of payload for HTTP/2 PING frame.
  */
 #define AWS_HTTP2_PING_DATA_SIZE (8)
+
 /**
  * HTTP/2: The number of known settings.
  */
 #define AWS_HTTP2_SETTINGS_COUNT (6)
+
 /**
  * Initializes aws_http2_connection_options with default values.
  */
@@ -426,7 +466,8 @@ AWS_HTTP_API
 bool aws_http_connection_is_client(const struct aws_http_connection *connection);
 
 /**
- * Increments the connection-wide read window by the value specified.
+ * DEPRECATED
+ * TODO: Delete once this is removed from H2.
  */
 AWS_HTTP_API
 void aws_http_connection_update_window(struct aws_http_connection *connection, size_t increment_size);

@@ -451,12 +451,6 @@ static void s_on_signing_complete(struct aws_http_message *request, int error_co
 
 static void s_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct elasticurl_ctx *app_ctx = user_data;
-    if (app_ctx->required_http_version) {
-        if (aws_http_connection_get_version(connection) != app_ctx->required_http_version) {
-            fprintf(stderr, "Error. The requested HTTP version, %s, is not supported by the peer.", app_ctx->alpn);
-            exit(1);
-        }
-    }
 
     if (error_code) {
         fprintf(stderr, "Connection failed with error %s\n", aws_error_debug_str(error_code));
@@ -465,6 +459,13 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
         aws_mutex_unlock(&app_ctx->mutex);
         aws_condition_variable_notify_all(&app_ctx->c_var);
         return;
+    }
+
+    if (app_ctx->required_http_version) {
+        if (aws_http_connection_get_version(connection) != app_ctx->required_http_version) {
+            fprintf(stderr, "Error. The requested HTTP version, %s, is not supported by the peer.", app_ctx->alpn);
+            exit(1);
+        }
     }
 
     app_ctx->connection = connection;
