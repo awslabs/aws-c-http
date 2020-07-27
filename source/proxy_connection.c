@@ -16,6 +16,7 @@
 
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#    pragma warning(disable : 4232) /* function pointer to dll symbol */
 #endif
 
 AWS_STATIC_STRING_FROM_LITERAL(s_host_header_name, "Host");

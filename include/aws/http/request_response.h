@@ -757,11 +757,17 @@ AWS_HTTP_API
 int aws_http_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response);
 
 /**
- * Manually issue a window update.
- * Note that the stream's default behavior is to issue updates which keep the window at its original size.
- * See aws_http_make_request_options.manual_window_management for details on letting the window shrink.
+ * Increment the stream's flow-control window to keep data flowing.
  *
- * TODO: HTTP/2 vs HTTP/1, we need two different function
+ * If the connection was created with `manual_window_management` set true,
+ * the flow-control window of each stream will shrink as body data is received
+ * (headers, padding, and other metadata do not affect the window).
+ * The connection's `initial_window_size` determines the starting size of each stream's window.
+ * If a stream's flow-control window reaches 0, no further data will be received.
+ *
+ * If `manual_window_management` is false, this call will have no effect.
+ * The connection maintains its flow-control windows such that
+ * no back-pressure is applied and data arrives as fast as possible.
  */
 AWS_HTTP_API
 void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
