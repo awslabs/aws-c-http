@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/private/h1_encoder.h>
@@ -69,8 +59,11 @@ H1_ENCODER_TEST_CASE(h1_encoder_content_length_put_request_headers) {
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
     aws_http_message_set_body_stream(request, body_stream);
 
+    struct aws_linked_list chunk_list;
+    aws_linked_list_init(&chunk_list);
+
     struct aws_h1_encoder_message encoder_message;
-    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list);
 
     ASSERT_FALSE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -104,8 +97,11 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_put_request_headers) {
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
 
+    struct aws_linked_list chunk_list;
+    aws_linked_list_init(&chunk_list);
+
     struct aws_h1_encoder_message encoder_message;
-    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list);
 
     ASSERT_TRUE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -142,8 +138,11 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_put_request_multiple_t
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
 
+    struct aws_linked_list chunk_list;
+    aws_linked_list_init(&chunk_list);
+
     struct aws_h1_encoder_message encoder_message;
-    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list);
 
     ASSERT_TRUE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -176,8 +175,11 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_put_request_headers_ca
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
 
+    struct aws_linked_list chunk_list;
+    aws_linked_list_init(&chunk_list);
+
     struct aws_h1_encoder_message encoder_message;
-    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list);
 
     ASSERT_TRUE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -213,8 +215,11 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_not_chunked_put_request_header
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
     aws_http_message_set_body_stream(request, body_stream);
 
+    struct aws_linked_list chunk_list;
+    aws_linked_list_init(&chunk_list);
+
     struct aws_h1_encoder_message encoder_message;
-    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list);
 
     ASSERT_FALSE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -252,8 +257,11 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_set_body_stream_errors) {
     /* Setting the body stream should cause an error */
     aws_http_message_set_body_stream(request, body_stream);
 
+    struct aws_linked_list chunk_list;
+    aws_linked_list_init(&chunk_list);
+
     struct aws_h1_encoder_message encoder_message;
-    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list);
 
     ASSERT_FALSE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -291,8 +299,11 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_not_ending_in_chunked_put_requ
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
 
+    struct aws_linked_list chunk_list;
+    aws_linked_list_init(&chunk_list);
+
     struct aws_h1_encoder_message encoder_message;
-    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list);
 
     ASSERT_FALSE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -325,8 +336,11 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_multiple_put_request_h
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
 
+    struct aws_linked_list chunk_list;
+    aws_linked_list_init(&chunk_list);
+
     struct aws_h1_encoder_message encoder_message;
-    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL);
+    aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list);
 
     ASSERT_TRUE(encoder_message.has_chunked_encoding_header);
     ASSERT_FALSE(encoder_message.has_connection_close_header);
@@ -365,11 +379,15 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_and_content_length_put
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
 
+    struct aws_linked_list chunk_list;
+    aws_linked_list_init(&chunk_list);
+
     struct aws_h1_encoder_message encoder_message;
 
     /* Per RFC 2656 (https://tools.ietf.org/html/rfc2616#section-4.4), if both the Content-Length and Transfer-Encoding
      * header are defined, the client should not send the request. */
-    ASSERT_INT_EQUALS(AWS_OP_ERR, aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL));
+    ASSERT_INT_EQUALS(
+        AWS_OP_ERR, aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list));
 
     aws_input_stream_destroy(body_stream);
     aws_http_message_destroy(request);
@@ -399,11 +417,15 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_not_final_encoding_put
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
     aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers));
 
+    struct aws_linked_list chunk_list;
+    aws_linked_list_init(&chunk_list);
+
     struct aws_h1_encoder_message encoder_message;
 
     /* Per RFC 2656 (https://tools.ietf.org/html/rfc2616#section-4.4), if both the Content-Length and Transfer-Encoding
      * header are defined, the client should not send the request. */
-    ASSERT_INT_EQUALS(AWS_OP_ERR, aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, NULL));
+    ASSERT_INT_EQUALS(
+        AWS_OP_ERR, aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list));
 
     aws_http_message_destroy(request);
     aws_h1_encoder_message_clean_up(&encoder_message);

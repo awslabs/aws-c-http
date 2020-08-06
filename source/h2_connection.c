@@ -1,19 +1,10 @@
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/private/h2_connection.h>
+#include <aws/http/private/h2_stream.h>
 
 #include <aws/http/private/h2_decoder.h>
 #include <aws/http/private/h2_stream.h>
@@ -210,6 +201,20 @@ static void s_unlock_synced_data(struct aws_h2_connection *connection) {
     (void)err;
 }
 
+static void s_acquire_stream_and_connection_lock(struct aws_h2_stream *stream, struct aws_h2_connection *connection) {
+    int err = aws_mutex_lock(&stream->synced_data.lock);
+    err |= aws_mutex_lock(&connection->synced_data.lock);
+    AWS_ASSERT(!err && "lock connection and stream failed");
+    (void)err;
+}
+
+static void s_release_stream_and_connection_lock(struct aws_h2_stream *stream, struct aws_h2_connection *connection) {
+    int err = aws_mutex_unlock(&connection->synced_data.lock);
+    err |= aws_mutex_unlock(&stream->synced_data.lock);
+    AWS_ASSERT(!err && "unlock connection and stream failed");
+    (void)err;
+}
+
 /**
  * Internal function for bringing connection to a stop.
  * Invoked multiple times, including when:
@@ -258,7 +263,7 @@ static void s_stop(
     }
 }
 
-static void s_shutdown_due_to_write_err(struct aws_h2_connection *connection, int error_code) {
+void aws_h2_connection_shutdown_due_to_write_err(struct aws_h2_connection *connection, int error_code) {
     AWS_PRECONDITION(error_code);
 
     if (connection->thread_data.channel_shutdown_waiting_for_goaway_to_be_written) {
@@ -583,7 +588,7 @@ static void s_on_channel_write_complete(
 
     if (err_code) {
         CONNECTION_LOGF(ERROR, connection, "Message did not write to network, error %s", aws_error_name(err_code));
-        s_shutdown_due_to_write_err(connection, err_code);
+        aws_h2_connection_shutdown_due_to_write_err(connection, err_code);
         return;
     }
 
@@ -719,7 +724,7 @@ error:;
         aws_mem_release(msg->allocator, msg);
     }
 
-    s_shutdown_due_to_write_err(connection, error_code);
+    aws_h2_connection_shutdown_due_to_write_err(connection, error_code);
 }
 
 /* Write as many frames from outgoing_frames_queue as possible (contains all non-DATA frames) */
@@ -1678,7 +1683,7 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
     return;
 
 error:
-    s_shutdown_due_to_write_err(connection, aws_last_error());
+    aws_h2_connection_shutdown_due_to_write_err(connection, aws_last_error());
 }
 
 static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h2_stream *stream, int error_code) {
@@ -2012,30 +2017,32 @@ int aws_h2_stream_activate(struct aws_http_stream *stream) {
     int err;
     bool was_cross_thread_work_scheduled = false;
     { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(connection);
+        s_acquire_stream_and_connection_lock(h2_stream, connection);
 
         if (stream->id) {
             /* stream has already been activated. */
-            s_unlock_synced_data(connection);
+            s_release_stream_and_connection_lock(h2_stream, connection);
             return AWS_OP_SUCCESS;
         }
 
         err = connection->synced_data.new_stream_error_code;
         if (err) {
-            s_unlock_synced_data(connection);
+            s_release_stream_and_connection_lock(h2_stream, connection);
             goto error;
         }
 
         stream->id = aws_http_connection_get_next_stream_id(base_connection);
 
         if (stream->id) {
+            /* success */
             was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
             connection->synced_data.is_cross_thread_work_task_scheduled = true;
 
             aws_linked_list_push_back(&connection->synced_data.pending_stream_list, &h2_stream->node);
+            h2_stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_ACTIVE;
         }
 
-        s_unlock_synced_data(connection);
+        s_release_stream_and_connection_lock(h2_stream, connection);
     } /* END CRITICAL SECTION */
 
     if (!stream->id) {
@@ -2472,7 +2479,7 @@ static void s_send_goaway(
     return;
 
 error:
-    s_shutdown_due_to_write_err(connection, aws_last_error());
+    aws_h2_connection_shutdown_due_to_write_err(connection, aws_last_error());
 }
 
 static int s_connection_get_sent_goaway(

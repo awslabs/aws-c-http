@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/common/hash_table.h>
@@ -109,13 +99,22 @@ static struct aws_error_info s_errors[] = {
         "Protocol rules violated by peer"),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_STREAM_IDS_EXHAUSTED,
-        "Connection exhausted all possible stream IDs. Establish a new connection for new streams."),
+        "Connection exhausted all possible HTTP-stream IDs. Establish a new connection for new streams."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_GOAWAY_RECEIVED,
-        "Peer sent GOAWAY to initiate connection shutdown. Establish a new connection to retry the streams."),
+        "Peer sent GOAWAY to initiate connection shutdown. Establish a new connection to retry the HTTP-streams."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_RST_STREAM_RECEIVED,
-        "Peer sent RST_STREAM to terminate stream"),
+        "Peer sent RST_STREAM to terminate HTTP-stream."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_RST_STREAM_SENT,
+        "RST_STREAM has sent from local implementation and HTTP-stream has been terminated."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED,
+        "HTTP-stream must be activated before use."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_HAS_COMPLETED,
+        "HTTP-stream has completed, action cannot be performed."),
 };
 /* clang-format on */
 
