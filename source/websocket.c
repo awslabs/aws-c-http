@@ -55,6 +55,7 @@ struct aws_websocket {
     struct aws_channel_task shutdown_channel_task;
     struct aws_channel_task increment_read_window_task;
     struct aws_channel_task waiting_on_payload_stream_task;
+    struct aws_channel_task close_timeout_task;
     bool is_server;
 
     /* Data that should only be accessed from the websocket's channel thread. */
@@ -183,6 +184,7 @@ static void s_move_synced_data_to_thread_task(struct aws_channel_task *task, voi
 static void s_increment_read_window_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_shutdown_channel_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_waiting_on_payload_stream_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
+static void s_close_timeout_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static void s_schedule_channel_shutdown(struct aws_websocket *websocket, int error_code);
 static void s_shutdown_due_to_write_err(struct aws_websocket *websocket, int error_code);
 static void s_shutdown_due_to_read_err(struct aws_websocket *websocket, int error_code);
@@ -291,6 +293,7 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
         s_waiting_on_payload_stream_task,
         websocket,
         "websocket_waiting_on_payload_stream");
+    aws_channel_task_init(&websocket->close_timeout_task, s_close_timeout_task, websocket, "websocket_close_timeout");
 
     aws_linked_list_init(&websocket->thread_data.outgoing_frame_list);
 
@@ -1118,11 +1121,39 @@ static int s_handler_shutdown(
                     AWS_LS_HTTP_WEBSOCKET,
                     "id=%p: Outgoing CLOSE frame queued, handler will finish shutdown once it's sent.",
                     (void *)websocket);
+                /* schedule a task to run after 1 sec. If the CLOSE still not sent at that time, we should just cancel
+                 * sending it and shutdown the channel. */
+                aws_channel_schedule_task_future(
+                    websocket->channel_slot->channel, &websocket->close_timeout_task, AWS_WEBSOCKET_CLOSE_TIMEOUT);
             }
         }
     }
 
     return AWS_OP_SUCCESS;
+}
+
+static void s_close_timeout_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        /* If channel has shut down, don't need to resume sending payload */
+        return;
+    }
+
+    struct aws_websocket *websocket = arg;
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
+
+    if (!websocket->thread_data.is_waiting_for_write_completion) {
+        /* Not waiting for write to complete, which means the CLOSE frame has sent, just do nothing */
+        return;
+    }
+
+    AWS_LOGF_WARN(
+        AWS_LS_HTTP_WEBSOCKET,
+        "id=%p: Failed to send CLOSE frame, timeout happened, shutdown the channel",
+        (void *)websocket);
+
+    s_stop_writing(websocket, AWS_ERROR_HTTP_CONNECTION_CLOSED);
+    s_finish_shutdown(websocket);
 }
 
 static void s_finish_shutdown(struct aws_websocket *websocket) {
