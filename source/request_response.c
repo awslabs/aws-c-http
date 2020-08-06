@@ -343,7 +343,7 @@ static int s_set_string_from_cursor(
     /* If the cursor is empty, set dst to NULL */
     struct aws_string *new_str;
     if (cursor.len) {
-        new_str = aws_string_new_from_array(alloc, cursor.ptr, cursor.len);
+        new_str = aws_string_new_from_cursor(alloc, &cursor);
         if (!new_str) {
             return AWS_OP_ERR;
         }

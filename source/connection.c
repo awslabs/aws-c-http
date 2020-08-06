@@ -908,7 +908,7 @@ int aws_http_client_connect_internal(
     AWS_FATAL_ASSERT(options.proxy_options == NULL);
 
     /* bootstrap_new() functions requires a null-terminated c-str */
-    host_name = aws_string_new_from_array(options.allocator, options.host_name.ptr, options.host_name.len);
+    host_name = aws_string_new_from_cursor(options.allocator, &options.host_name.ptr);
     if (!host_name) {
         goto error;
     }
