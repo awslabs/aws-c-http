@@ -1136,6 +1136,7 @@ static void s_close_timeout_task(struct aws_channel_task *task, void *arg, enum 
     (void)task;
     if (status != AWS_TASK_STATUS_RUN_READY) {
         /* If channel has shut down, don't need to resume sending payload */
+        AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "close_timeout_task canceled");
         return;
     }
 
@@ -1144,6 +1145,7 @@ static void s_close_timeout_task(struct aws_channel_task *task, void *arg, enum 
 
     if (!websocket->thread_data.is_waiting_for_write_completion) {
         /* Not waiting for write to complete, which means the CLOSE frame has sent, just do nothing */
+        AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: close_timeout_task not waiting for write.", (void *)websocket);
         return;
     }
 
