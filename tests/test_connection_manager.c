@@ -39,8 +39,8 @@ struct cm_tester_options {
 
 struct cm_tester {
     struct aws_allocator *allocator;
-    struct aws_event_loop_group event_loop_group;
-    struct aws_host_resolver host_resolver;
+    struct aws_event_loop_group *event_loop_group;
+    struct aws_host_resolver *host_resolver;
 
     struct aws_client_bootstrap *client_bootstrap;
 
@@ -140,14 +140,11 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     if (options->mock_table) {
         clock_fn = options->mock_table->get_monotonic_time;
     }
-    ASSERT_SUCCESS(
-        aws_event_loop_group_init(&tester->event_loop_group, tester->allocator, clock_fn, 1, s_new_event_loop, NULL));
-
-    ASSERT_SUCCESS(
-        aws_host_resolver_init_default(&tester->host_resolver, tester->allocator, 8, &tester->event_loop_group));
+    tester->event_loop_group = aws_event_loop_group_new(tester->allocator, clock_fn, 1, s_new_event_loop, NULL, NULL);
+    tester->host_resolver = aws_host_resolver_new_default(tester->allocator, 8, tester->event_loop_group);
     struct aws_client_bootstrap_options bootstrap_options = {
-        .event_loop_group = &tester->event_loop_group,
-        .host_resolver = &tester->host_resolver,
+        .event_loop_group = tester->event_loop_group,
+        .host_resolver = tester->host_resolver,
         .on_shutdown_complete = s_cm_tester_on_client_bootstrap_shutdown_complete,
         .user_data = tester,
     };
@@ -400,8 +397,8 @@ static int s_cm_tester_clean_up(void) {
     aws_client_bootstrap_release(tester->client_bootstrap);
     ASSERT_SUCCESS(s_wait_on_client_bootstrap_shutdown_complete());
 
-    aws_host_resolver_clean_up(&tester->host_resolver);
-    aws_event_loop_group_clean_up(&tester->event_loop_group);
+    aws_host_resolver_release(tester->host_resolver);
+    aws_event_loop_group_release(tester->event_loop_group);
 
     aws_tls_ctx_options_clean_up(&tester->tls_ctx_options);
     aws_tls_connection_options_clean_up(&tester->tls_connection_options);

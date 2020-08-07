@@ -126,8 +126,8 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
     ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
 
-    ASSERT_SUCCESS(aws_event_loop_group_default_init(&tester->event_loop_group, tester->alloc, 1));
-    ASSERT_SUCCESS(aws_host_resolver_init_default(&tester->host_resolver, tester->alloc, 8, &tester->event_loop_group));
+    tester->event_loop_group = aws_event_loop_group_new_default(tester->alloc, 1, NULL);
+    tester->host_resolver = aws_host_resolver_new_default(tester->alloc, 8, tester->event_loop_group);
 
     struct aws_socket_options socket_options = {
         .type = AWS_SOCKET_STREAM,
@@ -137,8 +137,8 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
     };
 
     struct aws_client_bootstrap_options bootstrap_options = {
-        .event_loop_group = &tester->event_loop_group,
-        .host_resolver = &tester->host_resolver,
+        .event_loop_group = tester->event_loop_group,
+        .host_resolver = tester->host_resolver,
         .on_shutdown_complete = proxy_tester_on_client_bootstrap_shutdown,
         .user_data = tester,
     };
@@ -208,8 +208,8 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
     aws_client_bootstrap_release(tester->client_bootstrap);
     ASSERT_SUCCESS(proxy_tester_wait(tester, proxy_tester_client_bootstrap_shutdown_pred));
 
-    aws_host_resolver_clean_up(&tester->host_resolver);
-    aws_event_loop_group_clean_up(&tester->event_loop_group);
+    aws_host_resolver_release(tester->host_resolver);
+    aws_event_loop_group_release(tester->event_loop_group);
 
     if (tester->tls_ctx) {
         aws_tls_connection_options_clean_up(&tester->tls_connection_options);

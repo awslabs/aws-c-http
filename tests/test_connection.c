@@ -43,8 +43,8 @@ struct tester_options {
 struct tester {
     struct aws_allocator *alloc;
     struct aws_logger logger;
-    struct aws_event_loop_group event_loop_group;
-    struct aws_host_resolver host_resolver;
+    struct aws_event_loop_group *event_loop_group;
+    struct aws_host_resolver *host_resolver;
     struct aws_server_bootstrap *server_bootstrap;
     struct aws_http_server *server;
     struct aws_client_bootstrap *client_bootstrap;
@@ -253,9 +253,9 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
 
-    ASSERT_SUCCESS(aws_event_loop_group_default_init(&tester->event_loop_group, tester->alloc, 1));
-    ASSERT_SUCCESS(aws_host_resolver_init_default(&tester->host_resolver, tester->alloc, 8, &tester->event_loop_group));
-    tester->server_bootstrap = aws_server_bootstrap_new(tester->alloc, &tester->event_loop_group);
+    tester->event_loop_group = aws_event_loop_group_new_default(tester->alloc, 1, NULL);
+    tester->host_resolver = aws_host_resolver_new_default(tester->alloc, 8, tester->event_loop_group);
+    tester->server_bootstrap = aws_server_bootstrap_new(tester->alloc, tester->event_loop_group);
     ASSERT_NOT_NULL(tester->server_bootstrap);
 
     struct aws_socket_options socket_options = {
@@ -295,8 +295,8 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     }
 
     struct aws_client_bootstrap_options bootstrap_options = {
-        .event_loop_group = &tester->event_loop_group,
-        .host_resolver = &tester->host_resolver,
+        .event_loop_group = tester->event_loop_group,
+        .host_resolver = tester->host_resolver,
         .on_shutdown_complete = s_tester_on_client_bootstrap_shutdown,
         .user_data = tester,
     };
@@ -335,8 +335,8 @@ static int s_tester_clean_up(struct tester *tester) {
         ASSERT_SUCCESS(s_tester_wait(tester, s_tester_server_shutdown_pred));
     }
     aws_server_bootstrap_release(tester->server_bootstrap);
-    aws_host_resolver_clean_up(&tester->host_resolver);
-    aws_event_loop_group_clean_up(&tester->event_loop_group);
+    aws_host_resolver_release(tester->host_resolver);
+    aws_event_loop_group_release(tester->event_loop_group);
     aws_http_library_clean_up();
     aws_logger_clean_up(&tester->logger);
     aws_mutex_clean_up(&tester->wait_lock);
@@ -540,25 +540,24 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
     };
     /* create a new eventloop for the new connection and block the new connection. Waiting server to begin shutting
      * down. */
-    struct aws_event_loop_group event_loop_group;
-    ASSERT_SUCCESS(aws_event_loop_group_default_init(&event_loop_group, allocator, 1));
+    struct aws_event_loop_group *event_loop_group = aws_event_loop_group_new_default(allocator, 1, NULL);
 
     /* get the first eventloop, which will be the eventloop for client to connect */
-    struct aws_event_loop *current_eventloop = aws_event_loop_group_get_loop_at(&event_loop_group, 0);
+    struct aws_event_loop *current_eventloop = aws_event_loop_group_get_loop_at(event_loop_group, 0);
     struct aws_task *block_task = aws_mem_acquire(allocator, sizeof(struct aws_task));
     aws_task_init(block_task, s_block_task, &tester, "wait_a_bit");
     aws_event_loop_schedule_task_now(current_eventloop, block_task);
 
     /* get the first eventloop of tester, which will be the eventloop for server listener socket, block the listener
      * socket */
-    struct aws_event_loop *server_eventloop = aws_event_loop_group_get_loop_at(&tester.event_loop_group, 0);
+    struct aws_event_loop *server_eventloop = aws_event_loop_group_get_loop_at(tester.event_loop_group, 0);
     struct aws_task *server_block_task = aws_mem_acquire(allocator, sizeof(struct aws_task));
     aws_task_init(server_block_task, s_block_task, &tester, "wait_a_bit");
     aws_event_loop_schedule_task_now(server_eventloop, server_block_task);
 
     struct aws_client_bootstrap_options bootstrap_options = {
-        .event_loop_group = &event_loop_group,
-        .host_resolver = &tester.host_resolver,
+        .event_loop_group = event_loop_group,
+        .host_resolver = tester.host_resolver,
     };
     struct aws_client_bootstrap *bootstrap = aws_client_bootstrap_new(allocator, &bootstrap_options);
     struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
@@ -605,7 +604,7 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
     aws_client_bootstrap_release(bootstrap);
     aws_client_bootstrap_release(tester.client_bootstrap);
     ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_client_bootstrap_shutdown_pred));
-    aws_event_loop_group_clean_up(&event_loop_group);
+    aws_event_loop_group_release(event_loop_group);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
 
     return AWS_OP_SUCCESS;

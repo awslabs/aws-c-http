@@ -43,8 +43,8 @@ struct proxy_tester_options {
 struct proxy_tester {
     struct aws_allocator *alloc;
     struct aws_logger logger;
-    struct aws_event_loop_group event_loop_group;
-    struct aws_host_resolver host_resolver;
+    struct aws_event_loop_group *event_loop_group;
+    struct aws_host_resolver *host_resolver;
     struct aws_client_bootstrap *client_bootstrap;
 
     struct aws_tls_ctx *tls_ctx;
