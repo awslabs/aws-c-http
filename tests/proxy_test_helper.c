@@ -213,7 +213,7 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
 
     if (tester->tls_ctx) {
         aws_tls_connection_options_clean_up(&tester->tls_connection_options);
-        aws_tls_ctx_destroy(tester->tls_ctx);
+        aws_tls_ctx_release(tester->tls_ctx);
         aws_tls_ctx_options_clean_up(&tester->tls_ctx_options);
     }
 

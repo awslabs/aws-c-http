@@ -737,7 +737,7 @@ int main(int argc, char **argv) {
 
     if (tls_ctx) {
         aws_tls_connection_options_clean_up(&tls_connection_options);
-        aws_tls_ctx_destroy(tls_ctx);
+        aws_tls_ctx_release(tls_ctx);
         aws_tls_ctx_options_clean_up(&tls_ctx_options);
     }
 

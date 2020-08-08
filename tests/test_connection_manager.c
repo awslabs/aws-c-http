@@ -402,7 +402,7 @@ static int s_cm_tester_clean_up(void) {
 
     aws_tls_ctx_options_clean_up(&tester->tls_ctx_options);
     aws_tls_connection_options_clean_up(&tester->tls_connection_options);
-    aws_tls_ctx_destroy(tester->tls_ctx);
+    aws_tls_ctx_release(tester->tls_ctx);
 
     aws_mutex_clean_up(&tester->lock);
     aws_condition_variable_clean_up(&tester->signal);
