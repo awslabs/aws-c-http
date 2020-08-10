@@ -18,7 +18,7 @@
 struct aws_h1_connection {
     struct aws_http_connection base;
 
-    size_t initial_window_size;
+    size_t initial_stream_window_size;
 
     /* Task responsible for sending data.
      * As long as there is data available to send, the task will be "active" and repeatedly:
@@ -64,16 +64,32 @@ struct aws_h1_connection {
         /* Used to encode requests and responses */
         struct aws_h1_encoder encoder;
 
-        size_t body_bytes_decoded;
-
-        /* All aws_io_messages arriving in the read direction are queued here before processing.
-         * The downstream window (window of next handler, or window of incoming stream)
-         * determines how much data can be processed. The `copy_mark` is used to
-         * track progress on partially processed messages at the front of the queue. */
+        /**
+         * All aws_io_messages arriving in the read direction are queued here before processing.
+         * This allows the connection to receive more data than the the current HTTP-stream might allow,
+         * and process the data later when HTTP-stream's window opens or the next stream begins.
+         *
+         * The `aws_io_message.copy_mark` is used to track progress on partially processed messages.
+         * `pending_bytes` is the sum of all unprocessed bytes across all queued messages.
+         * `capacity` is the limit for how many unprocessed bytes we'd like in the queue.
+         */
         struct {
             struct aws_linked_list messages;
-            /* TODO: more variables will go in this struct in the near-future */
+            size_t pending_bytes;
+            size_t capacity;
         } read_buffer;
+
+        /**
+         * The connection's current window size.
+         * We use this variable, instead of the existing `aws_channel_slot.window_size`,
+         * because that variable is not updated immediately, the channel uses a task to update it.
+         * Since we use the difference between current and desired window size when deciding
+         * how much to increment, we need the most up-to-date values possible.
+         */
+        size_t connection_window;
+
+        /* Only used by tests. Sum of window_increments issued by this slot. Resets each time it's queried */
+        size_t recent_window_increments;
 
         struct aws_crt_statistics_http1_channel stats;
 
@@ -94,6 +110,8 @@ struct aws_h1_connection {
 
         /* see `outgoing_stream_task` */
         bool is_outgoing_stream_task_active : 1;
+
+        bool is_processing_read_messages : 1;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held */
@@ -119,6 +137,16 @@ struct aws_h1_connection {
     } synced_data;
 };
 
+/* Allow tests to check current window stats */
+struct aws_h1_window_stats {
+    size_t connection_window;
+    size_t recent_window_increments; /* Resets to 0 each time window stats are queried*/
+    size_t buffer_capacity;
+    size_t buffer_pending_bytes;
+    uint64_t stream_window;
+    bool has_incoming_stream;
+};
+
 AWS_EXTERN_C_BEGIN
 
 /* The functions below are exported so they can be accessed from tests. */
@@ -127,13 +155,19 @@ AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http1_1_server(
     struct aws_allocator *allocator,
     bool manual_window_management,
-    size_t initial_window_size);
+    size_t initial_window_size,
+    const struct aws_http1_connection_options *http1_options);
 
 AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http1_1_client(
     struct aws_allocator *allocator,
     bool manual_window_management,
-    size_t initial_window_size);
+    size_t initial_window_size,
+    const struct aws_http1_connection_options *http1_options);
+
+/* Allow tests to check current window stats */
+AWS_HTTP_API
+struct aws_h1_window_stats aws_h1_connection_window_stats(struct aws_http_connection *connection_base);
 
 AWS_EXTERN_C_END
 
@@ -152,5 +186,16 @@ void aws_h1_connection_unlock_synced_data(struct aws_h1_connection *connection);
  * MUST be called from the connection's event-loop thread.
  */
 void aws_h1_connection_try_write_outgoing_stream(struct aws_h1_connection *connection);
+
+/**
+ * If any read messages are queued, and the downstream window is non-zero,
+ * process data and send it downstream. Then calculate the connection's
+ * desired window size and increment it if necessary.
+ *
+ * During normal operations "downstream" means the current incoming stream.
+ * If the connection has switched protocols "downstream" means the next
+ * channel handler in the read direction.
+ */
+void aws_h1_connection_try_process_read_messages(struct aws_h1_connection *connection);
 
 #endif /* AWS_HTTP_H1_CONNECTION_H */

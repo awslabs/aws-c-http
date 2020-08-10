@@ -43,6 +43,8 @@ static void s_stream_unlock_synced_data(struct aws_h1_stream *stream) {
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
     (void)task;
     struct aws_h1_stream *stream = arg;
+    struct aws_h1_connection *connection = s_get_h1_connection(stream);
+
     if (status != AWS_TASK_STATUS_RUN_READY) {
         goto done;
     }
@@ -61,6 +63,9 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
 
     bool has_outgoing_response = stream->synced_data.has_outgoing_response;
 
+    uint64_t pending_window_update = stream->synced_data.pending_window_update;
+    stream->synced_data.pending_window_update = 0;
+
     s_stream_unlock_synced_data(stream);
     /* END CRITICAL SECTION */
 
@@ -74,7 +79,17 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     }
 
     if (new_outgoing_data && (api_state == AWS_H1_STREAM_API_STATE_ACTIVE)) {
-        aws_h1_connection_try_write_outgoing_stream(s_get_h1_connection(stream));
+        aws_h1_connection_try_write_outgoing_stream(connection);
+    }
+
+    /* Add to window size using saturated sum to prevent overflow.
+     * Saturating is fine because it's a u64, the stream could never receive that much data. */
+    stream->thread_data.stream_window =
+        aws_add_u64_saturating(stream->thread_data.stream_window, pending_window_update);
+    if ((pending_window_update > 0) && (api_state == AWS_H1_STREAM_API_STATE_ACTIVE)) {
+        /* Now that stream window is larger, connection might have buffered
+         * data to send, or might need to increment its own window */
+        aws_h1_connection_try_process_read_messages(connection);
     }
 
 done:
@@ -82,8 +97,44 @@ done:
     aws_http_stream_release(&stream->base);
 }
 
-static void s_stream_update_window(struct aws_http_stream *stream, size_t increment_size) {
-    aws_http_connection_update_window(stream->owning_connection, increment_size);
+/* Note the update in synced_data, and schedule the cross_thread_work_task if necessary */
+static void s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size) {
+    if (increment_size == 0) {
+        return;
+    }
+
+    if (!stream_base->owning_connection->manual_window_management) {
+        return;
+    }
+
+    struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
+    bool should_schedule_task = false;
+
+    { /* BEGIN CRITICAL SECTION */
+        s_stream_lock_synced_data(stream);
+
+        /* Saturated sum. It's a u64. The stream could never receive that much data. */
+        stream->synced_data.pending_window_update =
+            aws_add_u64_saturating(stream->synced_data.pending_window_update, increment_size);
+
+        /* Don't alert the connection unless the stream is active */
+        if (stream->synced_data.api_state == AWS_H1_STREAM_API_STATE_ACTIVE) {
+            if (!stream->synced_data.is_cross_thread_work_task_scheduled) {
+                stream->synced_data.is_cross_thread_work_task_scheduled = true;
+                should_schedule_task = true;
+            }
+        }
+
+        s_stream_unlock_synced_data(stream);
+    } /* END CRITICAL SECTION */
+
+    if (should_schedule_task) {
+        /* Keep stream alive until task completes */
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Scheduling stream cross-thread work task.", (void *)stream_base);
+        aws_channel_schedule_task_now(
+            stream->base.owning_connection->channel_slot->channel, &stream->cross_thread_work_task);
+    }
 }
 
 static int s_stream_write_chunk(struct aws_http_stream *stream_base, const struct aws_http1_chunk_options *options) {
@@ -185,23 +236,23 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
 };
 
 static struct aws_h1_stream *s_stream_new_common(
-    struct aws_http_connection *owning_connection,
-    bool manual_window_management,
+    struct aws_http_connection *connection_base,
     void *user_data,
     aws_http_on_incoming_headers_fn *on_incoming_headers,
     aws_http_on_incoming_header_block_done_fn *on_incoming_header_block_done,
     aws_http_on_incoming_body_fn *on_incoming_body,
     aws_http_on_stream_complete_fn on_complete) {
 
-    struct aws_h1_stream *stream = aws_mem_calloc(owning_connection->alloc, 1, sizeof(struct aws_h1_stream));
+    struct aws_h1_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h1_connection, base);
+
+    struct aws_h1_stream *stream = aws_mem_calloc(connection_base->alloc, 1, sizeof(struct aws_h1_stream));
     if (!stream) {
         return NULL;
     }
 
     stream->base.vtable = &s_stream_vtable;
-    stream->base.alloc = owning_connection->alloc;
-    stream->base.owning_connection = owning_connection;
-    stream->base.manual_window_management = manual_window_management;
+    stream->base.alloc = connection_base->alloc;
+    stream->base.owning_connection = connection_base;
     stream->base.user_data = user_data;
     stream->base.on_incoming_headers = on_incoming_headers;
     stream->base.on_incoming_header_block_done = on_incoming_header_block_done;
@@ -213,6 +264,8 @@ static struct aws_h1_stream *s_stream_new_common(
 
     aws_linked_list_init(&stream->thread_data.pending_chunk_list);
     aws_linked_list_init(&stream->synced_data.pending_chunk_list);
+
+    stream->thread_data.stream_window = connection->initial_stream_window_size;
 
     /* Stream refcount starts at 1 for user and is incremented upon activation for the connection */
     aws_atomic_init_int(&stream->base.refcount, 1);
@@ -226,7 +279,6 @@ struct aws_h1_stream *aws_h1_stream_new_request(
 
     struct aws_h1_stream *stream = s_stream_new_common(
         client_connection,
-        client_connection->manual_window_management,
         options->user_data,
         options->on_response_headers,
         options->on_response_header_block_done,
@@ -273,7 +325,6 @@ error:
 struct aws_h1_stream *aws_h1_stream_new_request_handler(const struct aws_http_request_handler_options *options) {
     struct aws_h1_stream *stream = s_stream_new_common(
         options->server_connection,
-        options->server_connection->manual_window_management,
         options->user_data,
         options->on_request_headers,
         options->on_request_header_block_done,
