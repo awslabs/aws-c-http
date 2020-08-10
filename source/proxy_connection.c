@@ -71,7 +71,7 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     user_data->state = AWS_PBS_SOCKET_CONNECT;
     user_data->error_code = AWS_ERROR_SUCCESS;
 
-    user_data->original_host = aws_string_new_from_array(allocator, options->host_name.ptr, options->host_name.len);
+    user_data->original_host = aws_string_new_from_cursor(allocator, &options->host_name);
     if (user_data->original_host == NULL) {
         goto on_error;
     }
