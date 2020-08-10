@@ -1123,8 +1123,16 @@ static int s_handler_shutdown(
                     (void *)websocket);
                 /* schedule a task to run after 1 sec. If the CLOSE still not sent at that time, we should just cancel
                  * sending it and shutdown the channel. */
+                uint64_t schedule_time = 0;
+                aws_channel_current_clock_time(websocket->channel_slot->channel, &schedule_time);
+                schedule_time += AWS_WEBSOCKET_CLOSE_TIMEOUT;
+                AWS_LOGF_TRACE(
+                    AWS_LS_HTTP_WEBSOCKET,
+                    "id=%p: websocket_close_timeout task will be run at timestamp %" PRIu64,
+                    (void *)websocket,
+                    schedule_time);
                 aws_channel_schedule_task_future(
-                    websocket->channel_slot->channel, &websocket->close_timeout_task, AWS_WEBSOCKET_CLOSE_TIMEOUT);
+                    websocket->channel_slot->channel, &websocket->close_timeout_task, schedule_time);
             }
         }
     }
@@ -1136,7 +1144,6 @@ static void s_close_timeout_task(struct aws_channel_task *task, void *arg, enum 
     (void)task;
     if (status != AWS_TASK_STATUS_RUN_READY) {
         /* If channel has shut down, don't need to resume sending payload */
-        AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "close_timeout_task canceled");
         return;
     }
 
@@ -1145,7 +1152,6 @@ static void s_close_timeout_task(struct aws_channel_task *task, void *arg, enum 
 
     if (!websocket->thread_data.is_waiting_for_write_completion) {
         /* Not waiting for write to complete, which means the CLOSE frame has sent, just do nothing */
-        AWS_LOGF_TRACE(AWS_LS_HTTP_WEBSOCKET, "id=%p: close_timeout_task not waiting for write.", (void *)websocket);
         return;
     }
 
