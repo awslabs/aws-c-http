@@ -34,6 +34,7 @@ enum aws_websocket_opcode {
 
 #define AWS_WEBSOCKET_MAX_PAYLOAD_LENGTH 0x7FFFFFFFFFFFFFFF
 #define AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH 25
+#define AWS_WEBSOCKET_CLOSE_TIMEOUT 1000000000 // nanos -> 1 sec
 
 /**
  * Called when websocket setup is complete.
