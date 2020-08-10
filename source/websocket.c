@@ -1150,7 +1150,7 @@ static void s_close_timeout_task(struct aws_channel_task *task, void *arg, enum 
     struct aws_websocket *websocket = arg;
     AWS_ASSERT(aws_channel_thread_is_callers_thread(websocket->channel_slot->channel));
 
-    if (!websocket->is_shutting_down_and_waiting_for_close_frame_to_be_written)
+    if (!websocket->thread_data.is_shutting_down_and_waiting_for_close_frame_to_be_written) {
         /* Not waiting for write to complete, which means the CLOSE frame has sent, just do nothing */
         return;
     }
