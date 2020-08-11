@@ -63,7 +63,7 @@ struct proxy_tester {
     struct testing_channel *testing_channel;
 
     bool client_connection_is_shutdown;
-    bool client_bootstrap_is_shutdown;
+    bool elg_shutdown_complete;
 
     /* If we need to wait for some async process*/
     struct aws_mutex wait_lock;

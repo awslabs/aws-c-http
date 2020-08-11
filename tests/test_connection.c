@@ -64,7 +64,7 @@ struct tester {
     int server_connection_is_shutdown;
     int wait_client_connection_is_shutdown;
     int wait_server_connection_is_shutdown;
-    bool client_bootstrap_is_shutdown;
+    bool elg_is_shutdown;
 
     bool server_is_shutdown;
     struct aws_http_connection *new_client_connection;
@@ -177,11 +177,11 @@ static void s_tester_on_client_connection_shutdown(
     AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
     aws_condition_variable_notify_one(&tester->wait_cvar);
 }
-static void s_tester_on_client_bootstrap_shutdown(void *user_data) {
+static void s_tester_on_elg_shutdown(void *user_data) {
     struct tester *tester = user_data;
     AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
 
-    tester->client_bootstrap_is_shutdown = true;
+    tester->elg_is_shutdown = true;
 
     AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->wait_lock) == AWS_OP_SUCCESS);
     aws_condition_variable_notify_one(&tester->wait_cvar);
@@ -230,9 +230,9 @@ static bool s_tester_server_shutdown_pred(void *user_data) {
     return tester->server_is_shutdown;
 }
 
-static bool s_tester_client_bootstrap_shutdown_pred(void *user_data) {
+static bool s_tester_elg_shutdown_pred(void *user_data) {
     struct tester *tester = user_data;
-    return tester->client_bootstrap_is_shutdown;
+    return tester->elg_is_shutdown;
 }
 
 static int s_tester_init(struct tester *tester, const struct tester_options *options) {
@@ -253,7 +253,12 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
 
-    tester->event_loop_group = aws_event_loop_group_new_default(tester->alloc, 1, NULL);
+    struct aws_event_loop_group_shutdown_options shutdown_options = {
+        .asynchronous_shutdown = true,
+        .shutdown_complete = s_tester_on_elg_shutdown,
+        .shutdown_complete_user_data = tester,
+    };
+    tester->event_loop_group = aws_event_loop_group_new_default(tester->alloc, 1, &shutdown_options);
     tester->host_resolver = aws_host_resolver_new_default(tester->alloc, 8, tester->event_loop_group);
     tester->server_bootstrap = aws_server_bootstrap_new(tester->alloc, tester->event_loop_group);
     ASSERT_NOT_NULL(tester->server_bootstrap);
@@ -297,8 +302,6 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     struct aws_client_bootstrap_options bootstrap_options = {
         .event_loop_group = tester->event_loop_group,
         .host_resolver = tester->host_resolver,
-        .on_shutdown_complete = s_tester_on_client_bootstrap_shutdown,
-        .user_data = tester,
     };
     tester->client_bootstrap = aws_client_bootstrap_new(tester->alloc, &bootstrap_options);
     ASSERT_NOT_NULL(tester->client_bootstrap);
@@ -335,8 +338,11 @@ static int s_tester_clean_up(struct tester *tester) {
         ASSERT_SUCCESS(s_tester_wait(tester, s_tester_server_shutdown_pred));
     }
     aws_server_bootstrap_release(tester->server_bootstrap);
+    aws_client_bootstrap_release(tester->client_bootstrap);
     aws_host_resolver_release(tester->host_resolver);
     aws_event_loop_group_release(tester->event_loop_group);
+    s_tester_wait(tester, s_tester_elg_shutdown_pred);
+
     aws_http_library_clean_up();
     aws_logger_clean_up(&tester->logger);
     aws_mutex_clean_up(&tester->wait_lock);
@@ -386,9 +392,6 @@ static int s_test_connection_setup_shutdown(struct aws_allocator *allocator, voi
     release_all_server_connections(&tester);
     ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
 
-    aws_client_bootstrap_release(tester.client_bootstrap);
-    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_client_bootstrap_shutdown_pred));
-
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
 }
@@ -413,8 +416,6 @@ static int s_test_connection_destroy_server_with_connection_existing(struct aws_
     /* release memory */
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
-    aws_client_bootstrap_release(tester.client_bootstrap);
-    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_client_bootstrap_shutdown_pred));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -457,9 +458,6 @@ static int s_test_connection_destroy_server_with_multiple_connections_existing(
     /* release memory */
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
-
-    aws_client_bootstrap_release(tester.client_bootstrap);
-    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_client_bootstrap_shutdown_pred));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
@@ -602,8 +600,6 @@ static int s_test_connection_server_shutting_down_new_connection_setup_fail(
     release_all_client_connections(&tester);
     release_all_server_connections(&tester);
     aws_client_bootstrap_release(bootstrap);
-    aws_client_bootstrap_release(tester.client_bootstrap);
-    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_client_bootstrap_shutdown_pred));
     aws_event_loop_group_release(event_loop_group);
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
 
