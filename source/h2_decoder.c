@@ -1258,7 +1258,7 @@ static struct aws_h2err s_process_header_field(
         /* Buffer up pseudo-headers, we'll deliver them later once they're all validated. */
         current_block->pseudoheader_compression[pseudoheader_enum] = header_field->compression;
         current_block->pseudoheader_values[pseudoheader_enum] =
-            aws_string_new_from_array(decoder->alloc, header_field->value.ptr, header_field->value.len);
+            aws_string_new_from_cursor(decoder->alloc, &header_field->value);
         if (!current_block->pseudoheader_values[pseudoheader_enum]) {
             return aws_h2err_from_last_error();
         }

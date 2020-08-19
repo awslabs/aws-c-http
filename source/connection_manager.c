@@ -789,7 +789,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     aws_linked_list_init(&manager->idle_connections);
     aws_linked_list_init(&manager->pending_acquisitions);
 
-    manager->host = aws_string_new_from_array(allocator, options->host.ptr, options->host.len);
+    manager->host = aws_string_new_from_cursor(allocator, &options->host);
     if (manager->host == NULL) {
         goto on_error;
     }
