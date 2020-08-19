@@ -64,7 +64,6 @@ struct elasticurl_ctx {
     enum aws_log_level log_level;
     enum aws_http_version required_http_version;
     bool exchange_completed;
-    bool elg_shutdown_complete;
 };
 
 static void s_usage(int exit_code) {
@@ -539,20 +538,6 @@ static bool s_completion_predicate(void *arg) {
     return app_ctx->exchange_completed;
 }
 
-static void s_on_elg_shutdown_complete(void *user_data) {
-    struct elasticurl_ctx *app_ctx = user_data;
-
-    aws_mutex_lock(&app_ctx->mutex);
-    app_ctx->elg_shutdown_complete = true;
-    aws_mutex_unlock(&app_ctx->mutex);
-    aws_condition_variable_notify_all(&app_ctx->c_var);
-}
-
-static bool s_elg_shutdown_predicate(void *arg) {
-    struct elasticurl_ctx *app_ctx = arg;
-    return app_ctx->elg_shutdown_complete;
-}
-
 int main(int argc, char **argv) {
     struct aws_allocator *allocator = aws_default_allocator();
 
@@ -690,14 +675,8 @@ int main(int argc, char **argv) {
         }
     }
 
-    struct aws_event_loop_group_shutdown_options shutdown_options = {
-        .asynchronous_shutdown = true,
-        .shutdown_complete = s_on_elg_shutdown_complete,
-        .shutdown_complete_user_data = &app_ctx,
-    };
-
-    struct aws_event_loop_group *el_group = aws_event_loop_group_new_default(allocator, 1, &shutdown_options);
-    struct aws_host_resolver *resolver = aws_host_resolver_new_default(allocator, 8, el_group);
+    struct aws_event_loop_group *el_group = aws_event_loop_group_new_default(allocator, 1, NULL);
+    struct aws_host_resolver *resolver = aws_host_resolver_new_default(allocator, 8, el_group, NULL);
 
     struct aws_client_bootstrap_options bootstrap_options = {
         .event_loop_group = el_group,
@@ -735,9 +714,7 @@ int main(int argc, char **argv) {
     aws_host_resolver_release(resolver);
     aws_event_loop_group_release(el_group);
 
-    aws_mutex_lock(&app_ctx.mutex);
-    aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_elg_shutdown_predicate, &app_ctx);
-    aws_mutex_unlock(&app_ctx.mutex);
+    aws_global_thread_shutdown_wait();
 
     if (tls_ctx) {
         aws_tls_connection_options_clean_up(&tls_connection_options);

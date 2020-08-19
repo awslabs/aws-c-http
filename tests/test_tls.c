@@ -31,7 +31,6 @@ struct test_ctx {
     size_t body_size;
     bool stream_complete;
     bool client_connection_is_shutdown;
-    bool elg_shutdown_complete;
 
     struct aws_mutex wait_lock;
     struct aws_condition_variable wait_cvar;
@@ -109,21 +108,6 @@ static bool s_stream_wait_pred(void *user_data) {
     return test->wait_result || test->stream_complete;
 }
 
-static void s_on_elg_shutdown(void *user_data) {
-    struct test_ctx *test_context = user_data;
-
-    AWS_FATAL_ASSERT(aws_mutex_lock(&test_context->wait_lock) == AWS_OP_SUCCESS);
-    test_context->elg_shutdown_complete = true;
-    AWS_FATAL_ASSERT(aws_mutex_unlock(&test_context->wait_lock) == AWS_OP_SUCCESS);
-
-    aws_condition_variable_notify_one(&test_context->wait_cvar);
-}
-
-static bool s_test_elg_shutdown_pred(void *user_data) {
-    struct test_ctx *test = user_data;
-    return test->elg_shutdown_complete;
-}
-
 static int s_test_tls_download_medium_file_general(
     struct aws_allocator *allocator,
     struct aws_byte_cursor url,
@@ -147,14 +131,8 @@ static int s_test_tls_download_medium_file_general(
     aws_mutex_init(&test.wait_lock);
     aws_condition_variable_init(&test.wait_cvar);
 
-    struct aws_event_loop_group_shutdown_options shutdown_options;
-    AWS_ZERO_STRUCT(shutdown_options);
-    shutdown_options.asynchronous_shutdown = true;
-    shutdown_options.shutdown_complete = s_on_elg_shutdown;
-    shutdown_options.shutdown_complete_user_data = &test;
-
-    test.event_loop_group = aws_event_loop_group_new_default(test.alloc, 1, &shutdown_options);
-    test.host_resolver = aws_host_resolver_new_default(test.alloc, 1, test.event_loop_group);
+    test.event_loop_group = aws_event_loop_group_new_default(test.alloc, 1, NULL);
+    test.host_resolver = aws_host_resolver_new_default(test.alloc, 1, test.event_loop_group, NULL);
 
     struct aws_client_bootstrap_options bootstrap_options = {
         .event_loop_group = test.event_loop_group,
@@ -229,7 +207,7 @@ static int s_test_tls_download_medium_file_general(
     aws_host_resolver_release(test.host_resolver);
     aws_event_loop_group_release(test.event_loop_group);
 
-    ASSERT_SUCCESS(s_test_wait(&test, s_test_elg_shutdown_pred));
+    aws_global_thread_shutdown_wait();
 
     aws_tls_ctx_options_clean_up(&tls_ctx_options);
     aws_tls_connection_options_clean_up(&tls_connection_options);
