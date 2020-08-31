@@ -365,7 +365,7 @@ static int s_cm_tester_clean_up(void) {
 
     aws_host_resolver_release(tester->host_resolver);
     aws_event_loop_group_release(tester->event_loop_group);
-    aws_global_thread_shutdown_wait();
+    aws_global_thread_creator_shutdown_wait_for(10);
 
     aws_tls_ctx_options_clean_up(&tester->tls_ctx_options);
     aws_tls_connection_options_clean_up(&tester->tls_connection_options);
