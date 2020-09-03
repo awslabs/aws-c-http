@@ -1,0 +1,5 @@
+# threads created here are not explicitly joined but they are part of a ref-count mechanism that
+# decrements (with a possible signal of a shutdown callback based on state and count) on thread
+# exit function.  For now, there is no reasonable way to integrate thread join into the host resolver
+# logic, and so this is a false positive.
+thread:create_and_init_host_entry
