@@ -287,10 +287,18 @@ struct aws_http_request_handler_options {
 };
 
 /**
- * Signature definition of the function which will be invoked, if provided by the caller, after a chunked transfer
- *  encoding chunk has been written to an HTTP/1.1 connection.
+ * Invoked when the data of an outgoing HTTP/1.1 chunk is no longer in use.
+ * This is always invoked on the HTTP connection's event-loop thread.
+ *
+ * @param stream        HTTP-stream this chunk was submitted to.
+ * @param error_code    If error_code is AWS_ERROR_SUCCESS (0), the data was successfully sent.
+ *                      Any other error_code indicates that the HTTP-stream is in the process of terminating.
+ *                      If the error_code is AWS_ERROR_HTTP_STREAM_HAS_COMPLETED,
+ *                      the stream's termination has nothing to do with this chunk.
+ *                      Any other non-zero error code indicates a problem with this particular chunk's data.
+ * @param user_data     User data for this chunk.
  */
-typedef void aws_http1_stream_write_chunk_complete_fn(void *user_data);
+typedef void aws_http1_stream_write_chunk_complete_fn(struct aws_http_stream *stream, int error_code, void *user_data);
 
 /**
  * HTTP/1.1 chunk extension for chunked encoding.
@@ -308,6 +316,7 @@ struct aws_http1_chunk_options {
     /*
      * The data stream to be sent in a single chunk.
      * The aws_input_stream must remain valid until on_complete is invoked.
+     * May be NULL in the final chunk with size 0.
      *
      * Note that, for Transfer-Encodings other than "chunked", the data is
      * expected to already have that encoding applied. For example, if
@@ -319,12 +328,13 @@ struct aws_http1_chunk_options {
     /*
      * Size of the chunk_data input stream in bytes.
      */
-    size_t chunk_data_size;
+    uint64_t chunk_data_size;
 
     /**
      * A pointer to an array of chunked extensions.
      * The num_extensions must match the length of the array.
-     * This data is copied, it does not need to remain valid on_complete is invoked.
+     * This data is deep-copied by aws_http1_stream_write_chunk(),
+     * it does not need to remain valid until on_complete is invoked.
      */
     struct aws_http1_chunk_extension *extensions;
 
@@ -334,8 +344,9 @@ struct aws_http1_chunk_options {
     size_t num_extensions;
 
     /**
-     * A caller provided callback which will be invoked after the chunk has been submitted to the channel for writing
-     * to the underlying HTTP connection.
+     * Invoked when the chunk data is no longer in use, whether or not it was successfully sent.
+     * Optional.
+     * See `aws_http1_stream_write_chunk_complete_fn`.
      */
     aws_http1_stream_write_chunk_complete_fn *on_complete;
 
@@ -596,14 +607,26 @@ AWS_HTTP_API
 void aws_http_message_set_body_stream(struct aws_http_message *message, struct aws_input_stream *body_stream);
 
 /**
- * Submit a stream of data for writing to an outbound HTTP/1.1 stream using chunked transfer encoding.
- * Note: Everything except the input stream and http stream may be cleaned up after this call returns.
- * Upon invocation of on_complete, the caller may release or modify the data stream.
- * On successful submission of the data stream to the HTTP stream, AWS_OP_SUCCESS is returned and AWS_OP_ERR otherwise.
+ * Submit a chunk of data to be sent on an HTTP/1.1 stream.
+ * The stream must have specified "chunked" in a "transfer-encoding" header.
+ * For client streams, activate() must be called before any chunks are submitted.
+ * For server streams, the response must be submitted before any chunks.
+ * A final chunk with size 0 must be submitted to successfully complete the HTTP-stream.
+ *
+ * Returns AWS_OP_SUCCESS if the chunk has been submitted. The chunk's completion
+ * callback will be invoked when the HTTP-stream is done with the chunk data,
+ * whether or not it was successfully sent (see `aws_http1_stream_write_chunk_complete_fn`).
+ * The chunk data must remain valid until the completion callback is invoked.
+ *
+ * Returns AWS_OP_ERR and raises an error if the chunk could not be submitted.
+ * In this case, the chunk's completion callback will never be invoked.
+ * Note that it is always possible for the HTTP-stream to terminate unexpectedly
+ * prior to this call being made, in which case the error raised is
+ * AWS_ERROR_HTTP_STREAM_HAS_COMPLETED.
  */
 AWS_HTTP_API int aws_http1_stream_write_chunk(
     struct aws_http_stream *http1_stream,
-    struct aws_http1_chunk_options *options);
+    const struct aws_http1_chunk_options *options);
 
 /**
  * Get the message's aws_http_headers.
@@ -734,11 +757,17 @@ AWS_HTTP_API
 int aws_http_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response);
 
 /**
- * Manually issue a window update.
- * Note that the stream's default behavior is to issue updates which keep the window at its original size.
- * See aws_http_make_request_options.manual_window_management for details on letting the window shrink.
+ * Increment the stream's flow-control window to keep data flowing.
  *
- * TODO: HTTP/2 vs HTTP/1, we need two different function
+ * If the connection was created with `manual_window_management` set true,
+ * the flow-control window of each stream will shrink as body data is received
+ * (headers, padding, and other metadata do not affect the window).
+ * The connection's `initial_window_size` determines the starting size of each stream's window.
+ * If a stream's flow-control window reaches 0, no further data will be received.
+ *
+ * If `manual_window_management` is false, this call will have no effect.
+ * The connection maintains its flow-control windows such that
+ * no back-pressure is applied and data arrives as fast as possible.
  */
 AWS_HTTP_API
 void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);

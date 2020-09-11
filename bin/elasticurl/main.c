@@ -64,7 +64,6 @@ struct elasticurl_ctx {
     enum aws_log_level log_level;
     enum aws_http_version required_http_version;
     bool exchange_completed;
-    bool bootstrap_shutdown_completed;
 };
 
 static void s_usage(int exit_code) {
@@ -451,12 +450,6 @@ static void s_on_signing_complete(struct aws_http_message *request, int error_co
 
 static void s_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct elasticurl_ctx *app_ctx = user_data;
-    if (app_ctx->required_http_version) {
-        if (aws_http_connection_get_version(connection) != app_ctx->required_http_version) {
-            fprintf(stderr, "Error. The requested HTTP version, %s, is not supported by the peer.", app_ctx->alpn);
-            exit(1);
-        }
-    }
 
     if (error_code) {
         fprintf(stderr, "Connection failed with error %s\n", aws_error_debug_str(error_code));
@@ -465,6 +458,13 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
         aws_mutex_unlock(&app_ctx->mutex);
         aws_condition_variable_notify_all(&app_ctx->c_var);
         return;
+    }
+
+    if (app_ctx->required_http_version) {
+        if (aws_http_connection_get_version(connection) != app_ctx->required_http_version) {
+            fprintf(stderr, "Error. The requested HTTP version, %s, is not supported by the peer.", app_ctx->alpn);
+            exit(1);
+        }
     }
 
     app_ctx->connection = connection;
@@ -536,20 +536,6 @@ static void s_on_client_connection_shutdown(struct aws_http_connection *connecti
 static bool s_completion_predicate(void *arg) {
     struct elasticurl_ctx *app_ctx = arg;
     return app_ctx->exchange_completed;
-}
-
-static void s_bootstrap_on_shutdown(void *user_data) {
-    struct elasticurl_ctx *app_ctx = user_data;
-
-    aws_mutex_lock(&app_ctx->mutex);
-    app_ctx->bootstrap_shutdown_completed = true;
-    aws_mutex_unlock(&app_ctx->mutex);
-    aws_condition_variable_notify_all(&app_ctx->c_var);
-}
-
-static bool s_bootstrap_shutdown_predicate(void *arg) {
-    struct elasticurl_ctx *app_ctx = arg;
-    return app_ctx->bootstrap_shutdown_completed;
 }
 
 int main(int argc, char **argv) {
@@ -689,17 +675,12 @@ int main(int argc, char **argv) {
         }
     }
 
-    struct aws_event_loop_group el_group;
-    aws_event_loop_group_default_init(&el_group, allocator, 1);
-
-    struct aws_host_resolver resolver;
-    aws_host_resolver_init_default(&resolver, allocator, 8, &el_group);
+    struct aws_event_loop_group *el_group = aws_event_loop_group_new_default(allocator, 1, NULL);
+    struct aws_host_resolver *resolver = aws_host_resolver_new_default(allocator, 8, el_group, NULL);
 
     struct aws_client_bootstrap_options bootstrap_options = {
-        .event_loop_group = &el_group,
-        .host_resolver = &resolver,
-        .on_shutdown_complete = s_bootstrap_on_shutdown,
-        .user_data = &app_ctx,
+        .event_loop_group = el_group,
+        .host_resolver = resolver,
     };
     struct aws_client_bootstrap *bootstrap = aws_client_bootstrap_new(allocator, &bootstrap_options);
 
@@ -730,16 +711,17 @@ int main(int argc, char **argv) {
     aws_mutex_unlock(&app_ctx.mutex);
 
     aws_client_bootstrap_release(bootstrap);
-    aws_mutex_lock(&app_ctx.mutex);
-    aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_bootstrap_shutdown_predicate, &app_ctx);
-    aws_mutex_unlock(&app_ctx.mutex);
+    aws_host_resolver_release(resolver);
+    aws_event_loop_group_release(el_group);
 
-    aws_host_resolver_clean_up(&resolver);
-    aws_event_loop_group_clean_up(&el_group);
+    if (aws_global_thread_creator_shutdown_wait_for(5)) {
+        fprintf(stderr, "Timeout waiting for thread shutdown!");
+        exit(1);
+    }
 
     if (tls_ctx) {
         aws_tls_connection_options_clean_up(&tls_connection_options);
-        aws_tls_ctx_destroy(tls_ctx);
+        aws_tls_ctx_release(tls_ctx);
         aws_tls_ctx_options_clean_up(&tls_ctx_options);
     }
 

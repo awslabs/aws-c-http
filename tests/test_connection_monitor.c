@@ -107,7 +107,9 @@ static int s_init_monitor_test(struct aws_allocator *allocator, struct aws_crt_s
     s_test_context.test_channel.channel_shutdown = s_testing_channel_shutdown_callback;
     s_test_context.test_channel.channel_shutdown_user_data = &s_test_context;
 
-    struct aws_http_connection *connection = aws_http_connection_new_http1_1_client(allocator, true, SIZE_MAX);
+    struct aws_http1_connection_options http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+    struct aws_http_connection *connection =
+        aws_http_connection_new_http1_1_client(allocator, true, SIZE_MAX, &http1_options);
     ASSERT_NOT_NULL(connection);
     connection->next_stream_id = 1;
 

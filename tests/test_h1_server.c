@@ -183,7 +183,8 @@ static int s_tester_init(struct aws_allocator *alloc) {
     struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
     ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, alloc, &test_channel_options));
 
-    s_tester.server_connection = aws_http_connection_new_http1_1_server(alloc, true, SIZE_MAX);
+    struct aws_http1_connection_options http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+    s_tester.server_connection = aws_http_connection_new_http1_1_server(alloc, true, SIZE_MAX, &http1_options);
     ASSERT_NOT_NULL(s_tester.server_connection);
     struct aws_http_server_connection_options options = AWS_HTTP_SERVER_CONNECTION_OPTIONS_INIT;
     options.connection_user_data = &s_tester;
@@ -1466,7 +1467,8 @@ static int s_error_tester_init(struct aws_allocator *alloc, struct error_from_ca
     struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
     ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc, &test_channel_options));
 
-    tester->server_connection = aws_http_connection_new_http1_1_server(alloc, true, SIZE_MAX);
+    struct aws_http1_connection_options http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+    tester->server_connection = aws_http_connection_new_http1_1_server(alloc, true, SIZE_MAX, &http1_options);
     ASSERT_NOT_NULL(tester->server_connection);
     struct aws_http_server_connection_options options = AWS_HTTP_SERVER_CONNECTION_OPTIONS_INIT;
     options.connection_user_data = tester;
@@ -1558,7 +1560,10 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
     struct aws_http_message *response;
     ASSERT_SUCCESS(
         s_create_response(&response, 200, headers, AWS_ARRAY_SIZE(headers), &error_from_outgoing_body_stream));
-    ASSERT_SUCCESS(aws_http_stream_send_response(request->request_handler, response));
+
+    /* send_response() may succeed or fail, depending on when things shut down */
+    aws_http_stream_send_response(request->request_handler, response);
+
     testing_channel_drain_queued_tasks(&error_tester.testing_channel);
     /* check that callbacks were invoked before error_at, but not after */
     for (int i = 0; i < REQUEST_HANDLER_CALLBACK_COMPLETE; ++i) {

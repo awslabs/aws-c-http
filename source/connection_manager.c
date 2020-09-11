@@ -23,6 +23,10 @@
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4232) /* function pointer to dll symbol */
+#endif
+
 /*
  * Established connections not currently in use are tracked via this structure.
  */
@@ -644,6 +648,8 @@ static void s_aws_http_connection_manager_finish_destroy(struct aws_http_connect
 
     aws_mutex_clean_up(&manager->lock);
 
+    aws_client_bootstrap_release(manager->bootstrap);
+
     if (manager->shutdown_complete_callback) {
         manager->shutdown_complete_callback(manager->shutdown_complete_user_data);
     }
@@ -783,7 +789,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     aws_linked_list_init(&manager->idle_connections);
     aws_linked_list_init(&manager->pending_acquisitions);
 
-    manager->host = aws_string_new_from_array(allocator, options->host.ptr, options->host.len);
+    manager->host = aws_string_new_from_cursor(allocator, &options->host);
     if (manager->host == NULL) {
         goto on_error;
     }
@@ -811,7 +817,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->port = options->port;
     manager->max_connections = options->max_connections;
     manager->socket_options = *options->socket_options;
-    manager->bootstrap = options->bootstrap;
+    manager->bootstrap = aws_client_bootstrap_acquire(options->bootstrap);
     manager->system_vtable = g_aws_http_connection_manager_default_system_vtable_ptr;
     manager->external_ref_count = 1;
     manager->shutdown_complete_callback = options->shutdown_complete_callback;
