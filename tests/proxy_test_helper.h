@@ -43,8 +43,8 @@ struct proxy_tester_options {
 struct proxy_tester {
     struct aws_allocator *alloc;
     struct aws_logger logger;
-    struct aws_event_loop_group event_loop_group;
-    struct aws_host_resolver host_resolver;
+    struct aws_event_loop_group *event_loop_group;
+    struct aws_host_resolver *host_resolver;
     struct aws_client_bootstrap *client_bootstrap;
 
     struct aws_tls_ctx *tls_ctx;
@@ -63,7 +63,6 @@ struct proxy_tester {
     struct testing_channel *testing_channel;
 
     bool client_connection_is_shutdown;
-    bool client_bootstrap_is_shutdown;
 
     /* If we need to wait for some async process*/
     struct aws_mutex wait_lock;
