@@ -252,8 +252,7 @@ struct aws_websocket_client_connection_options {
 
 /**
  * Called repeatedly as the websocket's payload is streamed out.
- * The user should write payload data to out_buf and return an enum to indicate their progress.
- * If the data is not yet available, your may return return IN_PROGRESS without writing out any data.
+ * The user should write payload data to out_buf, up to available capacity.
  * The websocket will mask this data for you, if necessary.
  * Invoked repeatedly on the websocket's event-loop thread.
  *
