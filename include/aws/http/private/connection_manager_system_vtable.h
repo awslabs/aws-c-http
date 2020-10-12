@@ -10,6 +10,8 @@
 
 #include <aws/http/connection.h>
 
+struct aws_http_connection_manager;
+
 typedef int(aws_http_connection_manager_create_connection_fn)(const struct aws_http_client_connection_options *options);
 typedef void(aws_http_connection_manager_close_connection_fn)(struct aws_http_connection *connection);
 typedef void(aws_http_connection_release_connection_fn)(struct aws_http_connection *connection);
