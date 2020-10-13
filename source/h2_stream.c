@@ -11,6 +11,7 @@
 #include <aws/io/channel.h>
 #include <aws/io/logging.h>
 
+/* Apple toolchains such as xcode and swiftpm define the DEBUG symbol. undef it here so we can actually use the token */
 #undef DEBUG
 
 static void s_stream_destroy(struct aws_http_stream *stream_base);

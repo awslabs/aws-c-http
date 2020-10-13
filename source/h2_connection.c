@@ -17,6 +17,7 @@
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
+/* Apple toolchains such as xcode and swiftpm define the DEBUG symbol. undef it here so we can actually use the token */
 #undef DEBUG
 
 #define CONNECTION_LOGF(level, connection, text, ...)                                                                  \
