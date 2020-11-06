@@ -252,8 +252,7 @@ struct aws_websocket_client_connection_options {
 
 /**
  * Called repeatedly as the websocket's payload is streamed out.
- * The user should write payload data to out_buf and return an enum to indicate their progress.
- * If the data is not yet available, your may return return IN_PROGRESS without writing out any data.
+ * The user should write payload data to out_buf, up to available capacity.
  * The websocket will mask this data for you, if necessary.
  * Invoked repeatedly on the websocket's event-loop thread.
  *
@@ -267,7 +266,7 @@ typedef bool(aws_websocket_stream_outgoing_payload_fn)(
 
 /**
  * Called when a aws_websocket_send_frame() operation completes.
- * error_code will be non-zero if the operation was successful.
+ * error_code will be zero if the operation was successful.
  * "Success" does not guarantee that the peer actually received or processed the frame.
  * Invoked exactly once per sent frame on the websocket's event-loop thread.
  */
