@@ -28,6 +28,7 @@ string(REPLACE ";" "${AWS_MODULE_DIR};" AWS_MODULE_PATH "${CMAKE_PREFIX_PATH}${A
 list(APPEND CMAKE_MODULE_PATH ${AWS_MODULE_PATH})
 
 include(AwsCFlags)
+include(AwsCheckHeaders)
 include(AwsSharedLibSetup)
 include(AwsSanitizers)
 include(CheckCCompilerFlag)
@@ -61,7 +62,6 @@ aws_add_sanitizers(${PROJECT_NAME} BLACKLIST "sanitizer-blacklist.txt")
 
 # We are not ABI stable yet
 set_target_properties(${PROJECT_NAME} PROPERTIES VERSION 1.0.0)
-set_target_properties(${PROJECT_NAME} PROPERTIES SOVERSION 0unstable)
 
 target_include_directories(${PROJECT_NAME} PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -73,6 +73,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC ${DEP_AWS_LIBS})
 
 aws_prepare_shared_lib_exports(${PROJECT_NAME})
 
+aws_check_headers(${PROJECT_NAME} ${AWS_HTTP_HEADERS})
 install(FILES ${AWS_HTTP_HEADERS} DESTINATION "include/aws/http")
 
 if (BUILD_SHARED_LIBS)

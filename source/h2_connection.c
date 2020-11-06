@@ -17,6 +17,9 @@
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
+/* Apple toolchains such as xcode and swiftpm define the DEBUG symbol. undef it here so we can actually use the token */
+#undef DEBUG
+
 #define CONNECTION_LOGF(level, connection, text, ...)                                                                  \
     AWS_LOGF_##level(AWS_LS_HTTP_CONNECTION, "id=%p: " text, (void *)(connection), __VA_ARGS__)
 #define CONNECTION_LOG(level, connection, text) CONNECTION_LOGF(level, connection, "%s", text)
