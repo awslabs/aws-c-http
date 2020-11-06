@@ -2177,8 +2177,8 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
 
     int err = 0;
     bool cross_thread_work_should_schedule = false;
-    bool connection_open;
-    size_t sum_size;
+    bool connection_open = false;
+    size_t sum_size = 0;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
 
