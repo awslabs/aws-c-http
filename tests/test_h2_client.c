@@ -293,7 +293,6 @@ TEST_CASE(h2_client_auto_ping_ack_higher_priority) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* validate PING ACK frame has higher priority than the normal request frames, and be received earliest */
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     struct h2_decoded_frame *fastest_frame = h2_decode_tester_get_frame(&s_tester.peer.decode, frames_count);
