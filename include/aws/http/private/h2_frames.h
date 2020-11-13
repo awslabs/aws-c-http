@@ -1,21 +1,12 @@
 #ifndef AWS_HTTP_H2_FRAMES_H
 #define AWS_HTTP_H2_FRAMES_H
 
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
+#include <aws/http/connection.h>
 #include <aws/http/request_response.h>
 
 #include <aws/common/byte_buf.h>
@@ -45,66 +36,37 @@ enum aws_h2_frame_flag {
     AWS_H2_FRAME_F_PRIORITY = 0x20,
 };
 
-/* Error codes that may be present in RST_STREAM and GOAWAY frames (RFC-7540 7). */
-enum aws_h2_error_code {
-    AWS_H2_ERR_NO_ERROR = 0x00,
-    AWS_H2_ERR_PROTOCOL_ERROR = 0x01,
-    AWS_H2_ERR_INTERNAL_ERROR = 0x02,
-    AWS_H2_ERR_FLOW_CONTROL_ERROR = 0x03,
-    AWS_H2_ERR_SETTINGS_TIMEOUT = 0x04,
-    AWS_H2_ERR_STREAM_CLOSED = 0x05,
-    AWS_H2_ERR_FRAME_SIZE_ERROR = 0x06,
-    AWS_H2_ERR_REFUSED_STREAM = 0x07,
-    AWS_H2_ERR_CANCEL = 0x08,
-    AWS_H2_ERR_COMPRESSION_ERROR = 0x09,
-    AWS_H2_ERR_CONNECT_ERROR = 0x0A,
-    AWS_H2_ERR_ENHANCE_YOUR_CALM = 0x0B,
-    AWS_H2_ERR_INADEQUATE_SECURITY = 0x0C,
-    AWS_H2_ERR_HTTP_1_1_REQUIRED = 0x0D,
-    AWS_H2_ERR_COUNT,
-};
-
 /* Pairs the AWS_ERROR_* to show our API user,
- * along with the AWS_H2_ERR_* that should
+ * along with the AWS_HTTP2_ERR_* that should
  * be sent to the peer via RST_STREAM or GOAWAY.
  *
  * Used in place of normal error handling in functions that may result
  * in an HTTP/2 Connection Error or Stream Error.
  */
 struct aws_h2err {
-    enum aws_h2_error_code h2_code;
+    enum aws_http2_error_code h2_code;
     int aws_code;
 };
 
 #define AWS_H2ERR_SUCCESS                                                                                              \
     (struct aws_h2err) { .h2_code = 0, .aws_code = 0 }
 
-/* Predefined settings identifiers (RFC-7540 6.5.2) */
-enum aws_h2_settings {
-    AWS_H2_SETTINGS_BEGIN_RANGE = 0x1, /* Beginning of known values */
-    AWS_H2_SETTINGS_HEADER_TABLE_SIZE = 0x1,
-    AWS_H2_SETTINGS_ENABLE_PUSH = 0x2,
-    AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS = 0x3,
-    AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE = 0x4,
-    AWS_H2_SETTINGS_MAX_FRAME_SIZE = 0x5,
-    AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE = 0x6,
-    AWS_H2_SETTINGS_END_RANGE, /* End of known values */
-};
-
 #define AWS_H2_PAYLOAD_MAX (0x00FFFFFF)       /* must fit in 3 bytes */
 #define AWS_H2_WINDOW_UPDATE_MAX (0x7FFFFFFF) /* cannot use high bit */
 #define AWS_H2_STREAM_ID_MAX (0x7FFFFFFF)     /* cannot use high bit */
 #define AWS_H2_FRAME_PREFIX_SIZE (9)
-#define AWS_H2_PING_DATA_SIZE (8)
 
 /* Legal min(inclusive) and max(inclusive) for each setting */
-extern const uint32_t aws_h2_settings_bounds[AWS_H2_SETTINGS_END_RANGE][2];
+extern const uint32_t aws_h2_settings_bounds[AWS_HTTP2_SETTINGS_END_RANGE][2];
 
 /* Initial values for settings RFC-7540 6.5.2 */
-extern const uint32_t aws_h2_settings_initial[AWS_H2_SETTINGS_END_RANGE];
+AWS_HTTP_API
+extern const uint32_t aws_h2_settings_initial[AWS_HTTP2_SETTINGS_END_RANGE];
 
 /* This magic string must be the very first thing a client sends to the server.
- * See RFC-7540 3.5 - HTTP/2 Connection Preface */
+ * See RFC-7540 3.5 - HTTP/2 Connection Preface.
+ * Exported for tests */
+AWS_HTTP_API
 extern const struct aws_byte_cursor aws_h2_connection_preface_client_string;
 
 /**
@@ -137,12 +99,6 @@ struct aws_h2_frame {
     /* If true, frame will be sent before those with normal priority.
      * Useful for frames like PING ACK where low latency is important. */
     bool high_priority;
-};
-
-/* A h2 setting and its value, used in SETTINGS frame */
-struct aws_h2_frame_setting {
-    uint16_t id; /* aws_h2_settings */
-    uint32_t value;
 };
 
 /* Used to encode a frame */
@@ -179,7 +135,7 @@ AWS_HTTP_API
 const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type);
 
 AWS_HTTP_API
-const char *aws_h2_error_code_to_str(enum aws_h2_error_code h2_error_code);
+const char *aws_http2_error_code_to_str(enum aws_http2_error_code h2_error_code);
 
 /**
  * Specify which HTTP/2 error-code will be sent to the peer in a GOAWAY or RST_STREAM frame.
@@ -187,7 +143,7 @@ const char *aws_h2_error_code_to_str(enum aws_h2_error_code h2_error_code);
  * The AWS_ERROR reported to the API user will be AWS_ERROR_HTTP_PROTOCOL_ERROR.
  */
 AWS_HTTP_API
-struct aws_h2err aws_h2err_from_h2_code(enum aws_h2_error_code h2_error_code);
+struct aws_h2err aws_h2err_from_h2_code(enum aws_http2_error_code h2_error_code);
 
 /**
  * Specify which AWS_ERROR will be reported to the API user.
@@ -296,7 +252,7 @@ struct aws_h2_frame *aws_h2_frame_new_rst_stream(
 AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_settings(
     struct aws_allocator *allocator,
-    const struct aws_h2_frame_setting *settings_array,
+    const struct aws_http2_setting *settings_array,
     size_t num_settings,
     bool ack);
 
@@ -316,7 +272,7 @@ AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_ping(
     struct aws_allocator *allocator,
     bool ack,
-    const uint8_t opaque_data[AWS_H2_PING_DATA_SIZE]);
+    const uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE]);
 
 AWS_HTTP_API
 struct aws_h2_frame *aws_h2_frame_new_goaway(

@@ -1,19 +1,9 @@
 #ifndef AWS_HTTP_PROXY_TEST_HELPER_H
 #define AWS_HTTP_PROXY_TEST_HELPER_H
 
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/common/condition_variable.h>
@@ -53,8 +43,8 @@ struct proxy_tester_options {
 struct proxy_tester {
     struct aws_allocator *alloc;
     struct aws_logger logger;
-    struct aws_event_loop_group event_loop_group;
-    struct aws_host_resolver host_resolver;
+    struct aws_event_loop_group *event_loop_group;
+    struct aws_host_resolver *host_resolver;
     struct aws_client_bootstrap *client_bootstrap;
 
     struct aws_tls_ctx *tls_ctx;
@@ -73,7 +63,6 @@ struct proxy_tester {
     struct testing_channel *testing_channel;
 
     bool client_connection_is_shutdown;
-    bool client_bootstrap_is_shutdown;
 
     /* If we need to wait for some async process*/
     struct aws_mutex wait_lock;

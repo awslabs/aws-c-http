@@ -1,19 +1,9 @@
 #ifndef AWS_HTTP_H
 #define AWS_HTTP_H
 
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/common/logging.h>
@@ -53,8 +43,30 @@ enum aws_http_errors {
     AWS_ERROR_HTTP_STREAM_IDS_EXHAUSTED,
     AWS_ERROR_HTTP_GOAWAY_RECEIVED,
     AWS_ERROR_HTTP_RST_STREAM_RECEIVED,
+    AWS_ERROR_HTTP_RST_STREAM_SENT,
+    AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED,
+    AWS_ERROR_HTTP_STREAM_HAS_COMPLETED,
 
     AWS_ERROR_HTTP_END_RANGE = AWS_ERROR_ENUM_END_RANGE(AWS_C_HTTP_PACKAGE_ID)
+};
+
+/* Error codes that may be present in HTTP/2 RST_STREAM and GOAWAY frames (RFC-7540 7). */
+enum aws_http2_error_code {
+    AWS_HTTP2_ERR_NO_ERROR = 0x00,
+    AWS_HTTP2_ERR_PROTOCOL_ERROR = 0x01,
+    AWS_HTTP2_ERR_INTERNAL_ERROR = 0x02,
+    AWS_HTTP2_ERR_FLOW_CONTROL_ERROR = 0x03,
+    AWS_HTTP2_ERR_SETTINGS_TIMEOUT = 0x04,
+    AWS_HTTP2_ERR_STREAM_CLOSED = 0x05,
+    AWS_HTTP2_ERR_FRAME_SIZE_ERROR = 0x06,
+    AWS_HTTP2_ERR_REFUSED_STREAM = 0x07,
+    AWS_HTTP2_ERR_CANCEL = 0x08,
+    AWS_HTTP2_ERR_COMPRESSION_ERROR = 0x09,
+    AWS_HTTP2_ERR_CONNECT_ERROR = 0x0A,
+    AWS_HTTP2_ERR_ENHANCE_YOUR_CALM = 0x0B,
+    AWS_HTTP2_ERR_INADEQUATE_SECURITY = 0x0C,
+    AWS_HTTP2_ERR_HTTP_1_1_REQUIRED = 0x0D,
+    AWS_HTTP2_ERR_COUNT,
 };
 
 enum aws_http_log_subject {

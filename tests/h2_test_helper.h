@@ -1,18 +1,8 @@
 #ifndef AWS_HTTP_H2_TEST_HELPER_H
 #define AWS_HTTP_H2_TEST_HELPER_H
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/common/array_list.h>
@@ -30,7 +20,7 @@ struct aws_input_stream;
                 PRINT_FAIL_INTERNAL0(                                                                                  \
                     "Expected success at %s; got aws_h2err{%s, %s}\n",                                                 \
                     #condition,                                                                                        \
-                    aws_h2_error_code_to_str(assert_rv.h2_code),                                                       \
+                    aws_http2_error_code_to_str(assert_rv.h2_code),                                                    \
                     aws_error_name(assert_rv.aws_code));                                                               \
             }                                                                                                          \
             POSTFAIL_INTERNAL();                                                                                       \
@@ -55,7 +45,7 @@ struct aws_input_stream;
             if (!PRINT_FAIL_INTERNAL0(__VA_ARGS__)) {                                                                  \
                 PRINT_FAIL_INTERNAL0(                                                                                  \
                     "Expected %s failure at %s; got AWS_H2ERR_SUCCESS\n",                                              \
-                    aws_h2_error_code_to_str(h2_error),                                                                \
+                    aws_http2_error_code_to_str(h2_error),                                                             \
                     #condition);                                                                                       \
             }                                                                                                          \
             POSTFAIL_INTERNAL();                                                                                       \
@@ -63,9 +53,9 @@ struct aws_input_stream;
         if (assert_rv.h2_code != h2_error) {                                                                           \
             PRINT_FAIL_INTERNAL0(                                                                                      \
                 "Expected %s failure at %s; got aws_h2err{%s, %s}\n",                                                  \
-                aws_h2_error_code_to_str(h2_error),                                                                    \
+                aws_http2_error_code_to_str(h2_error),                                                                 \
                 #condition,                                                                                            \
-                aws_h2_error_code_to_str(assert_rv.h2_code),                                                           \
+                aws_http2_error_code_to_str(assert_rv.h2_code),                                                        \
                 aws_error_name(assert_rv.aws_code));                                                                   \
         }                                                                                                              \
     } while (0)
@@ -95,17 +85,17 @@ struct h2_decoded_frame {
     bool end_stream; /* HEADERS and DATA might have this */
     bool ack;        /* PING and SETTINGS might have this */
 
-    uint32_t error_code;                             /* RST_STREAM and GOAWAY have this */
-    uint32_t promised_stream_id;                     /* PUSH_PROMISE has this */
-    uint32_t goaway_last_stream_id;                  /* GOAWAY has this */
-    uint32_t goaway_debug_data_remaining;            /* GOAWAY has this*/
-    uint8_t ping_opaque_data[AWS_H2_PING_DATA_SIZE]; /* PING has this */
-    uint32_t window_size_increment;                  /* WINDOW_UPDATE has this */
+    uint32_t error_code;                                /* RST_STREAM and GOAWAY have this */
+    uint32_t promised_stream_id;                        /* PUSH_PROMISE has this */
+    uint32_t goaway_last_stream_id;                     /* GOAWAY has this */
+    uint32_t goaway_debug_data_remaining;               /* GOAWAY has this*/
+    uint8_t ping_opaque_data[AWS_HTTP2_PING_DATA_SIZE]; /* PING has this */
+    uint32_t window_size_increment;                     /* WINDOW_UPDATE has this */
 
     struct aws_http_headers *headers;             /* HEADERS and PUSH_PROMISE have this */
     bool headers_malformed;                       /* HEADERS and PUSH_PROMISE have this */
     enum aws_http_header_block header_block_type; /* HEADERS have this */
-    struct aws_array_list settings;               /* contains aws_h2_frame_setting, SETTINGS has this */
+    struct aws_array_list settings;               /* contains aws_http2_setting, SETTINGS has this */
     struct aws_byte_buf data;                     /* DATA has this */
     uint32_t data_payload_len;                    /* DATA has this */
     bool data_end_stream;                         /* DATA has this */

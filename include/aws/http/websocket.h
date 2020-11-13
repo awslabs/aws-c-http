@@ -1,18 +1,8 @@
 #ifndef AWS_HTTP_WEBSOCKET_H
 #define AWS_HTTP_WEBSOCKET_H
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/http.h>
@@ -44,6 +34,7 @@ enum aws_websocket_opcode {
 
 #define AWS_WEBSOCKET_MAX_PAYLOAD_LENGTH 0x7FFFFFFFFFFFFFFF
 #define AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH 25
+#define AWS_WEBSOCKET_CLOSE_TIMEOUT 1000000000 // nanos -> 1 sec
 
 /**
  * Called when websocket setup is complete.
@@ -261,8 +252,7 @@ struct aws_websocket_client_connection_options {
 
 /**
  * Called repeatedly as the websocket's payload is streamed out.
- * The user should write payload data to out_buf and return an enum to indicate their progress.
- * If the data is not yet available, your may return return IN_PROGRESS without writing out any data.
+ * The user should write payload data to out_buf, up to available capacity.
  * The websocket will mask this data for you, if necessary.
  * Invoked repeatedly on the websocket's event-loop thread.
  *
@@ -276,7 +266,7 @@ typedef bool(aws_websocket_stream_outgoing_payload_fn)(
 
 /**
  * Called when a aws_websocket_send_frame() operation completes.
- * error_code will be non-zero if the operation was successful.
+ * error_code will be zero if the operation was successful.
  * "Success" does not guarantee that the peer actually received or processed the frame.
  * Invoked exactly once per sent frame on the websocket's event-loop thread.
  */

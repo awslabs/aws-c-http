@@ -1,19 +1,9 @@
 #ifndef AWS_HTTP_REQUEST_RESPONSE_IMPL_H
 #define AWS_HTTP_REQUEST_RESPONSE_IMPL_H
 
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/request_response.h>
@@ -26,6 +16,12 @@ struct aws_http_stream_vtable {
     void (*destroy)(struct aws_http_stream *stream);
     void (*update_window)(struct aws_http_stream *stream, size_t increment_size);
     int (*activate)(struct aws_http_stream *stream);
+
+    int (*http1_write_chunk)(struct aws_http_stream *http1_stream, const struct aws_http1_chunk_options *options);
+
+    int (*http2_reset_stream)(struct aws_http_stream *http2_stream, uint32_t http2_error);
+    int (*http2_get_received_error_code)(struct aws_http_stream *http2_stream, uint32_t *http2_error);
+    int (*http2_get_sent_error_code)(struct aws_http_stream *http2_stream, uint32_t *http2_error);
 };
 
 /**
@@ -38,8 +34,6 @@ struct aws_http_stream {
     struct aws_http_connection *owning_connection;
 
     uint32_t id;
-
-    bool manual_window_management;
 
     void *user_data;
     aws_http_on_incoming_headers_fn *on_incoming_headers;

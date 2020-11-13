@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/private/connection_impl.h>
@@ -32,6 +22,7 @@
 
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
+#    pragma warning(disable : 4232) /* function pointer to dll symbol */
 #endif
 
 static struct aws_http_connection_system_vtable s_default_system_vtable = {
@@ -66,13 +57,13 @@ struct aws_http_server {
     } synced_data;
 };
 
-void s_server_lock_synced_data(struct aws_http_server *server) {
+static void s_server_lock_synced_data(struct aws_http_server *server) {
     int err = aws_mutex_lock(&server->synced_data.lock);
     AWS_ASSERT(!err);
     (void)err;
 }
 
-void s_server_unlock_synced_data(struct aws_http_server *server) {
+static void s_server_unlock_synced_data(struct aws_http_server *server) {
     int err = aws_mutex_unlock(&server->synced_data.lock);
     AWS_ASSERT(!err);
     (void)err;
@@ -85,7 +76,9 @@ static struct aws_http_connection *s_connection_new(
     bool is_server,
     bool is_using_tls,
     bool manual_window_management,
-    size_t initial_window_size) {
+    size_t initial_window_size,
+    const struct aws_http1_connection_options *http1_options,
+    const struct aws_http2_connection_options *http2_options) {
 
     struct aws_channel_slot *connection_slot = NULL;
     struct aws_http_connection *connection = NULL;
@@ -148,18 +141,18 @@ static struct aws_http_connection *s_connection_new(
     switch (version) {
         case AWS_HTTP_VERSION_1_1:
             if (is_server) {
-                connection =
-                    aws_http_connection_new_http1_1_server(alloc, manual_window_management, initial_window_size);
+                connection = aws_http_connection_new_http1_1_server(
+                    alloc, manual_window_management, initial_window_size, http1_options);
             } else {
-                connection =
-                    aws_http_connection_new_http1_1_client(alloc, manual_window_management, initial_window_size);
+                connection = aws_http_connection_new_http1_1_client(
+                    alloc, manual_window_management, initial_window_size, http1_options);
             }
             break;
         case AWS_HTTP_VERSION_2:
             if (is_server) {
-                connection = aws_http_connection_new_http2_server(alloc, manual_window_management, initial_window_size);
+                connection = aws_http_connection_new_http2_server(alloc, manual_window_management, http2_options);
             } else {
-                connection = aws_http_connection_new_http2_client(alloc, manual_window_management, initial_window_size);
+                connection = aws_http_connection_new_http2_client(alloc, manual_window_management, http2_options);
             }
             break;
         default:
@@ -185,11 +178,10 @@ static struct aws_http_connection *s_connection_new(
     }
 
     /* Connect handler and slot */
-    err = aws_channel_slot_set_handler(connection_slot, &connection->channel_handler);
-    if (err) {
+    if (aws_channel_slot_set_handler(connection_slot, &connection->channel_handler)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "static: Failed to setting HTTP handler into slot on channel %p, error %d (%s).",
+            "static: Failed to set HTTP handler into slot on channel %p, error %d (%s).",
             (void *)channel,
             aws_last_error(),
             aws_error_name(aws_last_error()));
@@ -224,6 +216,11 @@ bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
     return connection->vtable->is_open(connection);
 }
 
+bool aws_http_connection_new_requests_allowed(const struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    return connection->vtable->new_requests_allowed(connection);
+}
+
 bool aws_http_connection_is_client(const struct aws_http_connection *connection) {
     return connection->client_data;
 }
@@ -235,6 +232,112 @@ bool aws_http_connection_is_server(const struct aws_http_connection *connection)
 void aws_http_connection_update_window(struct aws_http_connection *connection, size_t increment_size) {
     AWS_ASSERT(connection);
     connection->vtable->update_window(connection, increment_size);
+}
+
+static int s_check_http2_connection(const struct aws_http_connection *http2_connection) {
+    if (http2_connection->http_version == AWS_HTTP_VERSION_2) {
+        return AWS_OP_SUCCESS;
+    } else {
+        AWS_LOGF_WARN(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: HTTP/2 connection only function invoked on connection with other protocol, ignoring call.",
+            (void *)http2_connection);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+}
+
+int aws_http2_connection_change_settings(
+    struct aws_http_connection *http2_connection,
+    const struct aws_http2_setting *settings_array,
+    size_t num_settings,
+    aws_http2_on_change_settings_complete_fn *on_completed,
+    void *user_data) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    return http2_connection->vtable->change_settings(
+        http2_connection, settings_array, num_settings, on_completed, user_data);
+}
+
+int aws_http2_connection_ping(
+    struct aws_http_connection *http2_connection,
+    const struct aws_byte_cursor *optional_opaque_data,
+    aws_http2_on_ping_complete_fn *on_ack,
+    void *user_data) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    return http2_connection->vtable->send_ping(http2_connection, optional_opaque_data, on_ack, user_data);
+}
+
+int aws_http2_connection_send_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t http2_error,
+    bool allow_more_streams,
+    const struct aws_byte_cursor *optional_debug_data) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    return http2_connection->vtable->send_goaway(
+        http2_connection, http2_error, allow_more_streams, optional_debug_data);
+}
+
+int aws_http2_connection_get_sent_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(out_http2_error);
+    AWS_PRECONDITION(out_last_stream_id);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    return http2_connection->vtable->get_sent_goaway(http2_connection, out_http2_error, out_last_stream_id);
+}
+
+int aws_http2_connection_get_received_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(out_http2_error);
+    AWS_PRECONDITION(out_last_stream_id);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    return http2_connection->vtable->get_received_goaway(http2_connection, out_http2_error, out_last_stream_id);
+}
+
+int aws_http2_connection_get_local_settings(
+    const struct aws_http_connection *http2_connection,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    http2_connection->vtable->get_local_settings(http2_connection, out_settings);
+    return AWS_OP_SUCCESS;
+}
+
+int aws_http2_connection_get_remote_settings(
+    const struct aws_http_connection *http2_connection,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]) {
+    AWS_ASSERT(http2_connection);
+    AWS_PRECONDITION(http2_connection->vtable);
+    if (s_check_http2_connection(http2_connection)) {
+        return AWS_OP_ERR;
+    }
+    http2_connection->vtable->get_remote_settings(http2_connection, out_settings);
+    return AWS_OP_SUCCESS;
 }
 
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {
@@ -296,13 +399,18 @@ static void s_server_bootstrap_on_accept_channel_setup(
         goto error;
     }
     /* Create connection */
+    /* TODO: expose http1/2 options to server API */
+    struct aws_http1_connection_options http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+    struct aws_http2_connection_options http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
     connection = s_connection_new(
         server->alloc,
         channel,
         true,
         server->is_using_tls,
         server->manual_window_management,
-        server->initial_window_size);
+        server->initial_window_size,
+        &http1_options,
+        &http2_options);
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
@@ -397,6 +505,9 @@ static void s_http_server_clean_up(struct aws_http_server *server) {
     if (!server) {
         return;
     }
+
+    aws_server_bootstrap_release(server->bootstrap);
+
     /* invoke the user callback */
     if (server->on_destroy_complete) {
         server->on_destroy_complete(server->user_data);
@@ -469,7 +580,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     }
 
     server->alloc = options->allocator;
-    server->bootstrap = options->bootstrap;
+    server->bootstrap = aws_server_bootstrap_acquire(options->bootstrap);
     server->is_using_tls = options->tls_options != NULL;
     server->initial_window_size = options->initial_window_size;
     server->user_data = options->server_user_data;
@@ -628,7 +739,9 @@ static void s_client_bootstrap_on_channel_setup(
         false,
         http_bootstrap->is_using_tls,
         http_bootstrap->manual_window_management,
-        http_bootstrap->initial_window_size);
+        http_bootstrap->initial_window_size,
+        &http_bootstrap->http1_options,
+        &http_bootstrap->http2_options);
     if (!http_bootstrap->connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
@@ -721,68 +834,139 @@ static void s_client_bootstrap_on_channel_shutdown(
     aws_mem_release(http_bootstrap->alloc, http_bootstrap);
 }
 
+static int s_validate_http_client_connection_options(const struct aws_http_client_connection_options *options) {
+    if (options->self_size == 0) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, self size not initialized");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (!options->allocator) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, no allocator supplied");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (options->host_name.len == 0) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, empty host name.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (!options->socket_options) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, socket options are null.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (!options->on_setup) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, setup callback is null");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    /* http2_options cannot be NULL here, calling function adds them if they were missing */
+    if (options->http2_options->num_initial_settings > 0 && options->http2_options->initial_settings_array) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Invalid connection options, h2 settings count is non-zero but settings array is null");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (options->monitoring_options && !aws_http_connection_monitoring_options_is_valid(options->monitoring_options)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, invalid monitoring options");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 int aws_http_client_connect_internal(
-    const struct aws_http_client_connection_options *options,
+    const struct aws_http_client_connection_options *orig_options,
     aws_http_proxy_request_transform_fn *proxy_request_transform) {
 
-    AWS_FATAL_ASSERT(options->proxy_options == NULL);
+    if (!orig_options) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: http connection options are null.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
 
     struct aws_http_client_bootstrap *http_bootstrap = NULL;
     struct aws_string *host_name = NULL;
     int err = 0;
 
-    if (!options || options->self_size == 0 || !options->allocator || !options->bootstrap ||
-        options->host_name.len == 0 || !options->socket_options || !options->on_setup) {
+    /* make copy of options, and add defaults for missing optional structs */
+    struct aws_http_client_connection_options options = *orig_options;
 
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid options, cannot create client connection.");
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    const struct aws_http1_connection_options default_http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+    if (options.http1_options == NULL) {
+        options.http1_options = &default_http1_options;
+    }
+
+    const struct aws_http2_connection_options default_http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
+    if (options.http2_options == NULL) {
+        options.http2_options = &default_http2_options;
+    }
+
+    /* validate options */
+    if (s_validate_http_client_connection_options(&options)) {
         goto error;
     }
 
-    if (options->monitoring_options && !aws_http_connection_monitoring_options_is_valid(options->monitoring_options)) {
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: invalid monitoring options");
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        goto error;
-    }
+    AWS_FATAL_ASSERT(options.proxy_options == NULL);
 
     /* bootstrap_new() functions requires a null-terminated c-str */
-    host_name = aws_string_new_from_array(options->allocator, options->host_name.ptr, options->host_name.len);
+    host_name = aws_string_new_from_cursor(options.allocator, &options.host_name);
     if (!host_name) {
         goto error;
     }
 
-    http_bootstrap = aws_mem_calloc(options->allocator, 1, sizeof(struct aws_http_client_bootstrap));
-    if (!http_bootstrap) {
+    struct aws_http2_setting *setting_array = NULL;
+    if (!aws_mem_acquire_many(
+            options.allocator,
+            2,
+            &http_bootstrap,
+            sizeof(struct aws_http_client_bootstrap),
+            &setting_array,
+            options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting))) {
         goto error;
     }
 
-    http_bootstrap->alloc = options->allocator;
-    http_bootstrap->is_using_tls = options->tls_options != NULL;
-    http_bootstrap->manual_window_management = options->manual_window_management;
-    http_bootstrap->initial_window_size = options->initial_window_size;
-    http_bootstrap->user_data = options->user_data;
-    http_bootstrap->on_setup = options->on_setup;
-    http_bootstrap->on_shutdown = options->on_shutdown;
+    AWS_ZERO_STRUCT(*http_bootstrap);
+
+    http_bootstrap->alloc = options.allocator;
+    http_bootstrap->is_using_tls = options.tls_options != NULL;
+    http_bootstrap->manual_window_management = options.manual_window_management;
+    http_bootstrap->initial_window_size = options.initial_window_size;
+    http_bootstrap->user_data = options.user_data;
+    http_bootstrap->on_setup = options.on_setup;
+    http_bootstrap->on_shutdown = options.on_shutdown;
     http_bootstrap->proxy_request_transform = proxy_request_transform;
-    if (options->monitoring_options) {
-        http_bootstrap->monitoring_options = *options->monitoring_options;
+    http_bootstrap->http1_options = *options.http1_options;
+    http_bootstrap->http2_options = *options.http2_options;
+
+    /* keep a copy of the settings array if it's not NULL */
+    if (options.http2_options->num_initial_settings > 0) {
+        memcpy(
+            setting_array,
+            options.http2_options->initial_settings_array,
+            options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting));
+        http_bootstrap->http2_options.initial_settings_array = setting_array;
+    }
+
+    if (options.monitoring_options) {
+        http_bootstrap->monitoring_options = *options.monitoring_options;
     }
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_CONNECTION,
         "static: attempting to initialize a new client channel to %s:%d",
         aws_string_c_str(host_name),
-        (int)options->port);
+        (int)options.port);
 
     struct aws_socket_channel_bootstrap_options channel_options = {
-        .bootstrap = options->bootstrap,
+        .bootstrap = options.bootstrap,
         .host_name = aws_string_c_str(host_name),
-        .port = options->port,
-        .socket_options = options->socket_options,
-        .tls_options = options->tls_options,
+        .port = options.port,
+        .socket_options = options.socket_options,
+        .tls_options = options.tls_options,
         .setup_callback = s_client_bootstrap_on_channel_setup,
         .shutdown_callback = s_client_bootstrap_on_channel_shutdown,
-        .enable_read_back_pressure = options->manual_window_management,
+        .enable_read_back_pressure = options.manual_window_management,
         .user_data = http_bootstrap,
     };
 

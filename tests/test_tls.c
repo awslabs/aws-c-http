@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/connection.h>
@@ -31,9 +21,8 @@
 /* Singleton used by tests in this file */
 struct test_ctx {
     struct aws_allocator *alloc;
-    struct aws_logger logger;
-    struct aws_event_loop_group event_loop_group;
-    struct aws_host_resolver host_resolver;
+    struct aws_event_loop_group *event_loop_group;
+    struct aws_host_resolver *host_resolver;
     struct aws_tls_ctx *tls_ctx;
     struct aws_client_bootstrap *client_bootstrap;
     struct aws_http_connection *client_connection;
@@ -50,7 +39,7 @@ struct test_ctx {
 
 static const uint32_t TEST_TIMEOUT_SEC = 4;
 
-void s_on_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
+static void s_on_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct test_ctx *test = user_data;
     AWS_FATAL_ASSERT(aws_mutex_lock(&test->wait_lock) == AWS_OP_SUCCESS);
 
@@ -61,7 +50,7 @@ void s_on_connection_setup(struct aws_http_connection *connection, int error_cod
     aws_condition_variable_notify_one(&test->wait_cvar);
 }
 
-void s_on_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
+static void s_on_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
     (void)connection;
     struct test_ctx *test = user_data;
     AWS_FATAL_ASSERT(aws_mutex_lock(&test->wait_lock) == AWS_OP_SUCCESS);
@@ -94,15 +83,23 @@ static bool s_test_connection_shutdown_pred(void *user_data) {
 static int s_on_stream_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
     (void)stream;
     struct test_ctx *test = user_data;
+
+    AWS_FATAL_ASSERT(aws_mutex_lock(&test->wait_lock) == AWS_OP_SUCCESS);
     test->body_size += data->len;
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&test->wait_lock) == AWS_OP_SUCCESS);
+
     return AWS_OP_SUCCESS;
 }
 
 static void s_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     (void)stream;
     struct test_ctx *test = user_data;
+
+    AWS_FATAL_ASSERT(aws_mutex_lock(&test->wait_lock) == AWS_OP_SUCCESS);
     test->wait_result = error_code;
     test->stream_complete = true;
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&test->wait_lock) == AWS_OP_SUCCESS);
+
     aws_condition_variable_notify_one(&test->wait_cvar);
 }
 
@@ -131,19 +128,15 @@ static int s_test_tls_download_medium_file_general(
     AWS_ZERO_STRUCT(test);
     test.alloc = allocator;
 
-    struct aws_logger_standard_options logger_options = {.file = stdout, .level = AWS_LL_DEBUG};
-    aws_logger_init_standard(&test.logger, allocator, &logger_options);
-    aws_logger_set(&test.logger);
-
     aws_mutex_init(&test.wait_lock);
     aws_condition_variable_init(&test.wait_cvar);
 
-    ASSERT_SUCCESS(aws_event_loop_group_default_init(&test.event_loop_group, test.alloc, 1));
-    ASSERT_SUCCESS(aws_host_resolver_init_default(&test.host_resolver, test.alloc, 1, &test.event_loop_group));
+    test.event_loop_group = aws_event_loop_group_new_default(test.alloc, 1, NULL);
+    test.host_resolver = aws_host_resolver_new_default(test.alloc, 1, test.event_loop_group, NULL);
 
     struct aws_client_bootstrap_options bootstrap_options = {
-        .event_loop_group = &test.event_loop_group,
-        .host_resolver = &test.host_resolver,
+        .event_loop_group = test.event_loop_group,
+        .host_resolver = test.host_resolver,
     };
     ASSERT_NOT_NULL(test.client_bootstrap = aws_client_bootstrap_new(test.alloc, &bootstrap_options));
     struct aws_tls_ctx_options tls_ctx_options;
@@ -211,15 +204,14 @@ static int s_test_tls_download_medium_file_general(
     ASSERT_SUCCESS(s_test_wait(&test, s_test_connection_shutdown_pred));
 
     aws_client_bootstrap_release(test.client_bootstrap);
-    aws_host_resolver_clean_up(&test.host_resolver);
-    aws_event_loop_group_clean_up(&test.event_loop_group);
+    aws_host_resolver_release(test.host_resolver);
+    aws_event_loop_group_release(test.event_loop_group);
+
+    ASSERT_SUCCESS(aws_global_thread_creator_shutdown_wait_for(10));
 
     aws_tls_ctx_options_clean_up(&tls_ctx_options);
     aws_tls_connection_options_clean_up(&tls_connection_options);
-    aws_tls_ctx_destroy(test.tls_ctx);
-
-    aws_logger_set(NULL);
-    aws_logger_clean_up(&test.logger);
+    aws_tls_ctx_release(test.tls_ctx);
 
     aws_mutex_clean_up(&test.wait_lock);
     aws_condition_variable_clean_up(&test.wait_cvar);

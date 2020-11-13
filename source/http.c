@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/common/hash_table.h>
@@ -21,12 +11,6 @@
 #include <aws/io/logging.h>
 
 #include <ctype.h>
-
-#ifdef _MSC_VER
-#    pragma warning(disable : 4311) /* 'type cast': pointer truncation from 'void *' to 'int' */
-#else
-#    pragma GCC diagnostic ignored "-Wpointer-to-int-cast"
-#endif
 
 #define AWS_DEFINE_ERROR_INFO_HTTP(CODE, STR) [(CODE)-0x0800] = AWS_DEFINE_ERROR_INFO(CODE, STR, "aws-c-http")
 
@@ -115,13 +99,22 @@ static struct aws_error_info s_errors[] = {
         "Protocol rules violated by peer"),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_STREAM_IDS_EXHAUSTED,
-        "Connection exhausted all possible stream IDs. Establish a new connection for new streams."),
+        "Connection exhausted all possible HTTP-stream IDs. Establish a new connection for new streams."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_GOAWAY_RECEIVED,
-        "Peer sent GOAWAY to initiate connection shutdown. Establish a new connection to retry the streams."),
+        "Peer sent GOAWAY to initiate connection shutdown. Establish a new connection to retry the HTTP-streams."),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_RST_STREAM_RECEIVED,
-        "Peer sent RST_STREAM to terminate stream"),
+        "Peer sent RST_STREAM to terminate HTTP-stream."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_RST_STREAM_SENT,
+        "RST_STREAM has sent from local implementation and HTTP-stream has been terminated."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED,
+        "HTTP-stream must be activated before use."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_HAS_COMPLETED,
+        "HTTP-stream has completed, action cannot be performed."),
 };
 /* clang-format on */
 
@@ -147,6 +140,16 @@ static struct aws_log_subject_info_list s_log_subject_list = {
     .count = AWS_ARRAY_SIZE(s_log_subject_infos),
 };
 
+struct aws_enum_value {
+    struct aws_allocator *allocator;
+    int value;
+};
+
+static void s_destroy_enum_value(void *value) {
+    struct aws_enum_value *enum_value = value;
+    aws_mem_release(enum_value->allocator, enum_value);
+}
+
 /**
  * Given array of aws_byte_cursors, init hashtable where...
  * Key is aws_byte_cursor* (pointing into cursor from array) and comparisons are case-insensitive.
@@ -167,13 +170,18 @@ static void s_init_str_to_enum_hash_table(
         ignore_case ? aws_hash_byte_cursor_ptr_ignore_case : aws_hash_byte_cursor_ptr,
         (aws_hash_callback_eq_fn *)(ignore_case ? aws_byte_cursor_eq_ignore_case : aws_byte_cursor_eq),
         NULL,
-        NULL);
+        s_destroy_enum_value);
     AWS_FATAL_ASSERT(!err);
 
-    for (size_t i = start_index; i < (size_t)end_index; ++i) {
-        int was_created;
+    for (int i = start_index; i < end_index; ++i) {
+        int was_created = 0;
+        struct aws_enum_value *enum_value = aws_mem_calloc(alloc, 1, sizeof(struct aws_enum_value));
+        AWS_FATAL_ASSERT(enum_value);
+        enum_value->allocator = alloc;
+        enum_value->value = i;
+
         AWS_FATAL_ASSERT(str_array[i].ptr && "Missing enum string");
-        err = aws_hash_table_put(table, &str_array[i], (void *)i, &was_created);
+        err = aws_hash_table_put(table, &str_array[i], (void *)enum_value, &was_created);
         AWS_FATAL_ASSERT(!err && was_created);
     }
 }
@@ -186,7 +194,8 @@ static int s_find_in_str_to_enum_hash_table(const struct aws_hash_table *table, 
     struct aws_hash_element *elem;
     aws_hash_table_find(table, key, &elem);
     if (elem) {
-        return (int)elem->value;
+        struct aws_enum_value *enum_value = elem->value;
+        return enum_value->value;
     }
     return -1;
 }
@@ -235,7 +244,7 @@ static void s_versions_init(struct aws_allocator *alloc) {
 static void s_versions_clean_up(void) {}
 
 struct aws_byte_cursor aws_http_version_to_str(enum aws_http_version version) {
-    if (version < AWS_HTTP_VERSION_UNKNOWN || version >= AWS_HTTP_VERSION_COUNT) {
+    if ((int)version < AWS_HTTP_VERSION_UNKNOWN || (int)version >= AWS_HTTP_VERSION_COUNT) {
         version = AWS_HTTP_VERSION_UNKNOWN;
     }
 

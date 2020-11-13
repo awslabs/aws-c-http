@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/private/h2_frames.h>
@@ -33,38 +23,37 @@
 
 #define ENCODER_LOG(level, encoder, text) ENCODER_LOGF(level, encoder, "%s", text)
 
-/* exported for tests */
-AWS_HTTP_API const struct aws_byte_cursor aws_h2_connection_preface_client_string =
+const struct aws_byte_cursor aws_h2_connection_preface_client_string =
     AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 
 /* Initial values and bounds are from RFC-7540 6.5.2 */
-const uint32_t aws_h2_settings_initial[AWS_H2_SETTINGS_END_RANGE] = {
-    [AWS_H2_SETTINGS_HEADER_TABLE_SIZE] = 4096,
-    [AWS_H2_SETTINGS_ENABLE_PUSH] = 1,
-    [AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS] = UINT32_MAX, /* "Initially there is no limit to this value" */
-    [AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE] = 65535,
-    [AWS_H2_SETTINGS_MAX_FRAME_SIZE] = 16384,
-    [AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE] = UINT32_MAX, /* "The initial value of this setting is unlimited" */
+const uint32_t aws_h2_settings_initial[AWS_HTTP2_SETTINGS_END_RANGE] = {
+    [AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE] = 4096,
+    [AWS_HTTP2_SETTINGS_ENABLE_PUSH] = 1,
+    [AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS] = UINT32_MAX, /* "Initially there is no limit to this value" */
+    [AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] = 65535,
+    [AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE] = 16384,
+    [AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE] = UINT32_MAX, /* "The initial value of this setting is unlimited" */
 };
 
-const uint32_t aws_h2_settings_bounds[AWS_H2_SETTINGS_END_RANGE][2] = {
-    [AWS_H2_SETTINGS_HEADER_TABLE_SIZE][0] = 0,
-    [AWS_H2_SETTINGS_HEADER_TABLE_SIZE][1] = UINT32_MAX,
+const uint32_t aws_h2_settings_bounds[AWS_HTTP2_SETTINGS_END_RANGE][2] = {
+    [AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE][0] = 0,
+    [AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE][1] = UINT32_MAX,
 
-    [AWS_H2_SETTINGS_ENABLE_PUSH][0] = 0,
-    [AWS_H2_SETTINGS_ENABLE_PUSH][1] = 1,
+    [AWS_HTTP2_SETTINGS_ENABLE_PUSH][0] = 0,
+    [AWS_HTTP2_SETTINGS_ENABLE_PUSH][1] = 1,
 
-    [AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS][0] = 0,
-    [AWS_H2_SETTINGS_MAX_CONCURRENT_STREAMS][1] = UINT32_MAX,
+    [AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS][0] = 0,
+    [AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS][1] = UINT32_MAX,
 
-    [AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE][0] = 0,
-    [AWS_H2_SETTINGS_INITIAL_WINDOW_SIZE][1] = AWS_H2_WINDOW_UPDATE_MAX,
+    [AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE][0] = 0,
+    [AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE][1] = AWS_H2_WINDOW_UPDATE_MAX,
 
-    [AWS_H2_SETTINGS_MAX_FRAME_SIZE][0] = 16384,
-    [AWS_H2_SETTINGS_MAX_FRAME_SIZE][1] = AWS_H2_PAYLOAD_MAX,
+    [AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE][0] = 16384,
+    [AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE][1] = AWS_H2_PAYLOAD_MAX,
 
-    [AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE][0] = 0,
-    [AWS_H2_SETTINGS_MAX_HEADER_LIST_SIZE][1] = UINT32_MAX,
+    [AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE][0] = 0,
+    [AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE][1] = UINT32_MAX,
 };
 
 /* Stream ids & dependencies should only write the bottom 31 bits */
@@ -108,43 +97,43 @@ const char *aws_h2_frame_type_to_str(enum aws_h2_frame_type type) {
     }
 }
 
-const char *aws_h2_error_code_to_str(enum aws_h2_error_code h2_error_code) {
+const char *aws_http2_error_code_to_str(enum aws_http2_error_code h2_error_code) {
     switch (h2_error_code) {
-        case AWS_H2_ERR_NO_ERROR:
+        case AWS_HTTP2_ERR_NO_ERROR:
             return "NO_ERROR";
-        case AWS_H2_ERR_PROTOCOL_ERROR:
+        case AWS_HTTP2_ERR_PROTOCOL_ERROR:
             return "PROTOCOL_ERROR";
-        case AWS_H2_ERR_INTERNAL_ERROR:
+        case AWS_HTTP2_ERR_INTERNAL_ERROR:
             return "INTERNAL_ERROR";
-        case AWS_H2_ERR_FLOW_CONTROL_ERROR:
+        case AWS_HTTP2_ERR_FLOW_CONTROL_ERROR:
             return "FLOW_CONTROL_ERROR";
-        case AWS_H2_ERR_SETTINGS_TIMEOUT:
+        case AWS_HTTP2_ERR_SETTINGS_TIMEOUT:
             return "SETTINGS_TIMEOUT";
-        case AWS_H2_ERR_STREAM_CLOSED:
+        case AWS_HTTP2_ERR_STREAM_CLOSED:
             return "STREAM_CLOSED";
-        case AWS_H2_ERR_FRAME_SIZE_ERROR:
+        case AWS_HTTP2_ERR_FRAME_SIZE_ERROR:
             return "FRAME_SIZE_ERROR";
-        case AWS_H2_ERR_REFUSED_STREAM:
+        case AWS_HTTP2_ERR_REFUSED_STREAM:
             return "REFUSED_STREAM";
-        case AWS_H2_ERR_CANCEL:
+        case AWS_HTTP2_ERR_CANCEL:
             return "CANCEL";
-        case AWS_H2_ERR_COMPRESSION_ERROR:
+        case AWS_HTTP2_ERR_COMPRESSION_ERROR:
             return "COMPRESSION_ERROR";
-        case AWS_H2_ERR_CONNECT_ERROR:
+        case AWS_HTTP2_ERR_CONNECT_ERROR:
             return "CONNECT_ERROR";
-        case AWS_H2_ERR_ENHANCE_YOUR_CALM:
+        case AWS_HTTP2_ERR_ENHANCE_YOUR_CALM:
             return "ENHANCE_YOUR_CALM";
-        case AWS_H2_ERR_INADEQUATE_SECURITY:
+        case AWS_HTTP2_ERR_INADEQUATE_SECURITY:
             return "INADEQUATE_SECURITY";
-        case AWS_H2_ERR_HTTP_1_1_REQUIRED:
+        case AWS_HTTP2_ERR_HTTP_1_1_REQUIRED:
             return "HTTP_1_1_REQUIRED";
         default:
             return "UNKNOWN_ERROR";
     }
 }
 
-struct aws_h2err aws_h2err_from_h2_code(enum aws_h2_error_code h2_error_code) {
-    AWS_PRECONDITION(h2_error_code > AWS_H2_ERR_NO_ERROR && h2_error_code < AWS_H2_ERR_COUNT);
+struct aws_h2err aws_h2err_from_h2_code(enum aws_http2_error_code h2_error_code) {
+    AWS_PRECONDITION(h2_error_code > AWS_HTTP2_ERR_NO_ERROR && h2_error_code < AWS_HTTP2_ERR_COUNT);
 
     return (struct aws_h2err){
         .h2_code = h2_error_code,
@@ -156,7 +145,7 @@ struct aws_h2err aws_h2err_from_aws_code(int aws_error_code) {
     AWS_PRECONDITION(aws_error_code != 0);
 
     return (struct aws_h2err){
-        .h2_code = AWS_H2_ERR_INTERNAL_ERROR,
+        .h2_code = AWS_HTTP2_ERR_INTERNAL_ERROR,
         .aws_code = aws_error_code,
     };
 }
@@ -312,7 +301,7 @@ int aws_h2_frame_encoder_init(
         return AWS_OP_ERR;
     }
 
-    encoder->settings.max_frame_size = aws_h2_settings_initial[AWS_H2_SETTINGS_MAX_FRAME_SIZE];
+    encoder->settings.max_frame_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE];
     return AWS_OP_SUCCESS;
 }
 void aws_h2_frame_encoder_clean_up(struct aws_h2_frame_encoder *encoder) {
@@ -611,7 +600,7 @@ static void s_frame_headers_destroy(struct aws_h2_frame *frame_base) {
 }
 
 /* Encode the next frame for this header-block (or encode nothing if output buffer is too small). */
-void s_encode_single_header_block_frame(
+static void s_encode_single_header_block_frame(
     struct aws_h2_frame_headers *frame,
     struct aws_h2_frame_encoder *encoder,
     struct aws_byte_buf *output,
@@ -812,7 +801,7 @@ DEFINE_FRAME_VTABLE(prebuilt);
 
 /* Can't pre-encode a frame unless it's guaranteed to fit, regardless of current settings. */
 static size_t s_prebuilt_payload_max(void) {
-    return aws_h2_settings_bounds[AWS_H2_SETTINGS_MAX_FRAME_SIZE][0];
+    return aws_h2_settings_bounds[AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE][0];
 }
 
 /* Create aws_h2_frame_prebuilt and encode frame prefix into frame->encoded_buf.
@@ -988,7 +977,7 @@ static const size_t s_frame_setting_length = 6;
 
 struct aws_h2_frame *aws_h2_frame_new_settings(
     struct aws_allocator *allocator,
-    const struct aws_h2_frame_setting *settings_array,
+    const struct aws_http2_setting *settings_array,
     size_t num_settings,
     bool ack) {
 
@@ -1047,11 +1036,11 @@ struct aws_h2_frame *aws_h2_frame_new_settings(
 struct aws_h2_frame *aws_h2_frame_new_ping(
     struct aws_allocator *allocator,
     bool ack,
-    const uint8_t opaque_data[AWS_H2_PING_DATA_SIZE]) {
+    const uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE]) {
 
     /* PING can be pre-encoded */
     const uint8_t flags = ack ? AWS_H2_FRAME_F_ACK : 0;
-    const size_t payload_len = AWS_H2_PING_DATA_SIZE;
+    const size_t payload_len = AWS_HTTP2_PING_DATA_SIZE;
     const uint32_t stream_id = 0;
 
     struct aws_h2_frame_prebuilt *frame =
@@ -1068,7 +1057,7 @@ struct aws_h2_frame *aws_h2_frame_new_ping(
      * +---------------------------------------------------------------+
      */
     bool writes_ok = true;
-    writes_ok &= aws_byte_buf_write(&frame->encoded_buf, opaque_data, AWS_H2_PING_DATA_SIZE);
+    writes_ok &= aws_byte_buf_write(&frame->encoded_buf, opaque_data, AWS_HTTP2_PING_DATA_SIZE);
     AWS_ASSERT(writes_ok);
 
     /* PING responses SHOULD be given higher priority than any other frame */

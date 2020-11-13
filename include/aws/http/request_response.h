@@ -1,19 +1,9 @@
 #ifndef AWS_HTTP_REQUEST_RESPONSE_H
 #define AWS_HTTP_REQUEST_RESPONSE_H
 
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/http.h>
@@ -296,6 +286,76 @@ struct aws_http_request_handler_options {
     aws_http_on_stream_complete_fn *on_complete;
 };
 
+/**
+ * Invoked when the data of an outgoing HTTP/1.1 chunk is no longer in use.
+ * This is always invoked on the HTTP connection's event-loop thread.
+ *
+ * @param stream        HTTP-stream this chunk was submitted to.
+ * @param error_code    If error_code is AWS_ERROR_SUCCESS (0), the data was successfully sent.
+ *                      Any other error_code indicates that the HTTP-stream is in the process of terminating.
+ *                      If the error_code is AWS_ERROR_HTTP_STREAM_HAS_COMPLETED,
+ *                      the stream's termination has nothing to do with this chunk.
+ *                      Any other non-zero error code indicates a problem with this particular chunk's data.
+ * @param user_data     User data for this chunk.
+ */
+typedef void aws_http1_stream_write_chunk_complete_fn(struct aws_http_stream *stream, int error_code, void *user_data);
+
+/**
+ * HTTP/1.1 chunk extension for chunked encoding.
+ * Note that the underlying strings are not owned by the byte cursors.
+ */
+struct aws_http1_chunk_extension {
+    struct aws_byte_cursor key;
+    struct aws_byte_cursor value;
+};
+
+/**
+ * Encoding options for an HTTP/1.1 chunked transfer encoding chunk.
+ */
+struct aws_http1_chunk_options {
+    /*
+     * The data stream to be sent in a single chunk.
+     * The aws_input_stream must remain valid until on_complete is invoked.
+     * May be NULL in the final chunk with size 0.
+     *
+     * Note that, for Transfer-Encodings other than "chunked", the data is
+     * expected to already have that encoding applied. For example, if
+     * "Transfer-Encoding: gzip, chunked" then the data from aws_input_stream
+     * should already be in gzip format.
+     */
+    struct aws_input_stream *chunk_data;
+
+    /*
+     * Size of the chunk_data input stream in bytes.
+     */
+    uint64_t chunk_data_size;
+
+    /**
+     * A pointer to an array of chunked extensions.
+     * The num_extensions must match the length of the array.
+     * This data is deep-copied by aws_http1_stream_write_chunk(),
+     * it does not need to remain valid until on_complete is invoked.
+     */
+    struct aws_http1_chunk_extension *extensions;
+
+    /**
+     * The number of elements defined in the extensions array.
+     */
+    size_t num_extensions;
+
+    /**
+     * Invoked when the chunk data is no longer in use, whether or not it was successfully sent.
+     * Optional.
+     * See `aws_http1_stream_write_chunk_complete_fn`.
+     */
+    aws_http1_stream_write_chunk_complete_fn *on_complete;
+
+    /**
+     * User provided data passed to the on_complete callback on its invocation.
+     */
+    void *user_data;
+};
+
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
     { .self_size = sizeof(struct aws_http_request_handler_options), }
 
@@ -547,6 +607,28 @@ AWS_HTTP_API
 void aws_http_message_set_body_stream(struct aws_http_message *message, struct aws_input_stream *body_stream);
 
 /**
+ * Submit a chunk of data to be sent on an HTTP/1.1 stream.
+ * The stream must have specified "chunked" in a "transfer-encoding" header.
+ * For client streams, activate() must be called before any chunks are submitted.
+ * For server streams, the response must be submitted before any chunks.
+ * A final chunk with size 0 must be submitted to successfully complete the HTTP-stream.
+ *
+ * Returns AWS_OP_SUCCESS if the chunk has been submitted. The chunk's completion
+ * callback will be invoked when the HTTP-stream is done with the chunk data,
+ * whether or not it was successfully sent (see `aws_http1_stream_write_chunk_complete_fn`).
+ * The chunk data must remain valid until the completion callback is invoked.
+ *
+ * Returns AWS_OP_ERR and raises an error if the chunk could not be submitted.
+ * In this case, the chunk's completion callback will never be invoked.
+ * Note that it is always possible for the HTTP-stream to terminate unexpectedly
+ * prior to this call being made, in which case the error raised is
+ * AWS_ERROR_HTTP_STREAM_HAS_COMPLETED.
+ */
+AWS_HTTP_API int aws_http1_stream_write_chunk(
+    struct aws_http_stream *http1_stream,
+    const struct aws_http1_chunk_options *options);
+
+/**
  * Get the message's aws_http_headers.
  *
  * This datastructure has more functions for inspecting and modifying headers than
@@ -675,20 +757,58 @@ AWS_HTTP_API
 int aws_http_stream_send_response(struct aws_http_stream *stream, struct aws_http_message *response);
 
 /**
- * Manually issue a window update.
- * Note that the stream's default behavior is to issue updates which keep the window at its original size.
- * See aws_http_make_request_options.manual_window_management for details on letting the window shrink.
+ * Increment the stream's flow-control window to keep data flowing.
+ *
+ * If the connection was created with `manual_window_management` set true,
+ * the flow-control window of each stream will shrink as body data is received
+ * (headers, padding, and other metadata do not affect the window).
+ * The connection's `initial_window_size` determines the starting size of each stream's window.
+ * If a stream's flow-control window reaches 0, no further data will be received.
+ *
+ * If `manual_window_management` is false, this call will have no effect.
+ * The connection maintains its flow-control windows such that
+ * no back-pressure is applied and data arrives as fast as possible.
  */
 AWS_HTTP_API
 void aws_http_stream_update_window(struct aws_http_stream *stream, size_t increment_size);
 
 /**
- * Gets the Http/2 id associated with a stream.  Even h1 streams have an id (using the same allocation procedure
+ * Gets the HTTP/2 id associated with a stream.  Even h1 streams have an id (using the same allocation procedure
  * as http/2) for easier tracking purposes. For client streams, this will only be non-zero after a successful call
  * to aws_http_stream_activate()
  */
 AWS_HTTP_API
 uint32_t aws_http_stream_get_id(const struct aws_http_stream *stream);
+
+/**
+ * Reset the HTTP/2 stream (HTTP/2 only).
+ * Note that if the stream closes before this async call is fully processed, the RST_STREAM frame will not be sent.
+ *
+ * @param http2_stream HTTP/2 stream.
+ * @param http2_error aws_http2_error_code. Reason to reset the stream.
+ */
+AWS_HTTP_API
+int aws_http2_stream_reset(struct aws_http_stream *http2_stream, uint32_t http2_error);
+
+/**
+ * Get the error code received in rst_stream.
+ * Only valid if the stream has completed, and an RST_STREAM frame has received.
+ *
+ * @param http2_stream HTTP/2 stream.
+ * @param out_http2_error Gets to set to HTTP/2 error code received in rst_stream.
+ */
+AWS_HTTP_API
+int aws_http2_stream_get_received_reset_error_code(struct aws_http_stream *http2_stream, uint32_t *out_http2_error);
+
+/**
+ * Get the HTTP/2 error code sent in the RST_STREAM frame (HTTP/2 only).
+ * Only valid if the stream has completed, and has sent an RST_STREAM frame.
+ *
+ * @param http2_stream HTTP/2 stream.
+ * @param out_http2_error Gets to set to HTTP/2 error code sent in rst_stream.
+ */
+AWS_HTTP_API
+int aws_http2_stream_get_sent_reset_error_code(struct aws_http_stream *http2_stream, uint32_t *out_http2_error);
 
 AWS_EXTERN_C_END
 

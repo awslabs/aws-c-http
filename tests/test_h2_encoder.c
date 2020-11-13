@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 #include "h2_test_helper.h"
 #include <aws/testing/aws_test_harness.h>
@@ -312,10 +302,10 @@ TEST_CASE(h2_encoder_rst_stream) {
 TEST_CASE(h2_encoder_settings) {
     (void)ctx;
 
-    struct aws_h2_frame_setting settings[] = {
-        {.id = AWS_H2_SETTINGS_ENABLE_PUSH, .value = 1}, /* real world value */
-        {.id = 0x0000, .value = 0x00000000},             /* min value */
-        {.id = 0xFFFF, .value = 0xFFFFFFFF},             /* max value */
+    struct aws_http2_setting settings[] = {
+        {.id = AWS_HTTP2_SETTINGS_ENABLE_PUSH, .value = 1}, /* real world value */
+        {.id = 0x0000, .value = 0x00000000},                /* min value */
+        {.id = 0xFFFF, .value = 0xFFFFFFFF},                /* max value */
     };
 
     struct aws_h2_frame *frame =
@@ -408,7 +398,7 @@ TEST_CASE(h2_encoder_push_promise) {
 TEST_CASE(h2_encoder_ping) {
     (void)ctx;
 
-    uint8_t opaque_data[AWS_H2_PING_DATA_SIZE] = {0, 1, 2, 3, 4, 5, 6, 7};
+    uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE] = {0, 1, 2, 3, 4, 5, 6, 7};
 
     struct aws_h2_frame *frame = aws_h2_frame_new_ping(allocator, true /*ack*/, opaque_data);
     ASSERT_NOT_NULL(frame);

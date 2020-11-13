@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/testing/aws_test_harness.h>
@@ -43,13 +33,14 @@ struct cm_tester_options {
     struct aws_http_connection_manager_system_vtable *mock_table;
     struct aws_http_proxy_options *proxy_options;
     size_t max_connections;
+    uint64_t max_connection_idle_in_ms;
+    uint64_t starting_mock_time;
 };
 
 struct cm_tester {
     struct aws_allocator *allocator;
-    struct aws_logger logger;
-    struct aws_event_loop_group event_loop_group;
-    struct aws_host_resolver host_resolver;
+    struct aws_event_loop_group *event_loop_group;
+    struct aws_host_resolver *host_resolver;
 
     struct aws_client_bootstrap *client_bootstrap;
 
@@ -69,16 +60,32 @@ struct cm_tester {
 
     size_t wait_for_connection_count;
     bool is_shutdown_complete;
-    bool is_client_bootstrap_shutdown_complete;
 
     struct aws_http_connection_manager_system_vtable *mock_table;
 
     struct aws_atomic_var next_connection_id;
     struct aws_array_list mock_connections;
     aws_http_on_client_connection_shutdown_fn *release_connection_fn;
+
+    struct aws_mutex mock_time_lock;
+    uint64_t mock_time;
 };
 
 static struct cm_tester s_tester;
+
+static int s_tester_get_mock_time(uint64_t *current_time) {
+    aws_mutex_lock(&s_tester.mock_time_lock);
+    *current_time = s_tester.mock_time;
+    aws_mutex_unlock(&s_tester.mock_time_lock);
+
+    return AWS_OP_SUCCESS;
+}
+
+static void s_tester_set_mock_time(uint64_t current_time) {
+    aws_mutex_lock(&s_tester.mock_time_lock);
+    s_tester.mock_time = current_time;
+    aws_mutex_unlock(&s_tester.mock_time_lock);
+}
 
 static void s_cm_tester_on_cm_shutdown_complete(void *user_data) {
     struct cm_tester *tester = user_data;
@@ -90,18 +97,16 @@ static void s_cm_tester_on_cm_shutdown_complete(void *user_data) {
     aws_condition_variable_notify_one(&tester->signal);
 }
 
-static void s_cm_tester_on_client_bootstrap_shutdown_complete(void *user_data) {
-    struct cm_tester *tester = user_data;
-    AWS_FATAL_ASSERT(tester == &s_tester);
-    aws_mutex_lock(&tester->lock);
+static struct aws_event_loop *s_new_event_loop(
+    struct aws_allocator *alloc,
+    aws_io_clock_fn *clock,
+    void *new_loop_user_data) {
+    (void)new_loop_user_data;
 
-    tester->is_client_bootstrap_shutdown_complete = true;
-
-    aws_mutex_unlock(&tester->lock);
-    aws_condition_variable_notify_one(&tester->signal);
+    return aws_event_loop_new_default(alloc, clock);
 }
 
-int s_cm_tester_init(struct cm_tester_options *options) {
+static int s_cm_tester_init(struct cm_tester_options *options) {
     struct cm_tester *tester = &s_tester;
 
     AWS_ZERO_STRUCT(*tester);
@@ -113,25 +118,22 @@ int s_cm_tester_init(struct cm_tester_options *options) {
     ASSERT_SUCCESS(aws_mutex_init(&tester->lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->signal));
 
-    struct aws_logger_standard_options logger_options = {
-        .level = AWS_LOG_LEVEL_TRACE,
-        .file = stderr,
-    };
-
-    ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->allocator, &logger_options));
-    aws_logger_set(&tester->logger);
-
     ASSERT_SUCCESS(
         aws_array_list_init_dynamic(&tester->connections, tester->allocator, 10, sizeof(struct aws_http_connection *)));
 
-    ASSERT_SUCCESS(aws_event_loop_group_default_init(&tester->event_loop_group, tester->allocator, 1));
-    ASSERT_SUCCESS(
-        aws_host_resolver_init_default(&tester->host_resolver, tester->allocator, 8, &tester->event_loop_group));
+    aws_mutex_init(&tester->mock_time_lock);
+    s_tester_set_mock_time(options->starting_mock_time);
+
+    aws_io_clock_fn *clock_fn = &aws_high_res_clock_get_ticks;
+    if (options->mock_table) {
+        clock_fn = options->mock_table->get_monotonic_time;
+    }
+
+    tester->event_loop_group = aws_event_loop_group_new(tester->allocator, clock_fn, 1, s_new_event_loop, NULL, NULL);
+    tester->host_resolver = aws_host_resolver_new_default(tester->allocator, 8, tester->event_loop_group, NULL);
     struct aws_client_bootstrap_options bootstrap_options = {
-        .event_loop_group = &tester->event_loop_group,
-        .host_resolver = &tester->host_resolver,
-        .on_shutdown_complete = s_cm_tester_on_client_bootstrap_shutdown_complete,
-        .user_data = tester,
+        .event_loop_group = tester->event_loop_group,
+        .host_resolver = tester->host_resolver,
     };
     tester->client_bootstrap = aws_client_bootstrap_new(tester->allocator, &bootstrap_options);
     ASSERT_NOT_NULL(tester->client_bootstrap);
@@ -162,7 +164,12 @@ int s_cm_tester_init(struct cm_tester_options *options) {
         .max_connections = options->max_connections,
         .shutdown_complete_user_data = tester,
         .shutdown_complete_callback = s_cm_tester_on_cm_shutdown_complete,
+        .max_connection_idle_in_milliseconds = options->max_connection_idle_in_ms,
     };
+
+    if (options->mock_table) {
+        g_aws_http_connection_manager_default_system_vtable_ptr = options->mock_table;
+    }
 
     tester->connection_manager = aws_http_connection_manager_new(tester->allocator, &cm_options);
     ASSERT_NOT_NULL(tester->connection_manager);
@@ -181,7 +188,7 @@ int s_cm_tester_init(struct cm_tester_options *options) {
     return AWS_OP_SUCCESS;
 }
 
-void s_add_mock_connections(size_t count, enum new_connection_result_type result, bool closed_on_release) {
+static void s_add_mock_connections(size_t count, enum new_connection_result_type result, bool closed_on_release) {
     struct cm_tester *tester = &s_tester;
 
     for (size_t i = 0; i < count; ++i) {
@@ -195,7 +202,7 @@ void s_add_mock_connections(size_t count, enum new_connection_result_type result
     }
 }
 
-int s_release_connections(size_t count, bool close_first) {
+static int s_release_connections(size_t count, bool close_first) {
 
     struct cm_tester *tester = &s_tester;
 
@@ -264,7 +271,7 @@ release:
     return AWS_OP_SUCCESS;
 }
 
-void s_on_acquire_connection(struct aws_http_connection *connection, int error_code, void *user_data) {
+static void s_on_acquire_connection(struct aws_http_connection *connection, int error_code, void *user_data) {
     (void)error_code;
     (void)user_data;
 
@@ -332,27 +339,7 @@ static int s_wait_on_shutdown_complete(void) {
     return signal_error;
 }
 
-static bool s_is_client_bootstrap_shutdown_complete(void *context) {
-    (void)context;
-
-    struct cm_tester *tester = &s_tester;
-
-    return tester->is_client_bootstrap_shutdown_complete;
-}
-
-static int s_wait_on_client_bootstrap_shutdown_complete(void) {
-    struct cm_tester *tester = &s_tester;
-
-    ASSERT_SUCCESS(aws_mutex_lock(&tester->lock));
-
-    int signal_error = aws_condition_variable_wait_pred(
-        &tester->signal, &tester->lock, s_is_client_bootstrap_shutdown_complete, tester);
-
-    ASSERT_SUCCESS(aws_mutex_unlock(&tester->lock));
-    return signal_error;
-}
-
-int s_cm_tester_clean_up(void) {
+static int s_cm_tester_clean_up(void) {
     struct cm_tester *tester = &s_tester;
 
     ASSERT_SUCCESS(s_release_connections(aws_array_list_length(&tester->connections), false));
@@ -375,21 +362,21 @@ int s_cm_tester_clean_up(void) {
     s_wait_on_shutdown_complete();
 
     aws_client_bootstrap_release(tester->client_bootstrap);
-    ASSERT_SUCCESS(s_wait_on_client_bootstrap_shutdown_complete());
 
-    aws_host_resolver_clean_up(&tester->host_resolver);
-    aws_event_loop_group_clean_up(&tester->event_loop_group);
+    aws_host_resolver_release(tester->host_resolver);
+    aws_event_loop_group_release(tester->event_loop_group);
+    ASSERT_SUCCESS(aws_global_thread_creator_shutdown_wait_for(10));
 
     aws_tls_ctx_options_clean_up(&tester->tls_ctx_options);
     aws_tls_connection_options_clean_up(&tester->tls_connection_options);
-    aws_tls_ctx_destroy(tester->tls_ctx);
+    aws_tls_ctx_release(tester->tls_ctx);
 
     aws_mutex_clean_up(&tester->lock);
     aws_condition_variable_clean_up(&tester->signal);
 
-    aws_http_library_clean_up();
+    aws_mutex_clean_up(&tester->mock_time_lock);
 
-    aws_logger_clean_up(&tester->logger);
+    aws_http_library_clean_up();
 
     return AWS_OP_SUCCESS;
 }
@@ -494,7 +481,10 @@ AWS_TEST_CASE(test_connection_manager_close_and_release, s_test_connection_manag
 static int s_test_connection_manager_acquire_release_mix(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    struct cm_tester_options options = {.allocator = allocator, .max_connections = 5};
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+    };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
@@ -573,7 +563,8 @@ static void s_aws_http_connection_manager_close_connection_sync_mock(struct aws_
     (void)connection;
 }
 
-static bool s_aws_http_connection_manager_is_connection_open_sync_mock(const struct aws_http_connection *connection) {
+static bool s_aws_http_connection_manager_is_connection_available_sync_mock(
+    const struct aws_http_connection *connection) {
     (void)connection;
 
     struct mock_connection *proxy = (struct mock_connection *)(void *)connection;
@@ -581,11 +572,28 @@ static bool s_aws_http_connection_manager_is_connection_open_sync_mock(const str
     return !proxy->is_closed_on_release;
 }
 
+static bool s_aws_http_connection_manager_is_callers_thread_sync_mock(struct aws_channel *channel) {
+    (void)channel;
+
+    return true;
+}
+
+static struct aws_channel *s_aws_http_connection_manager_connection_get_channel_sync_mock(
+    struct aws_http_connection *connection) {
+    (void)connection;
+
+    return (struct aws_channel *)1;
+}
+
 static struct aws_http_connection_manager_system_vtable s_synchronous_mocks = {
     .create_connection = s_aws_http_connection_manager_create_connection_sync_mock,
     .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
     .close_connection = s_aws_http_connection_manager_close_connection_sync_mock,
-    .is_connection_open = s_aws_http_connection_manager_is_connection_open_sync_mock};
+    .is_connection_available = s_aws_http_connection_manager_is_connection_available_sync_mock,
+    .get_monotonic_time = aws_high_res_clock_get_ticks,
+    .connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
+    .is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
+};
 
 static int s_test_connection_manager_acquire_release_mix_synchronous(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -593,6 +601,7 @@ static int s_test_connection_manager_acquire_release_mix_synchronous(struct aws_
     struct cm_tester_options options = {
         .allocator = allocator,
         .max_connections = 5,
+        .mock_table = &s_synchronous_mocks,
     };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
@@ -631,7 +640,10 @@ static int s_test_connection_manager_connect_callback_failure(struct aws_allocat
     (void)ctx;
 
     struct cm_tester_options options = {
-        .allocator = allocator, .max_connections = 5, .mock_table = &s_synchronous_mocks};
+        .allocator = allocator,
+        .max_connections = 5,
+        .mock_table = &s_synchronous_mocks,
+    };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
@@ -653,7 +665,10 @@ static int s_test_connection_manager_connect_immediate_failure(struct aws_alloca
     (void)ctx;
 
     struct cm_tester_options options = {
-        .allocator = allocator, .max_connections = 5, .mock_table = &s_synchronous_mocks};
+        .allocator = allocator,
+        .max_connections = 5,
+        .mock_table = &s_synchronous_mocks,
+    };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
@@ -693,3 +708,235 @@ static int s_test_connection_manager_proxy_setup_shutdown(struct aws_allocator *
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_proxy_setup_shutdown, s_test_connection_manager_proxy_setup_shutdown);
+
+static struct aws_http_connection_manager_system_vtable s_idle_mocks = {
+    .create_connection = s_aws_http_connection_manager_create_connection_sync_mock,
+    .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
+    .close_connection = s_aws_http_connection_manager_close_connection_sync_mock,
+    .is_connection_available = s_aws_http_connection_manager_is_connection_available_sync_mock,
+    .get_monotonic_time = s_tester_get_mock_time,
+    .connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
+    .is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
+};
+
+static int s_register_acquired_connections(struct aws_array_list *seen_connections) {
+    aws_mutex_lock(&s_tester.lock);
+
+    size_t acquired_count = aws_array_list_length(&s_tester.connections);
+    for (size_t i = 0; i < acquired_count; ++i) {
+        struct aws_http_connection *connection = NULL;
+        aws_array_list_get_at(&s_tester.connections, &connection, i);
+        aws_array_list_push_back(seen_connections, &connection);
+    }
+
+    aws_mutex_unlock(&s_tester.lock);
+
+    return AWS_OP_SUCCESS;
+}
+
+static size_t s_get_acquired_connections_seen_count(struct aws_array_list *seen_connections) {
+    size_t actual_seen_count = 0;
+    aws_mutex_lock(&s_tester.lock);
+
+    size_t seen_count = aws_array_list_length(seen_connections);
+    size_t acquired_count = aws_array_list_length(&s_tester.connections);
+    for (size_t i = 0; i < acquired_count; ++i) {
+        struct aws_http_connection *acquired_connection = NULL;
+        aws_array_list_get_at(&s_tester.connections, &acquired_connection, i);
+
+        for (size_t j = 0; j < seen_count; ++j) {
+            struct aws_http_connection *seen_connection = NULL;
+            aws_array_list_get_at(seen_connections, &seen_connection, j);
+
+            if (seen_connection == acquired_connection) {
+                actual_seen_count++;
+            }
+        }
+    }
+
+    aws_mutex_unlock(&s_tester.lock);
+
+    return actual_seen_count;
+}
+
+static int s_test_connection_manager_idle_culling_single(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct aws_array_list seen_connections;
+    AWS_ZERO_STRUCT(seen_connections);
+    ASSERT_SUCCESS(aws_array_list_init_dynamic(&seen_connections, allocator, 10, sizeof(struct aws_http_connection *)));
+
+    uint64_t now = 0;
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 1,
+        .mock_table = &s_idle_mocks,
+        .max_connection_idle_in_ms = 1000,
+        .starting_mock_time = now,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    /* add enough fake connections to cover all the acquires */
+    s_add_mock_connections(2, AWS_NCRT_SUCCESS, false);
+
+    /* acquire some connections */
+    s_acquire_connections(1);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
+
+    /* remember what connections we acquired */
+    s_register_acquired_connections(&seen_connections);
+
+    /* release the connections */
+    s_release_connections(1, false);
+
+    /* advance fake time enough to cause the connections to be culled, also sleep for real to give the cull task
+     * a chance to run in the real event loop
+     */
+    uint64_t one_sec_in_nanos = aws_timestamp_convert(1, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL);
+    s_tester_set_mock_time(now + one_sec_in_nanos);
+    aws_thread_current_sleep(2 * one_sec_in_nanos);
+
+    /* acquire some connections */
+    s_acquire_connections(1);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(2));
+
+    /* make sure the connections acquired were not ones that we expected to cull */
+    ASSERT_INT_EQUALS(s_get_acquired_connections_seen_count(&seen_connections), 0);
+
+    /* release everything and clean up */
+    s_release_connections(1, false);
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    aws_array_list_clean_up(&seen_connections);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_idle_culling_single, s_test_connection_manager_idle_culling_single);
+
+static int s_test_connection_manager_idle_culling_many(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct aws_array_list seen_connections;
+    AWS_ZERO_STRUCT(seen_connections);
+    ASSERT_SUCCESS(aws_array_list_init_dynamic(&seen_connections, allocator, 10, sizeof(struct aws_http_connection *)));
+
+    uint64_t now = 0;
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+        .mock_table = &s_idle_mocks,
+        .max_connection_idle_in_ms = 1000,
+        .starting_mock_time = now,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    /* add enough fake connections to cover all the acquires */
+    s_add_mock_connections(10, AWS_NCRT_SUCCESS, false);
+
+    /* acquire some connections */
+    s_acquire_connections(5);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(5));
+
+    /* remember what connections we acquired */
+    s_register_acquired_connections(&seen_connections);
+
+    /* release the connections */
+    s_release_connections(5, false);
+
+    /* advance fake time enough to cause the connections to be culled, also sleep for real to give the cull task
+     * a chance to run in the real event loop
+     */
+    uint64_t one_sec_in_nanos = aws_timestamp_convert(1, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL);
+    s_tester_set_mock_time(now + one_sec_in_nanos);
+    aws_thread_current_sleep(2 * one_sec_in_nanos);
+
+    /* acquire some connections */
+    s_acquire_connections(5);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(10));
+
+    /* make sure the connections acquired were not ones that we expected to cull */
+    ASSERT_INT_EQUALS(s_get_acquired_connections_seen_count(&seen_connections), 0);
+
+    /* release everything and clean up */
+    s_release_connections(5, false);
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    aws_array_list_clean_up(&seen_connections);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_idle_culling_many, s_test_connection_manager_idle_culling_many);
+
+static int s_test_connection_manager_idle_culling_mixture(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct aws_array_list seen_connections;
+    AWS_ZERO_STRUCT(seen_connections);
+    ASSERT_SUCCESS(aws_array_list_init_dynamic(&seen_connections, allocator, 10, sizeof(struct aws_http_connection *)));
+
+    uint64_t now = 0;
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 10,
+        .mock_table = &s_idle_mocks,
+        .max_connection_idle_in_ms = 1000,
+        .starting_mock_time = now,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    /* add enough fake connections to cover all the acquires */
+    s_add_mock_connections(15, AWS_NCRT_SUCCESS, false);
+
+    /* acquire some connections */
+    s_acquire_connections(10);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(10));
+
+    /* remember what connections we acquired */
+    s_register_acquired_connections(&seen_connections);
+
+    /*
+     * release the connections
+     * Previous tests created situations where the entire block of idle connections end up getting culled.  We also
+     * want to create a situation where just some of the connections get culled.
+     */
+    s_release_connections(5, false);
+    s_tester_set_mock_time(now + 1);
+    s_release_connections(5, false);
+    s_tester_set_mock_time(now);
+    uint64_t one_sec_in_nanos = aws_timestamp_convert(1, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL);
+
+    /*
+     * advance fake time enough to cause half of the connections to be culled, also sleep for real to give the cull task
+     * a chance to run in the real event loop.
+     */
+    s_tester_set_mock_time(now + one_sec_in_nanos);
+    aws_thread_current_sleep(2 * one_sec_in_nanos);
+
+    /* acquire some connections */
+    s_acquire_connections(10);
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(20));
+
+    /* make sure the connections acquired are half old and half new */
+    ASSERT_INT_EQUALS(s_get_acquired_connections_seen_count(&seen_connections), 5);
+
+    /* release everything and clean up */
+    s_release_connections(10, false);
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    aws_array_list_clean_up(&seen_connections);
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_idle_culling_mixture, s_test_connection_manager_idle_culling_mixture);

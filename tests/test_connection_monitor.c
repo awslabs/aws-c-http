@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/common/thread.h>
@@ -117,7 +107,9 @@ static int s_init_monitor_test(struct aws_allocator *allocator, struct aws_crt_s
     s_test_context.test_channel.channel_shutdown = s_testing_channel_shutdown_callback;
     s_test_context.test_channel.channel_shutdown_user_data = &s_test_context;
 
-    struct aws_http_connection *connection = aws_http_connection_new_http1_1_client(allocator, true, SIZE_MAX);
+    struct aws_http1_connection_options http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+    struct aws_http_connection *connection =
+        aws_http_connection_new_http1_1_client(allocator, true, SIZE_MAX, &http1_options);
     ASSERT_NOT_NULL(connection);
     connection->next_stream_id = 1;
 
@@ -1038,7 +1030,10 @@ static struct aws_crt_statistics_handler *s_aws_crt_statistics_handler_new_http_
     return handler;
 }
 
-int s_aws_http_on_incoming_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
+static int s_aws_http_on_incoming_body(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    void *user_data) {
     (void)stream;
     (void)data;
     (void)user_data;
@@ -1046,7 +1041,7 @@ int s_aws_http_on_incoming_body(struct aws_http_stream *stream, const struct aws
     return AWS_OP_SUCCESS;
 }
 
-void s_aws_http_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+static void s_aws_http_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     (void)stream;
     (void)error_code;
 

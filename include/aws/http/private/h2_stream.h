@@ -1,25 +1,16 @@
 #ifndef AWS_HTTP_H2_STREAM_H
 #define AWS_HTTP_H2_STREAM_H
 
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/private/h2_frames.h>
 #include <aws/http/private/request_response_impl.h>
 
 #include <aws/common/mutex.h>
+#include <aws/io/channel.h>
 
 #include <inttypes.h>
 
@@ -55,19 +46,54 @@ enum aws_h2_stream_state {
     AWS_H2_STREAM_STATE_COUNT,
 };
 
+/* simplified stream state for API implementation */
+enum aws_h2_stream_api_state {
+    AWS_H2_STREAM_API_STATE_INIT,
+    AWS_H2_STREAM_API_STATE_ACTIVE,
+    AWS_H2_STREAM_API_STATE_COMPLETE,
+};
+
 struct aws_h2_stream {
     struct aws_http_stream base;
 
     struct aws_linked_list_node node;
+    struct aws_channel_task cross_thread_work_task;
 
     /* Only the event-loop thread may touch this data */
     struct {
         enum aws_h2_stream_state state;
         int32_t window_size_peer;
-        int32_t window_size_self;
+        /* The local window size.
+         * We allow this value exceed the max window size (int64 can hold much more than 0x7FFFFFFF),
+         * We leave it up to the remote peer to detect whether the max window size has been exceeded. */
+        int64_t window_size_self;
         struct aws_http_message *outgoing_message;
         bool received_main_headers;
     } thread_data;
+
+    /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
+    struct {
+        struct aws_mutex lock;
+
+        bool is_cross_thread_work_task_scheduled;
+
+        /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
+        size_t window_update_size;
+
+        /* The aws_http2_error_code user wanted to send to remote peer via rst_stream. */
+        uint32_t user_reset_error_code;
+
+        bool reset_called;
+
+        /* Simplified stream state. */
+        enum aws_h2_stream_api_state api_state;
+    } synced_data;
+
+    /* Store the sent reset HTTP/2 error code, set to -1, if none has sent so far */
+    int64_t sent_reset_error_code;
+
+    /* Store the received reset HTTP/2 error code, set to -1, if none has received so far */
+    int64_t received_reset_error_code;
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);

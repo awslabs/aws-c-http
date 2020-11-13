@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 #include "h2_test_helper.h"
 
@@ -354,7 +344,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_data_payload_exceed_max_size) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -376,7 +366,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_data_requires_stream_id) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -400,7 +390,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_payload_too_small_for_pad_length) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
     return AWS_OP_SUCCESS;
 }
 
@@ -767,7 +757,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_headers_requires_stream_id) {
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -793,7 +783,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_headers_payload_too_small_for_padding) 
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -819,7 +809,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_headers_payload_too_small_for_priority)
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1335,7 +1325,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_continuation_frame_expected) {
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1368,7 +1358,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_continuation_frame_same_stream_expected
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1392,7 +1382,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_partial_header) {
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_COMPRESSION_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_COMPRESSION_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1419,7 +1409,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_bad_hpack_data) {
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_COMPRESSION_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_COMPRESSION_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1489,7 +1479,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_priority_requires_stream_id) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1512,7 +1502,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_priority_payload_too_small) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1536,7 +1526,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_priority_payload_too_large) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1609,7 +1599,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_rst_stream_requires_stream_id) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1631,7 +1621,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_rst_stream_payload_too_small) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1654,7 +1644,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_rst_stream_payload_too_large) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1687,7 +1677,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_settings) {
     ASSERT_FALSE(frame->ack);
     ASSERT_UINT_EQUALS(2, aws_array_list_length(&frame->settings));
 
-    struct aws_h2_frame_setting setting;
+    struct aws_http2_setting setting;
     aws_array_list_get_at(&frame->settings, &setting, 0);
     ASSERT_UINT_EQUALS(0x0005, setting.id);
     ASSERT_UINT_EQUALS(0x00FFFFFF, setting.value);
@@ -1769,7 +1759,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_settings_ignores_unknown_ids) {
         0x00, 0xFF, 0xFF, 0xFF,     /* Value (32) */
         0x00, 0x01,                 /* Identifier (16) <-- This is OK */
         0x00, 0x00, 0x00, 0x01,     /* Value (32) */
-        0x00, AWS_H2_SETTINGS_END_RANGE, /* Identifier (16) <-- SHOULD IGNORE */
+        0x00, AWS_HTTP2_SETTINGS_END_RANGE, /* Identifier (16) <-- SHOULD IGNORE */
         0x00, 0x00, 0x00, 0x01,     /* Value (32) */
     };
     /* clang-format on */
@@ -1783,7 +1773,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_settings_ignores_unknown_ids) {
     ASSERT_FALSE(frame->ack);
     ASSERT_UINT_EQUALS(1, aws_array_list_length(&frame->settings));
 
-    struct aws_h2_frame_setting setting;
+    struct aws_http2_setting setting;
     aws_array_list_get_at(&frame->settings, &setting, 0);
     ASSERT_UINT_EQUALS(0x0001, setting.id);
     ASSERT_UINT_EQUALS(0x00000001, setting.value);
@@ -1837,7 +1827,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_settings_ack_with_data) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1861,7 +1851,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_settings_forbids_stream_id) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1886,7 +1876,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_settings_payload_size) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1911,7 +1901,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_settings_invalid_values_enable_push) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1935,7 +1925,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_settings_invalid_values_initial_window_
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FLOW_CONTROL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FLOW_CONTROL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -1959,7 +1949,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_settings_invalid_values_max_frame_size)
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2119,7 +2109,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_push_promise_continuation_expected) {
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2144,7 +2134,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_push_promise_requires_stream_id) {
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2225,7 +2215,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_push_promise_requires_promised_stream_i
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2251,7 +2241,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_push_promise_with_enable_push_0) {
     aws_h2_decoder_set_setting_enable_push(fixture->decode.decoder, (uint32_t)0);
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2277,7 +2267,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_ping) {
     /* Validate. */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PING, 0x0 /*stream_id*/));
-    ASSERT_BIN_ARRAYS_EQUALS("pingpong", AWS_H2_PING_DATA_SIZE, frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+    ASSERT_BIN_ARRAYS_EQUALS("pingpong", AWS_HTTP2_PING_DATA_SIZE, frame->ping_opaque_data, AWS_HTTP2_PING_DATA_SIZE);
     ASSERT_FALSE(frame->ack);
     return AWS_OP_SUCCESS;
 }
@@ -2303,7 +2293,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_ping_ack) {
     /* Validate. */
     struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(&fixture->decode);
     ASSERT_SUCCESS(h2_decoded_frame_check_finished(frame, AWS_H2_FRAME_T_PING, 0x0 /*stream_id*/));
-    ASSERT_BIN_ARRAYS_EQUALS("pingpong", AWS_H2_PING_DATA_SIZE, frame->ping_opaque_data, AWS_H2_PING_DATA_SIZE);
+    ASSERT_BIN_ARRAYS_EQUALS("pingpong", AWS_HTTP2_PING_DATA_SIZE, frame->ping_opaque_data, AWS_HTTP2_PING_DATA_SIZE);
     ASSERT_TRUE(frame->ack);
     return AWS_OP_SUCCESS;
 }
@@ -2324,7 +2314,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_ping_forbids_stream_id) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2346,7 +2336,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_ping_payload_too_small) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2368,7 +2358,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_ping_payload_too_large) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2451,7 +2441,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_goaway_forbids_stream_id) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2474,7 +2464,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_goaway_payload_too_small) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2549,7 +2539,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_window_update_payload_too_small) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2572,7 +2562,7 @@ H2_DECODER_ON_CLIENT_TEST(h2_decoder_err_window_update_payload_too_large) {
     /* clang-format on */
 
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_FRAME_SIZE_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2849,7 +2839,7 @@ H2_DECODER_ON_CLIENT_PREFACE_TEST(h2_decoder_err_bad_preface_from_server_1) {
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2872,7 +2862,7 @@ H2_DECODER_ON_CLIENT_PREFACE_TEST(h2_decoder_err_bad_preface_from_server_2) {
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2885,7 +2875,7 @@ H2_DECODER_ON_CLIENT_PREFACE_TEST(h2_decoder_err_bad_preface_from_server_3) {
     const struct aws_byte_cursor input = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 
     /* Decode */
-    ASSERT_H2ERR_ERROR(AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, input));
+    ASSERT_H2ERR_ERROR(AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, input));
 
     return AWS_OP_SUCCESS;
 }
@@ -2945,7 +2935,7 @@ H2_DECODER_ON_SERVER_PREFACE_TEST(h2_decoder_err_bad_preface_from_client_1) {
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }
@@ -2959,7 +2949,7 @@ H2_DECODER_ON_SERVER_PREFACE_TEST(h2_decoder_err_bad_preface_from_client_2) {
     struct aws_byte_cursor input = aws_byte_cursor_from_c_str("GET / HTTP/1.0\r\n\r\n");
 
     /* Decode */
-    ASSERT_H2ERR_ERROR(AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, input));
+    ASSERT_H2ERR_ERROR(AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, input));
 
     return AWS_OP_SUCCESS;
 }
@@ -2986,7 +2976,7 @@ H2_DECODER_ON_SERVER_PREFACE_TEST(h2_decoder_err_bad_preface_from_client_3) {
 
     /* Decode */
     ASSERT_H2ERR_ERROR(
-        AWS_H2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
+        AWS_HTTP2_ERR_PROTOCOL_ERROR, s_decode_all(fixture, aws_byte_cursor_from_array(input, sizeof(input))));
 
     return AWS_OP_SUCCESS;
 }

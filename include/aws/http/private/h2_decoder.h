@@ -1,19 +1,9 @@
 #ifndef AWS_HTTP_H2_DECODER_H
 #define AWS_HTTP_H2_DECODER_H
 
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/private/h2_frames.h>
@@ -72,17 +62,17 @@ struct aws_h2_decoder_vtable {
     struct aws_h2err (*on_rst_stream)(uint32_t stream_id, uint32_t error_code, void *userdata);
 
     /* Called once For PING frame with ACK flag set */
-    struct aws_h2err (*on_ping_ack)(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
+    struct aws_h2err (*on_ping_ack)(uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE], void *userdata);
 
     /* Called once for PING frame (no ACK flag set)*/
-    struct aws_h2err (*on_ping)(uint8_t opaque_data[AWS_H2_PING_DATA_SIZE], void *userdata);
+    struct aws_h2err (*on_ping)(uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE], void *userdata);
 
     /* Called once for SETTINGS frame with ACK flag */
     struct aws_h2err (*on_settings_ack)(void *userdata);
 
     /* Called once for SETTINGS frame, without ACK flag */
     struct aws_h2err (
-        *on_settings)(const struct aws_h2_frame_setting *settings_array, size_t num_settings, void *userdata);
+        *on_settings)(const struct aws_http2_setting *settings_array, size_t num_settings, void *userdata);
 
     /* For GOAWAY frame: _begin() is called, then 0+ _i() calls, then _end().
      * No other decoder callbacks will occur in this time. */

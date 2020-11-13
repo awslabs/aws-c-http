@@ -1,22 +1,13 @@
 #ifndef AWS_HTTP_H2_CONNECTION_H
 #define AWS_HTTP_H2_CONNECTION_H
 
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/common/atomics.h>
+#include <aws/common/fifo_cache.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/mutex.h>
 
@@ -28,6 +19,9 @@ struct aws_h2_stream;
 
 struct aws_h2_connection {
     struct aws_http_connection base;
+
+    aws_http2_on_goaway_received_fn *on_goaway_received;
+    aws_http2_on_remote_settings_change_fn *on_remote_settings_change;
 
     struct aws_channel_task cross_thread_work_task;
     struct aws_channel_task outgoing_frames_task;
@@ -44,13 +38,17 @@ struct aws_h2_connection {
         bool is_outgoing_frames_task_active;
 
         /* Settings received from peer, which restricts the message to send */
-        uint32_t settings_peer[AWS_H2_SETTINGS_END_RANGE];
-        /* My settings to send/sent to peer, which affects the decoding */
-        uint32_t settings_self[AWS_H2_SETTINGS_END_RANGE];
+        uint32_t settings_peer[AWS_HTTP2_SETTINGS_END_RANGE];
+        /* Local settings to send/sent to peer, which affects the decoding */
+        uint32_t settings_self[AWS_HTTP2_SETTINGS_END_RANGE];
 
-        /* List using h2_pending_settings.node
+        /* List using aws_h2_pending_settings.node
          * Contains settings waiting to be ACKed by peer and applied */
         struct aws_linked_list pending_settings_queue;
+
+        /* List using aws_h2_pending_ping.node
+         * Pings waiting to be ACKed by peer */
+        struct aws_linked_list pending_ping_queue;
 
         /* Most recent stream-id that was initiated by peer */
         uint32_t latest_peer_initiated_stream_id;
@@ -75,11 +73,10 @@ struct aws_h2_connection {
          * When queue is empty, then we send DATA frames from the outgoing_streams_list */
         struct aws_linked_list outgoing_frames_queue;
 
-        /* Maps stream-id to aws_h2_stream_closed_when.
-         * Contains data about streams that were recently closed by this end (sent RST_STREAM frame or END_STREAM flag),
-         * but might still receive frames that remote peer sent before learning that the stream was closed.
-         * Entries are removed after a period of time. */
-        struct aws_hash_table closed_streams_where_frames_might_trickle_in;
+        /* FIFO cache for closed stream, key: stream-id, value: aws_h2_stream_closed_when.
+         * Contains data about streams that were recently closed.
+         * The oldest entry will be removed if the cache is full */
+        struct aws_cache *closed_streams;
 
         /* Flow-control of connection from peer. Indicating the buffer capacity of our peer.
          * Reduce the space after sending a flow-controlled frame. Increment after receiving WINDOW_UPDATE for
@@ -98,6 +95,12 @@ struct aws_h2_connection {
         /* Last-stream-id sent in most recent GOAWAY frame. Defaults to max stream-id. */
         uint32_t goaway_sent_last_stream_id;
 
+        /* Frame we are encoding now. NULL if we are not encoding anything. */
+        struct aws_h2_frame *current_outgoing_frame;
+
+        /* Pointer to initial pending settings. If ACKed by peer, it will be NULL. */
+        struct aws_h2_pending_settings *init_pending_settings;
+
         /* Cached channel shutdown values.
          * If possible, we delay shutdown-in-the-write-dir until GOAWAY is written. */
         int channel_shutdown_error_code;
@@ -112,23 +115,81 @@ struct aws_h2_connection {
         /* New `aws_h2_stream *` that haven't moved to `thread_data` yet */
         struct aws_linked_list pending_stream_list;
 
+        /* New `aws_h2_frames *`, connection control frames created by user that haven't moved to `thread_data` yet */
+        struct aws_linked_list pending_frame_list;
+
+        /* New `aws_h2_pending_settings *` created by user that haven't moved to `thread_data` yet */
+        struct aws_linked_list pending_settings_list;
+
+        /* New `aws_h2_pending_ping *` created by user that haven't moved to `thread_data` yet */
+        struct aws_linked_list pending_ping_list;
+
+        /* New `aws_h2_pending_goaway *` created by user that haven't sent yet */
+        struct aws_linked_list pending_goaway_list;
+
         bool is_cross_thread_work_task_scheduled;
 
-    } synced_data;
+        /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
+        size_t window_update_size;
 
-    struct {
         /* For checking status from outside the event-loop thread. */
-        struct aws_atomic_var is_open;
+        bool is_open;
 
         /* If non-zero, reason to immediately reject new streams. (ex: closing) */
-        struct aws_atomic_var new_stream_error_code;
-    } atomic;
+        int new_stream_error_code;
+
+        /* Last-stream-id sent in most recent GOAWAY frame. Defaults to AWS_H2_STREAM_ID_MAX + 1 indicates no GOAWAY has
+         * been sent so far.*/
+        uint32_t goaway_sent_last_stream_id;
+        /* aws_http2_error_code sent in most recent GOAWAY frame. Defaults to 0, check goaway_sent_last_stream_id for
+         * any GOAWAY has sent or not */
+        uint32_t goaway_sent_http2_error_code;
+
+        /* Last-stream-id received in most recent GOAWAY frame. Defaults to AWS_H2_STREAM_ID_MAX + 1 indicates no GOAWAY
+         * has been received so far.*/
+        uint32_t goaway_received_last_stream_id;
+        /* aws_http2_error_code received in most recent GOAWAY frame. Defaults to 0, check
+         * goaway_received_last_stream_id for any GOAWAY has received or not */
+        uint32_t goaway_received_http2_error_code;
+
+        /* For checking settings received from peer from outside the event-loop thread. */
+        uint32_t settings_peer[AWS_HTTP2_SETTINGS_END_RANGE];
+        /* For checking local settings to send/sent to peer from outside the event-loop thread. */
+        uint32_t settings_self[AWS_HTTP2_SETTINGS_END_RANGE];
+    } synced_data;
+};
+
+struct aws_h2_pending_settings {
+    struct aws_http2_setting *settings_array;
+    size_t num_settings;
+    struct aws_linked_list_node node;
+    /* user callback */
+    void *user_data;
+    aws_http2_on_change_settings_complete_fn *on_completed;
+};
+
+struct aws_h2_pending_ping {
+    uint8_t opaque_data[AWS_HTTP2_PING_DATA_SIZE];
+    /* For calculating round-trip time */
+    uint64_t started_time;
+    struct aws_linked_list_node node;
+    /* user callback */
+    void *user_data;
+    aws_http2_on_ping_complete_fn *on_completed;
+};
+
+struct aws_h2_pending_goaway {
+    bool allow_more_streams;
+    uint32_t http2_error;
+    struct aws_byte_cursor debug_data;
+    struct aws_linked_list_node node;
 };
 
 /**
  * The action which caused the stream to close.
  */
 enum aws_h2_stream_closed_when {
+    AWS_H2_STREAM_CLOSED_UNKNOWN,
     AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM,
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_RECEIVED,
     AWS_H2_STREAM_CLOSED_WHEN_RST_STREAM_SENT,
@@ -152,13 +213,13 @@ AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http2_server(
     struct aws_allocator *allocator,
     bool manual_window_management,
-    size_t initial_window_size);
+    const struct aws_http2_connection_options *http2_options);
 
 AWS_HTTP_API
 struct aws_http_connection *aws_http_connection_new_http2_client(
     struct aws_allocator *allocator,
     bool manual_window_management,
-    size_t initial_window_size);
+    const struct aws_http2_connection_options *http2_options);
 
 /* Transform the request to h2 style headers */
 AWS_HTTP_API
@@ -169,12 +230,6 @@ struct aws_http_headers *aws_h2_create_headers_from_request(
 AWS_EXTERN_C_END
 
 /* Private functions called from multiple .c files... */
-
-/* Internal API for changing self settings of the connection */
-int aws_h2_connection_change_settings(
-    struct aws_h2_connection *connection,
-    const struct aws_h2_frame_setting *setting_array,
-    size_t num_settings);
 
 /**
  * Enqueue outgoing frame.
@@ -206,5 +261,15 @@ int aws_h2_connection_send_rst_and_close_reserved_stream(
     struct aws_h2_connection *connection,
     uint32_t stream_id,
     uint32_t h2_error_code);
+
+/**
+ * Error happens while writing into channel, shutdown the connection.
+ */
+void aws_h2_connection_shutdown_due_to_write_err(struct aws_h2_connection *connection, int error_code);
+
+/**
+ * Try to write outgoing frames, if the outgoing-frames-task isn't scheduled, run it immediately.
+ */
+void aws_h2_try_write_outgoing_frames(struct aws_h2_connection *connection);
 
 #endif /* AWS_HTTP_H2_CONNECTION_H */
