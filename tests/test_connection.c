@@ -240,7 +240,12 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
 
     tester->event_loop_group = aws_event_loop_group_new_default(tester->alloc, 1, NULL);
     tester->host_resolver = aws_host_resolver_new_default(tester->alloc, 8, tester->event_loop_group, NULL);
-    tester->server_bootstrap = aws_server_bootstrap_new(tester->alloc, tester->event_loop_group);
+
+    struct aws_server_bootstrap_options server_bootstrap_options = {
+        .event_loop_group = tester->event_loop_group,
+    };
+
+    tester->server_bootstrap = aws_server_bootstrap_new(tester->alloc, &server_bootstrap_options);
     ASSERT_NOT_NULL(tester->server_bootstrap);
 
     struct aws_socket_options socket_options = {
