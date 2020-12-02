@@ -120,6 +120,14 @@ struct aws_proxy_request_flow {
 
 AWS_EXTERN_C_BEGIN
 
+/**
+ * A constructor for a simple proxy request flow that performs basic authentication by adding the appropriate
+ * header and header value to requests.
+ *
+ * @param user_name user name to use in basic authentication
+ * @param password  password to use in basic authentication
+ * @return a new proxy request flow if successfully constructed, otherwise NULL
+ */
 struct aws_proxy_request_flow *aws_proxy_request_flow_new_basic_auth(
     struct aws_byte_cursor user_name,
     struct aws_byte_cursor password);
