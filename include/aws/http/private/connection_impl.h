@@ -1,19 +1,9 @@
 #ifndef AWS_HTTP_CONNECTION_IMPL_H
 #define AWS_HTTP_CONNECTION_IMPL_H
 
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/connection.h>
@@ -51,20 +41,40 @@ struct aws_http_connection_vtable {
     int (*stream_send_response)(struct aws_http_stream *stream, struct aws_http_message *response);
     void (*close)(struct aws_http_connection *connection);
     bool (*is_open)(const struct aws_http_connection *connection);
+    bool (*new_requests_allowed)(const struct aws_http_connection *connection);
     void (*update_window)(struct aws_http_connection *connection, size_t increment_size);
 
     /* HTTP/2 specific functions */
     int (*change_settings)(
-        struct aws_http_connection *connection,
+        struct aws_http_connection *http2_connection,
         const struct aws_http2_setting *settings_array,
         size_t num_settings,
         aws_http2_on_change_settings_complete_fn *on_completed,
         void *user_data);
-    int (*ping)(
-        struct aws_http_connection *connection,
+    int (*send_ping)(
+        struct aws_http_connection *http2_connection,
         const struct aws_byte_cursor *optional_opaque_data,
         aws_http2_on_ping_complete_fn *on_completed,
         void *user_data);
+    int (*send_goaway)(
+        struct aws_http_connection *http2_connection,
+        uint32_t http2_error,
+        bool allow_more_streams,
+        const struct aws_byte_cursor *optional_debug_data);
+    int (*get_sent_goaway)(
+        struct aws_http_connection *http2_connection,
+        uint32_t *out_http2_error,
+        uint32_t *out_last_stream_id);
+    int (*get_received_goaway)(
+        struct aws_http_connection *http2_connection,
+        uint32_t *out_http2_error,
+        uint32_t *out_last_stream_id);
+    void (*get_local_settings)(
+        const struct aws_http_connection *http2_connection,
+        struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
+    void (*get_remote_settings)(
+        const struct aws_http_connection *http2_connection,
+        struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
 };
 
 typedef int(aws_http_proxy_request_transform_fn)(struct aws_http_message *request, void *user_data);
@@ -122,6 +132,7 @@ struct aws_http_client_bootstrap {
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
     aws_http_proxy_request_transform_fn *proxy_request_transform;
 
+    struct aws_http1_connection_options http1_options;
     struct aws_http2_connection_options http2_options;
     struct aws_http_connection *connection;
 };

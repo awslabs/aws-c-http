@@ -1,16 +1,6 @@
-/*
- * Copyright 2010-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/connection_manager.h>
@@ -33,6 +23,10 @@
 #include <aws/common/mutex.h>
 #include <aws/common/string.h>
 
+#if _MSC_VER
+#    pragma warning(disable : 4232) /* function pointer to dll symbol */
+#endif
+
 /*
  * Established connections not currently in use are tracked via this structure.
  */
@@ -50,7 +44,7 @@ static struct aws_http_connection_manager_system_vtable s_default_system_vtable 
     .create_connection = aws_http_client_connect,
     .release_connection = aws_http_connection_release,
     .close_connection = aws_http_connection_close,
-    .is_connection_open = aws_http_connection_is_open,
+    .is_connection_available = aws_http_connection_new_requests_allowed,
     .get_monotonic_time = aws_high_res_clock_get_ticks,
     .is_callers_thread = aws_channel_thread_is_callers_thread,
     .connection_get_channel = aws_http_connection_get_channel,
@@ -61,7 +55,7 @@ const struct aws_http_connection_manager_system_vtable *g_aws_http_connection_ma
 
 bool aws_http_connection_manager_system_vtable_is_valid(const struct aws_http_connection_manager_system_vtable *table) {
     return table->create_connection && table->close_connection && table->release_connection &&
-           table->is_connection_open;
+           table->is_connection_available;
 }
 
 enum aws_http_connection_manager_state_type { AWS_HCMST_UNINITIALIZED, AWS_HCMST_READY, AWS_HCMST_SHUTTING_DOWN };
@@ -654,6 +648,8 @@ static void s_aws_http_connection_manager_finish_destroy(struct aws_http_connect
 
     aws_mutex_clean_up(&manager->lock);
 
+    aws_client_bootstrap_release(manager->bootstrap);
+
     if (manager->shutdown_complete_callback) {
         manager->shutdown_complete_callback(manager->shutdown_complete_user_data);
     }
@@ -793,7 +789,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     aws_linked_list_init(&manager->idle_connections);
     aws_linked_list_init(&manager->pending_acquisitions);
 
-    manager->host = aws_string_new_from_array(allocator, options->host.ptr, options->host.len);
+    manager->host = aws_string_new_from_cursor(allocator, &options->host);
     if (manager->host == NULL) {
         goto on_error;
     }
@@ -821,7 +817,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->port = options->port;
     manager->max_connections = options->max_connections;
     manager->socket_options = *options->socket_options;
-    manager->bootstrap = options->bootstrap;
+    manager->bootstrap = aws_client_bootstrap_acquire(options->bootstrap);
     manager->system_vtable = g_aws_http_connection_manager_default_system_vtable_ptr;
     manager->external_ref_count = 1;
     manager->shutdown_complete_callback = options->shutdown_complete_callback;
@@ -1139,7 +1135,7 @@ int aws_http_connection_manager_release_connection(
     s_aws_connection_management_transaction_init(&work, manager);
 
     int result = AWS_OP_ERR;
-    bool should_release_connection = !manager->system_vtable->is_connection_open(connection);
+    bool should_release_connection = !manager->system_vtable->is_connection_available(connection);
 
     AWS_LOGF_DEBUG(
         AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Releasing connection (id=%p)", (void *)manager, (void *)connection);

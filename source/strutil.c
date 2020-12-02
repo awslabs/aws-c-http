@@ -1,44 +1,8 @@
-/*
- * Copyright 2010-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 #include <aws/http/private/strutil.h>
-
-/* Lookup from '0' -> 0, 'f' -> 0xf, 'F' -> 0xF, etc
- * invalid characters have value 255 */
-/* clang-format off */
-static const uint8_t s_ascii_to_num_table[256] = {
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-    255, 255,
-    /* 0 - 9 */
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-    255, 255, 255, 255, 255, 255, 255,
-    /* A - F */
-    0xA, 0xB, 0xC, 0xD, 0xE, 0xF,
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-    255, 255, 255,
-    /* a - f */
-    0xa, 0xb, 0xc, 0xd, 0xe, 0xf,
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-};
-/* clang-format on */
 
 static int s_read_unsigned(struct aws_byte_cursor cursor, uint64_t *dst, uint8_t base) {
     uint64_t val = 0;
@@ -48,10 +12,12 @@ static int s_read_unsigned(struct aws_byte_cursor cursor, uint64_t *dst, uint8_t
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
+    const uint8_t *hex_to_num_table = aws_lookup_table_hex_to_num_get();
+
     /* read from left to right */
     for (size_t i = 0; i < cursor.len; ++i) {
         const uint8_t c = cursor.ptr[i];
-        const uint8_t cval = s_ascii_to_num_table[c];
+        const uint8_t cval = hex_to_num_table[c];
         if (cval >= base) {
             return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         }

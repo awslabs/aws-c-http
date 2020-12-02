@@ -1,19 +1,9 @@
 #ifndef AWS_HTTP_H2_CONNECTION_H
 #define AWS_HTTP_H2_CONNECTION_H
 
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/common/atomics.h>
@@ -49,7 +39,7 @@ struct aws_h2_connection {
 
         /* Settings received from peer, which restricts the message to send */
         uint32_t settings_peer[AWS_HTTP2_SETTINGS_END_RANGE];
-        /* My settings to send/sent to peer, which affects the decoding */
+        /* Local settings to send/sent to peer, which affects the decoding */
         uint32_t settings_self[AWS_HTTP2_SETTINGS_END_RANGE];
 
         /* List using aws_h2_pending_settings.node
@@ -134,19 +124,39 @@ struct aws_h2_connection {
         /* New `aws_h2_pending_ping *` created by user that haven't moved to `thread_data` yet */
         struct aws_linked_list pending_ping_list;
 
+        /* New `aws_h2_pending_goaway *` created by user that haven't sent yet */
+        struct aws_linked_list pending_goaway_list;
+
         bool is_cross_thread_work_task_scheduled;
 
         /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
         size_t window_update_size;
-    } synced_data;
 
-    struct {
         /* For checking status from outside the event-loop thread. */
-        struct aws_atomic_var is_open;
+        bool is_open;
 
         /* If non-zero, reason to immediately reject new streams. (ex: closing) */
-        struct aws_atomic_var new_stream_error_code;
-    } atomic;
+        int new_stream_error_code;
+
+        /* Last-stream-id sent in most recent GOAWAY frame. Defaults to AWS_H2_STREAM_ID_MAX + 1 indicates no GOAWAY has
+         * been sent so far.*/
+        uint32_t goaway_sent_last_stream_id;
+        /* aws_http2_error_code sent in most recent GOAWAY frame. Defaults to 0, check goaway_sent_last_stream_id for
+         * any GOAWAY has sent or not */
+        uint32_t goaway_sent_http2_error_code;
+
+        /* Last-stream-id received in most recent GOAWAY frame. Defaults to AWS_H2_STREAM_ID_MAX + 1 indicates no GOAWAY
+         * has been received so far.*/
+        uint32_t goaway_received_last_stream_id;
+        /* aws_http2_error_code received in most recent GOAWAY frame. Defaults to 0, check
+         * goaway_received_last_stream_id for any GOAWAY has received or not */
+        uint32_t goaway_received_http2_error_code;
+
+        /* For checking settings received from peer from outside the event-loop thread. */
+        uint32_t settings_peer[AWS_HTTP2_SETTINGS_END_RANGE];
+        /* For checking local settings to send/sent to peer from outside the event-loop thread. */
+        uint32_t settings_self[AWS_HTTP2_SETTINGS_END_RANGE];
+    } synced_data;
 };
 
 struct aws_h2_pending_settings {
@@ -166,6 +176,13 @@ struct aws_h2_pending_ping {
     /* user callback */
     void *user_data;
     aws_http2_on_ping_complete_fn *on_completed;
+};
+
+struct aws_h2_pending_goaway {
+    bool allow_more_streams;
+    uint32_t http2_error;
+    struct aws_byte_cursor debug_data;
+    struct aws_linked_list_node node;
 };
 
 /**
@@ -244,6 +261,11 @@ int aws_h2_connection_send_rst_and_close_reserved_stream(
     struct aws_h2_connection *connection,
     uint32_t stream_id,
     uint32_t h2_error_code);
+
+/**
+ * Error happens while writing into channel, shutdown the connection.
+ */
+void aws_h2_connection_shutdown_due_to_write_err(struct aws_h2_connection *connection, int error_code);
 
 /**
  * Try to write outgoing frames, if the outgoing-frames-task isn't scheduled, run it immediately.

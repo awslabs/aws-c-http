@@ -1,19 +1,9 @@
 #ifndef AWS_HTTP_CONNECTION_H
 #define AWS_HTTP_CONNECTION_H
 
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/http.h>
@@ -187,7 +177,7 @@ struct aws_http_proxy_options {
      * TLS configuration for the Local <-> Proxy connection
      * Must be distinct from the the TLS options in the parent aws_http_connection_options struct
      */
-    struct aws_tls_connection_options *tls_options;
+    const struct aws_tls_connection_options *tls_options;
 
     /**
      * What type of proxy authentication to use, if any
@@ -208,7 +198,27 @@ struct aws_http_proxy_options {
 };
 
 /**
- * HTTP/2 connection options.
+ * Options specific to HTTP/1.x connections.
+ * Initialize with AWS_HTTP1_CONNECTION_OPTIONS_INIT to set default values.
+ */
+struct aws_http1_connection_options {
+    /**
+     * Optional
+     * Capacity in bytes of the HTTP/1 connection's read buffer.
+     * The buffer grows if the flow-control window of the incoming HTTP-stream
+     * reaches zero. If the buffer reaches capacity, no further socket data is
+     * read until the HTTP-stream's window opens again, allowing data to resume flowing.
+     *
+     * Ignored if `manual_window_management` is false.
+     * If zero is specified (the default) then a default capacity is chosen.
+     * A capacity that is too small may hinder throughput.
+     * A capacity that is too big may waste memory without helping throughput.
+     */
+    size_t read_buffer_capacity;
+};
+
+/**
+ * Options specific to HTTP/2 connections.
  * Initialize with AWS_HTTP2_CONNECTION_OPTIONS_INIT to set default values.
  */
 struct aws_http2_connection_options {
@@ -324,10 +334,24 @@ struct aws_http_client_connection_options {
     const struct aws_http_connection_monitoring_options *monitoring_options;
 
     /**
-     * Optional.
-     * The initial connection flow-control window size for HTTP/1 connection.
-     * Ignored by HTTP/2 connection, since the initial connection flow-control window in HTTP/2 is not configurable.
-     * A default size is set by AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT.
+     * Set to true to manually manage the flow-control window of each stream.
+     *
+     * If false, the connection will maintain its flow-control windows such that
+     * no back-pressure is applied and data arrives as fast as possible.
+     *
+     * If true, the flow-control window of each stream will shrink as body data
+     * is received (headers, padding, and other metadata do not affect the window).
+     * `initial_window_size` determines the starting size of each stream's window.
+     * If a stream's flow-control window reaches 0, no further data will be received.
+     * The user must call aws_http_stream_update_window() to increment the stream's
+     * window and keep data flowing.
+     */
+    bool manual_window_management;
+
+    /**
+     * The starting size of each HTTP stream's flow-control window.
+     * Required if `manual_window_management` is true,
+     * ignored if `manual_window_management` is false.
      */
     size_t initial_window_size;
 
@@ -353,23 +377,20 @@ struct aws_http_client_connection_options {
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
 
     /**
-     * Set to true to manually manage the read window size.
-     *
-     * If this is false, the connection will maintain a constant window size.
-     *
-     * If this is true, the caller must manually increment the window size using aws_http_stream_update_window().
-     * If the window is not incremented, it will shrink by the amount of body data received. If the window size
-     * reaches 0, no further data will be received.
-     **/
-    bool manual_window_management;
+     * Options specific to HTTP/1.x connections.
+     * Optional.
+     * Ignored if connection is not HTTP/1.x.
+     * If connection is HTTP/1.x and options were not specified, default values are used.
+     */
+    const struct aws_http1_connection_options *http1_options;
 
     /**
-     * HTTP/2 connection specific options.
+     * Options specific to HTTP/2 connections.
      * Optional.
-     * If HTTP/2 connection created, we will use this for some configurations in HTTP/2 connection.
-     * If other protocol connection created, this will be ignored.
+     * Ignored if connection is not HTTP/2.
+     * If connection is HTTP/2 and options were not specified, default values are used.
      */
-    struct aws_http2_connection_options *http2_options;
+    const struct aws_http2_connection_options *http2_options;
 };
 
 /* Predefined settings identifiers (RFC-7540 6.5.2) */
@@ -391,13 +412,26 @@ struct aws_http2_setting {
 };
 
 /**
+ * Initializes aws_http1_connection_options with default values.
+ */
+#define AWS_HTTP1_CONNECTION_OPTIONS_INIT                                                                              \
+    { .read_buffer_capacity = 0 }
+
+/**
  * HTTP/2: Default value for max closed streams we will keep in memory.
  */
 #define AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS (32)
+
 /**
  * HTTP/2: The size of payload for HTTP/2 PING frame.
  */
 #define AWS_HTTP2_PING_DATA_SIZE (8)
+
+/**
+ * HTTP/2: The number of known settings.
+ */
+#define AWS_HTTP2_SETTINGS_COUNT (6)
+
 /**
  * Initializes aws_http2_connection_options with default values.
  */
@@ -447,13 +481,21 @@ AWS_HTTP_API
 bool aws_http_connection_is_open(const struct aws_http_connection *connection);
 
 /**
+ * Return whether the connection can make a new requests.
+ * If false, then a new connection must be established to make further requests.
+ */
+AWS_HTTP_API
+bool aws_http_connection_new_requests_allowed(const struct aws_http_connection *connection);
+
+/**
  * Returns true if this is a client connection.
  */
 AWS_HTTP_API
 bool aws_http_connection_is_client(const struct aws_http_connection *connection);
 
 /**
- * Increments the connection-wide read window by the value specified.
+ * DEPRECATED
+ * TODO: Delete once this is removed from H2.
  */
 AWS_HTTP_API
 void aws_http_connection_update_window(struct aws_http_connection *connection, size_t increment_size);
@@ -467,6 +509,12 @@ enum aws_http_version aws_http_connection_get_version(const struct aws_http_conn
  */
 AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
+
+/**
+ * Checks http proxy options for correctness
+ */
+AWS_HTTP_API
+int aws_http_options_validate_proxy_configuration(const struct aws_http_client_connection_options *options);
 
 /**
  * Send a SETTINGS frame (HTTP/2 only).
@@ -507,10 +555,83 @@ int aws_http2_connection_ping(
     void *user_data);
 
 /**
- * Checks http proxy options for correctness
+ * Get the local settings we are using to affect the decoding.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param out_settings fixed size array of aws_http2_setting gets set to the local settings
  */
 AWS_HTTP_API
-int aws_http_options_validate_proxy_configuration(const struct aws_http_client_connection_options *options);
+int aws_http2_connection_get_local_settings(
+    const struct aws_http_connection *http2_connection,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
+
+/**
+ * Get the settings received from remote peer, which we are using to restricts the message to send.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param out_settings fixed size array of aws_http2_setting gets set to  the remote settings
+ */
+AWS_HTTP_API
+int aws_http2_connection_get_remote_settings(
+    const struct aws_http_connection *http2_connection,
+    struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
+
+/**
+ * Send a custom GOAWAY frame (HTTP/2 only).
+ *
+ * Note that the connection automatically attempts to send a GOAWAY during
+ * shutdown (unless a GOAWAY with a valid Last-Stream-ID has already been sent).
+ *
+ * This call can be used to gracefully warn the peer of an impending shutdown
+ * (http2_error=0, allow_more_streams=true), or to customize the final GOAWAY
+ * frame that is sent by this connection.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param http2_error The HTTP/2 error code (RFC-7540 section 7) to send.
+ *      `enum aws_http2_error_code` lists official codes.
+ * @param allow_more_streams If true, new peer-initiated streams will continue
+ *      to be acknowledged and the GOAWAY's Last-Stream-ID will be set to a max value.
+ *      If false, new peer-initiated streams will be ignored and the GOAWAY's
+ *      Last-Stream-ID will be set to the latest acknowledged stream.
+ * @param optional_debug_data Optional debug data to send. Size must not exceed 16KB.
+ */
+
+AWS_HTTP_API
+int aws_http2_connection_send_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t http2_error,
+    bool allow_more_streams,
+    const struct aws_byte_cursor *optional_debug_data);
+
+/**
+ * Get data about the latest GOAWAY frame sent to peer (HTTP/2 only).
+ * If no GOAWAY has been sent, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE will be raised.
+ * Note that GOAWAY frames are typically sent automatically by the connection
+ * during shutdown.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param out_http2_error Gets set to HTTP/2 error code sent in most recent GOAWAY.
+ * @param out_last_stream_id Gets set to Last-Stream-ID sent in most recent GOAWAY.
+ */
+AWS_HTTP_API
+int aws_http2_connection_get_sent_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id);
+
+/**
+ * Get data about the latest GOAWAY frame received from peer (HTTP/2 only).
+ * If no GOAWAY has been received, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE will be raised.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param out_http2_error Gets set to HTTP/2 error code received in most recent GOAWAY.
+ * @param out_last_stream_id Gets set to Last-Stream-ID received in most recent GOAWAY.
+ */
+AWS_HTTP_API
+int aws_http2_connection_get_received_goaway(
+    struct aws_http_connection *http2_connection,
+    uint32_t *out_http2_error,
+    uint32_t *out_last_stream_id);
 
 AWS_EXTERN_C_END
 

@@ -1,19 +1,9 @@
 #ifndef AWS_HTTP_H2_FRAMES_H
 #define AWS_HTTP_H2_FRAMES_H
 
-/*
- * Copyright 2010-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License").
- * You may not use this file except in compliance with the License.
- * A copy of the License is located at
- *
- *  http://aws.amazon.com/apache2.0
- *
- * or in the "license" file accompanying this file. This file is distributed
- * on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing
- * permissions and limitations under the License.
+/**
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0.
  */
 
 #include <aws/http/connection.h>
@@ -74,7 +64,9 @@ AWS_HTTP_API
 extern const uint32_t aws_h2_settings_initial[AWS_HTTP2_SETTINGS_END_RANGE];
 
 /* This magic string must be the very first thing a client sends to the server.
- * See RFC-7540 3.5 - HTTP/2 Connection Preface */
+ * See RFC-7540 3.5 - HTTP/2 Connection Preface.
+ * Exported for tests */
+AWS_HTTP_API
 extern const struct aws_byte_cursor aws_h2_connection_preface_client_string;
 
 /**
