@@ -144,13 +144,7 @@ enum aws_http_proxy_connection_type {
     AWS_HPCT_SOCKS5,
 };
 
-/**
- * Supported proxy authentication modes
- */
-enum aws_http_proxy_authentication_type {
-    AWS_HPAT_NONE = 0,
-    AWS_HPAT_BASIC,
-};
+struct aws_proxy_request_flow;
 
 /**
  * Options for http proxy server usage
@@ -179,22 +173,7 @@ struct aws_http_proxy_options {
      */
     const struct aws_tls_connection_options *tls_options;
 
-    /**
-     * What type of proxy authentication to use, if any
-     */
-    enum aws_http_proxy_authentication_type auth_type;
-
-    /**
-     * Optional
-     * User name to use for authentication, basic only
-     */
-    struct aws_byte_cursor auth_username;
-
-    /**
-     * Optional
-     * Password to use for authentication, basic only
-     */
-    struct aws_byte_cursor auth_password;
+    struct aws_proxy_request_flow *request_flow;
 };
 
 /**
