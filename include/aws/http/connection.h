@@ -173,6 +173,12 @@ struct aws_http_proxy_options {
      */
     const struct aws_tls_connection_options *tls_options;
 
+    /**
+     * Optional
+     * Advanced option that allows the user to create a custom request flow that gives low-level control of either the
+     * CONNECT stage (for tunneling proxy connections) or every outbound request going through the connection
+     * (for forwarding proxy connections).
+     */
     struct aws_proxy_request_flow *request_flow;
 };
 
