@@ -112,7 +112,13 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
 
     tester->event_loop_group = aws_event_loop_group_new_default(tester->alloc, 1, NULL);
-    tester->host_resolver = aws_host_resolver_new_default(tester->alloc, 8, tester->event_loop_group, NULL);
+
+    struct aws_host_resolver_default_options resolver_options = {
+        .el_group = tester->event_loop_group,
+        .max_entries = 8,
+    };
+
+    tester->host_resolver = aws_host_resolver_new_default(tester->alloc, &resolver_options);
 
     struct aws_socket_options socket_options = {
         .type = AWS_SOCKET_STREAM,

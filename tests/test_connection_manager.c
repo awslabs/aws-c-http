@@ -130,7 +130,13 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     }
 
     tester->event_loop_group = aws_event_loop_group_new(tester->allocator, clock_fn, 1, s_new_event_loop, NULL, NULL);
-    tester->host_resolver = aws_host_resolver_new_default(tester->allocator, 8, tester->event_loop_group, NULL);
+
+    struct aws_host_resolver_default_options resolver_options = {
+        .el_group = tester->event_loop_group,
+        .max_entries = 8,
+    };
+
+    tester->host_resolver = aws_host_resolver_new_default(tester->allocator, &resolver_options);
     struct aws_client_bootstrap_options bootstrap_options = {
         .event_loop_group = tester->event_loop_group,
         .host_resolver = tester->host_resolver,
