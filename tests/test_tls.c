@@ -137,7 +137,7 @@ static int s_test_tls_download_medium_file_general(
         .el_group = test.event_loop_group,
         .max_entries = 1,
     };
-    
+
     test.host_resolver = aws_host_resolver_new_default(test.alloc, &resolver_options);
 
     struct aws_client_bootstrap_options bootstrap_options = {
