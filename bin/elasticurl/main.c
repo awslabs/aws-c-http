@@ -676,7 +676,13 @@ int main(int argc, char **argv) {
     }
 
     struct aws_event_loop_group *el_group = aws_event_loop_group_new_default(allocator, 1, NULL);
-    struct aws_host_resolver *resolver = aws_host_resolver_new_default(allocator, 8, el_group, NULL);
+
+    struct aws_host_resolver_default_options resolver_options = {
+        .el_group = el_group,
+        .max_entries = 8,
+    };
+
+    struct aws_host_resolver *resolver = aws_host_resolver_new_default(allocator, &resolver_options);
 
     struct aws_client_bootstrap_options bootstrap_options = {
         .event_loop_group = el_group,
