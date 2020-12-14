@@ -608,7 +608,7 @@ static void s_chain_tunnel_try_next_strategy(
         message,
         s_chain_tunnel_iteration_termination_callback,
         s_chain_tunnel_iteration_forward_callback,
-        chain_strategy);
+        proxy_strategy);
     return;
 
 on_error:
