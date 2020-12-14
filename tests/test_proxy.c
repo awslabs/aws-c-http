@@ -8,6 +8,7 @@
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/h1_stream.h>
 #include <aws/http/private/proxy_impl.h>
+#include <aws/http/proxy_strategy.h>
 
 #include <aws/io/uri.h>
 
@@ -153,7 +154,7 @@ static int s_test_aws_proxy_new_socket_channel(struct aws_socket_channel_bootstr
 
     testing_channel_run_currently_queued_tasks(tester.testing_channel);
 
-    if (tester.proxy_options->connection_type == AWS_HPCT_HTTP_TUNNEL) {
+    if (tester.proxy_options.connection_type == AWS_HPCT_HTTP_TUNNEL) {
         /* For tunnel proxies, send the CONNECT request and response */
         ASSERT_SUCCESS(proxy_tester_verify_connect_request(&tester));
         ASSERT_SUCCESS(proxy_tester_send_connect_response(&tester));
@@ -173,9 +174,7 @@ static int s_setup_proxy_test(
     struct aws_allocator *allocator,
     enum proxy_tester_test_mode test_mode,
     enum proxy_tester_failure_type failure_type,
-    enum aws_http_proxy_authentication_type auth_type) {
-
-    (void)auth_type;
+    bool use_basic_auth) {
 
     aws_http_connection_set_system_vtable(&s_proxy_connection_system_vtable);
     aws_http_proxy_system_set_vtable(&s_proxy_table_for_tls);
@@ -186,10 +185,14 @@ static int s_setup_proxy_test(
         .port = s_proxy_port,
     };
 
-    if (auth_type == AWS_HPAT_BASIC) {
-        proxy_options.auth_type = AWS_HPAT_BASIC;
-        proxy_options.auth_username = aws_byte_cursor_from_string(s_mock_request_username);
-        proxy_options.auth_password = aws_byte_cursor_from_string(s_mock_request_password);
+    if (use_basic_auth) {
+        struct aws_http_proxy_strategy_factory_basic_auth_config config = {
+            .proxy_connection_type = AWS_HPCT_HTTP_FORWARD,
+            .user_name = aws_byte_cursor_from_string(s_mock_request_username),
+            .password = aws_byte_cursor_from_string(s_mock_request_password),
+        };
+
+        proxy_options.proxy_strategy_factory = aws_http_proxy_strategy_factory_new_basic_auth(allocator, &config);
     }
 
     struct proxy_tester_options options = {
@@ -215,7 +218,7 @@ static int s_setup_proxy_test(
 static int s_test_http_forwarding_proxy_connection_proxy_target(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_NONE, AWS_HPAT_NONE));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_NONE, false));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -233,7 +236,7 @@ AWS_TEST_CASE(test_http_forwarding_proxy_connection_proxy_target, s_test_http_fo
 static int s_test_http_forwarding_proxy_connection_channel_failure(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_CHANNEL, AWS_HPAT_NONE));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_CHANNEL, false));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -255,7 +258,7 @@ AWS_TEST_CASE(
 static int s_test_http_forwarding_proxy_connection_connect_failure(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_CONNECTION, AWS_HPAT_NONE));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_CONNECTION, false));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -277,7 +280,7 @@ AWS_TEST_CASE(
 static int s_test_https_tunnel_proxy_connection_success(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS_TUNNEL, PTFT_NONE, AWS_HPAT_NONE));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS_TUNNEL, PTFT_NONE, false));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -297,7 +300,7 @@ AWS_TEST_CASE(test_https_tunnel_proxy_connection_success, s_test_https_tunnel_pr
 static int s_test_http_tunnel_proxy_connection_success(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_TUNNEL, PTFT_NONE, AWS_HPAT_NONE));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_TUNNEL, PTFT_NONE, false));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -317,7 +320,7 @@ AWS_TEST_CASE(test_http_tunnel_proxy_connection_success, s_test_http_tunnel_prox
 static int s_test_https_tunnel_proxy_connection_failure_connect(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS_TUNNEL, PTFT_CONNECT_REQUEST, AWS_HPAT_NONE));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS_TUNNEL, PTFT_CONNECT_REQUEST, false));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -337,7 +340,7 @@ AWS_TEST_CASE(test_https_tunnel_proxy_connection_failure_connect, s_test_https_t
 static int s_test_http_tunnel_proxy_connection_failure_connect(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_TUNNEL, PTFT_CONNECT_REQUEST, AWS_HPAT_NONE));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_TUNNEL, PTFT_CONNECT_REQUEST, false));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -357,7 +360,7 @@ AWS_TEST_CASE(test_http_tunnel_proxy_connection_failure_connect, s_test_http_tun
 static int s_test_https_tunnel_proxy_connection_failure_tls(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS_TUNNEL, PTFT_TLS_NEGOTIATION, AWS_HPAT_NONE));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS_TUNNEL, PTFT_TLS_NEGOTIATION, false));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -430,8 +433,7 @@ static int s_verify_transformed_request(
 
 static int s_do_http_forwarding_proxy_request_transform_test(struct aws_allocator *allocator, bool use_basic_auth) {
 
-    ASSERT_SUCCESS(
-        s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_NONE, use_basic_auth ? AWS_HPAT_BASIC : AWS_HPAT_NONE));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_NONE, use_basic_auth));
 
     struct aws_http_message *untransformed_request = s_build_http_request(allocator);
     struct aws_http_message *request = s_build_http_request(allocator);

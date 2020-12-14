@@ -52,7 +52,7 @@ struct proxy_tester {
     struct aws_tls_ctx_options tls_ctx_options;
     struct aws_tls_connection_options tls_connection_options;
 
-    struct aws_http_proxy_options *proxy_options;
+    struct aws_http_proxy_options proxy_options;
     struct aws_byte_cursor host;
     uint16_t port;
 

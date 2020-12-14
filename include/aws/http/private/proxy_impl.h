@@ -43,11 +43,7 @@ struct aws_http_proxy_config {
 
     struct aws_tls_connection_options *tls_options;
 
-    enum aws_http_proxy_authentication_type auth_type;
-
-    struct aws_byte_buf auth_username;
-
-    struct aws_byte_buf auth_password;
+    struct aws_http_proxy_strategy_factory *proxy_strategy_factory;
 };
 
 /*
@@ -76,6 +72,7 @@ struct aws_http_proxy_user_data {
     struct aws_tls_connection_options *tls_options;
 
     struct aws_http_proxy_config *proxy_config;
+    struct aws_http_proxy_strategy *proxy_strategy;
 };
 
 struct aws_http_proxy_system_vtable {

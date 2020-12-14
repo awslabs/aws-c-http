@@ -144,7 +144,7 @@ enum aws_http_proxy_connection_type {
     AWS_HPCT_SOCKS5,
 };
 
-struct aws_proxy_request_flow;
+struct aws_http_proxy_strategy_factory;
 
 /**
  * Options for http proxy server usage
@@ -175,11 +175,14 @@ struct aws_http_proxy_options {
 
     /**
      * Optional
-     * Advanced option that allows the user to create a custom request flow that gives low-level control of either the
-     * CONNECT stage (for tunneling proxy connections) or every outbound request going through the connection
-     * (for forwarding proxy connections).
+     * Advanced option that allows the user to create a custom strategy that gives low-level control of
+     * certain logical flows within the proxy logic.
+     *
+     * For tunneling proxies it allows custom retry and adaptive negotiation of CONNECT requests.
+     * For forwarding proxies it allows custom request transformations.
+     * Other proxy connection types TBD.
      */
-    struct aws_proxy_request_flow *request_flow;
+    struct aws_http_proxy_strategy_factory *proxy_strategy_factory;
 };
 
 /**

@@ -6,6 +6,7 @@
 #include <aws/http/connection.h>
 #include <aws/http/private/h1_connection.h>
 #include <aws/http/private/proxy_impl.h>
+#include <aws/http/proxy_strategy.h>
 #include <aws/http/server.h>
 
 #include <aws/common/clock.h>
@@ -94,7 +95,7 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
 
     tester->host = options->host;
     tester->port = options->port;
-    tester->proxy_options = options->proxy_options;
+    tester->proxy_options = *options->proxy_options;
     tester->test_mode = options->test_mode;
     tester->failure_type = options->failure_type;
 
@@ -191,6 +192,8 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
         aws_tls_ctx_release(tester->tls_ctx);
         aws_tls_ctx_options_clean_up(&tester->tls_ctx_options);
     }
+
+    aws_http_proxy_strategy_factory_release(tester->proxy_options.proxy_strategy_factory);
 
     aws_http_library_clean_up();
 
