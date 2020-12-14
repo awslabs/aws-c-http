@@ -294,6 +294,8 @@ static int s_aws_http_on_incoming_body_tunnel_proxy(
         (*on_incoming_body)(context->proxy_strategy, data);
     }
 
+    aws_http_stream_update_window(stream, data->len);
+
     return AWS_OP_SUCCESS;
 }
 
