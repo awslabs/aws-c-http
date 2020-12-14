@@ -177,23 +177,20 @@ done:
     return result;
 }
 
-int s_basic_auth_forward_add_header(struct aws_http_message *message, void *strategy_user_data) {
-
-    struct aws_http_proxy_strategy *strategy = strategy_user_data;
-    struct aws_http_proxy_strategy_basic_auth *basic_auth_strategy = strategy->impl;
+int s_basic_auth_forward_add_header(struct aws_http_proxy_strategy *proxy_strategy, struct aws_http_message *message) {
+    struct aws_http_proxy_strategy_basic_auth *basic_auth_strategy = proxy_strategy->impl;
 
     return s_add_basic_proxy_authentication_header(basic_auth_strategy->allocator, message, basic_auth_strategy);
 }
 
 void s_basic_auth_tunnel_add_header(
+    struct aws_http_proxy_strategy *proxy_strategy,
     struct aws_http_message *message,
     aws_http_proxy_strategy_terminate_fn *strategy_termination_callback,
     aws_http_proxy_strategy_http_request_forward_fn *strategy_http_request_forward_callback,
-    void *strategy_user_data,
     void *internal_proxy_user_data) {
 
-    struct aws_http_proxy_strategy *strategy = strategy_user_data;
-    struct aws_http_proxy_strategy_basic_auth *basic_auth_strategy = strategy->impl;
+    struct aws_http_proxy_strategy_basic_auth *basic_auth_strategy = proxy_strategy->impl;
     if (basic_auth_strategy->connect_state != AWS_PSCS_READY) {
         strategy_termination_callback(message, AWS_ERROR_INVALID_STATE, internal_proxy_user_data);
         return;
@@ -209,14 +206,17 @@ void s_basic_auth_tunnel_add_header(
     strategy_http_request_forward_callback(message, internal_proxy_user_data);
 }
 
-static int s_basic_auth_on_connect_status(enum aws_http_status_code status_code, void *user_data) {
-    struct aws_http_proxy_strategy *strategy = user_data;
-    struct aws_http_proxy_strategy_basic_auth *basic_auth_strategy = strategy->impl;
+static int s_basic_auth_on_connect_status(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    enum aws_http_status_code status_code) {
+    struct aws_http_proxy_strategy_basic_auth *basic_auth_strategy = proxy_strategy->impl;
 
-    if (AWS_HTTP_STATUS_CODE_200_OK != status_code) {
-        basic_auth_strategy->connect_state = AWS_PSCS_FAILURE;
-    } else {
-        basic_auth_strategy->connect_state = AWS_PSCS_SUCCESS;
+    if (basic_auth_strategy->connect_state == AWS_PSCS_IN_PROGRESS) {
+        if (AWS_HTTP_STATUS_CODE_200_OK != status_code) {
+            basic_auth_strategy->connect_state = AWS_PSCS_FAILURE;
+        } else {
+            basic_auth_strategy->connect_state = AWS_PSCS_SUCCESS;
+        }
     }
 
     return AWS_OP_SUCCESS;
@@ -339,14 +339,13 @@ static void s_destroy_one_time_identity_strategy(struct aws_http_proxy_strategy 
 }
 
 void s_one_time_identity_connect_transform(
+    struct aws_http_proxy_strategy *proxy_strategy,
     struct aws_http_message *message,
     aws_http_proxy_strategy_terminate_fn *strategy_termination_callback,
     aws_http_proxy_strategy_http_request_forward_fn *strategy_http_request_forward_callback,
-    void *strategy_user_data,
     void *internal_proxy_user_data) {
 
-    struct aws_http_proxy_strategy *strategy = strategy_user_data;
-    struct aws_http_proxy_strategy_one_time_identity *one_time_identity_strategy = strategy->impl;
+    struct aws_http_proxy_strategy_one_time_identity *one_time_identity_strategy = proxy_strategy->impl;
     if (one_time_identity_strategy->connect_state != AWS_PSCS_READY) {
         strategy_termination_callback(message, AWS_ERROR_INVALID_STATE, internal_proxy_user_data);
         return;
@@ -356,13 +355,17 @@ void s_one_time_identity_connect_transform(
     strategy_http_request_forward_callback(message, internal_proxy_user_data);
 }
 
-static int s_one_time_identity_on_connect_status(enum aws_http_status_code status_code, void *user_data) {
-    struct aws_http_proxy_strategy_one_time_identity *one_time_identity_strategy = user_data;
+static int s_one_time_identity_on_connect_status(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    enum aws_http_status_code status_code) {
+    struct aws_http_proxy_strategy_one_time_identity *one_time_identity_strategy = proxy_strategy->impl;
 
-    if (AWS_HTTP_STATUS_CODE_200_OK != status_code) {
-        one_time_identity_strategy->connect_state = AWS_PSCS_FAILURE;
-    } else {
-        one_time_identity_strategy->connect_state = AWS_PSCS_SUCCESS;
+    if (one_time_identity_strategy->connect_state == AWS_PSCS_IN_PROGRESS) {
+        if (AWS_HTTP_STATUS_CODE_200_OK != status_code) {
+            one_time_identity_strategy->connect_state = AWS_PSCS_FAILURE;
+        } else {
+            one_time_identity_strategy->connect_state = AWS_PSCS_SUCCESS;
+        }
     }
 
     return AWS_OP_SUCCESS;
@@ -458,10 +461,12 @@ static void s_destroy_forwarding_identity_strategy(struct aws_http_proxy_strateg
     aws_mem_release(identity_strategy->allocator, identity_strategy);
 }
 
-int s_forwarding_identity_connect_transform(struct aws_http_message *message, void *strategy_user_data) {
+int s_forwarding_identity_connect_transform(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    struct aws_http_message *message) {
 
     (void)message;
-    (void)strategy_user_data;
+    (void)proxy_strategy;
 
     return AWS_OP_SUCCESS;
 }

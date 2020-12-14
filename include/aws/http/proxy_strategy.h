@@ -49,36 +49,41 @@ typedef void(
  *
  */
 typedef void(aws_http_proxy_strategy_http_request_transform_async_fn)(
+    struct aws_http_proxy_strategy *proxy_strategy,
     struct aws_http_message *message,
     aws_http_proxy_strategy_terminate_fn *strategy_termination_callback,
     aws_http_proxy_strategy_http_request_forward_fn *strategy_http_request_forward_callback,
-    void *strategy_user_data,
     void *internal_proxy_user_data);
 
-typedef int(
-    aws_http_proxy_strategy_http_request_transform_fn)(struct aws_http_message *message, void *strategy_user_data);
+typedef int(aws_http_proxy_strategy_http_request_transform_fn)(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    struct aws_http_message *message);
 
 /**
  * Tunneling proxy connections only.  A callback that lets the strategy examine the headers in the
  * response to the most recent CONNECT request as they arrive.
  */
 typedef int(aws_http_proxy_strategy_connect_on_incoming_headers_fn)(
+    struct aws_http_proxy_strategy *proxy_strategy,
     enum aws_http_header_block header_block,
     const struct aws_http_header *header_array,
-    size_t num_headers,
-    void *strategy_user_data);
+    size_t num_headers);
 
 /**
  * Tunneling proxy connections only.  A callback that lets the strategy examine the status code of the
  * response to the most recent CONNECT request.
  */
-typedef int(aws_http_proxy_strategy_connect_status_fn)(enum aws_http_status_code status_code, void *strategy_user_data);
+typedef int(aws_http_proxy_strategy_connect_status_fn)(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    enum aws_http_status_code status_code);
 
 /**
  * Tunneling proxy connections only.  A callback that lets the strategy examine the body of the response
  * to the most recent CONNECT request.
  */
-typedef int(aws_http_proxy_strategy_connect_on_incoming_body_fn)(const struct aws_byte_cursor *data, void *user_data);
+typedef int(aws_http_proxy_strategy_connect_on_incoming_body_fn)(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    const struct aws_byte_cursor *data);
 
 /**
  * Destructor for a proxy strategy.  A standard pattern is to

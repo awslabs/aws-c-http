@@ -246,14 +246,18 @@ static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_pr
         goto on_error;
     }
 
-    struct aws_http_header host_header = {.name = aws_byte_cursor_from_string(s_host_header_name),
-                                          .value = aws_byte_cursor_from_array(path_buffer.buffer, path_buffer.len)};
+    struct aws_http_header host_header = {
+        .name = aws_byte_cursor_from_string(s_host_header_name),
+        .value = aws_byte_cursor_from_array(path_buffer.buffer, path_buffer.len),
+    };
     if (aws_http_message_add_header(request, host_header)) {
         goto on_error;
     }
 
-    struct aws_http_header keep_alive_header = {.name = aws_byte_cursor_from_string(s_proxy_connection_header_name),
-                                                .value = aws_byte_cursor_from_string(s_proxy_connection_header_value)};
+    struct aws_http_header keep_alive_header = {
+        .name = aws_byte_cursor_from_string(s_proxy_connection_header_name),
+        .value = aws_byte_cursor_from_string(s_proxy_connection_header_value),
+    };
     if (aws_http_message_add_header(request, keep_alive_header)) {
         goto on_error;
     }
@@ -277,6 +281,40 @@ on_error:
     return NULL;
 }
 
+static int s_aws_http_on_incoming_body_tunnel_proxy(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    void *user_data) {
+    (void)stream;
+
+    struct aws_http_proxy_user_data *context = user_data;
+    aws_http_proxy_strategy_connect_on_incoming_body_fn *on_incoming_body =
+        context->proxy_strategy->strategy_vtable.tunnelling_vtable->on_incoming_body_callback;
+    if (on_incoming_body != NULL) {
+        (*on_incoming_body)(context->proxy_strategy, data);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_aws_http_on_response_headers_tunnel_proxy(
+    struct aws_http_stream *stream,
+    enum aws_http_header_block header_block,
+    const struct aws_http_header *header_array,
+    size_t num_headers,
+    void *user_data) {
+    (void)stream;
+
+    struct aws_http_proxy_user_data *context = user_data;
+    aws_http_proxy_strategy_connect_on_incoming_headers_fn *on_incoming_headers =
+        context->proxy_strategy->strategy_vtable.tunnelling_vtable->on_incoming_headers_callback;
+    if (on_incoming_headers != NULL) {
+        (*on_incoming_headers)(context->proxy_strategy, header_block, header_array, num_headers);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 /*
  * Headers done callback for the CONNECT request made during tls proxy connections
  */
@@ -296,6 +334,12 @@ static int s_aws_http_on_incoming_header_block_done_tunnel_proxy(
                 (void *)context->connection,
                 status);
             context->error_code = AWS_ERROR_HTTP_PROXY_TLS_CONNECT_FAILED;
+        }
+
+        aws_http_proxy_strategy_connect_status_fn *on_status =
+            context->proxy_strategy->strategy_vtable.tunnelling_vtable->on_status_callback;
+        if (on_status != NULL) {
+            (*on_status)(context->proxy_strategy, status);
         }
     }
 
@@ -340,6 +384,8 @@ static void s_aws_http_on_stream_complete_tunnel_proxy(
     void *user_data) {
     struct aws_http_proxy_user_data *context = user_data;
     AWS_FATAL_ASSERT(stream == context->connect_stream);
+
+    /* TODO strategy */
 
     if (context->error_code == AWS_ERROR_SUCCESS && error_code != AWS_ERROR_SUCCESS) {
         context->error_code = error_code;
@@ -429,7 +475,9 @@ static void s_continue_tunneling_connect(struct aws_http_message *message, void 
         .self_size = sizeof(request_options),
         .request = message,
         .user_data = proxy_ud,
+        .on_response_headers = s_aws_http_on_response_headers_tunnel_proxy,
         .on_response_header_block_done = s_aws_http_on_incoming_header_block_done_tunnel_proxy,
+        .on_response_body = s_aws_http_on_incoming_body_tunnel_proxy,
         .on_complete = s_aws_http_on_stream_complete_tunnel_proxy,
     };
 
@@ -458,10 +506,10 @@ static int s_make_proxy_connect_request(struct aws_http_proxy_user_data *user_da
     }
 
     (*user_data->proxy_strategy->strategy_vtable.tunnelling_vtable->connect_request_transform)(
+        user_data->proxy_strategy,
         user_data->connect_request,
         s_terminate_tunneling_connect,
         s_continue_tunneling_connect,
-        user_data->proxy_strategy,
         user_data);
 
     return AWS_OP_SUCCESS;
@@ -617,7 +665,7 @@ static int s_proxy_http_request_transform(struct aws_http_message *request, void
     }
 
     if ((*proxy_ud->proxy_strategy->strategy_vtable.forwarding_vtable->forward_request_transform)(
-            request, proxy_ud->proxy_strategy)) {
+            proxy_ud->proxy_strategy, request)) {
         return AWS_OP_ERR;
     }
 
