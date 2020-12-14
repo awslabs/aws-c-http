@@ -543,9 +543,9 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_forw
 struct aws_http_proxy_strategy_factory_tunneling_chain {
     struct aws_allocator *allocator;
 
-    struct aws_http_proxy_strategy_factory factory_base;
-
     struct aws_array_list strategy_factories;
+
+    struct aws_http_proxy_strategy_factory factory_base;
 };
 
 struct aws_http_proxy_strategy_tunneling_chain {
@@ -917,6 +917,234 @@ on_error:
 
     aws_http_proxy_strategy_factory_release(bad_basic_factory);
     aws_http_proxy_strategy_factory_release(good_basic_factory);
+    aws_http_proxy_strategy_factory_release(adaptive_factory);
+
+    return NULL;
+}
+
+/******************************************************************************************************************/
+
+struct aws_http_proxy_strategy_factory_tunneling_kerberos {
+    struct aws_allocator *allocator;
+
+    struct aws_http_proxy_strategy_factory factory_base;
+
+    /* SA-TBI: add any factory state needed here */
+};
+
+struct aws_http_proxy_strategy_tunneling_kerberos {
+    struct aws_allocator *allocator;
+
+    struct aws_http_proxy_strategy strategy_base;
+
+    enum proxy_strategy_connect_state state;
+
+    /*
+     * SA-TBI: add any factory state needed here
+     *
+     * Likely things include response code (from the vanilla CONNECT) and the appropriate headers in
+     * the response
+     */
+};
+
+static void s_kerberos_tunnel_transform_connect(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    struct aws_http_message *message,
+    aws_http_proxy_strategy_terminate_fn *strategy_termination_callback,
+    aws_http_proxy_strategy_http_request_forward_fn *strategy_http_request_forward_callback,
+    void *internal_proxy_user_data) {
+
+    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    (void)kerberos_strategy;
+    (void)message;
+    (void)strategy_termination_callback;
+    (void)strategy_http_request_forward_callback;
+    (void)internal_proxy_user_data;
+
+    /*
+     * SA-TBI: modify message with kerberos auth data and call the request_forward callback or if
+     * encountering an error, invoke the strategy_termination callback.
+     *
+     * As written, a connection attempt using this strategy will hang because neither of these are currently
+     * invoked.
+     */
+}
+
+static int s_kerberos_on_incoming_headers(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    enum aws_http_header_block header_block,
+    const struct aws_http_header *header_array,
+    size_t num_headers) {
+
+    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    (void)kerberos_strategy;
+    (void)header_block;
+    (void)header_array;
+    (void)num_headers;
+
+    /* SA-TBI: process CONNECT response headers here if needed */
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_kerberos_on_connect_status(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    enum aws_http_status_code status_code) {
+
+    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    (void)kerberos_strategy;
+    (void)status_code;
+
+    /* SA-TBI: process status code of CONNECT request here if needed */
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_kerberos_on_incoming_body(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    const struct aws_byte_cursor *data) {
+
+    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    (void)kerberos_strategy;
+    (void)data;
+
+    /* SA-TBI: process body of CONNECT request here if needed */
+
+    return AWS_OP_SUCCESS;
+}
+
+static struct aws_http_proxy_strategy_tunnelling_vtable s_tunneling_kerberos_proxy_tunneling_vtable = {
+    .on_incoming_body_callback = s_kerberos_on_incoming_body,
+    .on_incoming_headers_callback = s_kerberos_on_incoming_headers,
+    .on_status_callback = s_kerberos_on_connect_status,
+    .connect_request_transform = s_kerberos_tunnel_transform_connect,
+};
+
+static void s_destroy_tunneling_kerberos_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
+    struct aws_http_proxy_strategy_tunneling_kerberos *kerberos_strategy = proxy_strategy->impl;
+
+    /* SA-TBI: any special kerberos strategy clean up here */
+
+    aws_mem_release(kerberos_strategy->allocator, kerberos_strategy);
+}
+
+static struct aws_http_proxy_strategy *s_create_tunneling_kerberos_strategy(
+    struct aws_http_proxy_strategy_factory *proxy_strategy_factory,
+    struct aws_allocator *allocator) {
+    if (proxy_strategy_factory == NULL || allocator == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_strategy_tunneling_kerberos *kerberos_strategy =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_strategy_tunneling_kerberos));
+    if (kerberos_strategy == NULL) {
+        return NULL;
+    }
+
+    kerberos_strategy->allocator = allocator;
+    kerberos_strategy->strategy_base.impl = kerberos_strategy;
+    aws_ref_count_init(
+        &kerberos_strategy->strategy_base.ref_count,
+        &kerberos_strategy->strategy_base,
+        (aws_simple_completion_callback *)s_destroy_tunneling_kerberos_strategy);
+
+    kerberos_strategy->strategy_base.strategy_vtable.tunnelling_vtable = &s_tunneling_kerberos_proxy_tunneling_vtable;
+
+    /* SA-TBI: special kerberos strategy init here */
+
+    return &kerberos_strategy->strategy_base;
+}
+
+static struct aws_http_proxy_strategy_factory_vtable s_tunneling_kerberos_factory_vtable = {
+    .create_strategy = s_create_tunneling_kerberos_strategy,
+};
+
+static void s_destroy_tunneling_kerberos_factory(struct aws_http_proxy_strategy_factory *proxy_strategy_factory) {
+    struct aws_http_proxy_strategy_factory_tunneling_kerberos *kerberos_factory = proxy_strategy_factory->impl;
+
+    /* SA-TBI: any special factory clean up here */
+
+    aws_mem_release(kerberos_factory->allocator, kerberos_factory);
+}
+
+struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_kerberos(
+    struct aws_allocator *allocator,
+    struct aws_http_proxy_strategy_factory_tunneling_kerberos_options *config) {
+
+    if (allocator == NULL || config == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_strategy_factory_tunneling_kerberos *kerberos_factory =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_strategy_factory_tunneling_kerberos));
+    if (kerberos_factory == NULL) {
+        return NULL;
+    }
+
+    kerberos_factory->factory_base.impl = kerberos_factory;
+    kerberos_factory->factory_base.vtable = &s_tunneling_kerberos_factory_vtable;
+    kerberos_factory->factory_base.proxy_connection_type = AWS_HPCT_HTTP_TUNNEL;
+    kerberos_factory->allocator = allocator;
+
+    aws_ref_count_init(
+        &kerberos_factory->factory_base.ref_count,
+        &kerberos_factory->factory_base,
+        (aws_simple_completion_callback *)s_destroy_tunneling_kerberos_factory);
+
+    /* SA-TBI: any other factory init here */
+
+    return &kerberos_factory->factory_base;
+}
+
+/******************************************************************************************************************/
+
+AWS_HTTP_API
+struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_adaptive_kerberos(
+    struct aws_allocator *allocator,
+    struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options *config) {
+
+    if (allocator == NULL || config == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_strategy_factory *identity_factory = NULL;
+    struct aws_http_proxy_strategy_factory *kerberos_factory = NULL;
+    struct aws_http_proxy_strategy_factory *adaptive_factory = NULL;
+
+    identity_factory = aws_http_proxy_strategy_factory_new_tunneling_one_time_identity(allocator);
+    if (identity_factory == NULL) {
+        goto on_error;
+    }
+
+    kerberos_factory = aws_http_proxy_strategy_factory_new_tunneling_kerberos(allocator, &config->kerberos_options);
+    if (kerberos_factory == NULL) {
+        goto on_error;
+    }
+
+    struct aws_http_proxy_strategy_factory *factories[2] = {
+        identity_factory,
+        kerberos_factory,
+    };
+
+    struct aws_http_proxy_strategy_factory_tunneling_chain_options chain_config = {
+        .factories = factories,
+        .factory_count = 2,
+    };
+
+    adaptive_factory = aws_http_proxy_strategy_factory_new_tunneling_chain(allocator, &chain_config);
+    if (adaptive_factory == NULL) {
+        goto on_error;
+    }
+
+    return adaptive_factory;
+
+on_error:
+
+    aws_http_proxy_strategy_factory_release(identity_factory);
+    aws_http_proxy_strategy_factory_release(kerberos_factory);
     aws_http_proxy_strategy_factory_release(adaptive_factory);
 
     return NULL;

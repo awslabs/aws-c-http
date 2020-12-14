@@ -169,10 +169,8 @@ struct aws_http_proxy_strategy_factory_tunneling_chain_options {
 };
 
 /*
- * The adaptive test strategy attempts a vanilla CONNECT and if that fails it attempts a basic auth
+ * The adaptive test strategy attempts a bad basic CONNECT and if that fails it attempts a regular basic auth
  * CONNECT.
- *
- * SA TBI: the second stage should make a proper kerberos-aware CONNECT instead.
  */
 struct aws_http_proxy_strategy_factory_tunneling_adaptive_test_options {
     /* user name to use in basic authentication */
@@ -180,6 +178,17 @@ struct aws_http_proxy_strategy_factory_tunneling_adaptive_test_options {
 
     /* password to use in basic authentication */
     struct aws_byte_cursor password;
+};
+
+/*
+ * SA-TBI: add any configuration needed for kerberos auth negotiation here
+ */
+struct aws_http_proxy_strategy_factory_tunneling_kerberos_options {
+    bool placeholder;
+};
+
+struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options {
+    struct aws_http_proxy_strategy_factory_tunneling_kerberos_options kerberos_options;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -277,9 +286,8 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_forw
 /**
  * This is an experimental API.
  *
- * Constructor for a WIP adaptive tunneling proxy strategy.  This strategy attempts a vanilla CONNECT and if that
- * fails it attempts a basic auth CONNECT.  The second CONNECT should have basic auth replaced with a kerberos or
- * other network identity tech stage instead.
+ * Constructor for a WIP adaptive tunneling proxy strategy.  This strategy attempts a bad basic auth CONNECT and if that
+ * fails it attempts a configurable basic auth CONNECT.
  *
  * @param allocator memory allocator to use
  * @param config configuration options for the strategy factory
@@ -289,6 +297,21 @@ AWS_HTTP_API
 struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_adaptive_test(
     struct aws_allocator *allocator,
     struct aws_http_proxy_strategy_factory_tunneling_adaptive_test_options *config);
+
+/**
+ * This is an experimental API.
+ *
+ * Constructor for a WIP adaptive tunneling proxy strategy.  This strategy attempts a vanilla CONNECT and if that
+ * fails it attempts a kerberos-oriented CONNECT (if applicable).
+ *
+ * @param allocator memory allocator to use
+ * @param config configuration options for the strategy factory
+ * @return a new proxy strategy factory if successfully constructed, otherwise NULL
+ */
+AWS_HTTP_API
+struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_adaptive_kerberos(
+    struct aws_allocator *allocator,
+    struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options *config);
 
 AWS_EXTERN_C_END
 
