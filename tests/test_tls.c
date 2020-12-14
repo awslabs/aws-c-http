@@ -132,7 +132,13 @@ static int s_test_tls_download_medium_file_general(
     aws_condition_variable_init(&test.wait_cvar);
 
     test.event_loop_group = aws_event_loop_group_new_default(test.alloc, 1, NULL);
-    test.host_resolver = aws_host_resolver_new_default(test.alloc, 1, test.event_loop_group, NULL);
+
+    struct aws_host_resolver_default_options resolver_options = {
+        .el_group = test.event_loop_group,
+        .max_entries = 1,
+    };
+
+    test.host_resolver = aws_host_resolver_new_default(test.alloc, &resolver_options);
 
     struct aws_client_bootstrap_options bootstrap_options = {
         .event_loop_group = test.event_loop_group,
