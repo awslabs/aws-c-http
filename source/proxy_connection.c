@@ -823,7 +823,7 @@ int aws_http_options_validate_proxy_configuration(const struct aws_http_client_c
         return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
     }
 
-    if (proxy_type == AWS_HPCT_HTTP_FORWARD && options->proxy_options->tls_options != NULL) {
+    if (proxy_type == AWS_HPCT_HTTP_FORWARD && options->tls_options != NULL) {
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
