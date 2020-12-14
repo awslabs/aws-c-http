@@ -163,9 +163,23 @@ struct aws_http_proxy_strategy_factory_basic_auth_config {
 };
 
 struct aws_http_proxy_strategy_factory_tunneling_chain_options {
-    struct aws_http_proxy_strategy **strategies;
+    struct aws_http_proxy_strategy_factory **factories;
 
-    uint32_t strategy_count;
+    uint32_t factory_count;
+};
+
+/*
+ * The adaptive test strategy attempts a vanilla CONNECT and if that fails it attempts a basic auth
+ * CONNECT.
+ *
+ * SA TBI: the second stage should make a proper kerberos-aware CONNECT instead.
+ */
+struct aws_http_proxy_strategy_factory_tunneling_adaptive_test_options {
+    /* user name to use in basic authentication */
+    struct aws_byte_cursor user_name;
+
+    /* password to use in basic authentication */
+    struct aws_byte_cursor password;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -225,9 +239,9 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_basi
     struct aws_http_proxy_strategy_factory_basic_auth_config *config);
 
 /**
- * A constructor for a tunnel-only proxy request flow that does nothing.  Intended to be the first link in an adaptive
- * chain for a tunneling proxy: first try a basic CONNECT, then based on the response, later links are allowed to
- * make attempts.
+ * Factory constructor for a tunnel-only proxy request flow that does nothing.  Intended to be the first link in an
+ * adaptive chain for a tunneling proxy: first try a basic CONNECT, then based on the response, later links are allowed
+ * to make attempts.
  *
  * @param allocator memory allocator to use
  * @return a new proxy strategy factory if successfully constructed, otherwise NULL
@@ -237,8 +251,8 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
     struct aws_allocator *allocator);
 
 /**
- * Constructor for a tunneling proxy strategy that contains a chain of sub-strategies which are tried sequentially
- * in order.
+ * Factory constructor for a tunneling proxy strategy that contains a chain of sub-strategies which are tried
+ * sequentially in order.
  *
  * @param allocator memory allocator to use
  * @param config chain configuration info
@@ -250,7 +264,7 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
     struct aws_http_proxy_strategy_factory_tunneling_chain_options *config);
 
 /**
- * A constructor for a forwarding-only proxy request flow that does nothing. Exists so that all proxy logic uses a
+ * Factory constructor for a forwarding-only proxy strategy that does nothing. Exists so that all proxy logic uses a
  * strategy.
  *
  * @param allocator memory allocator to use
@@ -259,6 +273,22 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
 AWS_HTTP_API
 struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_forwarding_identity(
     struct aws_allocator *allocator);
+
+/**
+ * This is an experimental API.
+ *
+ * Constructor for a WIP adaptive tunneling proxy strategy.  This strategy attempts a vanilla CONNECT and if that
+ * fails it attempts a basic auth CONNECT.  The second CONNECT should have basic auth replaced with a kerberos or
+ * other network identity tech stage instead.
+ *
+ * @param allocator memory allocator to use
+ * @param config configuration options for the strategy factory
+ * @return a new proxy strategy factory if successfully constructed, otherwise NULL
+ */
+AWS_HTTP_API
+struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_adaptive_test(
+    struct aws_allocator *allocator,
+    struct aws_http_proxy_strategy_factory_tunneling_adaptive_test_options *config);
 
 AWS_EXTERN_C_END
 

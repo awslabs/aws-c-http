@@ -538,9 +538,384 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_forw
     return &identity_factory->factory_base;
 }
 
-#ifdef NEVER
+/******************************************************************************************************************/
+
+struct aws_http_proxy_strategy_factory_tunneling_chain {
+    struct aws_allocator *allocator;
+
+    struct aws_http_proxy_strategy_factory factory_base;
+
+    struct aws_array_list strategy_factories;
+};
+
+struct aws_http_proxy_strategy_tunneling_chain {
+    struct aws_allocator *allocator;
+
+    struct aws_array_list strategies;
+    size_t current_strategy_transform_index;
+    void *original_internal_proxy_user_data;
+    aws_http_proxy_strategy_terminate_fn *original_strategy_termination_callback;
+    aws_http_proxy_strategy_http_request_forward_fn *original_strategy_http_request_forward_callback;
+
+    struct aws_http_proxy_strategy strategy_base;
+};
+
+static void s_chain_tunnel_try_next_strategy(
+    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy,
+    struct aws_http_message *message);
+
+static void s_chain_tunnel_iteration_termination_callback(
+    struct aws_http_message *message,
+    int error_code,
+    void *user_data) {
+
+    (void)error_code; /* TODO: log */
+
+    struct aws_http_proxy_strategy *proxy_strategy = user_data;
+    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy = proxy_strategy->impl;
+
+    chain_strategy->current_strategy_transform_index++;
+
+    s_chain_tunnel_try_next_strategy(chain_strategy, message);
+}
+
+static void s_chain_tunnel_iteration_forward_callback(struct aws_http_message *message, void *user_data) {
+    struct aws_http_proxy_strategy *proxy_strategy = user_data;
+    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy = proxy_strategy->impl;
+
+    chain_strategy->original_strategy_http_request_forward_callback(
+        message, chain_strategy->original_internal_proxy_user_data);
+}
+
+static void s_chain_tunnel_try_next_strategy(
+    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy,
+    struct aws_http_message *message) {
+    size_t strategy_count = aws_array_list_length(&chain_strategy->strategies);
+    if (chain_strategy->current_strategy_transform_index >= strategy_count) {
+        goto on_error;
+    }
+
+    struct aws_http_proxy_strategy *current_strategy = NULL;
+    if (aws_array_list_get_at(
+            &chain_strategy->strategies, &current_strategy, chain_strategy->current_strategy_transform_index)) {
+        goto on_error;
+    }
+
+    current_strategy->strategy_vtable.tunnelling_vtable->connect_request_transform(
+        current_strategy,
+        message,
+        s_chain_tunnel_iteration_termination_callback,
+        s_chain_tunnel_iteration_forward_callback,
+        chain_strategy);
+    return;
+
+on_error:
+
+    chain_strategy->original_strategy_termination_callback(
+        message, AWS_ERROR_HTTP_PROXY_STRATEGY_TRANSFORM_FAILED, chain_strategy->original_internal_proxy_user_data);
+}
+
+static void s_chain_tunnel_transform_connect(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    struct aws_http_message *message,
+    aws_http_proxy_strategy_terminate_fn *strategy_termination_callback,
+    aws_http_proxy_strategy_http_request_forward_fn *strategy_http_request_forward_callback,
+    void *internal_proxy_user_data) {
+
+    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy = proxy_strategy->impl;
+
+    chain_strategy->current_strategy_transform_index = 0;
+    chain_strategy->original_internal_proxy_user_data = internal_proxy_user_data;
+    chain_strategy->original_strategy_termination_callback = strategy_termination_callback;
+    chain_strategy->original_strategy_http_request_forward_callback = strategy_http_request_forward_callback;
+
+    s_chain_tunnel_try_next_strategy(chain_strategy, message);
+}
+
+static int s_chain_on_incoming_headers(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    enum aws_http_header_block header_block,
+    const struct aws_http_header *header_array,
+    size_t num_headers) {
+
+    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy = proxy_strategy->impl;
+    size_t strategy_count = aws_array_list_length(&chain_strategy->strategies);
+    for (size_t i = 0; i < strategy_count; ++i) {
+        struct aws_http_proxy_strategy *strategy = NULL;
+        if (aws_array_list_get_at(&chain_strategy->strategies, &strategy, i)) {
+            continue;
+        }
+
+        aws_http_proxy_strategy_connect_on_incoming_headers_fn *on_incoming_headers =
+            strategy->strategy_vtable.tunnelling_vtable->on_incoming_headers_callback;
+        if (on_incoming_headers != NULL) {
+            (*on_incoming_headers)(strategy, header_block, header_array, num_headers);
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_chain_on_connect_status(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    enum aws_http_status_code status_code) {
+
+    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy = proxy_strategy->impl;
+    size_t strategy_count = aws_array_list_length(&chain_strategy->strategies);
+    for (size_t i = 0; i < strategy_count; ++i) {
+        struct aws_http_proxy_strategy *strategy = NULL;
+        if (aws_array_list_get_at(&chain_strategy->strategies, &strategy, i)) {
+            continue;
+        }
+
+        aws_http_proxy_strategy_connect_status_fn *on_status =
+            strategy->strategy_vtable.tunnelling_vtable->on_status_callback;
+        if (on_status != NULL) {
+            (*on_status)(strategy, status_code);
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_chain_on_incoming_body(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    const struct aws_byte_cursor *data) {
+
+    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy = proxy_strategy->impl;
+    size_t strategy_count = aws_array_list_length(&chain_strategy->strategies);
+    for (size_t i = 0; i < strategy_count; ++i) {
+        struct aws_http_proxy_strategy *strategy = NULL;
+        if (aws_array_list_get_at(&chain_strategy->strategies, &strategy, i)) {
+            continue;
+        }
+
+        aws_http_proxy_strategy_connect_on_incoming_body_fn *on_incoming_body =
+            strategy->strategy_vtable.tunnelling_vtable->on_incoming_body_callback;
+        if (on_incoming_body != NULL) {
+            (*on_incoming_body)(strategy, data);
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static struct aws_http_proxy_strategy_tunnelling_vtable s_tunneling_chain_proxy_tunneling_vtable = {
+    .on_incoming_body_callback = s_chain_on_incoming_body,
+    .on_incoming_headers_callback = s_chain_on_incoming_headers,
+    .on_status_callback = s_chain_on_connect_status,
+    .connect_request_transform = s_chain_tunnel_transform_connect,
+};
+
+static void s_destroy_tunneling_chain_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
+    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy = proxy_strategy->impl;
+
+    size_t strategy_count = aws_array_list_length(&chain_strategy->strategies);
+    for (size_t i = 0; i < strategy_count; ++i) {
+        struct aws_http_proxy_strategy *strategy = NULL;
+        if (aws_array_list_get_at(&chain_strategy->strategies, &strategy, i)) {
+            continue;
+        }
+
+        aws_http_proxy_strategy_release(strategy);
+    }
+
+    aws_array_list_clean_up(&chain_strategy->strategies);
+
+    aws_mem_release(chain_strategy->allocator, chain_strategy);
+}
+
+static struct aws_http_proxy_strategy *s_create_tunneling_chain_strategy(
+    struct aws_http_proxy_strategy_factory *proxy_strategy_factory,
+    struct aws_allocator *allocator) {
+    if (proxy_strategy_factory == NULL || allocator == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_strategy_tunneling_chain));
+    if (chain_strategy == NULL) {
+        return NULL;
+    }
+
+    chain_strategy->allocator = allocator;
+    chain_strategy->strategy_base.impl = chain_strategy;
+    aws_ref_count_init(
+        &chain_strategy->strategy_base.ref_count,
+        &chain_strategy->strategy_base,
+        (aws_simple_completion_callback *)s_destroy_tunneling_chain_strategy);
+
+    chain_strategy->strategy_base.strategy_vtable.tunnelling_vtable = &s_tunneling_chain_proxy_tunneling_vtable;
+
+    struct aws_http_proxy_strategy_factory_tunneling_chain *chain_factory = proxy_strategy_factory->impl;
+    size_t strategy_count = aws_array_list_length(&chain_factory->strategy_factories);
+
+    if (aws_array_list_init_dynamic(
+            &chain_strategy->strategies, allocator, strategy_count, sizeof(struct aws_http_proxy_strategy *))) {
+        goto on_error;
+    }
+
+    for (size_t i = 0; i < strategy_count; ++i) {
+        struct aws_http_proxy_strategy_factory *factory = NULL;
+        if (aws_array_list_get_at(&chain_factory->strategy_factories, &factory, i)) {
+            goto on_error;
+        }
+
+        struct aws_http_proxy_strategy *strategy = aws_http_proxy_strategy_factory_create_strategy(factory, allocator);
+        if (strategy == NULL) {
+            goto on_error;
+        }
+
+        if (aws_array_list_push_back(&chain_strategy->strategies, &strategy)) {
+            aws_http_proxy_strategy_release(strategy);
+            goto on_error;
+        }
+    }
+
+    return &chain_strategy->strategy_base;
+
+on_error:
+
+    aws_http_proxy_strategy_release(&chain_strategy->strategy_base);
+
+    return NULL;
+}
+
+static struct aws_http_proxy_strategy_factory_vtable s_tunneling_chain_factory_vtable = {
+    .create_strategy = s_create_tunneling_chain_strategy,
+};
+
+static void s_destroy_tunneling_chain_factory(struct aws_http_proxy_strategy_factory *proxy_strategy_factory) {
+    struct aws_http_proxy_strategy_factory_tunneling_chain *chain_factory = proxy_strategy_factory->impl;
+
+    size_t factory_count = aws_array_list_length(&chain_factory->strategy_factories);
+    for (size_t i = 0; i < factory_count; ++i) {
+        struct aws_http_proxy_strategy_factory *factory = NULL;
+        if (aws_array_list_get_at(&chain_factory->strategy_factories, &factory, i)) {
+            continue;
+        }
+
+        aws_http_proxy_strategy_factory_release(factory);
+    }
+
+    aws_array_list_clean_up(&chain_factory->strategy_factories);
+
+    aws_mem_release(chain_factory->allocator, chain_factory);
+}
 
 struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_chain(
     struct aws_allocator *allocator,
-    struct aws_http_proxy_strategy_factory_tunneling_chain_options *config) {}
-#endif
+    struct aws_http_proxy_strategy_factory_tunneling_chain_options *config) {
+
+    if (allocator == NULL || config == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_strategy_factory_tunneling_chain *chain_factory =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_strategy_factory_tunneling_chain));
+    if (chain_factory == NULL) {
+        return NULL;
+    }
+
+    chain_factory->factory_base.impl = chain_factory;
+    chain_factory->factory_base.vtable = &s_tunneling_chain_factory_vtable;
+    chain_factory->factory_base.proxy_connection_type = AWS_HPCT_HTTP_TUNNEL;
+    chain_factory->allocator = allocator;
+
+    aws_ref_count_init(
+        &chain_factory->factory_base.ref_count,
+        &chain_factory->factory_base,
+        (aws_simple_completion_callback *)s_destroy_tunneling_chain_factory);
+
+    if (aws_array_list_init_dynamic(
+            &chain_factory->strategy_factories,
+            allocator,
+            config->factory_count,
+            sizeof(struct aws_http_proxy_strategy_factory *))) {
+        goto on_error;
+    }
+
+    for (size_t i = 0; i < config->factory_count; ++i) {
+        struct aws_http_proxy_strategy_factory *factory = config->factories[i];
+
+        if (aws_array_list_push_back(&chain_factory->strategy_factories, &factory)) {
+            goto on_error;
+        }
+
+        aws_http_proxy_strategy_factory_acquire(factory);
+    }
+
+    return &chain_factory->factory_base;
+
+on_error:
+
+    aws_http_proxy_strategy_factory_release(&chain_factory->factory_base);
+
+    return NULL;
+}
+
+/******************************************************************************************************************/
+
+AWS_HTTP_API
+struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_adaptive_test(
+    struct aws_allocator *allocator,
+    struct aws_http_proxy_strategy_factory_tunneling_adaptive_test_options *config) {
+
+    if (allocator == NULL || config == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_strategy_factory *bad_basic_factory = NULL;
+    struct aws_http_proxy_strategy_factory *good_basic_factory = NULL;
+    struct aws_http_proxy_strategy_factory *adaptive_factory = NULL;
+
+    struct aws_http_proxy_strategy_factory_basic_auth_config bad_config = {
+        .proxy_connection_type = AWS_HPCT_HTTP_TUNNEL,
+        .password = aws_byte_cursor_from_c_str("NotAUsername"),
+        .user_name = aws_byte_cursor_from_c_str("NotAPassword"),
+    };
+
+    bad_basic_factory = aws_http_proxy_strategy_factory_new_basic_auth(allocator, &bad_config);
+    if (bad_basic_factory == NULL) {
+        goto on_error;
+    }
+
+    struct aws_http_proxy_strategy_factory_basic_auth_config good_config = {
+        .proxy_connection_type = AWS_HPCT_HTTP_TUNNEL,
+        .password = config->password,
+        .user_name = config->user_name,
+    };
+
+    good_basic_factory = aws_http_proxy_strategy_factory_new_basic_auth(allocator, &good_config);
+    if (good_basic_factory == NULL) {
+        goto on_error;
+    }
+
+    struct aws_http_proxy_strategy_factory *factories[2] = {
+        bad_basic_factory,
+        good_basic_factory,
+    };
+
+    struct aws_http_proxy_strategy_factory_tunneling_chain_options chain_config = {
+        .factories = factories,
+        .factory_count = 2,
+    };
+
+    adaptive_factory = aws_http_proxy_strategy_factory_new_tunneling_chain(allocator, &chain_config);
+    if (adaptive_factory == NULL) {
+        goto on_error;
+    }
+
+    return adaptive_factory;
+
+on_error:
+
+    aws_http_proxy_strategy_factory_release(bad_basic_factory);
+    aws_http_proxy_strategy_factory_release(good_basic_factory);
+    aws_http_proxy_strategy_factory_release(adaptive_factory);
+
+    return NULL;
+}
