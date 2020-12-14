@@ -561,7 +561,7 @@ struct aws_http_proxy_strategy_tunneling_chain {
 };
 
 static void s_chain_tunnel_try_next_strategy(
-    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy,
+    struct aws_http_proxy_strategy *proxy_strategy,
     struct aws_http_message *message);
 
 static void s_chain_tunnel_iteration_termination_callback(
@@ -576,7 +576,7 @@ static void s_chain_tunnel_iteration_termination_callback(
 
     chain_strategy->current_strategy_transform_index++;
 
-    s_chain_tunnel_try_next_strategy(chain_strategy, message);
+    s_chain_tunnel_try_next_strategy(proxy_strategy, message);
 }
 
 static void s_chain_tunnel_iteration_forward_callback(struct aws_http_message *message, void *user_data) {
@@ -588,8 +588,10 @@ static void s_chain_tunnel_iteration_forward_callback(struct aws_http_message *m
 }
 
 static void s_chain_tunnel_try_next_strategy(
-    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy,
+    struct aws_http_proxy_strategy *proxy_strategy,
     struct aws_http_message *message) {
+    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy = proxy_strategy->impl;
+
     size_t strategy_count = aws_array_list_length(&chain_strategy->strategies);
     if (chain_strategy->current_strategy_transform_index >= strategy_count) {
         goto on_error;
@@ -629,7 +631,7 @@ static void s_chain_tunnel_transform_connect(
     chain_strategy->original_strategy_termination_callback = strategy_termination_callback;
     chain_strategy->original_strategy_http_request_forward_callback = strategy_http_request_forward_callback;
 
-    s_chain_tunnel_try_next_strategy(chain_strategy, message);
+    s_chain_tunnel_try_next_strategy(proxy_strategy, message);
 }
 
 static int s_chain_on_incoming_headers(
