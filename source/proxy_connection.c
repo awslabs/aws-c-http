@@ -395,6 +395,7 @@ static void s_aws_http_on_stream_complete_tunnel_proxy(
 
     if (context->error_code != AWS_ERROR_SUCCESS) {
         /* retry until strategy terminates */
+        context->error_code = 0;
         if (s_make_proxy_connect_request(context)) {
             s_aws_http_proxy_user_data_shutdown(context);
         }
@@ -470,6 +471,7 @@ static void s_terminate_tunneling_connect(
         error_code,
         aws_error_str(error_code));
 
+    proxy_ud->error_code = error_code;
     s_aws_http_proxy_user_data_shutdown(proxy_ud);
 }
 
