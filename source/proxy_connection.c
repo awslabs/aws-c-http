@@ -377,6 +377,8 @@ static void s_on_origin_server_tls_negotation_result(
     context->original_on_setup(context->connection, AWS_ERROR_SUCCESS, context->original_user_data);
 }
 
+static int s_make_proxy_connect_request(struct aws_http_proxy_user_data *user_data);
+
 /*
  * Stream done callback for the CONNECT request made during tls proxy connections
  */
@@ -387,14 +389,15 @@ static void s_aws_http_on_stream_complete_tunnel_proxy(
     struct aws_http_proxy_user_data *context = user_data;
     AWS_FATAL_ASSERT(stream == context->connect_stream);
 
-    /* TODO strategy */
-
     if (context->error_code == AWS_ERROR_SUCCESS && error_code != AWS_ERROR_SUCCESS) {
         context->error_code = error_code;
     }
 
     if (context->error_code != AWS_ERROR_SUCCESS) {
-        s_aws_http_proxy_user_data_shutdown(context);
+        /* retry until strategy terminates */
+        if (s_make_proxy_connect_request(context)) {
+            s_aws_http_proxy_user_data_shutdown(context);
+        }
         return;
     }
 
@@ -502,6 +505,11 @@ on_error:
  * of upgrading with TLS on success
  */
 static int s_make_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
+    if (user_data->connect_request != NULL) {
+        aws_http_message_destroy(user_data->connect_request);
+        user_data->connect_request = NULL;
+    }
+
     user_data->connect_request = s_build_proxy_connect_request(user_data);
     if (user_data->connect_request == NULL) {
         return AWS_OP_ERR;
