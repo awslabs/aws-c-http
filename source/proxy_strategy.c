@@ -8,6 +8,11 @@
 #include <aws/common/encoding.h>
 #include <aws/common/string.h>
 
+#if defined(_MSC_VER)
+#    pragma warning(push)
+#    pragma warning(disable : 4221)
+#endif /* _MSC_VER */
+
 struct aws_http_proxy_strategy *aws_http_proxy_strategy_acquire(struct aws_http_proxy_strategy *proxy_strategy) {
     if (proxy_strategy != NULL) {
         aws_ref_count_acquire(&proxy_strategy->ref_count);
@@ -896,13 +901,13 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
         goto on_error;
     }
 
-    struct aws_http_proxy_strategy_factory *factories[2] = {
+    struct aws_http_proxy_strategy_factory *factory_array[2] = {
         bad_basic_factory,
         good_basic_factory,
     };
 
     struct aws_http_proxy_strategy_factory_tunneling_chain_options chain_config = {
-        .factories = factories,
+        .factories = factory_array,
         .factory_count = 2,
     };
 
@@ -1124,13 +1129,13 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
         goto on_error;
     }
 
-    struct aws_http_proxy_strategy_factory *factories[2] = {
+    struct aws_http_proxy_strategy_factory *factory_array[2] = {
         identity_factory,
         kerberos_factory,
     };
 
     struct aws_http_proxy_strategy_factory_tunneling_chain_options chain_config = {
-        .factories = factories,
+        .factories = factory_array,
         .factory_count = 2,
     };
 
@@ -1149,3 +1154,7 @@ on_error:
 
     return NULL;
 }
+
+#if defined(_MSC_VER)
+#    pragma warning(pop)
+#endif /* _MSC_VER */
