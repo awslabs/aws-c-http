@@ -8,11 +8,6 @@
 #include <aws/common/encoding.h>
 #include <aws/common/string.h>
 
-#if defined(_MSC_VER)
-#    pragma warning(push)
-#    pragma warning(disable : 4221)
-#endif /* _MSC_VER */
-
 struct aws_http_proxy_strategy *aws_http_proxy_strategy_acquire(struct aws_http_proxy_strategy *proxy_strategy) {
     if (proxy_strategy != NULL) {
         aws_ref_count_acquire(&proxy_strategy->ref_count);
@@ -53,7 +48,7 @@ void aws_http_proxy_strategy_factory_release(struct aws_http_proxy_strategy_fact
     }
 }
 
-/******************************************************************************************************************/
+/*****************************************************************************************************************/
 
 enum proxy_strategy_connect_state {
     AWS_PSCS_READY,
@@ -62,12 +57,12 @@ enum proxy_strategy_connect_state {
     AWS_PSCS_FAILURE,
 };
 
+/* Functions for factory basic auth strategy with Basic Header */
+
 struct aws_http_proxy_strategy_factory_basic_auth {
     struct aws_allocator *allocator;
-
     struct aws_string *user_name;
     struct aws_string *password;
-
     struct aws_http_proxy_strategy_factory factory_base;
 };
 
@@ -322,6 +317,282 @@ on_error:
 }
 
 /******************************************************************************************************************/
+
+/* Functions for factory kerberos strategy with Negotiate Header */
+
+struct aws_http_proxy_strategy_factory_kerberos_auth {
+    struct aws_allocator *allocator;
+    struct aws_string *user_token;
+    struct aws_http_proxy_strategy_factory factory_base;
+};
+
+static void s_destroy_kerberos_auth_factory(struct aws_http_proxy_strategy_factory *proxy_strategy_factory) {
+    struct aws_http_proxy_strategy_factory_kerberos_auth *kerberos_auth_factory = proxy_strategy_factory->impl;
+
+    aws_string_destroy(kerberos_auth_factory->user_token);
+
+    aws_mem_release(kerberos_auth_factory->allocator, kerberos_auth_factory);
+}
+
+struct aws_http_proxy_strategy_kerberos_auth {
+    struct aws_allocator *allocator;
+
+    struct aws_http_proxy_strategy_factory *factory;
+
+    enum proxy_strategy_connect_state connect_state;
+
+    struct aws_http_proxy_strategy strategy_base;
+};
+
+static void s_destroy_kerberos_auth_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
+    struct aws_http_proxy_strategy_kerberos_auth *kerberos_auth_strategy = proxy_strategy->impl;
+
+    aws_http_proxy_strategy_factory_release(kerberos_auth_strategy->factory);
+
+    aws_mem_release(kerberos_auth_strategy->allocator, kerberos_auth_strategy);
+}
+
+AWS_STATIC_STRING_FROM_LITERAL(s_proxy_authorization_header_kerberos_prefix, "Negotiate ");
+
+/*
+ * Adds a proxy authentication header based on the kerberos authentication mode
+ */
+static int s_add_kerberos_proxy_authentication_header(
+    struct aws_allocator *allocator,
+    struct aws_http_message *request,
+    struct aws_http_proxy_strategy_kerberos_auth *kerberos_auth_strategy) {
+
+    struct aws_byte_buf base64_input_value;
+    AWS_ZERO_STRUCT(base64_input_value);
+
+    struct aws_byte_buf header_value;
+    AWS_ZERO_STRUCT(header_value);
+
+    int result = AWS_OP_ERR;
+
+    struct aws_http_proxy_strategy_factory_kerberos_auth *factory = kerberos_auth_strategy->factory->impl;
+
+    if (aws_byte_buf_init(&base64_input_value, allocator, factory->user_token->len + 1)) {
+        goto done;
+    }
+
+    /* First build a buffer with "username:password" in it */
+    struct aws_byte_cursor usertoken_cursor = aws_byte_cursor_from_string(factory->user_token);
+    if (aws_byte_buf_append(&base64_input_value, &usertoken_cursor)) {
+        goto done;
+    }
+
+    struct aws_byte_cursor base64_source_cursor =
+        aws_byte_cursor_from_array(base64_input_value.buffer, base64_input_value.len);
+
+    /* Figure out how much room we need in our final header value buffer */
+    size_t required_size = 0;
+    if (aws_base64_compute_encoded_len(base64_source_cursor.len, &required_size)) {
+        goto done;
+    }
+
+    required_size += s_proxy_authorization_header_kerberos_prefix->len + 1;
+    if (aws_byte_buf_init(&header_value, allocator, required_size)) {
+        goto done;
+    }
+
+    /* Build the final header value by appending the authorization type and the base64 encoding string together */
+    struct aws_byte_cursor kerberos_prefix = aws_byte_cursor_from_string(s_proxy_authorization_header_kerberos_prefix);
+    if (aws_byte_buf_append_dynamic(&header_value, &kerberos_prefix)) {
+        goto done;
+    }
+
+     uint8_t length = (uint8_t) s_proxy_authorization_header_kerberos_prefix->len;
+    
+    /* copy the length of token into header value buffer starting with an offset*/
+    for (uint16_t i = 0; i <base64_input_value.len ;i++) {
+        
+        header_value.buffer[i + length] = base64_input_value.buffer[i];
+        
+    }
+
+    header_value.len += base64_input_value.len;
+
+    /*
+    * We do not need base64 encoding as the usertoken is already base64 encoded
+    if (aws_base64_encode(&base64_source_cursor, &header_value)) {
+         goto done;
+    }
+    */
+    struct aws_http_header header = {
+        .name = aws_byte_cursor_from_string(s_proxy_authorization_header_name),
+        .value = aws_byte_cursor_from_array(header_value.buffer, header_value.len),
+    };
+
+    if (aws_http_message_add_header(request, header)) {
+        goto done;
+    }
+
+    result = AWS_OP_SUCCESS;
+
+done:
+
+    aws_byte_buf_clean_up(&header_value);
+    aws_byte_buf_clean_up(&base64_input_value);
+
+    return result;
+}
+
+int s_kerberos_auth_forward_add_header(struct aws_http_proxy_strategy *proxy_strategy, struct aws_http_message *message) {
+    struct aws_http_proxy_strategy_kerberos_auth *kerberos_auth_strategy = proxy_strategy->impl;
+
+    return s_add_kerberos_proxy_authentication_header(kerberos_auth_strategy->allocator, message, kerberos_auth_strategy);
+}
+
+void s_kerberos_auth_tunnel_add_header(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    struct aws_http_message *message,
+    aws_http_proxy_strategy_terminate_fn *strategy_termination_callback,
+    aws_http_proxy_strategy_http_request_forward_fn *strategy_http_request_forward_callback,
+    void *internal_proxy_user_data) {
+
+    struct aws_http_proxy_strategy_kerberos_auth *kerberos_auth_strategy = proxy_strategy->impl;
+    if (kerberos_auth_strategy->connect_state != AWS_PSCS_READY) {
+        strategy_termination_callback(message, AWS_ERROR_INVALID_STATE, internal_proxy_user_data);
+        return;
+    }
+
+    kerberos_auth_strategy->connect_state = AWS_PSCS_IN_PROGRESS;
+
+    if (s_add_kerberos_proxy_authentication_header(kerberos_auth_strategy->allocator, message, kerberos_auth_strategy)) {
+        strategy_termination_callback(message, aws_last_error(), internal_proxy_user_data);
+        return;
+    }
+
+    strategy_http_request_forward_callback(message, internal_proxy_user_data);
+}
+
+static int s_kerberos_on_incoming_header(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    enum aws_http_header_block header_block,
+    const struct aws_http_header *header_array,
+    size_t num_headers) {
+
+    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    (void)kerberos_strategy;
+    (void)header_block;
+    (void)header_array;
+    (void)num_headers;
+
+    /* SA-TBI: process CONNECT response headers here if needed */
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_kerberos_auth_on_connect_status(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    enum aws_http_status_code status_code) {
+    struct aws_http_proxy_strategy_kerberos_auth *kerberos_auth_strategy = proxy_strategy->impl;
+
+    if (kerberos_auth_strategy->connect_state == AWS_PSCS_IN_PROGRESS) {
+        if (AWS_HTTP_STATUS_CODE_200_OK != status_code) {
+            kerberos_auth_strategy->connect_state = AWS_PSCS_FAILURE;
+        } else {
+            kerberos_auth_strategy->connect_state = AWS_PSCS_SUCCESS;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static struct aws_http_proxy_strategy_forwarding_vtable s_kerberos_auth_proxy_forwarding_vtable = {
+    .forward_request_transform = s_kerberos_auth_forward_add_header,
+};
+
+static struct aws_http_proxy_strategy_tunnelling_vtable s_kerberos_auth_proxy_tunneling_vtable = {
+    .on_status_callback = s_kerberos_auth_on_connect_status,
+    .connect_request_transform = s_kerberos_auth_tunnel_add_header,
+    .on_incoming_headers_callback = s_kerberos_on_incoming_header,
+};
+
+
+static struct aws_http_proxy_strategy *s_create_kerberos_auth_strategy(
+    struct aws_http_proxy_strategy_factory *proxy_strategy_factory,
+    struct aws_allocator *allocator) {
+    if (proxy_strategy_factory == NULL || allocator == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_strategy_kerberos_auth *kerberos_auth_strategy =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_strategy_kerberos_auth));
+    if (kerberos_auth_strategy == NULL) {
+        return NULL;
+    }
+
+    kerberos_auth_strategy->allocator = allocator;
+    kerberos_auth_strategy->connect_state = AWS_PSCS_READY;
+    kerberos_auth_strategy->strategy_base.impl = kerberos_auth_strategy;
+    aws_ref_count_init(
+        &kerberos_auth_strategy->strategy_base.ref_count,
+        &kerberos_auth_strategy->strategy_base,
+        (aws_simple_completion_callback *)s_destroy_kerberos_auth_strategy);
+
+    if (proxy_strategy_factory->proxy_connection_type == AWS_HPCT_HTTP_FORWARD) {
+        kerberos_auth_strategy->strategy_base.strategy_vtable.forwarding_vtable = &s_kerberos_auth_proxy_forwarding_vtable;
+    } else {
+        kerberos_auth_strategy->strategy_base.strategy_vtable.tunnelling_vtable = &s_kerberos_auth_proxy_tunneling_vtable;
+    }
+
+    kerberos_auth_strategy->factory = aws_ref_count_acquire(&proxy_strategy_factory->ref_count);
+
+    return &kerberos_auth_strategy->strategy_base;
+}
+
+static struct aws_http_proxy_strategy_factory_vtable s_kerberos_auth_factory_vtable = {
+    .create_strategy = s_create_kerberos_auth_strategy,
+};
+
+struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_kerberos_auth(
+    struct aws_allocator *allocator,
+    struct aws_http_proxy_strategy_factory_kerberos_auth_config *config) {
+    if (config == NULL || allocator == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    if (config->proxy_connection_type != AWS_HPCT_HTTP_FORWARD &&
+        config->proxy_connection_type != AWS_HPCT_HTTP_TUNNEL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_strategy_factory_kerberos_auth *kerberos_auth_factory =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_strategy_factory_kerberos_auth));
+    if (kerberos_auth_factory == NULL) {
+        return NULL;
+    }
+
+    kerberos_auth_factory->factory_base.impl = kerberos_auth_factory;
+    kerberos_auth_factory->factory_base.vtable = &s_kerberos_auth_factory_vtable;
+    kerberos_auth_factory->allocator = allocator;
+    kerberos_auth_factory->factory_base.proxy_connection_type = config->proxy_connection_type;
+    aws_ref_count_init(
+        &kerberos_auth_factory->factory_base.ref_count,
+        &kerberos_auth_factory->factory_base,
+        (aws_simple_completion_callback *)s_destroy_kerberos_auth_factory);
+
+    kerberos_auth_factory->user_token = aws_string_new_from_cursor(allocator, &config->user_token);
+    if (kerberos_auth_factory->user_token == NULL) {
+        goto on_error;
+    }
+
+    return &kerberos_auth_factory->factory_base;
+
+on_error:
+
+    aws_http_proxy_strategy_factory_release(&kerberos_auth_factory->factory_base);
+
+    return NULL;
+}
+
+
+/*****************************************************************************************************************/
 
 struct aws_http_proxy_strategy_factory_one_time_identity {
     struct aws_allocator *allocator;
@@ -901,13 +1172,13 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
         goto on_error;
     }
 
-    struct aws_http_proxy_strategy_factory *factory_array[2] = {
+    struct aws_http_proxy_strategy_factory *factories[2] = {
         bad_basic_factory,
         good_basic_factory,
     };
 
     struct aws_http_proxy_strategy_factory_tunneling_chain_options chain_config = {
-        .factories = factory_array,
+        .factories = factories,
         .factory_count = 2,
     };
 
@@ -966,13 +1237,15 @@ static void s_kerberos_tunnel_transform_connect(
     (void)strategy_http_request_forward_callback;
     (void)internal_proxy_user_data;
 
-    /*
+
+     /*
      * SA-TBI: modify message with kerberos auth data and call the request_forward callback or if
      * encountering an error, invoke the strategy_termination callback.
      *
      * As written, a connection attempt using this strategy will hang because neither of these are currently
      * invoked.
      */
+
 }
 
 static int s_kerberos_on_incoming_headers(
@@ -1129,13 +1402,13 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
         goto on_error;
     }
 
-    struct aws_http_proxy_strategy_factory *factory_array[2] = {
+    struct aws_http_proxy_strategy_factory *factories[2] = {
         identity_factory,
         kerberos_factory,
     };
 
     struct aws_http_proxy_strategy_factory_tunneling_chain_options chain_config = {
-        .factories = factory_array,
+        .factories = factories,
         .factory_count = 2,
     };
 
@@ -1154,7 +1427,3 @@ on_error:
 
     return NULL;
 }
-
-#if defined(_MSC_VER)
-#    pragma warning(pop)
-#endif /* _MSC_VER */

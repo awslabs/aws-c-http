@@ -150,6 +150,17 @@ struct aws_http_proxy_strategy_factory {
     enum aws_http_proxy_connection_type proxy_connection_type;
 };
 
+
+struct aws_http_proxy_strategy_factory_kerberos_auth_config {
+
+    /* type of proxy connection being established, must be forwarding or tunnel */
+    enum aws_http_proxy_connection_type proxy_connection_type;
+
+    /* user token to use in kerberos authentication */
+    struct aws_byte_cursor user_token;
+
+};
+
 struct aws_http_proxy_strategy_factory_basic_auth_config {
 
     /* type of proxy connection being established, must be forwarding or tunnel */
@@ -189,6 +200,8 @@ struct aws_http_proxy_strategy_factory_tunneling_kerberos_options {
 
 struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options {
     struct aws_http_proxy_strategy_factory_tunneling_kerberos_options kerberos_options;
+    
+
 };
 
 AWS_EXTERN_C_BEGIN
@@ -233,6 +246,23 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_acquire(
  */
 AWS_HTTP_API
 void aws_http_proxy_strategy_factory_release(struct aws_http_proxy_strategy_factory *proxy_strategy_factory);
+
+
+
+/**
+ * A constructor for a proxy strategy factory that performs kerberos authentication by adding the appropriate
+ * header and header value to requests or CONNECT requests.
+ *
+ * @param allocator memory allocator to use
+ * @param config kerberos authentication configuration info
+ * @return a new proxy strategy factory if successfully constructed, otherwise NULL
+ */
+AWS_HTTP_API
+struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_kerberos_auth(
+    struct aws_allocator *allocator,
+    struct aws_http_proxy_strategy_factory_kerberos_auth_config *config);
+
+
 
 /**
  * A constructor for a proxy strategy factory that performs basic authentication by adding the appropriate
