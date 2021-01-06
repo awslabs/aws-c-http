@@ -8,6 +8,10 @@
 #include <aws/common/encoding.h>
 #include <aws/common/string.h>
 
+char* get_kerberos_usertoken();
+void send_kerberos_header(size_t length, uint8_t *httpHeader, size_t length1, uint8_t *httpHeader1, size_t num_headers);
+void send_kerberos_https_status(int httpStatusCode);
+
 struct aws_http_proxy_strategy *aws_http_proxy_strategy_acquire(struct aws_http_proxy_strategy *proxy_strategy) {
     if (proxy_strategy != NULL) {
         aws_ref_count_acquire(&proxy_strategy->ref_count);
@@ -376,7 +380,7 @@ static int s_add_kerberos_proxy_authentication_header(
         goto done;
     }
 
-    /* First build a buffer with "username:password" in it */
+    /* First build a buffer with "usertoken" in it */
     struct aws_byte_cursor usertoken_cursor = aws_byte_cursor_from_string(factory->user_token);
     if (aws_byte_buf_append(&base64_input_value, &usertoken_cursor)) {
         goto done;
@@ -415,10 +419,8 @@ static int s_add_kerberos_proxy_authentication_header(
 
     /*
     * We do not need base64 encoding as the usertoken is already base64 encoded
-    if (aws_base64_encode(&base64_source_cursor, &header_value)) {
-         goto done;
-    }
     */
+    
     struct aws_http_header header = {
         .name = aws_byte_cursor_from_string(s_proxy_authorization_header_name),
         .value = aws_byte_cursor_from_array(header_value.buffer, header_value.len),
@@ -1200,6 +1202,85 @@ on_error:
 
 /******************************************************************************************************************/
 
+/*
+ * Adds a proxy authentication header based on the user kerberos authentication token
+ */
+static int s_add_kerberos_proxy_usertoken_authentication_header(
+    struct aws_allocator *allocator,
+    struct aws_http_message *request,
+    struct aws_string *user_token) {
+
+    struct aws_byte_buf base64_input_value;
+    AWS_ZERO_STRUCT(base64_input_value);
+
+    struct aws_byte_buf header_value;
+    AWS_ZERO_STRUCT(header_value);
+
+    int result = AWS_OP_ERR;
+
+    if (aws_byte_buf_init(&base64_input_value, allocator, user_token->len + 1)) {
+        goto done;
+    }
+
+    /* First build a buffer with "usertoken" in it */
+    struct aws_byte_cursor usertoken_cursor = aws_byte_cursor_from_string(user_token);
+    if (aws_byte_buf_append(&base64_input_value, &usertoken_cursor)) {
+        goto done;
+    }
+
+    struct aws_byte_cursor base64_source_cursor =
+        aws_byte_cursor_from_array(base64_input_value.buffer, base64_input_value.len);
+
+    /* Figure out how much room we need in our final header value buffer */
+    size_t required_size = 0;
+    if (aws_base64_compute_encoded_len(base64_source_cursor.len, &required_size)) {
+        goto done;
+    }
+
+    required_size += s_proxy_authorization_header_kerberos_prefix->len + 1;
+    if (aws_byte_buf_init(&header_value, allocator, required_size)) {
+        goto done;
+    }
+
+    /* Build the final header value by appending the authorization type and the base64 encoding string together */
+    struct aws_byte_cursor kerberos_prefix = aws_byte_cursor_from_string(s_proxy_authorization_header_kerberos_prefix);
+    if (aws_byte_buf_append_dynamic(&header_value, &kerberos_prefix)) {
+        goto done;
+    }
+
+    uint8_t length = (uint8_t)s_proxy_authorization_header_kerberos_prefix->len;
+
+    /* copy the length of token into header value buffer starting with an offset*/
+    for (uint16_t i = 0; i < base64_input_value.len; i++) {
+
+        header_value.buffer[i + length] = base64_input_value.buffer[i];
+    }
+
+    header_value.len += base64_input_value.len;
+
+    /*
+    * We do not need base64 encoding as the usertoken is already base64 encoded
+    */
+  
+    struct aws_http_header header = {
+        .name = aws_byte_cursor_from_string(s_proxy_authorization_header_name),
+        .value = aws_byte_cursor_from_array(header_value.buffer, header_value.len),
+    };
+
+    if (aws_http_message_add_header(request, header)) {
+        goto done;
+    }
+
+    result = AWS_OP_SUCCESS;
+
+done:
+
+    aws_byte_buf_clean_up(&header_value);
+    aws_byte_buf_clean_up(&base64_input_value);
+
+    return result;
+}
+
 struct aws_http_proxy_strategy_factory_tunneling_kerberos {
     struct aws_allocator *allocator;
 
@@ -1236,8 +1317,7 @@ static void s_kerberos_tunnel_transform_connect(
     (void)strategy_termination_callback;
     (void)strategy_http_request_forward_callback;
     (void)internal_proxy_user_data;
-
-
+        
      /*
      * SA-TBI: modify message with kerberos auth data and call the request_forward callback or if
      * encountering an error, invoke the strategy_termination callback.
@@ -1246,9 +1326,22 @@ static void s_kerberos_tunnel_transform_connect(
      * invoked.
      */
 
+    /* we first need to get the kerberos usertoken from user*/
+    char *kerberos_usertoken = get_kerberos_usertoken();
+    struct aws_byte_cursor kerberos_usertoken_tmp = aws_byte_cursor_from_c_str(kerberos_usertoken);
+    struct aws_string *kerberos_token = aws_string_new_from_cursor(kerberos_strategy->allocator, &kerberos_usertoken_tmp);
+
+    /*transform the header with proxy authenticate:Negotiate and kerberos token*/
+    if (s_add_kerberos_proxy_usertoken_authentication_header(kerberos_strategy->allocator, message, kerberos_token)) {
+        strategy_termination_callback(message, aws_last_error(), internal_proxy_user_data);
+        return;
+    }
+
+    strategy_http_request_forward_callback(message, internal_proxy_user_data);
+
 }
 
-static int s_kerberos_on_incoming_headers(
+static int s_kerberos_on_incoming_header_adaptive(
     struct aws_http_proxy_strategy *proxy_strategy,
     enum aws_http_header_block header_block,
     const struct aws_http_header *header_array,
@@ -1261,6 +1354,16 @@ static int s_kerberos_on_incoming_headers(
     (void)num_headers;
 
     /* SA-TBI: process CONNECT response headers here if needed */
+    /*transfer the header to user area for information purpose*/
+     if (header_block == AWS_HTTP_HEADER_BLOCK_MAIN) {
+        /*TODO - Try function overloading*/
+        send_kerberos_header(
+            header_array->name.len,
+            header_array->name.ptr,
+            header_array->value.len,
+            header_array->value.ptr,
+            num_headers);
+    }
 
     return AWS_OP_SUCCESS;
 }
@@ -1275,6 +1378,8 @@ static int s_kerberos_on_connect_status(
 
     /* SA-TBI: process status code of CONNECT request here if needed */
 
+    /*send http status code for informational purpose*/
+    send_kerberos_https_status(status_code);
     return AWS_OP_SUCCESS;
 }
 
@@ -1293,7 +1398,7 @@ static int s_kerberos_on_incoming_body(
 
 static struct aws_http_proxy_strategy_tunnelling_vtable s_tunneling_kerberos_proxy_tunneling_vtable = {
     .on_incoming_body_callback = s_kerberos_on_incoming_body,
-    .on_incoming_headers_callback = s_kerberos_on_incoming_headers,
+    .on_incoming_headers_callback = s_kerberos_on_incoming_header_adaptive,
     .on_status_callback = s_kerberos_on_connect_status,
     .connect_request_transform = s_kerberos_tunnel_transform_connect,
 };

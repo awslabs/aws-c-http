@@ -18,6 +18,24 @@ struct aws_http_header;
 struct aws_http_proxy_strategy;
 struct aws_http_proxy_strategy_factory;
 
+/* function defined in crt to get kerberos usertoken*/
+#ifdef __cplusplus
+extern "C" char* get_kerberos_usertoken();
+#endif
+
+#ifdef __cplusplus
+extern "C" void send_kerberos_header(
+    size_t length,
+    uint8_t *httpHeader,
+    size_t length1,
+    uint8_t *httpHeader1,
+    size_t num_headers);
+#endif
+
+#ifdef __cplusplus
+extern "C" void send_kerberos_https_status(int httpStatusCode);
+#endif
+
 /**
  * Proxy strategy logic must call this function to indicate an unsuccessful outcome
  */
