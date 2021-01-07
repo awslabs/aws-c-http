@@ -800,6 +800,8 @@ struct aws_http_proxy_config *aws_http_proxy_config_new(
         return NULL;
     }
 
+    config->connection_type = options->connection_type;
+
     if (aws_byte_buf_init_copy_from_cursor(&config->host, allocator, options->host)) {
         goto on_error;
     }
@@ -867,6 +869,7 @@ void aws_http_proxy_options_init_from_config(
     const struct aws_http_proxy_config *config) {
     AWS_FATAL_ASSERT(options && config);
 
+    options->connection_type = config->connection_type;
     options->host = aws_byte_cursor_from_buf(&config->host);
     options->port = config->port;
     options->tls_options = config->tls_options;
