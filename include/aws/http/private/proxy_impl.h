@@ -37,6 +37,8 @@ struct aws_http_proxy_config {
 
     struct aws_allocator *allocator;
 
+    enum aws_http_proxy_connection_type connection_type;
+
     struct aws_byte_buf host;
 
     uint16_t port;
