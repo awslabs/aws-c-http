@@ -23,8 +23,18 @@ struct aws_http_proxy_strategy_factory;
 extern "C" char* get_kerberos_usertoken();
 #endif
 
+/* function defined in crt to get ntlm credential*/
 #ifdef __cplusplus
-extern "C" void send_kerberos_header(
+extern "C" char *get_ntlm_credential();
+#endif
+
+/* function defined in crt to get ntlm credential*/
+#ifdef __cplusplus
+extern "C" char *get_ntlm_response();
+#endif
+
+#ifdef __cplusplus
+extern "C" void send_ntlm_challenge_header(
     size_t length,
     uint8_t *httpHeader,
     size_t length1,
@@ -222,6 +232,19 @@ struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options {
 
 };
 
+/*
+ * SA-TBI: add any configuration needed for ntlm auth negotiation here
+ */
+struct aws_http_proxy_strategy_factory_tunneling_ntlm_options {
+    bool placeholder;
+    /* user credential for ntlm */
+    struct aws_byte_cursor user_credential;
+};
+
+struct aws_http_proxy_strategy_factory_tunneling_adaptive_ntlm_options {
+    struct aws_http_proxy_strategy_factory_tunneling_ntlm_options ntlm_options;
+};
+
 AWS_EXTERN_C_BEGIN
 
 /**
@@ -360,6 +383,21 @@ AWS_HTTP_API
 struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_adaptive_kerberos(
     struct aws_allocator *allocator,
     struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options *config);
+
+/**
+ * This is an experimental API.
+ *
+ * Constructor for a WIP adaptive tunneling proxy strategy.  This strategy attempts a vanilla CONNECT and if that
+ * fails it attempts a ntlm-oriented CONNECT (if applicable).
+ *
+ * @param allocator memory allocator to use
+ * @param config configuration options for the strategy factory
+ * @return a new proxy strategy factory if successfully constructed, otherwise NULL
+ */
+AWS_HTTP_API
+struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_adaptive_ntlm(
+    struct aws_allocator *allocator,
+    struct aws_http_proxy_strategy_factory_tunneling_adaptive_ntlm_options *config);
 
 AWS_EXTERN_C_END
 
