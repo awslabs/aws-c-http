@@ -99,11 +99,11 @@ static void s_cm_tester_on_cm_shutdown_complete(void *user_data) {
 
 static struct aws_event_loop *s_new_event_loop(
     struct aws_allocator *alloc,
-    aws_io_clock_fn *clock,
+    const struct aws_event_loop_options *options,
     void *new_loop_user_data) {
     (void)new_loop_user_data;
 
-    return aws_event_loop_new_default(alloc, clock);
+    return aws_event_loop_new_default(alloc, options->clock);
 }
 
 static int s_cm_tester_init(struct cm_tester_options *options) {
