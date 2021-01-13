@@ -1312,14 +1312,14 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_multiple_chunked_encoding) {
 
 static int s_stream_tester_init(
     struct client_stream_tester *tester,
-    struct tester *master_tester,
+    struct tester *main_tester,
     struct aws_http_message *request) {
 
     struct client_stream_tester_options options = {
         .request = request,
-        .connection = master_tester->connection,
+        .connection = main_tester->connection,
     };
-    return client_stream_tester_init(tester, master_tester->alloc, &options);
+    return client_stream_tester_init(tester, main_tester->alloc, &options);
 }
 
 H1_CLIENT_TEST_CASE(h1_client_response_get_1liner) {
