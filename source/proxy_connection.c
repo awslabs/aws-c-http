@@ -771,6 +771,19 @@ static int s_aws_http_client_connect_via_tunneling_proxy(const struct aws_http_c
     return result;
 }
 
+static enum aws_http_proxy_connection_type s_determine_proxy_connection_type(const struct aws_http_client_connection_options *options) {
+    enum aws_http_proxy_connection_type proxy_connection_type = options->proxy_options->connection_type;
+    if (proxy_connection_type != AWS_HPCT_HTTP_LEGACY) {
+        return proxy_connection_type;
+    }
+
+    if (options->tls_options != NULL) {
+        return AWS_HPCT_HTTP_TUNNEL;
+    } else {
+        return AWS_HPCT_HTTP_FORWARD;
+    }
+}
+
 /*
  * Dispatches a proxy-enabled connection request to the appropriate top-level connection function
  */
@@ -779,7 +792,9 @@ int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_op
         return AWS_OP_ERR;
     }
 
-    switch (options->proxy_options->connection_type) {
+    enum aws_http_proxy_connection_type proxy_connection_type = s_determine_proxy_connection_type(options);
+
+    switch (proxy_connection_type) {
         case AWS_HPCT_HTTP_FORWARD:
             return s_aws_http_client_connect_via_forwarding_proxy(options);
 
