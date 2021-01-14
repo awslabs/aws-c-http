@@ -414,14 +414,12 @@ AWS_STATIC_STRING_FROM_LITERAL(s_proxy_authorization_header_kerberos_prefix, "Ne
 
 /*
  * Adds a proxy authentication header based on the kerberos authentication mode
+ * Uses a token that is already base64 encoded
  */
 static int s_add_kerberos_proxy_authentication_header(
     struct aws_allocator *allocator,
     struct aws_http_message *request,
     struct aws_http_proxy_strategy_kerberos_auth *kerberos_auth_strategy) {
-
-    struct aws_byte_buf base64_input_value;
-    AWS_ZERO_STRUCT(base64_input_value);
 
     struct aws_byte_buf header_value;
     AWS_ZERO_STRUCT(header_value);
@@ -430,50 +428,22 @@ static int s_add_kerberos_proxy_authentication_header(
 
     struct aws_http_proxy_strategy_factory_kerberos_auth *factory = kerberos_auth_strategy->factory->impl;
 
-    if (aws_byte_buf_init(&base64_input_value, allocator, factory->user_token->len + 1)) {
+    if (aws_byte_buf_init(
+            &header_value, allocator, s_proxy_authorization_header_kerberos_prefix->len+factory->user_token->len + 1)) {
         goto done;
     }
 
-    /* First build a buffer with "usertoken" in it */
+    /* First append proxy authorization header kerberos prefix" in it */
+    struct aws_byte_cursor auth_header_cursor = aws_byte_cursor_from_string(s_proxy_authorization_header_kerberos_prefix);
+    if (aws_byte_buf_append(&header_value, &auth_header_cursor)) {
+        goto done;
+    }
+
+    /* Append token to it " in it */
     struct aws_byte_cursor usertoken_cursor = aws_byte_cursor_from_string(factory->user_token);
-    if (aws_byte_buf_append(&base64_input_value, &usertoken_cursor)) {
+    if (aws_byte_buf_append(&header_value, &usertoken_cursor)) {
         goto done;
     }
-
-    struct aws_byte_cursor base64_source_cursor =
-        aws_byte_cursor_from_array(base64_input_value.buffer, base64_input_value.len);
-
-    /* Figure out how much room we need in our final header value buffer */
-    size_t required_size = 0;
-    if (aws_base64_compute_encoded_len(base64_source_cursor.len, &required_size)) {
-        goto done;
-    }
-
-    required_size += s_proxy_authorization_header_kerberos_prefix->len + 1;
-    if (aws_byte_buf_init(&header_value, allocator, required_size)) {
-        goto done;
-    }
-
-    /* Build the final header value by appending the authorization type and the base64 encoding string together */
-    struct aws_byte_cursor kerberos_prefix = aws_byte_cursor_from_string(s_proxy_authorization_header_kerberos_prefix);
-    if (aws_byte_buf_append_dynamic(&header_value, &kerberos_prefix)) {
-        goto done;
-    }
-
-     uint8_t length = (uint8_t) s_proxy_authorization_header_kerberos_prefix->len;
-    
-    /* copy the length of token into header value buffer starting with an offset*/
-    for (uint16_t i = 0; i <base64_input_value.len ;i++) {
-        
-        header_value.buffer[i + length] = base64_input_value.buffer[i];
-        
-    }
-
-    header_value.len += base64_input_value.len;
-
-    /*
-    * We do not need base64 encoding as the usertoken is already base64 encoded
-    */
     
     struct aws_http_header header = {
         .name = aws_byte_cursor_from_string(s_proxy_authorization_header_name),
@@ -487,9 +457,7 @@ static int s_add_kerberos_proxy_authentication_header(
     result = AWS_OP_SUCCESS;
 
 done:
-
     aws_byte_buf_clean_up(&header_value);
-    aws_byte_buf_clean_up(&base64_input_value);
 
     return result;
 }
@@ -1281,64 +1249,35 @@ struct aws_http_proxy_strategy_tunneling_kerberos {
 /*SA-Added Start*/
 /*
  * Adds a proxy authentication header based on the user kerberos authentication token
+ * This uses a token that is already base64 encoded
  */
 static int s_add_kerberos_proxy_usertoken_authentication_header(
     struct aws_allocator *allocator,
     struct aws_http_message *request,
     struct aws_string *user_token) {
 
-    struct aws_byte_buf base64_input_value;
-    AWS_ZERO_STRUCT(base64_input_value);
-
     struct aws_byte_buf header_value;
     AWS_ZERO_STRUCT(header_value);
 
     int result = AWS_OP_ERR;
 
-    if (aws_byte_buf_init(&base64_input_value, allocator, user_token->len + 1)) {
+    if (aws_byte_buf_init(
+            &header_value, allocator, s_proxy_authorization_header_kerberos_prefix->len+user_token->len + 1)) {
         goto done;
     }
 
-    /* First build a buffer with "usertoken" in it */
+    /* First append proxy authorization header kerberos prefix" in it */
+    struct aws_byte_cursor auth_header_cursor = aws_byte_cursor_from_string(s_proxy_authorization_header_kerberos_prefix);
+    if (aws_byte_buf_append(&header_value, &auth_header_cursor)) {
+        goto done;
+    }
+
+    /* Append token to it " in it */
     struct aws_byte_cursor usertoken_cursor = aws_byte_cursor_from_string(user_token);
-    if (aws_byte_buf_append(&base64_input_value, &usertoken_cursor)) {
+    if (aws_byte_buf_append(&header_value, &usertoken_cursor)) {
         goto done;
     }
 
-    struct aws_byte_cursor base64_source_cursor =
-        aws_byte_cursor_from_array(base64_input_value.buffer, base64_input_value.len);
-
-    /* Figure out how much room we need in our final header value buffer */
-    size_t required_size = 0;
-    if (aws_base64_compute_encoded_len(base64_source_cursor.len, &required_size)) {
-        goto done;
-    }
-
-    required_size += s_proxy_authorization_header_kerberos_prefix->len + 1;
-    if (aws_byte_buf_init(&header_value, allocator, required_size)) {
-        goto done;
-    }
-
-    /* Build the final header value by appending the authorization type and the base64 encoding string together */
-    struct aws_byte_cursor kerberos_prefix = aws_byte_cursor_from_string(s_proxy_authorization_header_kerberos_prefix);
-    if (aws_byte_buf_append_dynamic(&header_value, &kerberos_prefix)) {
-        goto done;
-    }
-
-    /*
-     * We do not need base64 encoding as the usertoken is already base64 encoded
-     */
-
-    uint8_t length = (uint8_t)s_proxy_authorization_header_kerberos_prefix->len;
-
-    /* copy the length of token into header value buffer starting with an offset*/
-    for (uint16_t i = 0; i < base64_input_value.len; i++) {
-
-        header_value.buffer[i + length] = base64_input_value.buffer[i];
-    }
-
-    header_value.len += base64_input_value.len;
-  
     struct aws_http_header header = {
         .name = aws_byte_cursor_from_string(s_proxy_authorization_header_name),
         .value = aws_byte_cursor_from_array(header_value.buffer, header_value.len),
@@ -1353,8 +1292,6 @@ static int s_add_kerberos_proxy_usertoken_authentication_header(
 done:
 
     aws_byte_buf_clean_up(&header_value);
-    aws_byte_buf_clean_up(&base64_input_value);
-
     return result;
 }
 /*SA-Added End*/
@@ -1589,58 +1526,29 @@ static int s_add_ntlm_proxy_usertoken_authentication_header(
     struct aws_http_message *request,
     struct aws_string *credential_response) {
 
-    struct aws_byte_buf base64_input_value;
-    AWS_ZERO_STRUCT(base64_input_value);
-
     struct aws_byte_buf header_value;
     AWS_ZERO_STRUCT(header_value);
 
     int result = AWS_OP_ERR;
 
-    if (aws_byte_buf_init(&base64_input_value, allocator, credential_response->len + 1)) {
+    if (aws_byte_buf_init(
+            &header_value, allocator, s_proxy_authorization_header_ntlm_prefix->len + credential_response->len + 1)) {
         goto done;
     }
 
-    /* First build a buffer with "ntlm credential/response" in it */
-    struct aws_byte_cursor credential_response_cursor = aws_byte_cursor_from_string(credential_response);
-    if (aws_byte_buf_append(&base64_input_value, &credential_response_cursor)) {
+    /* First append proxy authorization header prefix" in it */
+    struct aws_byte_cursor auth_header_cursor =
+        aws_byte_cursor_from_string(s_proxy_authorization_header_ntlm_prefix);
+    if (aws_byte_buf_append(&header_value, &auth_header_cursor)) {
         goto done;
     }
 
-    struct aws_byte_cursor base64_source_cursor =
-        aws_byte_cursor_from_array(base64_input_value.buffer, base64_input_value.len);
-
-    /* Figure out how much room we need in our final header value buffer */
-    size_t required_size = 0;
-    if (aws_base64_compute_encoded_len(base64_source_cursor.len, &required_size)) {
+    /* Append user data to it " in it */
+    struct aws_byte_cursor user_credential_response = aws_byte_cursor_from_string(credential_response);
+    if (aws_byte_buf_append(&header_value, &user_credential_response)) {
         goto done;
     }
 
-    required_size += s_proxy_authorization_header_ntlm_prefix->len + 1;
-    if (aws_byte_buf_init(&header_value, allocator, required_size)) {
-        goto done;
-    }
-
-    /* Build the final header value by appending the authorization type and the base64 encoding string together */
-    struct aws_byte_cursor ntlm_prefix = aws_byte_cursor_from_string(s_proxy_authorization_header_ntlm_prefix);
-    if (aws_byte_buf_append_dynamic(&header_value, &ntlm_prefix)) {
-        goto done;
-    }
-
-     /*
-     * We do not need base64 encoding as the credential or response are already base64 encoded
-     */
-
-    uint8_t length = (uint8_t)s_proxy_authorization_header_ntlm_prefix->len;
-
-    /* copy the length of credential into header value buffer starting with an offset*/
-    for (uint16_t i = 0; i < base64_input_value.len; i++) {
-
-        header_value.buffer[i + length] = base64_input_value.buffer[i];
-    }
-
-    header_value.len += base64_input_value.len;
-    
     struct aws_http_header header = {
         .name = aws_byte_cursor_from_string(s_proxy_authorization_header_name),
         .value = aws_byte_cursor_from_array(header_value.buffer, header_value.len),
@@ -1655,8 +1563,6 @@ static int s_add_ntlm_proxy_usertoken_authentication_header(
 done:
 
     aws_byte_buf_clean_up(&header_value);
-    aws_byte_buf_clean_up(&base64_input_value);
-
     return result;
 }
 
@@ -1683,6 +1589,14 @@ static void s_ntlm_tunnel_transform_connect(
      */
     
     /*Terminate when both states are not AWS_PSCS_READY*/
+    /* Why there is a sub_state logic - > For NTLM we have to first send the credentials with CONNECT Request 
+    * This CONNECT request will yeild a challenge in response
+    * This challenge will be followed by a new CONNECT request with response in it
+    * Instead of creating 2 different strategies for 2x CONNECT request i have created a sub state logic in which 
+    * the strategy is terminated only when both CONNECT request have resulted in a failure or else first a CONNECT 
+    request with credentials go out followed by response*/
+
+
     if ((ntlm_strategy->connect_state != AWS_PSCS_READY)
         &&(ntlm_strategy->connect_sub_state != AWS_PSCS_SUB_STATE_READY)) {
            strategy_termination_callback(message, AWS_ERROR_INVALID_STATE, internal_proxy_user_data);
@@ -1747,19 +1661,18 @@ static int s_ntlm_on_incoming_header_adaptive(
     if ((ntlm_strategy->connect_state == AWS_PSCS_IN_PROGRESS)
         &&(ntlm_strategy->connect_sub_state != AWS_PSCS_SUB_STATE_IN_PROGRESS))
     {
-
+        /* This section of code checks for header block when connect and connect sub state are both in progress
+        ,the code locates the header in which the challenge has come and triggers a callback to send challenge to user*/
         if (header_block == AWS_HTTP_HEADER_BLOCK_MAIN) {
 
                  uint8_t *header_name = header_array->name.ptr;
                  char array_header[100];
                  if ((header_array->name.len) > 0) {
-
                     size_t header_length = header_array->name.len;
-                    
+              
                     for (size_t i = 0; i < header_array->name.len; ++i) {
 
                         array_header[i] = (char)header_name[i];
-                        
                     }
                     if (strncmp(array_header, "Proxy-Authenticate", header_length) == 0) {
 
