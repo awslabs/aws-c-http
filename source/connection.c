@@ -65,12 +65,12 @@ static void s_s3_client_log_stats(enum aws_s3_client_log_stats_reason reason, si
         aws_s3_client_log_stats_reason_to_string(reason));
 }
 
-static void s_s3_client_conn_opened() {
+static void s_s3_client_conn_opened(void) {
     size_t active_conn_count = aws_atomic_fetch_add(&g_active_conn_count, 1) + 1;
     s_s3_client_log_stats(AWS_S3_CLIENT_LOG_STATS_REASON_CONN_OPENED, active_conn_count);
 }
 
-static void s_s3_client_conn_closed() {
+static void s_s3_client_conn_closed(void) {
     size_t active_conn_count = aws_atomic_fetch_sub(&g_active_conn_count, 1) - 1;
     s_s3_client_log_stats(AWS_S3_CLIENT_LOG_STATS_REASON_CONN_CLOSED, active_conn_count);
 }
