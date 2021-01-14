@@ -35,6 +35,46 @@ void aws_http_connection_set_system_vtable(const struct aws_http_connection_syst
     s_system_vtable_ptr = system_vtable;
 }
 
+struct aws_atomic_var g_active_conn_count = AWS_ATOMIC_INIT_INT(0);
+
+enum aws_s3_client_log_stats_reason {
+    AWS_S3_CLIENT_LOG_STATS_REASON_CONN_NONE,
+    AWS_S3_CLIENT_LOG_STATS_REASON_CONN_OPENED,
+    AWS_S3_CLIENT_LOG_STATS_REASON_CONN_CLOSED,
+};
+
+static const char *aws_s3_client_log_stats_reason_to_string(enum aws_s3_client_log_stats_reason reason) {
+    switch (reason) {
+        case AWS_S3_CLIENT_LOG_STATS_REASON_CONN_NONE:
+            return "None";
+        case AWS_S3_CLIENT_LOG_STATS_REASON_CONN_OPENED:
+            return "Connection opened";
+        case AWS_S3_CLIENT_LOG_STATS_REASON_CONN_CLOSED:
+            return "Connection closed";
+    }
+
+    return "None";
+}
+
+static void s_s3_client_log_stats(enum aws_s3_client_log_stats_reason reason, size_t num_active_connections) {
+
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_CONNECTION,
+        "HTTP-STATS-LOGGING  Active-Connections:%d  Log-Reason:'%s'",
+        (int32_t)num_active_connections,
+        aws_s3_client_log_stats_reason_to_string(reason));
+}
+
+static void s_s3_client_conn_opened() {
+    size_t active_conn_count = aws_atomic_fetch_add(&g_active_conn_count, 1) + 1;
+    s_s3_client_log_stats(AWS_S3_CLIENT_LOG_STATS_REASON_CONN_OPENED, active_conn_count);
+}
+
+static void s_s3_client_conn_closed() {
+    size_t active_conn_count = aws_atomic_fetch_sub(&g_active_conn_count, 1) - 1;
+    s_s3_client_log_stats(AWS_S3_CLIENT_LOG_STATS_REASON_CONN_CLOSED, active_conn_count);
+}
+
 AWS_STATIC_STRING_FROM_LITERAL(s_alpn_protocol_http_1_1, "http/1.1");
 AWS_STATIC_STRING_FROM_LITERAL(s_alpn_protocol_http_2, "h2");
 
@@ -191,6 +231,8 @@ static struct aws_http_connection *s_connection_new(
 
     /* Success! Inform connection that installation is complete */
     connection->vtable->on_channel_handler_installed(&connection->channel_handler, connection_slot);
+
+    s_s3_client_conn_opened();
 
     return connection;
 
@@ -364,6 +406,8 @@ void aws_http_connection_release(struct aws_http_connection *connection) {
 
         /* When the channel's refcount reaches 0, it destroys its slots/handlers, which will destroy the connection */
         aws_channel_release_hold(connection->channel_slot->channel);
+
+        s_s3_client_conn_closed();
     } else {
         AWS_ASSERT(prev_refcount != 0);
         AWS_LOGF_TRACE(
