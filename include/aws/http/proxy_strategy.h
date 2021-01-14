@@ -18,33 +18,28 @@ struct aws_http_header;
 struct aws_http_proxy_strategy;
 struct aws_http_proxy_strategy_factory;
 
-/* function defined in crt to get kerberos usertoken*/
-#ifdef __cplusplus
-extern "C" char* get_kerberos_usertoken();
-#endif
+/*SA-Added Start*/
 
-/* function defined in crt to get ntlm credential*/
-#ifdef __cplusplus
-extern "C" char *get_ntlm_credential();
-#endif
+/*enum defination for callback state*/
+enum proxy_strategy_callback_state {
+    AWS_KERB_TOKEN,
+    AWS_NTLM_CRED,
+    AWS_NTLM_RESP,
+};
 
-/* function defined in crt to get ntlm credential*/
-#ifdef __cplusplus
-extern "C" char *get_ntlm_response();
-#endif
+/**
+ * User-supplied transform callback function that sends user data to user 
+ *(example NTLM challenge)
+ */
+typedef void (*aws_http_proxy_send_user_data_callback_fn)(size_t data_length, uint8_t *data, void *userdata);
 
-#ifdef __cplusplus
-extern "C" void send_ntlm_challenge_header(
-    size_t length,
-    uint8_t *httpHeader,
-    size_t length1,
-    uint8_t *httpHeader1,
-    size_t num_headers);
-#endif
+/**
+ * User-supplied transform callback function that gets user data depending on callback state
+ *(example NTLM credentials/response)
+ */
+typedef char* (*aws_http_proxy_get_user_data_callback_fn)(int callback_state, void *userdata);
 
-#ifdef __cplusplus
-extern "C" void send_kerberos_https_status(int httpStatusCode);
-#endif
+/*SA-Added End*/
 
 /**
  * Proxy strategy logic must call this function to indicate an unsuccessful outcome
@@ -178,17 +173,6 @@ struct aws_http_proxy_strategy_factory {
     enum aws_http_proxy_connection_type proxy_connection_type;
 };
 
-
-struct aws_http_proxy_strategy_factory_kerberos_auth_config {
-
-    /* type of proxy connection being established, must be forwarding or tunnel */
-    enum aws_http_proxy_connection_type proxy_connection_type;
-
-    /* user token to use in kerberos authentication */
-    struct aws_byte_cursor user_token;
-
-};
-
 struct aws_http_proxy_strategy_factory_basic_auth_config {
 
     /* type of proxy connection being established, must be forwarding or tunnel */
@@ -228,23 +212,27 @@ struct aws_http_proxy_strategy_factory_tunneling_kerberos_options {
 
 struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options {
     struct aws_http_proxy_strategy_factory_tunneling_kerberos_options kerberos_options;
-    
+ };
 
-};
+/*SA-Added Start*/
+ struct aws_http_proxy_strategy_factory_kerberos_auth_config {
 
-/*
- * SA-TBI: add any configuration needed for ntlm auth negotiation here
- */
+     /* type of proxy connection being established, must be forwarding or tunnel */
+     enum aws_http_proxy_connection_type proxy_connection_type;
+
+     /* user token to use in kerberos authentication which is base64 encoded and provided by user*/
+     struct aws_byte_cursor user_token;
+ };
+
 struct aws_http_proxy_strategy_factory_tunneling_ntlm_options {
     bool placeholder;
-    /* user credential for ntlm */
-    struct aws_byte_cursor user_credential;
 };
 
 struct aws_http_proxy_strategy_factory_tunneling_adaptive_ntlm_options {
     struct aws_http_proxy_strategy_factory_tunneling_ntlm_options ntlm_options;
 };
 
+/*SA-Added End*/
 AWS_EXTERN_C_BEGIN
 
 /**
@@ -287,23 +275,6 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_acquire(
  */
 AWS_HTTP_API
 void aws_http_proxy_strategy_factory_release(struct aws_http_proxy_strategy_factory *proxy_strategy_factory);
-
-
-
-/**
- * A constructor for a proxy strategy factory that performs kerberos authentication by adding the appropriate
- * header and header value to requests or CONNECT requests.
- *
- * @param allocator memory allocator to use
- * @param config kerberos authentication configuration info
- * @return a new proxy strategy factory if successfully constructed, otherwise NULL
- */
-AWS_HTTP_API
-struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_kerberos_auth(
-    struct aws_allocator *allocator,
-    struct aws_http_proxy_strategy_factory_kerberos_auth_config *config);
-
-
 
 /**
  * A constructor for a proxy strategy factory that performs basic authentication by adding the appropriate
@@ -384,10 +355,25 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
     struct aws_allocator *allocator,
     struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options *config);
 
+/*SA-Added Start*/
+
+/**
+ * A constructor for a proxy strategy factory that performs kerberos authentication by adding the appropriate
+ * header and header value to requests or CONNECT requests.
+ *
+ * @param allocator memory allocator to use
+ * @param config kerberos authentication configuration info
+ * @return a new proxy strategy factory if successfully constructed, otherwise NULL
+ */
+AWS_HTTP_API
+struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_kerberos_auth(
+    struct aws_allocator *allocator,
+    struct aws_http_proxy_strategy_factory_kerberos_auth_config *config);
+
 /**
  * This is an experimental API.
  *
- * Constructor for a WIP adaptive tunneling proxy strategy.  This strategy attempts a vanilla CONNECT and if that
+ * Constructor for a WIP adaptive tunneling NTLM proxy strategy.  This strategy attempts a vanilla CONNECT and if that
  * fails it attempts a ntlm-oriented CONNECT (if applicable).
  *
  * @param allocator memory allocator to use
@@ -398,6 +384,24 @@ AWS_HTTP_API
 struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_adaptive_ntlm(
     struct aws_allocator *allocator,
     struct aws_http_proxy_strategy_factory_tunneling_adaptive_ntlm_options *config);
+
+/**
+ * This is an experimental API.
+ *
+ * Constructor for callback functions
+ *
+ * @param callback function for sending user data to user, example - NTLM chalenge 
+ * @param callback function for getting user data, example - NTLM Cred,NTLM Response, Kerberos Token
+ * @return NULL
+ */
+
+AWS_HTTP_API
+int aws_http_proxy_connection_configure_callback(
+    aws_http_proxy_send_user_data_callback_fn func_1,
+    aws_http_proxy_get_user_data_callback_fn func_2,
+    void *userdata);
+
+/*SA-Added End*/
 
 AWS_EXTERN_C_END
 
