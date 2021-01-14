@@ -62,7 +62,6 @@ aws_add_sanitizers(${PROJECT_NAME} BLACKLIST "sanitizer-blacklist.txt")
 
 # We are not ABI stable yet
 set_target_properties(${PROJECT_NAME} PROPERTIES VERSION 1.0.0)
-set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS "/wd4221")
 
 target_include_directories(${PROJECT_NAME} PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
