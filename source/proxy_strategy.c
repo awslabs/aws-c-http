@@ -959,7 +959,7 @@ static void s_kerberos_tunnel_transform_connect(
     aws_http_proxy_strategy_http_request_forward_fn *strategy_http_request_forward_callback,
     void *internal_proxy_user_data) {
 
-    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    struct aws_http_proxy_strategy_tunneling_kerberos *kerberos_strategy = proxy_strategy->impl;
     (void)kerberos_strategy;
     (void)message;
     (void)strategy_termination_callback;
@@ -981,7 +981,7 @@ static int s_kerberos_on_incoming_headers(
     const struct aws_http_header *header_array,
     size_t num_headers) {
 
-    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    struct aws_http_proxy_strategy_tunneling_kerberos *kerberos_strategy = proxy_strategy->impl;
     (void)kerberos_strategy;
     (void)header_block;
     (void)header_array;
@@ -996,7 +996,7 @@ static int s_kerberos_on_connect_status(
     struct aws_http_proxy_strategy *proxy_strategy,
     enum aws_http_status_code status_code) {
 
-    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    struct aws_http_proxy_strategy_tunneling_kerberos *kerberos_strategy = proxy_strategy->impl;
     (void)kerberos_strategy;
     (void)status_code;
 
@@ -1009,7 +1009,7 @@ static int s_kerberos_on_incoming_body(
     struct aws_http_proxy_strategy *proxy_strategy,
     const struct aws_byte_cursor *data) {
 
-    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    struct aws_http_proxy_strategy_tunneling_kerberos *kerberos_strategy = proxy_strategy->impl;
     (void)kerberos_strategy;
     (void)data;
 

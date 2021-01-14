@@ -10,6 +10,7 @@
 
 #include <aws/http/connection.h>
 
+struct aws_http_connection_manager_options;
 struct aws_http_message;
 struct aws_channel_slot;
 struct aws_string;
@@ -103,9 +104,14 @@ AWS_HTTP_API
 void aws_http_proxy_system_set_vtable(struct aws_http_proxy_system_vtable *vtable);
 
 AWS_HTTP_API
-struct aws_http_proxy_config *aws_http_proxy_config_new(
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_connection_options(
     struct aws_allocator *allocator,
-    const struct aws_http_proxy_options *options);
+    const struct aws_http_client_connection_options *options);
+
+AWS_HTTP_API
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_manager_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_connection_manager_options *options);
 
 AWS_HTTP_API
 void aws_http_proxy_config_destroy(struct aws_http_proxy_config *config);
