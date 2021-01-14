@@ -13,12 +13,49 @@
 #    pragma warning(disable : 4221)
 #endif /* _MSC_VER */
 
+/*SA-Added Start*/
 
-char* get_kerberos_usertoken();
-char *get_ntlm_credential();
-char *get_ntlm_response();
-void send_ntlm_challenge_header(size_t length, uint8_t *httpHeader, size_t length1, uint8_t *httpHeader1, size_t num_headers);
-void send_kerberos_https_status(int httpStatusCode);
+#if defined(_MSC_VER)
+#    pragma warning(push)
+#    pragma warning(disable : 4152)
+#endif /* _MSC_VER */
+
+typedef void (*proxy_callback_fn_t_1)();
+typedef char*(*proxy_callback_fn_t_2)();
+
+typedef struct {
+    proxy_callback_fn_t_2 func_1;
+    proxy_callback_fn_t_2 func_2;
+    unsigned user;
+    void *userdata;
+} proxy_connection_callback_t;
+
+static proxy_connection_callback_t proxy_connection_callback;
+
+/* function to initialize callback functions */
+static int aws_http_proxy_connection_init_callback(void *func_1, void *func_2, int user, void *userdata) {
+
+    proxy_connection_callback.user = user;
+    proxy_connection_callback.userdata = userdata;
+    proxy_connection_callback.func_1 = func_1;
+    proxy_connection_callback.func_2 = func_2;
+
+    return 0;
+}
+
+/* function to initialize callback functions */
+
+int aws_http_proxy_connection_configure_callback(
+    aws_http_proxy_send_user_data_callback_fn func_1,
+    aws_http_proxy_get_user_data_callback_fn func_2,
+    void *userdata) {
+
+    aws_http_proxy_connection_init_callback(func_1, func_2, 1, userdata);
+
+    return 0;
+}
+
+/*SA-Added End*/
 
 struct aws_http_proxy_strategy *aws_http_proxy_strategy_acquire(struct aws_http_proxy_strategy *proxy_strategy) {
     if (proxy_strategy != NULL) {
@@ -69,12 +106,14 @@ enum proxy_strategy_connect_state {
     AWS_PSCS_FAILURE,
 };
 
+/*SA-Added Start*/
 enum proxy_strategy_connect_sub_state {
     AWS_PSCS_SUB_STATE_READY,
     AWS_PSCS_SUB_STATE_IN_PROGRESS,
     AWS_PSCS_SUB_STATE_SUCCESS,
     AWS_PSCS_SUB_STATE_FAILURE,
 };
+/*SA-Added End*/
 
 /* Functions for factory basic auth strategy with Basic Header */
 
@@ -336,7 +375,7 @@ on_error:
 }
 
 /******************************************************************************************************************/
-/**/
+/*SA-Added Start*/
 /*straight kerberos*/
 
 struct aws_http_proxy_strategy_factory_kerberos_auth {
@@ -490,7 +529,7 @@ static int s_kerberos_on_incoming_header(
     const struct aws_http_header *header_array,
     size_t num_headers) {
 
-    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    struct aws_http_proxy_strategy_tunneling_kerberos *kerberos_strategy = proxy_strategy->impl;
     (void)kerberos_strategy;
     (void)header_block;
     (void)header_array;
@@ -513,7 +552,6 @@ static int s_kerberos_auth_on_connect_status(
             kerberos_auth_strategy->connect_state = AWS_PSCS_SUCCESS;
         }
     }
-
     return AWS_OP_SUCCESS;
 }
 
@@ -607,7 +645,7 @@ on_error:
 
     return NULL;
 }
-
+/*SA-Added End*/
 
 /*****************************************************************************************************************/
 
@@ -629,34 +667,6 @@ static void s_destroy_one_time_identity_strategy(struct aws_http_proxy_strategy 
     struct aws_http_proxy_strategy_one_time_identity *identity_strategy = proxy_strategy->impl;
 
     aws_mem_release(identity_strategy->allocator, identity_strategy);
-}
-
-static int s_one_time_identity_on_incoming_header_adaptive(
-    struct aws_http_proxy_strategy *proxy_strategy,
-    enum aws_http_header_block header_block,
-    const struct aws_http_header *header_array,
-    size_t num_headers) {
-
-    struct aws_http_proxy_strategy_one_time_identity *one_time_identity_strategy = proxy_strategy->impl;
-    (void)one_time_identity_strategy;
-    (void)header_block;
-    (void)header_array;
-    (void)num_headers;
-
-    /* SA-TBI: process CONNECT response headers here if needed */
-    
-    return AWS_OP_SUCCESS;
-}
-
-static int s_one_time_identity_on_incoming_body(struct aws_http_proxy_strategy *proxy_strategy, const struct aws_byte_cursor *data) {
-
-    struct aws_http_proxy_strategy_one_time_identity *one_time_identity_strategy = proxy_strategy->impl;
-    (void)one_time_identity_strategy;
-    (void)data;
-
-    /* SA-TBI: process body of CONNECT request here if needed */
-
-    return AWS_OP_SUCCESS;
 }
 
 void s_one_time_identity_connect_transform(
@@ -693,8 +703,6 @@ static int s_one_time_identity_on_connect_status(
 }
 
 static struct aws_http_proxy_strategy_tunnelling_vtable s_one_time_identity_proxy_tunneling_vtable = {
-    .on_incoming_body_callback = s_one_time_identity_on_incoming_body,
-    .on_incoming_headers_callback = s_one_time_identity_on_incoming_header_adaptive,
     .on_status_callback = s_one_time_identity_on_connect_status,
     .connect_request_transform = s_one_time_identity_connect_transform,
 };
@@ -879,9 +887,7 @@ struct aws_http_proxy_strategy_tunneling_chain {
     void *original_internal_proxy_user_data;
     aws_http_proxy_strategy_terminate_fn *original_strategy_termination_callback;
     aws_http_proxy_strategy_http_request_forward_fn *original_strategy_http_request_forward_callback;
-    enum proxy_strategy_connect_state connect_state;
-    enum proxy_strategy_connect_sub_state connect_sub_state;
-
+    
     struct aws_http_proxy_strategy strategy_base;
 };
 
@@ -1074,8 +1080,6 @@ static struct aws_http_proxy_strategy *s_create_tunneling_chain_strategy(
         (aws_simple_completion_callback *)s_destroy_tunneling_chain_strategy);
 
     chain_strategy->strategy_base.strategy_vtable.tunnelling_vtable = &s_tunneling_chain_proxy_tunneling_vtable;
-    chain_strategy->connect_state = AWS_PSCS_READY;
-    chain_strategy->connect_sub_state = AWS_PSCS_SUB_STATE_READY;
 
     struct aws_http_proxy_strategy_factory_tunneling_chain *chain_factory = proxy_strategy_factory->impl;
     size_t strategy_count = aws_array_list_length(&chain_factory->strategy_factories);
@@ -1264,7 +1268,7 @@ struct aws_http_proxy_strategy_tunneling_kerberos {
 
     struct aws_http_proxy_strategy strategy_base;
 
-    enum proxy_strategy_connect_state state;
+    enum proxy_strategy_connect_state connect_state;
 
     /*
      * SA-TBI: add any factory state needed here
@@ -1274,6 +1278,7 @@ struct aws_http_proxy_strategy_tunneling_kerberos {
      */
 };
 
+/*SA-Added Start*/
 /*
  * Adds a proxy authentication header based on the user kerberos authentication token
  */
@@ -1320,7 +1325,6 @@ static int s_add_kerberos_proxy_usertoken_authentication_header(
         goto done;
     }
 
-    
     /*
      * We do not need base64 encoding as the usertoken is already base64 encoded
      */
@@ -1353,7 +1357,7 @@ done:
 
     return result;
 }
-
+/*SA-Added End*/
 static void s_kerberos_tunnel_transform_connect(
     struct aws_http_proxy_strategy *proxy_strategy,
     struct aws_http_message *message,
@@ -1361,7 +1365,7 @@ static void s_kerberos_tunnel_transform_connect(
     aws_http_proxy_strategy_http_request_forward_fn *strategy_http_request_forward_callback,
     void *internal_proxy_user_data) {
 
-    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    struct aws_http_proxy_strategy_tunneling_kerberos *kerberos_strategy = proxy_strategy->impl;
     (void)kerberos_strategy;
     (void)message;
     (void)strategy_termination_callback;
@@ -1375,14 +1379,18 @@ static void s_kerberos_tunnel_transform_connect(
      * As written, a connection attempt using this strategy will hang because neither of these are currently
      * invoked.
      */
-
+    /*SA-Added Start*/
     if (kerberos_strategy->connect_state != AWS_PSCS_READY) {
         strategy_termination_callback(message, AWS_ERROR_INVALID_STATE, internal_proxy_user_data);
         return;
     }
 
-     /* we first need to get the kerberos usertoken from user*/
-    char *kerberos_usertoken = get_kerberos_usertoken();
+    enum proxy_strategy_callback_state callback_state;
+    callback_state = AWS_KERB_TOKEN;
+
+
+    /* we first need to get the kerberos usertoken from user*/
+    char *kerberos_usertoken = (proxy_connection_callback.func_2)(callback_state,proxy_connection_callback.userdata);
     struct aws_byte_cursor kerberos_usertoken_tmp = aws_byte_cursor_from_c_str(kerberos_usertoken);
     struct aws_string *kerberos_token = aws_string_new_from_cursor(kerberos_strategy->allocator, &kerberos_usertoken_tmp);
 
@@ -1394,7 +1402,7 @@ static void s_kerberos_tunnel_transform_connect(
 
     kerberos_strategy->connect_state = AWS_PSCS_IN_PROGRESS;
     strategy_http_request_forward_callback(message, internal_proxy_user_data);
-
+    /*SA-Added End*/
 }
 
 static int s_kerberos_on_incoming_header_adaptive(
@@ -1403,7 +1411,7 @@ static int s_kerberos_on_incoming_header_adaptive(
     const struct aws_http_header *header_array,
     size_t num_headers) {
 
-    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    struct aws_http_proxy_strategy_tunneling_kerberos *kerberos_strategy = proxy_strategy->impl;
     (void)kerberos_strategy;
     (void)header_block;
     (void)header_array;
@@ -1412,9 +1420,7 @@ static int s_kerberos_on_incoming_header_adaptive(
     /* SA-TBI: process CONNECT response headers here if needed */
 
     if (kerberos_strategy->connect_state == AWS_PSCS_IN_PROGRESS) {
-    
-        /*transfer the header to user area for information purpose*/
-        
+                  
     }
     
     return AWS_OP_SUCCESS;
@@ -1424,7 +1430,7 @@ static int s_kerberos_on_connect_status(
     struct aws_http_proxy_strategy *proxy_strategy,
     enum aws_http_status_code status_code) {
 
-    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    struct aws_http_proxy_strategy_tunneling_kerberos *kerberos_strategy = proxy_strategy->impl;
     (void)kerberos_strategy;
     (void)status_code;
 
@@ -1437,8 +1443,6 @@ static int s_kerberos_on_connect_status(
             kerberos_strategy->connect_state = AWS_PSCS_SUCCESS;
         }
 
-        /*send http status code for informational purpose*/
-        send_kerberos_https_status(status_code);
     }
 
     return AWS_OP_SUCCESS;
@@ -1448,7 +1452,7 @@ static int s_kerberos_on_incoming_body(
     struct aws_http_proxy_strategy *proxy_strategy,
     const struct aws_byte_cursor *data) {
 
-    struct aws_http_proxy_strategy_tunneling_chain *kerberos_strategy = proxy_strategy->impl;
+    struct aws_http_proxy_strategy_tunneling_kerberos *kerberos_strategy = proxy_strategy->impl;
     (void)kerberos_strategy;
     (void)data;
 
@@ -1547,7 +1551,7 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
 }
 
 /******************************************************************************************************************/
-
+/*SA-Added End*/
 /*adaptive ntlm*/
 
 struct aws_http_proxy_strategy_factory_tunneling_ntlm {
@@ -1563,7 +1567,9 @@ struct aws_http_proxy_strategy_tunneling_ntlm {
 
     struct aws_http_proxy_strategy strategy_base;
 
-    enum proxy_strategy_connect_state state;
+    enum proxy_strategy_connect_state connect_state;
+
+    enum proxy_strategy_connect_sub_state connect_sub_state;
 
     /*
      * SA-TBI: add any factory state needed here
@@ -1661,7 +1667,7 @@ static void s_ntlm_tunnel_transform_connect(
     aws_http_proxy_strategy_http_request_forward_fn *strategy_http_request_forward_callback,
     void *internal_proxy_user_data) {
 
-    struct aws_http_proxy_strategy_tunneling_chain *ntlm_strategy = proxy_strategy->impl;
+    struct aws_http_proxy_strategy_tunneling_ntlm *ntlm_strategy = proxy_strategy->impl;
     (void)ntlm_strategy;
     (void)message;
     (void)strategy_termination_callback;
@@ -1686,7 +1692,11 @@ static void s_ntlm_tunnel_transform_connect(
     if (ntlm_strategy->connect_state == AWS_PSCS_READY) {
 
         /* we first need to get the ntlm credential from user*/
-        char *ntlm_credential_user = get_ntlm_credential();
+
+        enum proxy_strategy_callback_state callback_state;
+        callback_state = AWS_NTLM_CRED;
+        
+        char *ntlm_credential_user = (proxy_connection_callback.func_2)(callback_state, proxy_connection_callback.userdata);
         struct aws_byte_cursor ntlm_credential_tmp = aws_byte_cursor_from_c_str(ntlm_credential_user);
         struct aws_string *ntlm_credential = aws_string_new_from_cursor(ntlm_strategy->allocator, &ntlm_credential_tmp);
 
@@ -1699,7 +1709,10 @@ static void s_ntlm_tunnel_transform_connect(
     
     else if (ntlm_strategy->connect_sub_state == AWS_PSCS_SUB_STATE_READY) {
 
-        char *ntlm_response_user = get_ntlm_response();
+        enum proxy_strategy_callback_state callback_state;
+        callback_state = AWS_NTLM_RESP;
+                
+        char *ntlm_response_user = (proxy_connection_callback.func_2)(callback_state, proxy_connection_callback.userdata);
         struct aws_byte_cursor ntlm_response_tmp = aws_byte_cursor_from_c_str(ntlm_response_user);
         struct aws_string *ntlm_response =
             aws_string_new_from_cursor(ntlm_strategy->allocator, &ntlm_response_tmp);
@@ -1723,7 +1736,7 @@ static int s_ntlm_on_incoming_header_adaptive(
     const struct aws_http_header *header_array,
     size_t num_headers) {
 
-    struct aws_http_proxy_strategy_tunneling_chain *ntlm_strategy = proxy_strategy->impl;
+    struct aws_http_proxy_strategy_tunneling_ntlm *ntlm_strategy = proxy_strategy->impl;
     (void)ntlm_strategy;
     (void)header_block;
     (void)header_array;
@@ -1736,12 +1749,24 @@ static int s_ntlm_on_incoming_header_adaptive(
     {
 
         if (header_block == AWS_HTTP_HEADER_BLOCK_MAIN) {
-                send_ntlm_challenge_header(
-                    header_array->name.len,
-                    header_array->name.ptr,
-                    header_array->value.len,
-                    header_array->value.ptr,
-                    num_headers);
+
+                 uint8_t *header_name = header_array->name.ptr;
+                 char array_header[100];
+                 if ((header_array->name.len) > 0) {
+
+                    size_t header_length = header_array->name.len;
+                    
+                    for (size_t i = 0; i < header_array->name.len; ++i) {
+
+                        array_header[i] = (char)header_name[i];
+                        
+                    }
+                    if (strncmp(array_header, "Proxy-Authenticate", header_length) == 0) {
+
+                        (proxy_connection_callback.func_1)(
+                            header_array->value.len, header_array->value.ptr, proxy_connection_callback.userdata);
+                    }
+                }
        }
     }
     return AWS_OP_SUCCESS;
@@ -1751,7 +1776,7 @@ static int s_ntlm_on_connect_status(
     struct aws_http_proxy_strategy *proxy_strategy,
     enum aws_http_status_code status_code) {
 
-    struct aws_http_proxy_strategy_tunneling_chain *ntlm_strategy = proxy_strategy->impl;
+    struct aws_http_proxy_strategy_tunneling_ntlm *ntlm_strategy = proxy_strategy->impl;
     (void)ntlm_strategy;
     (void)status_code;
 
@@ -1779,7 +1804,7 @@ static int s_ntlm_on_incoming_body(
     struct aws_http_proxy_strategy *proxy_strategy,
     const struct aws_byte_cursor *data) {
 
-    struct aws_http_proxy_strategy_tunneling_chain *ntlm_strategy = proxy_strategy->impl;
+    struct aws_http_proxy_strategy_tunneling_ntlm *ntlm_strategy = proxy_strategy->impl;
     (void)ntlm_strategy;
     (void)data;
 
@@ -1875,7 +1900,7 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
 
     return &ntlm_factory->factory_base;
 }
-
+/*SA-Added End*/
 /******************************************************************************************************************/
 
 AWS_HTTP_API
@@ -1930,7 +1955,7 @@ on_error:
 }
 
 /******************************************************************************************************************/
-
+/*SA-Added Start*/
 AWS_HTTP_API
 struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_adaptive_ntlm(
     struct aws_allocator *allocator,
@@ -1980,7 +2005,7 @@ on_error:
 
     return NULL;
 }
-
+/*SA-Added End*/
 
 #if defined(_MSC_VER)
 #    pragma warning(pop)
