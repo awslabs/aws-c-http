@@ -28,13 +28,13 @@ enum proxy_strategy_callback_state {
 };
 
 /**
- * User-supplied transform callback function that sends user data to user 
- *(example NTLM challenge)
+ * User-supplied callback function that send data to user 
+ *(example NTLM challenge received from proxy server)
  */
 typedef void (*aws_http_proxy_send_user_data_callback_fn)(size_t data_length, uint8_t *data, void *userdata);
 
 /**
- * User-supplied transform callback function that gets user data depending on callback state
+ * User-supplied callback function that gets user data depending on callback state
  *(example NTLM credentials/response)
  */
 typedef char* (*aws_http_proxy_get_user_data_callback_fn)(int callback_state, void *userdata);
@@ -208,6 +208,9 @@ struct aws_http_proxy_strategy_factory_tunneling_adaptive_test_options {
  */
 struct aws_http_proxy_strategy_factory_tunneling_kerberos_options {
     bool placeholder;
+    aws_http_proxy_send_user_data_callback_fn func_1;
+    aws_http_proxy_get_user_data_callback_fn func_2;
+    void *userData;
 };
 
 struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options {
@@ -226,6 +229,9 @@ struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options {
 
 struct aws_http_proxy_strategy_factory_tunneling_ntlm_options {
     bool placeholder;
+    aws_http_proxy_send_user_data_callback_fn func_1;
+    aws_http_proxy_get_user_data_callback_fn func_2;
+    void *userData;
 };
 
 struct aws_http_proxy_strategy_factory_tunneling_adaptive_ntlm_options {
@@ -394,13 +400,13 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
  * @param callback function for getting user data, example - NTLM Cred,NTLM Response, Kerberos Token
  * @return NULL
  */
-
+/*
 AWS_HTTP_API
 int aws_http_proxy_connection_configure_callback(
     aws_http_proxy_send_user_data_callback_fn func_1,
     aws_http_proxy_get_user_data_callback_fn func_2,
     void *userdata);
-
+*/
 /*SA-Added End*/
 
 AWS_EXTERN_C_END
