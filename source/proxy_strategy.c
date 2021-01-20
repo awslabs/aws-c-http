@@ -1874,17 +1874,19 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
 /******************************************************************************************************************/
 
 AWS_HTTP_API
-struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_adaptive_kerberos(
+struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_adaptive_kerberos_ntlm(
     struct aws_allocator *allocator,
-    struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options *config) {
+    struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options *kerberos_config,
+    struct aws_http_proxy_strategy_factory_tunneling_adaptive_ntlm_options *ntlm_config) {
 
-    if (allocator == NULL || config == NULL) {
+    if (allocator == NULL || kerberos_config == NULL || ntlm_config == NULL) {
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }
 
     struct aws_http_proxy_strategy_factory *identity_factory = NULL;
     struct aws_http_proxy_strategy_factory *kerberos_factory = NULL;
+    struct aws_http_proxy_strategy_factory *ntlm_factory = NULL;
     struct aws_http_proxy_strategy_factory *adaptive_factory = NULL;
 
     identity_factory = aws_http_proxy_strategy_factory_new_tunneling_one_time_identity(allocator);
@@ -1892,20 +1894,26 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
         goto on_error;
     }
 
-    kerberos_factory = aws_http_proxy_strategy_factory_new_tunneling_kerberos(allocator, &config->kerberos_options);
+    kerberos_factory = aws_http_proxy_strategy_factory_new_tunneling_kerberos(allocator, &kerberos_config->kerberos_options);
     if (kerberos_factory == NULL) {
         goto on_error;
     }
 
-    struct aws_http_proxy_strategy_factory *factory_array[2] = {
+    ntlm_factory = aws_http_proxy_strategy_factory_new_tunneling_ntlm(allocator, &ntlm_config->ntlm_options);
+    if (ntlm_factory == NULL) {
+        goto on_error;
+    }
+
+    struct aws_http_proxy_strategy_factory *factory_array[3] = {
         identity_factory,
         kerberos_factory,
+        ntlm_factory,
         
     };
 
     struct aws_http_proxy_strategy_factory_tunneling_chain_options chain_config = {
         .factories = factory_array,
-        .factory_count = 2,
+        .factory_count = 3,
     };
 
     adaptive_factory = aws_http_proxy_strategy_factory_new_tunneling_chain(allocator, &chain_config);
@@ -1919,6 +1927,7 @@ on_error:
 
     aws_http_proxy_strategy_factory_release(identity_factory);
     aws_http_proxy_strategy_factory_release(kerberos_factory);
+    aws_http_proxy_strategy_factory_release(ntlm_factory);
     aws_http_proxy_strategy_factory_release(adaptive_factory);
 
     return NULL;

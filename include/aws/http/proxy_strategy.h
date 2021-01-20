@@ -350,16 +350,17 @@ struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunn
  * This is an experimental API.
  *
  * Constructor for a WIP adaptive tunneling proxy strategy.  This strategy attempts a vanilla CONNECT and if that
- * fails it attempts a kerberos-oriented CONNECT (if applicable).
+ * fails it attempts a kerberos-oriented CONNECT request followed by a NTLM-oriented CONNECT request (if applicable).
  *
  * @param allocator memory allocator to use
  * @param config configuration options for the strategy factory
  * @return a new proxy strategy factory if successfully constructed, otherwise NULL
  */
 AWS_HTTP_API
-struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_adaptive_kerberos(
+struct aws_http_proxy_strategy_factory *aws_http_proxy_strategy_factory_new_tunneling_adaptive_kerberos_ntlm(
     struct aws_allocator *allocator,
-    struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options *config);
+    struct aws_http_proxy_strategy_factory_tunneling_adaptive_kerberos_options *kerberos_config,
+    struct aws_http_proxy_strategy_factory_tunneling_adaptive_ntlm_options *ntlm_config);
 
 /*SA-Added Start*/
 
