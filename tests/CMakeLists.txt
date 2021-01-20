@@ -509,6 +509,7 @@ if (ENABLE_PROXY_INTEGRATION_TESTS)
     add_test_case(test_http_proxy_connection_get)
     add_test_case(test_https_proxy_connection_new_destroy)
     add_test_case(test_https_proxy_connection_get)
+    add_test_case(test_nested_https_proxy_connection_get)
 endif()
 
 add_test_case(test_http_connection_monitor_options_is_valid)

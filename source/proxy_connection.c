@@ -7,6 +7,7 @@
 
 #include <aws/common/encoding.h>
 #include <aws/common/string.h>
+#include <aws/http/connection_manager.h>
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/proxy_strategy.h>
 #include <aws/http/request_response.h>
@@ -79,7 +80,7 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
 
     user_data->original_port = options->port;
 
-    user_data->proxy_config = aws_http_proxy_config_new(allocator, options->proxy_options);
+    user_data->proxy_config = aws_http_proxy_config_new_from_connection_options(allocator, options);
     if (user_data->proxy_config == NULL) {
         goto on_error;
     }
@@ -771,6 +772,20 @@ static int s_aws_http_client_connect_via_tunneling_proxy(const struct aws_http_c
     return result;
 }
 
+static enum aws_http_proxy_connection_type s_determine_proxy_connection_type(
+    enum aws_http_proxy_connection_type proxy_connection_type,
+    const struct aws_tls_connection_options *tls_options) {
+    if (proxy_connection_type != AWS_HPCT_HTTP_LEGACY) {
+        return proxy_connection_type;
+    }
+
+    if (tls_options != NULL) {
+        return AWS_HPCT_HTTP_TUNNEL;
+    } else {
+        return AWS_HPCT_HTTP_FORWARD;
+    }
+}
+
 /*
  * Dispatches a proxy-enabled connection request to the appropriate top-level connection function
  */
@@ -779,7 +794,10 @@ int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_op
         return AWS_OP_ERR;
     }
 
-    switch (options->proxy_options->connection_type) {
+    enum aws_http_proxy_connection_type proxy_connection_type =
+        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_options);
+
+    switch (proxy_connection_type) {
         case AWS_HPCT_HTTP_FORWARD:
             return s_aws_http_client_connect_via_forwarding_proxy(options);
 
@@ -791,35 +809,37 @@ int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_op
     }
 }
 
-struct aws_http_proxy_config *aws_http_proxy_config_new(
+static struct aws_http_proxy_config *s_aws_http_proxy_config_new(
     struct aws_allocator *allocator,
-    const struct aws_http_proxy_options *options) {
-    AWS_FATAL_ASSERT(options != NULL);
+    const struct aws_http_proxy_options *proxy_options,
+    enum aws_http_proxy_connection_type override_proxy_connection_type) {
+    AWS_FATAL_ASSERT(proxy_options != NULL);
+
     struct aws_http_proxy_config *config = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_config));
     if (config == NULL) {
         return NULL;
     }
 
-    config->connection_type = options->connection_type;
-    
-    if (aws_byte_buf_init_copy_from_cursor(&config->host, allocator, options->host)) {
+    config->connection_type = override_proxy_connection_type;
+
+    if (aws_byte_buf_init_copy_from_cursor(&config->host, allocator, proxy_options->host)) {
         goto on_error;
     }
 
-    if (options->tls_options) {
+    if (proxy_options->tls_options) {
         config->tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
-        if (aws_tls_connection_options_copy(config->tls_options, options->tls_options)) {
+        if (aws_tls_connection_options_copy(config->tls_options, proxy_options->tls_options)) {
             goto on_error;
         }
     }
 
     config->allocator = allocator;
-    config->port = options->port;
+    config->port = proxy_options->port;
 
-    if (options->proxy_strategy_factory != NULL) {
-        config->proxy_strategy_factory = aws_http_proxy_strategy_factory_acquire(options->proxy_strategy_factory);
+    if (proxy_options->proxy_strategy_factory != NULL) {
+        config->proxy_strategy_factory = aws_http_proxy_strategy_factory_acquire(proxy_options->proxy_strategy_factory);
     } else {
-        switch (options->connection_type) {
+        switch (override_proxy_connection_type) {
             case AWS_HPCT_HTTP_FORWARD:
                 config->proxy_strategy_factory = aws_http_proxy_strategy_factory_new_forwarding_identity(allocator);
                 break;
@@ -845,6 +865,30 @@ on_error:
     aws_http_proxy_config_destroy(config);
 
     return NULL;
+}
+
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_connection_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_client_connection_options *options) {
+    AWS_FATAL_ASSERT(options != NULL);
+    AWS_FATAL_ASSERT(options->proxy_options != NULL);
+
+    return s_aws_http_proxy_config_new(
+        allocator,
+        options->proxy_options,
+        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_options));
+}
+
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_manager_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_connection_manager_options *options) {
+    AWS_FATAL_ASSERT(options != NULL);
+    AWS_FATAL_ASSERT(options->proxy_options != NULL);
+
+    return s_aws_http_proxy_config_new(
+        allocator,
+        options->proxy_options,
+        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_connection_options));
 }
 
 void aws_http_proxy_config_destroy(struct aws_http_proxy_config *config) {
