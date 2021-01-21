@@ -118,6 +118,12 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_PROXY_STRATEGY_TRANSFORM_FAILED,
         "Proxy strategy transform has completely failed."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_PROXY_STRATEGY_FAILED_PREVIOUSLY,
+        "Proxy strategy was previously tried and failed"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_PROXY_STRATEGY_NTLM_CHALLENGE_TOKEN_MISSING,
+        "NTLM Proxy strategy was initiated without a challenge token"),
 };
 /* clang-format on */
 
