@@ -199,7 +199,7 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
         aws_tls_ctx_options_clean_up(&tester->tls_ctx_options);
     }
 
-    aws_http_proxy_strategy_factory_release(tester->proxy_options.proxy_strategy_factory);
+    aws_http_proxy_strategy_release(tester->proxy_options.proxy_strategy);
 
     aws_http_library_clean_up();
 

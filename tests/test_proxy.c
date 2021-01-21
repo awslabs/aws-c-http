@@ -186,13 +186,13 @@ static int s_setup_proxy_test(
     };
 
     if (use_basic_auth) {
-        struct aws_http_proxy_strategy_factory_basic_auth_config config = {
+        struct aws_http_proxy_strategy_basic_auth_options config = {
             .proxy_connection_type = AWS_HPCT_HTTP_FORWARD,
             .user_name = aws_byte_cursor_from_string(s_mock_request_username),
             .password = aws_byte_cursor_from_string(s_mock_request_password),
         };
 
-        proxy_options.proxy_strategy_factory = aws_http_proxy_strategy_factory_new_basic_auth(allocator, &config);
+        proxy_options.proxy_strategy = aws_http_proxy_strategy_new_basic_auth(allocator, &config);
     }
 
     struct proxy_tester_options options = {

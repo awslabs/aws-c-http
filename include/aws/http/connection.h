@@ -152,7 +152,7 @@ enum aws_http_proxy_connection_type {
     AWS_HPCT_SOCKS5,
 };
 
-struct aws_http_proxy_strategy_factory;
+struct aws_http_proxy_strategy;
 
 /**
  * Options for http proxy server usage
@@ -190,7 +190,7 @@ struct aws_http_proxy_options {
      * For forwarding proxies it allows custom request transformations.
      * Other proxy connection types TBD.
      */
-    struct aws_http_proxy_strategy_factory *proxy_strategy_factory;
+    struct aws_http_proxy_strategy *proxy_strategy;
 };
 
 /**

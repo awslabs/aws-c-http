@@ -53,7 +53,7 @@ void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data
         aws_mem_release(user_data->allocator, user_data->tls_options);
     }
 
-    aws_http_proxy_strategy_release(user_data->proxy_strategy);
+    aws_http_proxy_negotiator_release(user_data->proxy_negotiator);
 
     aws_mem_release(user_data->allocator, user_data);
 }
@@ -85,9 +85,9 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
         goto on_error;
     }
 
-    user_data->proxy_strategy =
-        aws_http_proxy_strategy_factory_create_strategy(user_data->proxy_config->proxy_strategy_factory, allocator);
-    if (user_data->proxy_strategy == NULL) {
+    user_data->proxy_negotiator =
+        aws_http_proxy_strategy_create_negotiator(user_data->proxy_config->proxy_strategy, allocator);
+    if (user_data->proxy_negotiator == NULL) {
         goto on_error;
     }
 
@@ -289,10 +289,10 @@ static int s_aws_http_on_incoming_body_tunnel_proxy(
     (void)stream;
 
     struct aws_http_proxy_user_data *context = user_data;
-    aws_http_proxy_strategy_connect_on_incoming_body_fn *on_incoming_body =
-        context->proxy_strategy->strategy_vtable.tunnelling_vtable->on_incoming_body_callback;
+    aws_http_proxy_negotiator_connect_on_incoming_body_fn *on_incoming_body =
+        context->proxy_negotiator->strategy_vtable.tunnelling_vtable->on_incoming_body_callback;
     if (on_incoming_body != NULL) {
-        (*on_incoming_body)(context->proxy_strategy, data);
+        (*on_incoming_body)(context->proxy_negotiator, data);
     }
 
     aws_http_stream_update_window(stream, data->len);
@@ -309,10 +309,10 @@ static int s_aws_http_on_response_headers_tunnel_proxy(
     (void)stream;
 
     struct aws_http_proxy_user_data *context = user_data;
-    aws_http_proxy_strategy_connect_on_incoming_headers_fn *on_incoming_headers =
-        context->proxy_strategy->strategy_vtable.tunnelling_vtable->on_incoming_headers_callback;
+    aws_http_proxy_negotiation_connect_on_incoming_headers_fn *on_incoming_headers =
+        context->proxy_negotiator->strategy_vtable.tunnelling_vtable->on_incoming_headers_callback;
     if (on_incoming_headers != NULL) {
-        (*on_incoming_headers)(context->proxy_strategy, header_block, header_array, num_headers);
+        (*on_incoming_headers)(context->proxy_negotiator, header_block, header_array, num_headers);
     }
 
     return AWS_OP_SUCCESS;
@@ -339,10 +339,10 @@ static int s_aws_http_on_incoming_header_block_done_tunnel_proxy(
             context->error_code = AWS_ERROR_HTTP_PROXY_TLS_CONNECT_FAILED;
         }
 
-        aws_http_proxy_strategy_connect_status_fn *on_status =
-            context->proxy_strategy->strategy_vtable.tunnelling_vtable->on_status_callback;
+        aws_http_proxy_negotiator_connect_status_fn *on_status =
+            context->proxy_negotiator->strategy_vtable.tunnelling_vtable->on_status_callback;
         if (on_status != NULL) {
-            (*on_status)(context->proxy_strategy, status);
+            (*on_status)(context->proxy_negotiator, status);
         }
     }
 
@@ -518,8 +518,8 @@ static int s_make_proxy_connect_request(struct aws_http_proxy_user_data *user_da
         return AWS_OP_ERR;
     }
 
-    (*user_data->proxy_strategy->strategy_vtable.tunnelling_vtable->connect_request_transform)(
-        user_data->proxy_strategy,
+    (*user_data->proxy_negotiator->strategy_vtable.tunnelling_vtable->connect_request_transform)(
+        user_data->proxy_negotiator,
         user_data->connect_request,
         s_terminate_tunneling_connect,
         s_continue_tunneling_connect,
@@ -677,8 +677,8 @@ static int s_proxy_http_request_transform(struct aws_http_message *request, void
         return AWS_OP_ERR;
     }
 
-    if ((*proxy_ud->proxy_strategy->strategy_vtable.forwarding_vtable->forward_request_transform)(
-            proxy_ud->proxy_strategy, request)) {
+    if ((*proxy_ud->proxy_negotiator->strategy_vtable.forwarding_vtable->forward_request_transform)(
+            proxy_ud->proxy_negotiator, request)) {
         return AWS_OP_ERR;
     }
 
@@ -836,24 +836,23 @@ static struct aws_http_proxy_config *s_aws_http_proxy_config_new(
     config->allocator = allocator;
     config->port = proxy_options->port;
 
-    if (proxy_options->proxy_strategy_factory != NULL) {
-        config->proxy_strategy_factory = aws_http_proxy_strategy_factory_acquire(proxy_options->proxy_strategy_factory);
+    if (proxy_options->proxy_strategy != NULL) {
+        config->proxy_strategy = aws_http_proxy_strategy_acquire(proxy_options->proxy_strategy);
     } else {
         switch (override_proxy_connection_type) {
             case AWS_HPCT_HTTP_FORWARD:
-                config->proxy_strategy_factory = aws_http_proxy_strategy_factory_new_forwarding_identity(allocator);
+                config->proxy_strategy = aws_http_proxy_strategy_new_forwarding_identity(allocator);
                 break;
 
             case AWS_HPCT_HTTP_TUNNEL:
-                config->proxy_strategy_factory =
-                    aws_http_proxy_strategy_factory_new_tunneling_one_time_identity(allocator);
+                config->proxy_strategy = aws_http_proxy_strategy_new_tunneling_one_time_identity(allocator);
                 break;
 
             default:
                 break;
         }
 
-        if (config->proxy_strategy_factory == NULL) {
+        if (config->proxy_strategy == NULL) {
             goto on_error;
         }
     }
@@ -903,7 +902,7 @@ void aws_http_proxy_config_destroy(struct aws_http_proxy_config *config) {
         aws_mem_release(config->allocator, config->tls_options);
     }
 
-    aws_http_proxy_strategy_factory_release(config->proxy_strategy_factory);
+    aws_http_proxy_strategy_release(config->proxy_strategy);
 
     aws_mem_release(config->allocator, config);
 }
@@ -917,7 +916,7 @@ void aws_http_proxy_options_init_from_config(
     options->host = aws_byte_cursor_from_buf(&config->host);
     options->port = config->port;
     options->tls_options = config->tls_options;
-    options->proxy_strategy_factory = config->proxy_strategy_factory;
+    options->proxy_strategy = config->proxy_strategy;
 }
 
 int aws_http_options_validate_proxy_configuration(const struct aws_http_client_connection_options *options) {
@@ -934,9 +933,9 @@ int aws_http_options_validate_proxy_configuration(const struct aws_http_client_c
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
-    struct aws_http_proxy_strategy_factory *proxy_strategy_factory = options->proxy_options->proxy_strategy_factory;
-    if (proxy_strategy_factory != NULL) {
-        if (proxy_strategy_factory->proxy_connection_type != proxy_type) {
+    struct aws_http_proxy_strategy *proxy_strategy = options->proxy_options->proxy_strategy;
+    if (proxy_strategy != NULL) {
+        if (proxy_strategy->proxy_connection_type != proxy_type) {
             return aws_raise_error(AWS_ERROR_INVALID_STATE);
         }
     }
