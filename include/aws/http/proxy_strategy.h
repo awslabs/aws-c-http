@@ -128,6 +128,7 @@ typedef int(aws_http_proxy_negotiator_connect_on_incoming_body_fn)(
     struct aws_http_proxy_negotiator *proxy_negotiator,
     const struct aws_byte_cursor *data);
 
+
 /**
  * Vtable for forwarding-based proxy negotiators
  */
@@ -233,10 +234,6 @@ struct aws_http_proxy_strategy_tunneling_adaptive_options {
      * If non-null will insert an ntlm proxy strategy into the adaptive chain
      */
     struct aws_http_proxy_strategy_tunneling_ntlm_options *ntlm_options;
-};
-
-struct aws_http_proxy_strategy_factory_tunneling_adaptive_ntlm_options {
-    struct aws_http_proxy_strategy_factory_tunneling_ntlm_options ntlm_options;
 };
 
 /*SA-Added End*/

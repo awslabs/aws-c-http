@@ -1011,12 +1011,7 @@ static int s_kerberos_on_incoming_header_adaptive(
     (void)header_array;
     (void)num_headers;
 
-    /* TODO: process vanilla CONNECT response headers here to improve usage/application */
-
-    if (kerberos_strategy->connect_state == AWS_PSCS_IN_PROGRESS) {
-                  
-    }
-    
+      
     return AWS_OP_SUCCESS;
 }
 
@@ -1034,15 +1029,6 @@ static int s_kerberos_on_connect_status(
         } else {
             kerberos_negotiator->connect_state = AWS_PNCS_SUCCESS;
         }
-    }
-
-    if (kerberos_strategy->connect_state == AWS_PSCS_IN_PROGRESS) {
-        if (AWS_HTTP_STATUS_CODE_200_OK != status_code) {
-            kerberos_strategy->connect_state = AWS_PSCS_FAILURE;
-        } else {
-            kerberos_strategy->connect_state = AWS_PSCS_SUCCESS;
-        }
-
     }
 
     return AWS_OP_SUCCESS;
