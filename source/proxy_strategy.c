@@ -1011,7 +1011,8 @@ static int s_kerberos_on_incoming_header_adaptive(
     (void)header_array;
     (void)num_headers;
 
-      
+    /* TODO: process vanilla CONNECT response headers here to improve usage/application */
+
     return AWS_OP_SUCCESS;
 }
 
@@ -1417,8 +1418,6 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_ntlm(
 }
 
 /******************************************************************************************************************/
-/*SA-Added End*/
-/*adaptive ntlm*/
 
 #define PROXY_STRATEGY_MAX_ADAPTIVE_STRATEGIES 3
 
@@ -1481,7 +1480,6 @@ done:
 
     return adaptive_chain_strategy;
 }
-/*SA-Added End*/
 
 #if defined(_MSC_VER)
 #    pragma warning(pop)

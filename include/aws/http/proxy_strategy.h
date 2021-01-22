@@ -18,29 +18,6 @@ struct aws_http_header;
 struct aws_http_proxy_negotiator;
 struct aws_http_proxy_strategy;
 
-/*SA-Added Start*/
-
-/*enum defination for callback state*/
-enum proxy_strategy_callback_state {
-    AWS_KERB_TOKEN,
-    AWS_NTLM_CRED,
-    AWS_NTLM_RESP,
-};
-
-/**
- * User-supplied callback function that send data to user 
- *(example NTLM challenge received from proxy server)
- */
-typedef void (*aws_http_proxy_send_user_data_callback_fn)(size_t data_length, uint8_t *data, void *userdata);
-
-/**
- * User-supplied callback function that gets user data depending on callback state
- *(example NTLM credentials/response)
- */
-typedef char* (*aws_http_proxy_get_user_data_callback_fn)(int callback_state, void *userdata);
-
-/*SA-Added End*/
-
 /**
  * Synchronous (for now) callback function to fetch a token used in modifying CONNECT requests
  */
@@ -127,7 +104,6 @@ typedef int(aws_http_proxy_negotiator_connect_status_fn)(
 typedef int(aws_http_proxy_negotiator_connect_on_incoming_body_fn)(
     struct aws_http_proxy_negotiator *proxy_negotiator,
     const struct aws_byte_cursor *data);
-
 
 /**
  * Vtable for forwarding-based proxy negotiators
@@ -236,7 +212,6 @@ struct aws_http_proxy_strategy_tunneling_adaptive_options {
     struct aws_http_proxy_strategy_tunneling_ntlm_options *ntlm_options;
 };
 
-/*SA-Added End*/
 AWS_EXTERN_C_BEGIN
 
 /**
