@@ -67,6 +67,7 @@ struct proxy_tester {
     struct aws_http_client_bootstrap *http_bootstrap;
     struct testing_channel *testing_channel;
 
+    bool client_connection_is_setup;
     bool client_connection_is_shutdown;
 
     /* If we need to wait for some async process*/
@@ -91,6 +92,7 @@ struct proxy_tester {
 int proxy_tester_wait(struct proxy_tester *tester, bool (*pred)(void *user_data));
 
 bool proxy_tester_connection_setup_pred(void *user_data);
+bool proxy_tester_connection_complete_pred(void *user_data);
 bool proxy_tester_connection_shutdown_pred(void *user_data);
 bool proxy_tester_request_complete_pred_fn(void *user_data);
 

@@ -625,7 +625,7 @@ static void s_chain_tunnel_try_next_negotiator(
 on_error:
 
     chain_negotiator->original_negotiation_termination_callback(
-        message, AWS_ERROR_HTTP_PROXY_STRATEGY_TRANSFORM_FAILED, chain_negotiator->original_internal_proxy_user_data);
+        message, AWS_ERROR_HTTP_PROXY_CONNECT_FAILED, chain_negotiator->original_internal_proxy_user_data);
 }
 
 static void s_chain_tunnel_transform_connect(
@@ -1455,14 +1455,14 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
 
     identity_strategy = aws_http_proxy_strategy_new_tunneling_one_time_identity(allocator);
     if (identity_strategy == NULL) {
-        goto on_error;
+        goto done;
     }
     strategies[strategy_count++] = identity_strategy;
 
     if (config->kerberos_options != NULL) {
         kerberos_strategy = aws_http_proxy_strategy_new_tunneling_kerberos(allocator, config->kerberos_options);
         if (kerberos_strategy == NULL) {
-            goto on_error;
+            goto done;
         }
 
         strategies[strategy_count++] = kerberos_strategy;
@@ -1471,7 +1471,7 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
     if (config->ntlm_options != NULL) {
         ntlm_strategy = aws_http_proxy_strategy_new_tunneling_ntlm(allocator, config->ntlm_options);
         if (ntlm_strategy == NULL) {
-            goto on_error;
+            goto done;
         }
 
         strategies[strategy_count++] = ntlm_strategy;
@@ -1484,19 +1484,16 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
 
     adaptive_chain_strategy = aws_http_proxy_strategy_new_tunneling_chain(allocator, &chain_config);
     if (adaptive_chain_strategy == NULL) {
-        goto on_error;
+        goto done;
     }
 
-    return adaptive_chain_strategy;
-
-on_error:
+done:
 
     aws_http_proxy_strategy_release(identity_strategy);
     aws_http_proxy_strategy_release(kerberos_strategy);
     aws_http_proxy_strategy_release(ntlm_strategy);
-    aws_http_proxy_strategy_release(adaptive_chain_strategy);
 
-    return NULL;
+    return adaptive_chain_strategy;
 }
 /*SA-Added End*/
 
