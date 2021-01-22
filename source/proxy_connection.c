@@ -492,6 +492,10 @@ static void s_continue_tunneling_connect(struct aws_http_message *message, void 
         .on_complete = s_aws_http_on_stream_complete_tunnel_proxy,
     };
 
+    if (proxy_ud->connect_stream != NULL) {
+        aws_http_stream_release(proxy_ud->connect_stream);
+    }
+
     proxy_ud->connect_stream = aws_http_connection_make_request(proxy_ud->connection, &request_options);
     if (proxy_ud->connect_stream == NULL) {
         goto on_error;
