@@ -152,12 +152,19 @@ static int s_test_aws_proxy_new_socket_channel(struct aws_socket_channel_bootstr
     struct aws_http_client_bootstrap *http_bootstrap = channel_options->user_data;
     http_bootstrap->on_setup(tester.client_connection, AWS_ERROR_SUCCESS, http_bootstrap->user_data);
 
-    testing_channel_run_currently_queued_tasks(tester.testing_channel);
+    if (tester.failure_type == PTFT_PROXY_STRATEGY) {
+        testing_channel_drain_queued_tasks(tester.testing_channel);
+    } else {
+        testing_channel_run_currently_queued_tasks(tester.testing_channel);
+    }
 
-    if (tester.proxy_options.connection_type == AWS_HPCT_HTTP_TUNNEL) {
-        /* For tunnel proxies, send the CONNECT request and response */
-        ASSERT_SUCCESS(proxy_tester_verify_connect_request(&tester));
-        ASSERT_SUCCESS(proxy_tester_send_connect_response(&tester));
+    if (tester.failure_type == PTFT_NONE || tester.failure_type == PTFT_CONNECT_REQUEST ||
+        tester.failure_type == PTFT_TLS_NEGOTIATION) {
+        if (tester.proxy_options.connection_type == AWS_HPCT_HTTP_TUNNEL) {
+            /* For tunnel proxies, send the CONNECT request and response */
+            ASSERT_SUCCESS(proxy_tester_verify_connect_request(&tester));
+            ASSERT_SUCCESS(proxy_tester_send_connect_response(&tester));
+        }
     }
 
     return AWS_OP_SUCCESS;
@@ -527,7 +534,7 @@ static int s_verify_kerberos_connect_request(struct aws_http_message *request) {
 /*
  * Verify requests get properly transformed with kerberos strategy
  */
-static int s_test_http_forwarding_proxy_request_transform_kerberos(struct aws_allocator *allocator, void *ctx) {
+static int s_test_http_proxy_request_transform_kerberos(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
     struct aws_http_proxy_strategy_tunneling_kerberos_options config = {
@@ -559,9 +566,73 @@ static int s_test_http_forwarding_proxy_request_transform_kerberos(struct aws_al
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(
-    test_http_forwarding_proxy_request_transform_kerberos,
-    s_test_http_forwarding_proxy_request_transform_kerberos);
+AWS_TEST_CASE(test_http_proxy_request_transform_kerberos, s_test_http_proxy_request_transform_kerberos);
+
+static int s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_failure_fn(
+    void *user_data,
+    struct aws_byte_cursor *out_token_value,
+    int *out_error_code) {
+
+    (void)user_data;
+
+    *out_error_code = AWS_ERROR_UNKNOWN;
+
+    return AWS_OP_ERR;
+}
+
+static int s_test_http_proxy_kerberos_token_failure(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct aws_http_proxy_strategy_tunneling_kerberos_options config = {
+        .get_token = s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_failure_fn,
+        .get_token_user_data = NULL,
+    };
+
+    struct aws_http_proxy_strategy *kerberos_strategy =
+        aws_http_proxy_strategy_new_tunneling_kerberos(allocator, &config);
+
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_TUNNEL, PTFT_PROXY_STRATEGY, kerberos_strategy));
+
+    ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
+        &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
+    ASSERT_TRUE(tester.client_connection == NULL);
+    ASSERT_TRUE(tester.wait_result == AWS_ERROR_UNKNOWN);
+
+    aws_http_proxy_strategy_release(kerberos_strategy);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(test_http_proxy_kerberos_token_failure, s_test_http_proxy_kerberos_token_failure);
+
+static int s_test_http_proxy_kerberos_connect_failure(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct aws_http_proxy_strategy_tunneling_kerberos_options config = {
+        .get_token = s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_fn,
+        .get_token_user_data = NULL,
+    };
+
+    struct aws_http_proxy_strategy *kerberos_strategy =
+        aws_http_proxy_strategy_new_tunneling_kerberos(allocator, &config);
+
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_TUNNEL, PTFT_CONNECT_REQUEST, kerberos_strategy));
+
+    ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
+        &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
+    ASSERT_TRUE(tester.client_connection == NULL);
+    ASSERT_TRUE(tester.wait_result == AWS_ERROR_HTTP_PROXY_CONNECT_FAILED);
+
+    aws_http_proxy_strategy_release(kerberos_strategy);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(test_http_proxy_kerberos_connect_failure, s_test_http_proxy_kerberos_connect_failure);
 
 AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_host, "www.uri.com");
 AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_path, "/main/index.html?foo=bar");

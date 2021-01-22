@@ -30,6 +30,7 @@ enum proxy_tester_failure_type {
     PTFT_TLS_NEGOTIATION,
     PTFT_CHANNEL,
     PTFT_CONNECTION,
+    PTFT_PROXY_STRATEGY,
 };
 
 struct proxy_tester_options {

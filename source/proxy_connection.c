@@ -200,8 +200,11 @@ static void s_aws_http_proxy_user_data_shutdown(struct aws_http_proxy_user_data 
         user_data->connect_request = NULL;
     }
 
-    aws_http_connection_release(user_data->connection);
+    struct aws_http_connection *http_connection = user_data->connection;
     user_data->connection = NULL;
+
+    aws_channel_shutdown(http_connection->channel_slot->channel, user_data->error_code);
+    aws_http_connection_release(http_connection);
 }
 
 /*
@@ -336,7 +339,7 @@ static int s_aws_http_on_incoming_header_block_done_tunnel_proxy(
                 "(%p) Proxy CONNECT request failed with status code %d",
                 (void *)context->connection,
                 status);
-            context->error_code = AWS_ERROR_HTTP_PROXY_TLS_CONNECT_FAILED;
+            context->error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED;
         }
 
         aws_http_proxy_negotiator_connect_status_fn *on_status =

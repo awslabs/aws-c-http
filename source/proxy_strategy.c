@@ -964,7 +964,7 @@ static void s_kerberos_tunnel_transform_connect(
     AWS_ZERO_STRUCT(kerberos_token);
 
     if (kerberos_negotiator->connect_state == AWS_PNCS_FAILURE) {
-        error_code = AWS_ERROR_HTTP_PROXY_STRATEGY_FAILED_PREVIOUSLY;
+        error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED;
         goto done;
     }
 
@@ -1223,7 +1223,7 @@ static void s_ntlm_tunnel_transform_connect(
     AWS_ZERO_STRUCT(challenge_token);
 
     if (ntlm_negotiator->connect_state == AWS_PNCS_FAILURE) {
-        error_code = AWS_ERROR_HTTP_PROXY_STRATEGY_FAILED_PREVIOUSLY;
+        error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED;
         goto done;
     }
 
