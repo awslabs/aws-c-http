@@ -116,9 +116,6 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_STREAM_HAS_COMPLETED,
         "HTTP-stream has completed, action cannot be performed."),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_PROXY_STRATEGY_TRANSFORM_FAILED,
-        "Proxy strategy transform has completely failed."),
-    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_PROXY_STRATEGY_NTLM_CHALLENGE_TOKEN_MISSING,
         "NTLM Proxy strategy was initiated without a challenge token"),
 };

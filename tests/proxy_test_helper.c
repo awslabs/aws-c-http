@@ -35,6 +35,8 @@ void proxy_tester_on_client_connection_setup(struct aws_http_connection *connect
     struct proxy_tester *tester = user_data;
     AWS_FATAL_ASSERT(aws_mutex_lock(&tester->wait_lock) == AWS_OP_SUCCESS);
 
+    tester->client_connection_is_setup = true;
+
     if (error_code) {
         tester->client_connection = NULL;
         tester->wait_result = error_code;
@@ -75,6 +77,11 @@ int proxy_tester_wait(struct proxy_tester *tester, bool (*pred)(void *user_data)
 bool proxy_tester_connection_setup_pred(void *user_data) {
     struct proxy_tester *tester = user_data;
     return tester->wait_result || tester->client_connection;
+}
+
+bool proxy_tester_connection_complete_pred(void *user_data) {
+    struct proxy_tester *tester = user_data;
+    return tester->client_connection_is_setup;
 }
 
 bool proxy_tester_connection_shutdown_pred(void *user_data) {
@@ -118,7 +125,7 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
     for (size_t i = 0; i < options->desired_connect_response_count; ++i) {
         struct aws_byte_cursor response_cursor = options->desired_connect_responses[i];
         struct aws_string *response = aws_string_new_from_cursor(tester->alloc, &response_cursor);
-        ASSERT_SUCCESS(aws_array_list_push_back(&tester->desired_connect_responses, response));
+        ASSERT_SUCCESS(aws_array_list_push_back(&tester->desired_connect_responses, &response));
     }
 
     tester->event_loop_group = aws_event_loop_group_new_default(tester->alloc, 1, NULL);
@@ -181,9 +188,7 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
 
 int proxy_tester_clean_up(struct proxy_tester *tester) {
     if (tester->client_connection) {
-        if (tester->client_connection) {
-            aws_http_connection_release(tester->client_connection);
-        }
+        aws_http_connection_release(tester->client_connection);
     }
 
     if (tester->testing_channel) {
