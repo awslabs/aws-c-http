@@ -29,8 +29,8 @@ static uint16_t s_proxy_port = 777;
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_method, "GET");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_path, "/");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_host, "aws.amazon.com");
-AWS_STATIC_STRING_FROM_LITERAL(s_expected_auth_header_name, "Proxy-Authorization");
-AWS_STATIC_STRING_FROM_LITERAL(s_expected_auth_header_value, "Basic U29tZVVzZXI6U3VwZXJTZWNyZXQ=");
+AWS_STATIC_STRING_FROM_LITERAL(s_expected_basic_auth_header_name, "Proxy-Authorization");
+AWS_STATIC_STRING_FROM_LITERAL(s_expected_basic_auth_header_value, "Basic U29tZVVzZXI6U3VwZXJTZWNyZXQ=");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_username, "SomeUser");
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_request_password, "SuperSecret");
 
@@ -174,7 +174,7 @@ static int s_setup_proxy_test(
     struct aws_allocator *allocator,
     enum proxy_tester_test_mode test_mode,
     enum proxy_tester_failure_type failure_type,
-    bool use_basic_auth) {
+    struct aws_http_proxy_strategy *proxy_strategy) {
 
     aws_http_connection_set_system_vtable(&s_proxy_connection_system_vtable);
     aws_http_proxy_system_set_vtable(&s_proxy_table_for_tls);
@@ -183,17 +183,8 @@ static int s_setup_proxy_test(
         .connection_type = (test_mode == PTTM_HTTP_FORWARD) ? AWS_HPCT_HTTP_FORWARD : AWS_HPCT_HTTP_TUNNEL,
         .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
         .port = s_proxy_port,
+        .proxy_strategy = proxy_strategy,
     };
-
-    if (use_basic_auth) {
-        struct aws_http_proxy_strategy_basic_auth_options config = {
-            .proxy_connection_type = AWS_HPCT_HTTP_FORWARD,
-            .user_name = aws_byte_cursor_from_string(s_mock_request_username),
-            .password = aws_byte_cursor_from_string(s_mock_request_password),
-        };
-
-        proxy_options.proxy_strategy = aws_http_proxy_strategy_new_basic_auth(allocator, &config);
-    }
 
     struct proxy_tester_options options = {
         .alloc = allocator,
@@ -218,7 +209,7 @@ static int s_setup_proxy_test(
 static int s_test_http_forwarding_proxy_connection_proxy_target(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_NONE, false));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_NONE, NULL));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -236,7 +227,7 @@ AWS_TEST_CASE(test_http_forwarding_proxy_connection_proxy_target, s_test_http_fo
 static int s_test_http_forwarding_proxy_connection_channel_failure(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_CHANNEL, false));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_CHANNEL, NULL));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -258,7 +249,7 @@ AWS_TEST_CASE(
 static int s_test_http_forwarding_proxy_connection_connect_failure(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_CONNECTION, false));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_CONNECTION, NULL));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -280,7 +271,7 @@ AWS_TEST_CASE(
 static int s_test_https_tunnel_proxy_connection_success(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS_TUNNEL, PTFT_NONE, false));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS_TUNNEL, PTFT_NONE, NULL));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -300,7 +291,7 @@ AWS_TEST_CASE(test_https_tunnel_proxy_connection_success, s_test_https_tunnel_pr
 static int s_test_http_tunnel_proxy_connection_success(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_TUNNEL, PTFT_NONE, false));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_TUNNEL, PTFT_NONE, NULL));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -320,7 +311,7 @@ AWS_TEST_CASE(test_http_tunnel_proxy_connection_success, s_test_http_tunnel_prox
 static int s_test_https_tunnel_proxy_connection_failure_connect(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS_TUNNEL, PTFT_CONNECT_REQUEST, false));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS_TUNNEL, PTFT_CONNECT_REQUEST, NULL));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -340,7 +331,7 @@ AWS_TEST_CASE(test_https_tunnel_proxy_connection_failure_connect, s_test_https_t
 static int s_test_http_tunnel_proxy_connection_failure_connect(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_TUNNEL, PTFT_CONNECT_REQUEST, false));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_TUNNEL, PTFT_CONNECT_REQUEST, NULL));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -360,7 +351,7 @@ AWS_TEST_CASE(test_http_tunnel_proxy_connection_failure_connect, s_test_http_tun
 static int s_test_https_tunnel_proxy_connection_failure_tls(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS_TUNNEL, PTFT_TLS_NEGOTIATION, false));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTPS_TUNNEL, PTFT_TLS_NEGOTIATION, NULL));
 
     ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
         &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
@@ -376,7 +367,6 @@ AWS_TEST_CASE(test_https_tunnel_proxy_connection_failure_tls, s_test_https_tunne
 static int s_verify_transformed_request(
     struct aws_http_message *untransformed_request,
     struct aws_http_message *transformed_request,
-    bool used_basic_auth,
     struct aws_allocator *allocator) {
 
     /* method shouldn't change */
@@ -409,21 +399,10 @@ static int s_verify_transformed_request(
 
     /* all old headers should still be present */
     size_t untransformed_header_count = aws_http_message_get_header_count(untransformed_request);
-    ASSERT_TRUE(
-        untransformed_header_count + (used_basic_auth ? 1 : 0) ==
-        aws_http_message_get_header_count(transformed_request));
     for (size_t i = 0; i < untransformed_header_count; ++i) {
         struct aws_http_header header;
         ASSERT_SUCCESS(aws_http_message_get_header(untransformed_request, &header, i));
         ASSERT_TRUE(s_is_header_in_request(transformed_request, &header));
-    }
-
-    /* auth header should be present if basic auth used */
-    if (used_basic_auth) {
-        struct aws_http_header auth_header;
-        auth_header.name = aws_byte_cursor_from_string(s_expected_auth_header_name);
-        auth_header.value = aws_byte_cursor_from_string(s_expected_auth_header_value);
-        ASSERT_TRUE(s_is_header_in_request(transformed_request, &auth_header));
     }
 
     aws_uri_clean_up(&uri);
@@ -431,9 +410,12 @@ static int s_verify_transformed_request(
     return AWS_OP_SUCCESS;
 }
 
-static int s_do_http_forwarding_proxy_request_transform_test(struct aws_allocator *allocator, bool use_basic_auth) {
+static int s_do_http_forwarding_proxy_request_transform_test(
+    struct aws_allocator *allocator,
+    struct aws_http_proxy_strategy *proxy_strategy,
+    int (*transformed_request_verifier_fn)(struct aws_http_message *)) {
 
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_NONE, use_basic_auth));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_FORWARD, PTFT_NONE, proxy_strategy));
 
     struct aws_http_message *untransformed_request = s_build_http_request(allocator);
     struct aws_http_message *request = s_build_http_request(allocator);
@@ -450,7 +432,11 @@ static int s_do_http_forwarding_proxy_request_transform_test(struct aws_allocato
 
     testing_channel_run_currently_queued_tasks(tester.testing_channel);
 
-    s_verify_transformed_request(untransformed_request, request, use_basic_auth, allocator);
+    s_verify_transformed_request(untransformed_request, request, allocator);
+
+    if (transformed_request_verifier_fn != NULL) {
+        ASSERT_SUCCESS(transformed_request_verifier_fn(request));
+    }
 
     /* double release the stream because the dummy connection doesn't actually process (and release) it */
     aws_http_stream_release(stream);
@@ -469,11 +455,21 @@ static int s_do_http_forwarding_proxy_request_transform_test(struct aws_allocato
 static int s_test_http_forwarding_proxy_request_transform(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_do_http_forwarding_proxy_request_transform_test(allocator, false));
+    ASSERT_SUCCESS(s_do_http_forwarding_proxy_request_transform_test(allocator, NULL, NULL));
 
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_http_forwarding_proxy_request_transform, s_test_http_forwarding_proxy_request_transform);
+
+static int s_check_for_basic_auth_header(struct aws_http_message *transformed_request) {
+    /* Check for basic auth header */
+    struct aws_http_header auth_header;
+    auth_header.name = aws_byte_cursor_from_string(s_expected_basic_auth_header_name);
+    auth_header.value = aws_byte_cursor_from_string(s_expected_basic_auth_header_value);
+    ASSERT_TRUE(s_is_header_in_request(transformed_request, &auth_header));
+
+    return AWS_OP_SUCCESS;
+}
 
 /*
  * If we do pass in proxy options, verify requests get properly transformed with basic authentication
@@ -481,13 +477,91 @@ AWS_TEST_CASE(test_http_forwarding_proxy_request_transform, s_test_http_forwardi
 static int s_test_http_forwarding_proxy_request_transform_basic_auth(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_do_http_forwarding_proxy_request_transform_test(allocator, true));
+    struct aws_http_proxy_strategy_basic_auth_options config = {
+        .proxy_connection_type = AWS_HPCT_HTTP_FORWARD,
+        .user_name = aws_byte_cursor_from_string(s_mock_request_username),
+        .password = aws_byte_cursor_from_string(s_mock_request_password),
+    };
+
+    struct aws_http_proxy_strategy *proxy_strategy = aws_http_proxy_strategy_new_basic_auth(allocator, &config);
+
+    ASSERT_SUCCESS(
+        s_do_http_forwarding_proxy_request_transform_test(allocator, proxy_strategy, s_check_for_basic_auth_header));
+
+    aws_http_proxy_strategy_release(proxy_strategy);
 
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(
     test_http_forwarding_proxy_request_transform_basic_auth,
     s_test_http_forwarding_proxy_request_transform_basic_auth);
+
+AWS_STATIC_STRING_FROM_LITERAL(s_mock_kerberos_token_value, "abcdefABCDEF123");
+
+static int s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_fn(
+    void *user_data,
+    struct aws_byte_cursor *out_token_value,
+    int *out_error_code) {
+
+    (void)user_data;
+
+    *out_error_code = AWS_ERROR_SUCCESS;
+    *out_token_value = aws_byte_cursor_from_string(s_mock_kerberos_token_value);
+
+    return AWS_OP_SUCCESS;
+}
+
+AWS_STATIC_STRING_FROM_LITERAL(s_expected_kerberos_auth_header_name, "Proxy-Authorization");
+AWS_STATIC_STRING_FROM_LITERAL(s_expected_kerberos_auth_header_value, "Negotiate abcdefABCDEF123");
+
+static int s_verify_kerberos_connect_request(struct aws_http_message *request) {
+    /* Check for basic auth header */
+    struct aws_http_header auth_header;
+    auth_header.name = aws_byte_cursor_from_string(s_expected_kerberos_auth_header_name);
+    auth_header.value = aws_byte_cursor_from_string(s_expected_kerberos_auth_header_value);
+    ASSERT_TRUE(s_is_header_in_request(request, &auth_header));
+
+    return AWS_OP_SUCCESS;
+}
+
+/*
+ * Verify requests get properly transformed with kerberos strategy
+ */
+static int s_test_http_forwarding_proxy_request_transform_kerberos(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct aws_http_proxy_strategy_tunneling_kerberos_options config = {
+        .get_token = s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_fn,
+        .get_token_user_data = NULL,
+    };
+
+    struct aws_http_proxy_strategy *kerberos_strategy =
+        aws_http_proxy_strategy_new_tunneling_kerberos(allocator, &config);
+
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, PTTM_HTTP_TUNNEL, PTFT_NONE, kerberos_strategy));
+
+    ASSERT_SUCCESS(proxy_tester_verify_connection_attempt_was_to_proxy(
+        &tester, aws_byte_cursor_from_c_str(s_proxy_host_name), s_proxy_port));
+    ASSERT_TRUE(tester.client_connection != NULL);
+    ASSERT_TRUE(tester.wait_result == AWS_ERROR_SUCCESS);
+
+    ASSERT_INT_EQUALS(1, aws_array_list_length(&tester.connect_requests));
+
+    struct aws_http_message *connect_request = NULL;
+    aws_array_list_get_at(&tester.connect_requests, &connect_request, 0);
+
+    ASSERT_SUCCESS(s_verify_kerberos_connect_request(connect_request));
+
+    aws_http_proxy_strategy_release(kerberos_strategy);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(
+    test_http_forwarding_proxy_request_transform_kerberos,
+    s_test_http_forwarding_proxy_request_transform_kerberos);
 
 AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_host, "www.uri.com");
 AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_path, "/main/index.html?foo=bar");

@@ -12,6 +12,7 @@
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
 #include <aws/common/log_writer.h>
+#include <aws/common/string.h>
 #include <aws/common/thread.h>
 #include <aws/common/uuid.h>
 #include <aws/http/request_response.h>
@@ -103,6 +104,22 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
 
     ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
+
+    ASSERT_SUCCESS(
+        aws_array_list_init_dynamic(&tester->connect_requests, tester->alloc, 1, sizeof(struct aws_http_message *)));
+
+    int connect_response_count = 1;
+    if (options->desired_connect_response_count > connect_response_count) {
+        connect_response_count = options->desired_connect_response_count;
+    }
+    ASSERT_SUCCESS(aws_array_list_init_dynamic(
+        &tester->desired_connect_responses, tester->alloc, connect_response_count, sizeof(struct aws_string *)));
+
+    for (size_t i = 0; i < options->desired_connect_response_count; ++i) {
+        struct aws_byte_cursor response_cursor = options->desired_connect_responses[i];
+        struct aws_string *response = aws_string_new_from_cursor(tester->alloc, &response_cursor);
+        ASSERT_SUCCESS(aws_array_list_push_back(&tester->desired_connect_responses, response));
+    }
 
     tester->event_loop_group = aws_event_loop_group_new_default(tester->alloc, 1, NULL);
 
@@ -199,7 +216,23 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
         aws_tls_ctx_options_clean_up(&tester->tls_ctx_options);
     }
 
-    aws_http_proxy_strategy_release(tester->proxy_options.proxy_strategy);
+    size_t connect_request_count = aws_array_list_length(&tester->connect_requests);
+    for (size_t i = 0; i < connect_request_count; ++i) {
+        struct aws_http_message *request = NULL;
+
+        aws_array_list_get_at(&tester->connect_requests, &request, i);
+        aws_http_message_release(request);
+    }
+    aws_array_list_clean_up(&tester->connect_requests);
+
+    size_t connect_response_count = aws_array_list_length(&tester->desired_connect_responses);
+    for (size_t i = 0; i < connect_response_count; ++i) {
+        struct aws_string *response = NULL;
+
+        aws_array_list_get_at(&tester->desired_connect_responses, &response, i);
+        aws_string_destroy(response);
+    }
+    aws_array_list_clean_up(&tester->desired_connect_responses);
 
     aws_http_library_clean_up();
 
@@ -250,6 +283,78 @@ int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester) 
     return AWS_OP_SUCCESS;
 }
 
+bool s_line_feed_predicate(uint8_t value) {
+    return value == '\r';
+}
+
+/*
+ * A very crude, sloppy http request parser that does just enough to test what we want to test
+ */
+static int s_record_connect_request(struct aws_byte_buf *request_buffer, struct proxy_tester *tester) {
+    struct aws_byte_cursor request_cursor = aws_byte_cursor_from_buf(request_buffer);
+
+    struct aws_array_list lines;
+    ASSERT_SUCCESS(aws_array_list_init_dynamic(&lines, tester->alloc, 10, sizeof(struct aws_byte_cursor)));
+    aws_byte_cursor_split_on_char(&request_cursor, '\n', &lines);
+
+    size_t line_count = aws_array_list_length(&lines);
+    ASSERT_TRUE(line_count > 1);
+
+    struct aws_http_message *message = aws_http_message_new_request(tester->alloc);
+
+    struct aws_byte_cursor first_line_cursor;
+    AWS_ZERO_STRUCT(first_line_cursor);
+    aws_array_list_get_at(&lines, &first_line_cursor, 0);
+    first_line_cursor = aws_byte_cursor_trim_pred(&first_line_cursor, s_line_feed_predicate);
+
+    struct aws_byte_cursor method_cursor;
+    AWS_ZERO_STRUCT(method_cursor);
+    aws_byte_cursor_next_split(&first_line_cursor, ' ', &method_cursor);
+
+    aws_http_message_set_request_method(message, method_cursor);
+
+    aws_byte_cursor_advance(&first_line_cursor, method_cursor.len + 1);
+
+    struct aws_byte_cursor uri_cursor;
+    AWS_ZERO_STRUCT(uri_cursor);
+    aws_byte_cursor_next_split(&first_line_cursor, ' ', &uri_cursor);
+
+    aws_http_message_set_request_path(message, uri_cursor);
+
+    for (size_t i = 1; i < line_count; ++i) {
+        struct aws_byte_cursor line_cursor;
+        AWS_ZERO_STRUCT(line_cursor);
+        aws_array_list_get_at(&lines, &line_cursor, i);
+        line_cursor = aws_byte_cursor_trim_pred(&line_cursor, s_line_feed_predicate);
+
+        if (line_cursor.len == 0) {
+            break;
+        }
+
+        struct aws_byte_cursor name_cursor;
+        AWS_ZERO_STRUCT(name_cursor);
+        aws_byte_cursor_next_split(&line_cursor, ':', &name_cursor);
+
+        aws_byte_cursor_advance(&line_cursor, name_cursor.len + 1);
+        line_cursor = aws_byte_cursor_trim_pred(&line_cursor, aws_isspace);
+
+        struct aws_http_header header = {
+            .name = name_cursor,
+            .value = line_cursor,
+        };
+
+        aws_http_message_add_header(message, header);
+    }
+
+    /* we don't care about the body */
+
+    aws_array_list_push_back(&tester->connect_requests, &message);
+
+    aws_array_list_clean_up(&lines);
+
+    return AWS_OP_SUCCESS;
+}
+
 int proxy_tester_verify_connect_request(struct proxy_tester *tester) {
     struct aws_byte_buf output;
     ASSERT_SUCCESS(aws_byte_buf_init(&output, tester->alloc, 1024));
@@ -274,6 +379,8 @@ int proxy_tester_verify_connect_request(struct proxy_tester *tester) {
 
     ASSERT_TRUE(aws_byte_cursor_eq(&first_line_cursor, &expected_connect_message_first_line_cursor));
 
+    ASSERT_SUCCESS(s_record_connect_request(&output, tester));
+
     aws_byte_buf_clean_up(&output);
 
     return AWS_OP_SUCCESS;
@@ -283,7 +390,14 @@ int proxy_tester_send_connect_response(struct proxy_tester *tester) {
     (void)tester;
 
     const char *response_string = NULL;
-    if (tester->failure_type == PTFT_CONNECT_REQUEST) {
+
+    size_t desired_response_count = aws_array_list_length(&tester->desired_connect_responses);
+    if (desired_response_count > 0) {
+        struct aws_string *response = NULL;
+        aws_array_list_get_at(&tester->desired_connect_responses, &response, tester->current_response_index++);
+        response_string = (const char *)response->bytes;
+
+    } else if (tester->failure_type == PTFT_CONNECT_REQUEST) {
         response_string = "HTTP/1.0 401 Unauthorized\r\n\r\n";
     } else {
         /* adding close here because it's an edge case we need to exercise. The desired behavior is that it has
