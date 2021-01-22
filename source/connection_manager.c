@@ -802,7 +802,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     }
 
     if (options->proxy_options) {
-        manager->proxy_config = aws_http_proxy_config_new(allocator, options->proxy_options);
+        manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
         if (manager->proxy_config == NULL) {
             goto on_error;
         }

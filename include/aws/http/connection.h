@@ -126,10 +126,18 @@ struct aws_http_connection_monitoring_options {
  */
 enum aws_http_proxy_connection_type {
     /**
+     * Deprecated, but 0-valued for backwards compatibility
+     *
+     * If tls options are provided (for the main connection) then treat the proxy as a tunneling proxy
+     * If tls options are not provided (for the main connection), then treate the proxy as a forwarding proxy
+     */
+    AWS_HPCT_HTTP_LEGACY = 0,
+
+    /**
      * Use the proxy to forward http requests.  Attempting to use both this mode and TLS on the tunnel destination
      * is a configuration error.
      */
-    AWS_HPCT_HTTP_FORWARD = 0,
+    AWS_HPCT_HTTP_FORWARD,
 
     /**
      * Use the proxy to establish an http connection via a CONNECT request to the proxy.  Works for both plaintext and
@@ -144,7 +152,7 @@ enum aws_http_proxy_connection_type {
     AWS_HPCT_SOCKS5,
 };
 
-struct aws_http_proxy_strategy_factory;
+struct aws_http_proxy_strategy;
 
 /**
  * Options for http proxy server usage
@@ -182,7 +190,7 @@ struct aws_http_proxy_options {
      * For forwarding proxies it allows custom request transformations.
      * Other proxy connection types TBD.
      */
-    struct aws_http_proxy_strategy_factory *proxy_strategy_factory;
+    struct aws_http_proxy_strategy *proxy_strategy;
 };
 
 /**

@@ -10,6 +10,7 @@
 
 #include <aws/http/connection.h>
 
+struct aws_http_connection_manager_options;
 struct aws_http_message;
 struct aws_channel_slot;
 struct aws_string;
@@ -37,13 +38,15 @@ struct aws_http_proxy_config {
 
     struct aws_allocator *allocator;
 
+    enum aws_http_proxy_connection_type connection_type;
+
     struct aws_byte_buf host;
 
     uint16_t port;
 
     struct aws_tls_connection_options *tls_options;
 
-    struct aws_http_proxy_strategy_factory *proxy_strategy_factory;
+    struct aws_http_proxy_strategy *proxy_strategy;
 };
 
 /*
@@ -72,7 +75,7 @@ struct aws_http_proxy_user_data {
     struct aws_tls_connection_options *tls_options;
 
     struct aws_http_proxy_config *proxy_config;
-    struct aws_http_proxy_strategy *proxy_strategy;
+    struct aws_http_proxy_negotiator *proxy_negotiator;
 };
 
 struct aws_http_proxy_system_vtable {
@@ -101,9 +104,14 @@ AWS_HTTP_API
 void aws_http_proxy_system_set_vtable(struct aws_http_proxy_system_vtable *vtable);
 
 AWS_HTTP_API
-struct aws_http_proxy_config *aws_http_proxy_config_new(
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_connection_options(
     struct aws_allocator *allocator,
-    const struct aws_http_proxy_options *options);
+    const struct aws_http_client_connection_options *options);
+
+AWS_HTTP_API
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_manager_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_connection_manager_options *options);
 
 AWS_HTTP_API
 void aws_http_proxy_config_destroy(struct aws_http_proxy_config *config);

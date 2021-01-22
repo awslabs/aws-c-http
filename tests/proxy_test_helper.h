@@ -30,6 +30,7 @@ enum proxy_tester_failure_type {
     PTFT_TLS_NEGOTIATION,
     PTFT_CHANNEL,
     PTFT_CONNECTION,
+    PTFT_PROXY_STRATEGY,
 };
 
 struct proxy_tester_options {
@@ -39,6 +40,9 @@ struct proxy_tester_options {
     uint16_t port;
     enum proxy_tester_test_mode test_mode;
     enum proxy_tester_failure_type failure_type;
+
+    uint32_t desired_connect_response_count;
+    struct aws_byte_cursor *desired_connect_responses;
 };
 
 struct proxy_tester {
@@ -77,6 +81,11 @@ struct proxy_tester {
 
     struct aws_byte_buf connection_host_name;
     uint16_t connection_port;
+
+    struct aws_array_list connect_requests;
+
+    uint32_t current_response_index;
+    struct aws_array_list desired_connect_responses;
 };
 
 int proxy_tester_wait(struct proxy_tester *tester, bool (*pred)(void *user_data));
