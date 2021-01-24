@@ -960,8 +960,7 @@ static void s_kerberos_tunnel_transform_connect(
 
     int result = AWS_OP_ERR;
     int error_code = AWS_ERROR_SUCCESS;
-    struct aws_byte_cursor kerberos_token;
-    AWS_ZERO_STRUCT(kerberos_token);
+    struct aws_string *kerberos_token = NULL;
 
     if (kerberos_negotiator->connect_state == AWS_PNCS_FAILURE) {
         error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED;
@@ -975,13 +974,14 @@ static void s_kerberos_tunnel_transform_connect(
 
     kerberos_negotiator->connect_state = AWS_PNCS_IN_PROGRESS;
 
-    if (kerberos_strategy->get_token(kerberos_strategy->get_token_user_data, &kerberos_token, &error_code) ||
-        error_code != AWS_ERROR_SUCCESS) {
+    kerberos_token = kerberos_strategy->get_token(kerberos_strategy->get_token_user_data, &error_code);
+    if (kerberos_token == NULL || error_code != AWS_ERROR_SUCCESS) {
         goto done;
     }
 
     /*transform the header with proxy authenticate:Negotiate and kerberos token*/
-    if (s_add_kerberos_proxy_usertoken_authentication_header(kerberos_negotiator->allocator, message, kerberos_token)) {
+    if (s_add_kerberos_proxy_usertoken_authentication_header(
+            kerberos_negotiator->allocator, message, aws_byte_cursor_from_string(kerberos_token))) {
         error_code = aws_last_error();
         goto done;
     }
@@ -999,6 +999,8 @@ done:
     } else {
         negotiation_http_request_forward_callback(message, internal_proxy_user_data);
     }
+
+    aws_string_destroy(kerberos_token);
 }
 
 static int s_kerberos_on_incoming_header_adaptive(
@@ -1217,8 +1219,7 @@ static void s_ntlm_tunnel_transform_connect(
 
     int result = AWS_OP_ERR;
     int error_code = AWS_ERROR_SUCCESS;
-    struct aws_byte_cursor challenge_answer_token;
-    AWS_ZERO_STRUCT(challenge_answer_token);
+    struct aws_string *challenge_answer_token = NULL;
     struct aws_byte_cursor challenge_token;
     AWS_ZERO_STRUCT(challenge_token);
 
@@ -1239,14 +1240,16 @@ static void s_ntlm_tunnel_transform_connect(
 
     ntlm_negotiator->connect_state = AWS_PNCS_IN_PROGRESS;
     challenge_token = aws_byte_cursor_from_string(ntlm_negotiator->challenge_token);
-    if (ntlm_strategy->get_challenge_token(
-            ntlm_strategy->get_challenge_token_user_data, &challenge_token, &challenge_answer_token, &error_code) ||
-        error_code != AWS_ERROR_SUCCESS) {
+    challenge_answer_token =
+        ntlm_strategy->get_challenge_token(ntlm_strategy->get_challenge_token_user_data, &challenge_token, &error_code);
+
+    if (challenge_answer_token == NULL || error_code != AWS_ERROR_SUCCESS) {
         goto done;
     }
 
     /*transform the header with proxy authenticate:Negotiate and kerberos token*/
-    if (s_add_ntlm_proxy_usertoken_authentication_header(ntlm_negotiator->allocator, message, challenge_answer_token)) {
+    if (s_add_ntlm_proxy_usertoken_authentication_header(
+            ntlm_negotiator->allocator, message, aws_byte_cursor_from_string(challenge_answer_token))) {
         error_code = aws_last_error();
         goto done;
     }
@@ -1264,6 +1267,8 @@ done:
     } else {
         negotiation_http_request_forward_callback(message, internal_proxy_user_data);
     }
+
+    aws_string_destroy(challenge_answer_token);
 }
 
 AWS_STATIC_STRING_FROM_LITERAL(s_ntlm_challenge_token_header, "Proxy-Authenticate");

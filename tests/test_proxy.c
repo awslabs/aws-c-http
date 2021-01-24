@@ -572,17 +572,14 @@ AWS_TEST_CASE(
 
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_kerberos_token_value, "abcdefABCDEF123");
 
-static int s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_fn(
+static struct aws_string *s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_fn(
     void *user_data,
-    struct aws_byte_cursor *out_token_value,
     int *out_error_code) {
 
-    (void)user_data;
+    struct aws_allocator *allocator = user_data;
 
     *out_error_code = AWS_ERROR_SUCCESS;
-    *out_token_value = aws_byte_cursor_from_string(s_mock_kerberos_token_value);
-
-    return AWS_OP_SUCCESS;
+    return aws_string_new_from_string(allocator, s_mock_kerberos_token_value);
 }
 
 AWS_STATIC_STRING_FROM_LITERAL(s_expected_kerberos_auth_header_name, "Proxy-Authorization");
@@ -606,7 +603,7 @@ static int s_test_http_proxy_request_transform_kerberos(struct aws_allocator *al
 
     struct aws_http_proxy_strategy_tunneling_kerberos_options config = {
         .get_token = s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_fn,
-        .get_token_user_data = NULL,
+        .get_token_user_data = allocator,
     };
 
     struct aws_http_proxy_strategy *kerberos_strategy =
@@ -641,16 +638,15 @@ static int s_test_http_proxy_request_transform_kerberos(struct aws_allocator *al
 
 AWS_TEST_CASE(test_http_proxy_request_transform_kerberos, s_test_http_proxy_request_transform_kerberos);
 
-static int s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_failure_fn(
+static struct aws_string *s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_failure_fn(
     void *user_data,
-    struct aws_byte_cursor *out_token_value,
     int *out_error_code) {
 
     (void)user_data;
 
     *out_error_code = AWS_ERROR_UNKNOWN;
 
-    return AWS_OP_ERR;
+    return NULL;
 }
 
 static int s_test_http_proxy_kerberos_token_failure(struct aws_allocator *allocator, void *ctx) {
@@ -691,7 +687,7 @@ static int s_test_http_proxy_kerberos_connect_failure(struct aws_allocator *allo
 
     struct aws_http_proxy_strategy_tunneling_kerberos_options config = {
         .get_token = s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_fn,
-        .get_token_user_data = NULL,
+        .get_token_user_data = allocator,
     };
 
     struct aws_http_proxy_strategy *kerberos_strategy =
@@ -721,18 +717,15 @@ AWS_TEST_CASE(test_http_proxy_kerberos_connect_failure, s_test_http_proxy_kerber
 
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_ntlm_token_value, "NTLM_RESPONSE");
 
-static int s_mock_aws_http_proxy_negotiation_ntlm_get_challenge_token_sync_fn(
+static struct aws_string *s_mock_aws_http_proxy_negotiation_ntlm_get_challenge_token_sync_fn(
     void *user_data,
     const struct aws_byte_cursor *challenge_value,
-    struct aws_byte_cursor *out_token_value,
     int *out_error_code) {
 
-    (void)user_data;
+    struct aws_allocator *allocator = user_data;
 
     *out_error_code = AWS_ERROR_SUCCESS;
-    *out_token_value = aws_byte_cursor_from_string(s_mock_ntlm_token_value);
-
-    return AWS_OP_SUCCESS;
+    return aws_string_new_from_string(allocator, s_mock_ntlm_token_value);
 }
 
 static int s_verify_identity_connect_request(struct aws_http_message *request) {
@@ -744,12 +737,12 @@ static int s_verify_identity_connect_request(struct aws_http_message *request) {
 static struct aws_http_proxy_strategy *s_create_adaptive_strategy(struct aws_allocator *allocator) {
     struct aws_http_proxy_strategy_tunneling_kerberos_options kerberos_config = {
         .get_token = s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_fn,
-        .get_token_user_data = NULL,
+        .get_token_user_data = allocator,
     };
 
     struct aws_http_proxy_strategy_tunneling_ntlm_options ntlm_config = {
         .get_challenge_token = s_mock_aws_http_proxy_negotiation_ntlm_get_challenge_token_sync_fn,
-        .get_challenge_token_user_data = NULL,
+        .get_challenge_token_user_data = allocator,
     };
 
     struct aws_http_proxy_strategy_tunneling_adaptive_options config = {
