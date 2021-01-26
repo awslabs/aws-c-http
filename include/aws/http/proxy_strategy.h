@@ -21,19 +21,15 @@ struct aws_http_proxy_strategy;
 /**
  * Synchronous (for now) callback function to fetch a token used in modifying CONNECT requests
  */
-typedef int(aws_http_proxy_negotiation_get_token_sync_fn)(
-    void *user_data,
-    struct aws_byte_cursor *out_token_value,
-    int *out_error_code);
+typedef struct aws_string *(aws_http_proxy_negotiation_get_token_sync_fn)(void *user_data, int *out_error_code);
 
 /**
  * Synchronous (for now) callback function to fetch a token used in modifying CONNECT request.  Includes a (byte string)
  * context intended to be used as part of a challenge-response flow.
  */
-typedef int(aws_http_proxy_negotiation_get_challenge_token_sync_fn)(
+typedef struct aws_string *(aws_http_proxy_negotiation_get_challenge_token_sync_fn)(
     void *user_data,
     const struct aws_byte_cursor *challenge_context,
-    struct aws_byte_cursor *out_token_value,
     int *out_error_code);
 
 /**
