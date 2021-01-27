@@ -720,10 +720,7 @@ int main(int argc, char **argv) {
     aws_host_resolver_release(resolver);
     aws_event_loop_group_release(el_group);
 
-    if (aws_global_thread_creator_shutdown_wait_for(5)) {
-        fprintf(stderr, "Timeout waiting for thread shutdown!");
-        exit(1);
-    }
+    aws_thread_join_all_managed();
 
     if (tls_ctx) {
         aws_tls_connection_options_clean_up(&tls_connection_options);

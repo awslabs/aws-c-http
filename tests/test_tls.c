@@ -213,7 +213,7 @@ static int s_test_tls_download_medium_file_general(
     aws_host_resolver_release(test.host_resolver);
     aws_event_loop_group_release(test.event_loop_group);
 
-    ASSERT_SUCCESS(aws_global_thread_creator_shutdown_wait_for(10));
+    aws_thread_join_all_managed();
 
     aws_tls_ctx_options_clean_up(&tls_ctx_options);
     aws_tls_connection_options_clean_up(&tls_connection_options);
