@@ -191,6 +191,8 @@ struct aws_http_proxy_strategy_tunneling_kerberos_options {
 
 struct aws_http_proxy_strategy_tunneling_ntlm_options {
 
+    aws_http_proxy_negotiation_get_token_sync_fn *get_token;
+
     aws_http_proxy_negotiation_get_challenge_token_sync_fn *get_challenge_token;
 
     void *get_challenge_token_user_data;
