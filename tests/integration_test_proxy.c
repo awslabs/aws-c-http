@@ -311,10 +311,10 @@ static int s_test_proxy_sequential_negotiation(struct aws_allocator *allocator, 
         .get_challenge_token_user_data = allocator,
     };
 
-    (void)ntlm_config;
 
     struct aws_http_proxy_strategy_tunneling_adaptive_options adaptive_config = {
-        .kerberos_options = &kerberos_config, .ntlm_options = NULL, /*&ntlm_config,*/
+        .kerberos_options = &kerberos_config,
+        .ntlm_options = &ntlm_config,
     };
 
     struct aws_http_proxy_strategy *proxy_strategy =
