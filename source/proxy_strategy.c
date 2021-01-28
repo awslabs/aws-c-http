@@ -1155,8 +1155,6 @@ struct aws_http_proxy_negotiator_tunneling_ntlm {
 
     enum proxy_negotiator_connect_state connect_state;
 
-    struct aws_string *token;
-
     struct aws_string *challenge_token;
 
     struct aws_http_proxy_negotiator negotiator_base;
@@ -1588,17 +1586,17 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
     struct aws_http_proxy_strategy *strategies[PROXY_STRATEGY_MAX_ADAPTIVE_STRATEGIES];
 
     uint32_t strategy_count = 0;
-    /*struct aws_http_proxy_strategy *identity_strategy = NULL;*/
+    struct aws_http_proxy_strategy *identity_strategy = NULL;
     struct aws_http_proxy_strategy *kerberos_strategy = NULL;
     struct aws_http_proxy_strategy *ntlm_credential_strategy = NULL;
     struct aws_http_proxy_strategy *ntlm_strategy = NULL;
     struct aws_http_proxy_strategy *adaptive_chain_strategy = NULL;
 
-    /*identity_strategy = aws_http_proxy_strategy_new_tunneling_one_time_identity(allocator);
+    identity_strategy = aws_http_proxy_strategy_new_tunneling_one_time_identity(allocator);
     if (identity_strategy == NULL) {
         goto done;
     }
-    strategies[strategy_count++] = identity_strategy;*/
+    strategies[strategy_count++] = identity_strategy;
 
     if (config->kerberos_options != NULL) {
         kerberos_strategy = aws_http_proxy_strategy_new_tunneling_kerberos(allocator, config->kerberos_options);
@@ -1617,11 +1615,7 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
         }
 
         strategies[strategy_count++] = ntlm_credential_strategy;
-    }
 
-    
-
-    if (config->ntlm_options != NULL) {
         ntlm_strategy = aws_http_proxy_strategy_new_tunneling_ntlm(allocator, config->ntlm_options);
         if (ntlm_strategy == NULL) {
             goto done;
@@ -1642,7 +1636,7 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
 
 done:
 
-  /*  aws_http_proxy_strategy_release(identity_strategy);*/
+    aws_http_proxy_strategy_release(identity_strategy);
     aws_http_proxy_strategy_release(kerberos_strategy);
     aws_http_proxy_strategy_release(ntlm_credential_strategy);
     aws_http_proxy_strategy_release(ntlm_strategy);
