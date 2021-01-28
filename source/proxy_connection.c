@@ -201,7 +201,7 @@ on_error:
  * Connection callback used ONLY by http proxy connections.  After this,
  * the connection is live and the user is notified
  */
-static void s_aws_http_on_client_connection_http_proxy_setup_fn(
+static void s_aws_http_on_client_connection_http_forwarding_proxy_setup_fn(
     struct aws_http_connection *connection,
     int error_code,
     void *user_data) {
@@ -477,20 +477,18 @@ static void s_aws_http_on_stream_complete_tunnel_proxy(
     }
 
     if (context->error_code != AWS_ERROR_SUCCESS) {
-        if (context->connect_status_code == AWS_HTTP_STATUS_CODE_407_PROXY_AUTHENTICATION_REQUIRED) {
+        context->error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED;
+        if (context->connect_status_code != AWS_HTTP_STATUS_CODE_407_PROXY_AUTHENTICATION_REQUIRED) {
             struct aws_http_proxy_user_data *new_context =
                 aws_http_proxy_user_data_new_reset_clone(context->allocator, context);
-            if (new_context == NULL || s_create_tunneling_connection(new_context)) {
-                context->error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED;
-                s_aws_http_proxy_user_data_shutdown(context);
-            } else {
+            if (new_context != NULL && s_create_tunneling_connection(new_context) == AWS_OP_SUCCESS) {
                 context->original_on_shutdown = NULL;
                 context->original_on_setup = NULL;
+                context->error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE;
             }
-        } else {
-            context->error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED;
-            s_aws_http_proxy_user_data_shutdown(context);
         }
+
+        s_aws_http_proxy_user_data_shutdown(context);
         return;
     }
 
@@ -603,11 +601,6 @@ on_error:
  * of upgrading with TLS on success
  */
 static int s_make_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
-    if (user_data->connect_request != NULL) {
-        aws_http_message_destroy(user_data->connect_request);
-        user_data->connect_request = NULL;
-    }
-
     user_data->connect_request = s_build_proxy_connect_request(user_data);
     if (user_data->connect_request == NULL) {
         return AWS_OP_ERR;
@@ -627,7 +620,7 @@ static int s_make_proxy_connect_request(struct aws_http_proxy_user_data *user_da
  * Connection setup callback for tls-based proxy connections.
  * Could be unified with non-tls version by checking tls options and branching post-success
  */
-static void s_aws_http_on_client_connection_http_tunnel_proxy_setup_fn(
+static void s_aws_http_on_client_connection_http_tunneling_proxy_setup_fn(
     struct aws_http_connection *connection,
     int error_code,
     void *user_data) {
@@ -807,7 +800,7 @@ static int s_aws_http_client_connect_via_forwarding_proxy(const struct aws_http_
     options_copy.host_name = options->proxy_options->host;
     options_copy.port = options->proxy_options->port;
     options_copy.user_data = proxy_user_data;
-    options_copy.on_setup = s_aws_http_on_client_connection_http_proxy_setup_fn;
+    options_copy.on_setup = s_aws_http_on_client_connection_http_forwarding_proxy_setup_fn;
     options_copy.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
     options_copy.tls_options = options->proxy_options->tls_options;
 
@@ -840,7 +833,7 @@ static int s_create_tunneling_connection(struct aws_http_proxy_user_data *user_d
     connect_options.manual_window_management = user_data->manual_window_management;
     connect_options.initial_window_size = user_data->initial_window_size;
     connect_options.user_data = user_data;
-    connect_options.on_setup = s_aws_http_on_client_connection_http_tunnel_proxy_setup_fn;
+    connect_options.on_setup = s_aws_http_on_client_connection_http_tunneling_proxy_setup_fn;
     connect_options.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
     connect_options.http1_options = NULL; /* ToDo */
     connect_options.http2_options = NULL; /* ToDo */

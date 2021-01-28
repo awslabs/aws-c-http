@@ -1197,10 +1197,15 @@ static void s_sequence_tunnel_iteration_termination_callback(
     struct aws_http_proxy_negotiator *proxy_negotiator = user_data;
     struct aws_http_proxy_negotiator_tunneling_sequence *sequence_negotiator = proxy_negotiator->impl;
 
-    AWS_LOGF_WARN(AWS_LS_HTTP_PROXY_NEGOTIATION, "(id=%p) Proxy negotiation step failed with error %d", (void *)proxy_negotiator, error_code);
+    AWS_LOGF_WARN(
+        AWS_LS_HTTP_PROXY_NEGOTIATION,
+        "(id=%p) Proxy negotiation step failed with error %d",
+        (void *)proxy_negotiator,
+        error_code);
 
     int connection_error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE;
-    if (sequence_negotiator->current_negotiator_transform_index >= aws_array_list_length(&sequence_negotiator->negotiators)) {
+    if (sequence_negotiator->current_negotiator_transform_index >=
+        aws_array_list_length(&sequence_negotiator->negotiators)) {
         connection_error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED;
     }
 
@@ -1228,9 +1233,9 @@ static void s_sequence_tunnel_try_next_negotiator(
 
     struct aws_http_proxy_negotiator *current_negotiator = NULL;
     if (aws_array_list_get_at(
-        &sequence_negotiator->negotiators,
-        &current_negotiator,
-        sequence_negotiator->current_negotiator_transform_index++)) {
+            &sequence_negotiator->negotiators,
+            &current_negotiator,
+            sequence_negotiator->current_negotiator_transform_index++)) {
         goto on_error;
     }
 
@@ -1386,7 +1391,7 @@ static struct aws_http_proxy_negotiator *s_create_tunneling_sequence_negotiator(
     size_t strategy_count = aws_array_list_length(&sequence_strategy->strategies);
 
     if (aws_array_list_init_dynamic(
-        &sequence_negotiator->negotiators, allocator, strategy_count, sizeof(struct aws_http_proxy_negotiator *))) {
+            &sequence_negotiator->negotiators, allocator, strategy_count, sizeof(struct aws_http_proxy_negotiator *))) {
         goto on_error;
     }
 
@@ -1464,7 +1469,10 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_sequence(
         (aws_simple_completion_callback *)s_destroy_tunneling_sequence_strategy);
 
     if (aws_array_list_init_dynamic(
-        &sequence_strategy->strategies, allocator, config->strategy_count, sizeof(struct aws_http_proxy_strategy *))) {
+            &sequence_strategy->strategies,
+            allocator,
+            config->strategy_count,
+            sizeof(struct aws_http_proxy_strategy *))) {
         goto on_error;
     }
 
