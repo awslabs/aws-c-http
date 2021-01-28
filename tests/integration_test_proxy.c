@@ -271,3 +271,81 @@ static int s_test_nested_https_proxy_connection_get(struct aws_allocator *alloca
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_nested_https_proxy_connection_get, s_test_nested_https_proxy_connection_get);
+
+#include <aws/http/proxy_strategy.h>
+
+AWS_STATIC_STRING_FROM_LITERAL(s_mock_kerberos_token_value, "abcdefABCDEF123");
+
+static struct aws_string *s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_fn(
+    void *user_data,
+    int *out_error_code) {
+
+    struct aws_allocator *allocator = user_data;
+
+    *out_error_code = AWS_ERROR_SUCCESS;
+    return aws_string_new_from_string(allocator, s_mock_kerberos_token_value);
+}
+
+AWS_STATIC_STRING_FROM_LITERAL(s_mock_ntlm_token_value, "NTLM_RESPONSE");
+
+static struct aws_string *s_mock_aws_http_proxy_negotiation_ntlm_get_challenge_token_sync_fn(
+    void *user_data,
+    const struct aws_byte_cursor *challenge_value,
+    int *out_error_code) {
+
+    struct aws_allocator *allocator = user_data;
+
+    *out_error_code = AWS_ERROR_SUCCESS;
+    return aws_string_new_from_string(allocator, s_mock_ntlm_token_value);
+}
+
+static int s_test_proxy_sequential_negotiation(struct aws_allocator *allocator, void *ctx) {
+
+    struct aws_http_proxy_strategy_tunneling_kerberos_options kerberos_config = {
+        .get_token = s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_fn,
+        .get_token_user_data = allocator,
+    };
+
+    struct aws_http_proxy_strategy_tunneling_ntlm_options ntlm_config = {
+        .get_challenge_token = s_mock_aws_http_proxy_negotiation_ntlm_get_challenge_token_sync_fn,
+        .get_challenge_token_user_data = allocator,
+    };
+
+    struct aws_http_proxy_strategy_tunneling_adaptive_options adaptive_config = {
+        .kerberos_options = &kerberos_config,
+        .ntlm_options = &ntlm_config,
+    };
+
+    struct aws_http_proxy_strategy *proxy_strategy =
+        aws_http_proxy_strategy_new_tunneling_adaptive(allocator, &adaptive_config);
+
+    struct aws_http_proxy_options proxy_options = {
+        .connection_type = AWS_HPCT_HTTP_TUNNEL,
+        .host = aws_byte_cursor_from_string(s_proxy_host_name),
+        .port = HTTPS_PROXY_PORT,
+        .tls_options = NULL,
+        .proxy_strategy = proxy_strategy,
+    };
+
+    struct proxy_tester_options options = {
+        .alloc = allocator,
+        .proxy_options = &proxy_options,
+        .host = aws_byte_cursor_from_c_str("www.amazon.com"),
+        .port = 443,
+        .test_mode = PTTM_HTTP_TUNNEL,
+        .failure_type = PTFT_NONE,
+    };
+
+    ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
+    ASSERT_SUCCESS(proxy_tester_wait(&tester, proxy_tester_connection_setup_pred));
+
+    ASSERT_TRUE(tester.wait_result != AWS_ERROR_SUCCESS);
+
+    ASSERT_SUCCESS(proxy_tester_clean_up(&tester));
+
+    aws_http_proxy_strategy_release(proxy_strategy);
+
+    return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(test_proxy_sequential_negotiation, s_test_proxy_sequential_negotiation);

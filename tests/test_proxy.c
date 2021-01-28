@@ -70,6 +70,7 @@ static struct aws_http_message *s_build_http_request(struct aws_allocator *alloc
         aws_byte_cursor_from_string(s_mock_request_host));
 }
 
+#ifdef NEVER
 static bool s_is_header_in_request(struct aws_http_message *request, struct aws_byte_cursor header_name) {
     size_t header_count = aws_http_message_get_header_count(request);
     for (size_t i = 0; i < header_count; ++i) {
@@ -83,6 +84,7 @@ static bool s_is_header_in_request(struct aws_http_message *request, struct aws_
 
     return false;
 }
+#endif
 
 static bool s_is_header_and_value_in_request(struct aws_http_message *request, struct aws_http_header *header) {
     size_t header_count = aws_http_message_get_header_count(request);
@@ -715,6 +717,8 @@ static int s_test_http_proxy_kerberos_connect_failure(struct aws_allocator *allo
 
 AWS_TEST_CASE(test_http_proxy_kerberos_connect_failure, s_test_http_proxy_kerberos_connect_failure);
 
+#ifdef NEVER
+
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_ntlm_token_value, "NTLM_RESPONSE");
 
 static struct aws_string *s_mock_aws_http_proxy_negotiation_ntlm_get_challenge_token_sync_fn(
@@ -969,6 +973,7 @@ static int s_test_http_proxy_adaptive_failure(struct aws_allocator *allocator, v
 }
 
 AWS_TEST_CASE(test_http_proxy_adaptive_failure, s_test_http_proxy_adaptive_failure);
+#endif
 
 AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_host, "www.uri.com");
 AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_path, "/main/index.html?foo=bar");

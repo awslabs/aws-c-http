@@ -176,12 +176,6 @@ struct aws_http_proxy_strategy_basic_auth_options {
     struct aws_byte_cursor password;
 };
 
-struct aws_http_proxy_strategy_tunneling_chain_options {
-    struct aws_http_proxy_strategy **strategies;
-
-    uint32_t strategy_count;
-};
-
 struct aws_http_proxy_strategy_tunneling_kerberos_options {
 
     aws_http_proxy_negotiation_get_token_sync_fn *get_token;
@@ -200,14 +194,20 @@ struct aws_http_proxy_strategy_tunneling_ntlm_options {
 
 struct aws_http_proxy_strategy_tunneling_adaptive_options {
     /*
-     * If non-null, will insert a kerberos proxy strategy into the adaptive chain
+     * If non-null, will insert a kerberos proxy strategy into the adaptive sequence
      */
     struct aws_http_proxy_strategy_tunneling_kerberos_options *kerberos_options;
 
     /*
-     * If non-null will insert an ntlm proxy strategy into the adaptive chain
+     * If non-null will insert an ntlm proxy strategy into the adaptive sequence
      */
     struct aws_http_proxy_strategy_tunneling_ntlm_options *ntlm_options;
+};
+
+struct aws_http_proxy_strategy_tunneling_sequence_options {
+    struct aws_http_proxy_strategy **strategies;
+
+    uint32_t strategy_count;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -265,68 +265,6 @@ AWS_HTTP_API
 struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_basic_auth(
     struct aws_allocator *allocator,
     struct aws_http_proxy_strategy_basic_auth_options *config);
-
-/**
- * Constructor for a tunnel-only proxy strategy that applies no changes to outbound CONNECT requests.  Intended to be
- * the first link in an adaptive chain for a tunneling proxy: first try a basic CONNECT, then based on the response,
- * later links are allowed to make attempts.
- *
- * @param allocator memory allocator to use
- * @return a new proxy strategy if successfully constructed, otherwise NULL
- */
-AWS_HTTP_API
-struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_one_time_identity(
-    struct aws_allocator *allocator);
-
-/**
- * Constructor for a forwarding-only proxy strategy that does nothing. Exists so that all proxy logic uses a
- * strategy.
- *
- * @param allocator memory allocator to use
- * @return a new proxy strategy if successfully constructed, otherwise NULL
- */
-AWS_HTTP_API
-struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_forwarding_identity(struct aws_allocator *allocator);
-
-/**
- * Constructor for a tunneling proxy strategy that contains a chain of sub-strategies which are tried
- * sequentially in order.
- *
- * @param allocator memory allocator to use
- * @param config chain configuration options
- * @return a new proxy strategy if successfully constructed, otherwise NULL
- */
-AWS_HTTP_API
-struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_chain(
-    struct aws_allocator *allocator,
-    struct aws_http_proxy_strategy_tunneling_chain_options *config);
-
-/**
- * A constructor for a proxy strategy that performs kerberos authentication by adding the appropriate
- * header and header value to CONNECT requests.
- *
- * @param allocator memory allocator to use
- * @param config kerberos authentication configuration info
- * @return a new proxy strategy if successfully constructed, otherwise NULL
- */
-AWS_HTTP_API
-struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_kerberos(
-    struct aws_allocator *allocator,
-    struct aws_http_proxy_strategy_tunneling_kerberos_options *config);
-
-/**
- * Constructor for an NTLM proxy strategy.  Because ntlm is a challenge-response authentication protocol, this
- * strategy will only succeed in a chain in a non-leading position.  The strategy extracts the challenge from the
- * proxy's response to a previous CONNECT request in the chain.
- *
- * @param allocator memory allocator to use
- * @param config configuration options for the strategy
- * @return a new proxy strategy if successfully constructed, otherwise NULL
- */
-AWS_HTTP_API
-struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_ntlm(
-    struct aws_allocator *allocator,
-    struct aws_http_proxy_strategy_tunneling_ntlm_options *config);
 
 /**
  * Constructor for an adaptive tunneling proxy strategy.  This strategy attempts a vanilla CONNECT and if that

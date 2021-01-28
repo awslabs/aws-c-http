@@ -7,6 +7,7 @@
 
 #include <aws/common/encoding.h>
 #include <aws/common/string.h>
+#include <aws/http/private/proxy_impl.h>
 
 #if defined(_MSC_VER)
 #    pragma warning(push)
@@ -202,7 +203,7 @@ void s_basic_auth_tunnel_add_header(
 
     struct aws_http_proxy_negotiator_basic_auth *basic_auth_negotiator = proxy_negotiator->impl;
     if (basic_auth_negotiator->connect_state != AWS_PNCS_READY) {
-        negotiation_termination_callback(message, AWS_ERROR_INVALID_STATE, internal_proxy_user_data);
+        negotiation_termination_callback(message, AWS_ERROR_HTTP_PROXY_CONNECT_FAILED, internal_proxy_user_data);
         return;
     }
 
@@ -359,7 +360,7 @@ void s_one_time_identity_connect_transform(
 
     struct aws_http_proxy_negotiator_one_time_identity *one_time_identity_negotiator = proxy_negotiator->impl;
     if (one_time_identity_negotiator->connect_state != AWS_PNCS_READY) {
-        negotiation_termination_callback(message, AWS_ERROR_INVALID_STATE, internal_proxy_user_data);
+        negotiation_termination_callback(message, AWS_ERROR_HTTP_PROXY_CONNECT_FAILED, internal_proxy_user_data);
         return;
     }
 
@@ -546,325 +547,6 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_forwarding_identity(
         (aws_simple_completion_callback *)s_destroy_forwarding_identity_strategy);
 
     return &identity_strategy->strategy_base;
-}
-
-/******************************************************************************************************************/
-
-struct aws_http_proxy_strategy_tunneling_chain {
-    struct aws_allocator *allocator;
-
-    struct aws_array_list strategies;
-
-    struct aws_http_proxy_strategy strategy_base;
-};
-
-struct aws_http_proxy_negotiator_tunneling_chain {
-    struct aws_allocator *allocator;
-
-    struct aws_array_list negotiators;
-    size_t current_negotiator_transform_index;
-    void *original_internal_proxy_user_data;
-    aws_http_proxy_negotiation_terminate_fn *original_negotiation_termination_callback;
-    aws_http_proxy_negotiation_http_request_forward_fn *original_negotiation_http_request_forward_callback;
-    struct aws_http_proxy_negotiator negotiator_base;
-};
-
-static void s_chain_tunnel_try_next_negotiator(
-    struct aws_http_proxy_negotiator *proxy_negotiator,
-    struct aws_http_message *message);
-
-static void s_chain_tunnel_iteration_termination_callback(
-    struct aws_http_message *message,
-    int error_code,
-    void *user_data) {
-
-    (void)error_code; /* TODO: log */
-
-    struct aws_http_proxy_negotiator *proxy_negotiator = user_data;
-    struct aws_http_proxy_negotiator_tunneling_chain *chain_negotiator = proxy_negotiator->impl;
-
-    chain_negotiator->current_negotiator_transform_index++;
-
-    s_chain_tunnel_try_next_negotiator(proxy_negotiator, message);
-}
-
-static void s_chain_tunnel_iteration_forward_callback(struct aws_http_message *message, void *user_data) {
-    struct aws_http_proxy_negotiator *proxy_negotiator = user_data;
-    struct aws_http_proxy_negotiator_tunneling_chain *chain_negotiator = proxy_negotiator->impl;
-
-    chain_negotiator->original_negotiation_http_request_forward_callback(
-        message, chain_negotiator->original_internal_proxy_user_data);
-}
-
-static void s_chain_tunnel_try_next_negotiator(
-    struct aws_http_proxy_negotiator *proxy_negotiator,
-    struct aws_http_message *message) {
-    struct aws_http_proxy_negotiator_tunneling_chain *chain_negotiator = proxy_negotiator->impl;
-
-    size_t negotiator_count = aws_array_list_length(&chain_negotiator->negotiators);
-    if (chain_negotiator->current_negotiator_transform_index >= negotiator_count) {
-        goto on_error;
-    }
-
-    struct aws_http_proxy_negotiator *current_negotiator = NULL;
-    if (aws_array_list_get_at(
-            &chain_negotiator->negotiators,
-            &current_negotiator,
-            chain_negotiator->current_negotiator_transform_index)) {
-        goto on_error;
-    }
-
-    current_negotiator->strategy_vtable.tunnelling_vtable->connect_request_transform(
-        current_negotiator,
-        message,
-        s_chain_tunnel_iteration_termination_callback,
-        s_chain_tunnel_iteration_forward_callback,
-        proxy_negotiator);
-    return;
-
-on_error:
-
-    chain_negotiator->original_negotiation_termination_callback(
-        message, AWS_ERROR_HTTP_PROXY_CONNECT_FAILED, chain_negotiator->original_internal_proxy_user_data);
-}
-
-static void s_chain_tunnel_transform_connect(
-    struct aws_http_proxy_negotiator *proxy_negotiator,
-    struct aws_http_message *message,
-    aws_http_proxy_negotiation_terminate_fn *negotiation_termination_callback,
-    aws_http_proxy_negotiation_http_request_forward_fn *negotiation_http_request_forward_callback,
-    void *internal_proxy_user_data) {
-
-    struct aws_http_proxy_negotiator_tunneling_chain *chain_negotiator = proxy_negotiator->impl;
-
-    chain_negotiator->current_negotiator_transform_index = 0;
-    chain_negotiator->original_internal_proxy_user_data = internal_proxy_user_data;
-    chain_negotiator->original_negotiation_termination_callback = negotiation_termination_callback;
-    chain_negotiator->original_negotiation_http_request_forward_callback = negotiation_http_request_forward_callback;
-
-    s_chain_tunnel_try_next_negotiator(proxy_negotiator, message);
-}
-
-static int s_chain_on_incoming_headers(
-    struct aws_http_proxy_negotiator *proxy_negotiator,
-    enum aws_http_header_block header_block,
-    const struct aws_http_header *header_array,
-    size_t num_headers) {
-
-    struct aws_http_proxy_negotiator_tunneling_chain *chain_negotiator = proxy_negotiator->impl;
-    size_t negotiator_count = aws_array_list_length(&chain_negotiator->negotiators);
-    for (size_t i = 0; i < negotiator_count; ++i) {
-        struct aws_http_proxy_negotiator *negotiator = NULL;
-        if (aws_array_list_get_at(&chain_negotiator->negotiators, &negotiator, i)) {
-            continue;
-        }
-
-        aws_http_proxy_negotiation_connect_on_incoming_headers_fn *on_incoming_headers =
-            negotiator->strategy_vtable.tunnelling_vtable->on_incoming_headers_callback;
-        if (on_incoming_headers != NULL) {
-            (*on_incoming_headers)(negotiator, header_block, header_array, num_headers);
-        }
-    }
-
-    return AWS_OP_SUCCESS;
-}
-
-static int s_chain_on_connect_status(
-    struct aws_http_proxy_negotiator *proxy_negotiator,
-    enum aws_http_status_code status_code) {
-
-    struct aws_http_proxy_negotiator_tunneling_chain *chain_negotiator = proxy_negotiator->impl;
-    size_t negotiator_count = aws_array_list_length(&chain_negotiator->negotiators);
-    for (size_t i = 0; i < negotiator_count; ++i) {
-        struct aws_http_proxy_negotiator *negotiator = NULL;
-        if (aws_array_list_get_at(&chain_negotiator->negotiators, &negotiator, i)) {
-            continue;
-        }
-
-        aws_http_proxy_negotiator_connect_status_fn *on_status =
-            negotiator->strategy_vtable.tunnelling_vtable->on_status_callback;
-        if (on_status != NULL) {
-            (*on_status)(negotiator, status_code);
-        }
-    }
-
-    return AWS_OP_SUCCESS;
-}
-
-static int s_chain_on_incoming_body(
-    struct aws_http_proxy_negotiator *proxy_negotiator,
-    const struct aws_byte_cursor *data) {
-
-    struct aws_http_proxy_negotiator_tunneling_chain *chain_negotiator = proxy_negotiator->impl;
-    size_t negotiator_count = aws_array_list_length(&chain_negotiator->negotiators);
-    for (size_t i = 0; i < negotiator_count; ++i) {
-        struct aws_http_proxy_negotiator *negotiator = NULL;
-        if (aws_array_list_get_at(&chain_negotiator->negotiators, &negotiator, i)) {
-            continue;
-        }
-
-        aws_http_proxy_negotiator_connect_on_incoming_body_fn *on_incoming_body =
-            negotiator->strategy_vtable.tunnelling_vtable->on_incoming_body_callback;
-        if (on_incoming_body != NULL) {
-            (*on_incoming_body)(negotiator, data);
-        }
-    }
-
-    return AWS_OP_SUCCESS;
-}
-
-static struct aws_http_proxy_negotiator_tunnelling_vtable s_tunneling_chain_proxy_negotiator_tunneling_vtable = {
-    .on_incoming_body_callback = s_chain_on_incoming_body,
-    .on_incoming_headers_callback = s_chain_on_incoming_headers,
-    .on_status_callback = s_chain_on_connect_status,
-    .connect_request_transform = s_chain_tunnel_transform_connect,
-};
-
-static void s_destroy_tunneling_chain_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {
-    struct aws_http_proxy_negotiator_tunneling_chain *chain_negotiator = proxy_negotiator->impl;
-
-    size_t negotiator_count = aws_array_list_length(&chain_negotiator->negotiators);
-    for (size_t i = 0; i < negotiator_count; ++i) {
-        struct aws_http_proxy_negotiator *negotiator = NULL;
-        if (aws_array_list_get_at(&chain_negotiator->negotiators, &negotiator, i)) {
-            continue;
-        }
-
-        aws_http_proxy_negotiator_release(negotiator);
-    }
-
-    aws_array_list_clean_up(&chain_negotiator->negotiators);
-
-    aws_mem_release(chain_negotiator->allocator, chain_negotiator);
-}
-
-static struct aws_http_proxy_negotiator *s_create_tunneling_chain_negotiator(
-    struct aws_http_proxy_strategy *proxy_strategy,
-    struct aws_allocator *allocator) {
-    if (proxy_strategy == NULL || allocator == NULL) {
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        return NULL;
-    }
-
-    struct aws_http_proxy_negotiator_tunneling_chain *chain_negotiator =
-        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_negotiator_tunneling_chain));
-    if (chain_negotiator == NULL) {
-        return NULL;
-    }
-
-    chain_negotiator->allocator = allocator;
-    chain_negotiator->negotiator_base.impl = chain_negotiator;
-    aws_ref_count_init(
-        &chain_negotiator->negotiator_base.ref_count,
-        &chain_negotiator->negotiator_base,
-        (aws_simple_completion_callback *)s_destroy_tunneling_chain_negotiator);
-
-    chain_negotiator->negotiator_base.strategy_vtable.tunnelling_vtable =
-        &s_tunneling_chain_proxy_negotiator_tunneling_vtable;
-
-    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy = proxy_strategy->impl;
-    size_t strategy_count = aws_array_list_length(&chain_strategy->strategies);
-
-    if (aws_array_list_init_dynamic(
-            &chain_negotiator->negotiators, allocator, strategy_count, sizeof(struct aws_http_proxy_negotiator *))) {
-        goto on_error;
-    }
-
-    for (size_t i = 0; i < strategy_count; ++i) {
-        struct aws_http_proxy_strategy *strategy = NULL;
-        if (aws_array_list_get_at(&chain_strategy->strategies, &strategy, i)) {
-            goto on_error;
-        }
-
-        struct aws_http_proxy_negotiator *negotiator = aws_http_proxy_strategy_create_negotiator(strategy, allocator);
-        if (negotiator == NULL) {
-            goto on_error;
-        }
-
-        if (aws_array_list_push_back(&chain_negotiator->negotiators, &negotiator)) {
-            aws_http_proxy_negotiator_release(negotiator);
-            goto on_error;
-        }
-    }
-
-    return &chain_negotiator->negotiator_base;
-
-on_error:
-
-    aws_http_proxy_negotiator_release(&chain_negotiator->negotiator_base);
-
-    return NULL;
-}
-
-static struct aws_http_proxy_strategy_vtable s_tunneling_chain_strategy_vtable = {
-    .create_negotiator = s_create_tunneling_chain_negotiator,
-};
-
-static void s_destroy_tunneling_chain_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
-    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy = proxy_strategy->impl;
-
-    size_t strategy_count = aws_array_list_length(&chain_strategy->strategies);
-    for (size_t i = 0; i < strategy_count; ++i) {
-        struct aws_http_proxy_strategy *strategy = NULL;
-        if (aws_array_list_get_at(&chain_strategy->strategies, &strategy, i)) {
-            continue;
-        }
-
-        aws_http_proxy_strategy_release(strategy);
-    }
-
-    aws_array_list_clean_up(&chain_strategy->strategies);
-
-    aws_mem_release(chain_strategy->allocator, chain_strategy);
-}
-
-struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_chain(
-    struct aws_allocator *allocator,
-    struct aws_http_proxy_strategy_tunneling_chain_options *config) {
-
-    if (allocator == NULL || config == NULL) {
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        return NULL;
-    }
-
-    struct aws_http_proxy_strategy_tunneling_chain *chain_strategy =
-        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_strategy_tunneling_chain));
-    if (chain_strategy == NULL) {
-        return NULL;
-    }
-
-    chain_strategy->strategy_base.impl = chain_strategy;
-    chain_strategy->strategy_base.vtable = &s_tunneling_chain_strategy_vtable;
-    chain_strategy->strategy_base.proxy_connection_type = AWS_HPCT_HTTP_TUNNEL;
-    chain_strategy->allocator = allocator;
-
-    aws_ref_count_init(
-        &chain_strategy->strategy_base.ref_count,
-        &chain_strategy->strategy_base,
-        (aws_simple_completion_callback *)s_destroy_tunneling_chain_strategy);
-
-    if (aws_array_list_init_dynamic(
-            &chain_strategy->strategies, allocator, config->strategy_count, sizeof(struct aws_http_proxy_strategy *))) {
-        goto on_error;
-    }
-
-    for (size_t i = 0; i < config->strategy_count; ++i) {
-        struct aws_http_proxy_strategy *strategy = config->strategies[i];
-
-        if (aws_array_list_push_back(&chain_strategy->strategies, &strategy)) {
-            goto on_error;
-        }
-
-        aws_http_proxy_strategy_acquire(strategy);
-    }
-
-    return &chain_strategy->strategy_base;
-
-on_error:
-
-    aws_http_proxy_strategy_release(&chain_strategy->strategy_base);
-
-    return NULL;
 }
 
 /******************************************************************************************************************/
@@ -1127,7 +809,6 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_kerberos(
         &kerberos_strategy->strategy_base,
         (aws_simple_completion_callback *)s_destroy_tunneling_kerberos_strategy);
 
-
     kerberos_strategy->get_token = config->get_token;
     kerberos_strategy->get_token_user_data = config->get_token_user_data;
 
@@ -1140,7 +821,7 @@ struct aws_http_proxy_strategy_tunneling_ntlm {
     struct aws_allocator *allocator;
 
     aws_http_proxy_negotiation_get_token_sync_fn *get_token;
-    
+
     aws_http_proxy_negotiation_get_challenge_token_sync_fn *get_challenge_token;
 
     void *get_challenge_token_user_data;
@@ -1483,10 +1164,10 @@ done:
 
 static struct aws_http_proxy_negotiator_tunnelling_vtable
     s_tunneling_ntlm_proxy_credential_negotiator_tunneling_vtable = {
-    .on_incoming_body_callback = s_ntlm_on_incoming_body,
-    .on_incoming_headers_callback = s_ntlm_on_incoming_header_adaptive,
-    .on_status_callback = s_ntlm_on_connect_status,
-    .connect_request_transform = s_ntlm_credential_tunnel_transform_connect,
+        .on_incoming_body_callback = s_ntlm_on_incoming_body,
+        .on_incoming_headers_callback = s_ntlm_on_incoming_header_adaptive,
+        .on_status_callback = s_ntlm_on_connect_status,
+        .connect_request_transform = s_ntlm_credential_tunnel_transform_connect,
 };
 
 static void s_destroy_tunneling_ntlm_credential_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {
@@ -1569,7 +1250,6 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_ntlm_crede
     return &ntlm_credential_strategy->strategy_base;
 }
 
-
 /******************************************************************************************************************/
 
 #define PROXY_STRATEGY_MAX_ADAPTIVE_STRATEGIES 4
@@ -1590,7 +1270,7 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
     struct aws_http_proxy_strategy *kerberos_strategy = NULL;
     struct aws_http_proxy_strategy *ntlm_credential_strategy = NULL;
     struct aws_http_proxy_strategy *ntlm_strategy = NULL;
-    struct aws_http_proxy_strategy *adaptive_chain_strategy = NULL;
+    struct aws_http_proxy_strategy *adaptive_sequence_strategy = NULL;
 
     identity_strategy = aws_http_proxy_strategy_new_tunneling_one_time_identity(allocator);
     if (identity_strategy == NULL) {
@@ -1624,13 +1304,13 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
         strategies[strategy_count++] = ntlm_strategy;
     }
 
-    struct aws_http_proxy_strategy_tunneling_chain_options chain_config = {
+    struct aws_http_proxy_strategy_tunneling_sequence_options sequence_config = {
         .strategies = strategies,
         .strategy_count = strategy_count,
     };
 
-    adaptive_chain_strategy = aws_http_proxy_strategy_new_tunneling_chain(allocator, &chain_config);
-    if (adaptive_chain_strategy == NULL) {
+    adaptive_sequence_strategy = aws_http_proxy_strategy_new_tunneling_sequence(allocator, &sequence_config);
+    if (adaptive_sequence_strategy == NULL) {
         goto done;
     }
 
@@ -1641,9 +1321,336 @@ done:
     aws_http_proxy_strategy_release(ntlm_credential_strategy);
     aws_http_proxy_strategy_release(ntlm_strategy);
 
-    return adaptive_chain_strategy;
+    return adaptive_sequence_strategy;
 }
 
+/******************************************************************************************************************/
+
+struct aws_http_proxy_strategy_tunneling_sequence {
+    struct aws_allocator *allocator;
+
+    struct aws_array_list strategies;
+
+    struct aws_http_proxy_strategy strategy_base;
+};
+
+struct aws_http_proxy_negotiator_tunneling_sequence {
+    struct aws_allocator *allocator;
+
+    struct aws_array_list negotiators;
+    size_t current_negotiator_transform_index;
+    void *original_internal_proxy_user_data;
+    aws_http_proxy_negotiation_terminate_fn *original_negotiation_termination_callback;
+    aws_http_proxy_negotiation_http_request_forward_fn *original_negotiation_http_request_forward_callback;
+
+    struct aws_http_proxy_negotiator negotiator_base;
+};
+
+static void s_sequence_tunnel_iteration_termination_callback(
+    struct aws_http_message *message,
+    int error_code,
+    void *user_data) {
+
+    struct aws_http_proxy_negotiator *proxy_negotiator = user_data;
+    struct aws_http_proxy_negotiator_tunneling_sequence *sequence_negotiator = proxy_negotiator->impl;
+
+    AWS_LOGF_WARN(
+        AWS_LS_HTTP_PROXY_NEGOTIATION,
+        "(id=%p) Proxy negotiation step failed with error %d",
+        (void *)proxy_negotiator,
+        error_code);
+
+    int connection_error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE;
+    if (sequence_negotiator->current_negotiator_transform_index >=
+        aws_array_list_length(&sequence_negotiator->negotiators)) {
+        connection_error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED;
+    }
+
+    sequence_negotiator->original_negotiation_termination_callback(
+        message, connection_error_code, sequence_negotiator->original_internal_proxy_user_data);
+}
+
+static void s_sequence_tunnel_iteration_forward_callback(struct aws_http_message *message, void *user_data) {
+    struct aws_http_proxy_negotiator *proxy_negotiator = user_data;
+    struct aws_http_proxy_negotiator_tunneling_sequence *sequence_negotiator = proxy_negotiator->impl;
+
+    sequence_negotiator->original_negotiation_http_request_forward_callback(
+        message, sequence_negotiator->original_internal_proxy_user_data);
+}
+
+static void s_sequence_tunnel_try_next_negotiator(
+    struct aws_http_proxy_negotiator *proxy_negotiator,
+    struct aws_http_message *message) {
+    struct aws_http_proxy_negotiator_tunneling_sequence *sequence_negotiator = proxy_negotiator->impl;
+
+    size_t negotiator_count = aws_array_list_length(&sequence_negotiator->negotiators);
+    if (sequence_negotiator->current_negotiator_transform_index >= negotiator_count) {
+        goto on_error;
+    }
+
+    struct aws_http_proxy_negotiator *current_negotiator = NULL;
+    if (aws_array_list_get_at(
+            &sequence_negotiator->negotiators,
+            &current_negotiator,
+            sequence_negotiator->current_negotiator_transform_index++)) {
+        goto on_error;
+    }
+
+    current_negotiator->strategy_vtable.tunnelling_vtable->connect_request_transform(
+        current_negotiator,
+        message,
+        s_sequence_tunnel_iteration_termination_callback,
+        s_sequence_tunnel_iteration_forward_callback,
+        proxy_negotiator);
+
+    return;
+
+on_error:
+
+    sequence_negotiator->original_negotiation_termination_callback(
+        message, AWS_ERROR_HTTP_PROXY_CONNECT_FAILED, sequence_negotiator->original_internal_proxy_user_data);
+}
+
+static void s_sequence_tunnel_transform_connect(
+    struct aws_http_proxy_negotiator *proxy_negotiator,
+    struct aws_http_message *message,
+    aws_http_proxy_negotiation_terminate_fn *negotiation_termination_callback,
+    aws_http_proxy_negotiation_http_request_forward_fn *negotiation_http_request_forward_callback,
+    void *internal_proxy_user_data) {
+
+    struct aws_http_proxy_negotiator_tunneling_sequence *sequence_negotiator = proxy_negotiator->impl;
+
+    sequence_negotiator->original_internal_proxy_user_data = internal_proxy_user_data;
+    sequence_negotiator->original_negotiation_termination_callback = negotiation_termination_callback;
+    sequence_negotiator->original_negotiation_http_request_forward_callback = negotiation_http_request_forward_callback;
+
+    s_sequence_tunnel_try_next_negotiator(proxy_negotiator, message);
+}
+
+static int s_sequence_on_incoming_headers(
+    struct aws_http_proxy_negotiator *proxy_negotiator,
+    enum aws_http_header_block header_block,
+    const struct aws_http_header *header_array,
+    size_t num_headers) {
+
+    struct aws_http_proxy_negotiator_tunneling_sequence *sequence_negotiator = proxy_negotiator->impl;
+    size_t negotiator_count = aws_array_list_length(&sequence_negotiator->negotiators);
+    for (size_t i = 0; i < negotiator_count; ++i) {
+        struct aws_http_proxy_negotiator *negotiator = NULL;
+        if (aws_array_list_get_at(&sequence_negotiator->negotiators, &negotiator, i)) {
+            continue;
+        }
+
+        aws_http_proxy_negotiation_connect_on_incoming_headers_fn *on_incoming_headers =
+            negotiator->strategy_vtable.tunnelling_vtable->on_incoming_headers_callback;
+        if (on_incoming_headers != NULL) {
+            (*on_incoming_headers)(negotiator, header_block, header_array, num_headers);
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_sequence_on_connect_status(
+    struct aws_http_proxy_negotiator *proxy_negotiator,
+    enum aws_http_status_code status_code) {
+
+    struct aws_http_proxy_negotiator_tunneling_sequence *sequence_negotiator = proxy_negotiator->impl;
+    size_t negotiator_count = aws_array_list_length(&sequence_negotiator->negotiators);
+    for (size_t i = 0; i < negotiator_count; ++i) {
+        struct aws_http_proxy_negotiator *negotiator = NULL;
+        if (aws_array_list_get_at(&sequence_negotiator->negotiators, &negotiator, i)) {
+            continue;
+        }
+
+        aws_http_proxy_negotiator_connect_status_fn *on_status =
+            negotiator->strategy_vtable.tunnelling_vtable->on_status_callback;
+        if (on_status != NULL) {
+            (*on_status)(negotiator, status_code);
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_sequence_on_incoming_body(
+    struct aws_http_proxy_negotiator *proxy_negotiator,
+    const struct aws_byte_cursor *data) {
+
+    struct aws_http_proxy_negotiator_tunneling_sequence *sequence_negotiator = proxy_negotiator->impl;
+    size_t negotiator_count = aws_array_list_length(&sequence_negotiator->negotiators);
+    for (size_t i = 0; i < negotiator_count; ++i) {
+        struct aws_http_proxy_negotiator *negotiator = NULL;
+        if (aws_array_list_get_at(&sequence_negotiator->negotiators, &negotiator, i)) {
+            continue;
+        }
+
+        aws_http_proxy_negotiator_connect_on_incoming_body_fn *on_incoming_body =
+            negotiator->strategy_vtable.tunnelling_vtable->on_incoming_body_callback;
+        if (on_incoming_body != NULL) {
+            (*on_incoming_body)(negotiator, data);
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static struct aws_http_proxy_negotiator_tunnelling_vtable s_tunneling_sequence_proxy_negotiator_tunneling_vtable = {
+    .on_incoming_body_callback = s_sequence_on_incoming_body,
+    .on_incoming_headers_callback = s_sequence_on_incoming_headers,
+    .on_status_callback = s_sequence_on_connect_status,
+    .connect_request_transform = s_sequence_tunnel_transform_connect,
+};
+
+static void s_destroy_tunneling_sequence_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {
+    struct aws_http_proxy_negotiator_tunneling_sequence *sequence_negotiator = proxy_negotiator->impl;
+
+    size_t negotiator_count = aws_array_list_length(&sequence_negotiator->negotiators);
+    for (size_t i = 0; i < negotiator_count; ++i) {
+        struct aws_http_proxy_negotiator *negotiator = NULL;
+        if (aws_array_list_get_at(&sequence_negotiator->negotiators, &negotiator, i)) {
+            continue;
+        }
+
+        aws_http_proxy_negotiator_release(negotiator);
+    }
+
+    aws_array_list_clean_up(&sequence_negotiator->negotiators);
+
+    aws_mem_release(sequence_negotiator->allocator, sequence_negotiator);
+}
+
+static struct aws_http_proxy_negotiator *s_create_tunneling_sequence_negotiator(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    struct aws_allocator *allocator) {
+    if (proxy_strategy == NULL || allocator == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_negotiator_tunneling_sequence *sequence_negotiator =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_negotiator_tunneling_sequence));
+    if (sequence_negotiator == NULL) {
+        return NULL;
+    }
+
+    sequence_negotiator->allocator = allocator;
+    sequence_negotiator->negotiator_base.impl = sequence_negotiator;
+    aws_ref_count_init(
+        &sequence_negotiator->negotiator_base.ref_count,
+        &sequence_negotiator->negotiator_base,
+        (aws_simple_completion_callback *)s_destroy_tunneling_sequence_negotiator);
+
+    sequence_negotiator->negotiator_base.strategy_vtable.tunnelling_vtable =
+        &s_tunneling_sequence_proxy_negotiator_tunneling_vtable;
+
+    struct aws_http_proxy_strategy_tunneling_sequence *sequence_strategy = proxy_strategy->impl;
+    size_t strategy_count = aws_array_list_length(&sequence_strategy->strategies);
+
+    if (aws_array_list_init_dynamic(
+            &sequence_negotiator->negotiators, allocator, strategy_count, sizeof(struct aws_http_proxy_negotiator *))) {
+        goto on_error;
+    }
+
+    for (size_t i = 0; i < strategy_count; ++i) {
+        struct aws_http_proxy_strategy *strategy = NULL;
+        if (aws_array_list_get_at(&sequence_strategy->strategies, &strategy, i)) {
+            goto on_error;
+        }
+
+        struct aws_http_proxy_negotiator *negotiator = aws_http_proxy_strategy_create_negotiator(strategy, allocator);
+        if (negotiator == NULL) {
+            goto on_error;
+        }
+
+        if (aws_array_list_push_back(&sequence_negotiator->negotiators, &negotiator)) {
+            aws_http_proxy_negotiator_release(negotiator);
+            goto on_error;
+        }
+    }
+
+    return &sequence_negotiator->negotiator_base;
+
+on_error:
+
+    aws_http_proxy_negotiator_release(&sequence_negotiator->negotiator_base);
+
+    return NULL;
+}
+
+static struct aws_http_proxy_strategy_vtable s_tunneling_sequence_strategy_vtable = {
+    .create_negotiator = s_create_tunneling_sequence_negotiator,
+};
+
+static void s_destroy_tunneling_sequence_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
+    struct aws_http_proxy_strategy_tunneling_sequence *sequence_strategy = proxy_strategy->impl;
+
+    size_t strategy_count = aws_array_list_length(&sequence_strategy->strategies);
+    for (size_t i = 0; i < strategy_count; ++i) {
+        struct aws_http_proxy_strategy *strategy = NULL;
+        if (aws_array_list_get_at(&sequence_strategy->strategies, &strategy, i)) {
+            continue;
+        }
+
+        aws_http_proxy_strategy_release(strategy);
+    }
+
+    aws_array_list_clean_up(&sequence_strategy->strategies);
+
+    aws_mem_release(sequence_strategy->allocator, sequence_strategy);
+}
+
+struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_sequence(
+    struct aws_allocator *allocator,
+    struct aws_http_proxy_strategy_tunneling_sequence_options *config) {
+
+    if (allocator == NULL || config == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_strategy_tunneling_sequence *sequence_strategy =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_strategy_tunneling_sequence));
+    if (sequence_strategy == NULL) {
+        return NULL;
+    }
+
+    sequence_strategy->strategy_base.impl = sequence_strategy;
+    sequence_strategy->strategy_base.vtable = &s_tunneling_sequence_strategy_vtable;
+    sequence_strategy->strategy_base.proxy_connection_type = AWS_HPCT_HTTP_TUNNEL;
+    sequence_strategy->allocator = allocator;
+
+    aws_ref_count_init(
+        &sequence_strategy->strategy_base.ref_count,
+        &sequence_strategy->strategy_base,
+        (aws_simple_completion_callback *)s_destroy_tunneling_sequence_strategy);
+
+    if (aws_array_list_init_dynamic(
+            &sequence_strategy->strategies,
+            allocator,
+            config->strategy_count,
+            sizeof(struct aws_http_proxy_strategy *))) {
+        goto on_error;
+    }
+
+    for (size_t i = 0; i < config->strategy_count; ++i) {
+        struct aws_http_proxy_strategy *strategy = config->strategies[i];
+
+        if (aws_array_list_push_back(&sequence_strategy->strategies, &strategy)) {
+            goto on_error;
+        }
+
+        aws_http_proxy_strategy_acquire(strategy);
+    }
+
+    return &sequence_strategy->strategy_base;
+
+on_error:
+
+    aws_http_proxy_strategy_release(&sequence_strategy->strategy_base);
+
+    return NULL;
+}
 
 #if defined(_MSC_VER)
 #    pragma warning(pop)
