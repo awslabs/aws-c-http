@@ -176,12 +176,6 @@ struct aws_http_proxy_strategy_basic_auth_options {
     struct aws_byte_cursor password;
 };
 
-struct aws_http_proxy_strategy_tunneling_chain_options {
-    struct aws_http_proxy_strategy **strategies;
-
-    uint32_t strategy_count;
-};
-
 struct aws_http_proxy_strategy_tunneling_kerberos_options {
 
     aws_http_proxy_negotiation_get_token_sync_fn *get_token;
@@ -198,14 +192,20 @@ struct aws_http_proxy_strategy_tunneling_ntlm_options {
 
 struct aws_http_proxy_strategy_tunneling_adaptive_options {
     /*
-     * If non-null, will insert a kerberos proxy strategy into the adaptive chain
+     * If non-null, will insert a kerberos proxy strategy into the adaptive sequence
      */
     struct aws_http_proxy_strategy_tunneling_kerberos_options *kerberos_options;
 
     /*
-     * If non-null will insert an ntlm proxy strategy into the adaptive chain
+     * If non-null will insert an ntlm proxy strategy into the adaptive sequence
      */
     struct aws_http_proxy_strategy_tunneling_ntlm_options *ntlm_options;
+};
+
+struct aws_http_proxy_strategy_tunneling_sequence_options {
+    struct aws_http_proxy_strategy **strategies;
+
+    uint32_t strategy_count;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -266,7 +266,7 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_basic_auth(
 
 /**
  * Constructor for a tunnel-only proxy strategy that applies no changes to outbound CONNECT requests.  Intended to be
- * the first link in an adaptive chain for a tunneling proxy: first try a basic CONNECT, then based on the response,
+ * the first link in an adaptive sequence for a tunneling proxy: first try a basic CONNECT, then based on the response,
  * later links are allowed to make attempts.
  *
  * @param allocator memory allocator to use
@@ -287,17 +287,17 @@ AWS_HTTP_API
 struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_forwarding_identity(struct aws_allocator *allocator);
 
 /**
- * Constructor for a tunneling proxy strategy that contains a chain of sub-strategies which are tried
- * sequentially in order.
+ * Constructor for a tunneling proxy strategy that contains a set of sub-strategies which are tried
+ * sequentially in order.  Each strategy is tried against a new, fresh connection.
  *
  * @param allocator memory allocator to use
- * @param config chain configuration options
+ * @param config sequence configuration options
  * @return a new proxy strategy if successfully constructed, otherwise NULL
  */
 AWS_HTTP_API
-struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_chain(
+struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_sequence(
     struct aws_allocator *allocator,
-    struct aws_http_proxy_strategy_tunneling_chain_options *config);
+    struct aws_http_proxy_strategy_tunneling_sequence_options *config);
 
 /**
  * A constructor for a proxy strategy that performs kerberos authentication by adding the appropriate

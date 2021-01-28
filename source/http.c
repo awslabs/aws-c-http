@@ -121,6 +121,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_PROXY_STRATEGY_TOKEN_RETRIEVAL_FAILURE,
         "Failure in user code while retrieving proxy auth token"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE,
+        "Proxy connection attempt failed but the negotiation could be continued on a new connection"),
 };
 /* clang-format on */
 
@@ -139,6 +142,10 @@ static struct aws_log_subject_info s_log_subject_infos[] = {
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "connection-manager", "HTTP connection manager"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET, "websocket", "Websocket"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET_SETUP, "websocket-setup", "Websocket setup"),
+    DEFINE_LOG_SUBJECT_INFO(
+        AWS_LS_HTTP_PROXY_NEGOTIATION,
+        "proxy-negotiation",
+        "Negotiating an http connection with a proxy server"),
 };
 
 static struct aws_log_subject_info_list s_log_subject_list = {

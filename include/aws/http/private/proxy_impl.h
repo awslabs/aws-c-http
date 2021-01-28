@@ -9,6 +9,8 @@
 #include <aws/http/http.h>
 
 #include <aws/http/connection.h>
+#include <aws/http/status_code.h>
+#include <aws/io/socket.h>
 
 struct aws_http_connection_manager_options;
 struct aws_http_message;
@@ -60,12 +62,20 @@ struct aws_http_proxy_config {
 struct aws_http_proxy_user_data {
     struct aws_allocator *allocator;
 
+    /*
+     * dynamic proxy connection resolution state
+     */
     enum aws_proxy_bootstrap_state state;
     int error_code;
+    enum aws_http_status_code connect_status_code;
     struct aws_http_connection *connection;
     struct aws_http_message *connect_request;
     struct aws_http_stream *connect_stream;
+    struct aws_http_proxy_negotiator *proxy_negotiator;
 
+    /*
+     * Cached original connect options
+     */
     struct aws_string *original_host;
     uint16_t original_port;
     aws_http_on_client_connection_setup_fn *original_on_setup;
@@ -73,9 +83,12 @@ struct aws_http_proxy_user_data {
     void *original_user_data;
 
     struct aws_tls_connection_options *tls_options;
+    struct aws_client_bootstrap *bootstrap;
+    struct aws_socket_options socket_options;
+    bool manual_window_management;
+    size_t initial_window_size;
 
     struct aws_http_proxy_config *proxy_config;
-    struct aws_http_proxy_negotiator *proxy_negotiator;
 };
 
 struct aws_http_proxy_system_vtable {
@@ -112,6 +125,11 @@ AWS_HTTP_API
 struct aws_http_proxy_config *aws_http_proxy_config_new_from_manager_options(
     struct aws_allocator *allocator,
     const struct aws_http_connection_manager_options *options);
+
+AWS_HTTP_API
+struct aws_http_proxy_config *aws_http_proxy_config_new_clone(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_config *proxy_config);
 
 AWS_HTTP_API
 void aws_http_proxy_config_destroy(struct aws_http_proxy_config *config);
