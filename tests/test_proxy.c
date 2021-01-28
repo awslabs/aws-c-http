@@ -791,7 +791,7 @@ static int s_test_http_proxy_adaptive_identity_success(struct aws_allocator *all
 
 AWS_TEST_CASE(test_http_proxy_adaptive_identity_success, s_test_http_proxy_adaptive_identity_success);
 
-AWS_STATIC_STRING_FROM_LITERAL(s_unauthorized_response, "HTTP/1.0 401 Unauthorized\r\n\r\n");
+AWS_STATIC_STRING_FROM_LITERAL(s_unauthorized_response, "HTTP/1.0 407 Unauthorized\r\n\r\n");
 AWS_STATIC_STRING_FROM_LITERAL(s_good_response, "HTTP/1.0 200 Connection established\r\nconnection: close\r\n\r\n");
 
 static int s_test_http_proxy_adaptive_kerberos_success(struct aws_allocator *allocator, void *ctx) {

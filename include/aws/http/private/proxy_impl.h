@@ -144,6 +144,14 @@ void aws_http_proxy_options_init_from_config(
     const struct aws_http_proxy_config *config);
 
 /**
+ * Checks if tunneling proxy negotiation should continue to try and connect
+ * @param proxy_negotiator negotiator to query
+ * @return true if another connect request should be attempted, false otherwise
+ */
+AWS_HTTP_API
+bool aws_http_proxy_negotiator_should_retry(struct aws_http_proxy_negotiator *proxy_negotiator);
+
+/**
  * Constructor for a tunnel-only proxy strategy that applies no changes to outbound CONNECT requests.  Intended to be
  * the first link in an adaptive sequence for a tunneling proxy: first try a basic CONNECT, then based on the response,
  * later links are allowed to make attempts.

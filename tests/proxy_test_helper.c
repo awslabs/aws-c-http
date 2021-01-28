@@ -403,7 +403,7 @@ int proxy_tester_send_connect_response(struct proxy_tester *tester) {
         response_string = (const char *)response->bytes;
 
     } else if (tester->failure_type == PTFT_CONNECT_REQUEST) {
-        response_string = "HTTP/1.0 401 Unauthorized\r\n\r\n";
+        response_string = "HTTP/1.0 407 Unauthorized\r\n\r\n";
     } else {
         /* adding close here because it's an edge case we need to exercise. The desired behavior is that it has
          * absolutely no effect. */

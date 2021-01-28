@@ -286,11 +286,23 @@ static struct aws_string *s_mock_aws_http_proxy_negotiation_kerberos_get_token_s
     return aws_string_new_from_string(allocator, s_mock_kerberos_token_value);
 }
 
-AWS_STATIC_STRING_FROM_LITERAL(s_mock_ntlm_token_value, "NTLM_RESPONSE");
+AWS_STATIC_STRING_FROM_LITERAL(s_mock_ntlm_challenge_token_value, "NTLM_RESPONSE");
 
 static struct aws_string *s_mock_aws_http_proxy_negotiation_ntlm_get_challenge_token_sync_fn(
     void *user_data,
     const struct aws_byte_cursor *challenge_value,
+    int *out_error_code) {
+
+    struct aws_allocator *allocator = user_data;
+
+    *out_error_code = AWS_ERROR_SUCCESS;
+    return aws_string_new_from_string(allocator, s_mock_ntlm_challenge_token_value);
+}
+
+AWS_STATIC_STRING_FROM_LITERAL(s_mock_ntlm_token_value, "NTLM_TOKEN");
+
+static struct aws_string *s_mock_aws_http_proxy_negotiation_ntlm_get_token_sync_fn(
+    void *user_data,
     int *out_error_code) {
 
     struct aws_allocator *allocator = user_data;
@@ -309,6 +321,7 @@ static int s_test_proxy_sequential_negotiation(struct aws_allocator *allocator, 
     struct aws_http_proxy_strategy_tunneling_ntlm_options ntlm_config = {
         .get_challenge_token = s_mock_aws_http_proxy_negotiation_ntlm_get_challenge_token_sync_fn,
         .get_challenge_token_user_data = allocator,
+        .get_token = s_mock_aws_http_proxy_negotiation_ntlm_get_token_sync_fn,
     };
 
     struct aws_http_proxy_strategy_tunneling_adaptive_options adaptive_config = {
