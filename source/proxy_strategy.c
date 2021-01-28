@@ -566,7 +566,6 @@ struct aws_http_proxy_negotiator_tunneling_chain {
     void *original_internal_proxy_user_data;
     aws_http_proxy_negotiation_terminate_fn *original_negotiation_termination_callback;
     aws_http_proxy_negotiation_http_request_forward_fn *original_negotiation_http_request_forward_callback;
-
     struct aws_http_proxy_negotiator negotiator_base;
 };
 
@@ -954,7 +953,6 @@ static void s_kerberos_tunnel_transform_connect(
     aws_http_proxy_negotiation_terminate_fn *negotiation_termination_callback,
     aws_http_proxy_negotiation_http_request_forward_fn *negotiation_http_request_forward_callback,
     void *internal_proxy_user_data) {
-
     struct aws_http_proxy_negotiator_tunneling_kerberos *kerberos_negotiator = proxy_negotiator->impl;
     struct aws_http_proxy_strategy_tunneling_kerberos *kerberos_strategy = kerberos_negotiator->strategy->impl;
 
@@ -1129,6 +1127,7 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_kerberos(
         &kerberos_strategy->strategy_base,
         (aws_simple_completion_callback *)s_destroy_tunneling_kerberos_strategy);
 
+
     kerberos_strategy->get_token = config->get_token;
     kerberos_strategy->get_token_user_data = config->get_token_user_data;
 
@@ -1140,6 +1139,8 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_kerberos(
 struct aws_http_proxy_strategy_tunneling_ntlm {
     struct aws_allocator *allocator;
 
+    aws_http_proxy_negotiation_get_token_sync_fn *get_token;
+    
     aws_http_proxy_negotiation_get_challenge_token_sync_fn *get_challenge_token;
 
     void *get_challenge_token_user_data;
@@ -1153,6 +1154,8 @@ struct aws_http_proxy_negotiator_tunneling_ntlm {
     struct aws_http_proxy_strategy *strategy;
 
     enum proxy_negotiator_connect_state connect_state;
+
+    struct aws_string *token;
 
     struct aws_string *challenge_token;
 
@@ -1422,10 +1425,156 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_ntlm(
 
     return &ntlm_strategy->strategy_base;
 }
+/******************************************************************************************************/
+
+static void s_ntlm_credential_tunnel_transform_connect(
+    struct aws_http_proxy_negotiator *proxy_negotiator,
+    struct aws_http_message *message,
+    aws_http_proxy_negotiation_terminate_fn *negotiation_termination_callback,
+    aws_http_proxy_negotiation_http_request_forward_fn *negotiation_http_request_forward_callback,
+    void *internal_proxy_user_data) {
+
+    struct aws_http_proxy_negotiator_tunneling_ntlm *ntlm_credential_negotiator = proxy_negotiator->impl;
+    struct aws_http_proxy_strategy_tunneling_ntlm *ntlm_credential_strategy =
+        ntlm_credential_negotiator->strategy->impl;
+
+    int result = AWS_OP_ERR;
+    int error_code = AWS_ERROR_SUCCESS;
+    struct aws_string *token = NULL;
+
+    if (ntlm_credential_negotiator->connect_state == AWS_PNCS_FAILURE) {
+        error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED;
+        goto done;
+    }
+
+    if (ntlm_credential_negotiator->connect_state != AWS_PNCS_READY) {
+        error_code = AWS_ERROR_INVALID_STATE;
+        goto done;
+    }
+
+    ntlm_credential_negotiator->connect_state = AWS_PNCS_IN_PROGRESS;
+    token = ntlm_credential_strategy->get_token(ntlm_credential_strategy->get_challenge_token_user_data, &error_code);
+
+    if (token == NULL || error_code != AWS_ERROR_SUCCESS) {
+        goto done;
+    }
+
+    /*transform the header with proxy authenticate:Negotiate and kerberos token*/
+    if (s_add_ntlm_proxy_usertoken_authentication_header(
+            ntlm_credential_negotiator->allocator, message, aws_byte_cursor_from_string(token))) {
+        error_code = aws_last_error();
+        goto done;
+    }
+
+    ntlm_credential_negotiator->connect_state = AWS_PNCS_IN_PROGRESS;
+    result = AWS_OP_SUCCESS;
+
+done:
+
+    if (result != AWS_OP_SUCCESS) {
+        if (error_code == AWS_ERROR_SUCCESS) {
+            error_code = AWS_ERROR_UNKNOWN;
+        }
+        negotiation_termination_callback(message, error_code, internal_proxy_user_data);
+    } else {
+        negotiation_http_request_forward_callback(message, internal_proxy_user_data);
+    }
+
+    aws_string_destroy(token);
+}
+
+static struct aws_http_proxy_negotiator_tunnelling_vtable
+    s_tunneling_ntlm_proxy_credential_negotiator_tunneling_vtable = {
+    .on_incoming_body_callback = s_ntlm_on_incoming_body,
+    .on_incoming_headers_callback = s_ntlm_on_incoming_header_adaptive,
+    .on_status_callback = s_ntlm_on_connect_status,
+    .connect_request_transform = s_ntlm_credential_tunnel_transform_connect,
+};
+
+static void s_destroy_tunneling_ntlm_credential_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {
+    struct aws_http_proxy_negotiator_tunneling_ntlm *ntlm_credential_negotiator = proxy_negotiator->impl;
+
+    aws_string_destroy(ntlm_credential_negotiator->challenge_token);
+    aws_http_proxy_strategy_release(ntlm_credential_negotiator->strategy);
+
+    aws_mem_release(ntlm_credential_negotiator->allocator, ntlm_credential_negotiator);
+}
+
+static struct aws_http_proxy_negotiator *s_create_tunneling_ntlm_credential_negotiator(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    struct aws_allocator *allocator) {
+    if (proxy_strategy == NULL || allocator == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_negotiator_tunneling_ntlm *ntlm_credential_negotiator =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_negotiator_tunneling_ntlm));
+    if (ntlm_credential_negotiator == NULL) {
+        return NULL;
+    }
+
+    ntlm_credential_negotiator->allocator = allocator;
+    ntlm_credential_negotiator->negotiator_base.impl = ntlm_credential_negotiator;
+    aws_ref_count_init(
+        &ntlm_credential_negotiator->negotiator_base.ref_count,
+        &ntlm_credential_negotiator->negotiator_base,
+        (aws_simple_completion_callback *)s_destroy_tunneling_ntlm_credential_negotiator);
+
+    ntlm_credential_negotiator->negotiator_base.strategy_vtable.tunnelling_vtable =
+        &s_tunneling_ntlm_proxy_credential_negotiator_tunneling_vtable;
+
+    ntlm_credential_negotiator->strategy = aws_http_proxy_strategy_acquire(proxy_strategy);
+
+    return &ntlm_credential_negotiator->negotiator_base;
+}
+
+static struct aws_http_proxy_strategy_vtable s_tunneling_ntlm_credential_strategy_vtable = {
+    .create_negotiator = s_create_tunneling_ntlm_credential_negotiator,
+};
+
+static void s_destroy_tunneling_ntlm_credential_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
+    struct aws_http_proxy_strategy_tunneling_ntlm *ntlm_credential_strategy = proxy_strategy->impl;
+
+    aws_mem_release(ntlm_credential_strategy->allocator, ntlm_credential_strategy);
+}
+
+struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_ntlm_credential(
+    struct aws_allocator *allocator,
+    struct aws_http_proxy_strategy_tunneling_ntlm_options *config) {
+
+    if (allocator == NULL || config == NULL || config->get_token == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_strategy_tunneling_ntlm *ntlm_credential_strategy =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_strategy_tunneling_ntlm));
+    if (ntlm_credential_strategy == NULL) {
+        return NULL;
+    }
+
+    ntlm_credential_strategy->strategy_base.impl = ntlm_credential_strategy;
+    ntlm_credential_strategy->strategy_base.vtable = &s_tunneling_ntlm_credential_strategy_vtable;
+    ntlm_credential_strategy->strategy_base.proxy_connection_type = AWS_HPCT_HTTP_TUNNEL;
+
+    ntlm_credential_strategy->allocator = allocator;
+
+    aws_ref_count_init(
+        &ntlm_credential_strategy->strategy_base.ref_count,
+        &ntlm_credential_strategy->strategy_base,
+        (aws_simple_completion_callback *)s_destroy_tunneling_ntlm_credential_strategy);
+
+    ntlm_credential_strategy->get_token = config->get_token;
+    ntlm_credential_strategy->get_challenge_token_user_data = config->get_challenge_token_user_data;
+
+    return &ntlm_credential_strategy->strategy_base;
+}
+
 
 /******************************************************************************************************************/
 
-#define PROXY_STRATEGY_MAX_ADAPTIVE_STRATEGIES 3
+#define PROXY_STRATEGY_MAX_ADAPTIVE_STRATEGIES 4
 
 struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
     struct aws_allocator *allocator,
@@ -1439,16 +1588,17 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
     struct aws_http_proxy_strategy *strategies[PROXY_STRATEGY_MAX_ADAPTIVE_STRATEGIES];
 
     uint32_t strategy_count = 0;
-    struct aws_http_proxy_strategy *identity_strategy = NULL;
+    /*struct aws_http_proxy_strategy *identity_strategy = NULL;*/
     struct aws_http_proxy_strategy *kerberos_strategy = NULL;
+    struct aws_http_proxy_strategy *ntlm_credential_strategy = NULL;
     struct aws_http_proxy_strategy *ntlm_strategy = NULL;
     struct aws_http_proxy_strategy *adaptive_chain_strategy = NULL;
 
-    identity_strategy = aws_http_proxy_strategy_new_tunneling_one_time_identity(allocator);
+    /*identity_strategy = aws_http_proxy_strategy_new_tunneling_one_time_identity(allocator);
     if (identity_strategy == NULL) {
         goto done;
     }
-    strategies[strategy_count++] = identity_strategy;
+    strategies[strategy_count++] = identity_strategy;*/
 
     if (config->kerberos_options != NULL) {
         kerberos_strategy = aws_http_proxy_strategy_new_tunneling_kerberos(allocator, config->kerberos_options);
@@ -1458,6 +1608,18 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
 
         strategies[strategy_count++] = kerberos_strategy;
     }
+
+    if (config->ntlm_options != NULL) {
+        ntlm_credential_strategy =
+            aws_http_proxy_strategy_new_tunneling_ntlm_credential(allocator, config->ntlm_options);
+        if (ntlm_credential_strategy == NULL) {
+            goto done;
+        }
+
+        strategies[strategy_count++] = ntlm_credential_strategy;
+    }
+
+    
 
     if (config->ntlm_options != NULL) {
         ntlm_strategy = aws_http_proxy_strategy_new_tunneling_ntlm(allocator, config->ntlm_options);
@@ -1480,12 +1642,14 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
 
 done:
 
-    aws_http_proxy_strategy_release(identity_strategy);
+  /*  aws_http_proxy_strategy_release(identity_strategy);*/
     aws_http_proxy_strategy_release(kerberos_strategy);
+    aws_http_proxy_strategy_release(ntlm_credential_strategy);
     aws_http_proxy_strategy_release(ntlm_strategy);
 
     return adaptive_chain_strategy;
 }
+
 
 #if defined(_MSC_VER)
 #    pragma warning(pop)

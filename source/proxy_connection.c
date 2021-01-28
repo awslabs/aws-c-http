@@ -830,6 +830,7 @@ static struct aws_http_proxy_config *s_aws_http_proxy_config_new(
     config->connection_type = override_proxy_connection_type;
 
     if (aws_byte_buf_init_copy_from_cursor(&config->host, allocator, proxy_options->host)) {
+
         goto on_error;
     }
 
