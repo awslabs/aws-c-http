@@ -1572,12 +1572,6 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_ntlm_crede
 }
 
 
-
-
-
-
-
-
 /******************************************************************************************************************/
 
 #define PROXY_STRATEGY_MAX_ADAPTIVE_STRATEGIES 4
@@ -1594,17 +1588,17 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
     struct aws_http_proxy_strategy *strategies[PROXY_STRATEGY_MAX_ADAPTIVE_STRATEGIES];
 
     uint32_t strategy_count = 0;
-    struct aws_http_proxy_strategy *identity_strategy = NULL;
+    /*struct aws_http_proxy_strategy *identity_strategy = NULL;*/
     struct aws_http_proxy_strategy *kerberos_strategy = NULL;
     struct aws_http_proxy_strategy *ntlm_credential_strategy = NULL;
     struct aws_http_proxy_strategy *ntlm_strategy = NULL;
     struct aws_http_proxy_strategy *adaptive_chain_strategy = NULL;
 
-    identity_strategy = aws_http_proxy_strategy_new_tunneling_one_time_identity(allocator);
+    /*identity_strategy = aws_http_proxy_strategy_new_tunneling_one_time_identity(allocator);
     if (identity_strategy == NULL) {
         goto done;
     }
-    strategies[strategy_count++] = identity_strategy;
+    strategies[strategy_count++] = identity_strategy;*/
 
     if (config->kerberos_options != NULL) {
         kerberos_strategy = aws_http_proxy_strategy_new_tunneling_kerberos(allocator, config->kerberos_options);
@@ -1648,13 +1642,14 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
 
 done:
 
-    aws_http_proxy_strategy_release(identity_strategy);
+  /*  aws_http_proxy_strategy_release(identity_strategy);*/
     aws_http_proxy_strategy_release(kerberos_strategy);
     aws_http_proxy_strategy_release(ntlm_credential_strategy);
     aws_http_proxy_strategy_release(ntlm_strategy);
 
     return adaptive_chain_strategy;
 }
+
 
 #if defined(_MSC_VER)
 #    pragma warning(pop)
