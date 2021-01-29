@@ -611,6 +611,11 @@ on_error:
  * of upgrading with TLS on success
  */
 static int s_make_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
+    if (user_data->connect_request != NULL) {
+        aws_http_message_destroy(user_data->connect_request);
+        user_data->connect_request = NULL;
+    }
+
     user_data->connect_request = s_build_proxy_connect_request(user_data);
     if (user_data->connect_request == NULL) {
         return AWS_OP_ERR;
