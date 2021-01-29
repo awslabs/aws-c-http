@@ -9,6 +9,7 @@
 #include <aws/http/http.h>
 
 #include <aws/http/connection.h>
+#include <aws/http/proxy_strategy.h>
 #include <aws/http/status_code.h>
 #include <aws/io/socket.h>
 
@@ -149,7 +150,8 @@ void aws_http_proxy_options_init_from_config(
  * @return true if another connect request should be attempted, false otherwise
  */
 AWS_HTTP_API
-bool aws_http_proxy_negotiator_should_retry(struct aws_http_proxy_negotiator *proxy_negotiator);
+enum aws_http_proxy_negotiation_retry_directive aws_http_proxy_negotiator_get_retry_directive(
+    struct aws_http_proxy_negotiator *proxy_negotiator);
 
 /**
  * Constructor for a tunnel-only proxy strategy that applies no changes to outbound CONNECT requests.  Intended to be

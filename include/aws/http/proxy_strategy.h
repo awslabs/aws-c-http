@@ -101,7 +101,13 @@ typedef int(aws_http_proxy_negotiator_connect_on_incoming_body_fn)(
     struct aws_http_proxy_negotiator *proxy_negotiator,
     const struct aws_byte_cursor *data);
 
-typedef bool(aws_http_proxy_negotiator_should_retry_fn)(struct aws_http_proxy_negotiator *proxy_negotiator);
+enum aws_http_proxy_negotiation_retry_directive {
+    AWS_HPNRD_STOP,
+    AWS_HPNRD_NEW_CONNECTION,
+    AWS_HPNRD_CURRENT_CONNECTION,
+};
+
+typedef enum aws_http_proxy_negotiation_retry_directive(aws_http_proxy_negotiator_get_retry_directive_fn)(struct aws_http_proxy_negotiator *proxy_negotiator);
 
 /**
  * Vtable for forwarding-based proxy negotiators
@@ -120,7 +126,7 @@ struct aws_http_proxy_negotiator_tunnelling_vtable {
     aws_http_proxy_negotiator_connect_status_fn *on_status_callback;
     aws_http_proxy_negotiator_connect_on_incoming_body_fn *on_incoming_body_callback;
 
-    aws_http_proxy_negotiator_should_retry_fn *should_retry;
+    aws_http_proxy_negotiator_get_retry_directive_fn *get_retry_directive;
 };
 
 /*

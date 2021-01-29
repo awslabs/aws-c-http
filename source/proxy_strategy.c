@@ -40,14 +40,15 @@ struct aws_http_proxy_negotiator *aws_http_proxy_strategy_create_negotiator(
     return strategy->vtable->create_negotiator(strategy, allocator);
 }
 
-bool aws_http_proxy_negotiator_should_retry(struct aws_http_proxy_negotiator *proxy_negotiator) {
+enum aws_http_proxy_negotiation_retry_directive aws_http_proxy_negotiator_get_retry_directive(
+    struct aws_http_proxy_negotiator *proxy_negotiator) {
     if (proxy_negotiator != NULL) {
-        if (proxy_negotiator->strategy_vtable.tunnelling_vtable->should_retry != NULL) {
-            return proxy_negotiator->strategy_vtable.tunnelling_vtable->should_retry(proxy_negotiator);
+        if (proxy_negotiator->strategy_vtable.tunnelling_vtable->get_retry_directive != NULL) {
+            return proxy_negotiator->strategy_vtable.tunnelling_vtable->get_retry_directive(proxy_negotiator);
         }
     }
 
-    return false;
+    return AWS_HPNRD_STOP;
 }
 
 struct aws_http_proxy_strategy *aws_http_proxy_strategy_acquire(struct aws_http_proxy_strategy *proxy_strategy) {
@@ -1028,11 +1029,19 @@ static int s_ntlm_on_incoming_body(
     return AWS_OP_SUCCESS;
 }
 
+static enum aws_http_proxy_negotiation_retry_directive s_ntlm_tunnel_get_retry_directive(
+    struct aws_http_proxy_negotiator *proxy_negotiator) {
+    (void)proxy_negotiator;
+
+    return AWS_HPNRD_CURRENT_CONNECTION;
+}
+
 static struct aws_http_proxy_negotiator_tunnelling_vtable s_tunneling_ntlm_proxy_negotiator_tunneling_vtable = {
     .on_incoming_body_callback = s_ntlm_on_incoming_body,
     .on_incoming_headers_callback = s_ntlm_on_incoming_header_adaptive,
     .on_status_callback = s_ntlm_on_connect_status,
     .connect_request_transform = s_ntlm_tunnel_transform_connect,
+    .get_retry_directive = s_ntlm_tunnel_get_retry_directive,
 };
 
 static void s_destroy_tunneling_ntlm_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {
@@ -1505,11 +1514,28 @@ static int s_sequence_on_incoming_body(
     return AWS_OP_SUCCESS;
 }
 
-static bool s_sequence_should_retry(struct aws_http_proxy_negotiator *proxy_negotiator) {
+static enum aws_http_proxy_negotiation_retry_directive s_sequence_get_retry_directive(
+    struct aws_http_proxy_negotiator *proxy_negotiator) {
     struct aws_http_proxy_negotiator_tunneling_sequence *sequence_negotiator = proxy_negotiator->impl;
 
-    return sequence_negotiator->current_negotiator_transform_index <
-           aws_array_list_length(&sequence_negotiator->negotiators);
+    if (sequence_negotiator->current_negotiator_transform_index <
+        aws_array_list_length(&sequence_negotiator->negotiators)) {
+        struct aws_http_proxy_negotiator *next_negotiator = NULL;
+        aws_array_list_get_at(
+            &sequence_negotiator->negotiators,
+            &next_negotiator,
+            sequence_negotiator->current_negotiator_transform_index);
+
+        enum aws_http_proxy_negotiation_retry_directive next_negotiator_directive =
+            aws_http_proxy_negotiator_get_retry_directive(next_negotiator);
+        if (next_negotiator_directive == AWS_HPNRD_CURRENT_CONNECTION) {
+            return AWS_HPNRD_CURRENT_CONNECTION;
+        } else {
+            return AWS_HPNRD_NEW_CONNECTION;
+        }
+    }
+
+    return AWS_HPNRD_STOP;
 }
 
 static struct aws_http_proxy_negotiator_tunnelling_vtable s_tunneling_sequence_proxy_negotiator_tunneling_vtable = {
@@ -1517,7 +1543,7 @@ static struct aws_http_proxy_negotiator_tunnelling_vtable s_tunneling_sequence_p
     .on_incoming_headers_callback = s_sequence_on_incoming_headers,
     .on_status_callback = s_sequence_on_connect_status,
     .connect_request_transform = s_sequence_tunnel_transform_connect,
-    .should_retry = s_sequence_should_retry,
+    .get_retry_directive = s_sequence_get_retry_directive,
 };
 
 static void s_destroy_tunneling_sequence_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {

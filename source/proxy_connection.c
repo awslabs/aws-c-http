@@ -478,14 +478,22 @@ static void s_aws_http_on_stream_complete_tunnel_proxy(
 
     if (context->error_code != AWS_ERROR_SUCCESS) {
         context->error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED;
-        if (context->connect_status_code == AWS_HTTP_STATUS_CODE_407_PROXY_AUTHENTICATION_REQUIRED &&
-            aws_http_proxy_negotiator_should_retry(context->proxy_negotiator)) {
-            struct aws_http_proxy_user_data *new_context =
-                aws_http_proxy_user_data_new_reset_clone(context->allocator, context);
-            if (new_context != NULL && s_create_tunneling_connection(new_context) == AWS_OP_SUCCESS) {
-                context->original_on_shutdown = NULL;
-                context->original_on_setup = NULL;
-                context->error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE;
+        if (context->connect_status_code == AWS_HTTP_STATUS_CODE_407_PROXY_AUTHENTICATION_REQUIRED) {
+            enum aws_http_proxy_negotiation_retry_directive retry_directive =
+                aws_http_proxy_negotiator_get_retry_directive(context->proxy_negotiator);
+
+            if (retry_directive == AWS_HPNRD_NEW_CONNECTION) {
+                struct aws_http_proxy_user_data *new_context =
+                    aws_http_proxy_user_data_new_reset_clone(context->allocator, context);
+                if (new_context != NULL && s_create_tunneling_connection(new_context) == AWS_OP_SUCCESS) {
+                    context->original_on_shutdown = NULL;
+                    context->original_on_setup = NULL;
+                    context->error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE;
+                }
+            } else if (retry_directive == AWS_HPNRD_CURRENT_CONNECTION) {
+                if (s_make_proxy_connect_request(context) == AWS_OP_SUCCESS) {
+                    return;
+                }
             }
         }
 
