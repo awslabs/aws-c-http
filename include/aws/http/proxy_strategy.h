@@ -107,7 +107,8 @@ enum aws_http_proxy_negotiation_retry_directive {
     AWS_HPNRD_CURRENT_CONNECTION,
 };
 
-typedef enum aws_http_proxy_negotiation_retry_directive(aws_http_proxy_negotiator_get_retry_directive_fn)(struct aws_http_proxy_negotiator *proxy_negotiator);
+typedef enum aws_http_proxy_negotiation_retry_directive(aws_http_proxy_negotiator_get_retry_directive_fn)(
+    struct aws_http_proxy_negotiator *proxy_negotiator);
 
 /**
  * Vtable for forwarding-based proxy negotiators

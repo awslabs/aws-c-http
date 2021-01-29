@@ -491,6 +491,7 @@ static void s_aws_http_on_stream_complete_tunnel_proxy(
                     context->error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE;
                 }
             } else if (retry_directive == AWS_HPNRD_CURRENT_CONNECTION) {
+                context->error_code = AWS_ERROR_SUCCESS;
                 if (s_make_proxy_connect_request(context) == AWS_OP_SUCCESS) {
                     return;
                 }
