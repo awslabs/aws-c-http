@@ -130,6 +130,17 @@ struct aws_http_proxy_negotiator_tunnelling_vtable {
     aws_http_proxy_negotiator_get_retry_directive_fn *get_retry_directive;
 };
 
+typedef int(aws_socks5_proxy_append_supported_authentication_codes_fn)(
+    struct aws_http_proxy_negotiator *proxy_negotiator,
+    struct aws_byte_buf *authentication_codes);
+
+/**
+ * vtable for socks5 proxy negotiators
+ */
+struct aws_http_proxy_negotiator_socks5_vtable {
+    aws_socks5_proxy_append_supported_authentication_codes_fn *append_supported_authentication_codes;
+};
+
 /*
  * Base definition of a proxy negotiator.
  *
@@ -145,7 +156,7 @@ struct aws_http_proxy_negotiator_tunnelling_vtable {
  * (2) Forwarding - In a forwarding proxy connection, the forward_request_transform is invoked on every request sent out
  * on the connection.
  *
- * (3) Socks5 - not yet supported
+ * (3) Socks5 - wip
  */
 struct aws_http_proxy_negotiator {
     struct aws_ref_count ref_count;
@@ -155,6 +166,7 @@ struct aws_http_proxy_negotiator {
     union {
         struct aws_http_proxy_negotiator_forwarding_vtable *forwarding_vtable;
         struct aws_http_proxy_negotiator_tunnelling_vtable *tunnelling_vtable;
+        struct aws_http_proxy_negotiator_socks5_vtable *socks5_vtable;
     } strategy_vtable;
 };
 
@@ -290,6 +302,10 @@ AWS_HTTP_API
 struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
     struct aws_allocator *allocator,
     struct aws_http_proxy_strategy_tunneling_adaptive_options *config);
+
+AWS_HTTP_API
+struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_socks5_no_auth(struct aws_allocator *allocator);
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_PROXY_STRATEGY_H */

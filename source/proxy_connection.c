@@ -901,6 +901,30 @@ static enum aws_http_proxy_connection_type s_determine_proxy_connection_type(
     }
 }
 
+static int s_create_socks5_connection(struct aws_http_proxy_user_data *user_data) {
+    (void)user_data;
+
+    return AWS_OP_ERR;
+}
+
+static int s_aws_http_client_connect_via_socks5(const struct aws_http_client_connection_options *options) {
+    AWS_FATAL_ASSERT(options->proxy_options != NULL);
+
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_CONNECTION,
+        "(STATIC) Connecting to \"" PRInSTR "\" through a tunnel via SOCKS5 proxy \"" PRInSTR "\"",
+        AWS_BYTE_CURSOR_PRI(options->host_name),
+        AWS_BYTE_CURSOR_PRI(options->proxy_options->host));
+
+    /* Create a wrapper user data that contains all proxy-related information, state, and user-facing callbacks */
+    struct aws_http_proxy_user_data *user_data = aws_http_proxy_user_data_new(options->allocator, options);
+    if (user_data == NULL) {
+        return AWS_OP_ERR;
+    }
+
+    return s_create_socks5_connection(user_data);
+}
+
 /*
  * Dispatches a proxy-enabled connection request to the appropriate top-level connection function
  */
@@ -918,6 +942,9 @@ int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_op
 
         case AWS_HPCT_HTTP_TUNNEL:
             return s_aws_http_client_connect_via_tunneling_proxy(options);
+
+        case AWS_HPCT_SOCKS5:
+            return s_aws_http_client_connect_via_socks5(options);
 
         default:
             return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
@@ -1078,10 +1105,6 @@ int aws_http_options_validate_proxy_configuration(const struct aws_http_client_c
     }
 
     enum aws_http_proxy_connection_type proxy_type = options->proxy_options->connection_type;
-    if (proxy_type == AWS_HPCT_SOCKS5) {
-        return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
-    }
-
     if (proxy_type == AWS_HPCT_HTTP_FORWARD && options->tls_options != NULL) {
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }

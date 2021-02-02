@@ -876,6 +876,83 @@ static int s_validate_http_client_connection_options(const struct aws_http_clien
     return AWS_OP_SUCCESS;
 }
 
+static struct aws_http1_connection_options s_default_http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+static struct aws_http2_connection_options s_default_http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
+
+static int s_build_http_options(
+    const struct aws_http_client_connection_options *orig_options,
+    struct aws_http_client_connection_options *out_options) {
+    *out_options = *orig_options;
+
+    if (out_options->http1_options == NULL) {
+        out_options->http1_options = &s_default_http1_options;
+    }
+
+    if (out_options->http2_options == NULL) {
+        out_options->http2_options = &s_default_http2_options;
+    }
+
+    /* validate options */
+    if (s_validate_http_client_connection_options(out_options)) {
+        return AWS_OP_ERR;
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static struct aws_http_client_bootstrap *s_build_http_bootstrap(
+    const struct aws_http_client_connection_options *options,
+    aws_http_proxy_request_transform_fn *proxy_request_transform) {
+    struct aws_http_client_bootstrap *http_bootstrap = NULL;
+    struct aws_http2_setting *setting_array = NULL;
+
+    if (!aws_mem_acquire_many(
+            options->allocator,
+            2,
+            &http_bootstrap,
+            sizeof(struct aws_http_client_bootstrap),
+            &setting_array,
+            options->http2_options->num_initial_settings * sizeof(struct aws_http2_setting))) {
+        goto on_error;
+    }
+
+    AWS_ZERO_STRUCT(*http_bootstrap);
+
+    http_bootstrap->alloc = options->allocator;
+    http_bootstrap->is_using_tls = options->tls_options != NULL;
+    http_bootstrap->manual_window_management = options->manual_window_management;
+    http_bootstrap->initial_window_size = options->initial_window_size;
+    http_bootstrap->user_data = options->user_data;
+    http_bootstrap->on_setup = options->on_setup;
+    http_bootstrap->on_shutdown = options->on_shutdown;
+    http_bootstrap->proxy_request_transform = proxy_request_transform;
+    http_bootstrap->http1_options = *options->http1_options;
+    http_bootstrap->http2_options = *options->http2_options;
+
+    /* keep a copy of the settings array if it's not NULL */
+    if (options->http2_options->num_initial_settings > 0) {
+        memcpy(
+            setting_array,
+            options->http2_options->initial_settings_array,
+            options->http2_options->num_initial_settings * sizeof(struct aws_http2_setting));
+        http_bootstrap->http2_options.initial_settings_array = setting_array;
+    }
+
+    if (options->monitoring_options) {
+        http_bootstrap->monitoring_options = *options->monitoring_options;
+    }
+
+    return http_bootstrap;
+
+on_error:
+
+    if (http_bootstrap) {
+        aws_mem_release(http_bootstrap->alloc, http_bootstrap);
+    }
+
+    return NULL;
+}
+
 int aws_http_client_connect_internal(
     const struct aws_http_client_connection_options *orig_options,
     aws_http_proxy_request_transform_fn *proxy_request_transform) {
@@ -885,25 +962,11 @@ int aws_http_client_connect_internal(
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    struct aws_http_client_bootstrap *http_bootstrap = NULL;
     struct aws_string *host_name = NULL;
-    int err = 0;
+    struct aws_http_client_bootstrap *http_bootstrap = NULL;
 
-    /* make copy of options, and add defaults for missing optional structs */
-    struct aws_http_client_connection_options options = *orig_options;
-
-    const struct aws_http1_connection_options default_http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
-    if (options.http1_options == NULL) {
-        options.http1_options = &default_http1_options;
-    }
-
-    const struct aws_http2_connection_options default_http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
-    if (options.http2_options == NULL) {
-        options.http2_options = &default_http2_options;
-    }
-
-    /* validate options */
-    if (s_validate_http_client_connection_options(&options)) {
+    struct aws_http_client_connection_options options;
+    if (s_build_http_options(orig_options, &options)) {
         goto error;
     }
 
@@ -915,48 +978,10 @@ int aws_http_client_connect_internal(
         goto error;
     }
 
-    struct aws_http2_setting *setting_array = NULL;
-    if (!aws_mem_acquire_many(
-            options.allocator,
-            2,
-            &http_bootstrap,
-            sizeof(struct aws_http_client_bootstrap),
-            &setting_array,
-            options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting))) {
+    http_bootstrap = s_build_http_bootstrap(&options, proxy_request_transform);
+    if (http_bootstrap == NULL) {
         goto error;
     }
-
-    AWS_ZERO_STRUCT(*http_bootstrap);
-
-    http_bootstrap->alloc = options.allocator;
-    http_bootstrap->is_using_tls = options.tls_options != NULL;
-    http_bootstrap->manual_window_management = options.manual_window_management;
-    http_bootstrap->initial_window_size = options.initial_window_size;
-    http_bootstrap->user_data = options.user_data;
-    http_bootstrap->on_setup = options.on_setup;
-    http_bootstrap->on_shutdown = options.on_shutdown;
-    http_bootstrap->proxy_request_transform = proxy_request_transform;
-    http_bootstrap->http1_options = *options.http1_options;
-    http_bootstrap->http2_options = *options.http2_options;
-
-    /* keep a copy of the settings array if it's not NULL */
-    if (options.http2_options->num_initial_settings > 0) {
-        memcpy(
-            setting_array,
-            options.http2_options->initial_settings_array,
-            options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting));
-        http_bootstrap->http2_options.initial_settings_array = setting_array;
-    }
-
-    if (options.monitoring_options) {
-        http_bootstrap->monitoring_options = *options.monitoring_options;
-    }
-
-    AWS_LOGF_TRACE(
-        AWS_LS_HTTP_CONNECTION,
-        "static: attempting to initialize a new client channel to %s:%d",
-        aws_string_c_str(host_name),
-        (int)options.port);
 
     struct aws_socket_channel_bootstrap_options channel_options = {
         .bootstrap = options.bootstrap,
@@ -970,9 +995,7 @@ int aws_http_client_connect_internal(
         .user_data = http_bootstrap,
     };
 
-    err = s_system_vtable_ptr->new_socket_channel(&channel_options);
-
-    if (err) {
+    if (s_system_vtable_ptr->new_socket_channel(&channel_options)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "static: Failed to initiate socket channel for new client connection, error %d (%s).",
@@ -983,9 +1006,11 @@ int aws_http_client_connect_internal(
     }
 
     aws_string_destroy(host_name);
+
     return AWS_OP_SUCCESS;
 
 error:
+
     if (http_bootstrap) {
         aws_mem_release(http_bootstrap->alloc, http_bootstrap);
     }

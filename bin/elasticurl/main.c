@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 #include <aws/http/connection.h>
+#include <aws/http/proxy_strategy.h>
 #include <aws/http/request_response.h>
 
 #include <aws/common/command_line_parser.h>
 #include <aws/common/condition_variable.h>
-#include <aws/common/hash_table.h>
 #include <aws/common/log_channel.h>
 #include <aws/common/log_formatter.h>
 #include <aws/common/log_writer.h>
@@ -51,15 +51,12 @@ struct elasticurl_ctx {
     struct aws_input_stream *input_body;
     struct aws_http_message *request;
     struct aws_http_connection *connection;
-    const char *signing_library_path;
-    struct aws_shared_library signing_library;
-    const char *signing_function_name;
-    struct aws_hash_table signing_context;
-    aws_http_message_transform_fn *signing_function;
     const char *alpn;
     bool include_headers;
     bool insecure;
     FILE *output;
+    struct aws_byte_cursor socks5_host;
+    uint16_t socks5_port;
     const char *trace_file;
     enum aws_log_level log_level;
     enum aws_http_version required_http_version;
@@ -85,12 +82,9 @@ static void s_usage(int exit_code) {
     fprintf(stderr, "  -I, --head: uses HEAD for the verb.\n");
     fprintf(stderr, "  -i, --include: includes headers in output.\n");
     fprintf(stderr, "  -k, --insecure: turns off SSL/TLS validation.\n");
-    fprintf(stderr, "      --signing-lib: path to a shared library with an exported signing function to use\n");
-    fprintf(stderr, "      --signing-func: name of the signing function to use within the signing library\n");
-    fprintf(
-        stderr,
-        "      --signing-context: key=value pair to pass to the signing function; may be used multiple times\n");
     fprintf(stderr, "  -o, --output FILE: dumps content-body to FILE instead of stdout.\n");
+    fprintf(
+        stderr, "  -s, --socks5 <host>:<port>: uses the specified endpoint as a socks5 proxy to make the request\n");
     fprintf(stderr, "  -t, --trace FILE: dumps logs to FILE instead of stderr.\n");
     fprintf(stderr, "  -v, --verbose: ERROR|INFO|DEBUG|TRACE: log level to configure. Default is none.\n");
     fprintf(stderr, "      --version: print the version of elasticurl.\n");
@@ -114,12 +108,10 @@ static struct aws_cli_option s_long_options[] = {
     {"get", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'G'},
     {"post", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'P'},
     {"head", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'I'},
-    {"signing-lib", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'j'},
     {"include", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'i'},
     {"insecure", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'k'},
-    {"signing-func", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'l'},
-    {"signing-context", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'm'},
     {"output", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'o'},
+    {"socks5", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 's'},
     {"trace", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 't'},
     {"verbose", AWS_CLI_OPTIONS_REQUIRED_ARGUMENT, NULL, 'v'},
     {"version", AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 'V'},
@@ -130,38 +122,27 @@ static struct aws_cli_option s_long_options[] = {
     {NULL, AWS_CLI_OPTIONS_NO_ARGUMENT, NULL, 0},
 };
 
-static int s_parse_signing_context(
-    struct aws_hash_table *signing_context,
-    struct aws_allocator *allocator,
-    const char *context_argument) {
-    (void)signing_context;
-    (void)context_argument;
+static void s_parse_socks5_proxy_info(struct elasticurl_ctx *ctx, const char *socks5_proxy_arg) {
+    struct aws_byte_cursor argument_cursor = aws_byte_cursor_from_c_str(socks5_proxy_arg);
 
-    char *delimiter = memchr(context_argument, ':', strlen(context_argument));
-    if (!delimiter) {
-        fprintf(stderr, "invalid signing context line \"%s\".", context_argument);
-        exit(1);
+    struct aws_byte_cursor host_cursor;
+    AWS_ZERO_STRUCT(host_cursor);
+
+    if (!aws_byte_cursor_next_split(&argument_cursor, ':', &host_cursor)) {
+        s_usage(1);
     }
 
-    struct aws_string *key =
-        aws_string_new_from_array(allocator, (const uint8_t *)context_argument, delimiter - context_argument);
-    struct aws_string *value =
-        aws_string_new_from_array(allocator, (const uint8_t *)delimiter + 1, strlen(delimiter + 1));
-    if (key == NULL || value == NULL) {
-        fprintf(stderr, "failure allocating signing context kv pair");
-        exit(1);
-    }
+    ctx->socks5_host = host_cursor;
 
-    aws_hash_table_put(signing_context, key, value, NULL);
+    aws_byte_cursor_advance(&argument_cursor, host_cursor.len + 1);
 
-    return AWS_OP_SUCCESS;
+    ctx->socks5_port = (uint16_t)atoi((const char *)argument_cursor.ptr);
 }
 
 static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
     while (true) {
         int option_index = 0;
-        int c =
-            aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:j:l:m:M:GPHiko:t:v:VwWh", s_long_options, &option_index);
+        int c = aws_cli_getopt_long(argc, argv, "a:b:c:e:f:H:d:g:M:GPHiko:s:t:v:VwWh", s_long_options, &option_index);
         if (c == -1) {
             break;
         }
@@ -205,22 +186,6 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                     s_usage(1);
                 }
                 break;
-            case 'j':
-                ctx->signing_library_path = aws_cli_optarg;
-                if (aws_shared_library_init(&ctx->signing_library, aws_cli_optarg)) {
-                    fprintf(stderr, "unable to open signing library %s.\n", aws_cli_optarg);
-                    s_usage(1);
-                }
-                break;
-            case 'l':
-                ctx->signing_function_name = aws_cli_optarg;
-                break;
-            case 'm':
-                if (s_parse_signing_context(&ctx->signing_context, ctx->allocator, aws_cli_optarg)) {
-                    fprintf(stderr, "error parsing signing context \"%s\"\n", aws_cli_optarg);
-                    s_usage(1);
-                }
-                break;
             case 'M':
                 ctx->verb = aws_cli_optarg;
                 break;
@@ -247,6 +212,10 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
                     s_usage(1);
                 }
                 break;
+            case 's': {
+                s_parse_socks5_proxy_info(ctx, aws_cli_optarg);
+                break;
+            }
             case 't':
                 ctx->trace_file = aws_cli_optarg;
                 break;
@@ -281,26 +250,6 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
             default:
                 fprintf(stderr, "Unknown option\n");
                 s_usage(1);
-        }
-    }
-
-    if (ctx->signing_function_name != NULL) {
-        if (ctx->signing_library_path == NULL) {
-            fprintf(
-                stderr,
-                "To sign a request made by Elasticurl you must supply both a signing library path and a signing "
-                "function name\n");
-            s_usage(1);
-        }
-
-        if (aws_shared_library_find_function(
-                &ctx->signing_library, ctx->signing_function_name, (aws_generic_function *)&ctx->signing_function)) {
-            fprintf(
-                stderr,
-                "Unable to find function %s in signing library %s",
-                ctx->signing_function_name,
-                ctx->signing_library_path);
-            s_usage(1);
         }
     }
 
@@ -446,40 +395,7 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
     return request;
 }
 
-static void s_on_signing_complete(struct aws_http_message *request, int error_code, void *user_data);
-
-static void s_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
-    struct elasticurl_ctx *app_ctx = user_data;
-
-    if (error_code) {
-        fprintf(stderr, "Connection failed with error %s\n", aws_error_debug_str(error_code));
-        aws_mutex_lock(&app_ctx->mutex);
-        app_ctx->exchange_completed = true;
-        aws_mutex_unlock(&app_ctx->mutex);
-        aws_condition_variable_notify_all(&app_ctx->c_var);
-        return;
-    }
-
-    if (app_ctx->required_http_version) {
-        if (aws_http_connection_get_version(connection) != app_ctx->required_http_version) {
-            fprintf(stderr, "Error. The requested HTTP version, %s, is not supported by the peer.", app_ctx->alpn);
-            exit(1);
-        }
-    }
-
-    app_ctx->connection = connection;
-    app_ctx->request = s_build_http_request(app_ctx);
-
-    /* If async signing function is set, invoke it. It must invoke the signing complete callback when it's done. */
-    if (app_ctx->signing_function) {
-        app_ctx->signing_function(app_ctx->request, &app_ctx->signing_context, s_on_signing_complete, app_ctx);
-    } else {
-        /* If no signing function, proceed immediately to next step. */
-        s_on_signing_complete(app_ctx->request, AWS_ERROR_SUCCESS, app_ctx);
-    }
-}
-
-static void s_on_signing_complete(struct aws_http_message *request, int error_code, void *user_data) {
+static void s_open_request_stream(struct aws_http_message *request, int error_code, void *user_data) {
     struct elasticurl_ctx *app_ctx = user_data;
 
     AWS_FATAL_ASSERT(request == app_ctx->request);
@@ -522,6 +438,31 @@ static void s_on_signing_complete(struct aws_http_message *request, int error_co
     app_ctx->connection = NULL;
 }
 
+static void s_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
+    struct elasticurl_ctx *app_ctx = user_data;
+
+    if (error_code) {
+        fprintf(stderr, "Connection failed with error %s\n", aws_error_debug_str(error_code));
+        aws_mutex_lock(&app_ctx->mutex);
+        app_ctx->exchange_completed = true;
+        aws_mutex_unlock(&app_ctx->mutex);
+        aws_condition_variable_notify_all(&app_ctx->c_var);
+        return;
+    }
+
+    if (app_ctx->required_http_version) {
+        if (aws_http_connection_get_version(connection) != app_ctx->required_http_version) {
+            fprintf(stderr, "Error. The requested HTTP version, %s, is not supported by the peer.", app_ctx->alpn);
+            exit(1);
+        }
+    }
+
+    app_ctx->connection = connection;
+    app_ctx->request = s_build_http_request(app_ctx);
+
+    s_open_request_stream(app_ctx->request, AWS_ERROR_SUCCESS, app_ctx);
+}
+
 static void s_on_client_connection_shutdown(struct aws_http_connection *connection, int error_code, void *user_data) {
     (void)error_code;
     (void)connection;
@@ -552,14 +493,6 @@ int main(int argc, char **argv) {
     app_ctx.verb = "GET";
     app_ctx.alpn = "h2;http/1.1";
     aws_mutex_init(&app_ctx.mutex);
-    aws_hash_table_init(
-        &app_ctx.signing_context,
-        allocator,
-        10,
-        aws_hash_string,
-        aws_hash_callback_string_eq,
-        aws_hash_callback_string_destroy,
-        aws_hash_callback_string_destroy);
 
     s_parse_options(argc, argv, &app_ctx);
 
@@ -711,7 +644,23 @@ int main(int argc, char **argv) {
         .on_setup = s_on_client_connection_setup,
         .on_shutdown = s_on_client_connection_shutdown,
     };
-    aws_http_client_connect(&http_client_options);
+
+    struct aws_http_proxy_options proxy_options;
+    AWS_ZERO_STRUCT(proxy_options);
+    if (app_ctx.socks5_host.len > 0 && app_ctx.socks5_port > 0) {
+        proxy_options.connection_type = AWS_HPCT_SOCKS5;
+        proxy_options.host = app_ctx.socks5_host;
+        proxy_options.port = app_ctx.socks5_port;
+        proxy_options.proxy_strategy = aws_http_proxy_strategy_new_socks5_no_auth(allocator);
+
+        http_client_options.proxy_options = &proxy_options;
+    }
+
+    if (aws_http_client_connect(&http_client_options)) {
+        fprintf(stderr, "Failed to initiate http connection with error %s.", aws_error_debug_str(aws_last_error()));
+        exit(1);
+    }
+
     aws_mutex_lock(&app_ctx.mutex);
     aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_completion_predicate, &app_ctx);
     aws_mutex_unlock(&app_ctx.mutex);
@@ -741,8 +690,6 @@ int main(int argc, char **argv) {
 
     aws_http_message_destroy(app_ctx.request);
 
-    aws_shared_library_clean_up(&app_ctx.signing_library);
-
     if (app_ctx.output != stdout) {
         fclose(app_ctx.output);
     }
@@ -754,8 +701,6 @@ int main(int argc, char **argv) {
     if (app_ctx.input_file) {
         fclose(app_ctx.input_file);
     }
-
-    aws_hash_table_clean_up(&app_ctx.signing_context);
 
     return 0;
 }

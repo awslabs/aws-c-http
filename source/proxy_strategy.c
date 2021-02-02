@@ -342,6 +342,102 @@ on_error:
 
 /*****************************************************************************************************************/
 
+struct aws_http_proxy_strategy_socks5_no_auth {
+    struct aws_allocator *allocator;
+
+    struct aws_http_proxy_strategy strategy_base;
+};
+
+struct aws_http_proxy_negotiator_socks5_no_auth {
+    struct aws_allocator *allocator;
+
+    struct aws_http_proxy_negotiator negotiator_base;
+};
+
+static void s_destroy_socks5_no_auth_negotiator(struct aws_http_proxy_negotiator *proxy_negotiator) {
+    struct aws_http_proxy_negotiator_socks5_no_auth *socks5_negotiator = proxy_negotiator->impl;
+
+    aws_mem_release(socks5_negotiator->allocator, socks5_negotiator);
+}
+
+AWS_STATIC_STRING_FROM_LITERAL(s_socks5_no_authentication_code, "\x00");
+
+static int s_aws_socks5_proxy_no_auth_append_supported_authentication_codes(
+    struct aws_http_proxy_negotiator *proxy_negotiator,
+    struct aws_byte_buf *authentication_codes) {
+    (void)proxy_negotiator;
+
+    struct aws_byte_cursor zero_cursor = aws_byte_cursor_from_string(s_socks5_no_authentication_code);
+    return aws_byte_buf_append_dynamic(authentication_codes, &zero_cursor);
+}
+
+static struct aws_http_proxy_negotiator_socks5_vtable s_socks5_proxy_negotiator_no_auth_vtable = {
+    .append_supported_authentication_codes = s_aws_socks5_proxy_no_auth_append_supported_authentication_codes,
+};
+
+static struct aws_http_proxy_negotiator *s_create_socks5_no_auth_negotiator(
+    struct aws_http_proxy_strategy *proxy_strategy,
+    struct aws_allocator *allocator) {
+    if (proxy_strategy == NULL || allocator == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_negotiator_socks5_no_auth *socks5_negotiator =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_negotiator_socks5_no_auth));
+    if (socks5_negotiator == NULL) {
+        return NULL;
+    }
+
+    socks5_negotiator->allocator = allocator;
+    socks5_negotiator->negotiator_base.impl = socks5_negotiator;
+    aws_ref_count_init(
+        &socks5_negotiator->negotiator_base.ref_count,
+        &socks5_negotiator->negotiator_base,
+        (aws_simple_completion_callback *)s_destroy_socks5_no_auth_negotiator);
+
+    socks5_negotiator->negotiator_base.strategy_vtable.socks5_vtable = &s_socks5_proxy_negotiator_no_auth_vtable;
+
+    return &socks5_negotiator->negotiator_base;
+}
+
+static struct aws_http_proxy_strategy_vtable s_socks5_no_auth_proxy_strategy_vtable = {
+    .create_negotiator = s_create_socks5_no_auth_negotiator,
+};
+
+static void s_destroy_socks5_no_auth_strategy(struct aws_http_proxy_strategy *proxy_strategy) {
+    struct aws_http_proxy_strategy_socks5_no_auth *socks5_strategy = proxy_strategy->impl;
+
+    aws_mem_release(socks5_strategy->allocator, socks5_strategy);
+}
+
+struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_socks5_no_auth(struct aws_allocator *allocator) {
+    if (allocator == NULL) {
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    struct aws_http_proxy_strategy_socks5_no_auth *socks5_strategy =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_strategy_socks5_no_auth));
+    if (socks5_strategy == NULL) {
+        return NULL;
+    }
+
+    socks5_strategy->strategy_base.impl = socks5_strategy;
+    socks5_strategy->strategy_base.vtable = &s_socks5_no_auth_proxy_strategy_vtable;
+    socks5_strategy->strategy_base.proxy_connection_type = AWS_HPCT_HTTP_TUNNEL;
+    socks5_strategy->allocator = allocator;
+
+    aws_ref_count_init(
+        &socks5_strategy->strategy_base.ref_count,
+        &socks5_strategy->strategy_base,
+        (aws_simple_completion_callback *)s_destroy_socks5_no_auth_strategy);
+
+    return &socks5_strategy->strategy_base;
+}
+
+/*****************************************************************************************************************/
+
 struct aws_http_proxy_strategy_one_time_identity {
     struct aws_allocator *allocator;
 
