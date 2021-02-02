@@ -739,7 +739,6 @@ static void s_try_write_outgoing_frames(struct aws_websocket *websocket) {
         (void *)websocket,
         io_msg->message_data.len);
 
-    websocket->thread_data.is_waiting_for_write_completion = true;
     err = aws_channel_slot_send_message(websocket->channel_slot, io_msg, AWS_CHANNEL_DIR_WRITE);
     if (err) {
         websocket->thread_data.is_waiting_for_write_completion = false;
@@ -817,13 +816,7 @@ static void s_io_message_write_completed(
     struct aws_websocket *websocket = user_data;
     AWS_ASSERT(aws_channel_thread_is_callers_thread(channel));
 
-    if (err_code == AWS_ERROR_SUCCESS) {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_WEBSOCKET, "id=%p: aws_io_message written to socket, sending more data...", (void *)websocket);
-
-        websocket->thread_data.is_waiting_for_write_completion = false;
-        s_try_write_outgoing_frames(websocket);
-    } else {
+    if (err_code) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_WEBSOCKET,
             "id=%p: aws_io_message did not finish writing to socket, error %d (%s).",
@@ -832,7 +825,15 @@ static void s_io_message_write_completed(
             aws_error_name(err_code));
 
         s_shutdown_due_to_write_err(websocket, err_code);
+        return;
     }
+
+    websocket->thread_data.is_waiting_for_write_completion = false;
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_WEBSOCKET,
+        "id=%p: aws_io_message written to socket, scheduling task to send more data...",
+        (void *)websocket);
+    aws_channel_schedule_task_now(websocket->channel_slot->channel, &websocket->move_synced_data_to_thread_task);
 }
 
 static int s_handler_process_write_message(
