@@ -739,6 +739,7 @@ static void s_try_write_outgoing_frames(struct aws_websocket *websocket) {
         (void *)websocket,
         io_msg->message_data.len);
 
+    websocket->thread_data.is_waiting_for_write_completion = true;
     err = aws_channel_slot_send_message(websocket->channel_slot, io_msg, AWS_CHANNEL_DIR_WRITE);
     if (err) {
         websocket->thread_data.is_waiting_for_write_completion = false;
