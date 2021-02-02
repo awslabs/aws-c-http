@@ -834,7 +834,7 @@ static void s_io_message_write_completed(
         AWS_LS_HTTP_WEBSOCKET,
         "id=%p: aws_io_message written to socket, scheduling task to send more data...",
         (void *)websocket);
-    aws_channel_schedule_task_now(websocket->channel_slot->channel, &websocket->move_synced_data_to_thread_task);
+    aws_channel_schedule_task_now(websocket->channel_slot->channel, &websocket->waiting_on_payload_stream_task);
 }
 
 static int s_handler_process_write_message(
