@@ -57,8 +57,12 @@ void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data
 
     aws_client_bootstrap_release(user_data->bootstrap);
 
+    aws_byte_buf_clean_up(&user_data->socks5_decode_buffer);
+
     aws_mem_release(user_data->allocator, user_data);
 }
+
+#define INITIAL_SOCKS5_DECODE_CAPACITY 32
 
 struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     struct aws_allocator *allocator,
@@ -114,6 +118,12 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     user_data->original_on_setup = options->on_setup;
     user_data->original_on_shutdown = options->on_shutdown;
     user_data->original_user_data = options->user_data;
+
+    if (options->proxy_options->connection_type == AWS_HPCT_SOCKS5) {
+        if (aws_byte_buf_init(&user_data->socks5_decode_buffer, allocator, INITIAL_SOCKS5_DECODE_CAPACITY)) {
+            goto on_error;
+        }
+    }
 
     return user_data;
 
@@ -181,6 +191,12 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new_reset_clone(
     user_data->original_on_setup = old_user_data->original_on_setup;
     user_data->original_on_shutdown = old_user_data->original_on_shutdown;
     user_data->original_user_data = old_user_data->original_user_data;
+
+    if (user_data->proxy_config->connection_type == AWS_HPCT_SOCKS5) {
+        if (aws_byte_buf_init(&user_data->socks5_decode_buffer, allocator, INITIAL_SOCKS5_DECODE_CAPACITY)) {
+            goto on_error;
+        }
+    }
 
     return user_data;
 
@@ -901,10 +917,541 @@ static enum aws_http_proxy_connection_type s_determine_proxy_connection_type(
     }
 }
 
-static int s_create_socks5_connection(struct aws_http_proxy_user_data *user_data) {
-    (void)user_data;
+static void s_destroy_intercept_user_data(struct aws_http_client_connection_intercept_user_data *intercept_user_data) {
+    aws_mem_release(intercept_user_data->allocator, intercept_user_data);
+}
+
+static void s_aws_http_on_client_connection_socks5_proxy_shutdown_fn(
+    struct aws_client_bootstrap *channel_bootstrap,
+    int error_code,
+    struct aws_channel *channel,
+    void *user_data) {
+
+    struct aws_http_client_connection_intercept_user_data *intercept_user_data = user_data;
+    struct aws_http_proxy_user_data *proxy_user_data = intercept_user_data->intercept_user_data;
+
+    void *http_user_data = intercept_user_data->http_user_data;
+    aws_client_bootstrap_on_channel_event_fn *http_on_shutdown = intercept_user_data->http_shutdown_callback;
+    aws_client_bootstrap_on_channel_event_fn *http_on_setup = intercept_user_data->http_setup_callback;
+
+    s_destroy_intercept_user_data(intercept_user_data);
+
+    if (proxy_user_data->state == AWS_PBS_SUCCESS) {
+        AWS_LOGF_INFO(
+            AWS_LS_HTTP_CONNECTION,
+            "(STATIC) Proxy l5 intercept connection shutdown with error %d(%s)",
+            error_code,
+            aws_error_str(error_code));
+        http_on_shutdown(channel_bootstrap, error_code, channel, http_user_data);
+    } else {
+        int ec = error_code;
+        if (ec == AWS_ERROR_SUCCESS) {
+            ec = proxy_user_data->error_code;
+        }
+        if (ec == AWS_ERROR_SUCCESS) {
+            ec = AWS_ERROR_UNKNOWN;
+        }
+
+        AWS_LOGF_INFO(
+            AWS_LS_HTTP_CONNECTION,
+            "(STATIC) Proxy l5 intercept connection shutdown with error %d(%s)",
+            ec,
+            aws_error_str(ec));
+
+        http_on_setup(channel_bootstrap, ec, NULL, http_user_data);
+    }
+
+    aws_http_proxy_user_data_destroy(proxy_user_data);
+}
+
+#define SOCKS_VERSION 5
+
+static void s_socks5_next_state(
+    struct aws_http_proxy_user_data *proxy_user_data,
+    enum aws_proxy_bootstrap_state next_state) {
+    proxy_user_data->state = next_state;
+    proxy_user_data->socks5_decode_sub_state = 0;
+}
+
+#define SOCKS5_COMMAND_CONNECT 1
+
+#define SOCKS5_ADDRESS_TYPE_IPV4 1
+#define SOCKS5_ADDRESS_TYPE_DOMAIN_NAME 3
+#define SOCKS5_ADDRESS_TYPE_IPV6 4
+
+static int s_encode_socks5_client_connect(
+    struct aws_byte_buf *message_buffer,
+    struct aws_http_proxy_user_data *proxy_user_data) {
+    if (!aws_byte_buf_write_u8(message_buffer, SOCKS_VERSION)) {
+        return AWS_OP_ERR;
+    }
+
+    if (!aws_byte_buf_write_u8(message_buffer, SOCKS5_COMMAND_CONNECT)) {
+        return AWS_OP_ERR;
+    }
+
+    if (!aws_byte_buf_write_u8(message_buffer, 0)) {
+        return AWS_OP_ERR;
+    }
+
+    if (!aws_byte_buf_write_u8(message_buffer, SOCKS5_ADDRESS_TYPE_DOMAIN_NAME)) {
+        return AWS_OP_ERR;
+    }
+
+    if (!aws_byte_buf_write_u8(message_buffer, (uint8_t)proxy_user_data->original_host->len)) {
+        return AWS_OP_ERR;
+    }
+
+    struct aws_byte_cursor host_cursor = aws_byte_cursor_from_string(proxy_user_data->original_host);
+    if (aws_byte_buf_append(message_buffer, &host_cursor)) {
+        return AWS_OP_ERR;
+    }
+
+    if (!aws_byte_buf_write_be16(message_buffer, proxy_user_data->original_port)) {
+        return AWS_OP_ERR;
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_send_client_connect(struct aws_http_proxy_user_data *proxy_user_data) {
+    struct aws_channel_slot *slot = proxy_user_data->socks5_slot;
+
+    /* 1 + 1 + 1 + (1 + 1 + domain_name_length) + 2 */
+    size_t connect_message_size = 7 + proxy_user_data->original_host->len;
+    struct aws_io_message *message =
+        aws_channel_acquire_message_from_pool(slot->channel, AWS_IO_MESSAGE_APPLICATION_DATA, connect_message_size);
+    if (message == NULL) {
+        return AWS_OP_ERR;
+    }
+
+    if (s_encode_socks5_client_connect(&message->message_data, proxy_user_data)) {
+        goto on_error;
+    }
+
+    if (aws_channel_slot_send_message(slot, message, AWS_CHANNEL_DIR_WRITE)) {
+        aws_raise_error(AWS_ERROR_UNKNOWN);
+        goto on_error;
+    }
+
+    proxy_user_data->state = AWS_PBS_SOCKS5_CLIENT_CONNECT;
+
+    return AWS_OP_SUCCESS;
+
+on_error:
 
     return AWS_OP_ERR;
+}
+
+enum socks5_decode_client_hello_sub_state {
+    SOCKS5_DCHST_VERSION,
+    SOCKS5_DCHST_METHOD,
+};
+
+static int s_socks5_decode_client_hello(
+    struct aws_http_proxy_user_data *proxy_user_data,
+    struct aws_byte_cursor *data) {
+    AWS_FATAL_ASSERT(data->len > 0);
+
+    switch (proxy_user_data->socks5_decode_sub_state) {
+        case SOCKS5_DCHST_VERSION:
+            if (*data->ptr != SOCKS_VERSION) {
+                return AWS_OP_ERR;
+            }
+            aws_byte_cursor_advance(data, 1);
+            proxy_user_data->socks5_decode_sub_state = SOCKS5_DCHST_METHOD;
+            return AWS_OP_SUCCESS;
+
+        case SOCKS5_DCHST_METHOD:
+            if (*data->ptr != 0) {
+                return AWS_OP_ERR;
+            }
+            aws_byte_cursor_advance(data, 1);
+            s_socks5_next_state(proxy_user_data, AWS_PBS_SOCKS5_CLIENT_CONNECT);
+            return s_send_client_connect(proxy_user_data);
+
+        default:
+            break;
+    }
+
+    return AWS_OP_ERR;
+}
+
+enum socks5_decode_client_connect_sub_state {
+    SOCKS5_DCCST_VERSION,
+    SOCKS5_DCCST_REPLY,
+    SOCKS5_DCCST_RESERVED,
+    SOCKS5_DCCST_ADDRESS_TYPE,
+    SOCKS5_DCCST_ADDRESS,
+    SOCKS5_DCCST_PORT,
+};
+
+static uint32_t s_get_response_address_length(struct aws_http_proxy_user_data *proxy_user_data) {
+    AWS_FATAL_ASSERT(proxy_user_data->socks5_decode_buffer.len >= 1);
+
+    uint8_t address_type = proxy_user_data->socks5_connect_response_address_type;
+    switch (address_type) {
+        case SOCKS5_ADDRESS_TYPE_IPV4:
+            return 4;
+
+        case SOCKS5_ADDRESS_TYPE_DOMAIN_NAME:
+            return 1 + proxy_user_data->socks5_decode_buffer.buffer[1];
+
+        case SOCKS5_ADDRESS_TYPE_IPV6:
+            return 16;
+
+        default:
+            AWS_FATAL_ASSERT(false);
+            return 0;
+    }
+}
+static int s_decode_response_address(struct aws_http_proxy_user_data *proxy_user_data, struct aws_byte_cursor *data) {
+
+    if (proxy_user_data->socks5_decode_buffer.len < 1) {
+        size_t append_amount = 1 - proxy_user_data->socks5_decode_buffer.len;
+        if (append_amount > data->len) {
+            append_amount = data->len;
+        }
+        struct aws_byte_cursor append_cursor = aws_byte_cursor_advance(data, append_amount);
+
+        return aws_byte_buf_append_dynamic(&proxy_user_data->socks5_decode_buffer, &append_cursor);
+    }
+
+    uint32_t address_length = s_get_response_address_length(proxy_user_data);
+    if (proxy_user_data->socks5_decode_buffer.len < address_length) {
+        size_t append_amount = address_length - proxy_user_data->socks5_decode_buffer.len;
+        if (append_amount > data->len) {
+            append_amount = data->len;
+        }
+        struct aws_byte_cursor append_cursor = aws_byte_cursor_advance(data, append_amount);
+
+        return aws_byte_buf_append_dynamic(&proxy_user_data->socks5_decode_buffer, &append_cursor);
+    }
+
+    aws_byte_buf_reset(&proxy_user_data->socks5_decode_buffer, false);
+    proxy_user_data->socks5_decode_sub_state = SOCKS5_DCCST_PORT;
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_socks5_decode_client_connect(
+    struct aws_http_proxy_user_data *proxy_user_data,
+    struct aws_byte_cursor *data) {
+    AWS_FATAL_ASSERT(data->len > 0);
+
+    switch (proxy_user_data->socks5_decode_sub_state) {
+        case SOCKS5_DCCST_VERSION:
+            if (*data->ptr != SOCKS_VERSION) {
+                return AWS_OP_ERR;
+            }
+            aws_byte_cursor_advance(data, 1);
+            proxy_user_data->socks5_decode_sub_state = SOCKS5_DCCST_REPLY;
+            return AWS_OP_SUCCESS;
+
+        case SOCKS5_DCCST_REPLY:
+            if (*data->ptr != 0) {
+                return AWS_OP_ERR;
+            }
+            aws_byte_cursor_advance(data, 1);
+            proxy_user_data->socks5_decode_sub_state = SOCKS5_DCCST_RESERVED;
+            return AWS_OP_SUCCESS;
+
+        case SOCKS5_DCCST_RESERVED:
+            if (*data->ptr != 0) {
+                return AWS_OP_ERR;
+            }
+            aws_byte_cursor_advance(data, 1);
+            proxy_user_data->socks5_decode_sub_state = SOCKS5_DCCST_ADDRESS_TYPE;
+            return AWS_OP_SUCCESS;
+
+        case SOCKS5_DCCST_ADDRESS_TYPE:
+            proxy_user_data->socks5_connect_response_address_type = *data->ptr;
+            aws_byte_cursor_advance(data, 1);
+            proxy_user_data->socks5_decode_sub_state = SOCKS5_DCCST_ADDRESS;
+            aws_byte_buf_reset(&proxy_user_data->socks5_decode_buffer, false);
+            return AWS_OP_SUCCESS;
+
+        case SOCKS5_DCCST_ADDRESS:
+            return s_decode_response_address(proxy_user_data, data);
+
+        case SOCKS5_DCCST_PORT: {
+            size_t data_size = proxy_user_data->socks5_decode_buffer.len + data->len;
+            if (data_size <= 2) {
+                aws_byte_buf_append_dynamic(&proxy_user_data->socks5_decode_buffer, data);
+                aws_byte_cursor_advance(data, data->len);
+                if (data_size == 2) {
+                    s_socks5_next_state(proxy_user_data, AWS_PBS_SOCKS5_CONNECTED);
+                }
+            } else {
+                return AWS_OP_ERR;
+            }
+            return AWS_OP_SUCCESS;
+        }
+
+        default:
+            break;
+    }
+
+    return AWS_OP_ERR;
+}
+
+static int s_socks5_decode(struct aws_http_proxy_user_data *proxy_user_data, struct aws_byte_cursor *data) {
+    switch (proxy_user_data->state) {
+        case AWS_PBS_SOCKS5_CLIENT_HELLO:
+            return s_socks5_decode_client_hello(proxy_user_data, data);
+            break;
+
+        case AWS_PBS_SOCKS5_CLIENT_CONNECT:
+            return s_socks5_decode_client_connect(proxy_user_data, data);
+            break;
+
+        default:
+            return AWS_OP_ERR;
+    }
+}
+
+static void s_socks5_on_tls_negotiation_result(
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    int error_code,
+    void *user_data) {
+    (void)handler;
+
+    struct aws_http_client_connection_intercept_user_data *intercept_user_data = user_data;
+    struct aws_http_proxy_user_data *proxy_user_data = intercept_user_data->intercept_user_data;
+
+    if (error_code == AWS_ERROR_SUCCESS) {
+        proxy_user_data->state = AWS_PBS_SUCCESS;
+        intercept_user_data->http_setup_callback(
+            proxy_user_data->bootstrap, AWS_ERROR_SUCCESS, slot->channel, intercept_user_data->http_user_data);
+    } else {
+        proxy_user_data->error_code = error_code;
+        aws_channel_shutdown(slot->channel, error_code);
+    }
+}
+
+static int s_on_socks5_connect_complete(struct aws_http_client_connection_intercept_user_data *intercept_user_data) {
+    struct aws_http_proxy_user_data *proxy_user_data = intercept_user_data->intercept_user_data;
+    struct aws_channel_slot *slot = proxy_user_data->socks5_slot;
+    struct aws_channel_slot *slot_left_of_socks5 = slot->adj_left;
+    struct aws_channel *channel = slot->channel;
+    proxy_user_data->socks5_slot = NULL;
+
+    /* remove the socks5 handler */
+    if (aws_channel_slot_remove(slot)) {
+        return AWS_OP_ERR;
+    }
+
+    if (proxy_user_data->tls_options == NULL) {
+        /* if plaintext http, invoke the http setup handler */
+        proxy_user_data->state = AWS_PBS_SUCCESS;
+        intercept_user_data->http_setup_callback(
+            proxy_user_data->bootstrap, AWS_ERROR_SUCCESS, channel, intercept_user_data->http_user_data);
+    } else {
+        /* if https, chain into the tls handler and start the tls negotiation */
+        proxy_user_data->tls_options->on_negotiation_result = s_socks5_on_tls_negotiation_result;
+        proxy_user_data->tls_options->user_data = intercept_user_data;
+        if (s_vtable->setup_client_tls(slot_left_of_socks5, proxy_user_data->tls_options)) {
+            return AWS_OP_ERR;
+        }
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_process_read_message(
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    struct aws_io_message *message) {
+
+    (void)slot;
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_PROXY_NEGOTIATION,
+        "Received message of length %d on socks5 channel handler",
+        (int)message->message_data.len);
+
+    struct aws_http_client_connection_intercept_user_data *intercept_user_data = handler->impl;
+    struct aws_http_proxy_user_data *proxy_user_data = intercept_user_data->intercept_user_data;
+
+    int result = AWS_OP_SUCCESS;
+    struct aws_byte_cursor message_cursor = aws_byte_cursor_from_buf(&message->message_data);
+    while (result == AWS_OP_SUCCESS && message_cursor.len > 0) {
+        result = s_socks5_decode(proxy_user_data, &message_cursor);
+    }
+
+    if (result == AWS_OP_SUCCESS && proxy_user_data->state == AWS_PBS_SOCKS5_CONNECTED) {
+        result = s_on_socks5_connect_complete(intercept_user_data);
+    }
+
+    aws_mem_release(message->allocator, message);
+
+    return result;
+}
+
+static int s_shutdown(
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    enum aws_channel_direction dir,
+    int error_code,
+    bool free_scarce_resources_immediately) {
+
+    (void)handler;
+
+    return aws_channel_slot_on_handler_shutdown_complete(slot, dir, error_code, free_scarce_resources_immediately);
+}
+
+static size_t s_initial_window_size(struct aws_channel_handler *handler) {
+    (void)handler;
+
+    return SIZE_MAX;
+}
+
+static void s_destroy(struct aws_channel_handler *handler) {
+    (void)handler;
+}
+
+static size_t s_message_overhead(struct aws_channel_handler *handler) {
+    (void)handler;
+    return 0;
+}
+
+static struct aws_channel_handler_vtable s_socks5_channel_handler_vtable = {
+    .process_read_message = &s_process_read_message,
+    .process_write_message = NULL,
+    .increment_read_window = NULL,
+    .shutdown = &s_shutdown,
+    .initial_window_size = &s_initial_window_size,
+    .message_overhead = &s_message_overhead,
+    .destroy = &s_destroy,
+};
+
+AWS_STATIC_STRING_FROM_LITERAL(s_no_auth_client_hello, "\x05\x01\x00");
+
+static int s_encode_socks5_client_hello(struct aws_byte_buf *message_data) {
+    struct aws_byte_cursor no_auth_cursor = aws_byte_cursor_from_string(s_no_auth_client_hello);
+    if (aws_byte_buf_append(message_data, &no_auth_cursor)) {
+        return AWS_OP_ERR;
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_kickoff_socks5_negotiation(struct aws_http_proxy_user_data *proxy_user_data) {
+    struct aws_channel_slot *slot = proxy_user_data->socks5_slot;
+
+    struct aws_io_message *message =
+        aws_channel_acquire_message_from_pool(slot->channel, AWS_IO_MESSAGE_APPLICATION_DATA, 3);
+    if (message == NULL) {
+        return AWS_OP_ERR;
+    }
+
+    if (s_encode_socks5_client_hello(&message->message_data)) {
+        goto on_error;
+    }
+
+    if (aws_channel_slot_send_message(slot, message, AWS_CHANNEL_DIR_WRITE)) {
+        aws_raise_error(AWS_ERROR_UNKNOWN);
+        goto on_error;
+    }
+
+    proxy_user_data->state = AWS_PBS_SOCKS5_CLIENT_HELLO;
+
+    return AWS_OP_SUCCESS;
+
+on_error:
+
+    aws_mem_release(message->allocator, message);
+
+    return AWS_OP_ERR;
+}
+
+static void s_aws_http_on_client_connection_socks5_proxy_setup_fn(
+    struct aws_client_bootstrap *channel_bootstrap,
+    int error_code,
+    struct aws_channel *channel,
+    void *user_data) {
+
+    struct aws_http_client_connection_intercept_user_data *intercept_user_data = user_data;
+    struct aws_http_proxy_user_data *proxy_user_data = intercept_user_data->intercept_user_data;
+
+    if (error_code != AWS_ERROR_SUCCESS) {
+        void *http_user_data = intercept_user_data->http_user_data;
+        aws_client_bootstrap_on_channel_event_fn *http_on_setup = intercept_user_data->http_setup_callback;
+
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "(STATIC) Proxy l5 intercept connection failed with error %d(%s)",
+            error_code,
+            aws_error_str(error_code));
+
+        aws_http_proxy_user_data_destroy(proxy_user_data);
+        s_destroy_intercept_user_data(intercept_user_data);
+        http_on_setup(channel_bootstrap, error_code, channel, http_user_data);
+
+        return;
+    }
+
+    struct aws_channel_handler *channel_handler =
+        aws_mem_calloc(proxy_user_data->allocator, 1, sizeof(struct aws_channel_handler));
+    struct aws_channel_slot *channel_slot = aws_channel_slot_new(channel);
+
+    /* don't feel like handling this error right now */
+    AWS_FATAL_ASSERT(channel_handler != NULL && channel_slot != NULL);
+
+    /* add a channel handler to perform the socks5 negotiation */
+    channel_handler->alloc = proxy_user_data->allocator;
+    channel_handler->vtable = &s_socks5_channel_handler_vtable;
+    channel_handler->impl = intercept_user_data;
+
+    aws_channel_slot_insert_end(channel, channel_slot);
+    aws_channel_slot_set_handler(channel_slot, channel_handler);
+
+    proxy_user_data->socks5_slot = channel_slot;
+
+    /* start the negotiation */
+    if (s_kickoff_socks5_negotiation(proxy_user_data)) {
+        aws_channel_shutdown(channel, AWS_ERROR_HTTP_PROXY_CONNECT_FAILED);
+    }
+}
+
+static int s_create_socks5_connection(struct aws_http_proxy_user_data *user_data) {
+    struct aws_http_client_connection_options connect_options;
+    AWS_ZERO_STRUCT(connect_options);
+
+    connect_options.self_size = sizeof(struct aws_http_client_connection_options);
+    connect_options.allocator = user_data->allocator;
+    connect_options.bootstrap = user_data->bootstrap;
+    connect_options.host_name = aws_byte_cursor_from_buf(&user_data->proxy_config->host);
+    connect_options.port = user_data->proxy_config->port;
+    connect_options.socket_options = &user_data->socket_options;
+    connect_options.tls_options = user_data->proxy_config->tls_options;
+    connect_options.monitoring_options = NULL; /* ToDo */
+    connect_options.manual_window_management = user_data->manual_window_management;
+    connect_options.initial_window_size = user_data->initial_window_size;
+    connect_options.user_data = user_data->original_user_data;
+    connect_options.on_setup = user_data->original_on_setup;
+    connect_options.on_shutdown = user_data->original_on_shutdown;
+    connect_options.http1_options = NULL; /* ToDo */
+    connect_options.http2_options = NULL; /* ToDo */
+
+    struct aws_http_client_connection_intercept_options intercept_options = {
+        .shutdown_callback = s_aws_http_on_client_connection_socks5_proxy_shutdown_fn,
+        .setup_callback = s_aws_http_on_client_connection_socks5_proxy_setup_fn,
+        .user_data = user_data,
+    };
+
+    int result = aws_http_client_connect_intercept(&connect_options, &intercept_options);
+    if (result == AWS_OP_ERR) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "(STATIC) Proxy l5 intercept connection failed with error %d(%s)",
+            aws_last_error(),
+            aws_error_str(aws_last_error()));
+        aws_http_proxy_user_data_destroy(user_data);
+    }
+
+    return result;
 }
 
 static int s_aws_http_client_connect_via_socks5(const struct aws_http_client_connection_options *options) {

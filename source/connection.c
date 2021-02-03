@@ -953,6 +953,92 @@ on_error:
     return NULL;
 }
 
+int aws_http_client_connect_intercept(
+    const struct aws_http_client_connection_options *orig_options,
+    const struct aws_http_client_connection_intercept_options *intercept_options) {
+
+    if (!orig_options) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: http connection options are null.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    struct aws_allocator *allocator = orig_options->allocator;
+    struct aws_http_client_connection_intercept_user_data *user_data = NULL;
+    struct aws_string *host_name = NULL;
+    struct aws_http_client_bootstrap *http_bootstrap = NULL;
+
+    struct aws_http_client_connection_options options;
+    if (s_build_http_options(orig_options, &options)) {
+        goto error;
+    }
+
+    AWS_FATAL_ASSERT(options.proxy_options == NULL);
+
+    /* bootstrap_new() functions requires a null-terminated c-str */
+    host_name = aws_string_new_from_cursor(options.allocator, &options.host_name);
+    if (!host_name) {
+        goto error;
+    }
+
+    http_bootstrap = s_build_http_bootstrap(&options, NULL);
+    if (http_bootstrap == NULL) {
+        goto error;
+    }
+
+    user_data = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_client_connection_intercept_user_data));
+    if (user_data == NULL) {
+        goto error;
+    }
+
+    user_data->allocator = allocator;
+    user_data->http_setup_callback = s_client_bootstrap_on_channel_setup;
+    user_data->http_shutdown_callback = s_client_bootstrap_on_channel_shutdown;
+    user_data->http_user_data = http_bootstrap;
+    user_data->intercept_user_data = intercept_options->user_data;
+
+    struct aws_socket_channel_bootstrap_options channel_options = {
+        .bootstrap = options.bootstrap,
+        .host_name = aws_string_c_str(host_name),
+        .port = options.port,
+        .socket_options = options.socket_options,
+        .tls_options = options.tls_options,
+        .setup_callback = intercept_options->setup_callback,
+        .shutdown_callback = intercept_options->shutdown_callback,
+        .enable_read_back_pressure = options.manual_window_management,
+        .user_data = user_data,
+    };
+
+    if (s_system_vtable_ptr->new_socket_channel(&channel_options)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "static: Failed to initiate socket channel for new client connection, error %d (%s).",
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+
+        goto error;
+    }
+
+    aws_string_destroy(host_name);
+
+    return AWS_OP_SUCCESS;
+
+error:
+
+    if (user_data) {
+        aws_mem_release(allocator, user_data);
+    }
+
+    if (http_bootstrap) {
+        aws_mem_release(http_bootstrap->alloc, http_bootstrap);
+    }
+
+    if (host_name) {
+        aws_string_destroy(host_name);
+    }
+
+    return AWS_OP_ERR;
+}
+
 int aws_http_client_connect_internal(
     const struct aws_http_client_connection_options *orig_options,
     aws_http_proxy_request_transform_fn *proxy_request_transform) {

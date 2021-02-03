@@ -36,6 +36,9 @@ enum aws_proxy_bootstrap_state {
     AWS_PBS_TLS_NEGOTIATION,
     AWS_PBS_SUCCESS,
     AWS_PBS_FAILURE,
+    AWS_PBS_SOCKS5_CLIENT_HELLO,
+    AWS_PBS_SOCKS5_CLIENT_CONNECT,
+    AWS_PBS_SOCKS5_CONNECTED,
 };
 
 /**
@@ -77,6 +80,10 @@ struct aws_http_proxy_user_data {
     struct aws_http_message *connect_request;
     struct aws_http_stream *connect_stream;
     struct aws_http_proxy_negotiator *proxy_negotiator;
+    struct aws_channel_slot *socks5_slot;
+    struct aws_byte_buf socks5_decode_buffer;
+    int socks5_decode_sub_state;
+    uint8_t socks5_connect_response_address_type;
 
     /*
      * Cached original connect options

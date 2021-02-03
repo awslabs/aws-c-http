@@ -425,7 +425,7 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_socks5_no_auth(struc
 
     socks5_strategy->strategy_base.impl = socks5_strategy;
     socks5_strategy->strategy_base.vtable = &s_socks5_no_auth_proxy_strategy_vtable;
-    socks5_strategy->strategy_base.proxy_connection_type = AWS_HPCT_HTTP_TUNNEL;
+    socks5_strategy->strategy_base.proxy_connection_type = AWS_HPCT_SOCKS5;
     socks5_strategy->allocator = allocator;
 
     aws_ref_count_init(

@@ -137,6 +137,20 @@ struct aws_http_client_bootstrap {
     struct aws_http_connection *connection;
 };
 
+struct aws_http_client_connection_intercept_options {
+    aws_client_bootstrap_on_channel_event_fn *shutdown_callback;
+    aws_client_bootstrap_on_channel_event_fn *setup_callback;
+    void *user_data;
+};
+
+struct aws_http_client_connection_intercept_user_data {
+    struct aws_allocator *allocator;
+    aws_client_bootstrap_on_channel_event_fn *http_shutdown_callback;
+    aws_client_bootstrap_on_channel_event_fn *http_setup_callback;
+    void *http_user_data;
+    void *intercept_user_data;
+};
+
 AWS_EXTERN_C_BEGIN
 
 AWS_HTTP_API
@@ -146,6 +160,11 @@ AWS_HTTP_API
 int aws_http_client_connect_internal(
     const struct aws_http_client_connection_options *options,
     aws_http_proxy_request_transform_fn *proxy_request_transform);
+
+AWS_HTTP_API
+int aws_http_client_connect_intercept(
+    const struct aws_http_client_connection_options *orig_options,
+    const struct aws_http_client_connection_intercept_options *intercept_options);
 
 /**
  * Internal API for adding a reference to a connection
