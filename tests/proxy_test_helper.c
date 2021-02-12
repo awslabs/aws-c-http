@@ -198,7 +198,6 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
 
     aws_host_resolver_release(tester->host_resolver);
     aws_event_loop_group_release(tester->event_loop_group);
-    aws_thread_join_all_managed();
 
     if (tester->tls_ctx) {
         aws_tls_connection_options_clean_up(&tester->tls_connection_options);
