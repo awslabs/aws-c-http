@@ -464,6 +464,7 @@ void aws_http_library_clean_up(void) {
     }
     s_library_initialized = false;
 
+    aws_thread_join_all_managed();
     aws_unregister_error_info(&s_error_list);
     aws_unregister_log_subject_info_list(&s_log_subject_list);
     s_methods_clean_up();
