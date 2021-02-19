@@ -536,7 +536,7 @@ static void s_aws_http_on_stream_complete_tunnel_proxy(
              */
             left_of_tls_slot = left_of_tls_slot->adj_right;
         }
-        
+
         if (s_vtable->setup_client_tls(left_of_tls_slot, context->tls_options)) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
