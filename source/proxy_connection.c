@@ -536,8 +536,8 @@ static void s_aws_http_on_stream_complete_tunnel_proxy(
              */
             left_of_tls_slot = left_of_tls_slot->adj_right;
         }
-
-        if (channel == NULL || s_vtable->setup_client_tls(left_of_tls_slot, context->tls_options)) {
+        
+        if (s_vtable->setup_client_tls(left_of_tls_slot, context->tls_options)) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
                 "(%p) Proxy connection failed to start TLS negotiation with error %d(%s)",
