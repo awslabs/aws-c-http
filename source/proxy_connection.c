@@ -410,8 +410,10 @@ static int s_aws_http_on_incoming_header_block_done_tunnel_proxy(
     struct aws_http_proxy_user_data *context = user_data;
 
     if (header_block == AWS_HTTP_HEADER_BLOCK_MAIN) {
-        aws_http_stream_get_incoming_response_status(stream, &context->connect_status_code);
-        if (context->connect_status_code != 200) {
+        int status_code = AWS_HTTP_STATUS_CODE_UNKNOWN;
+        aws_http_stream_get_incoming_response_status(stream, &status_code);
+        context->connect_status_code = (enum aws_http_status_code)status_code;
+        if (context->connect_status_code != AWS_HTTP_STATUS_CODE_200_OK) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
                 "(%p) Proxy CONNECT request failed with status code %d",
