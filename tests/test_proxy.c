@@ -195,6 +195,10 @@ struct mocked_proxy_test_options {
     enum proxy_tester_failure_type failure_type;
     struct aws_http_proxy_strategy *proxy_strategy;
 
+    enum aws_http_proxy_authentication_type auth_type;
+    struct aws_byte_cursor legacy_basic_username;
+    struct aws_byte_cursor legacy_basic_password;
+
     uint32_t mocked_response_count;
     struct aws_byte_cursor *mocked_responses;
 };
@@ -212,6 +216,9 @@ static int s_setup_proxy_test(struct aws_allocator *allocator, struct mocked_pro
         .host = aws_byte_cursor_from_c_str(s_proxy_host_name),
         .port = s_proxy_port,
         .proxy_strategy = config->proxy_strategy,
+        .auth_type = config->auth_type,
+        .auth_username = config->legacy_basic_username,
+        .auth_password = config->legacy_basic_password,
     };
 
     struct proxy_tester_options options = {
@@ -482,16 +489,10 @@ static int s_verify_transformed_request(
 
 static int s_do_http_forwarding_proxy_request_transform_test(
     struct aws_allocator *allocator,
-    struct aws_http_proxy_strategy *proxy_strategy,
+    struct mocked_proxy_test_options *test_options,
     int (*transformed_request_verifier_fn)(struct aws_http_message *)) {
 
-    struct mocked_proxy_test_options options = {
-        .test_mode = PTTM_HTTP_FORWARD,
-        .failure_type = PTFT_NONE,
-        .proxy_strategy = proxy_strategy,
-    };
-
-    ASSERT_SUCCESS(s_setup_proxy_test(allocator, &options));
+    ASSERT_SUCCESS(s_setup_proxy_test(allocator, test_options));
 
     struct aws_http_message *untransformed_request = s_build_http_request(allocator);
     struct aws_http_message *request = s_build_http_request(allocator);
@@ -531,7 +532,13 @@ static int s_do_http_forwarding_proxy_request_transform_test(
 static int s_test_http_forwarding_proxy_request_transform(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    ASSERT_SUCCESS(s_do_http_forwarding_proxy_request_transform_test(allocator, NULL, NULL));
+    struct mocked_proxy_test_options options = {
+        .test_mode = PTTM_HTTP_FORWARD,
+        .failure_type = PTFT_NONE,
+        .proxy_strategy = NULL,
+    };
+
+    ASSERT_SUCCESS(s_do_http_forwarding_proxy_request_transform_test(allocator, &options, NULL));
 
     return AWS_OP_SUCCESS;
 }
@@ -561,8 +568,14 @@ static int s_test_http_forwarding_proxy_request_transform_basic_auth(struct aws_
 
     struct aws_http_proxy_strategy *proxy_strategy = aws_http_proxy_strategy_new_basic_auth(allocator, &config);
 
+    struct mocked_proxy_test_options options = {
+        .test_mode = PTTM_HTTP_FORWARD,
+        .failure_type = PTFT_NONE,
+        .proxy_strategy = proxy_strategy,
+    };
+
     ASSERT_SUCCESS(
-        s_do_http_forwarding_proxy_request_transform_test(allocator, proxy_strategy, s_check_for_basic_auth_header));
+        s_do_http_forwarding_proxy_request_transform_test(allocator, &options, s_check_for_basic_auth_header));
 
     aws_http_proxy_strategy_release(proxy_strategy);
 
@@ -571,6 +584,28 @@ static int s_test_http_forwarding_proxy_request_transform_basic_auth(struct aws_
 AWS_TEST_CASE(
     test_http_forwarding_proxy_request_transform_basic_auth,
     s_test_http_forwarding_proxy_request_transform_basic_auth);
+
+static int s_test_http_forwarding_proxy_request_transform_legacy_basic_auth(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+
+    struct mocked_proxy_test_options options = {
+        .test_mode = PTTM_HTTP_FORWARD,
+        .failure_type = PTFT_NONE,
+        .auth_type = AWS_HPAT_BASIC,
+        .legacy_basic_username = aws_byte_cursor_from_string(s_mock_request_username),
+        .legacy_basic_password = aws_byte_cursor_from_string(s_mock_request_password),
+    };
+
+    ASSERT_SUCCESS(
+        s_do_http_forwarding_proxy_request_transform_test(allocator, &options, s_check_for_basic_auth_header));
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_http_forwarding_proxy_request_transform_legacy_basic_auth,
+    s_test_http_forwarding_proxy_request_transform_legacy_basic_auth);
 
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_kerberos_token_value, "abcdefABCDEF123");
 

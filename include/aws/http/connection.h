@@ -122,6 +122,14 @@ struct aws_http_connection_monitoring_options {
 };
 
 /**
+ * @Deprecated - Supported proxy authentication modes.  Superceded by proxy strategy.
+ */
+enum aws_http_proxy_authentication_type {
+    AWS_HPAT_NONE = 0,
+    AWS_HPAT_BASIC,
+};
+
+/**
  * Supported proxy connection types
  */
 enum aws_http_proxy_connection_type {
@@ -129,7 +137,7 @@ enum aws_http_proxy_connection_type {
      * Deprecated, but 0-valued for backwards compatibility
      *
      * If tls options are provided (for the main connection) then treat the proxy as a tunneling proxy
-     * If tls options are not provided (for the main connection), then treate the proxy as a forwarding proxy
+     * If tls options are not provided (for the main connection), then treat the proxy as a forwarding proxy
      */
     AWS_HPCT_HTTP_LEGACY = 0,
 
@@ -144,12 +152,6 @@ enum aws_http_proxy_connection_type {
      * tls connections.
      */
     AWS_HPCT_HTTP_TUNNEL,
-
-    /**
-     * Establish an http(s) connection through a socks5 proxy.
-     * Socks5 proxies are not yet supported
-     */
-    AWS_HPCT_SOCKS5,
 };
 
 struct aws_http_proxy_strategy;
@@ -191,6 +193,24 @@ struct aws_http_proxy_options {
      * Other proxy connection types TBD.
      */
     struct aws_http_proxy_strategy *proxy_strategy;
+
+    /**
+     * @Deprecated - What type of proxy authentication to use, if any.
+     * Replaced by proxy_strategy
+     */
+    enum aws_http_proxy_authentication_type auth_type;
+
+    /**
+     * @Deprecated - Optional user name to use for basic authentication
+     * Replaced by proxy_strategy, using an instantiation from aws_http_proxy_strategy_new_basic_auth()
+     */
+    struct aws_byte_cursor auth_username;
+
+    /**
+     * @Deprecated - Optional password to use for basic authentication
+     * Replaced by proxy_strategy, using an instantiation from aws_http_proxy_strategy_new_basic_auth()
+     */
+    struct aws_byte_cursor auth_password;
 };
 
 /**

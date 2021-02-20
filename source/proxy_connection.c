@@ -956,7 +956,18 @@ static struct aws_http_proxy_config *s_aws_http_proxy_config_new(
 
     if (proxy_options->proxy_strategy != NULL) {
         config->proxy_strategy = aws_http_proxy_strategy_acquire(proxy_options->proxy_strategy);
-    } else {
+    } else if (proxy_options->auth_type == AWS_HPAT_BASIC) {
+        struct aws_http_proxy_strategy_basic_auth_options basic_config;
+        AWS_ZERO_STRUCT(basic_config);
+
+        basic_config.proxy_connection_type = proxy_options->connection_type;
+        basic_config.user_name = proxy_options->auth_username;
+        basic_config.password = proxy_options->auth_password;
+
+        config->proxy_strategy = aws_http_proxy_strategy_new_basic_auth(allocator, &basic_config);
+    }
+
+    if (config->proxy_strategy == NULL) {
         switch (override_proxy_connection_type) {
             case AWS_HPCT_HTTP_FORWARD:
                 config->proxy_strategy = aws_http_proxy_strategy_new_forwarding_identity(allocator);
@@ -1080,10 +1091,6 @@ int aws_http_options_validate_proxy_configuration(const struct aws_http_client_c
     }
 
     enum aws_http_proxy_connection_type proxy_type = options->proxy_options->connection_type;
-    if (proxy_type == AWS_HPCT_SOCKS5) {
-        return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
-    }
-
     if (proxy_type == AWS_HPCT_HTTP_FORWARD && options->tls_options != NULL) {
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
