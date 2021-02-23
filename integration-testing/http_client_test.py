@@ -18,15 +18,21 @@ sys.argv = sys.argv[:1]
 def run_command(args):
     # gather all stderr and stdout to a single string that we print only if things go wrong
     process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    output = process.communicate()[0]
-
-    if process.returncode != 0:
+    try:
+        # set a 100 sec timeout
+        output = process.communicate(timeout=100)[0]
+    except subprocess.TimeoutExpired:
+        process.kill()
         args_str = subprocess.list2cmdline(args)
-        print(args_str)
-        for line in output.splitlines():
-            print(line.decode())
+        raise RuntimeError("100 secs timeout happens from: {cmd}".format(cmd=args_str))
+    else:
+        if process.returncode != 0:
+            args_str = subprocess.list2cmdline(args)
+            print(args_str)
+            for line in output.splitlines():
+                print(line.decode())
 
-        raise RuntimeError("Return code {code} from: {cmd}".format(code=process.returncode, cmd=args_str))
+            raise RuntimeError("Return code {code} from: {cmd}".format(code=process.returncode, cmd=args_str))
 
 def compare_files(filename_expected, filename_other):
     if not filecmp.cmp(filename_expected, filename_other, shallow=False):
