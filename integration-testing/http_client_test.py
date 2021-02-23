@@ -6,6 +6,8 @@ import sys
 import urllib.request
 import unittest
 
+TIMEOUT = 100
+
 # Accepting multiple args so we can pass something like: python elasticurl.py
 elasticurl_cmd_prefix = sys.argv[1:]
 if not elasticurl_cmd_prefix:
@@ -18,21 +20,24 @@ sys.argv = sys.argv[:1]
 def run_command(args):
     # gather all stderr and stdout to a single string that we print only if things go wrong
     process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    timedout = False
     try:
-        # set a 100 sec timeout
-        output = process.communicate(timeout=100)[0]
+        output = process.communicate(timeout=TIMEOUT)[0]
     except subprocess.TimeoutExpired:
+        timedout = True
         process.kill()
         args_str = subprocess.list2cmdline(args)
-        raise RuntimeError("100 secs timeout happens from: {cmd}".format(cmd=args_str))
-    else:
+        output = process.communicate()[0]
+    finally:
         if process.returncode != 0:
             args_str = subprocess.list2cmdline(args)
             print(args_str)
             for line in output.splitlines():
                 print(line.decode())
-
-            raise RuntimeError("Return code {code} from: {cmd}".format(code=process.returncode, cmd=args_str))
+            if timedout:
+                raise RuntimeError("Timeout happened after {secs} secs from: {cmd}".format(secs=TIMEOUT, cmd=args_str))
+            else:
+                raise RuntimeError("Return code {code} from: {cmd}".format(code=process.returncode, cmd=args_str))
 
 def compare_files(filename_expected, filename_other):
     if not filecmp.cmp(filename_expected, filename_other, shallow=False):
