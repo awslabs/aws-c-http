@@ -960,7 +960,7 @@ static struct aws_http_proxy_config *s_aws_http_proxy_config_new(
         struct aws_http_proxy_strategy_basic_auth_options basic_config;
         AWS_ZERO_STRUCT(basic_config);
 
-        basic_config.proxy_connection_type = proxy_options->connection_type;
+        basic_config.proxy_connection_type = override_proxy_connection_type;
         basic_config.user_name = proxy_options->auth_username;
         basic_config.password = proxy_options->auth_password;
 
