@@ -386,29 +386,73 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
     struct aws_allocator *allocator,
     struct aws_http_proxy_strategy_tunneling_adaptive_options *config);
 
+/*
+ * aws_http_proxy_config is the persistent version of aws_http_proxy_options
+ *
+ * This is a set of APIs for creating, destroying and converting between them
+ */
+
+/**
+ * Create a persistent proxy configuration from http connection options
+ * @param allocator memory allocator to use
+ * @param options http connection options to source proxy configuration from
+ * @return
+ */
 AWS_HTTP_API
 struct aws_http_proxy_config *aws_http_proxy_config_new_from_connection_options(
     struct aws_allocator *allocator,
     const struct aws_http_client_connection_options *options);
 
+/**
+ * Create a persistent proxy configuration from http connection manager options
+ * @param allocator memory allocator to use
+ * @param options http connection manager options to source proxy configuration from
+ * @return
+ */
 AWS_HTTP_API
 struct aws_http_proxy_config *aws_http_proxy_config_new_from_manager_options(
     struct aws_allocator *allocator,
     const struct aws_http_connection_manager_options *options);
 
+/**
+ * Create a persistent proxy configuration from non-persistent proxy options.  The resulting
+ * proxy configuration assumes a tunneling connection type.
+ *
+ * @param allocator memory allocator to use
+ * @param options http proxy options to source proxy configuration from
+ * @return
+ */
 AWS_HTTP_API
 struct aws_http_proxy_config *aws_http_proxy_config_new_tunneling_from_proxy_options(
     struct aws_allocator *allocator,
     const struct aws_http_proxy_options *options);
 
+/**
+ * Clones an existing proxy configuration.  A refactor could remove this (do a "move" between the old and new user
+ * data in the one spot it's used) but that should wait until we have better test cases for the logic where this
+ * gets invoked (ntlm/kerberos chains).
+ *
+ * @param allocator memory allocator to use
+ * @param proxy_config http proxy configuration to clone
+ * @return
+ */
 AWS_HTTP_API
 struct aws_http_proxy_config *aws_http_proxy_config_new_clone(
     struct aws_allocator *allocator,
     const struct aws_http_proxy_config *proxy_config);
 
+/**
+ * Destroys an http proxy configuration
+ * @param config http proxy configuration to destroy
+ */
 AWS_HTTP_API
 void aws_http_proxy_config_destroy(struct aws_http_proxy_config *config);
 
+/**
+ * Initializes non-persistent http proxy options from a persistent http proxy configuration
+ * @param options http proxy options to initialize
+ * @param config the http proxy config to use as an initialization source
+ */
 AWS_HTTP_API
 void aws_http_proxy_options_init_from_config(
     struct aws_http_proxy_options *options,
