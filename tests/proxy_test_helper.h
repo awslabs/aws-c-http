@@ -8,6 +8,7 @@
 
 #include <aws/common/condition_variable.h>
 #include <aws/common/mutex.h>
+#include <aws/http/proxy.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
 #include <aws/io/logging.h>

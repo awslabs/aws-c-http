@@ -15,6 +15,7 @@
 #include <aws/http/connection.h>
 #include <aws/http/connection_manager.h>
 #include <aws/http/private/connection_manager_system_vtable.h>
+#include <aws/http/proxy.h>
 #include <aws/http/server.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>

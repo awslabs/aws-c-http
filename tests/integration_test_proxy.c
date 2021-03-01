@@ -272,7 +272,7 @@ static int s_test_nested_https_proxy_connection_get(struct aws_allocator *alloca
 }
 AWS_TEST_CASE(test_nested_https_proxy_connection_get, s_test_nested_https_proxy_connection_get);
 
-#include <aws/http/proxy_strategy.h>
+#include <aws/http/proxy.h>
 
 AWS_STATIC_STRING_FROM_LITERAL(s_mock_kerberos_token_value, "abcdefABCDEF123");
 

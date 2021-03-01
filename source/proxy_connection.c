@@ -9,7 +9,7 @@
 #include <aws/common/string.h>
 #include <aws/http/connection_manager.h>
 #include <aws/http/private/connection_impl.h>
-#include <aws/http/proxy_strategy.h>
+#include <aws/http/proxy.h>
 #include <aws/http/request_response.h>
 #include <aws/io/channel.h>
 #include <aws/io/logging.h>
@@ -1017,6 +1017,16 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_from_manager_options(
         allocator,
         options->proxy_options,
         s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_connection_options));
+}
+
+struct aws_http_proxy_config *aws_http_proxy_config_new_tunneling_from_proxy_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_options *proxy_options) {
+
+    return s_aws_http_proxy_config_new(
+        allocator,
+        proxy_options,
+        AWS_HPCT_HTTP_TUNNEL);
 }
 
 struct aws_http_proxy_config *aws_http_proxy_config_new_clone(

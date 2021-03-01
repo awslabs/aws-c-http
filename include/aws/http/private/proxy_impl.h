@@ -9,7 +9,7 @@
 #include <aws/http/http.h>
 
 #include <aws/http/connection.h>
-#include <aws/http/proxy_strategy.h>
+#include <aws/http/proxy.h>
 #include <aws/http/status_code.h>
 #include <aws/io/socket.h>
 
@@ -120,29 +120,6 @@ int aws_http_rewrite_uri_for_proxy_request(
 
 AWS_HTTP_API
 void aws_http_proxy_system_set_vtable(struct aws_http_proxy_system_vtable *vtable);
-
-AWS_HTTP_API
-struct aws_http_proxy_config *aws_http_proxy_config_new_from_connection_options(
-    struct aws_allocator *allocator,
-    const struct aws_http_client_connection_options *options);
-
-AWS_HTTP_API
-struct aws_http_proxy_config *aws_http_proxy_config_new_from_manager_options(
-    struct aws_allocator *allocator,
-    const struct aws_http_connection_manager_options *options);
-
-AWS_HTTP_API
-struct aws_http_proxy_config *aws_http_proxy_config_new_clone(
-    struct aws_allocator *allocator,
-    const struct aws_http_proxy_config *proxy_config);
-
-AWS_HTTP_API
-void aws_http_proxy_config_destroy(struct aws_http_proxy_config *config);
-
-AWS_HTTP_API
-void aws_http_proxy_options_init_from_config(
-    struct aws_http_proxy_options *options,
-    const struct aws_http_proxy_config *config);
 
 /**
  * Checks if tunneling proxy negotiation should continue to try and connect

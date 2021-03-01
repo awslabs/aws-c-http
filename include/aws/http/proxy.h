@@ -7,16 +7,111 @@
  */
 
 #include <aws/common/ref_count.h>
-#include <aws/http/connection.h>
 #include <aws/http/http.h>
 #include <aws/http/request_response.h>
 #include <aws/http/status_code.h>
 
+struct aws_http_client_connection_options;
+struct aws_http_connection_manager_options;
+
 struct aws_http_message;
 struct aws_http_header;
 
+struct aws_http_proxy_config;
 struct aws_http_proxy_negotiator;
 struct aws_http_proxy_strategy;
+
+/**
+ * @Deprecated - Supported proxy authentication modes.  Superceded by proxy strategy.
+ */
+enum aws_http_proxy_authentication_type {
+    AWS_HPAT_NONE = 0,
+    AWS_HPAT_BASIC,
+};
+
+/**
+ * Supported proxy connection types
+ */
+enum aws_http_proxy_connection_type {
+    /**
+     * Deprecated, but 0-valued for backwards compatibility
+     *
+     * If tls options are provided (for the main connection) then treat the proxy as a tunneling proxy
+     * If tls options are not provided (for the main connection), then treat the proxy as a forwarding proxy
+     */
+    AWS_HPCT_HTTP_LEGACY = 0,
+
+    /**
+     * Use the proxy to forward http requests.  Attempting to use both this mode and TLS on the tunnel destination
+     * is a configuration error.
+     */
+    AWS_HPCT_HTTP_FORWARD,
+
+    /**
+     * Use the proxy to establish an http connection via a CONNECT request to the proxy.  Works for both plaintext and
+     * tls connections.
+     */
+    AWS_HPCT_HTTP_TUNNEL,
+};
+
+struct aws_http_proxy_strategy;
+
+/**
+ * Options for http proxy server usage
+ */
+struct aws_http_proxy_options {
+
+    /**
+     * Type of proxy connection to make
+     */
+    enum aws_http_proxy_connection_type connection_type;
+
+    /**
+     * Proxy host to connect to
+     */
+    struct aws_byte_cursor host;
+
+    /**
+     * Port to make the proxy connection to
+     */
+    uint16_t port;
+
+    /**
+     * Optional.
+     * TLS configuration for the Local <-> Proxy connection
+     * Must be distinct from the the TLS options in the parent aws_http_connection_options struct
+     */
+    const struct aws_tls_connection_options *tls_options;
+
+    /**
+     * Optional
+     * Advanced option that allows the user to create a custom strategy that gives low-level control of
+     * certain logical flows within the proxy logic.
+     *
+     * For tunneling proxies it allows custom retry and adaptive negotiation of CONNECT requests.
+     * For forwarding proxies it allows custom request transformations.
+     * Other proxy connection types TBD.
+     */
+    struct aws_http_proxy_strategy *proxy_strategy;
+
+    /**
+     * @Deprecated - What type of proxy authentication to use, if any.
+     * Replaced by proxy_strategy
+     */
+    enum aws_http_proxy_authentication_type auth_type;
+
+    /**
+     * @Deprecated - Optional user name to use for basic authentication
+     * Replaced by proxy_strategy, using an instantiation from aws_http_proxy_strategy_new_basic_auth()
+     */
+    struct aws_byte_cursor auth_username;
+
+    /**
+     * @Deprecated - Optional password to use for basic authentication
+     * Replaced by proxy_strategy, using an instantiation from aws_http_proxy_strategy_new_basic_auth()
+     */
+    struct aws_byte_cursor auth_password;
+};
 
 /**
  * Synchronous (for now) callback function to fetch a token used in modifying CONNECT requests
@@ -290,6 +385,35 @@ AWS_HTTP_API
 struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
     struct aws_allocator *allocator,
     struct aws_http_proxy_strategy_tunneling_adaptive_options *config);
+
+AWS_HTTP_API
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_connection_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_client_connection_options *options);
+
+AWS_HTTP_API
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_manager_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_connection_manager_options *options);
+
+AWS_HTTP_API
+struct aws_http_proxy_config *aws_http_proxy_config_new_tunneling_from_proxy_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_options *options);
+
+AWS_HTTP_API
+struct aws_http_proxy_config *aws_http_proxy_config_new_clone(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_config *proxy_config);
+
+AWS_HTTP_API
+void aws_http_proxy_config_destroy(struct aws_http_proxy_config *config);
+
+AWS_HTTP_API
+void aws_http_proxy_options_init_from_config(
+    struct aws_http_proxy_options *options,
+    const struct aws_http_proxy_config *config);
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_PROXY_STRATEGY_H */

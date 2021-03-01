@@ -8,7 +8,7 @@
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/h1_stream.h>
 #include <aws/http/private/proxy_impl.h>
-#include <aws/http/proxy_strategy.h>
+#include <aws/http/proxy.h>
 
 #include <aws/io/uri.h>
 

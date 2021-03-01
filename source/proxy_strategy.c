@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
-#include <aws/http/proxy_strategy.h>
+#include <aws/http/proxy.h>
 
 #include <aws/common/encoding.h>
 #include <aws/common/string.h>
