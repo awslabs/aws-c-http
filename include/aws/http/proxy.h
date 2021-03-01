@@ -21,6 +21,8 @@ struct aws_http_proxy_config;
 struct aws_http_proxy_negotiator;
 struct aws_http_proxy_strategy;
 
+struct aws_socket_channel_bootstrap_options;
+
 /**
  * @Deprecated - Supported proxy authentication modes.  Superceded by proxy strategy.
  */
@@ -457,6 +459,10 @@ AWS_HTTP_API
 void aws_http_proxy_options_init_from_config(
     struct aws_http_proxy_options *options,
     const struct aws_http_proxy_config *config);
+
+AWS_HTTP_API int aws_http_proxy_new_socket_channel(
+    struct aws_socket_channel_bootstrap_options *channel_options,
+    struct aws_http_proxy_options *proxy_options);
 
 AWS_EXTERN_C_END
 

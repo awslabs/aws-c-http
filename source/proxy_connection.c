@@ -1111,3 +1111,12 @@ int aws_http_options_validate_proxy_configuration(const struct aws_http_client_c
 
     return AWS_OP_SUCCESS;
 }
+
+int aws_http_proxy_new_socket_channel(
+    struct aws_socket_channel_bootstrap_options *channel_options,
+    struct aws_http_proxy_options *proxy_options) {
+    (void)channel_options;
+    (void)proxy_options;
+
+    return AWS_OP_ERR;
+}
