@@ -1023,10 +1023,7 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_tunneling_from_proxy_opt
     struct aws_allocator *allocator,
     const struct aws_http_proxy_options *proxy_options) {
 
-    return s_aws_http_proxy_config_new(
-        allocator,
-        proxy_options,
-        AWS_HPCT_HTTP_TUNNEL);
+    return s_aws_http_proxy_config_new(allocator, proxy_options, AWS_HPCT_HTTP_TUNNEL);
 }
 
 struct aws_http_proxy_config *aws_http_proxy_config_new_clone(
