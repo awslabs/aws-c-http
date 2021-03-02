@@ -460,7 +460,7 @@ void aws_http_proxy_options_init_from_config(
     struct aws_http_proxy_options *options,
     const struct aws_http_proxy_config *config);
 
-AWS_HTTP_API int aws_http_proxy_new_socket_channel(
+AWS_HTTP_API int aws_http_proxy_new_alpn_socket_channel(
     struct aws_socket_channel_bootstrap_options *channel_options,
     struct aws_http_proxy_options *proxy_options);
 

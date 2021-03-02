@@ -1112,11 +1112,139 @@ int aws_http_options_validate_proxy_configuration(const struct aws_http_client_c
     return AWS_OP_SUCCESS;
 }
 
-int aws_http_proxy_new_socket_channel(
+struct aws_alpn_socket_channel_user_data {
+    struct aws_allocator *allocator;
+    struct aws_client_bootstrap *bootstrap;
+    struct aws_channel *channel;
+    aws_client_bootstrap_on_channel_event_fn *original_setup_callback;
+    aws_client_bootstrap_on_channel_event_fn *original_shutdown_callback;
+    void *original_user_data;
+};
+
+static void s_alpn_user_data_destroy(struct aws_alpn_socket_channel_user_data *user_data) {
+    if (user_data == NULL) {
+        return;
+    }
+
+    aws_client_bootstrap_release(user_data->bootstrap);
+
+    aws_mem_release(user_data->allocator, user_data);
+}
+
+static struct aws_alpn_socket_channel_user_data *s_alpn_user_data_new(
+    struct aws_allocator *allocator,
+    struct aws_socket_channel_bootstrap_options *channel_options) {
+    struct aws_alpn_socket_channel_user_data *user_data =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_alpn_socket_channel_user_data));
+    if (user_data == NULL) {
+        return NULL;
+    }
+
+    user_data->allocator = allocator;
+    user_data->original_setup_callback = channel_options->setup_callback;
+    user_data->original_shutdown_callback = channel_options->shutdown_callback;
+    user_data->original_user_data = channel_options->user_data;
+    user_data->bootstrap = aws_client_bootstrap_acquire(channel_options->bootstrap);
+
+    return user_data;
+}
+
+static void s_http_proxied_alpn_channel_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
+
+    struct aws_alpn_socket_channel_user_data *alpn_user_data = user_data;
+
+    if (error_code != AWS_ERROR_SUCCESS || connection == NULL) {
+        alpn_user_data->original_setup_callback(
+            alpn_user_data->bootstrap, error_code, NULL, alpn_user_data->original_user_data);
+        s_alpn_user_data_destroy(alpn_user_data);
+        return;
+    }
+
+    alpn_user_data->channel = aws_http_connection_get_channel(connection);
+    struct aws_channel_slot *http_slot = aws_channel_get_first_slot(alpn_user_data->channel);
+    while (http_slot->adj_right) {
+        http_slot = http_slot->adj_right;
+    }
+    if (aws_channel_slot_remove(http_slot)) {
+        alpn_user_data->original_setup_callback(
+            alpn_user_data->bootstrap, aws_last_error(), NULL, alpn_user_data->original_user_data);
+        s_alpn_user_data_destroy(alpn_user_data);
+        return;
+    }
+
+    aws_channel_release_hold(alpn_user_data->channel);
+
+    alpn_user_data->original_setup_callback(
+        alpn_user_data->bootstrap, AWS_ERROR_SUCCESS, alpn_user_data->channel, alpn_user_data->original_user_data);
+}
+
+static void s_http_proxied_alpn_channel_shutdown(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
+    (void)connection;
+    struct aws_alpn_socket_channel_user_data *alpn_user_data = user_data;
+    alpn_user_data->original_shutdown_callback(
+        alpn_user_data->bootstrap, error_code, alpn_user_data->channel, alpn_user_data->original_user_data);
+
+    s_alpn_user_data_destroy(alpn_user_data);
+}
+
+int aws_http_proxy_new_alpn_socket_channel(
     struct aws_socket_channel_bootstrap_options *channel_options,
     struct aws_http_proxy_options *proxy_options) {
     (void)channel_options;
     (void)proxy_options;
+
+    AWS_FATAL_ASSERT(channel_options != NULL && channel_options->bootstrap != NULL);
+    AWS_FATAL_ASSERT(proxy_options != NULL);
+
+    if (proxy_options->connection_type != AWS_HPCT_HTTP_TUNNEL) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_PROXY_NEGOTIATION,
+            "Creating an alpn-negotiated protocol channel through an http proxy requires a tunneling proxy "
+            "configuration");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (channel_options->tls_options == NULL) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_PROXY_NEGOTIATION,
+            "Creating an alpn-negotiated protocol channel through an http proxy requires tls to the endpoint");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    if (!aws_tls_is_alpn_available()) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_PROXY_NEGOTIATION,
+            "Creating an alpn-negotiated protocol channel through an http proxy requires alpn support");
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    struct aws_allocator *allocator = channel_options->bootstrap->allocator;
+    struct aws_alpn_socket_channel_user_data *user_data = s_alpn_user_data_new(allocator, channel_options);
+
+    struct aws_http_client_connection_options http_connection_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
+    http_connection_options.allocator = allocator;
+    http_connection_options.bootstrap = channel_options->bootstrap;
+    http_connection_options.host_name = aws_byte_cursor_from_c_str(channel_options->host_name);
+    http_connection_options.port = channel_options->port;
+    http_connection_options.socket_options = channel_options->socket_options;
+    http_connection_options.tls_options = channel_options->tls_options;
+    http_connection_options.proxy_options = proxy_options;
+    http_connection_options.user_data = user_data;
+    http_connection_options.on_setup = s_http_proxied_alpn_channel_setup;
+    http_connection_options.on_shutdown = s_http_proxied_alpn_channel_shutdown;
+
+    if (s_aws_http_client_connect_via_tunneling_proxy(&http_connection_options)) {
+        goto on_error;
+    }
+
+    return AWS_OP_SUCCESS;
+
+on_error:
+
+    s_alpn_user_data_destroy(user_data);
 
     return AWS_OP_ERR;
 }
