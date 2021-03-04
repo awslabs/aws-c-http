@@ -7,13 +7,12 @@ on:
       - '!main'
 
 env:
-  BUILDER_VERSION: v0.8.5
+  BUILDER_VERSION: v0.8.6
   BUILDER_SOURCE: releases
   BUILDER_HOST: https://d19elf31gohf1l.cloudfront.net
   PACKAGE_NAME: aws-c-http
   LINUX_BASE_IMAGE: ubuntu-16-x64
   RUN: ${{ github.run_id }}-${{ github.run_number }}
-  CMAKE_BUILD_PARALLEL_LEVEL: 2
 
 jobs:
   linux-compat:
