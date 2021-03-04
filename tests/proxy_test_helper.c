@@ -10,7 +10,9 @@
 
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
+#include <aws/common/environment.h>
 #include <aws/common/log_writer.h>
+#include <aws/common/string.h>
 #include <aws/common/thread.h>
 #include <aws/common/uuid.h>
 #include <aws/http/request_response.h>
@@ -320,4 +322,79 @@ int proxy_tester_verify_connection_attempt_was_to_proxy(
     ASSERT_TRUE(tester->connection_port == expected_port);
 
     return AWS_OP_SUCCESS;
+}
+
+AWS_STATIC_STRING_FROM_LITERAL(s_proxy_host_default, "localhost");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_host_env_variable, "AWS_TEST_HTTP_PROXY_HOST");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_port_env_variable, "AWS_TEST_HTTP_PROXY_PORT");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_host_env_variable, "AWS_TEST_HTTPS_PROXY_HOST");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_port_env_variable, "AWS_TEST_HTTPS_PROXY_PORT");
+
+#define AWS_DEFAULT_PROXY_TEST_HTTP_PORT 3128
+#define AWS_DEFAULT_PROXY_TEST_HTTPS_PORT 3129
+
+struct aws_integration_test_proxy_environment *aws_integration_test_proxy_environment_new(
+    struct aws_allocator *allocator) {
+    struct aws_integration_test_proxy_environment *environment =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_integration_test_proxy_environment));
+    if (environment == NULL) {
+        return NULL;
+    }
+
+    environment->allocator = allocator;
+
+    struct aws_string *http_proxy_port = NULL;
+    struct aws_string *https_proxy_port = NULL;
+
+    if (aws_get_environment_value(allocator, s_http_proxy_host_env_variable, &environment->http_proxy_endpoint) ||
+        environment->http_proxy_endpoint == NULL) {
+        environment->http_proxy_endpoint = aws_string_new_from_string(allocator, s_proxy_host_default);
+        if (environment->http_proxy_endpoint == NULL) {
+            goto on_error;
+        }
+    }
+
+    if (aws_get_environment_value(allocator, s_https_proxy_host_env_variable, &environment->https_proxy_endpoint) ||
+        environment->https_proxy_endpoint == NULL) {
+        environment->https_proxy_endpoint = aws_string_new_from_string(allocator, s_proxy_host_default);
+        if (environment->https_proxy_endpoint == NULL) {
+            goto on_error;
+        }
+    }
+
+    if (aws_get_environment_value(allocator, s_http_proxy_port_env_variable, &http_proxy_port) ||
+        http_proxy_port == NULL) {
+        environment->http_proxy_port = AWS_DEFAULT_PROXY_TEST_HTTP_PORT;
+    } else {
+        environment->http_proxy_port = atoi((const char *)http_proxy_port->bytes);
+    }
+
+    if (aws_get_environment_value(allocator, s_https_proxy_port_env_variable, &https_proxy_port) ||
+        https_proxy_port == NULL) {
+        environment->https_proxy_port = AWS_DEFAULT_PROXY_TEST_HTTPS_PORT;
+    } else {
+        environment->https_proxy_port = atoi((const char *)https_proxy_port->bytes);
+    }
+
+    aws_string_destroy(http_proxy_port);
+    aws_string_destroy(https_proxy_port);
+
+    return environment;
+
+on_error:
+
+    aws_integration_test_proxy_environment_destroy(environment);
+
+    return NULL;
+}
+
+void aws_integration_test_proxy_environment_destroy(struct aws_integration_test_proxy_environment *environment) {
+    if (environment == NULL) {
+        return;
+    }
+
+    aws_string_destroy(environment->http_proxy_endpoint);
+    aws_string_destroy(environment->https_proxy_endpoint);
+
+    aws_mem_release(environment->allocator, environment);
 }

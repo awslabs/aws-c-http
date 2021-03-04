@@ -78,6 +78,19 @@ struct proxy_tester {
     uint16_t connection_port;
 };
 
+struct aws_integration_test_proxy_environment {
+    struct aws_allocator *allocator;
+
+    struct aws_string *http_proxy_endpoint;
+    uint16_t http_proxy_port;
+    struct aws_string *https_proxy_endpoint;
+    uint16_t https_proxy_port;
+};
+
+struct aws_integration_test_proxy_environment *aws_integration_test_proxy_environment_new(
+    struct aws_allocator *allocator);
+void aws_integration_test_proxy_environment_destroy(struct aws_integration_test_proxy_environment *environment);
+
 int proxy_tester_wait(struct proxy_tester *tester, bool (*pred)(void *user_data));
 
 bool proxy_tester_connection_setup_pred(void *user_data);

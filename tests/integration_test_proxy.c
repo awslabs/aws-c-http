@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+#include <aws/common/string.h>
+
 #include <aws/http/connection.h>
 #include <aws/http/request_response.h>
 #include <aws/http/server.h>
@@ -80,9 +82,13 @@ static int s_setup_proxy_test(
     struct aws_allocator *allocator,
     struct aws_byte_cursor host,
     enum proxy_tester_test_mode test_mode) {
+
+    struct aws_integration_test_proxy_environment *environment = aws_integration_test_proxy_environment_new(allocator);
+    ASSERT_NOT_NULL(environment);
+
     struct aws_http_proxy_options proxy_options = {
-        .host = aws_byte_cursor_from_c_str("127.0.0.1"),
-        .port = 3128,
+        .host = aws_byte_cursor_from_string(environment->http_proxy_endpoint),
+        .port = environment->http_proxy_port,
     };
 
     struct proxy_tester_options options = {
@@ -96,6 +102,8 @@ static int s_setup_proxy_test(
 
     ASSERT_SUCCESS(proxy_tester_init(&tester, &options));
     ASSERT_SUCCESS(proxy_tester_wait(&tester, proxy_tester_connection_setup_pred));
+
+    aws_integration_test_proxy_environment_destroy(environment);
 
     return AWS_OP_SUCCESS;
 }
