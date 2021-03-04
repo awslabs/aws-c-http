@@ -22,8 +22,7 @@
 #include <aws/io/tls_channel_handler.h>
 
 #ifdef _MSC_VER
-/* Disable warning: address of dllimport 'aws_high_res_clock_get_ticks' is not static, identity not guaranteed */
-#    pragma warning(disable : 4232)
+#    pragma warning(disable : 4232) /* function pointer to dll symbol */
 #endif
 
 enum new_connection_result_type { AWS_NCRT_SUCCESS, AWS_NCRT_ERROR_VIA_CALLBACK, AWS_NCRT_ERROR_FROM_CREATE };
