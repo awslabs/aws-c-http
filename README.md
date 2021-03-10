@@ -10,7 +10,7 @@ This library is licensed under the Apache 2.0 License.
 
 ### Building
 
-CMake is required to build.
+CMake 3.1+ is required to build.
 
 `<install-path>` must be an absolute path in the following instructions.
 
