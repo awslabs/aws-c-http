@@ -21,6 +21,10 @@
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 
+#ifdef _MSC_VER
+#    pragma warning(disable : 4232) /* function pointer to dll symbol */
+#endif
+
 enum new_connection_result_type { AWS_NCRT_SUCCESS, AWS_NCRT_ERROR_VIA_CALLBACK, AWS_NCRT_ERROR_FROM_CREATE };
 
 struct mock_connection {
@@ -39,8 +43,8 @@ struct cm_tester_options {
 
 struct cm_tester {
     struct aws_allocator *allocator;
-    struct aws_event_loop_group event_loop_group;
-    struct aws_host_resolver host_resolver;
+    struct aws_event_loop_group *event_loop_group;
+    struct aws_host_resolver *host_resolver;
 
     struct aws_client_bootstrap *client_bootstrap;
 
@@ -60,7 +64,6 @@ struct cm_tester {
 
     size_t wait_for_connection_count;
     bool is_shutdown_complete;
-    bool is_client_bootstrap_shutdown_complete;
 
     struct aws_http_connection_manager_system_vtable *mock_table;
 
@@ -98,24 +101,13 @@ static void s_cm_tester_on_cm_shutdown_complete(void *user_data) {
     aws_condition_variable_notify_one(&tester->signal);
 }
 
-static void s_cm_tester_on_client_bootstrap_shutdown_complete(void *user_data) {
-    struct cm_tester *tester = user_data;
-    AWS_FATAL_ASSERT(tester == &s_tester);
-    aws_mutex_lock(&tester->lock);
-
-    tester->is_client_bootstrap_shutdown_complete = true;
-
-    aws_mutex_unlock(&tester->lock);
-    aws_condition_variable_notify_one(&tester->signal);
-}
-
 static struct aws_event_loop *s_new_event_loop(
     struct aws_allocator *alloc,
-    aws_io_clock_fn *clock,
+    const struct aws_event_loop_options *options,
     void *new_loop_user_data) {
     (void)new_loop_user_data;
 
-    return aws_event_loop_new_default(alloc, clock);
+    return aws_event_loop_new_default(alloc, options->clock);
 }
 
 static int s_cm_tester_init(struct cm_tester_options *options) {
@@ -140,16 +132,18 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     if (options->mock_table) {
         clock_fn = options->mock_table->get_monotonic_time;
     }
-    ASSERT_SUCCESS(
-        aws_event_loop_group_init(&tester->event_loop_group, tester->allocator, clock_fn, 1, s_new_event_loop, NULL));
 
-    ASSERT_SUCCESS(
-        aws_host_resolver_init_default(&tester->host_resolver, tester->allocator, 8, &tester->event_loop_group));
+    tester->event_loop_group = aws_event_loop_group_new(tester->allocator, clock_fn, 1, s_new_event_loop, NULL, NULL);
+
+    struct aws_host_resolver_default_options resolver_options = {
+        .el_group = tester->event_loop_group,
+        .max_entries = 8,
+    };
+
+    tester->host_resolver = aws_host_resolver_new_default(tester->allocator, &resolver_options);
     struct aws_client_bootstrap_options bootstrap_options = {
-        .event_loop_group = &tester->event_loop_group,
-        .host_resolver = &tester->host_resolver,
-        .on_shutdown_complete = s_cm_tester_on_client_bootstrap_shutdown_complete,
-        .user_data = tester,
+        .event_loop_group = tester->event_loop_group,
+        .host_resolver = tester->host_resolver,
     };
     tester->client_bootstrap = aws_client_bootstrap_new(tester->allocator, &bootstrap_options);
     ASSERT_NOT_NULL(tester->client_bootstrap);
@@ -355,26 +349,6 @@ static int s_wait_on_shutdown_complete(void) {
     return signal_error;
 }
 
-static bool s_is_client_bootstrap_shutdown_complete(void *context) {
-    (void)context;
-
-    struct cm_tester *tester = &s_tester;
-
-    return tester->is_client_bootstrap_shutdown_complete;
-}
-
-static int s_wait_on_client_bootstrap_shutdown_complete(void) {
-    struct cm_tester *tester = &s_tester;
-
-    ASSERT_SUCCESS(aws_mutex_lock(&tester->lock));
-
-    int signal_error = aws_condition_variable_wait_pred(
-        &tester->signal, &tester->lock, s_is_client_bootstrap_shutdown_complete, tester);
-
-    ASSERT_SUCCESS(aws_mutex_unlock(&tester->lock));
-    return signal_error;
-}
-
 static int s_cm_tester_clean_up(void) {
     struct cm_tester *tester = &s_tester;
 
@@ -398,21 +372,20 @@ static int s_cm_tester_clean_up(void) {
     s_wait_on_shutdown_complete();
 
     aws_client_bootstrap_release(tester->client_bootstrap);
-    ASSERT_SUCCESS(s_wait_on_client_bootstrap_shutdown_complete());
 
-    aws_host_resolver_clean_up(&tester->host_resolver);
-    aws_event_loop_group_clean_up(&tester->event_loop_group);
+    aws_host_resolver_release(tester->host_resolver);
+    aws_event_loop_group_release(tester->event_loop_group);
 
     aws_tls_ctx_options_clean_up(&tester->tls_ctx_options);
     aws_tls_connection_options_clean_up(&tester->tls_connection_options);
-    aws_tls_ctx_destroy(tester->tls_ctx);
+    aws_tls_ctx_release(tester->tls_ctx);
+
+    aws_http_library_clean_up();
 
     aws_mutex_clean_up(&tester->lock);
     aws_condition_variable_clean_up(&tester->signal);
 
     aws_mutex_clean_up(&tester->mock_time_lock);
-
-    aws_http_library_clean_up();
 
     return AWS_OP_SUCCESS;
 }

@@ -648,6 +648,8 @@ static void s_aws_http_connection_manager_finish_destroy(struct aws_http_connect
 
     aws_mutex_clean_up(&manager->lock);
 
+    aws_client_bootstrap_release(manager->bootstrap);
+
     if (manager->shutdown_complete_callback) {
         manager->shutdown_complete_callback(manager->shutdown_complete_user_data);
     }
@@ -821,7 +823,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->port = options->port;
     manager->max_connections = options->max_connections;
     manager->socket_options = *options->socket_options;
-    manager->bootstrap = options->bootstrap;
+    manager->bootstrap = aws_client_bootstrap_acquire(options->bootstrap);
     manager->system_vtable = g_aws_http_connection_manager_default_system_vtable_ptr;
     manager->external_ref_count = 1;
     manager->shutdown_complete_callback = options->shutdown_complete_callback;

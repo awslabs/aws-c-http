@@ -752,7 +752,7 @@ static void s_try_write_outgoing_frames(struct aws_websocket *websocket) {
         goto error;
     }
 
-    /* Finish shutdown if we were waiting for theCLOSE frame to be written */
+    /* Finish shutdown if we were waiting for the CLOSE frame to be written */
     if (wrote_close_frame && websocket->thread_data.is_shutting_down_and_waiting_for_close_frame_to_be_written) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_WEBSOCKET, "id=%p: CLOSE frame sent, finishing handler shutdown sequence.", (void *)websocket);

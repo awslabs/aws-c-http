@@ -178,11 +178,10 @@ static struct aws_http_connection *s_connection_new(
     }
 
     /* Connect handler and slot */
-    err = aws_channel_slot_set_handler(connection_slot, &connection->channel_handler);
-    if (err) {
+    if (aws_channel_slot_set_handler(connection_slot, &connection->channel_handler)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "static: Failed to setting HTTP handler into slot on channel %p, error %d (%s).",
+            "static: Failed to set HTTP handler into slot on channel %p, error %d (%s).",
             (void *)channel,
             aws_last_error(),
             aws_error_name(aws_last_error()));
@@ -506,6 +505,9 @@ static void s_http_server_clean_up(struct aws_http_server *server) {
     if (!server) {
         return;
     }
+
+    aws_server_bootstrap_release(server->bootstrap);
+
     /* invoke the user callback */
     if (server->on_destroy_complete) {
         server->on_destroy_complete(server->user_data);
@@ -578,7 +580,7 @@ struct aws_http_server *aws_http_server_new(const struct aws_http_server_options
     }
 
     server->alloc = options->allocator;
-    server->bootstrap = options->bootstrap;
+    server->bootstrap = aws_server_bootstrap_acquire(options->bootstrap);
     server->is_using_tls = options->tls_options != NULL;
     server->initial_window_size = options->initial_window_size;
     server->user_data = options->server_user_data;

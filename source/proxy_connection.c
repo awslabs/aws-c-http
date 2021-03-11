@@ -448,12 +448,17 @@ static void s_aws_http_on_stream_complete_tls_proxy(struct aws_http_stream *stre
     context->state = AWS_PBS_TLS_NEGOTIATION;
     struct aws_channel *channel = aws_http_connection_get_channel(context->connection);
 
-    /*
-     * TODO: if making secure (double TLS) proxy connection, we need to go after the second slot:
-     *
-     * Socket -> TLS(proxy) -> TLS(origin server) -> Http
-     */
-    if (channel == NULL || s_vtable->setup_client_tls(aws_channel_get_first_slot(channel), context->tls_options)) {
+    struct aws_channel_slot *left_of_tls_slot = aws_channel_get_first_slot(channel);
+    if (context->proxy_config->tls_options != NULL) {
+        /*
+         * If making secure (double TLS) proxy connection, we need to go after the second slot:
+         *
+         * Socket -> TLS(proxy) -> TLS(origin server) -> Http
+         */
+        left_of_tls_slot = left_of_tls_slot->adj_right;
+    }
+
+    if (s_vtable->setup_client_tls(left_of_tls_slot, context->tls_options)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "(%p) Proxy connection failed to start TLS negotiation with error %d(%s)",
