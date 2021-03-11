@@ -51,7 +51,7 @@ struct tester_request {
 };
 
 /* Singleton used by tests in this file */
-struct tester {
+static struct tester {
     struct aws_allocator *alloc;
     struct aws_logger logger;
 
