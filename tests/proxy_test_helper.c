@@ -115,7 +115,7 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
     ASSERT_SUCCESS(
         aws_array_list_init_dynamic(&tester->connect_requests, tester->alloc, 1, sizeof(struct aws_http_message *)));
 
-    int connect_response_count = 1;
+    uint32_t connect_response_count = 1;
     if (options->desired_connect_response_count > connect_response_count) {
         connect_response_count = options->desired_connect_response_count;
     }

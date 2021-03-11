@@ -293,6 +293,8 @@ static struct aws_string *s_mock_aws_http_proxy_negotiation_ntlm_get_challenge_t
     const struct aws_byte_cursor *challenge_value,
     int *out_error_code) {
 
+    (void)challenge_value;
+
     struct aws_allocator *allocator = user_data;
 
     *out_error_code = AWS_ERROR_SUCCESS;
@@ -312,6 +314,7 @@ static struct aws_string *s_mock_aws_http_proxy_negotiation_ntlm_get_token_sync_
 }
 
 static int s_test_proxy_sequential_negotiation(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
 
     struct aws_http_proxy_strategy_tunneling_kerberos_options kerberos_config = {
         .get_token = s_mock_aws_http_proxy_negotiation_kerberos_get_token_sync_fn,
