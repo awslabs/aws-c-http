@@ -1,5 +1,5 @@
-#ifndef AWS_PROXY_STRATEGY_H
-#define AWS_PROXY_STRATEGY_H
+#ifndef AWS_PROXY_H
+#define AWS_PROXY_H
 
 /**
  * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -466,4 +466,4 @@ AWS_HTTP_API int aws_http_proxy_new_socket_channel(
 
 AWS_EXTERN_C_END
 
-#endif /* AWS_PROXY_STRATEGY_H */
+#endif /* AWS_PROXY_H */
