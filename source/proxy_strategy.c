@@ -1323,6 +1323,8 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
         strategies[strategy_count++] = ntlm_strategy;
     }
 
+    AWS_FATAL_ASSERT(strategy_count <= PROXY_STRATEGY_MAX_ADAPTIVE_STRATEGIES);
+
     struct aws_http_proxy_strategy_tunneling_sequence_options sequence_config = {
         .strategies = strategies,
         .strategy_count = strategy_count,
