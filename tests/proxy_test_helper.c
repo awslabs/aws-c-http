@@ -312,11 +312,6 @@ int proxy_tester_create_testing_channel_connection(
         aws_http_connection_new_http1_1_client(tester->alloc, true, 256, &http1_options);
     ASSERT_NOT_NULL(connection);
 
-    if (tester->client_connection != NULL) {
-        aws_http_connection_release(tester->client_connection);
-        tester->client_connection = NULL;
-    }
-
     connection->user_data = http_bootstrap->user_data;
     connection->client_data = &connection->client_or_server_data.client;
     connection->proxy_request_transform = http_bootstrap->proxy_request_transform;
