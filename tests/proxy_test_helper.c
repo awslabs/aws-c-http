@@ -30,6 +30,20 @@ enum {
     TESTER_TIMEOUT_SEC = 60, /* Give enough time for non-sudo users to enter password */
 };
 
+struct testing_channel_bootstrap_wrapper {
+    struct testing_channel *channel;
+    struct aws_http_client_bootstrap *bootstrap;
+};
+
+static struct testing_channel_bootstrap_wrapper *s_get_current_channel_bootstrap_wrapper(struct proxy_tester *tester) {
+    struct testing_channel_bootstrap_wrapper *wrapper = NULL;
+
+    size_t count = aws_array_list_length(&tester->testing_channels);
+    aws_array_list_get_at_ptr(&tester->testing_channels, (void **)&wrapper, count - 1);
+
+    return wrapper;
+}
+
 void proxy_tester_on_client_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
 
     struct proxy_tester *tester = user_data;
@@ -100,6 +114,9 @@ int proxy_tester_init(struct proxy_tester *tester, const struct proxy_tester_opt
     tester->alloc = options->alloc;
 
     aws_http_library_init(options->alloc);
+
+    ASSERT_SUCCESS(aws_array_list_init_dynamic(
+        &tester->testing_channels, options->alloc, 1, sizeof(struct testing_channel_bootstrap_wrapper)));
 
     tester->host = options->host;
     tester->port = options->port;
@@ -191,23 +208,38 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
         aws_http_connection_release(tester->client_connection);
     }
 
-    if (tester->testing_channel) {
-        ASSERT_SUCCESS(testing_channel_clean_up(tester->testing_channel));
-        while (!testing_channel_is_shutdown_completed(tester->testing_channel)) {
-            aws_thread_current_sleep(1000000000);
-        }
+    size_t channel_count = aws_array_list_length(&tester->testing_channels);
+    for (size_t i = 0; i < channel_count; ++i) {
+        struct testing_channel_bootstrap_wrapper wrapper;
+        aws_array_list_get_at(&tester->testing_channels, &wrapper, i);
+        struct testing_channel *channel = wrapper.channel;
+        if (channel) {
+            ASSERT_SUCCESS(testing_channel_clean_up(channel));
+            while (!testing_channel_is_shutdown_completed(channel)) {
+                aws_thread_current_sleep(1000000000);
+            }
 
-        aws_mem_release(tester->alloc, tester->testing_channel);
+            aws_mem_release(tester->alloc, channel);
+        }
     }
 
     ASSERT_SUCCESS(proxy_tester_wait(tester, proxy_tester_connection_shutdown_pred));
 
-    if (tester->http_bootstrap != NULL) {
-        if (tester->testing_channel == NULL && tester->http_bootstrap->user_data) {
-            aws_http_proxy_user_data_destroy(tester->http_bootstrap->user_data);
+    for (size_t i = 0; i < channel_count; ++i) {
+        struct testing_channel_bootstrap_wrapper wrapper;
+        aws_array_list_get_at(&tester->testing_channels, &wrapper, i);
+        if (wrapper.bootstrap != NULL) {
+            if (channel_count == 0 && wrapper.bootstrap->user_data) {
+                aws_http_proxy_user_data_destroy(wrapper.bootstrap->user_data);
+            }
+            if (i + 1 < channel_count) {
+                wrapper.bootstrap->on_shutdown(tester->client_connection, 0, wrapper.bootstrap->user_data);
+            }
+            aws_mem_release(tester->alloc, wrapper.bootstrap);
         }
-        aws_mem_release(tester->alloc, tester->http_bootstrap);
     }
+
+    aws_array_list_clean_up(&tester->testing_channels);
 
     aws_client_bootstrap_release(tester->client_bootstrap);
 
@@ -252,17 +284,26 @@ static void s_testing_channel_shutdown_callback(int error_code, void *user_data)
         tester->wait_result = error_code;
     }
 
-    tester->http_bootstrap->on_shutdown(
-        tester->client_connection, tester->wait_result, tester->http_bootstrap->user_data);
+    struct testing_channel_bootstrap_wrapper *wrapper = s_get_current_channel_bootstrap_wrapper(tester);
+
+    wrapper->bootstrap->on_shutdown(tester->client_connection, tester->wait_result, wrapper->bootstrap->user_data);
 }
 
-int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester) {
-    tester->testing_channel = aws_mem_calloc(tester->alloc, 1, sizeof(struct testing_channel));
+int proxy_tester_create_testing_channel_connection(
+    struct proxy_tester *tester,
+    struct aws_http_client_bootstrap *http_bootstrap) {
+
+    struct testing_channel_bootstrap_wrapper *old_wrapper = s_get_current_channel_bootstrap_wrapper(tester);
+    if (old_wrapper != NULL) {
+        old_wrapper->channel->channel_shutdown = NULL;
+    }
+
+    struct testing_channel *testing_channel = aws_mem_calloc(tester->alloc, 1, sizeof(struct testing_channel));
 
     struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
-    ASSERT_SUCCESS(testing_channel_init(tester->testing_channel, tester->alloc, &test_channel_options));
-    tester->testing_channel->channel_shutdown = s_testing_channel_shutdown_callback;
-    tester->testing_channel->channel_shutdown_user_data = tester;
+    ASSERT_SUCCESS(testing_channel_init(testing_channel, tester->alloc, &test_channel_options));
+    testing_channel->channel_shutdown = s_testing_channel_shutdown_callback;
+    testing_channel->channel_shutdown_user_data = tester;
 
     /* Use small window so that we can observe it opening in tests.
      * Channel may wait until the window is small before issuing the increment command. */
@@ -271,18 +312,28 @@ int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester) 
         aws_http_connection_new_http1_1_client(tester->alloc, true, 256, &http1_options);
     ASSERT_NOT_NULL(connection);
 
-    connection->user_data = tester->http_bootstrap->user_data;
-    connection->client_data = &connection->client_or_server_data.client;
-    connection->proxy_request_transform = tester->http_bootstrap->proxy_request_transform;
+    if (tester->client_connection != NULL) {
+        aws_http_connection_release(tester->client_connection);
+        tester->client_connection = NULL;
+    }
 
-    struct aws_channel_slot *slot = aws_channel_slot_new(tester->testing_channel->channel);
+    connection->user_data = http_bootstrap->user_data;
+    connection->client_data = &connection->client_or_server_data.client;
+    connection->proxy_request_transform = http_bootstrap->proxy_request_transform;
+
+    struct aws_channel_slot *slot = aws_channel_slot_new(testing_channel->channel);
     ASSERT_NOT_NULL(slot);
-    ASSERT_SUCCESS(aws_channel_slot_insert_end(tester->testing_channel->channel, slot));
+    ASSERT_SUCCESS(aws_channel_slot_insert_end(testing_channel->channel, slot));
     ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &connection->channel_handler));
     connection->vtable->on_channel_handler_installed(&connection->channel_handler, slot);
-    testing_channel_drain_queued_tasks(tester->testing_channel);
+    testing_channel_drain_queued_tasks(testing_channel);
 
     tester->client_connection = connection;
+
+    struct testing_channel_bootstrap_wrapper wrapper;
+    wrapper.channel = testing_channel;
+    wrapper.bootstrap = http_bootstrap;
+    aws_array_list_push_back(&tester->testing_channels, &wrapper);
 
     return AWS_OP_SUCCESS;
 }
@@ -362,7 +413,11 @@ static int s_record_connect_request(struct aws_byte_buf *request_buffer, struct 
 int proxy_tester_verify_connect_request(struct proxy_tester *tester) {
     struct aws_byte_buf output;
     ASSERT_SUCCESS(aws_byte_buf_init(&output, tester->alloc, 1024));
-    ASSERT_SUCCESS(testing_channel_drain_written_messages(tester->testing_channel, &output));
+
+    struct testing_channel *testing_channel = proxy_tester_get_current_channel(tester);
+    ASSERT_NOT_NULL(testing_channel);
+
+    ASSERT_SUCCESS(testing_channel_drain_written_messages(testing_channel, &output));
 
     char connect_request_buffer[1024];
     snprintf(
@@ -409,10 +464,12 @@ int proxy_tester_send_connect_response(struct proxy_tester *tester) {
         response_string = "HTTP/1.0 200 Connection established\r\nconnection: close\r\n\r\n";
     }
 
-    /* send response */
-    ASSERT_SUCCESS(testing_channel_push_read_str(tester->testing_channel, response_string));
+    struct testing_channel *channel = proxy_tester_get_current_channel(tester);
 
-    testing_channel_drain_queued_tasks(tester->testing_channel);
+    /* send response */
+    ASSERT_SUCCESS(testing_channel_push_read_str(channel, response_string));
+
+    testing_channel_drain_queued_tasks(channel);
 
     return AWS_OP_SUCCESS;
 }
@@ -433,4 +490,13 @@ int proxy_tester_verify_connection_attempt_was_to_proxy(
     ASSERT_TRUE(tester->connection_port == expected_port);
 
     return AWS_OP_SUCCESS;
+}
+
+struct testing_channel *proxy_tester_get_current_channel(struct proxy_tester *tester) {
+    struct testing_channel_bootstrap_wrapper *wrapper = s_get_current_channel_bootstrap_wrapper(tester);
+    if (wrapper == NULL) {
+        return NULL;
+    }
+
+    return wrapper->channel;
 }

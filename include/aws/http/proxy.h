@@ -241,8 +241,6 @@ struct aws_http_proxy_negotiator_tunnelling_vtable {
  *
  * (2) Forwarding - In a forwarding proxy connection, the forward_request_transform is invoked on every request sent out
  * on the connection.
- *
- * (3) Socks5 - not yet supported
  */
 struct aws_http_proxy_negotiator {
     struct aws_ref_count ref_count;
