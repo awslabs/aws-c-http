@@ -1214,13 +1214,6 @@ int aws_http_proxy_new_alpn_socket_channel(
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
-    if (!aws_tls_is_alpn_available()) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_PROXY_NEGOTIATION,
-            "Creating an alpn-negotiated protocol channel through an http proxy requires alpn support");
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
-    }
-
     struct aws_allocator *allocator = channel_options->bootstrap->allocator;
     struct aws_alpn_socket_channel_user_data *user_data = s_alpn_user_data_new(allocator, channel_options);
 
