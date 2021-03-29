@@ -15,6 +15,7 @@
 #include <aws/http/connection.h>
 #include <aws/http/connection_manager.h>
 #include <aws/http/private/connection_manager_system_vtable.h>
+#include <aws/http/proxy.h>
 #include <aws/http/server.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
@@ -25,7 +26,11 @@
 #    pragma warning(disable : 4232) /* function pointer to dll symbol */
 #endif
 
-enum new_connection_result_type { AWS_NCRT_SUCCESS, AWS_NCRT_ERROR_VIA_CALLBACK, AWS_NCRT_ERROR_FROM_CREATE };
+enum new_connection_result_type {
+    AWS_NCRT_SUCCESS,
+    AWS_NCRT_ERROR_VIA_CALLBACK,
+    AWS_NCRT_ERROR_FROM_CREATE,
+};
 
 struct mock_connection {
     enum new_connection_result_type result;
@@ -393,7 +398,10 @@ static int s_cm_tester_clean_up(void) {
 static int s_test_connection_manager_setup_shutdown(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    struct cm_tester_options options = {.allocator = allocator, .max_connections = 5};
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+    };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
@@ -406,7 +414,10 @@ AWS_TEST_CASE(test_connection_manager_setup_shutdown, s_test_connection_manager_
 static int s_test_connection_manager_single_connection(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    struct cm_tester_options options = {.allocator = allocator, .max_connections = 5};
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+    };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
@@ -425,7 +436,10 @@ AWS_TEST_CASE(test_connection_manager_single_connection, s_test_connection_manag
 static int s_test_connection_manager_many_connections(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    struct cm_tester_options options = {.allocator = allocator, .max_connections = 20};
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 20,
+    };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
@@ -444,7 +458,10 @@ AWS_TEST_CASE(test_connection_manager_many_connections, s_test_connection_manage
 static int s_test_connection_manager_acquire_release(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    struct cm_tester_options options = {.allocator = allocator, .max_connections = 4};
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 4,
+    };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 
@@ -467,7 +484,10 @@ AWS_TEST_CASE(test_connection_manager_acquire_release, s_test_connection_manager
 static int s_test_connection_manager_close_and_release(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    struct cm_tester_options options = {.allocator = allocator, .max_connections = 4};
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 4,
+    };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
 

@@ -7,7 +7,9 @@
 
 #include <aws/common/encoding.h>
 #include <aws/common/string.h>
+#include <aws/http/connection_manager.h>
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/proxy.h>
 #include <aws/http/request_response.h>
 #include <aws/io/channel.h>
 #include <aws/io/logging.h>
@@ -20,8 +22,6 @@
 #endif
 
 AWS_STATIC_STRING_FROM_LITERAL(s_host_header_name, "Host");
-AWS_STATIC_STRING_FROM_LITERAL(s_proxy_authorization_header_name, "Proxy-Authorization");
-AWS_STATIC_STRING_FROM_LITERAL(s_proxy_authorization_header_basic_prefix, "Basic ");
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_connection_header_name, "Proxy-Connection");
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_connection_header_value, "Keep-Alive");
 AWS_STATIC_STRING_FROM_LITERAL(s_options_method, "OPTIONS");
@@ -53,6 +53,10 @@ void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data
         aws_mem_release(user_data->allocator, user_data->tls_options);
     }
 
+    aws_http_proxy_negotiator_release(user_data->proxy_negotiator);
+
+    aws_client_bootstrap_release(user_data->bootstrap);
+
     aws_mem_release(user_data->allocator, user_data);
 }
 
@@ -70,6 +74,13 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     user_data->allocator = allocator;
     user_data->state = AWS_PBS_SOCKET_CONNECT;
     user_data->error_code = AWS_ERROR_SUCCESS;
+    user_data->connect_status_code = AWS_HTTP_STATUS_CODE_UNKNOWN;
+    user_data->bootstrap = aws_client_bootstrap_acquire(options->bootstrap);
+    if (options->socket_options != NULL) {
+        user_data->socket_options = *options->socket_options;
+    }
+    user_data->manual_window_management = options->manual_window_management;
+    user_data->initial_window_size = options->initial_window_size;
 
     user_data->original_host = aws_string_new_from_cursor(allocator, &options->host_name);
     if (user_data->original_host == NULL) {
@@ -78,8 +89,14 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
 
     user_data->original_port = options->port;
 
-    user_data->proxy_config = aws_http_proxy_config_new(allocator, options->proxy_options);
+    user_data->proxy_config = aws_http_proxy_config_new_from_connection_options(allocator, options);
     if (user_data->proxy_config == NULL) {
+        goto on_error;
+    }
+
+    user_data->proxy_negotiator =
+        aws_http_proxy_strategy_create_negotiator(user_data->proxy_config->proxy_strategy, allocator);
+    if (user_data->proxy_negotiator == NULL) {
         goto on_error;
     }
 
@@ -113,90 +130,78 @@ on_error:
     return NULL;
 }
 
-/*
- * Adds a proxy authentication header based on the basic authentication mode, rfc7617
- */
-static int s_add_basic_proxy_authentication_header(
-    struct aws_http_message *request,
-    struct aws_http_proxy_user_data *proxy_user_data) {
+struct aws_http_proxy_user_data *aws_http_proxy_user_data_new_reset_clone(
+    struct aws_allocator *allocator,
+    struct aws_http_proxy_user_data *old_user_data) {
 
-    struct aws_byte_buf base64_input_value;
-    AWS_ZERO_STRUCT(base64_input_value);
+    AWS_FATAL_ASSERT(old_user_data != NULL);
 
-    struct aws_byte_buf header_value;
-    AWS_ZERO_STRUCT(header_value);
-
-    int result = AWS_OP_ERR;
-
-    if (aws_byte_buf_init(
-            &base64_input_value,
-            proxy_user_data->allocator,
-            proxy_user_data->proxy_config->auth_username.len + proxy_user_data->proxy_config->auth_password.len + 1)) {
-        goto done;
+    struct aws_http_proxy_user_data *user_data = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_user_data));
+    if (user_data == NULL) {
+        return NULL;
     }
 
-    /* First build a buffer with "username:password" in it */
-    struct aws_byte_cursor username_cursor = aws_byte_cursor_from_buf(&proxy_user_data->proxy_config->auth_username);
-    if (aws_byte_buf_append(&base64_input_value, &username_cursor)) {
-        goto done;
+    user_data->allocator = allocator;
+    user_data->state = AWS_PBS_SOCKET_CONNECT;
+    user_data->error_code = AWS_ERROR_SUCCESS;
+    user_data->connect_status_code = AWS_HTTP_STATUS_CODE_UNKNOWN;
+    user_data->bootstrap = aws_client_bootstrap_acquire(old_user_data->bootstrap);
+    user_data->socket_options = old_user_data->socket_options;
+    user_data->manual_window_management = old_user_data->manual_window_management;
+    user_data->initial_window_size = old_user_data->initial_window_size;
+
+    user_data->original_host = aws_string_new_from_string(allocator, old_user_data->original_host);
+    if (user_data->original_host == NULL) {
+        goto on_error;
     }
 
-    struct aws_byte_cursor colon_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(":");
-    if (aws_byte_buf_append(&base64_input_value, &colon_cursor)) {
-        goto done;
+    user_data->original_port = old_user_data->original_port;
+
+    user_data->proxy_config = aws_http_proxy_config_new_clone(allocator, old_user_data->proxy_config);
+    if (user_data->proxy_config == NULL) {
+        goto on_error;
     }
 
-    struct aws_byte_cursor password_cursor = aws_byte_cursor_from_buf(&proxy_user_data->proxy_config->auth_password);
-    if (aws_byte_buf_append(&base64_input_value, &password_cursor)) {
-        goto done;
+    user_data->proxy_negotiator = aws_http_proxy_negotiator_acquire(old_user_data->proxy_negotiator);
+    if (user_data->proxy_negotiator == NULL) {
+        goto on_error;
     }
 
-    struct aws_byte_cursor base64_source_cursor =
-        aws_byte_cursor_from_array(base64_input_value.buffer, base64_input_value.len);
+    if (old_user_data->tls_options) {
+        /* clone tls options, but redirect user data to what we're creating */
+        user_data->tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
+        if (user_data->tls_options == NULL ||
+            aws_tls_connection_options_copy(user_data->tls_options, old_user_data->tls_options)) {
+            goto on_error;
+        }
 
-    /* Figure out how much room we need in our final header value buffer */
-    size_t required_size = 0;
-    if (aws_base64_compute_encoded_len(base64_source_cursor.len, &required_size)) {
-        goto done;
+        user_data->tls_options->user_data = user_data;
     }
 
-    required_size += s_proxy_authorization_header_basic_prefix->len + 1;
-    if (aws_byte_buf_init(&header_value, proxy_user_data->allocator, required_size)) {
-        goto done;
-    }
+    user_data->original_on_setup = old_user_data->original_on_setup;
+    user_data->original_on_shutdown = old_user_data->original_on_shutdown;
+    user_data->original_user_data = old_user_data->original_user_data;
 
-    /* Build the final header value by appending the authorization type and the base64 encoding string together */
-    struct aws_byte_cursor basic_prefix = aws_byte_cursor_from_string(s_proxy_authorization_header_basic_prefix);
-    if (aws_byte_buf_append_dynamic(&header_value, &basic_prefix)) {
-        goto done;
-    }
+    return user_data;
 
-    if (aws_base64_encode(&base64_source_cursor, &header_value)) {
-        goto done;
-    }
+on_error:
 
-    struct aws_http_header header = {.name = aws_byte_cursor_from_string(s_proxy_authorization_header_name),
-                                     .value = aws_byte_cursor_from_array(header_value.buffer, header_value.len)};
+    AWS_LOGF_ERROR(
+        AWS_LS_HTTP_CONNECTION,
+        "(STATIC) Proxy connection failed to create user data with error %d(%s)",
+        aws_last_error(),
+        aws_error_str(aws_last_error()));
 
-    if (aws_http_message_add_header(request, header)) {
-        goto done;
-    }
+    aws_http_proxy_user_data_destroy(user_data);
 
-    result = AWS_OP_SUCCESS;
-
-done:
-
-    aws_byte_buf_clean_up(&header_value);
-    aws_byte_buf_clean_up(&base64_input_value);
-
-    return result;
+    return NULL;
 }
 
 /*
  * Connection callback used ONLY by http proxy connections.  After this,
  * the connection is live and the user is notified
  */
-static void s_aws_http_on_client_connection_http_proxy_setup_fn(
+static void s_aws_http_on_client_connection_http_forwarding_proxy_setup_fn(
     struct aws_http_connection *connection,
     int error_code,
     void *user_data) {
@@ -235,14 +240,16 @@ static void s_aws_http_on_client_connection_http_proxy_shutdown_fn(
             ec = AWS_ERROR_UNKNOWN;
         }
 
-        AWS_LOGF_ERROR(
+        AWS_LOGF_WARN(
             AWS_LS_HTTP_CONNECTION,
             "(%p) Error %d while connecting to \"%s\" via proxy.",
             (void *)connection,
             ec,
             (char *)proxy_ud->original_host->bytes);
 
-        proxy_ud->original_on_setup(NULL, ec, proxy_ud->original_user_data);
+        if (proxy_ud->original_on_setup != NULL) {
+            proxy_ud->original_on_setup(NULL, ec, proxy_ud->original_user_data);
+        }
     }
 
     aws_http_proxy_user_data_destroy(user_data);
@@ -271,8 +278,11 @@ static void s_aws_http_proxy_user_data_shutdown(struct aws_http_proxy_user_data 
         user_data->connect_request = NULL;
     }
 
-    aws_http_connection_release(user_data->connection);
+    struct aws_http_connection *http_connection = user_data->connection;
     user_data->connection = NULL;
+
+    aws_channel_shutdown(http_connection->channel_slot->channel, user_data->error_code);
+    aws_http_connection_release(http_connection);
 }
 
 /*
@@ -318,20 +328,19 @@ static struct aws_http_message *s_build_proxy_connect_request(struct aws_http_pr
         goto on_error;
     }
 
-    struct aws_http_header host_header = {.name = aws_byte_cursor_from_string(s_host_header_name),
-                                          .value = aws_byte_cursor_from_string(user_data->original_host)};
+    struct aws_http_header host_header = {
+        .name = aws_byte_cursor_from_string(s_host_header_name),
+        .value = aws_byte_cursor_from_array(path_buffer.buffer, path_buffer.len),
+    };
     if (aws_http_message_add_header(request, host_header)) {
         goto on_error;
     }
 
-    struct aws_http_header keep_alive_header = {.name = aws_byte_cursor_from_string(s_proxy_connection_header_name),
-                                                .value = aws_byte_cursor_from_string(s_proxy_connection_header_value)};
+    struct aws_http_header keep_alive_header = {
+        .name = aws_byte_cursor_from_string(s_proxy_connection_header_name),
+        .value = aws_byte_cursor_from_string(s_proxy_connection_header_value),
+    };
     if (aws_http_message_add_header(request, keep_alive_header)) {
-        goto on_error;
-    }
-
-    if (user_data->proxy_config->auth_type == AWS_HPAT_BASIC &&
-        s_add_basic_proxy_authentication_header(request, user_data)) {
         goto on_error;
     }
 
@@ -354,10 +363,46 @@ on_error:
     return NULL;
 }
 
+static int s_aws_http_on_incoming_body_tunnel_proxy(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    void *user_data) {
+    (void)stream;
+
+    struct aws_http_proxy_user_data *context = user_data;
+    aws_http_proxy_negotiator_connect_on_incoming_body_fn *on_incoming_body =
+        context->proxy_negotiator->strategy_vtable.tunnelling_vtable->on_incoming_body_callback;
+    if (on_incoming_body != NULL) {
+        (*on_incoming_body)(context->proxy_negotiator, data);
+    }
+
+    aws_http_stream_update_window(stream, data->len);
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_aws_http_on_response_headers_tunnel_proxy(
+    struct aws_http_stream *stream,
+    enum aws_http_header_block header_block,
+    const struct aws_http_header *header_array,
+    size_t num_headers,
+    void *user_data) {
+    (void)stream;
+
+    struct aws_http_proxy_user_data *context = user_data;
+    aws_http_proxy_negotiation_connect_on_incoming_headers_fn *on_incoming_headers =
+        context->proxy_negotiator->strategy_vtable.tunnelling_vtable->on_incoming_headers_callback;
+    if (on_incoming_headers != NULL) {
+        (*on_incoming_headers)(context->proxy_negotiator, header_block, header_array, num_headers);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 /*
  * Headers done callback for the CONNECT request made during tls proxy connections
  */
-static int s_aws_http_on_incoming_header_block_done_tls_proxy(
+static int s_aws_http_on_incoming_header_block_done_tunnel_proxy(
     struct aws_http_stream *stream,
     enum aws_http_header_block header_block,
     void *user_data) {
@@ -365,14 +410,22 @@ static int s_aws_http_on_incoming_header_block_done_tls_proxy(
     struct aws_http_proxy_user_data *context = user_data;
 
     if (header_block == AWS_HTTP_HEADER_BLOCK_MAIN) {
-        int status = 0;
-        if (aws_http_stream_get_incoming_response_status(stream, &status) || status != 200) {
+        int status_code = AWS_HTTP_STATUS_CODE_UNKNOWN;
+        aws_http_stream_get_incoming_response_status(stream, &status_code);
+        context->connect_status_code = (enum aws_http_status_code)status_code;
+        if (context->connect_status_code != AWS_HTTP_STATUS_CODE_200_OK) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_CONNECTION,
                 "(%p) Proxy CONNECT request failed with status code %d",
                 (void *)context->connection,
-                status);
-            context->error_code = AWS_ERROR_HTTP_PROXY_TLS_CONNECT_FAILED;
+                context->connect_status_code);
+            context->error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED;
+        }
+
+        aws_http_proxy_negotiator_connect_status_fn *on_status =
+            context->proxy_negotiator->strategy_vtable.tunnelling_vtable->on_status_callback;
+        if (on_status != NULL) {
+            (*on_status)(context->proxy_negotiator, context->connect_status_code);
         }
     }
 
@@ -408,10 +461,16 @@ static void s_on_origin_server_tls_negotation_result(
     context->original_on_setup(context->connection, AWS_ERROR_SUCCESS, context->original_user_data);
 }
 
+static int s_create_tunneling_connection(struct aws_http_proxy_user_data *user_data);
+static int s_make_proxy_connect_request(struct aws_http_proxy_user_data *user_data);
+
 /*
  * Stream done callback for the CONNECT request made during tls proxy connections
  */
-static void s_aws_http_on_stream_complete_tls_proxy(struct aws_http_stream *stream, int error_code, void *user_data) {
+static void s_aws_http_on_stream_complete_tunnel_proxy(
+    struct aws_http_stream *stream,
+    int error_code,
+    void *user_data) {
     struct aws_http_proxy_user_data *context = user_data;
     AWS_FATAL_ASSERT(stream == context->connect_stream);
 
@@ -420,6 +479,32 @@ static void s_aws_http_on_stream_complete_tls_proxy(struct aws_http_stream *stre
     }
 
     if (context->error_code != AWS_ERROR_SUCCESS) {
+        context->error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED;
+        if (context->connect_status_code == AWS_HTTP_STATUS_CODE_407_PROXY_AUTHENTICATION_REQUIRED) {
+            enum aws_http_proxy_negotiation_retry_directive retry_directive =
+                aws_http_proxy_negotiator_get_retry_directive(context->proxy_negotiator);
+
+            if (retry_directive == AWS_HPNRD_NEW_CONNECTION) {
+                struct aws_http_proxy_user_data *new_context =
+                    aws_http_proxy_user_data_new_reset_clone(context->allocator, context);
+                if (new_context != NULL && s_create_tunneling_connection(new_context) == AWS_OP_SUCCESS) {
+                    /*
+                     * We successfully kicked off a new connection.  By NULLing the callbacks on the old one, we can
+                     * shut it down quietly without the user being notified.  The new connection will notify the user
+                     * based on its success or failure.
+                     */
+                    context->original_on_shutdown = NULL;
+                    context->original_on_setup = NULL;
+                    context->error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE;
+                }
+            } else if (retry_directive == AWS_HPNRD_CURRENT_CONNECTION) {
+                context->error_code = AWS_ERROR_SUCCESS;
+                if (s_make_proxy_connect_request(context) == AWS_OP_SUCCESS) {
+                    return;
+                }
+            }
+        }
+
         s_aws_http_proxy_user_data_shutdown(context);
         return;
     }
@@ -440,87 +525,122 @@ static void s_aws_http_on_stream_complete_tls_proxy(struct aws_http_stream *stre
 
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION, "(%p) Beginning TLS negotiation", (void *)context->connection);
 
-    /*
-     * Perform TLS negotiation to the origin server through proxy
-     */
-    context->tls_options->on_negotiation_result = s_on_origin_server_tls_negotation_result;
-
-    context->state = AWS_PBS_TLS_NEGOTIATION;
-    struct aws_channel *channel = aws_http_connection_get_channel(context->connection);
-
-    struct aws_channel_slot *left_of_tls_slot = aws_channel_get_first_slot(channel);
-    if (context->proxy_config->tls_options != NULL) {
+    if (context->tls_options != NULL) {
         /*
-         * If making secure (double TLS) proxy connection, we need to go after the second slot:
-         *
-         * Socket -> TLS(proxy) -> TLS(origin server) -> Http
+         * Perform TLS negotiation to the origin server through proxy
          */
-        left_of_tls_slot = left_of_tls_slot->adj_right;
-    }
+        context->tls_options->on_negotiation_result = s_on_origin_server_tls_negotation_result;
 
-    if (s_vtable->setup_client_tls(left_of_tls_slot, context->tls_options)) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "(%p) Proxy connection failed to start TLS negotiation with error %d(%s)",
-            (void *)context->connection,
-            aws_last_error(),
-            aws_error_str(aws_last_error()));
-        s_aws_http_proxy_user_data_shutdown(context);
-        return;
+        context->state = AWS_PBS_TLS_NEGOTIATION;
+        struct aws_channel *channel = aws_http_connection_get_channel(context->connection);
+
+        struct aws_channel_slot *left_of_tls_slot = aws_channel_get_first_slot(channel);
+        if (context->proxy_config->tls_options != NULL) {
+            /*
+             * If making secure (double TLS) proxy connection, we need to go after the second slot:
+             *
+             * Socket -> TLS(proxy) -> TLS(origin server) -> Http
+             */
+            left_of_tls_slot = left_of_tls_slot->adj_right;
+        }
+
+        if (s_vtable->setup_client_tls(left_of_tls_slot, context->tls_options)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION,
+                "(%p) Proxy connection failed to start TLS negotiation with error %d(%s)",
+                (void *)context->connection,
+                aws_last_error(),
+                aws_error_str(aws_last_error()));
+            s_aws_http_proxy_user_data_shutdown(context);
+            return;
+        }
+    } else {
+        /*
+         * The tunnel has been established.
+         */
+        context->state = AWS_PBS_SUCCESS;
+        context->original_on_setup(context->connection, AWS_ERROR_SUCCESS, context->original_user_data);
     }
 }
 
-/*
- * Issues a CONNECT request on a newly-established proxy connection with the intent
- * of upgrading with TLS on success
- */
-static int s_make_proxy_connect_request(
-    struct aws_http_connection *connection,
-    struct aws_http_proxy_user_data *user_data) {
-    struct aws_http_message *request = s_build_proxy_connect_request(user_data);
-    if (request == NULL) {
-        return AWS_OP_ERR;
-    }
+static void s_terminate_tunneling_connect(
+    struct aws_http_message *message,
+    int error_code,
+    void *internal_proxy_user_data) {
+    (void)message;
 
-    struct aws_http_make_request_options request_options = {
-        .self_size = sizeof(request_options),
-        .request = request,
-        .user_data = user_data,
-        .on_response_header_block_done = s_aws_http_on_incoming_header_block_done_tls_proxy,
-        .on_complete = s_aws_http_on_stream_complete_tls_proxy,
-    };
-
-    struct aws_http_stream *stream = aws_http_connection_make_request(connection, &request_options);
-    if (stream == NULL) {
-        goto on_error;
-    }
-
-    user_data->connect_stream = stream;
-    user_data->connect_request = request;
-
-    aws_http_stream_activate(stream);
-
-    return AWS_OP_SUCCESS;
-
-on_error:
+    struct aws_http_proxy_user_data *proxy_ud = internal_proxy_user_data;
 
     AWS_LOGF_ERROR(
         AWS_LS_HTTP_CONNECTION,
-        "(%p) Proxy connection failed to create request stream for CONNECT request with error %d(%s)",
-        (void *)connection,
-        aws_last_error(),
-        aws_error_str(aws_last_error()));
+        "(%p) Tunneling proxy connection failed to create request stream for CONNECT request with error %d(%s)",
+        (void *)proxy_ud->connection,
+        error_code,
+        aws_error_str(error_code));
 
-    aws_http_message_destroy(request);
+    proxy_ud->error_code = error_code;
+    s_aws_http_proxy_user_data_shutdown(proxy_ud);
+}
 
-    return AWS_OP_ERR;
+static void s_continue_tunneling_connect(struct aws_http_message *message, void *internal_proxy_user_data) {
+    struct aws_http_proxy_user_data *proxy_ud = internal_proxy_user_data;
+
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = message,
+        .user_data = proxy_ud,
+        .on_response_headers = s_aws_http_on_response_headers_tunnel_proxy,
+        .on_response_header_block_done = s_aws_http_on_incoming_header_block_done_tunnel_proxy,
+        .on_response_body = s_aws_http_on_incoming_body_tunnel_proxy,
+        .on_complete = s_aws_http_on_stream_complete_tunnel_proxy,
+    };
+
+    if (proxy_ud->connect_stream != NULL) {
+        aws_http_stream_release(proxy_ud->connect_stream);
+    }
+
+    proxy_ud->connect_stream = aws_http_connection_make_request(proxy_ud->connection, &request_options);
+    if (proxy_ud->connect_stream == NULL) {
+        goto on_error;
+    }
+
+    aws_http_stream_activate(proxy_ud->connect_stream);
+
+    return;
+
+on_error:
+
+    s_aws_http_proxy_user_data_shutdown(proxy_ud);
 }
 
 /*
- * Connection setup callback for tls-based proxy connections.
- * Could be unified with non-tls version by checking tls options and branching post-success
+ * Issues a CONNECT request on an http connection
  */
-static void s_aws_http_on_client_connection_http_tls_proxy_setup_fn(
+static int s_make_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
+    if (user_data->connect_request != NULL) {
+        aws_http_message_destroy(user_data->connect_request);
+        user_data->connect_request = NULL;
+    }
+
+    user_data->connect_request = s_build_proxy_connect_request(user_data);
+    if (user_data->connect_request == NULL) {
+        return AWS_OP_ERR;
+    }
+
+    (*user_data->proxy_negotiator->strategy_vtable.tunnelling_vtable->connect_request_transform)(
+        user_data->proxy_negotiator,
+        user_data->connect_request,
+        s_terminate_tunneling_connect,
+        s_continue_tunneling_connect,
+        user_data);
+
+    return AWS_OP_SUCCESS;
+}
+
+/*
+ * Connection setup callback for tunneling proxy connections.
+ */
+static void s_aws_http_on_client_connection_http_tunneling_proxy_setup_fn(
     struct aws_http_connection *connection,
     int error_code,
     void *user_data) {
@@ -536,7 +656,7 @@ static void s_aws_http_on_client_connection_http_tls_proxy_setup_fn(
 
     proxy_ud->connection = connection;
     proxy_ud->state = AWS_PBS_HTTP_CONNECT;
-    if (s_make_proxy_connect_request(connection, proxy_ud)) {
+    if (s_make_proxy_connect_request(proxy_ud)) {
         goto on_error;
     }
 
@@ -661,33 +781,22 @@ done:
 static int s_proxy_http_request_transform(struct aws_http_message *request, void *user_data) {
     struct aws_http_proxy_user_data *proxy_ud = user_data;
 
-    struct aws_byte_buf auth_header_value;
-    AWS_ZERO_STRUCT(auth_header_value);
-
-    int result = AWS_OP_ERR;
-
-    if (proxy_ud->proxy_config->auth_type == AWS_HPAT_BASIC &&
-        s_add_basic_proxy_authentication_header(request, proxy_ud)) {
-        goto done;
-    }
-
     if (aws_http_rewrite_uri_for_proxy_request(request, proxy_ud)) {
-        goto done;
+        return AWS_OP_ERR;
     }
 
-    result = AWS_OP_SUCCESS;
+    if ((*proxy_ud->proxy_negotiator->strategy_vtable.forwarding_vtable->forward_request_transform)(
+            proxy_ud->proxy_negotiator, request)) {
+        return AWS_OP_ERR;
+    }
 
-done:
-
-    aws_byte_buf_clean_up(&auth_header_value);
-
-    return result;
+    return AWS_OP_SUCCESS;
 }
 
 /*
  * Top-level function to route a connection request through a proxy server, with no channel security
  */
-static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client_connection_options *options) {
+static int s_aws_http_client_connect_via_forwarding_proxy(const struct aws_http_client_connection_options *options) {
     AWS_FATAL_ASSERT(options->tls_options == NULL);
 
     AWS_LOGF_INFO(
@@ -711,7 +820,7 @@ static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client
     options_copy.host_name = options->proxy_options->host;
     options_copy.port = options->proxy_options->port;
     options_copy.user_data = proxy_user_data;
-    options_copy.on_setup = s_aws_http_on_client_connection_http_proxy_setup_fn;
+    options_copy.on_setup = s_aws_http_on_client_connection_http_forwarding_proxy_setup_fn;
     options_copy.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
     options_copy.tls_options = options->proxy_options->tls_options;
 
@@ -729,43 +838,31 @@ static int s_aws_http_client_connect_via_proxy_http(const struct aws_http_client
     return result;
 }
 
-/*
- * Top-level function to route a TLS connection through a proxy server
- */
-static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_client_connection_options *options) {
+static int s_create_tunneling_connection(struct aws_http_proxy_user_data *user_data) {
+    struct aws_http_client_connection_options connect_options;
+    AWS_ZERO_STRUCT(connect_options);
 
-    AWS_FATAL_ASSERT(options->tls_options != NULL);
-    AWS_FATAL_ASSERT(options->proxy_options != NULL);
+    connect_options.self_size = sizeof(struct aws_http_client_connection_options);
+    connect_options.allocator = user_data->allocator;
+    connect_options.bootstrap = user_data->bootstrap;
+    connect_options.host_name = aws_byte_cursor_from_buf(&user_data->proxy_config->host);
+    connect_options.port = user_data->proxy_config->port;
+    connect_options.socket_options = &user_data->socket_options;
+    connect_options.tls_options = user_data->proxy_config->tls_options;
+    connect_options.monitoring_options = NULL; /* ToDo */
+    connect_options.manual_window_management = user_data->manual_window_management;
+    connect_options.initial_window_size = user_data->initial_window_size;
+    connect_options.user_data = user_data;
+    connect_options.on_setup = s_aws_http_on_client_connection_http_tunneling_proxy_setup_fn;
+    connect_options.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
+    connect_options.http1_options = NULL; /* ToDo */
+    connect_options.http2_options = NULL; /* ToDo */
 
-    AWS_LOGF_INFO(
-        AWS_LS_HTTP_CONNECTION,
-        "(STATIC) Connecting to \"" PRInSTR "\" through TLS via proxy \"" PRInSTR "\"",
-        AWS_BYTE_CURSOR_PRI(options->host_name),
-        AWS_BYTE_CURSOR_PRI(options->proxy_options->host));
-
-    /* Create a wrapper user data that contains all proxy-related information, state, and user-facing callbacks */
-    struct aws_http_proxy_user_data *user_data = aws_http_proxy_user_data_new(options->allocator, options);
-    if (user_data == NULL) {
-        return AWS_OP_ERR;
-    }
-
-    /* Fill in a new connection options pointing at the proxy */
-    struct aws_http_client_connection_options options_copy = *options;
-
-    options_copy.proxy_options = NULL;
-    options_copy.tls_options = NULL;
-    options_copy.host_name = options->proxy_options->host;
-    options_copy.port = options->proxy_options->port;
-    options_copy.user_data = user_data;
-    options_copy.on_setup = s_aws_http_on_client_connection_http_tls_proxy_setup_fn;
-    options_copy.on_shutdown = s_aws_http_on_client_connection_http_proxy_shutdown_fn;
-    options_copy.tls_options = options->proxy_options->tls_options;
-
-    int result = aws_http_client_connect(&options_copy);
+    int result = aws_http_client_connect(&connect_options);
     if (result == AWS_OP_ERR) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "(STATIC) Proxy https connection failed client connect with error %d(%s)",
+            "(STATIC) Proxy tunnel connection failed client connect with error %d(%s)",
             aws_last_error(),
             aws_error_str(aws_last_error()));
         aws_http_proxy_user_data_destroy(user_data);
@@ -775,49 +872,190 @@ static int s_aws_http_client_connect_via_proxy_https(const struct aws_http_clien
 }
 
 /*
- * Dispatches a proxy-enabled connection request to the appropriate top-level connection function
+ * Top-level function to route a connection through a proxy server via a CONNECT request
  */
-int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_options *options) {
+static int s_aws_http_client_connect_via_tunneling_proxy(const struct aws_http_client_connection_options *options) {
     AWS_FATAL_ASSERT(options->proxy_options != NULL);
 
-    if (options->tls_options != NULL) {
-        return s_aws_http_client_connect_via_proxy_https(options);
+    AWS_LOGF_INFO(
+        AWS_LS_HTTP_CONNECTION,
+        "(STATIC) Connecting to \"" PRInSTR "\" through a tunnel via proxy \"" PRInSTR "\"",
+        AWS_BYTE_CURSOR_PRI(options->host_name),
+        AWS_BYTE_CURSOR_PRI(options->proxy_options->host));
+
+    /* Create a wrapper user data that contains all proxy-related information, state, and user-facing callbacks */
+    struct aws_http_proxy_user_data *user_data = aws_http_proxy_user_data_new(options->allocator, options);
+    if (user_data == NULL) {
+        return AWS_OP_ERR;
+    }
+
+    return s_create_tunneling_connection(user_data);
+}
+
+static enum aws_http_proxy_connection_type s_determine_proxy_connection_type(
+    enum aws_http_proxy_connection_type proxy_connection_type,
+    const struct aws_tls_connection_options *tls_options) {
+    if (proxy_connection_type != AWS_HPCT_HTTP_LEGACY) {
+        return proxy_connection_type;
+    }
+
+    if (tls_options != NULL) {
+        return AWS_HPCT_HTTP_TUNNEL;
     } else {
-        return s_aws_http_client_connect_via_proxy_http(options);
+        return AWS_HPCT_HTTP_FORWARD;
     }
 }
 
-struct aws_http_proxy_config *aws_http_proxy_config_new(
+/*
+ * Dispatches a proxy-enabled connection request to the appropriate top-level connection function
+ */
+int aws_http_client_connect_via_proxy(const struct aws_http_client_connection_options *options) {
+    if (aws_http_options_validate_proxy_configuration(options)) {
+        return AWS_OP_ERR;
+    }
+
+    enum aws_http_proxy_connection_type proxy_connection_type =
+        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_options);
+
+    switch (proxy_connection_type) {
+        case AWS_HPCT_HTTP_FORWARD:
+            return s_aws_http_client_connect_via_forwarding_proxy(options);
+
+        case AWS_HPCT_HTTP_TUNNEL:
+            return s_aws_http_client_connect_via_tunneling_proxy(options);
+
+        default:
+            return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+    }
+}
+
+static struct aws_http_proxy_config *s_aws_http_proxy_config_new(
     struct aws_allocator *allocator,
-    const struct aws_http_proxy_options *options) {
-    AWS_FATAL_ASSERT(options != NULL);
+    const struct aws_http_proxy_options *proxy_options,
+    enum aws_http_proxy_connection_type override_proxy_connection_type) {
+    AWS_FATAL_ASSERT(proxy_options != NULL);
+
     struct aws_http_proxy_config *config = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_config));
     if (config == NULL) {
         return NULL;
     }
 
-    if (aws_byte_buf_init_copy_from_cursor(&config->host, allocator, options->host)) {
+    config->connection_type = override_proxy_connection_type;
+
+    if (aws_byte_buf_init_copy_from_cursor(&config->host, allocator, proxy_options->host)) {
+
         goto on_error;
     }
 
-    if (aws_byte_buf_init_copy_from_cursor(&config->auth_username, allocator, options->auth_username)) {
-        goto on_error;
-    }
-
-    if (aws_byte_buf_init_copy_from_cursor(&config->auth_password, allocator, options->auth_password)) {
-        goto on_error;
-    }
-
-    if (options->tls_options) {
+    if (proxy_options->tls_options) {
         config->tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
-        if (aws_tls_connection_options_copy(config->tls_options, options->tls_options)) {
+        if (aws_tls_connection_options_copy(config->tls_options, proxy_options->tls_options)) {
             goto on_error;
         }
     }
 
     config->allocator = allocator;
-    config->auth_type = options->auth_type;
-    config->port = options->port;
+    config->port = proxy_options->port;
+
+    if (proxy_options->proxy_strategy != NULL) {
+        config->proxy_strategy = aws_http_proxy_strategy_acquire(proxy_options->proxy_strategy);
+    } else if (proxy_options->auth_type == AWS_HPAT_BASIC) {
+        struct aws_http_proxy_strategy_basic_auth_options basic_config;
+        AWS_ZERO_STRUCT(basic_config);
+
+        basic_config.proxy_connection_type = override_proxy_connection_type;
+        basic_config.user_name = proxy_options->auth_username;
+        basic_config.password = proxy_options->auth_password;
+
+        config->proxy_strategy = aws_http_proxy_strategy_new_basic_auth(allocator, &basic_config);
+    }
+
+    if (config->proxy_strategy == NULL) {
+        switch (override_proxy_connection_type) {
+            case AWS_HPCT_HTTP_FORWARD:
+                config->proxy_strategy = aws_http_proxy_strategy_new_forwarding_identity(allocator);
+                break;
+
+            case AWS_HPCT_HTTP_TUNNEL:
+                config->proxy_strategy = aws_http_proxy_strategy_new_tunneling_one_time_identity(allocator);
+                break;
+
+            default:
+                break;
+        }
+
+        if (config->proxy_strategy == NULL) {
+            goto on_error;
+        }
+    }
+
+    return config;
+
+on_error:
+
+    aws_http_proxy_config_destroy(config);
+
+    return NULL;
+}
+
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_connection_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_client_connection_options *options) {
+    AWS_FATAL_ASSERT(options != NULL);
+    AWS_FATAL_ASSERT(options->proxy_options != NULL);
+
+    return s_aws_http_proxy_config_new(
+        allocator,
+        options->proxy_options,
+        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_options));
+}
+
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_manager_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_connection_manager_options *options) {
+    AWS_FATAL_ASSERT(options != NULL);
+    AWS_FATAL_ASSERT(options->proxy_options != NULL);
+
+    return s_aws_http_proxy_config_new(
+        allocator,
+        options->proxy_options,
+        s_determine_proxy_connection_type(options->proxy_options->connection_type, options->tls_connection_options));
+}
+
+struct aws_http_proxy_config *aws_http_proxy_config_new_tunneling_from_proxy_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_options *proxy_options) {
+
+    return s_aws_http_proxy_config_new(allocator, proxy_options, AWS_HPCT_HTTP_TUNNEL);
+}
+
+struct aws_http_proxy_config *aws_http_proxy_config_new_clone(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_config *proxy_config) {
+
+    AWS_FATAL_ASSERT(proxy_config != NULL);
+
+    struct aws_http_proxy_config *config = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_config));
+    if (config == NULL) {
+        return NULL;
+    }
+
+    config->connection_type = proxy_config->connection_type;
+
+    if (aws_byte_buf_init_copy_from_cursor(&config->host, allocator, aws_byte_cursor_from_buf(&proxy_config->host))) {
+        goto on_error;
+    }
+
+    if (proxy_config->tls_options) {
+        config->tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
+        if (aws_tls_connection_options_copy(config->tls_options, proxy_config->tls_options)) {
+            goto on_error;
+        }
+    }
+
+    config->allocator = allocator;
+    config->port = proxy_config->port;
+    config->proxy_strategy = aws_http_proxy_strategy_acquire(proxy_config->proxy_strategy);
 
     return config;
 
@@ -834,13 +1072,13 @@ void aws_http_proxy_config_destroy(struct aws_http_proxy_config *config) {
     }
 
     aws_byte_buf_clean_up(&config->host);
-    aws_byte_buf_clean_up(&config->auth_username);
-    aws_byte_buf_clean_up(&config->auth_password);
 
     if (config->tls_options) {
         aws_tls_connection_options_clean_up(config->tls_options);
         aws_mem_release(config->allocator, config->tls_options);
     }
+
+    aws_http_proxy_strategy_release(config->proxy_strategy);
 
     aws_mem_release(config->allocator, config);
 }
@@ -850,10 +1088,29 @@ void aws_http_proxy_options_init_from_config(
     const struct aws_http_proxy_config *config) {
     AWS_FATAL_ASSERT(options && config);
 
+    options->connection_type = config->connection_type;
     options->host = aws_byte_cursor_from_buf(&config->host);
-    options->auth_username = aws_byte_cursor_from_buf(&config->auth_username);
-    options->auth_password = aws_byte_cursor_from_buf(&config->auth_password);
-    options->auth_type = config->auth_type;
     options->port = config->port;
     options->tls_options = config->tls_options;
+    options->proxy_strategy = config->proxy_strategy;
+}
+
+int aws_http_options_validate_proxy_configuration(const struct aws_http_client_connection_options *options) {
+    if (options == NULL || options->proxy_options == NULL) {
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
+    enum aws_http_proxy_connection_type proxy_type = options->proxy_options->connection_type;
+    if (proxy_type == AWS_HPCT_HTTP_FORWARD && options->tls_options != NULL) {
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    struct aws_http_proxy_strategy *proxy_strategy = options->proxy_options->proxy_strategy;
+    if (proxy_strategy != NULL) {
+        if (proxy_strategy->proxy_connection_type != proxy_type) {
+            return aws_raise_error(AWS_ERROR_INVALID_STATE);
+        }
+    }
+
+    return AWS_OP_SUCCESS;
 }

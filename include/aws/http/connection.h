@@ -122,54 +122,6 @@ struct aws_http_connection_monitoring_options {
 };
 
 /**
- * Supported proxy authentication modes
- */
-enum aws_http_proxy_authentication_type {
-    AWS_HPAT_NONE = 0,
-    AWS_HPAT_BASIC,
-};
-
-/**
- * Options for http proxy server usage
- */
-struct aws_http_proxy_options {
-
-    /**
-     * Proxy host to connect to, in lieu of actual target
-     */
-    struct aws_byte_cursor host;
-
-    /**
-     * Port to make the proxy connection to
-     */
-    uint16_t port;
-
-    /**
-     * Optional.
-     * TLS configuration for the Local <-> Proxy connection
-     * Must be distinct from the the TLS options in the parent aws_http_connection_options struct
-     */
-    const struct aws_tls_connection_options *tls_options;
-
-    /**
-     * What type of proxy authentication to use, if any
-     */
-    enum aws_http_proxy_authentication_type auth_type;
-
-    /**
-     * Optional
-     * User name to use for authentication, basic only
-     */
-    struct aws_byte_cursor auth_username;
-
-    /**
-     * Optional
-     * Password to use for authentication, basic only
-     */
-    struct aws_byte_cursor auth_password;
-};
-
-/**
  * Options specific to HTTP/1.x connections.
  * Initialize with AWS_HTTP1_CONNECTION_OPTIONS_INIT to set default values.
  */
@@ -481,6 +433,12 @@ enum aws_http_version aws_http_connection_get_version(const struct aws_http_conn
  */
 AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
+
+/**
+ * Checks http proxy options for correctness
+ */
+AWS_HTTP_API
+int aws_http_options_validate_proxy_configuration(const struct aws_http_client_connection_options *options);
 
 /**
  * Send a SETTINGS frame (HTTP/2 only).
