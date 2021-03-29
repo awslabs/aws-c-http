@@ -217,10 +217,12 @@ static int s_test_tls_download_medium_file_general(
     aws_tls_connection_options_clean_up(&tls_connection_options);
     aws_tls_ctx_release(test.tls_ctx);
 
-    aws_mutex_clean_up(&test.wait_lock);
-    aws_condition_variable_clean_up(&test.wait_cvar);
     aws_uri_clean_up(&uri);
     aws_http_library_clean_up();
+
+    aws_mutex_clean_up(&test.wait_lock);
+    aws_condition_variable_clean_up(&test.wait_cvar);
+
     return AWS_OP_SUCCESS;
 }
 

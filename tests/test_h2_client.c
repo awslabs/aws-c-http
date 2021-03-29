@@ -62,7 +62,7 @@ static void s_on_remote_settings_change(
 }
 
 /* Singleton used by tests in this file */
-struct tester {
+static struct tester {
     struct aws_allocator *alloc;
     struct aws_http_connection *connection;
     struct testing_channel testing_channel;
