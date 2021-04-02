@@ -488,7 +488,16 @@ void aws_http_proxy_options_init_from_config(
     struct aws_http_proxy_options *options,
     const struct aws_http_proxy_config *config);
 
-AWS_HTTP_API int aws_http_proxy_new_alpn_socket_channel(
+/**
+ * Establish an arbitrary protocol connection through an http proxy via tunneling CONNECT.  Alpn is
+ * not required for this connection process to succeed, but we encourage it's use if available.
+ *
+ * @param channel_options configuration options for the socket level connection
+ * @param proxy_options configuration options for the proxy connection
+ *
+ * @return AWS_OP_SUCCESS if the asynchronous channel kickoff succeeded, AWS_OP_ERR otherwise
+ */
+AWS_HTTP_API int aws_http_proxy_new_socket_channel(
     struct aws_socket_channel_bootstrap_options *channel_options,
     struct aws_http_proxy_options *proxy_options);
 
