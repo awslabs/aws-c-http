@@ -87,7 +87,7 @@ static struct aws_error_info s_errors[] = {
         "The http server is closed, no more connections will be accepted"),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_PROXY_CONNECT_FAILED,
-        "Proxy tls connection establishment failed because the CONNECT call failed"),
+        "Proxy-based connection establishment failed because the CONNECT call failed"),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_MANAGER_SHUTTING_DOWN,
         "Connection acquisition failed because connection manager is shutting down"),

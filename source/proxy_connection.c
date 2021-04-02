@@ -488,6 +488,11 @@ static void s_aws_http_on_stream_complete_tunnel_proxy(
                 struct aws_http_proxy_user_data *new_context =
                     aws_http_proxy_user_data_new_reset_clone(context->allocator, context);
                 if (new_context != NULL && s_create_tunneling_connection(new_context) == AWS_OP_SUCCESS) {
+                    /*
+                     * We successfully kicked off a new connection.  By NULLing the callbacks on the old one, we can
+                     * shut it down quietly without the user being notified.  The new connection will notify the user
+                     * based on its success or failure.
+                     */
                     context->original_on_shutdown = NULL;
                     context->original_on_setup = NULL;
                     context->error_code = AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE;
@@ -609,8 +614,7 @@ on_error:
 }
 
 /*
- * Issues a CONNECT request on a newly-established proxy connection with the intent
- * of upgrading with TLS on success
+ * Issues a CONNECT request on an http connection
  */
 static int s_make_proxy_connect_request(struct aws_http_proxy_user_data *user_data) {
     if (user_data->connect_request != NULL) {
@@ -634,8 +638,7 @@ static int s_make_proxy_connect_request(struct aws_http_proxy_user_data *user_da
 }
 
 /*
- * Connection setup callback for tls-based proxy connections.
- * Could be unified with non-tls version by checking tls options and branching post-success
+ * Connection setup callback for tunneling proxy connections.
  */
 static void s_aws_http_on_client_connection_http_tunneling_proxy_setup_fn(
     struct aws_http_connection *connection,

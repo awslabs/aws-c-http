@@ -1,5 +1,5 @@
-#ifndef AWS_PROXY_STRATEGY_H
-#define AWS_PROXY_STRATEGY_H
+#ifndef AWS_PROXY_H
+#define AWS_PROXY_H
 
 /**
  * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -50,8 +50,8 @@ enum aws_http_proxy_connection_type {
     AWS_HPCT_HTTP_FORWARD,
 
     /**
-     * Use the proxy to establish an http connection via a CONNECT request to the proxy.  Works for both plaintext and
-     * tls connections.
+     * Use the proxy to establish a connection to a remote endpoint via a CONNECT request through the proxy.
+     * Works for both plaintext and tls connections.
      */
     AWS_HPCT_HTTP_TUNNEL,
 };
@@ -92,25 +92,24 @@ struct aws_http_proxy_options {
      *
      * For tunneling proxies it allows custom retry and adaptive negotiation of CONNECT requests.
      * For forwarding proxies it allows custom request transformations.
-     * Other proxy connection types TBD.
      */
     struct aws_http_proxy_strategy *proxy_strategy;
 
     /**
      * @Deprecated - What type of proxy authentication to use, if any.
-     * Replaced by proxy_strategy
+     * Replaced by instantiating a proxy_strategy
      */
     enum aws_http_proxy_authentication_type auth_type;
 
     /**
      * @Deprecated - Optional user name to use for basic authentication
-     * Replaced by proxy_strategy, using an instantiation from aws_http_proxy_strategy_new_basic_auth()
+     * Replaced by instantiating a proxy_strategy via aws_http_proxy_strategy_new_basic_auth()
      */
     struct aws_byte_cursor auth_username;
 
     /**
      * @Deprecated - Optional password to use for basic authentication
-     * Replaced by proxy_strategy, using an instantiation from aws_http_proxy_strategy_new_basic_auth()
+     * Replaced by instantiating a proxy_strategy via aws_http_proxy_strategy_new_basic_auth()
      */
     struct aws_byte_cursor auth_password;
 };
@@ -198,9 +197,24 @@ typedef int(aws_http_proxy_negotiator_connect_on_incoming_body_fn)(
     struct aws_http_proxy_negotiator *proxy_negotiator,
     const struct aws_byte_cursor *data);
 
+/*
+ * Control value that lets the http proxy implementation know if and how to retry a CONNECT request based on
+ * the proxy negotiator's state.
+ */
 enum aws_http_proxy_negotiation_retry_directive {
+    /*
+     * Stop trying to connect through the proxy and give up.
+     */
     AWS_HPNRD_STOP,
+
+    /*
+     * Establish a new connection to the proxy before making the next CONNECT request
+     */
     AWS_HPNRD_NEW_CONNECTION,
+
+    /*
+     * Reuse the existing connection to make the next CONNECT request
+     */
     AWS_HPNRD_CURRENT_CONNECTION,
 };
 
@@ -241,8 +255,6 @@ struct aws_http_proxy_negotiator_tunnelling_vtable {
  *
  * (2) Forwarding - In a forwarding proxy connection, the forward_request_transform is invoked on every request sent out
  * on the connection.
- *
- * (3) Socks5 - not yet supported
  */
 struct aws_http_proxy_negotiator {
     struct aws_ref_count ref_count;
@@ -272,6 +284,9 @@ struct aws_http_proxy_strategy {
     enum aws_http_proxy_connection_type proxy_connection_type;
 };
 
+/*
+ * Options necessary to create a basic authentication proxy strategy
+ */
 struct aws_http_proxy_strategy_basic_auth_options {
 
     /* type of proxy connection being established, must be forwarding or tunnel */
@@ -284,6 +299,9 @@ struct aws_http_proxy_strategy_basic_auth_options {
     struct aws_byte_cursor password;
 };
 
+/*
+ * Options necessary to create a (synchronous) kerberos authentication proxy strategy
+ */
 struct aws_http_proxy_strategy_tunneling_kerberos_options {
 
     aws_http_proxy_negotiation_get_token_sync_fn *get_token;
@@ -291,6 +309,9 @@ struct aws_http_proxy_strategy_tunneling_kerberos_options {
     void *get_token_user_data;
 };
 
+/*
+ * Options necessary to create a (synchronous) ntlm authentication proxy strategy
+ */
 struct aws_http_proxy_strategy_tunneling_ntlm_options {
 
     aws_http_proxy_negotiation_get_token_sync_fn *get_token;
@@ -300,6 +321,10 @@ struct aws_http_proxy_strategy_tunneling_ntlm_options {
     void *get_challenge_token_user_data;
 };
 
+/*
+ * Options necessary to create an adaptive sequential strategy that tries one or more of kerberos and ntlm (in that
+ * order, if both are active).  If an options struct is NULL, then that strategy will not be used.
+ */
 struct aws_http_proxy_strategy_tunneling_adaptive_options {
     /*
      * If non-null, will insert a kerberos proxy strategy into the adaptive sequence
@@ -312,6 +337,9 @@ struct aws_http_proxy_strategy_tunneling_adaptive_options {
     struct aws_http_proxy_strategy_tunneling_ntlm_options *ntlm_options;
 };
 
+/*
+ * Options necessary to create a sequential proxy strategy.
+ */
 struct aws_http_proxy_strategy_tunneling_sequence_options {
     struct aws_http_proxy_strategy **strategies;
 
@@ -389,7 +417,7 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_adaptive(
     struct aws_http_proxy_strategy_tunneling_adaptive_options *config);
 
 /*
- * aws_http_proxy_config is the persistent version of aws_http_proxy_options
+ * aws_http_proxy_config is the persistent, memory-managed version of aws_http_proxy_options
  *
  * This is a set of APIs for creating, destroying and converting between them
  */

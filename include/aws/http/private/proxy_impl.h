@@ -18,6 +18,7 @@ struct aws_http_message;
 struct aws_channel_slot;
 struct aws_string;
 struct aws_tls_connection_options;
+struct aws_http_proxy_negotiator;
 struct aws_http_proxy_strategy;
 struct aws_http_proxy_strategy_tunneling_sequence_options;
 struct aws_http_proxy_strategy_tunneling_kerberos_options;
@@ -154,7 +155,8 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_forwarding_identity(
 
 /**
  * Constructor for a tunneling proxy strategy that contains a set of sub-strategies which are tried
- * sequentially in order.  Each strategy is tried against a new, fresh connection.
+ * sequentially in order.  Each strategy has the choice to either proceed on a fresh connection or
+ * reuse the current one.
  *
  * @param allocator memory allocator to use
  * @param config sequence configuration options
@@ -169,6 +171,8 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_sequence(
  * A constructor for a proxy strategy that performs kerberos authentication by adding the appropriate
  * header and header value to CONNECT requests.
  *
+ * Currently only supports synchronous fetch of kerberos token values.
+ *
  * @param allocator memory allocator to use
  * @param config kerberos authentication configuration info
  * @return a new proxy strategy if successfully constructed, otherwise NULL
@@ -182,6 +186,8 @@ struct aws_http_proxy_strategy *aws_http_proxy_strategy_new_tunneling_kerberos(
  * Constructor for an NTLM proxy strategy.  Because ntlm is a challenge-response authentication protocol, this
  * strategy will only succeed in a chain in a non-leading position.  The strategy extracts the challenge from the
  * proxy's response to a previous CONNECT request in the chain.
+ *
+ * Currently only supports synchronous fetch of token values.
  *
  * @param allocator memory allocator to use
  * @param config configuration options for the strategy

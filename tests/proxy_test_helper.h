@@ -65,8 +65,7 @@ struct proxy_tester {
     enum proxy_tester_failure_type failure_type;
 
     struct aws_http_connection *client_connection;
-    struct aws_http_client_bootstrap *http_bootstrap;
-    struct testing_channel *testing_channel;
+    struct aws_array_list testing_channels;
 
     bool client_connection_is_setup;
     bool client_connection_is_shutdown;
@@ -110,7 +109,9 @@ void proxy_tester_on_client_connection_shutdown(
 
 void proxy_tester_on_client_bootstrap_shutdown(void *user_data);
 
-int proxy_tester_create_testing_channel_connection(struct proxy_tester *tester);
+int proxy_tester_create_testing_channel_connection(
+    struct proxy_tester *tester,
+    struct aws_http_client_bootstrap *http_bootstrap);
 
 int proxy_tester_verify_connect_request(struct proxy_tester *tester);
 
@@ -120,5 +121,7 @@ int proxy_tester_verify_connection_attempt_was_to_proxy(
     struct proxy_tester *tester,
     struct aws_byte_cursor expected_host,
     uint16_t expected_port);
+
+struct testing_channel *proxy_tester_get_current_channel(struct proxy_tester *tester);
 
 #endif /* AWS_HTTP_PROXY_TEST_HELPER_H */

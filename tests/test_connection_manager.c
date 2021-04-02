@@ -22,6 +22,10 @@
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 
+#ifdef _MSC_VER
+#    pragma warning(disable : 4232) /* function pointer to dll symbol */
+#endif
+
 enum new_connection_result_type {
     AWS_NCRT_SUCCESS,
     AWS_NCRT_ERROR_VIA_CALLBACK,
