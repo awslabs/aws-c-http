@@ -124,6 +124,13 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     user_data->original_on_shutdown = options->on_shutdown;
     user_data->original_user_data = options->user_data;
 
+    struct aws_http1_connection_options default_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+    if (options->http1_options) {
+        user_data->original_http1_options = *options->http1_options;
+    } else {
+        user_data->original_http1_options = default_options;
+    }
+
     return user_data;
 
 on_error:
@@ -452,7 +459,7 @@ static int s_aws_http_apply_http_connection_to_proxied_channel(struct aws_http_p
         context->tls_options != NULL,
         context->manual_window_management,
         context->initial_window_size,
-        NULL,  /* TODO: support http1 options */
+        &context->original_http1_options,
         NULL); /* TODO: support http2 options */
     if (context->final_connection == NULL) {
         AWS_LOGF_ERROR(

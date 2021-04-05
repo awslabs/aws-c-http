@@ -94,6 +94,7 @@ struct aws_http_proxy_user_data {
     struct aws_socket_options socket_options;
     bool manual_window_management;
     size_t initial_window_size;
+    struct aws_http1_connection_options original_http1_options;
 
     struct aws_http_proxy_config *proxy_config;
 };
