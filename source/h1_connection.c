@@ -461,9 +461,37 @@ static void s_cross_thread_work_task(struct aws_channel_task *channel_task, void
     }
 }
 
+static bool s_aws_http_stream_was_successful_connect(struct aws_h1_stream *stream, int error_code) {
+    if (error_code != AWS_ERROR_SUCCESS) {
+        return false;
+    }
+
+    struct aws_http_stream *base = &stream->base;
+    if (base->request_method != AWS_HTTP_METHOD_CONNECT) {
+        return false;
+    }
+
+    if (base->client_data == NULL) {
+        return false;
+    }
+
+    if (base->client_data->response_status != AWS_HTTP_STATUS_CODE_200_OK) {
+        return false;
+    }
+
+    return true;
+}
+
 static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     struct aws_h1_connection *connection =
         AWS_CONTAINER_OF(stream->base.owning_connection, struct aws_h1_connection, base);
+
+    if (s_aws_http_stream_was_successful_connect(stream, error_code)) {
+        if (aws_http1_switch_protocols(connection)) {
+            error_code = AWS_ERROR_HTTP_PROTOCOL_SWITCH_FAILURE;
+            s_connection_close(&connection->base);
+        }
+    }
 
     /* Remove stream from list. */
     aws_linked_list_remove(&stream->node);
@@ -1012,6 +1040,37 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
     return AWS_OP_SUCCESS;
 }
 
+int aws_http1_switch_protocols(struct aws_h1_connection *connection) {
+    AWS_FATAL_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
+    /* Switching protocols while there are multiple streams is too complex to deal with.
+     * Ensure stream_list has exactly this 1 stream in it. */
+    if (aws_linked_list_begin(&connection->thread_data.stream_list) !=
+        aws_linked_list_rbegin(&connection->thread_data.stream_list)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Cannot switch protocols while further streams are pending, closing connection.",
+            (void *)&connection->base);
+
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Connection has switched protocols, another channel handler must be installed to"
+        " deal with further data.",
+        (void *)&connection->base);
+
+    connection->thread_data.has_switched_protocols = true;
+    { /* BEGIN CRITICAL SECTION */
+        aws_h1_connection_lock_synced_data(connection);
+        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_SWITCHED_PROTOCOLS;
+        aws_h1_connection_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+
+    return AWS_OP_SUCCESS;
+}
+
 static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
     /* Bail out if we've already done this */
     if (incoming_stream->is_incoming_head_done) {
@@ -1034,31 +1093,9 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
         /* Only clients can receive informational headers.
          * Check whether we're switching protocols */
         if (incoming_stream->base.client_data->response_status == AWS_HTTP_STATUS_CODE_101_SWITCHING_PROTOCOLS) {
-
-            /* Switching protocols while there are multiple streams is too complex to deal with.
-             * Ensure stream_list has exactly this 1 stream in it. */
-            if (aws_linked_list_begin(&connection->thread_data.stream_list) !=
-                aws_linked_list_rbegin(&connection->thread_data.stream_list)) {
-                AWS_LOGF_ERROR(
-                    AWS_LS_HTTP_CONNECTION,
-                    "id=%p: Cannot switch protocols while further streams are pending, closing connection.",
-                    (void *)&connection->base);
-
-                return aws_raise_error(AWS_ERROR_INVALID_STATE);
+            if (aws_http1_switch_protocols(connection)) {
+                return AWS_OP_ERR;
             }
-
-            AWS_LOGF_TRACE(
-                AWS_LS_HTTP_CONNECTION,
-                "id=%p: Connection has switched protocols, another channel handler must be installed to"
-                " deal with further data.",
-                (void *)&connection->base);
-
-            connection->thread_data.has_switched_protocols = true;
-            { /* BEGIN CRITICAL SECTION */
-                aws_h1_connection_lock_synced_data(connection);
-                connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_SWITCHED_PROTOCOLS;
-                aws_h1_connection_unlock_synced_data(connection);
-            } /* END CRITICAL SECTION */
         }
     }
 

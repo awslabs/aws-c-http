@@ -169,6 +169,17 @@ struct aws_crt_statistics_http1_channel *aws_h1_connection_get_statistics(struct
 AWS_HTTP_API
 uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *connection);
 
+AWS_HTTP_API
+struct aws_http_connection *aws_http_connection_new_channel_handler(
+    struct aws_allocator *alloc,
+    struct aws_channel *channel,
+    bool is_server,
+    bool is_using_tls,
+    bool manual_window_management,
+    size_t initial_window_size,
+    const struct aws_http1_connection_options *http1_options,
+    const struct aws_http2_connection_options *http2_options);
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_CONNECTION_IMPL_H */
