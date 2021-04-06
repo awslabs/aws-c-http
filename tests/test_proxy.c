@@ -106,7 +106,30 @@ static int s_test_proxy_setup_client_tls(
     struct aws_channel_slot *right_of_slot,
     struct aws_tls_connection_options *tls_options) {
 
-    (void)right_of_slot;
+    /*
+     * apply a dummy handler, but don't kick off negotiation, instead invoke success/failure immediately.
+     * The tls handler being in a newly-created state won't affect the proxied tests which don't try and send
+     * data through it.
+     */
+    AWS_FATAL_ASSERT(right_of_slot != NULL);
+    struct aws_channel *channel = right_of_slot->channel;
+    struct aws_allocator *allocator = right_of_slot->alloc;
+
+    struct aws_channel_slot *tls_slot = aws_channel_slot_new(channel);
+    if (!tls_slot) {
+        return AWS_OP_ERR;
+    }
+
+    struct aws_channel_handler *tls_handler = aws_tls_client_handler_new(allocator, tls_options, tls_slot);
+    if (!tls_handler) {
+        aws_mem_release(allocator, tls_slot);
+        return AWS_OP_ERR;
+    }
+
+    aws_channel_slot_insert_right(right_of_slot, tls_slot);
+    if (aws_channel_slot_set_handler(tls_slot, tls_handler) != AWS_OP_SUCCESS) {
+        return AWS_OP_ERR;
+    }
 
     if (tester.failure_type == PTFT_TLS_NEGOTIATION) {
         tls_options->on_negotiation_result(NULL, NULL, AWS_ERROR_UNKNOWN, tls_options->user_data);
