@@ -365,7 +365,7 @@ void aws_http_connection_release(struct aws_http_connection *connection) {
         /* When the channel's refcount reaches 0, it destroys its slots/handlers, which will destroy the connection */
         aws_channel_release_hold(connection->channel_slot->channel);
     } else {
-        AWS_ASSERT(prev_refcount != 0);
+        AWS_FATAL_ASSERT(prev_refcount != 0);
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Connection refcount released, %zu remaining.",

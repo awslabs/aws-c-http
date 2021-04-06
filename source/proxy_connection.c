@@ -44,10 +44,10 @@ void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data
     }
 
     /*
-     * This is now internal and never surfaced to the user, so it's our responsibility
+     * For tunneling connections, this is now internal and never surfaced to the user, so it's our responsibility
      * to clean up the last reference.
      */
-    if (user_data->proxy_connection != NULL) {
+    if (user_data->proxy_connection != NULL && user_data->proxy_config->connection_type == AWS_HPCT_HTTP_TUNNEL) {
         aws_http_connection_release(user_data->proxy_connection);
         user_data->proxy_connection = NULL;
     }
