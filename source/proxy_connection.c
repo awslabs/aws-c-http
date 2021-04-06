@@ -232,6 +232,10 @@ on_error:
     return NULL;
 }
 
+/*
+ * Examines the proxy user data state and determines whether to make an http-interface setup callback
+ * or a raw channel setup callback
+ */
 static void s_do_on_setup_callback(
     struct aws_http_proxy_user_data *proxy_ud,
     struct aws_http_connection *connection,
@@ -252,6 +256,10 @@ static void s_do_on_setup_callback(
     }
 }
 
+/*
+ * Examines the proxy user data state and determines whether to make an http-interface shutdown callback
+ * or a raw channel shutdown callback
+ */
 static void s_do_on_shutdown_callback(struct aws_http_proxy_user_data *proxy_ud, int error_code) {
     AWS_FATAL_ASSERT(proxy_ud->proxy_connection);
 
@@ -284,6 +292,10 @@ static void s_aws_http_on_client_connection_http_forwarding_proxy_setup_fn(
     if (error_code != AWS_ERROR_SUCCESS) {
         aws_http_proxy_user_data_destroy(user_data);
     } else {
+        /*
+         * The proxy connection and final connection are the same in forwarding proxy connections.  This lets
+         * us unconditionally use fatal asserts on these being non-null regardless of proxy configuration.
+         */
         proxy_ud->proxy_connection = connection;
         proxy_ud->final_connection = connection;
         proxy_ud->state = AWS_PBS_SUCCESS;
@@ -543,7 +555,6 @@ static int s_aws_http_apply_http_connection_to_proxied_channel(struct aws_http_p
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->http_version)));
 
     context->final_connection = connection;
-    s_do_on_setup_callback(context, connection, AWS_ERROR_SUCCESS);
 
     return AWS_OP_SUCCESS;
 }
@@ -559,6 +570,8 @@ static void s_do_final_proxied_channel_setup(struct aws_http_proxy_user_data *pr
             s_aws_http_proxy_user_data_shutdown(proxy_ud);
             return;
         }
+
+        s_do_on_setup_callback(proxy_ud, proxy_ud->final_connection, AWS_ERROR_SUCCESS);
     } else {
         /*
          * Otherwise invoke setup directly (which will end up being channel setup)

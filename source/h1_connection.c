@@ -486,6 +486,10 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     struct aws_h1_connection *connection =
         AWS_CONTAINER_OF(stream->base.owning_connection, struct aws_h1_connection, base);
 
+    /*
+     * If this is the end of a successful CONNECT request, mark ourselves as pass-through since the proxy layer
+     * will be tacking on a new http handler (and possibly a tls handler in-between).
+     */
     if (s_aws_http_stream_was_successful_connect(stream, error_code)) {
         if (aws_http1_switch_protocols(connection)) {
             error_code = AWS_ERROR_HTTP_PROTOCOL_SWITCH_FAILURE;

@@ -75,7 +75,18 @@ struct aws_http_proxy_user_data {
     enum aws_proxy_bootstrap_state state;
     int error_code;
     enum aws_http_status_code connect_status_code;
+
+    /*
+     * The initial http connection object between the client and the proxy.
+     */
     struct aws_http_connection *proxy_connection;
+
+    /*
+     * The http connection object that gets surfaced to callers if http is the final protocol of proxy
+     * negotiation.
+     *
+     * In the case of a forwarding proxy, proxy_connection and final_connection are the same.
+     */
     struct aws_http_connection *final_connection;
     struct aws_http_message *connect_request;
     struct aws_http_stream *connect_stream;
@@ -94,6 +105,15 @@ struct aws_http_proxy_user_data {
     size_t original_initial_window_size;
     struct aws_http1_connection_options original_http1_options;
 
+    /*
+     * setup/shutdown callbacks.  We enforce via fatal assert that either the http callbacks are supplied or
+     * the channel callbacks are supplied but never both.
+     *
+     * When using a proxy to ultimately establish an http connection, use the http callbacks.
+     * When using a proxy to establish any other protocol connection, use the raw channel callbacks.
+     *
+     * In the future, we might consider a further refactor which only use raw channel callbacks.
+     */
     aws_http_on_client_connection_setup_fn *original_http_on_setup;
     aws_http_on_client_connection_shutdown_fn *original_http_on_shutdown;
     aws_client_bootstrap_on_channel_event_fn *original_channel_on_setup;
