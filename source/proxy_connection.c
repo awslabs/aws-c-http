@@ -256,7 +256,8 @@ static void s_do_on_shutdown_callback(struct aws_http_proxy_user_data *proxy_ud,
     AWS_FATAL_ASSERT(proxy_ud->proxy_connection);
 
     if (proxy_ud->original_http_on_shutdown) {
-        proxy_ud->original_http_on_shutdown(proxy_ud->proxy_connection, error_code, proxy_ud->original_user_data);
+        AWS_FATAL_ASSERT(proxy_ud->final_connection);
+        proxy_ud->original_http_on_shutdown(proxy_ud->final_connection, error_code, proxy_ud->original_user_data);
         proxy_ud->original_http_on_shutdown = NULL;
     }
 
@@ -284,6 +285,7 @@ static void s_aws_http_on_client_connection_http_forwarding_proxy_setup_fn(
         aws_http_proxy_user_data_destroy(user_data);
     } else {
         proxy_ud->proxy_connection = connection;
+        proxy_ud->final_connection = connection;
         proxy_ud->state = AWS_PBS_SUCCESS;
     }
 }
@@ -540,6 +542,7 @@ static int s_aws_http_apply_http_connection_to_proxied_channel(struct aws_http_p
         (void *)connection,
         AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(connection->http_version)));
 
+    context->final_connection = connection;
     s_do_on_setup_callback(context, connection, AWS_ERROR_SUCCESS);
 
     return AWS_OP_SUCCESS;

@@ -76,6 +76,7 @@ struct aws_http_proxy_user_data {
     int error_code;
     enum aws_http_status_code connect_status_code;
     struct aws_http_connection *proxy_connection;
+    struct aws_http_connection *final_connection;
     struct aws_http_message *connect_request;
     struct aws_http_stream *connect_stream;
     struct aws_http_proxy_negotiator *proxy_negotiator;
