@@ -1029,6 +1029,24 @@ AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_host, "www.uri.com");
 AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_path, "/main/index.html?foo=bar");
 AWS_STATIC_STRING_FROM_LITERAL(s_expected_rewritten_path, "http://www.uri.com:80/main/index.html?foo=bar");
 
+static void s_proxy_forwarding_request_rewrite_setup_fn(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
+    (void)connection;
+    (void)error_code;
+    (void)user_data;
+}
+
+static void s_proxy_forwarding_request_rewrite_shutdown_fn(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
+    (void)connection;
+    (void)error_code;
+    (void)user_data;
+}
+
 /*
  * Given some basic request parameters, (method, path, host), builds a simple http request and then applies the proxy
  * transform to it
@@ -1052,9 +1070,12 @@ static int s_do_request_rewrite_test(
         .host_name = aws_byte_cursor_from_string(s_rewrite_host),
         .port = 80,
         .proxy_options = &proxy_options,
+        .on_setup = s_proxy_forwarding_request_rewrite_setup_fn,
+        .on_shutdown = s_proxy_forwarding_request_rewrite_shutdown_fn,
     };
 
-    struct aws_http_proxy_user_data *user_data = aws_http_proxy_user_data_new(allocator, &connection_options);
+    struct aws_http_proxy_user_data *user_data =
+        aws_http_proxy_user_data_new(allocator, &connection_options, NULL, NULL);
     struct aws_http_message *request = s_build_dummy_http_request(
         allocator,
         aws_byte_cursor_from_string(method),
