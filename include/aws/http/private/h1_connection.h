@@ -198,4 +198,17 @@ void aws_h1_connection_try_write_outgoing_stream(struct aws_h1_connection *conne
  */
 void aws_h1_connection_try_process_read_messages(struct aws_h1_connection *connection);
 
+/**
+ * Validate and perform a protocol switch on a connection.  Protocol switching essentially turns the connection's
+ * handler into a dummy pass-through.  It is valid to switch protocols to the same protocol resulting in a channel
+ * that has a "dead" http handler in the middle of the channel (which negotiated the CONNECT through the proxy) and
+ * a "live" handler on the end which takes the actual http requests.  By doing this, we get the exact same
+ * behavior whether we're transitioning to http or any other protocol: once the CONNECT succeeds
+ * the first http handler is put in pass-through mode and a new protocol (which could be http) is tacked onto the end.
+ *
+ * @param connection connection to switch protocols on
+ * @return AWS_OP_SUCCESS if things went well, AWS_OP_ERR if things didn't.
+ */
+int aws_http1_switch_protocols(struct aws_h1_connection *connection);
+
 #endif /* AWS_HTTP_H1_CONNECTION_H */
