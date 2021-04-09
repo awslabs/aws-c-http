@@ -169,6 +169,32 @@ struct aws_crt_statistics_http1_channel *aws_h1_connection_get_statistics(struct
 AWS_HTTP_API
 uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *connection);
 
+/**
+ * Layers an http channel handler/connection onto a channel.  Moved from internal to private so that the proxy
+ * logic could apply a new http connection/handler after tunneling proxy negotiation (into http) is finished.
+ * This is a synchronous operation.
+ *
+ * @param alloc memory allocator to use
+ * @param channel channel to apply the http handler/connection to
+ * @param is_server should the handler behave like an http server
+ * @param is_using_tls is tls is being used (do an alpn check of the to-the-left channel handler)
+ * @param manual_window_management is manual window management enabled
+ * @param initial_window_size what should the initial window size be
+ * @param http1_options http1 options
+ * @param http2_options http2 options
+ * @return a new http connection or NULL on failure
+ */
+AWS_HTTP_API
+struct aws_http_connection *aws_http_connection_new_channel_handler(
+    struct aws_allocator *alloc,
+    struct aws_channel *channel,
+    bool is_server,
+    bool is_using_tls,
+    bool manual_window_management,
+    size_t initial_window_size,
+    const struct aws_http1_connection_options *http1_options,
+    const struct aws_http2_connection_options *http2_options);
+
 AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_CONNECTION_IMPL_H */

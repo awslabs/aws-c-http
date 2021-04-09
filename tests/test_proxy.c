@@ -106,7 +106,30 @@ static int s_test_proxy_setup_client_tls(
     struct aws_channel_slot *right_of_slot,
     struct aws_tls_connection_options *tls_options) {
 
-    (void)right_of_slot;
+    /*
+     * apply a dummy handler, but don't kick off negotiation, instead invoke success/failure immediately.
+     * The tls handler being in a newly-created state won't affect the proxied tests which don't try and send
+     * data through it.
+     */
+    AWS_FATAL_ASSERT(right_of_slot != NULL);
+    struct aws_channel *channel = right_of_slot->channel;
+    struct aws_allocator *allocator = right_of_slot->alloc;
+
+    struct aws_channel_slot *tls_slot = aws_channel_slot_new(channel);
+    if (!tls_slot) {
+        return AWS_OP_ERR;
+    }
+
+    struct aws_channel_handler *tls_handler = aws_tls_client_handler_new(allocator, tls_options, tls_slot);
+    if (!tls_handler) {
+        aws_mem_release(allocator, tls_slot);
+        return AWS_OP_ERR;
+    }
+
+    aws_channel_slot_insert_right(right_of_slot, tls_slot);
+    if (aws_channel_slot_set_handler(tls_slot, tls_handler) != AWS_OP_SUCCESS) {
+        return AWS_OP_ERR;
+    }
 
     if (tester.failure_type == PTFT_TLS_NEGOTIATION) {
         tls_options->on_negotiation_result(NULL, NULL, AWS_ERROR_UNKNOWN, tls_options->user_data);
@@ -1029,6 +1052,24 @@ AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_host, "www.uri.com");
 AWS_STATIC_STRING_FROM_LITERAL(s_rewrite_path, "/main/index.html?foo=bar");
 AWS_STATIC_STRING_FROM_LITERAL(s_expected_rewritten_path, "http://www.uri.com:80/main/index.html?foo=bar");
 
+static void s_proxy_forwarding_request_rewrite_setup_fn(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
+    (void)connection;
+    (void)error_code;
+    (void)user_data;
+}
+
+static void s_proxy_forwarding_request_rewrite_shutdown_fn(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
+    (void)connection;
+    (void)error_code;
+    (void)user_data;
+}
+
 /*
  * Given some basic request parameters, (method, path, host), builds a simple http request and then applies the proxy
  * transform to it
@@ -1052,9 +1093,12 @@ static int s_do_request_rewrite_test(
         .host_name = aws_byte_cursor_from_string(s_rewrite_host),
         .port = 80,
         .proxy_options = &proxy_options,
+        .on_setup = s_proxy_forwarding_request_rewrite_setup_fn,
+        .on_shutdown = s_proxy_forwarding_request_rewrite_shutdown_fn,
     };
 
-    struct aws_http_proxy_user_data *user_data = aws_http_proxy_user_data_new(allocator, &connection_options);
+    struct aws_http_proxy_user_data *user_data =
+        aws_http_proxy_user_data_new(allocator, &connection_options, NULL, NULL);
     struct aws_http_message *request = s_build_dummy_http_request(
         allocator,
         aws_byte_cursor_from_string(method),

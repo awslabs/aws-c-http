@@ -70,7 +70,7 @@ static void s_server_unlock_synced_data(struct aws_http_server *server) {
 }
 
 /* Determine the http-version, create appropriate type of connection, and insert it into the channel. */
-static struct aws_http_connection *s_connection_new(
+struct aws_http_connection *aws_http_connection_new_channel_handler(
     struct aws_allocator *alloc,
     struct aws_channel *channel,
     bool is_server,
@@ -365,7 +365,7 @@ void aws_http_connection_release(struct aws_http_connection *connection) {
         /* When the channel's refcount reaches 0, it destroys its slots/handlers, which will destroy the connection */
         aws_channel_release_hold(connection->channel_slot->channel);
     } else {
-        AWS_ASSERT(prev_refcount != 0);
+        AWS_FATAL_ASSERT(prev_refcount != 0);
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Connection refcount released, %zu remaining.",
@@ -402,7 +402,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
     /* TODO: expose http1/2 options to server API */
     struct aws_http1_connection_options http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
     struct aws_http2_connection_options http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
-    connection = s_connection_new(
+    connection = aws_http_connection_new_channel_handler(
         server->alloc,
         channel,
         true,
@@ -733,7 +733,7 @@ static void s_client_bootstrap_on_channel_setup(
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "static: Socket connected, creating client connection object.");
 
-    http_bootstrap->connection = s_connection_new(
+    http_bootstrap->connection = aws_http_connection_new_channel_handler(
         http_bootstrap->alloc,
         channel,
         false,

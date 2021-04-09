@@ -292,9 +292,7 @@ static struct aws_string *s_mock_aws_http_proxy_negotiation_ntlm_get_challenge_t
     void *user_data,
     const struct aws_byte_cursor *challenge_value,
     int *out_error_code) {
-
     (void)challenge_value;
-
     struct aws_allocator *allocator = user_data;
 
     *out_error_code = AWS_ERROR_SUCCESS;

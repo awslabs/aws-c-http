@@ -11,6 +11,7 @@
 #include <aws/http/connection.h>
 #include <aws/http/proxy.h>
 #include <aws/http/status_code.h>
+#include <aws/io/channel_bootstrap.h>
 #include <aws/io/socket.h>
 
 struct aws_http_connection_manager_options;
@@ -74,7 +75,19 @@ struct aws_http_proxy_user_data {
     enum aws_proxy_bootstrap_state state;
     int error_code;
     enum aws_http_status_code connect_status_code;
-    struct aws_http_connection *connection;
+
+    /*
+     * The initial http connection object between the client and the proxy.
+     */
+    struct aws_http_connection *proxy_connection;
+
+    /*
+     * The http connection object that gets surfaced to callers if http is the final protocol of proxy
+     * negotiation.
+     *
+     * In the case of a forwarding proxy, proxy_connection and final_connection are the same.
+     */
+    struct aws_http_connection *final_connection;
     struct aws_http_message *connect_request;
     struct aws_http_stream *connect_stream;
     struct aws_http_proxy_negotiator *proxy_negotiator;
@@ -84,15 +97,27 @@ struct aws_http_proxy_user_data {
      */
     struct aws_string *original_host;
     uint16_t original_port;
-    aws_http_on_client_connection_setup_fn *original_on_setup;
-    aws_http_on_client_connection_shutdown_fn *original_on_shutdown;
     void *original_user_data;
+    struct aws_tls_connection_options *original_tls_options;
+    struct aws_client_bootstrap *original_bootstrap;
+    struct aws_socket_options original_socket_options;
+    bool original_manual_window_management;
+    size_t original_initial_window_size;
+    struct aws_http1_connection_options original_http1_options;
 
-    struct aws_tls_connection_options *tls_options;
-    struct aws_client_bootstrap *bootstrap;
-    struct aws_socket_options socket_options;
-    bool manual_window_management;
-    size_t initial_window_size;
+    /*
+     * setup/shutdown callbacks.  We enforce via fatal assert that either the http callbacks are supplied or
+     * the channel callbacks are supplied but never both.
+     *
+     * When using a proxy to ultimately establish an http connection, use the http callbacks.
+     * When using a proxy to establish any other protocol connection, use the raw channel callbacks.
+     *
+     * In the future, we might consider a further refactor which only use raw channel callbacks.
+     */
+    aws_http_on_client_connection_setup_fn *original_http_on_setup;
+    aws_http_on_client_connection_shutdown_fn *original_http_on_shutdown;
+    aws_client_bootstrap_on_channel_event_fn *original_channel_on_setup;
+    aws_client_bootstrap_on_channel_event_fn *original_channel_on_shutdown;
 
     struct aws_http_proxy_config *proxy_config;
 };
@@ -106,7 +131,9 @@ AWS_EXTERN_C_BEGIN
 AWS_HTTP_API
 struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
     struct aws_allocator *allocator,
-    const struct aws_http_client_connection_options *options);
+    const struct aws_http_client_connection_options *options,
+    aws_client_bootstrap_on_channel_event_fn *on_channel_setup,
+    aws_client_bootstrap_on_channel_event_fn *on_channel_shutdown);
 
 AWS_HTTP_API
 void aws_http_proxy_user_data_destroy(struct aws_http_proxy_user_data *user_data);

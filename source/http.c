@@ -124,6 +124,9 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE,
         "Proxy connection attempt failed but the negotiation could be continued on a new connection"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_PROTOCOL_SWITCH_FAILURE,
+        "Internal state failure prevent connection from switching protocols"),
 };
 /* clang-format on */
 
