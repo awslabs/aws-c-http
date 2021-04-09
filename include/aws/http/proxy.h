@@ -490,7 +490,7 @@ void aws_http_proxy_options_init_from_config(
 
 /**
  * Establish an arbitrary protocol connection through an http proxy via tunneling CONNECT.  Alpn is
- * not required for this connection process to succeed, but we encourage it's use if available.
+ * not required for this connection process to succeed, but we encourage its use if available.
  *
  * @param channel_options configuration options for the socket level connection
  * @param proxy_options configuration options for the proxy connection

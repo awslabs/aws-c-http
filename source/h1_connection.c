@@ -461,11 +461,7 @@ static void s_cross_thread_work_task(struct aws_channel_task *channel_task, void
     }
 }
 
-static bool s_aws_http_stream_was_successful_connect(struct aws_h1_stream *stream, int error_code) {
-    if (error_code != AWS_ERROR_SUCCESS) {
-        return false;
-    }
-
+static bool s_aws_http_stream_was_successful_connect(struct aws_h1_stream *stream) {
     struct aws_http_stream *base = &stream->base;
     if (base->request_method != AWS_HTTP_METHOD_CONNECT) {
         return false;
@@ -482,6 +478,45 @@ static bool s_aws_http_stream_was_successful_connect(struct aws_h1_stream *strea
     return true;
 }
 
+/**
+ * Validate and perform a protocol switch on a connection.  Protocol switching essentially turns the connection's
+ * handler into a dummy pass-through.  It is valid to switch protocols to the same protocol resulting in a channel
+ * that has a "dead" http handler in the middle of the channel (which negotiated the CONNECT through the proxy) and
+ * a "live" handler on the end which takes the actual http requests.  By doing this, we get the exact same
+ * behavior whether we're transitioning to http or any other protocol: once the CONNECT succeeds
+ * the first http handler is put in pass-through mode and a new protocol (which could be http) is tacked onto the end.
+ */
+static int s_aws_http1_switch_protocols(struct aws_h1_connection *connection) {
+    AWS_FATAL_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
+    /* Switching protocols while there are multiple streams is too complex to deal with.
+     * Ensure stream_list has exactly this 1 stream in it. */
+    if (aws_linked_list_begin(&connection->thread_data.stream_list) !=
+        aws_linked_list_rbegin(&connection->thread_data.stream_list)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "id=%p: Cannot switch protocols while further streams are pending, closing connection.",
+            (void *)&connection->base);
+
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_CONNECTION,
+        "id=%p: Connection has switched protocols, another channel handler must be installed to"
+        " deal with further data.",
+        (void *)&connection->base);
+
+    connection->thread_data.has_switched_protocols = true;
+    { /* BEGIN CRITICAL SECTION */
+        aws_h1_connection_lock_synced_data(connection);
+        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_SWITCHED_PROTOCOLS;
+        aws_h1_connection_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+
+    return AWS_OP_SUCCESS;
+}
+
 static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
     struct aws_h1_connection *connection =
         AWS_CONTAINER_OF(stream->base.owning_connection, struct aws_h1_connection, base);
@@ -490,10 +525,10 @@ static void s_stream_complete(struct aws_h1_stream *stream, int error_code) {
      * If this is the end of a successful CONNECT request, mark ourselves as pass-through since the proxy layer
      * will be tacking on a new http handler (and possibly a tls handler in-between).
      */
-    if (s_aws_http_stream_was_successful_connect(stream, error_code)) {
-        if (aws_http1_switch_protocols(connection)) {
+    if (error_code == AWS_ERROR_SUCCESS && s_aws_http_stream_was_successful_connect(stream)) {
+        if (s_aws_http1_switch_protocols(connection)) {
             error_code = AWS_ERROR_HTTP_PROTOCOL_SWITCH_FAILURE;
-            s_connection_close(&connection->base);
+            s_shutdown_due_to_error(connection, error_code);
         }
     }
 
@@ -1044,37 +1079,6 @@ static int s_decoder_on_header(const struct aws_h1_decoded_header *header, void 
     return AWS_OP_SUCCESS;
 }
 
-int aws_http1_switch_protocols(struct aws_h1_connection *connection) {
-    AWS_FATAL_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
-
-    /* Switching protocols while there are multiple streams is too complex to deal with.
-     * Ensure stream_list has exactly this 1 stream in it. */
-    if (aws_linked_list_begin(&connection->thread_data.stream_list) !=
-        aws_linked_list_rbegin(&connection->thread_data.stream_list)) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION,
-            "id=%p: Cannot switch protocols while further streams are pending, closing connection.",
-            (void *)&connection->base);
-
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
-    }
-
-    AWS_LOGF_TRACE(
-        AWS_LS_HTTP_CONNECTION,
-        "id=%p: Connection has switched protocols, another channel handler must be installed to"
-        " deal with further data.",
-        (void *)&connection->base);
-
-    connection->thread_data.has_switched_protocols = true;
-    { /* BEGIN CRITICAL SECTION */
-        aws_h1_connection_lock_synced_data(connection);
-        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_SWITCHED_PROTOCOLS;
-        aws_h1_connection_unlock_synced_data(connection);
-    } /* END CRITICAL SECTION */
-
-    return AWS_OP_SUCCESS;
-}
-
 static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
     /* Bail out if we've already done this */
     if (incoming_stream->is_incoming_head_done) {
@@ -1097,7 +1101,7 @@ static int s_mark_head_done(struct aws_h1_stream *incoming_stream) {
         /* Only clients can receive informational headers.
          * Check whether we're switching protocols */
         if (incoming_stream->base.client_data->response_status == AWS_HTTP_STATUS_CODE_101_SWITCHING_PROTOCOLS) {
-            if (aws_http1_switch_protocols(connection)) {
+            if (s_aws_http1_switch_protocols(connection)) {
                 return AWS_OP_ERR;
             }
         }
