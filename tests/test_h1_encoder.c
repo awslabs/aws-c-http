@@ -478,6 +478,7 @@ static int s_test_bad_request(
 }
 
 H1_ENCODER_TEST_CASE(h1_encoder_rejects_bad_method) {
+    (void)ctx;
     return s_test_bad_request(
         allocator,
         "G@T" /*method*/,
@@ -488,6 +489,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_rejects_bad_method) {
 }
 
 H1_ENCODER_TEST_CASE(h1_encoder_rejects_missing_method) {
+    (void)ctx;
     return s_test_bad_request(
         allocator,
         NULL /*method*/,
@@ -498,6 +500,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_rejects_missing_method) {
 }
 
 H1_ENCODER_TEST_CASE(h1_encoder_rejects_bad_path) {
+    (void)ctx;
     return s_test_bad_request(
         allocator,
         "GET" /*method*/,
@@ -508,6 +511,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_rejects_bad_path) {
 }
 
 H1_ENCODER_TEST_CASE(h1_encoder_rejects_missing_path) {
+    (void)ctx;
     return s_test_bad_request(
         allocator,
         "GET" /*method*/,
@@ -518,6 +522,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_rejects_missing_path) {
 }
 
 H1_ENCODER_TEST_CASE(h1_encoder_rejects_bad_header_name) {
+    (void)ctx;
     const struct aws_http_header headers[] = {
         {
             .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
@@ -539,6 +544,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_rejects_bad_header_name) {
 }
 
 H1_ENCODER_TEST_CASE(h1_encoder_rejects_bad_header_value) {
+    (void)ctx;
     const struct aws_http_header headers[] = {
         {
             .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
