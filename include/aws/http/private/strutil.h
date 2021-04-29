@@ -87,8 +87,7 @@ bool aws_strutil_is_lowercase_http_token(struct aws_byte_cursor token);
  * obs-text       = %x80-FF
  *
  * Note that we ALWAYS forbid obs-fold. Section 3.2.4 explains how
- * obs-fold has led to security vulnerabilities and is deprecated "except within
- * the message/http media type" but I don't even understand what that means.
+ * obs-fold is deprecated "except within the message/http media type".
  */
 AWS_HTTP_API
 bool aws_strutil_is_http_field_value(struct aws_byte_cursor cursor);
