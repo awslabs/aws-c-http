@@ -426,7 +426,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
     }
 
     struct aws_byte_cursor name = splits[0];
-    if (name.len == 0 || !aws_strutil_is_http_token(name)) {
+    if (!aws_strutil_is_http_token(name)) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Invalid incoming header, bad name.", decoder->logging_id);
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_STREAM, "id=%p: Bad header is: '" PRInSTR "'", decoder->logging_id, AWS_BYTE_CURSOR_PRI(input));
@@ -434,6 +434,12 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
     }
 
     struct aws_byte_cursor value = aws_strutil_trim_http_whitespace(splits[1]);
+    if (!aws_strutil_is_http_field_value(value)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Invalid incoming header, bad value.", decoder->logging_id);
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_STREAM, "id=%p: Bad header is: '" PRInSTR "'", decoder->logging_id, AWS_BYTE_CURSOR_PRI(input));
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
 
     struct aws_h1_decoded_header header;
     header.name = aws_http_str_to_header_name(name);
@@ -603,6 +609,26 @@ static int s_linestate_request(struct aws_h1_decoder *decoder, struct aws_byte_c
     struct aws_byte_cursor uri = cursors[1];
     struct aws_byte_cursor version = cursors[2];
 
+    if (!aws_strutil_is_http_token(method)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Incoming request has invalid method.", decoder->logging_id);
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Bad request line is: '" PRInSTR "'",
+            decoder->logging_id,
+            AWS_BYTE_CURSOR_PRI(input));
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+
+    if (!aws_strutil_is_http_request_target(uri)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Incoming request has invalid path.", decoder->logging_id);
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Bad request line is: '" PRInSTR "'",
+            decoder->logging_id,
+            AWS_BYTE_CURSOR_PRI(input));
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+
     struct aws_byte_cursor version_expected = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
     if (!aws_byte_cursor_eq(&version, &version_expected)) {
         AWS_LOGF_ERROR(
@@ -645,7 +671,6 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
     struct aws_byte_cursor version = cursors[0];
     struct aws_byte_cursor code = cursors[1];
     struct aws_byte_cursor phrase = cursors[2];
-    (void)phrase; /* Unused for now. */
 
     struct aws_byte_cursor version_1_1_expected = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
     struct aws_byte_cursor version_1_0_expected = aws_http_version_to_str(AWS_HTTP_VERSION_1_0);
@@ -657,6 +682,12 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
             "id=%p: Unsupported version is: '" PRInSTR "'",
             decoder->logging_id,
             AWS_BYTE_CURSOR_PRI(version));
+        return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
+    }
+
+    /* Validate phrase */
+    if (!aws_strutil_is_http_reason_phrase(phrase)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Incoming response has invalid reason phrase.", decoder->logging_id);
         return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
     }
 

@@ -680,6 +680,33 @@ static int s_h1_decode_bad_requests_and_assert_failure(struct aws_allocator *all
                                               ": header with empty name\r\n"
                                               "\r\n"),
 
+        /* Header name with illegal characters */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "H@st: bad-char-in-name.com\r\n"),
+
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "Host : space-after-name.com\r\n"),
+
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              " Host: space-before-name.com\r\n"),
+
+        /* Header value with illegal characters */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "Host: carriage-return\r.com\r\n"),
+
+        /* Forbid line folding */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "Host: \r\n"
+                                              " obsolete-line-folding.com\r\n"),
+
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "Host: \r\n"
+                                              "\tobsolete-line-folding.com\r\n"),
+
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("POST / HTTP/1.1\r\n"
+                                              "Host: amazon.com\r\n"
+                                              "X-Line-Folding-Forbidden: one line of value\r\n"
+                                              " next line of value\r\n"),
         /* Method is blank */
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(" / HTTP/1.1\r\n"),
 
@@ -698,18 +725,30 @@ static int s_h1_decode_bad_requests_and_assert_failure(struct aws_allocator *all
         /* Extra space at end */
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("GET / HTTP/1.1 \r\n"),
 
+        /* Illegal characters in method */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("G@T / HTTP/1.1\r\n"),
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("G\rT / HTTP/1.1\r\n"),
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("G\nT / HTTP/1.1\r\n"),
+
+        /* Illegal characters in path */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("G@T /\rindex.html HTTP/1.1\r\n"),
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("G@T /\tindex.html HTTP/1.1\r\n"),
+
         /* Go ahead and add more cases here. */
     };
 
     for (size_t iter = 0; iter < AWS_ARRAY_SIZE(requests); ++iter) {
-        printf("--- %zu ---\n", iter);
         struct aws_byte_cursor request = requests[iter];
 
         struct aws_h1_decoder_params params;
         s_common_decoder_setup(allocator, 1024, &params, s_request, NULL);
         struct aws_h1_decoder *decoder = aws_h1_decoder_new(&params);
 
-        ASSERT_FAILS(aws_h1_decode(decoder, &request));
+        ASSERT_FAILS(
+            aws_h1_decode(decoder, &request),
+            "Entry [%zu] should have failed, but it passed:\n------\n" PRInSTR "\n------\n",
+            iter,
+            AWS_BYTE_CURSOR_PRI(requests[iter]));
 
         aws_h1_decoder_destroy(decoder);
     }
@@ -734,6 +773,9 @@ static int s_h1_decode_bad_responses_and_assert_failure(struct aws_allocator *al
 
         /* Response code should not be in hex */
         AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.1 FFF PHRASE\r\n"),
+
+        /* Phrase should not contain illegal characters */
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("HTTP/1.1 200 BAD\nPHRASE\r\n"),
 
         /* Go ahead and add more cases here. */
     };
