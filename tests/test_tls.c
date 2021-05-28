@@ -243,3 +243,69 @@ static int s_tls_download_medium_file_h2(struct aws_allocator *allocator, void *
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(tls_download_medium_file_h2, s_tls_download_medium_file_h2);
+
+static int s_test_tls_invalid_tls_connection_options(struct aws_allocator *allocator, void *ctx) {
+    aws_http_library_init(allocator);
+
+    struct test_ctx test;
+    AWS_ZERO_STRUCT(test);
+    test.alloc = allocator;
+
+    const struct aws_byte_cursor url =
+        AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https://d1cz66xoahf9cl.cloudfront.net/http_test_doc.txt");
+    struct aws_uri uri;
+    aws_uri_init_parse(&uri, allocator, &url);
+
+    struct aws_socket_options socket_options = {
+        .type = AWS_SOCKET_STREAM,
+        .domain = AWS_SOCKET_IPV4,
+        .connect_timeout_ms =
+            (uint32_t)aws_timestamp_convert(TEST_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
+    };
+
+    test.event_loop_group = aws_event_loop_group_new_default(test.alloc, 1, NULL);
+
+    struct aws_host_resolver_default_options resolver_options = {
+        .el_group = test.event_loop_group,
+        .max_entries = 1,
+    };
+
+    test.host_resolver = aws_host_resolver_new_default(test.alloc, &resolver_options);
+
+    struct aws_client_bootstrap_options bootstrap_options = {
+        .event_loop_group = test.event_loop_group,
+        .host_resolver = test.host_resolver,
+    };
+
+    ASSERT_NOT_NULL(test.client_bootstrap = aws_client_bootstrap_new(test.alloc, &bootstrap_options));
+
+    struct aws_tls_connection_options invalid_tls_connection_options;
+    AWS_ZERO_STRUCT(invalid_tls_connection_options);
+
+    struct aws_http_client_connection_options http_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
+    http_options.allocator = test.alloc;
+    http_options.bootstrap = test.client_bootstrap;
+    http_options.host_name = *aws_uri_host_name(&uri);
+    http_options.port = 443;
+    http_options.on_setup = s_on_connection_setup;
+    http_options.on_shutdown = s_on_connection_shutdown;
+    http_options.socket_options = &socket_options;
+    http_options.tls_options = &invalid_tls_connection_options;
+
+    ASSERT_FAILS(aws_http_client_connect(&http_options));
+
+    ASSERT_TRUE(aws_last_error() == AWS_ERROR_INVALID_ARGUMENT);
+
+    aws_client_bootstrap_release(test.client_bootstrap);
+    aws_host_resolver_release(test.host_resolver);
+    aws_event_loop_group_release(test.event_loop_group);
+
+    aws_tls_connection_options_clean_up(&invalid_tls_connection_options);
+
+    aws_uri_clean_up(&uri);
+    aws_http_library_clean_up();
+
+    return 0;
+}
+
+AWS_TEST_CASE(tls_invalid_tls_connection_options, s_test_tls_invalid_tls_connection_options);
