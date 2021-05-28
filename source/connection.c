@@ -873,6 +873,11 @@ static int s_validate_http_client_connection_options(const struct aws_http_clien
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
 
+    if (options->tls_options && !aws_tls_connection_options_is_valid(options->tls_options)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: Invalid connection options, invalid TLS options");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+
     return AWS_OP_SUCCESS;
 }
 
