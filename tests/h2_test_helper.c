@@ -666,7 +666,7 @@ struct aws_input_stream_tester {
 
 static int s_aws_input_stream_tester_seek(
     struct aws_input_stream *stream,
-    aws_off_t offset,
+    int64_t offset,
     enum aws_stream_seek_basis basis) {
 
     struct aws_input_stream_tester *impl = stream->impl;
