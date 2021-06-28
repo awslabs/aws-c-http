@@ -229,11 +229,6 @@ bool aws_http_connection_is_server(const struct aws_http_connection *connection)
     return connection->server_data;
 }
 
-void aws_http_connection_update_window(struct aws_http_connection *connection, size_t increment_size) {
-    AWS_ASSERT(connection);
-    connection->vtable->update_window(connection, increment_size);
-}
-
 static int s_check_http2_connection(const struct aws_http_connection *http2_connection) {
     if (http2_connection->http_version == AWS_HTTP_VERSION_2) {
         return AWS_OP_SUCCESS;
