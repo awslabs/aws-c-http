@@ -37,31 +37,51 @@ static int s_scan_outgoing_headers(
         struct aws_http_header header;
         aws_http_message_get_header(message, &header, i);
 
+        /* Validate header field-name (RFC-7230 3.2): field-name = token */
+        if (!aws_strutil_is_http_token(header.name)) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Header name is invalid");
+            return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_NAME);
+        }
+
+        /* Validate header field-value.
+         * The value itself isn't supposed to have whitespace on either side,
+         * but we'll trim it off before validation so we don't start needlessly
+         * failing requests that used to work before we added validation.
+         * This should be OK because field-value can be sent with any amount
+         * of whitespace around it, which the other side will just ignore (RFC-7230 3.2):
+         * header-field = field-name ":" OWS field-value OWS */
+        struct aws_byte_cursor field_value = aws_strutil_trim_http_whitespace(header.value);
+        if (!aws_strutil_is_http_field_value(field_value)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=static: Header '" PRInSTR "' has invalid value",
+                AWS_BYTE_CURSOR_PRI(header.name));
+            return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+        }
+
         enum aws_http_header_name name_enum = aws_http_str_to_header_name(header.name);
         switch (name_enum) {
             case AWS_HTTP_HEADER_CONNECTION: {
-                struct aws_byte_cursor trimmed_value = aws_strutil_trim_http_whitespace(header.value);
-                if (aws_byte_cursor_eq_c_str(&trimmed_value, "close")) {
+                if (aws_byte_cursor_eq_c_str(&field_value, "close")) {
                     encoder_message->has_connection_close_header = true;
                 }
             } break;
             case AWS_HTTP_HEADER_CONTENT_LENGTH: {
                 has_content_length_header = true;
-                struct aws_byte_cursor trimmed_value = aws_strutil_trim_http_whitespace(header.value);
-                if (aws_strutil_read_unsigned_num(trimmed_value, &encoder_message->content_length)) {
+                if (aws_strutil_read_unsigned_num(field_value, &encoder_message->content_length)) {
                     AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Invalid Content-Length");
                     return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
                 }
             } break;
             case AWS_HTTP_HEADER_TRANSFER_ENCODING: {
                 has_transfer_encoding_header = true;
-                if (0 == header.value.len) {
+                if (0 == field_value.len) {
                     AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Transfer-Encoding must include a valid value");
                     return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
                 }
                 struct aws_byte_cursor substr;
                 AWS_ZERO_STRUCT(substr);
-                while (aws_byte_cursor_next_split(&header.value, ',', &substr)) {
+                while (aws_byte_cursor_next_split(&field_value, ',', &substr)) {
                     struct aws_byte_cursor trimmed = aws_strutil_trim_http_whitespace(substr);
                     if (0 == trimmed.len) {
                         AWS_LOGF_ERROR(
@@ -177,6 +197,13 @@ int aws_h1_encoder_message_init_from_request(
     struct aws_byte_cursor method;
     int err = aws_http_message_get_request_method(request, &method);
     if (err) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Request method not set");
+        aws_raise_error(AWS_ERROR_HTTP_INVALID_METHOD);
+        goto error;
+    }
+    /* RFC-7230 3.1.1: method = token */
+    if (!aws_strutil_is_http_token(method)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Request method is invalid");
         aws_raise_error(AWS_ERROR_HTTP_INVALID_METHOD);
         goto error;
     }
@@ -184,6 +211,12 @@ int aws_h1_encoder_message_init_from_request(
     struct aws_byte_cursor uri;
     err = aws_http_message_get_request_path(request, &uri);
     if (err) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Request path not set");
+        aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
+        goto error;
+    }
+    if (!aws_strutil_is_http_request_target(uri)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Request path is invalid");
         aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
         goto error;
     }

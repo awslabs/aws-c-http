@@ -70,10 +70,49 @@ AWS_HTTP_API
 bool aws_strutil_is_http_token(struct aws_byte_cursor token);
 
 /**
- * Same as aws_strutil_is_http_token_valid(), but uppercase letters are forbidden.
+ * Same as aws_strutil_is_http_token(), but uppercase letters are forbidden.
  */
 AWS_HTTP_API
 bool aws_strutil_is_lowercase_http_token(struct aws_byte_cursor token);
+
+/**
+ * Return whether this ASCII/UTF-8 sequence is a valid HTTP header field-value.
+ *
+ * As defined in RFC7230 section 3.2 (except we are ALWAYS forbidding obs-fold):
+ *
+ * field-value    = *( field-content / obs-fold )
+ * field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
+ * field-vchar    = VCHAR / obs-text
+ * VCHAR          = %x21-7E ; visible (printing) characters
+ * obs-text       = %x80-FF
+ *
+ * Note that we ALWAYS forbid obs-fold. Section 3.2.4 explains how
+ * obs-fold is deprecated "except within the message/http media type".
+ */
+AWS_HTTP_API
+bool aws_strutil_is_http_field_value(struct aws_byte_cursor cursor);
+
+/**
+ * Return whether this ASCII/UTF-8 sequence is a valid HTTP response status reason-phrase.
+ *
+ * As defined in RFC7230 section 3.1.2:
+ *
+ * reason-phrase  = *( HTAB / SP / VCHAR / obs-text )
+ * VCHAR          = %x21-7E ; visible (printing) characters
+ * obs-text       = %x80-FF
+ */
+AWS_HTTP_API
+bool aws_strutil_is_http_reason_phrase(struct aws_byte_cursor cursor);
+
+/**
+ * Return whether this ASCII/UTF-8 sequence is a valid HTTP request-target.
+ *
+ * TODO: Actually check the complete grammar as defined in RFC7230 5.3 and
+ * RFC3986. Currently this just checks whether the sequence is blatantly illegal
+ * (ex: contains CR or LF)
+ */
+AWS_HTTP_API
+bool aws_strutil_is_http_request_target(struct aws_byte_cursor cursor);
 
 AWS_EXTERN_C_END
 #endif /* AWS_HTTP_STRUTIL_H */
