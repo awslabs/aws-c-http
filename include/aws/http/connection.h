@@ -420,6 +420,13 @@ bool aws_http_connection_new_requests_allowed(const struct aws_http_connection *
 AWS_HTTP_API
 bool aws_http_connection_is_client(const struct aws_http_connection *connection);
 
+/**
+ * DEPRECATED
+ * TODO: Delete once this is removed from H2.
+ */
+AWS_HTTP_API
+void aws_http_connection_update_window(struct aws_http_connection *connection, size_t increment_size);
+
 AWS_HTTP_API
 enum aws_http_version aws_http_connection_get_version(const struct aws_http_connection *connection);
 

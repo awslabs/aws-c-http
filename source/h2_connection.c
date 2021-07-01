@@ -56,6 +56,7 @@ static struct aws_http_stream *s_connection_make_request(
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
+static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
 static int s_connection_change_settings(
     struct aws_http_connection *connection_base,
     const struct aws_http2_setting *settings_array,
@@ -168,6 +169,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .close = s_connection_close,
     .is_open = s_connection_is_open,
     .new_requests_allowed = s_connection_new_requests_allowed,
+    .update_window = s_connection_update_window,
     .change_settings = s_connection_change_settings,
     .send_ping = s_connection_send_ping,
     .send_goaway = s_connection_send_goaway,
@@ -1176,9 +1178,8 @@ struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_le
         }
     }
 
-    /* Always auto update the connection window. User can control the connection window via stream window and the
-     * MAX_CONCURRENT_STREAM setting */
-    if (payload_len != 0) {
+    /* if manual_window_management is false, we will automatically maintain the connection self window size */
+    if (payload_len != 0 && !connection->base.manual_window_management) {
         struct aws_h2_frame *connection_window_update_frame =
             aws_h2_frame_new_window_update(connection->base.alloc, 0, payload_len);
         if (!connection_window_update_frame) {
@@ -1966,7 +1967,6 @@ static void s_move_stream_to_thread(
     uint32_t max_concurrent_streams = connection->thread_data.settings_peer[AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS];
     if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) >= max_concurrent_streams) {
         AWS_H2_STREAM_LOG(ERROR, stream, "Failed activating stream, max concurrent streams are reached");
-
         goto error;
     }
 
@@ -2214,6 +2214,78 @@ static bool s_connection_new_requests_allowed(const struct aws_http_connection *
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
     return new_stream_error_code == 0;
+}
+
+static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size) {
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
+    if (!increment_size) {
+        return;
+    }
+    if (!connection_base->manual_window_management) {
+        /* auto-mode, manual update window is not supported */
+        CONNECTION_LOG(
+            WARN, connection, "Manual window management is off, update window operations are not supported.");
+        return;
+    }
+    /* Type cast the increment size here, if overflow happens, we will detect it later, and the frame will be destroyed
+     */
+    struct aws_h2_frame *connection_window_update_frame =
+        aws_h2_frame_new_window_update(connection->base.alloc, 0, (uint32_t)increment_size);
+    if (!connection_window_update_frame) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "Failed to create WINDOW_UPDATE frame on connection, error %s",
+            aws_error_name(aws_last_error()));
+        return;
+    }
+
+    int err = 0;
+    bool cross_thread_work_should_schedule = false;
+    bool connection_open = false;
+    size_t sum_size = 0;
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+
+        err |= aws_add_size_checked(connection->synced_data.window_update_size, increment_size, &sum_size);
+        err |= sum_size > AWS_H2_WINDOW_UPDATE_MAX;
+        connection_open = connection->synced_data.is_open;
+
+        if (!err && connection_open) {
+            cross_thread_work_should_schedule = !connection->synced_data.is_cross_thread_work_task_scheduled;
+            connection->synced_data.is_cross_thread_work_task_scheduled = true;
+            aws_linked_list_push_back(
+                &connection->synced_data.pending_frame_list, &connection_window_update_frame->node);
+            connection->synced_data.window_update_size = sum_size;
+        }
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+
+    if (cross_thread_work_should_schedule) {
+        CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
+    }
+
+    if (!connection_open) {
+        CONNECTION_LOG(ERROR, connection, "Failed to update connection window, connection is closed or closing.");
+        aws_raise_error(AWS_ERROR_INVALID_STATE);
+        aws_h2_frame_destroy(connection_window_update_frame);
+        return;
+    }
+
+    if (err) {
+        /* The increment_size is still not 100% safe, since we cannot control the incoming data frame. So just
+         * ruled out the value that is obviously wrong values */
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "The increment size is too big for HTTP/2 protocol, max flow-control "
+            "window size is 2147483647. We got %zu, which will cause the flow-control window to exceed the maximum",
+            increment_size);
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        aws_h2_frame_destroy(connection_window_update_frame);
+        return;
+    }
 }
 
 static int s_connection_change_settings(
