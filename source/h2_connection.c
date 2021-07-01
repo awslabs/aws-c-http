@@ -297,7 +297,7 @@ static struct aws_h2_connection *s_connection_new(
     if (!connection) {
         return NULL;
     }
-
+    connection->buffer_limits = UINT32_MAX;
     connection->base.vtable = &s_h2_connection_vtable;
     connection->base.alloc = alloc;
     connection->base.channel_handler.vtable = &s_h2_connection_vtable.channel_handler_vtable;
