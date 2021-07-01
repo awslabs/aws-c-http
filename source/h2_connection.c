@@ -297,7 +297,6 @@ static struct aws_h2_connection *s_connection_new(
     if (!connection) {
         return NULL;
     }
-    connection->buffer_limits = UINT32_MAX;
     connection->base.vtable = &s_h2_connection_vtable;
     connection->base.alloc = alloc;
     connection->base.channel_handler.vtable = &s_h2_connection_vtable.channel_handler_vtable;
@@ -310,6 +309,7 @@ static struct aws_h2_connection *s_connection_new(
 
     connection->on_goaway_received = http2_options->on_goaway_received;
     connection->on_remote_settings_change = http2_options->on_remote_settings_change;
+    connection->buffer_limits = http2_options->buffer_limits;
 
     aws_channel_task_init(
         &connection->cross_thread_work_task, s_cross_thread_work_task, connection, "HTTP/2 cross-thread work");
@@ -2587,8 +2587,15 @@ static int s_connection_get_received_goaway(
     uint32_t received_last_stream_id;
     uint32_t received_http2_error;
     bool buf_copy_failed = false;
+    bool goaway_not_ready = false;
+    uint32_t max_stream_id = AWS_H2_STREAM_ID_MAX;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
+        if (connection->synced_data.goaway_received_last_stream_id == max_stream_id + 1 ||
+            connection->synced_data.goaway_received_debug_data.capacity >
+                connection->synced_data.goaway_received_debug_data.len) {
+            goaway_not_ready = true;
+        }
         received_last_stream_id = connection->synced_data.goaway_received_last_stream_id;
         received_http2_error = connection->synced_data.goaway_received_http2_error_code;
         if (out_debug_data) {
@@ -2604,8 +2611,7 @@ static int s_connection_get_received_goaway(
         return AWS_OP_ERR;
     }
 
-    uint32_t max_stream_id = AWS_H2_STREAM_ID_MAX;
-    if (received_last_stream_id == max_stream_id + 1) {
+    if (goaway_not_ready) {
         CONNECTION_LOG(ERROR, connection, "No GOAWAY has been received so far.");
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }

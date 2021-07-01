@@ -97,6 +97,7 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
         .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
         .on_initial_settings_completed = s_on_initial_settings_completed,
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
+        .buffer_limits = UINT32_MAX,
         .on_goaway_received = s_on_goaway_received,
         .on_remote_settings_change = s_on_remote_settings_change,
     };
@@ -2440,6 +2441,7 @@ static int s_manual_window_management_tester_init(struct aws_allocator *alloc, v
         .initial_settings_array = settings_array,
         .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
+        .buffer_limits = UINT32_MAX,
     };
 
     s_tester.connection =
@@ -3837,7 +3839,7 @@ TEST_CASE(h2_client_empty_initial_settings) {
     struct aws_http2_connection_options http2_options = {
         .on_initial_settings_completed = s_on_initial_settings_completed,
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
-        .on_goaway_received = s_on_goaway_received,
+        .buffer_limits = UINT32_MAX,
         .on_remote_settings_change = s_on_remote_settings_change,
     };
 
@@ -3891,7 +3893,7 @@ TEST_CASE(h2_client_conn_failed_initial_settings_completed_not_invoked) {
         .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
         .on_initial_settings_completed = s_on_initial_settings_completed,
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
-        .on_goaway_received = s_on_goaway_received,
+        .buffer_limits = UINT32_MAX,
         .on_remote_settings_change = s_on_remote_settings_change,
     };
     s_tester.connection =
@@ -4440,6 +4442,89 @@ TEST_CASE(h2_client_get_received_goaway) {
     ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, http2_error);
     /* Check we got an empty debug data */
     ASSERT_TRUE(aws_byte_buf_eq_c_str(&debug_data_buf, ""));
+    aws_byte_buf_clean_up(&debug_data_buf);
+
+    /* clean up */
+    return s_tester_clean_up();
+}
+
+TEST_CASE(h2_client_buffer_limits) {
+
+    s_tester.alloc = allocator;
+    struct aws_testing_channel_options options = {.clock_fn = aws_high_res_clock_get_ticks};
+
+    ASSERT_SUCCESS(testing_channel_init(&s_tester.testing_channel, allocator, &options));
+
+    /* initial settings */
+    struct aws_http2_connection_options http2_options = {
+        .on_initial_settings_completed = s_on_initial_settings_completed,
+        .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
+        .buffer_limits = 10,
+        .on_remote_settings_change = s_on_remote_settings_change,
+    };
+
+    s_tester.connection =
+        aws_http_connection_new_http2_client(allocator, false /* manual window management */, &http2_options);
+    ASSERT_NOT_NULL(s_tester.connection);
+
+    {
+        /* set connection user_data (handled by http-bootstrap in real world) */
+        s_tester.connection->user_data = &s_tester.user_data;
+        /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
+        struct aws_channel_slot *slot = aws_channel_slot_new(s_tester.testing_channel.channel);
+        ASSERT_NOT_NULL(slot);
+        ASSERT_SUCCESS(aws_channel_slot_insert_end(s_tester.testing_channel.channel, slot));
+        ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &s_tester.connection->channel_handler));
+        s_tester.connection->vtable->on_channel_handler_installed(&s_tester.connection->channel_handler, slot);
+    }
+
+    struct h2_fake_peer_options peer_options = {
+        .alloc = allocator,
+        .testing_channel = &s_tester.testing_channel,
+        .is_server = true,
+    };
+    ASSERT_SUCCESS(h2_fake_peer_init(&s_tester.peer, &peer_options));
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    uint32_t last_stream_id;
+    uint32_t http2_error;
+
+    /* fake peer send goaway */
+    const char long_debug_string[] = "Error, Core Dump 0XFFFFFFFF"; /* Longer than the set limits */
+    struct aws_byte_cursor debug_info = aws_byte_cursor_from_c_str(long_debug_string);
+    struct aws_h2_frame *peer_frame =
+        aws_h2_frame_new_goaway(allocator, AWS_H2_STREAM_ID_MAX, AWS_HTTP2_ERR_NO_ERROR, debug_info);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    struct aws_byte_buf debug_data_buf;
+    /* Until the next goaway received, the same goaway info will be got */
+    ASSERT_SUCCESS(aws_http2_connection_get_received_goaway(
+        s_tester.connection, &http2_error, &last_stream_id, &debug_data_buf, s_tester.alloc));
+    /* Debug data should be empty. */
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&debug_data_buf, ""));
+    ASSERT_UINT_EQUALS(AWS_H2_STREAM_ID_MAX, last_stream_id);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_NO_ERROR, http2_error);
+
+    /* Clean up the buf for the next debug data */
+    aws_byte_buf_clean_up(&debug_data_buf);
+
+    const char debug_string[] = "Error!"; /* Shorter than the set limits */
+    debug_info = aws_byte_cursor_from_c_str(debug_string);
+    peer_frame = aws_h2_frame_new_goaway(allocator, 0, AWS_HTTP2_ERR_PROTOCOL_ERROR, debug_info);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* Check the received goaway */
+    ASSERT_SUCCESS(aws_http2_connection_get_received_goaway(
+        s_tester.connection, &http2_error, &last_stream_id, &debug_data_buf, s_tester.alloc));
+    ASSERT_UINT_EQUALS(0, last_stream_id);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, http2_error);
+    /* Check we got an empty debug data */
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&debug_data_buf, debug_string));
+    aws_byte_buf_clean_up(&debug_data_buf);
 
     /* clean up */
     return s_tester_clean_up();

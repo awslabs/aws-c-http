@@ -186,6 +186,17 @@ struct aws_http2_connection_options {
     size_t max_closed_streams;
 
     /**
+     * Optional
+     * The customized limitation of the buffer size for http2 connection.
+     * A default number is set by AWS_HTTP2_CONNECTION_OPTIONS_INIT to UINT32_MAX.
+     *
+     * Affects the debug data from the received GOAWAY frame.
+     * If the data from GOAWAY frame is larger than the limitation, whole debug data
+     * will be ignored.
+     */
+    uint32_t buffer_limits;
+
+    /**
      * Optional.
      * Invoked when a valid GOAWAY frame received.
      * See `aws_http2_on_goaway_received_fn`.
@@ -363,7 +374,7 @@ struct aws_http2_setting {
  * Initializes aws_http2_connection_options with default values.
  */
 #define AWS_HTTP2_CONNECTION_OPTIONS_INIT                                                                              \
-    { .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS }
+    { .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS, .buffer_limits = UINT32_MAX }
 /**
  * Initializes aws_http_client_connection_options with default values.
  */
