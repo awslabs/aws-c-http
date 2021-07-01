@@ -300,15 +300,19 @@ int aws_http2_connection_get_sent_goaway(
 int aws_http2_connection_get_received_goaway(
     struct aws_http_connection *http2_connection,
     uint32_t *out_http2_error,
-    uint32_t *out_last_stream_id) {
+    uint32_t *out_last_stream_id,
+    struct aws_byte_buf *out_debug_data,
+    struct aws_allocator *alloc) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(out_http2_error);
     AWS_PRECONDITION(out_last_stream_id);
     AWS_PRECONDITION(http2_connection->vtable);
+    AWS_PRECONDITION(!out_debug_data || (out_debug_data && alloc));
     if (s_check_http2_connection(http2_connection)) {
         return AWS_OP_ERR;
     }
-    return http2_connection->vtable->get_received_goaway(http2_connection, out_http2_error, out_last_stream_id);
+    return http2_connection->vtable->get_received_goaway(
+        http2_connection, out_http2_error, out_last_stream_id, out_debug_data, alloc);
 }
 
 int aws_http2_connection_get_local_settings(

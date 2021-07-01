@@ -83,6 +83,8 @@ typedef void(aws_http2_on_ping_complete_fn)(
  *      peer, and are safe to retry on another connection.
  * @param http2_error_code The HTTP/2 error code (RFC-7540 section 7) sent by peer.
  *      `enum aws_http2_error_code` lists official codes.
+ * @param debug_data The debug data sent by peer. It can be empty. (Note: there is no guarantee about the lifetime of it
+ *      after the callback invoked. To keep it safe for further reference, caller should keep a deep copy)
  * @param user_data User-data passed to the callback.
  */
 
@@ -90,6 +92,7 @@ typedef void(aws_http2_on_goaway_received_fn)(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
     uint32_t http2_error_code,
+    const struct aws_byte_cursor *debug_data,
     void *user_data);
 
 /**
@@ -538,17 +541,23 @@ int aws_http2_connection_get_sent_goaway(
 
 /**
  * Get data about the latest GOAWAY frame received from peer (HTTP/2 only).
- * If no GOAWAY has been received, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE will be raised.
+ * If no GOAWAY has been received, or the GOAWAY payload is still in transmitting,
+ * AWS_ERROR_HTTP_DATA_NOT_AVAILABLE will be raised.
  *
  * @param http2_connection HTTP/2 connection.
  * @param out_http2_error Gets set to HTTP/2 error code received in most recent GOAWAY.
  * @param out_last_stream_id Gets set to Last-Stream-ID received in most recent GOAWAY.
+ * @param out_debug_data (Optional) Gets set to the debug data revied in most recent GOAWAY. Caller holds the ownership
+ *      of it(Need to be cleaned up after usage). Will be empty if no debug data in the GOAWAY
+ * @param alloc Allocator for the out_debug_data. Only required when the out_debug_data is not NULL.
  */
 AWS_HTTP_API
 int aws_http2_connection_get_received_goaway(
     struct aws_http_connection *http2_connection,
     uint32_t *out_http2_error,
-    uint32_t *out_last_stream_id);
+    uint32_t *out_last_stream_id,
+    struct aws_byte_buf *out_debug_data,
+    struct aws_allocator *alloc);
 
 AWS_EXTERN_C_END
 

@@ -26,6 +26,9 @@ struct aws_h2_connection {
     struct aws_channel_task cross_thread_work_task;
     struct aws_channel_task outgoing_frames_task;
 
+    /* Limitation of buffer set by user */
+    uint32_t buffer_limits;
+
     /* Only the event-loop thread may touch this data */
     struct {
         struct aws_h2_decoder *decoder;
@@ -151,6 +154,8 @@ struct aws_h2_connection {
         /* aws_http2_error_code received in most recent GOAWAY frame. Defaults to 0, check
          * goaway_received_last_stream_id for any GOAWAY has received or not */
         uint32_t goaway_received_http2_error_code;
+        /* Buffer of the received debug data in the latest goaway frame */
+        struct aws_byte_buf goaway_received_debug_data;
 
         /* For checking settings received from peer from outside the event-loop thread. */
         uint32_t settings_peer[AWS_HTTP2_SETTINGS_END_RANGE];

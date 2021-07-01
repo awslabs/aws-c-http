@@ -39,9 +39,11 @@ static void s_on_goaway_received(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
     uint32_t http2_error,
+    const struct aws_byte_cursor *debug_data,
     void *user_data) {
 
     (void)http2_connection;
+    (void)debug_data;
     struct connection_user_data *data = user_data;
     data->last_stream_id = last_stream_id;
     data->http2_error = http2_error;
@@ -4376,7 +4378,8 @@ TEST_CASE(h2_client_get_received_goaway) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* Try to get the received goaway */
-    ASSERT_SUCCESS(aws_http2_connection_get_received_goaway(s_tester.connection, &http2_error, &last_stream_id));
+    ASSERT_SUCCESS(
+        aws_http2_connection_get_received_goaway(s_tester.connection, &http2_error, &last_stream_id, NULL, NULL));
     ASSERT_UINT_EQUALS(AWS_H2_STREAM_ID_MAX, last_stream_id);
     ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_NO_ERROR, http2_error);
 
@@ -4384,7 +4387,8 @@ TEST_CASE(h2_client_get_received_goaway) {
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* Check the sent goaway */
-    ASSERT_SUCCESS(aws_http2_connection_get_received_goaway(s_tester.connection, &http2_error, &last_stream_id));
+    ASSERT_SUCCESS(
+        aws_http2_connection_get_received_goaway(s_tester.connection, &http2_error, &last_stream_id, NULL, NULL));
     ASSERT_UINT_EQUALS(0, last_stream_id);
     ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, http2_error);
 
