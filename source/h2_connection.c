@@ -142,13 +142,11 @@ static struct aws_h2err s_decoder_on_settings(
     void *userdata);
 static struct aws_h2err s_decoder_on_settings_ack(void *userdata);
 static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_increment, void *userdata);
-struct aws_h2err s_decoder_on_goaway_begin(
+struct aws_h2err s_decoder_on_goaway(
     uint32_t last_stream,
     uint32_t error_code,
-    uint32_t debug_data_length,
+    struct aws_byte_cursor debug_data,
     void *userdata);
-struct aws_h2err s_decoder_on_goaway_i(struct aws_byte_cursor debug_data, void *userdata);
-struct aws_h2err s_decoder_on_goaway_end(void *userdata);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
@@ -193,9 +191,7 @@ static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
     .on_settings = s_decoder_on_settings,
     .on_settings_ack = s_decoder_on_settings_ack,
     .on_window_update = s_decoder_on_window_update,
-    .on_goaway_begin = s_decoder_on_goaway_begin,
-    .on_goaway_i = s_decoder_on_goaway_i,
-    .on_goaway_end = s_decoder_on_goaway_end,
+    .on_goaway = s_decoder_on_goaway,
 };
 
 static void s_lock_synced_data(struct aws_h2_connection *connection) {
@@ -309,7 +305,6 @@ static struct aws_h2_connection *s_connection_new(
 
     connection->on_goaway_received = http2_options->on_goaway_received;
     connection->on_remote_settings_change = http2_options->on_remote_settings_change;
-    connection->buffer_limits = http2_options->buffer_limits;
 
     aws_channel_task_init(
         &connection->cross_thread_work_task, s_cross_thread_work_task, connection, "HTTP/2 cross-thread work");
@@ -380,6 +375,7 @@ static struct aws_h2_connection *s_connection_new(
         .userdata = connection,
         .logging_id = connection,
         .is_server = server,
+        .debug_data_max = http2_options->debug_data_max,
     };
     connection->thread_data.decoder = aws_h2_decoder_new(&params);
     if (!connection->thread_data.decoder) {
@@ -1551,10 +1547,10 @@ static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t 
     return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2err s_decoder_on_goaway_begin(
+struct aws_h2err s_decoder_on_goaway(
     uint32_t last_stream,
     uint32_t error_code,
-    uint32_t debug_data_length,
+    struct aws_byte_cursor debug_data,
     void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
@@ -1567,17 +1563,6 @@ struct aws_h2err s_decoder_on_goaway_begin(
             connection->thread_data.goaway_received_last_stream_id);
         return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
     }
-    bool record_debug_data = true;
-    if (debug_data_length > connection->buffer_limits) {
-        CONNECTION_LOGF(
-            DEBUG,
-            connection,
-            "Received GOAWAY with debug data length=%" PRIu32 ", but the buffer limits set by user is %" PRIu32
-            ". Not recording the debug data",
-            debug_data_length,
-            connection->buffer_limits);
-        record_debug_data = false;
-    }
     bool buf_init_failed = false;
     /* stop sending any new stream and making new request */
     { /* BEGIN CRITICAL SECTION */
@@ -1586,13 +1571,13 @@ struct aws_h2err s_decoder_on_goaway_begin(
         connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_GOAWAY_RECEIVED;
         connection->synced_data.goaway_received_last_stream_id = last_stream;
         connection->synced_data.goaway_received_http2_error_code = error_code;
-        if (record_debug_data) {
-            aws_byte_buf_clean_up(&connection->synced_data.goaway_received_debug_data);
-            if (aws_byte_buf_init(
-                    &connection->synced_data.goaway_received_debug_data, connection->base.alloc, debug_data_length)) {
-                buf_init_failed = true;
-            }
+        aws_byte_buf_clean_up(&connection->synced_data.goaway_received_debug_data);
+        /* buffer the debug data up for user to fetch the latest received GOAWAY detail */
+        if (aws_byte_buf_init_copy_from_cursor(
+                &connection->synced_data.goaway_received_debug_data, connection->base.alloc, debug_data)) {
+            buf_init_failed = true;
         }
+
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
     if (buf_init_failed) {
@@ -1621,54 +1606,15 @@ struct aws_h2err s_decoder_on_goaway_begin(
             s_stream_complete(connection, stream, AWS_ERROR_HTTP_GOAWAY_RECEIVED);
         }
     }
-
-    return AWS_H2ERR_SUCCESS;
-}
-
-struct aws_h2err s_decoder_on_goaway_i(struct aws_byte_cursor debug_data, void *userdata) {
-    struct aws_h2_connection *connection = userdata;
-    { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(connection);
-        if (connection->synced_data.goaway_received_debug_data.len <
-            connection->synced_data.goaway_received_debug_data.capacity) {
-            /* Unless debug_data buffer is initialized, otherwise, ignore the debug data */
-            aws_byte_buf_append(&connection->synced_data.goaway_received_debug_data, &debug_data);
-        }
-        s_unlock_synced_data(connection);
-    } /* END CRITICAL SECTION */
-    return AWS_H2ERR_SUCCESS;
-}
-
-struct aws_h2err s_decoder_on_goaway_end(void *userdata) {
-    struct aws_h2_connection *connection = userdata;
-    uint32_t last_stream;
-    uint32_t error_code;
-    struct aws_byte_buf debug_data;
-    AWS_ZERO_STRUCT(debug_data);
-    bool buf_copy_failed = false;
-    { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(connection);
-        last_stream = connection->synced_data.goaway_received_last_stream_id;
-        error_code = connection->synced_data.goaway_received_http2_error_code;
-        if (aws_byte_buf_init_copy(
-                &debug_data, connection->base.alloc, &connection->synced_data.goaway_received_debug_data)) {
-            /* Deep copy of the debug data, in case there is another goaway received and overwrites the data */
-            buf_copy_failed = true;
-        }
-        s_unlock_synced_data(connection);
-    } /* END CRITICAL SECTION */
-    if (buf_copy_failed) {
-        return aws_h2err_from_last_error();
-    }
-    struct aws_byte_cursor debug_data_cursor = aws_byte_cursor_from_buf(&debug_data);
     if (connection->on_goaway_received) {
         /* Inform user about goaway received and the error code. */
         connection->on_goaway_received(
-            &connection->base, last_stream, error_code, &debug_data_cursor, connection->base.user_data);
+            &connection->base, last_stream, error_code, &debug_data, connection->base.user_data);
     }
-    aws_byte_buf_clean_up(&debug_data);
+
     return AWS_H2ERR_SUCCESS;
 }
+
 /* End decoder callbacks */
 
 static int s_send_connection_preface_client_string(struct aws_h2_connection *connection) {
@@ -2591,16 +2537,16 @@ static int s_connection_get_received_goaway(
     uint32_t max_stream_id = AWS_H2_STREAM_ID_MAX;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
-        if (connection->synced_data.goaway_received_last_stream_id == max_stream_id + 1 ||
-            connection->synced_data.goaway_received_debug_data.capacity >
-                connection->synced_data.goaway_received_debug_data.len) {
+        if (connection->synced_data.goaway_received_last_stream_id == max_stream_id + 1) {
             goaway_not_ready = true;
-        }
-        received_last_stream_id = connection->synced_data.goaway_received_last_stream_id;
-        received_http2_error = connection->synced_data.goaway_received_http2_error_code;
-        if (out_debug_data) {
-            if (aws_byte_buf_init_copy(out_debug_data, alloc, &connection->synced_data.goaway_received_debug_data)) {
-                buf_copy_failed = true;
+        } else {
+            received_last_stream_id = connection->synced_data.goaway_received_last_stream_id;
+            received_http2_error = connection->synced_data.goaway_received_http2_error_code;
+            if (out_debug_data) {
+                if (aws_byte_buf_init_copy(
+                        out_debug_data, alloc, &connection->synced_data.goaway_received_debug_data)) {
+                    buf_copy_failed = true;
+                }
             }
         }
         s_unlock_synced_data(connection);

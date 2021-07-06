@@ -97,7 +97,6 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
         .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
         .on_initial_settings_completed = s_on_initial_settings_completed,
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
-        .buffer_limits = UINT32_MAX,
         .on_goaway_received = s_on_goaway_received,
         .on_remote_settings_change = s_on_remote_settings_change,
     };
@@ -2441,7 +2440,6 @@ static int s_manual_window_management_tester_init(struct aws_allocator *alloc, v
         .initial_settings_array = settings_array,
         .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
-        .buffer_limits = UINT32_MAX,
     };
 
     s_tester.connection =
@@ -3839,7 +3837,6 @@ TEST_CASE(h2_client_empty_initial_settings) {
     struct aws_http2_connection_options http2_options = {
         .on_initial_settings_completed = s_on_initial_settings_completed,
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
-        .buffer_limits = UINT32_MAX,
         .on_remote_settings_change = s_on_remote_settings_change,
     };
 
@@ -3893,7 +3890,6 @@ TEST_CASE(h2_client_conn_failed_initial_settings_completed_not_invoked) {
         .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
         .on_initial_settings_completed = s_on_initial_settings_completed,
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
-        .buffer_limits = UINT32_MAX,
         .on_remote_settings_change = s_on_remote_settings_change,
     };
     s_tester.connection =
@@ -4448,7 +4444,7 @@ TEST_CASE(h2_client_get_received_goaway) {
     return s_tester_clean_up();
 }
 
-TEST_CASE(h2_client_buffer_limits) {
+TEST_CASE(h2_client_debug_data_max) {
 
     s_tester.alloc = allocator;
     struct aws_testing_channel_options options = {.clock_fn = aws_high_res_clock_get_ticks};
@@ -4459,7 +4455,7 @@ TEST_CASE(h2_client_buffer_limits) {
     struct aws_http2_connection_options http2_options = {
         .on_initial_settings_completed = s_on_initial_settings_completed,
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
-        .buffer_limits = 10,
+        .debug_data_max = 10,
         .on_remote_settings_change = s_on_remote_settings_change,
     };
 

@@ -188,13 +188,13 @@ struct aws_http2_connection_options {
     /**
      * Optional
      * The customized limitation of the buffer size for http2 connection.
-     * A default number is set by AWS_HTTP2_CONNECTION_OPTIONS_INIT to UINT32_MAX.
+     * Set it to zero means no limitation of the buffer. Default is zero.
      *
      * Affects the debug data from the received GOAWAY frame.
      * If the data from GOAWAY frame is larger than the limitation, whole debug data
      * will be ignored.
      */
-    uint32_t buffer_limits;
+    uint32_t debug_data_max;
 
     /**
      * Optional.
@@ -374,7 +374,7 @@ struct aws_http2_setting {
  * Initializes aws_http2_connection_options with default values.
  */
 #define AWS_HTTP2_CONNECTION_OPTIONS_INIT                                                                              \
-    { .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS, .buffer_limits = UINT32_MAX }
+    { .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS }
 /**
  * Initializes aws_http_client_connection_options with default values.
  */
@@ -565,8 +565,8 @@ int aws_http2_connection_get_sent_goaway(
  * @param http2_connection HTTP/2 connection.
  * @param out_http2_error Gets set to HTTP/2 error code received in most recent GOAWAY.
  * @param out_last_stream_id Gets set to Last-Stream-ID received in most recent GOAWAY.
- * @param out_debug_data (Optional) Gets set to the debug data revied in most recent GOAWAY. Caller holds the ownership
- *      of it(Need to be cleaned up after usage). Will be empty if no debug data in the GOAWAY
+ * @param out_debug_data (Optional) Gets set to the debug data received in most recent GOAWAY. Caller holds the
+ * ownership of it(Need to be cleaned up after usage). Will be empty if no debug data in the GOAWAY
  * @param alloc Allocator for the out_debug_data. Only required when the out_debug_data is not NULL.
  */
 AWS_HTTP_API

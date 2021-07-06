@@ -74,12 +74,9 @@ struct aws_h2_decoder_vtable {
     struct aws_h2err (
         *on_settings)(const struct aws_http2_setting *settings_array, size_t num_settings, void *userdata);
 
-    /* For GOAWAY frame: _begin() is called, then 0+ _i() calls, then _end().
-     * No other decoder callbacks will occur in this time. */
+    /* Called once for GOAWAY frame */
     struct aws_h2err (
-        *on_goaway_begin)(uint32_t last_stream, uint32_t error_code, uint32_t debug_data_length, void *userdata);
-    struct aws_h2err (*on_goaway_i)(struct aws_byte_cursor debug_data, void *userdata);
-    struct aws_h2err (*on_goaway_end)(void *userdata);
+        *on_goaway)(uint32_t last_stream, uint32_t error_code, struct aws_byte_cursor debug_data, void *userdata);
 
     /* Called once for WINDOW_UPDATE frame */
     struct aws_h2err (*on_window_update)(uint32_t stream_id, uint32_t window_size_increment, void *userdata);
@@ -98,6 +95,8 @@ struct aws_h2_decoder_params {
     /* If true, do not expect the connection preface and immediately accept any frame type.
      * Only set this when testing the decoder itself */
     bool skip_connection_preface;
+    /* Limitation of debug data buffer set by user */
+    uint32_t debug_data_max;
 };
 
 struct aws_h2_decoder;

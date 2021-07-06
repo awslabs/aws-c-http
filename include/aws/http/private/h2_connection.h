@@ -26,9 +26,6 @@ struct aws_h2_connection {
     struct aws_channel_task cross_thread_work_task;
     struct aws_channel_task outgoing_frames_task;
 
-    /* Limitation of buffer set by user */
-    uint32_t buffer_limits;
-
     /* Only the event-loop thread may touch this data */
     struct {
         struct aws_h2_decoder *decoder;
