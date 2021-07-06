@@ -126,7 +126,6 @@ struct aws_http_connection_monitoring_options {
 
 /**
  * Options specific to HTTP/1.x connections.
- * Initialize with AWS_HTTP1_CONNECTION_OPTIONS_INIT to set default values.
  */
 struct aws_http1_connection_options {
     /**
@@ -146,7 +145,6 @@ struct aws_http1_connection_options {
 
 /**
  * Options specific to HTTP/2 connections.
- * Initialize with AWS_HTTP2_CONNECTION_OPTIONS_INIT to set default values.
  */
 struct aws_http2_connection_options {
     /**
@@ -175,7 +173,7 @@ struct aws_http2_connection_options {
     /**
      * Optional
      * The max number of recently-closed streams to remember.
-     * A default number is set by AWS_HTTP2_CONNECTION_OPTIONS_INIT.
+     * Set it to zero to use the default setting, AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS
      *
      * If the connection receives a frame for a closed stream,
      * the frame will be ignored or cause a connection error,
@@ -350,12 +348,6 @@ struct aws_http2_setting {
 };
 
 /**
- * Initializes aws_http1_connection_options with default values.
- */
-#define AWS_HTTP1_CONNECTION_OPTIONS_INIT                                                                              \
-    { .read_buffer_capacity = 0 }
-
-/**
  * HTTP/2: Default value for max closed streams we will keep in memory.
  */
 #define AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS (32)
@@ -370,11 +362,6 @@ struct aws_http2_setting {
  */
 #define AWS_HTTP2_SETTINGS_COUNT (6)
 
-/**
- * Initializes aws_http2_connection_options with default values.
- */
-#define AWS_HTTP2_CONNECTION_OPTIONS_INIT                                                                              \
-    { .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS }
 /**
  * Initializes aws_http_client_connection_options with default values.
  */

@@ -141,7 +141,8 @@ struct aws_http_proxy_user_data *aws_http_proxy_user_data_new(
 
     user_data->original_user_data = options->user_data;
 
-    struct aws_http1_connection_options default_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+    struct aws_http1_connection_options default_options;
+    AWS_ZERO_STRUCT(default_options);
     if (options->http1_options) {
         user_data->original_http1_options = *options->http1_options;
     } else {

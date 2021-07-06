@@ -343,9 +343,13 @@ static struct aws_h2_connection *s_connection_new(
             ERROR, connection, "Hashtable init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
         goto error;
     }
+    size_t max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS;
+    if (http2_options->max_closed_streams) {
+        max_closed_streams = http2_options->max_closed_streams;
+    }
 
     connection->thread_data.closed_streams =
-        aws_cache_new_fifo(alloc, aws_hash_ptr, aws_ptr_eq, NULL, NULL, http2_options->max_closed_streams);
+        aws_cache_new_fifo(alloc, aws_hash_ptr, aws_ptr_eq, NULL, NULL, max_closed_streams);
     if (!connection->thread_data.closed_streams) {
         CONNECTION_LOGF(
             ERROR, connection, "FIFO cache init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
