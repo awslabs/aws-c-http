@@ -1609,7 +1609,7 @@ struct aws_h2err s_decoder_on_goaway(
     if (connection->on_goaway_received) {
         /* Inform user about goaway received and the error code. */
         connection->on_goaway_received(
-            &connection->base, last_stream, error_code, &debug_data, connection->base.user_data);
+            &connection->base, last_stream, error_code, debug_data, connection->base.user_data);
     }
 
     return AWS_H2ERR_SUCCESS;

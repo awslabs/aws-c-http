@@ -92,7 +92,7 @@ typedef void(aws_http2_on_goaway_received_fn)(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
     uint32_t http2_error_code,
-    const struct aws_byte_cursor *debug_data,
+    const struct aws_byte_cursor debug_data,
     void *user_data);
 
 /**

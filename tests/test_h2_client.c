@@ -41,7 +41,7 @@ static void s_on_goaway_received(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
     uint32_t http2_error,
-    const struct aws_byte_cursor *debug_data,
+    const struct aws_byte_cursor debug_data,
     void *user_data) {
 
     (void)http2_connection;
@@ -52,7 +52,7 @@ static void s_on_goaway_received(
         /* If multiple goaway received, clean up the previous one */
         aws_byte_buf_clean_up(&data->debug_data);
     }
-    aws_byte_buf_init_copy_from_cursor(&data->debug_data, data->allocator, *debug_data);
+    aws_byte_buf_init_copy_from_cursor(&data->debug_data, data->allocator, debug_data);
 }
 
 static void s_on_remote_settings_change(
