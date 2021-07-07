@@ -7,7 +7,7 @@ on:
       - '!main'
 
 env:
-  BUILDER_VERSION: v0.8.9
+  BUILDER_VERSION: v0.8.11
   BUILDER_SOURCE: releases
   BUILDER_HOST: https://d19elf31gohf1l.cloudfront.net
   PACKAGE_NAME: aws-c-http
@@ -147,4 +147,17 @@ jobs:
         chmod a+x builder
         ./builder build -p ${{ env.PACKAGE_NAME }} downstream
 
+  cross_compile:
+    name: Cross Compile ${{matrix.arch}}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [linux-armv6, linux-armv7, linux-arm64, android-armv7]
+
+    steps:
+    - name: Build ${{ env.PACKAGE_NAME }} + consumers
+      run: |
+        python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder')"
+        chmod a+x builder
+        ./builder build -p ${{ env.PACKAGE_NAME }} --spec=downstream --target=${{matrix.arch}} run_tests=false
 
