@@ -434,7 +434,8 @@ H1_CLIENT_TEST_CASE(h1_client_request_waits_for_chunks) {
         .payloads = (const char **)&payloads,
         .stream = stream,
         .allocator = allocator,
-        .delay_between_writes_ns = 10000};
+        .delay_between_writes_ns = 10000,
+    };
 
     /* write and pause, in a loop. This exercises the rescheduling path. */
     for (size_t i = 0; i < chunk_data.num_chunks; ++i) {
