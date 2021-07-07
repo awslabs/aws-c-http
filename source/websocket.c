@@ -1631,7 +1631,7 @@ void aws_websocket_increment_read_window(struct aws_websocket *websocket, size_t
 int aws_websocket_random_handshake_key(struct aws_byte_buf *dst) {
     /* RFC-6455 Section 4.1.
      * Derive random 16-byte value, base64-encoded, for the Sec-WebSocket-Key header */
-    uint8_t key_random_storage[16];
+    uint8_t key_random_storage[16] = {0};
     struct aws_byte_buf key_random_buf = aws_byte_buf_from_empty_array(key_random_storage, sizeof(key_random_storage));
     int err = aws_device_random_buffer(&key_random_buf);
     if (err) {

@@ -80,7 +80,7 @@ static int s_state_length_byte(struct aws_websocket_encoder *encoder, struct aws
 /* STATE_EXTENDED_LENGTH: Output extended length (state skipped if not using extended length). */
 static int s_state_extended_length(struct aws_websocket_encoder *encoder, struct aws_byte_buf *out_buf) {
     /* Fill tmp buffer with extended-length in network byte order */
-    uint8_t network_bytes_array[8];
+    uint8_t network_bytes_array[8] = {0};
     struct aws_byte_buf network_bytes_buf =
         aws_byte_buf_from_empty_array(network_bytes_array, sizeof(network_bytes_array));
     if (encoder->frame.payload_length <= AWS_WEBSOCKET_2BYTE_EXTENDED_LENGTH_MAX_VALUE) {
