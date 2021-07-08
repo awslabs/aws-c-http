@@ -222,14 +222,12 @@ struct aws_h2_decoder {
     } frame_in_progress;
 
     /* GOAWAY buffer */
-    struct aws_goaway_buffer {
-        /* Limitation of debug data buffer set by user */
-        uint32_t debug_data_max;
+    struct aws_goaway_in_progress {
         uint32_t last_stream;
         uint32_t error_code;
         /* Buffer of the received debug data in the latest goaway frame */
-        struct aws_byte_buf goaway_received_debug_data;
-    } goaway_buffer;
+        struct aws_byte_buf debug_data;
+    } goaway_in_progress;
 
     /* A header-block starts with a HEADERS or PUSH_PROMISE frame, followed by 0 or more CONTINUATION frames.
      * It's an error for any other frame-type or stream ID to arrive while a header-block is in progress.
@@ -309,7 +307,6 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
     decoder->logging_id = params->logging_id;
     decoder->is_server = params->is_server;
     decoder->connection_preface_complete = params->skip_connection_preface;
-    decoder->goaway_buffer.debug_data_max = params->debug_data_max;
 
     decoder->scratch = aws_byte_buf_from_empty_array(scratch_buf, s_scratch_space_size);
 
@@ -368,7 +365,7 @@ void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder) {
     aws_hpack_context_destroy(decoder->hpack);
     s_reset_header_block_in_progress(decoder);
     aws_byte_buf_clean_up(&decoder->header_block_in_progress.cookies);
-    aws_byte_buf_clean_up(&decoder->goaway_buffer.goaway_received_debug_data);
+    aws_byte_buf_clean_up(&decoder->goaway_in_progress.debug_data);
     aws_mem_release(decoder->alloc, decoder);
 }
 
@@ -1032,23 +1029,12 @@ static struct aws_h2err s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, 
     uint32_t debug_data_length = decoder->frame_in_progress.payload_len;
     /* Received new GOAWAY, clean up the previous one. Buffer it up and invoke the callback once the debug data decoded
      * fully. */
-    aws_byte_buf_clean_up(&decoder->goaway_buffer.goaway_received_debug_data);
-    decoder->goaway_buffer.error_code = error_code;
-    decoder->goaway_buffer.last_stream = last_stream;
-    if (decoder->goaway_buffer.debug_data_max && debug_data_length > decoder->goaway_buffer.debug_data_max) {
-        DECODER_LOGF(
-            WARN,
-            decoder,
-            "Received GOAWAY with debug data length=%" PRIu32 ", but the buffer limits set by user is %" PRIu32
-            ". Not recording the debug data",
-            debug_data_length,
-            decoder->goaway_buffer.debug_data_max);
-    } else {
-        int error_code =
-            aws_byte_buf_init(&decoder->goaway_buffer.goaway_received_debug_data, decoder->alloc, debug_data_length);
-        AWS_ASSERT(error_code == 0);
-        (void)error_code;
-    }
+    aws_byte_buf_clean_up(&decoder->goaway_in_progress.debug_data);
+    decoder->goaway_in_progress.error_code = error_code;
+    decoder->goaway_in_progress.last_stream = last_stream;
+    int init_result = aws_byte_buf_init(&decoder->goaway_in_progress.debug_data, decoder->alloc, debug_data_length);
+    AWS_ASSERT(init_result == 0);
+    (void)init_result;
 
     return s_decoder_switch_state(decoder, &s_state_frame_goaway_debug_data);
 }
@@ -1064,22 +1050,24 @@ static struct aws_h2err s_state_fn_frame_goaway_debug_data(
 
     struct aws_byte_cursor debug_data = s_decoder_get_payload(decoder, input);
     if (debug_data.len > 0) {
-        if (decoder->goaway_buffer.goaway_received_debug_data.len <
-            decoder->goaway_buffer.goaway_received_debug_data.capacity) {
+        if (decoder->goaway_in_progress.debug_data.len < decoder->goaway_in_progress.debug_data.capacity) {
             /* Unless debug_data buffer is initialized, otherwise, ignore the debug data */
-            aws_byte_buf_append(&decoder->goaway_buffer.goaway_received_debug_data, &debug_data);
+            aws_byte_buf_append(&decoder->goaway_in_progress.debug_data, &debug_data);
         }
     }
 
     /* If this is the last data in the frame, reset decoder */
     if (decoder->frame_in_progress.payload_len == 0) {
-        struct aws_byte_cursor debug_cursor =
-            aws_byte_cursor_from_buf(&decoder->goaway_buffer.goaway_received_debug_data);
+        struct aws_byte_cursor debug_cursor = aws_byte_cursor_from_buf(&decoder->goaway_in_progress.debug_data);
 
         DECODER_CALL_VTABLE_ARGS(
-            decoder, on_goaway, decoder->goaway_buffer.last_stream, decoder->goaway_buffer.error_code, debug_cursor);
+            decoder,
+            on_goaway,
+            decoder->goaway_in_progress.last_stream,
+            decoder->goaway_in_progress.error_code,
+            debug_cursor);
         /* We can clean the buffer up as the connection will handle it now */
-        aws_byte_buf_clean_up(&decoder->goaway_buffer.goaway_received_debug_data);
+        aws_byte_buf_clean_up(&decoder->goaway_in_progress.debug_data);
         return s_decoder_reset_state(decoder);
     }
 

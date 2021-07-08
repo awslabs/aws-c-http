@@ -95,8 +95,6 @@ struct aws_h2_decoder_params {
     /* If true, do not expect the connection preface and immediately accept any frame type.
      * Only set this when testing the decoder itself */
     bool skip_connection_preface;
-    /* Limitation of debug data buffer set by user */
-    uint32_t debug_data_max;
 };
 
 struct aws_h2_decoder;

@@ -68,9 +68,7 @@ struct aws_http_connection_vtable {
     int (*get_received_goaway)(
         struct aws_http_connection *http2_connection,
         uint32_t *out_http2_error,
-        uint32_t *out_last_stream_id,
-        struct aws_byte_buf *out_debug_data,
-        struct aws_allocator *alloc);
+        uint32_t *out_last_stream_id);
     void (*get_local_settings)(
         const struct aws_http_connection *http2_connection,
         struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);

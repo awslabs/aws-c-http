@@ -305,19 +305,15 @@ int aws_http2_connection_get_sent_goaway(
 int aws_http2_connection_get_received_goaway(
     struct aws_http_connection *http2_connection,
     uint32_t *out_http2_error,
-    uint32_t *out_last_stream_id,
-    struct aws_byte_buf *out_debug_data,
-    struct aws_allocator *alloc) {
+    uint32_t *out_last_stream_id) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(out_http2_error);
     AWS_PRECONDITION(out_last_stream_id);
     AWS_PRECONDITION(http2_connection->vtable);
-    AWS_PRECONDITION(!out_debug_data || (out_debug_data && alloc));
     if (s_check_http2_connection(http2_connection)) {
         return AWS_OP_ERR;
     }
-    return http2_connection->vtable->get_received_goaway(
-        http2_connection, out_http2_error, out_last_stream_id, out_debug_data, alloc);
+    return http2_connection->vtable->get_received_goaway(http2_connection, out_http2_error, out_last_stream_id);
 }
 
 int aws_http2_connection_get_local_settings(
@@ -898,13 +894,13 @@ int aws_http_client_connect_internal(
     /* make copy of options, and add defaults for missing optional structs */
     struct aws_http_client_connection_options options = *orig_options;
 
-    const struct aws_http1_connection_options default_http1_options;
+    struct aws_http1_connection_options default_http1_options;
     AWS_ZERO_STRUCT(default_http1_options);
     if (options.http1_options == NULL) {
         options.http1_options = &default_http1_options;
     }
 
-    const struct aws_http2_connection_options default_http2_options;
+    struct aws_http2_connection_options default_http2_options;
     AWS_ZERO_STRUCT(default_http2_options);
     if (options.http2_options == NULL) {
         options.http2_options = &default_http2_options;

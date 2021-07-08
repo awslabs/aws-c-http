@@ -92,7 +92,7 @@ typedef void(aws_http2_on_goaway_received_fn)(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
     uint32_t http2_error_code,
-    const struct aws_byte_cursor debug_data,
+    struct aws_byte_cursor debug_data,
     void *user_data);
 
 /**
@@ -182,17 +182,6 @@ struct aws_http2_connection_options {
      * a connection error, but costs some memory.
      */
     size_t max_closed_streams;
-
-    /**
-     * Optional
-     * The customized limitation of the buffer size for http2 connection.
-     * Set it to zero means no limitation of the buffer. Default is zero.
-     *
-     * Affects the debug data from the received GOAWAY frame.
-     * If the data from GOAWAY frame is larger than the limitation, whole debug data
-     * will be ignored.
-     */
-    uint32_t debug_data_max;
 
     /**
      * Optional.
@@ -552,17 +541,12 @@ int aws_http2_connection_get_sent_goaway(
  * @param http2_connection HTTP/2 connection.
  * @param out_http2_error Gets set to HTTP/2 error code received in most recent GOAWAY.
  * @param out_last_stream_id Gets set to Last-Stream-ID received in most recent GOAWAY.
- * @param out_debug_data (Optional) Gets set to the debug data received in most recent GOAWAY. Caller holds the
- * ownership of it(Need to be cleaned up after usage). Will be empty if no debug data in the GOAWAY
- * @param alloc Allocator for the out_debug_data. Only required when the out_debug_data is not NULL.
  */
 AWS_HTTP_API
 int aws_http2_connection_get_received_goaway(
     struct aws_http_connection *http2_connection,
     uint32_t *out_http2_error,
-    uint32_t *out_last_stream_id,
-    struct aws_byte_buf *out_debug_data,
-    struct aws_allocator *alloc);
+    uint32_t *out_last_stream_id);
 
 AWS_EXTERN_C_END
 
