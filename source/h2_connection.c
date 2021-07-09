@@ -1563,7 +1563,6 @@ struct aws_h2err s_decoder_on_goaway(
             connection->thread_data.goaway_received_last_stream_id);
         return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
     }
-    bool buf_init_failed = false;
     /* stop sending any new stream and making new request */
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
@@ -1574,9 +1573,6 @@ struct aws_h2err s_decoder_on_goaway(
 
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
-    if (buf_init_failed) {
-        return aws_h2err_from_last_error();
-    }
     connection->thread_data.goaway_received_last_stream_id = last_stream;
     CONNECTION_LOGF(
         DEBUG,
@@ -2524,7 +2520,6 @@ static int s_connection_get_received_goaway(
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     uint32_t received_last_stream_id;
     uint32_t received_http2_error;
-    bool buf_copy_failed = false;
     bool goaway_not_ready = false;
     uint32_t max_stream_id = AWS_H2_STREAM_ID_MAX;
     { /* BEGIN CRITICAL SECTION */
@@ -2537,11 +2532,6 @@ static int s_connection_get_received_goaway(
         }
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
-
-    if (buf_copy_failed) {
-        /* Error has been raised */
-        return AWS_OP_ERR;
-    }
 
     if (goaway_not_ready) {
         CONNECTION_LOG(ERROR, connection, "No GOAWAY has been received so far.");

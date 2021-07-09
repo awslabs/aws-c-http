@@ -83,8 +83,8 @@ typedef void(aws_http2_on_ping_complete_fn)(
  *      peer, and are safe to retry on another connection.
  * @param http2_error_code The HTTP/2 error code (RFC-7540 section 7) sent by peer.
  *      `enum aws_http2_error_code` lists official codes.
- * @param debug_data The debug data sent by peer. It can be empty. (Note: there is no guarantee about the lifetime of it
- *      after the callback invoked. To keep it safe for further reference, caller should keep a deep copy)
+ * @param debug_data The debug data sent by peer. It can be empty. (NOTE: this data is only valid for the lifetime of
+ *      the callback. Make a deep copy if you wish to keep it longer.)
  * @param user_data User-data passed to the callback.
  */
 

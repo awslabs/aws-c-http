@@ -1029,7 +1029,6 @@ static struct aws_h2err s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, 
     uint32_t debug_data_length = decoder->frame_in_progress.payload_len;
     /* Received new GOAWAY, clean up the previous one. Buffer it up and invoke the callback once the debug data decoded
      * fully. */
-    aws_byte_buf_clean_up(&decoder->goaway_in_progress.debug_data);
     decoder->goaway_in_progress.error_code = error_code;
     decoder->goaway_in_progress.last_stream = last_stream;
     int init_result = aws_byte_buf_init(&decoder->goaway_in_progress.debug_data, decoder->alloc, debug_data_length);
@@ -1050,10 +1049,8 @@ static struct aws_h2err s_state_fn_frame_goaway_debug_data(
 
     struct aws_byte_cursor debug_data = s_decoder_get_payload(decoder, input);
     if (debug_data.len > 0) {
-        if (decoder->goaway_in_progress.debug_data.len < decoder->goaway_in_progress.debug_data.capacity) {
-            /* Unless debug_data buffer is initialized, otherwise, ignore the debug data */
-            aws_byte_buf_append(&decoder->goaway_in_progress.debug_data, &debug_data);
-        }
+        /* As we initialized the buffer to the size of debug data, we can safely append here */
+        aws_byte_buf_append(&decoder->goaway_in_progress.debug_data, &debug_data);
     }
 
     /* If this is the last data in the frame, reset decoder */
