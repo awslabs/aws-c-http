@@ -1063,7 +1063,6 @@ static struct aws_h2err s_state_fn_frame_goaway_debug_data(
             decoder->goaway_in_progress.last_stream,
             decoder->goaway_in_progress.error_code,
             debug_cursor);
-        /* We can clean the buffer up as the connection will handle it now */
         aws_byte_buf_clean_up(&decoder->goaway_in_progress.debug_data);
         return s_decoder_reset_state(decoder);
     }
