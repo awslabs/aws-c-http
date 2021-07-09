@@ -113,7 +113,8 @@ static int s_tester_init_ex(struct tester *tester, struct aws_allocator *alloc, 
     struct aws_testing_channel_options test_channel_options = {.clock_fn = aws_high_res_clock_get_ticks};
     ASSERT_SUCCESS(testing_channel_init(&tester->testing_channel, alloc, &test_channel_options));
 
-    struct aws_http1_connection_options http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+    struct aws_http1_connection_options http1_options;
+    AWS_ZERO_STRUCT(http1_options);
     http1_options.read_buffer_capacity = options->read_buffer_capacity;
 
     tester->connection = aws_http_connection_new_http1_1_client(
@@ -428,11 +429,13 @@ H1_CLIENT_TEST_CASE(h1_client_request_waits_for_chunks) {
     ASSERT_SUCCESS(aws_http_stream_activate(stream));
 
     char *payloads[] = {"write more tests", "write more tests", ""};
-    struct chunk_writer_data chunk_data = {.num_chunks = sizeof(payloads) / sizeof(payloads[0]),
-                                           .payloads = (const char **)&payloads,
-                                           .stream = stream,
-                                           .allocator = allocator,
-                                           .delay_between_writes_ns = 10000};
+    struct chunk_writer_data chunk_data = {
+        .num_chunks = sizeof(payloads) / sizeof(payloads[0]),
+        .payloads = (const char **)&payloads,
+        .stream = stream,
+        .allocator = allocator,
+        .delay_between_writes_ns = 10000,
+    };
 
     /* write and pause, in a loop. This exercises the rescheduling path. */
     for (size_t i = 0; i < chunk_data.num_chunks; ++i) {

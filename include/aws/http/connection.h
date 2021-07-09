@@ -83,6 +83,8 @@ typedef void(aws_http2_on_ping_complete_fn)(
  *      peer, and are safe to retry on another connection.
  * @param http2_error_code The HTTP/2 error code (RFC-7540 section 7) sent by peer.
  *      `enum aws_http2_error_code` lists official codes.
+ * @param debug_data The debug data sent by peer. It can be empty. (NOTE: this data is only valid for the lifetime of
+ *      the callback. Make a deep copy if you wish to keep it longer.)
  * @param user_data User-data passed to the callback.
  */
 
@@ -90,6 +92,7 @@ typedef void(aws_http2_on_goaway_received_fn)(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
     uint32_t http2_error_code,
+    struct aws_byte_cursor debug_data,
     void *user_data);
 
 /**
@@ -123,7 +126,6 @@ struct aws_http_connection_monitoring_options {
 
 /**
  * Options specific to HTTP/1.x connections.
- * Initialize with AWS_HTTP1_CONNECTION_OPTIONS_INIT to set default values.
  */
 struct aws_http1_connection_options {
     /**
@@ -143,7 +145,6 @@ struct aws_http1_connection_options {
 
 /**
  * Options specific to HTTP/2 connections.
- * Initialize with AWS_HTTP2_CONNECTION_OPTIONS_INIT to set default values.
  */
 struct aws_http2_connection_options {
     /**
@@ -172,7 +173,7 @@ struct aws_http2_connection_options {
     /**
      * Optional
      * The max number of recently-closed streams to remember.
-     * A default number is set by AWS_HTTP2_CONNECTION_OPTIONS_INIT.
+     * Set it to zero to use the default setting, AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS
      *
      * If the connection receives a frame for a closed stream,
      * the frame will be ignored or cause a connection error,
@@ -336,12 +337,6 @@ struct aws_http2_setting {
 };
 
 /**
- * Initializes aws_http1_connection_options with default values.
- */
-#define AWS_HTTP1_CONNECTION_OPTIONS_INIT                                                                              \
-    { .read_buffer_capacity = 0 }
-
-/**
  * HTTP/2: Default value for max closed streams we will keep in memory.
  */
 #define AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS (32)
@@ -356,11 +351,6 @@ struct aws_http2_setting {
  */
 #define AWS_HTTP2_SETTINGS_COUNT (6)
 
-/**
- * Initializes aws_http2_connection_options with default values.
- */
-#define AWS_HTTP2_CONNECTION_OPTIONS_INIT                                                                              \
-    { .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS }
 /**
  * Initializes aws_http_client_connection_options with default values.
  */
@@ -545,7 +535,8 @@ int aws_http2_connection_get_sent_goaway(
 
 /**
  * Get data about the latest GOAWAY frame received from peer (HTTP/2 only).
- * If no GOAWAY has been received, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE will be raised.
+ * If no GOAWAY has been received, or the GOAWAY payload is still in transmitting,
+ * AWS_ERROR_HTTP_DATA_NOT_AVAILABLE will be raised.
  *
  * @param http2_connection HTTP/2 connection.
  * @param out_http2_error Gets set to HTTP/2 error code received in most recent GOAWAY.

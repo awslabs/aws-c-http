@@ -400,8 +400,10 @@ static void s_server_bootstrap_on_accept_channel_setup(
     }
     /* Create connection */
     /* TODO: expose http1/2 options to server API */
-    struct aws_http1_connection_options http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
-    struct aws_http2_connection_options http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
+    struct aws_http1_connection_options http1_options;
+    AWS_ZERO_STRUCT(http1_options);
+    struct aws_http2_connection_options http2_options;
+    AWS_ZERO_STRUCT(http2_options);
     connection = aws_http_connection_new_channel_handler(
         server->alloc,
         channel,
@@ -892,12 +894,14 @@ int aws_http_client_connect_internal(
     /* make copy of options, and add defaults for missing optional structs */
     struct aws_http_client_connection_options options = *orig_options;
 
-    const struct aws_http1_connection_options default_http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+    struct aws_http1_connection_options default_http1_options;
+    AWS_ZERO_STRUCT(default_http1_options);
     if (options.http1_options == NULL) {
         options.http1_options = &default_http1_options;
     }
 
-    const struct aws_http2_connection_options default_http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
+    struct aws_http2_connection_options default_http2_options;
+    AWS_ZERO_STRUCT(default_http2_options);
     if (options.http2_options == NULL) {
         options.http2_options = &default_http2_options;
     }

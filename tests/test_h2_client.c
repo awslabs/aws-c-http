@@ -18,10 +18,12 @@
     { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
 
 struct connection_user_data {
+    struct aws_allocator *allocator;
     int initial_settings_error_code;
     uint32_t last_stream_id;
     uint32_t http2_error;
     struct aws_http2_setting remote_settings_array[10];
+    struct aws_byte_buf debug_data;
     size_t num_settings;
 };
 
@@ -39,12 +41,18 @@ static void s_on_goaway_received(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
     uint32_t http2_error,
+    const struct aws_byte_cursor debug_data,
     void *user_data) {
 
     (void)http2_connection;
     struct connection_user_data *data = user_data;
     data->last_stream_id = last_stream_id;
     data->http2_error = http2_error;
+    if (data->debug_data.capacity != 0) {
+        /* If multiple goaway received, clean up the previous one */
+        aws_byte_buf_clean_up(&data->debug_data);
+    }
+    aws_byte_buf_init_copy_from_cursor(&data->debug_data, data->allocator, debug_data);
 }
 
 static void s_on_remote_settings_change(
@@ -75,6 +83,7 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
     aws_http_library_init(alloc);
 
     s_tester.alloc = alloc;
+    AWS_ZERO_STRUCT(s_tester.user_data.debug_data);
 
     struct aws_testing_channel_options options = {.clock_fn = aws_high_res_clock_get_ticks};
 
@@ -97,6 +106,7 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
     ASSERT_NOT_NULL(s_tester.connection);
 
     {
+        s_tester.user_data.allocator = s_tester.alloc;
         /* set connection user_data (handled by http-bootstrap in real world) */
         s_tester.connection->user_data = &s_tester.user_data;
         /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
@@ -119,6 +129,7 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
 }
 
 static int s_tester_clean_up(void) {
+    aws_byte_buf_clean_up(&s_tester.user_data.debug_data);
     h2_fake_peer_clean_up(&s_tester.peer);
     aws_http_connection_release(s_tester.connection);
     ASSERT_SUCCESS(testing_channel_clean_up(&s_tester.testing_channel));
@@ -3134,6 +3145,31 @@ TEST_CASE(h2_client_conn_receive_goaway) {
     return s_tester_clean_up();
 }
 
+/* Test client receives the GOAWAY frame with the debug data correctly */
+TEST_CASE(h2_client_conn_receive_goaway_debug_data) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    /* fake peer send a GOAWAY frame indicating only the first request will be processed */
+    uint32_t stream_id = 1;
+    const char debug_string[] = "Error, Core Dump 0XFFFFFFFF";
+    struct aws_byte_cursor debug_info = aws_byte_cursor_from_c_str(debug_string);
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_goaway(allocator, stream_id, AWS_HTTP2_ERR_NO_ERROR, debug_info);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* validate the callback invoked and the information recorded during callback */
+    ASSERT_INT_EQUALS(s_tester.user_data.http2_error, AWS_HTTP2_ERR_NO_ERROR);
+    ASSERT_INT_EQUALS(s_tester.user_data.last_stream_id, stream_id);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&s_tester.user_data.debug_data, debug_string));
+
+    return s_tester_clean_up();
+}
+
 /* Test client receives the GOAWAY frame with invalid last stream id and connection error happened, and callback will
  * not be invoked for the invalid GOAWAY frame */
 TEST_CASE(h2_client_conn_err_invalid_last_stream_id_goaway) {
@@ -3801,7 +3837,6 @@ TEST_CASE(h2_client_empty_initial_settings) {
     struct aws_http2_connection_options http2_options = {
         .on_initial_settings_completed = s_on_initial_settings_completed,
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
-        .on_goaway_received = s_on_goaway_received,
         .on_remote_settings_change = s_on_remote_settings_change,
     };
 
@@ -3855,7 +3890,6 @@ TEST_CASE(h2_client_conn_failed_initial_settings_completed_not_invoked) {
         .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
         .on_initial_settings_completed = s_on_initial_settings_completed,
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
-        .on_goaway_received = s_on_goaway_received,
         .on_remote_settings_change = s_on_remote_settings_change,
     };
     s_tester.connection =
@@ -4364,14 +4398,13 @@ TEST_CASE(h2_client_get_received_goaway) {
 
     uint32_t last_stream_id;
     uint32_t http2_error;
-    ASSERT_FAILS(aws_http2_connection_get_sent_goaway(s_tester.connection, &http2_error, &last_stream_id));
 
     /* you are not able to get the received goaway if no GOAWAY received */
-    ASSERT_FAILS(aws_http2_connection_get_sent_goaway(s_tester.connection, &http2_error, &last_stream_id));
+    ASSERT_FAILS(aws_http2_connection_get_received_goaway(s_tester.connection, &http2_error, &last_stream_id));
 
     /* fake peer send goaway */
-    struct aws_byte_cursor debug_info;
-    AWS_ZERO_STRUCT(debug_info);
+    const char debug_string[] = "Error, Core Dump 0XFFFFFFFF";
+    struct aws_byte_cursor debug_info = aws_byte_cursor_from_c_str(debug_string);
     struct aws_h2_frame *peer_frame =
         aws_h2_frame_new_goaway(allocator, AWS_H2_STREAM_ID_MAX, AWS_HTTP2_ERR_NO_ERROR, debug_info);
     ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
@@ -4380,14 +4413,6 @@ TEST_CASE(h2_client_get_received_goaway) {
     ASSERT_SUCCESS(aws_http2_connection_get_received_goaway(s_tester.connection, &http2_error, &last_stream_id));
     ASSERT_UINT_EQUALS(AWS_H2_STREAM_ID_MAX, last_stream_id);
     ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_NO_ERROR, http2_error);
-
-    peer_frame = aws_h2_frame_new_goaway(allocator, 0, AWS_HTTP2_ERR_PROTOCOL_ERROR, debug_info);
-    ASSERT_SUCCESS(h2_fake_peer_send_frame(&s_tester.peer, peer_frame));
-    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    /* Check the sent goaway */
-    ASSERT_SUCCESS(aws_http2_connection_get_received_goaway(s_tester.connection, &http2_error, &last_stream_id));
-    ASSERT_UINT_EQUALS(0, last_stream_id);
-    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_PROTOCOL_ERROR, http2_error);
 
     /* clean up */
     return s_tester_clean_up();
