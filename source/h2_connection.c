@@ -2159,10 +2159,10 @@ static int s_connection_update_window(struct aws_http_connection *connection_bas
         return AWS_OP_SUCCESS;
     }
     if (!connection_base->manual_window_management) {
-        /* auto-mode, manual update window is not supported */
+        /* auto-mode, manual update window is not supported, silently do nothing with warning log. */
         CONNECTION_LOG(
             WARN, connection, "Manual window management is off, update window operations are not supported.");
-        return aws_raise_error(AWS_ERROR_UNSUPPORTED_OPERATION);
+        return AWS_OP_SUCCESS;
     }
     /* Type cast the increment size here, if overflow happens, we will detect it later, and the frame will be destroyed
      */
