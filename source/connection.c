@@ -341,8 +341,7 @@ int aws_http2_connection_update_window(struct aws_http_connection *http2_connect
     if (s_check_http2_connection(http2_connection)) {
         return AWS_OP_ERR;
     }
-    http2_connection->vtable->update_window(http2_connection, increment_size);
-    return AWS_OP_SUCCESS;
+    return http2_connection->vtable->update_window(http2_connection, increment_size);
 }
 
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection) {

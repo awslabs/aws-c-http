@@ -44,7 +44,7 @@ struct aws_http_connection_vtable {
     bool (*new_requests_allowed)(const struct aws_http_connection *connection);
 
     /* HTTP/2 specific functions */
-    void (*update_window)(struct aws_http_connection *connection, size_t increment_size);
+    int (*update_window)(struct aws_http_connection *connection, size_t increment_size);
     int (*change_settings)(
         struct aws_http_connection *http2_connection,
         const struct aws_http2_setting *settings_array,

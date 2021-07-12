@@ -56,7 +56,7 @@ static struct aws_http_stream *s_connection_make_request(
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
-static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
+static int s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
 static int s_connection_change_settings(
     struct aws_http_connection *connection_base,
     const struct aws_http2_setting *settings_array,
@@ -2152,16 +2152,17 @@ static bool s_connection_new_requests_allowed(const struct aws_http_connection *
     return new_stream_error_code == 0;
 }
 
-static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size) {
+static int s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size) {
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     if (!increment_size) {
-        return;
+        /* Instead of fail hard, just silently do nothing. */
+        return AWS_OP_SUCCESS;
     }
     if (!connection_base->manual_window_management) {
         /* auto-mode, manual update window is not supported */
         CONNECTION_LOG(
             WARN, connection, "Manual window management is off, update window operations are not supported.");
-        return;
+        return AWS_OP_ERR;
     }
     /* Type cast the increment size here, if overflow happens, we will detect it later, and the frame will be destroyed
      */
@@ -2173,7 +2174,7 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
             connection,
             "Failed to create WINDOW_UPDATE frame on connection, error %s",
             aws_error_name(aws_last_error()));
-        return;
+        return AWS_OP_ERR;
     }
 
     int err = 0;
@@ -2204,9 +2205,8 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
 
     if (!connection_open) {
         CONNECTION_LOG(ERROR, connection, "Failed to update connection window, connection is closed or closing.");
-        aws_raise_error(AWS_ERROR_INVALID_STATE);
         aws_h2_frame_destroy(connection_window_update_frame);
-        return;
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
     if (err) {
@@ -2218,10 +2218,10 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
             "The increment size is too big for HTTP/2 protocol, max flow-control "
             "window size is 2147483647. We got %zu, which will cause the flow-control window to exceed the maximum",
             increment_size);
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         aws_h2_frame_destroy(connection_window_update_frame);
-        return;
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
+    return AWS_OP_SUCCESS;
 }
 
 static int s_connection_change_settings(
