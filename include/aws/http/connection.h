@@ -270,6 +270,9 @@ struct aws_http_client_connection_options {
      * If a stream's flow-control window reaches 0, no further data will be received.
      * The user must call aws_http_stream_update_window() to increment the stream's
      * window and keep data flowing.
+     *
+     * If you created a HTTP/2 connection, it will also control the connection window
+     * management.
      */
     bool manual_window_management;
 
@@ -407,13 +410,6 @@ bool aws_http_connection_new_requests_allowed(const struct aws_http_connection *
 AWS_HTTP_API
 bool aws_http_connection_is_client(const struct aws_http_connection *connection);
 
-/**
- * DEPRECATED
- * TODO: Delete once this is removed from H2.
- */
-AWS_HTTP_API
-void aws_http_connection_update_window(struct aws_http_connection *connection, size_t increment_size);
-
 AWS_HTTP_API
 enum aws_http_version aws_http_connection_get_version(const struct aws_http_connection *connection);
 
@@ -547,6 +543,26 @@ int aws_http2_connection_get_received_goaway(
     struct aws_http_connection *http2_connection,
     uint32_t *out_http2_error,
     uint32_t *out_last_stream_id);
+
+/**
+ * Increment the connection's flow-control window to keep data flowing (HTTP/2 only).
+ *
+ * If the connection was created with `manual_window_management` set true,
+ * the flow-control window of the connection will shrink as body data is received for all the streams created on it.
+ * (headers, padding, and other metadata do not affect the window).
+ * The initial connection flow-control window is 65,535.
+ * Once the connection's flow-control window reaches to 0, all the streams on the connection stop receiving any further
+ * data.
+ *
+ * If `manual_window_management` is false, this call will have no effect.
+ * The connection maintains its flow-control windows such that
+ * no back-pressure is applied and data arrives as fast as possible.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param increment_size The size to increment for the connection's flow control window
+ */
+AWS_HTTP_API
+int aws_http2_connection_update_window(struct aws_http_connection *http2_connection, size_t increment_size);
 
 AWS_EXTERN_C_END
 
