@@ -335,7 +335,7 @@ int aws_http2_connection_get_remote_settings(
     return AWS_OP_SUCCESS;
 }
 
-int aws_http2_connection_update_window(struct aws_http_connection *http2_connection, size_t increment_size) {
+int aws_http2_connection_update_window(struct aws_http_connection *http2_connection, uint32_t increment_size) {
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
     if (s_check_http2_connection(http2_connection)) {

@@ -56,7 +56,7 @@ static struct aws_http_stream *s_connection_make_request(
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
-static int s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
+static int s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size);
 static int s_connection_change_settings(
     struct aws_http_connection *connection_base,
     const struct aws_http2_setting *settings_array,
@@ -2152,7 +2152,7 @@ static bool s_connection_new_requests_allowed(const struct aws_http_connection *
     return new_stream_error_code == 0;
 }
 
-static int s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size) {
+static int s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size) {
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     if (!increment_size) {
         /* Instead of fail hard, just silently do nothing. */
@@ -2164,10 +2164,8 @@ static int s_connection_update_window(struct aws_http_connection *connection_bas
             WARN, connection, "Manual window management is off, update window operations are not supported.");
         return AWS_OP_SUCCESS;
     }
-    /* Type cast the increment size here, if overflow happens, we will detect it later, and the frame will be destroyed
-     */
     struct aws_h2_frame *connection_window_update_frame =
-        aws_h2_frame_new_window_update(connection->base.alloc, 0, (uint32_t)increment_size);
+        aws_h2_frame_new_window_update(connection->base.alloc, 0, increment_size);
     if (!connection_window_update_frame) {
         CONNECTION_LOGF(
             ERROR,
@@ -2204,14 +2202,12 @@ static int s_connection_update_window(struct aws_http_connection *connection_bas
     }
 
     if (!connection_open) {
-        CONNECTION_LOG(ERROR, connection, "Failed to update connection window, connection is closed or closing.");
+        CONNECTION_LOG(DEBUG, connection, "Failed to update connection window, connection is closed or closing.");
         aws_h2_frame_destroy(connection_window_update_frame);
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+        return AWS_OP_SUCCESS;
     }
 
     if (err) {
-        /* The increment_size is still not 100% safe, since we cannot control the incoming data frame. So just
-         * ruled out the value that is obviously wrong values */
         CONNECTION_LOGF(
             ERROR,
             connection,
