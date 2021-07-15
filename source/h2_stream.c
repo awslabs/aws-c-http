@@ -356,7 +356,8 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
     }
     if (!connection->base.manual_window_management) {
         /* auto-mode, manual update window is not supported */
-        AWS_H2_STREAM_LOG(WARN, stream, "Manual window management is off, update window operations are not supported.");
+        AWS_H2_STREAM_LOG(
+            DEBUG, stream, "Manual window management is off, update window operations are not supported.");
         return;
     }
 
@@ -406,6 +407,11 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
             "window size is 2147483647. We got %zu, which will cause the flow-control window to exceed the maximum",
             increment_size);
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+
+        struct aws_h2err returned_h2err = s_send_rst_and_close_stream(stream, aws_h2err_from_last_error());
+        if (aws_h2err_failed(returned_h2err)) {
+            aws_h2_connection_shutdown_due_to_write_err(connection, returned_h2err.aws_code);
+        }
         return;
     }
 }

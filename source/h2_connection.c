@@ -2161,7 +2161,7 @@ static int s_connection_update_window(struct aws_http_connection *connection_bas
     if (!connection_base->manual_window_management) {
         /* auto-mode, manual update window is not supported, silently do nothing with warning log. */
         CONNECTION_LOG(
-            WARN, connection, "Manual window management is off, update window operations are not supported.");
+            DEBUG, connection, "Manual window management is off, update window operations are not supported.");
         return AWS_OP_SUCCESS;
     }
     struct aws_h2_frame *connection_window_update_frame =
@@ -2367,7 +2367,9 @@ static int s_connection_send_goaway(
         connection_open = connection->synced_data.is_open;
         if (!connection_open) {
             s_unlock_synced_data(connection);
-            goto closed;
+            CONNECTION_LOG(DEBUG, connection, "Goaway not sent, connection is closed or closing.");
+            aws_mem_release(connection->base.alloc, pending_goaway);
+            goto done;
         }
         was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
         connection->synced_data.is_cross_thread_work_task_scheduled = true;
@@ -2388,12 +2390,8 @@ static int s_connection_send_goaway(
         CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
         aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
     }
+done:
     return AWS_OP_SUCCESS;
-
-closed:
-    CONNECTION_LOG(ERROR, connection, "Failed to send goaway, connection is closed or closing.");
-    aws_mem_release(connection->base.alloc, pending_goaway);
-    return aws_raise_error(AWS_ERROR_INVALID_STATE);
 }
 
 static void s_get_settings_general(

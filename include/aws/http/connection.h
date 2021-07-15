@@ -496,6 +496,8 @@ int aws_http2_connection_get_remote_settings(
  * (http2_error=0, allow_more_streams=true), or to customize the final GOAWAY
  * frame that is sent by this connection.
  *
+ * The other end may not receive the goaway, if the connection already closed.
+ *
  * @param http2_connection HTTP/2 connection.
  * @param http2_error The HTTP/2 error code (RFC-7540 section 7) to send.
  *      `enum aws_http2_error_code` lists official codes.
