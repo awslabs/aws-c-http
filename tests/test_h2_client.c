@@ -4533,9 +4533,10 @@ TEST_CASE(h2_client_request_apis_failed_after_connection_begin_shutdown) {
     /* close the connection */
     aws_http_connection_close(s_tester.connection);
 
-    /* validate all those user apis to add stuff into synced data will fail */
-    ASSERT_FAILS(aws_http2_connection_send_goaway(
+    /* Send goaway will silently do nothing as the connection already closed */
+    ASSERT_SUCCESS(aws_http2_connection_send_goaway(
         s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, false /*allow_more_streams*/, NULL /*debug_data*/));
+    /* validate all those user apis to add stuff into synced data will fail */
     ASSERT_FAILS(aws_http_stream_activate(stream));
     ASSERT_FAILS(aws_http2_connection_change_settings(
         s_tester.connection, NULL, 0, NULL /*callback function*/, NULL /*user_data*/));
