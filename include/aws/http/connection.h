@@ -87,7 +87,6 @@ typedef void(aws_http2_on_ping_complete_fn)(
  *      the callback. Make a deep copy if you wish to keep it longer.)
  * @param user_data User-data passed to the callback.
  */
-
 typedef void(aws_http2_on_goaway_received_fn)(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
