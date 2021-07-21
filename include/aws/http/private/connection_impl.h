@@ -125,6 +125,7 @@ struct aws_http_client_bootstrap {
     struct aws_allocator *alloc;
     bool is_using_tls;
     bool manual_window_management;
+    bool prior_http2;
     size_t initial_window_size;
     struct aws_http_connection_monitoring_options monitoring_options;
     void *user_data;
@@ -179,6 +180,7 @@ uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *conn
  * @param is_server should the handler behave like an http server
  * @param is_using_tls is tls is being used (do an alpn check of the to-the-left channel handler)
  * @param manual_window_management is manual window management enabled
+ * @param prior_http2 prior knowledge about http2 connection to be used
  * @param initial_window_size what should the initial window size be
  * @param http1_options http1 options
  * @param http2_options http2 options
@@ -191,6 +193,7 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
     bool is_server,
     bool is_using_tls,
     bool manual_window_management,
+    bool prior_http2,
     size_t initial_window_size,
     const struct aws_http1_connection_options *http1_options,
     const struct aws_http2_connection_options *http2_options);

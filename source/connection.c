@@ -76,6 +76,7 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
     bool is_server,
     bool is_using_tls,
     bool manual_window_management,
+    bool prior_http2,
     size_t initial_window_size,
     const struct aws_http1_connection_options *http1_options,
     const struct aws_http2_connection_options *http2_options) {
@@ -134,6 +135,10 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
 
                 version = AWS_HTTP_VERSION_1_1;
             }
+        }
+    } else {
+        if (prior_http2) {
+            version = AWS_HTTP_VERSION_2;
         }
     }
 
@@ -410,6 +415,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
         true,
         server->is_using_tls,
         server->manual_window_management,
+        false, /* prior_http2 */
         server->initial_window_size,
         &http1_options,
         &http2_options);
@@ -741,6 +747,7 @@ static void s_client_bootstrap_on_channel_setup(
         false,
         http_bootstrap->is_using_tls,
         http_bootstrap->manual_window_management,
+        http_bootstrap->prior_http2,
         http_bootstrap->initial_window_size,
         &http_bootstrap->http1_options,
         &http_bootstrap->http2_options);
@@ -935,6 +942,7 @@ int aws_http_client_connect_internal(
     http_bootstrap->alloc = options.allocator;
     http_bootstrap->is_using_tls = options.tls_options != NULL;
     http_bootstrap->manual_window_management = options.manual_window_management;
+    http_bootstrap->prior_http2 = options.prior_http2;
     http_bootstrap->initial_window_size = options.initial_window_size;
     http_bootstrap->user_data = options.user_data;
     http_bootstrap->on_setup = options.on_setup;

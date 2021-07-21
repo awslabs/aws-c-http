@@ -534,6 +534,7 @@ static int s_aws_http_apply_http_connection_to_proxied_channel(struct aws_http_p
         false,
         context->original_tls_options != NULL,
         context->original_manual_window_management,
+        false, /* prior_http2 */
         context->original_initial_window_size,
         &context->original_http1_options,
         NULL); /* TODO: support http2 options */

@@ -301,6 +301,16 @@ struct aws_http_client_connection_options {
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
 
     /**
+     * Optional.
+     * When true, use prior knowledge to set up an HTTP/2 connection on a clear text
+     * connection.
+     * When tls_options is set, this will be ignored, and ALPN will determine the version
+     * of protocol to set up instead.
+     * Refer to RFC7540 3.4
+     */
+    bool prior_http2;
+
+    /**
      * Options specific to HTTP/1.x connections.
      * Optional.
      * Ignored if connection is not HTTP/1.x.
