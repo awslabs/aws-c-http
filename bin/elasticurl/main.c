@@ -425,7 +425,8 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
             sprintf(content_length, "%" PRIi64, data_len);
             struct aws_http_header content_length_header = {
                 .name = aws_byte_cursor_from_c_str("content-length"),
-                .value = aws_byte_cursor_from_c_str(content_length)};
+                .value = aws_byte_cursor_from_c_str(content_length),
+            };
             aws_http_message_add_header(request, content_length_header);
             aws_http_message_set_body_stream(request, app_ctx->input_body);
         }
