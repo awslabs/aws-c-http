@@ -308,7 +308,7 @@ struct aws_http_client_connection_options {
      * of protocol to set up instead.
      * Refer to RFC7540 3.4
      */
-    bool prior_http2;
+    bool prior_knowledge_http2;
 
     /**
      * Options specific to HTTP/1.x connections.

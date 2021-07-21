@@ -713,7 +713,7 @@ int main(int argc, char **argv) {
     };
     if (app_ctx.required_http_version == AWS_HTTP_VERSION_2 && !use_tls) {
         /* Use prior knowledge to connect */
-        http_client_options.prior_http2 = true;
+        http_client_options.prior_knowledge_http2 = true;
     }
     aws_http_client_connect(&http_client_options);
     aws_mutex_lock(&app_ctx.mutex);
