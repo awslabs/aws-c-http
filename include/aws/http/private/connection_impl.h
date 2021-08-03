@@ -135,10 +135,13 @@ struct aws_http_client_bootstrap {
 
     struct aws_http1_connection_options http1_options;
     struct aws_http2_connection_options http2_options;
+    struct aws_hash_table *alpn_string_map; /* Owns the hash table */
     struct aws_http_connection *connection;
 };
 
 AWS_EXTERN_C_BEGIN
+AWS_HTTP_API
+void aws_http_client_bootstrap_destroy(struct aws_http_client_bootstrap *bootstrap);
 
 AWS_HTTP_API
 void aws_http_connection_set_system_vtable(const struct aws_http_connection_system_vtable *system_vtable);
@@ -182,6 +185,7 @@ uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *conn
  * @param manual_window_management is manual window management enabled
  * @param prior_knowledge_http2 prior knowledge about http2 connection to be used
  * @param initial_window_size what should the initial window size be
+ * @param alpn_string_map the customized ALPN string map from `struct aws_string *` to `enum aws_http_version`.
  * @param http1_options http1 options
  * @param http2_options http2 options
  * @return a new http connection or NULL on failure
@@ -195,6 +199,7 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
     bool manual_window_management,
     bool prior_knowledge_http2,
     size_t initial_window_size,
+    const struct aws_hash_table *alpn_string_map,
     const struct aws_http1_connection_options *http1_options,
     const struct aws_http2_connection_options *http2_options);
 

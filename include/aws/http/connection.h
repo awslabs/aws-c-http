@@ -311,6 +311,16 @@ struct aws_http_client_connection_options {
     bool prior_knowledge_http2;
 
     /**
+     * Optional.
+     * Pointer to the hash map containing the ALPN string to protocol to use.
+     * Hash from `struct aws_string *` to `enum aws_http_version`.
+     * If not set, only the predefined string `h2` and `http/1.1` will be recognized. Other negotiated ALPN string will
+     * result in a HTTP1/1 connection
+     * Note: Connection will keep a deep copy of the table and the strings.
+     */
+    struct aws_hash_table *alpn_string_map;
+
+    /**
      * Options specific to HTTP/1.x connections.
      * Optional.
      * Ignored if connection is not HTTP/1.x.
@@ -432,6 +442,14 @@ enum aws_http_version aws_http_connection_get_version(const struct aws_http_conn
  */
 AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
+
+/**
+ * Helper function that returns a default map can be used in aws_http_client_connection_options as alpn_string_map.
+ * The caller owns the returned map.
+ * The aws_string created as the key of the map will be owned by the map.
+ */
+AWS_HTTP_API
+struct aws_hash_table *aws_http_default_alpn_map_new(struct aws_allocator *allocator);
 
 /**
  * Checks http proxy options for correctness

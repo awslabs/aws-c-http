@@ -31,6 +31,16 @@ static struct aws_http_connection_system_vtable s_default_system_vtable = {
 
 static const struct aws_http_connection_system_vtable *s_system_vtable_ptr = &s_default_system_vtable;
 
+void aws_http_client_bootstrap_destroy(struct aws_http_client_bootstrap *bootstrap) {
+    if (bootstrap->alpn_string_map) {
+        aws_hash_table_clean_up(bootstrap->alpn_string_map);
+    }
+    if (bootstrap->http2_options.initial_settings_array) {
+        aws_mem_release(bootstrap->alloc, bootstrap->http2_options.initial_settings_array);
+    }
+    aws_mem_release(bootstrap->alloc, bootstrap);
+}
+
 void aws_http_connection_set_system_vtable(const struct aws_http_connection_system_vtable *system_vtable) {
     s_system_vtable_ptr = system_vtable;
 }
@@ -78,6 +88,7 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
     bool manual_window_management,
     bool prior_knowledge_http2,
     size_t initial_window_size,
+    const struct aws_hash_table *alpn_string_map,
     const struct aws_http1_connection_options *http1_options,
     const struct aws_http2_connection_options *http2_options) {
 
@@ -124,7 +135,24 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
         struct aws_channel_handler *tls_handler = tls_slot->handler;
         struct aws_byte_buf protocol = aws_tls_handler_protocol(tls_handler);
         if (protocol.len) {
-            if (aws_string_eq_byte_buf(s_alpn_protocol_http_1_1, &protocol)) {
+            bool customized = false;
+            if (alpn_string_map) {
+                struct aws_string *negotiated_result = aws_string_new_from_buf(alloc, &protocol);
+                struct aws_hash_element *found = NULL;
+                aws_hash_table_find(alpn_string_map, (void *)negotiated_result, &found);
+                if (found) {
+                    version = (enum aws_http_version)found->value;
+                    customized = true;
+                }
+                aws_string_destroy(negotiated_result);
+            }
+            if (customized) {
+                AWS_LOGF_DEBUG(
+                    AWS_LS_HTTP_CONNECTION,
+                    "static: Customized ALPN protocol " PRInSTR " used. Get " PRInSTR " client connection established.",
+                    AWS_BYTE_BUF_PRI(protocol),
+                    AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(version)));
+            } else if (aws_string_eq_byte_buf(s_alpn_protocol_http_1_1, &protocol)) {
                 version = AWS_HTTP_VERSION_1_1;
             } else if (aws_string_eq_byte_buf(s_alpn_protocol_http_2, &protocol)) {
                 version = AWS_HTTP_VERSION_2;
@@ -350,6 +378,30 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
     return connection->channel_slot->channel;
 }
 
+struct aws_hash_table *aws_http_default_alpn_map_new(struct aws_allocator *allocator) {
+    AWS_ASSERT(allocator);
+    struct aws_hash_table *map = NULL;
+    int result = aws_hash_table_init(
+        map,
+        allocator,
+        5 /* initial size */,
+        aws_hash_string,
+        aws_hash_callback_string_eq,
+        aws_hash_callback_string_destroy,
+        NULL);
+    if (result) {
+        int error_code = aws_last_error();
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "Failed to initialize ALPN map with error code %d (%s)",
+            error_code,
+            aws_error_name(error_code));
+
+        return NULL;
+    }
+    return map;
+}
+
 void aws_http_connection_acquire(struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     aws_atomic_fetch_add(&connection->refcount, 1);
@@ -417,6 +469,7 @@ static void s_server_bootstrap_on_accept_channel_setup(
         server->manual_window_management,
         false, /* prior_knowledge_http2 */
         server->initial_window_size,
+        NULL, /* alpn_string_map */
         &http1_options,
         &http2_options);
     if (!connection) {
@@ -735,7 +788,7 @@ static void s_client_bootstrap_on_channel_setup(
         http_bootstrap->on_setup(NULL, error_code, http_bootstrap->user_data);
 
         /* Clean up the http_bootstrap, it has no more work to do. */
-        aws_mem_release(http_bootstrap->alloc, http_bootstrap);
+        aws_http_client_bootstrap_destroy(http_bootstrap);
         return;
     }
 
@@ -749,6 +802,7 @@ static void s_client_bootstrap_on_channel_setup(
         http_bootstrap->manual_window_management,
         http_bootstrap->prior_knowledge_http2,
         http_bootstrap->initial_window_size,
+        http_bootstrap->alpn_string_map,
         &http_bootstrap->http1_options,
         &http_bootstrap->http2_options);
     if (!http_bootstrap->connection) {
@@ -840,7 +894,7 @@ static void s_client_bootstrap_on_channel_shutdown(
     }
 
     /* Clean up bootstrapper */
-    aws_mem_release(http_bootstrap->alloc, http_bootstrap);
+    aws_http_client_bootstrap_destroy(http_bootstrap);
 }
 
 static int s_validate_http_client_connection_options(const struct aws_http_client_connection_options *options) {
@@ -885,6 +939,37 @@ static int s_validate_http_client_connection_options(const struct aws_http_clien
     return AWS_OP_SUCCESS;
 }
 
+struct s_copy_alpn_string_map_context {
+    struct aws_hash_table *map;
+    struct aws_allocator *allocator;
+};
+
+/* put every item into the source to make a deep copy of the map */
+static int s_copy_alpn_string_map(void *context, struct aws_hash_element *item) {
+    struct s_copy_alpn_string_map_context *func_context = context;
+    struct aws_hash_table *dest = func_context->map;
+    /* make a deep copy of the string and hash map will own the copy */
+    struct aws_string *key_copy = aws_string_new_from_string(func_context->allocator, item->key);
+    int was_created;
+    if (aws_hash_table_put(dest, key_copy, item->value, &was_created)) {
+        int error_code = aws_last_error();
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "Failed to copy ALPN map with error code %d (%s)",
+            error_code,
+            aws_error_name(error_code));
+        /* failed to put into the table, we need to clean up the copy ourselves */
+        aws_string_destroy(key_copy);
+        /* return error to stop iteration */
+        return AWS_COMMON_HASH_TABLE_ITER_ERROR;
+    }
+    if (!was_created) {
+        /* no new entry created, clean up the copy ourselves */
+        aws_string_destroy(key_copy);
+    }
+    return AWS_COMMON_HASH_TABLE_ITER_CONTINUE;
+}
+
 int aws_http_client_connect_internal(
     const struct aws_http_client_connection_options *orig_options,
     aws_http_proxy_request_transform_fn *proxy_request_transform) {
@@ -927,13 +1012,16 @@ int aws_http_client_connect_internal(
     }
 
     struct aws_http2_setting *setting_array = NULL;
+    struct aws_hash_table *alpn_string_map = NULL;
     if (!aws_mem_acquire_many(
             options.allocator,
-            2,
+            3,
             &http_bootstrap,
             sizeof(struct aws_http_client_bootstrap),
             &setting_array,
-            options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting))) {
+            options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting),
+            &alpn_string_map,
+            sizeof(struct aws_hash_table))) {
         goto error;
     }
 
@@ -958,6 +1046,27 @@ int aws_http_client_connect_internal(
             options.http2_options->initial_settings_array,
             options.http2_options->num_initial_settings * sizeof(struct aws_http2_setting));
         http_bootstrap->http2_options.initial_settings_array = setting_array;
+    }
+
+    if (options.alpn_string_map) {
+        alpn_string_map = aws_http_default_alpn_map_new(options.allocator);
+        if (!alpn_string_map) {
+            goto error;
+        }
+        struct s_copy_alpn_string_map_context context;
+        context.allocator = options.allocator;
+        context.map = alpn_string_map;
+        /* make a deep copy of the map */
+        if (aws_hash_table_foreach(options.alpn_string_map, s_copy_alpn_string_map, &context)) {
+            int error_code = aws_last_error();
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_CONNECTION,
+                "Failed to copy ALPN map with error code %d (%s)",
+                error_code,
+                aws_error_name(error_code));
+            goto error;
+        }
+        http_bootstrap->alpn_string_map = alpn_string_map;
     }
 
     if (options.monitoring_options) {
@@ -999,7 +1108,7 @@ int aws_http_client_connect_internal(
 
 error:
     if (http_bootstrap) {
-        aws_mem_release(http_bootstrap->alloc, http_bootstrap);
+        aws_http_client_bootstrap_destroy(http_bootstrap);
     }
 
     if (host_name) {
