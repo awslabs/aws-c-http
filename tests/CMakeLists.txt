@@ -441,6 +441,9 @@ add_test_case(h2_client_get_remote_settings)
 
 add_test_case(server_new_destroy)
 add_test_case(connection_setup_shutdown)
+add_test_case(connection_setup_shutdown_tls)
+add_test_case(connection_h2_prior_knowledge)
+add_test_case(connection_h2_prior_knowledge_not_work_with_tls)
 # These server tests occasionally fail. Resurrect if/when we get back to work on HTTP server.
 #add_test_case(connection_destroy_server_with_connection_existing)
 #add_test_case(connection_destroy_server_with_multiple_connections_existing)
