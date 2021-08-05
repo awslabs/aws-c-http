@@ -441,6 +441,9 @@ add_test_case(h2_client_get_remote_settings)
 
 add_test_case(server_new_destroy)
 add_test_case(connection_setup_shutdown)
+add_test_case(connection_setup_shutdown_tls)
+add_test_case(connection_h2_prior_knowledge)
+add_test_case(connection_h2_prior_knowledge_not_work_with_tls)
 # These server tests occasionally fail. Resurrect if/when we get back to work on HTTP server.
 #add_test_case(connection_destroy_server_with_connection_existing)
 #add_test_case(connection_destroy_server_with_multiple_connections_existing)
@@ -561,4 +564,4 @@ aws_add_fuzz_tests("${FUZZ_TESTS}" "" "")
 #SSL certificates to use for testing.
 add_custom_command(TARGET ${TEST_BINARY_NAME} PRE_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/resources ${CMAKE_CURRENT_BINARY_DIR})
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources $<TARGET_FILE_DIR:${TEST_BINARY_NAME}>)
