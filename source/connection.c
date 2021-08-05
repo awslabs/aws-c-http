@@ -961,7 +961,8 @@ static int s_copy_alpn_string_map(void *context, struct aws_hash_element *item) 
         /* failed to put into the table, we need to clean up the copy ourselves */
         aws_string_destroy(key_copy);
         /* return error to stop iteration */
-        return AWS_COMMON_HASH_TABLE_ITER_ERROR;
+        return 0;
+        // return AWS_COMMON_HASH_TABLE_ITER_ERROR;
     }
     if (!was_created) {
         /* no new entry created, clean up the copy ourselves */
