@@ -594,7 +594,7 @@ static int s_test_connection_customized_alpn(struct aws_allocator *allocator, vo
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, &options));
 
-    /* Connect with prior knowledge */
+    /* Connect with ALPN and the customized alpn string map */
     struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
     s_client_connection_options_init_tester(&client_options, &tester);
     ASSERT_SUCCESS(
