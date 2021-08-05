@@ -139,7 +139,7 @@ jobs:
         python builder.pyz build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DBUILD_SHARED_LIBS=ON
 
   osx:
-    runs-on: macos-latest
+    runs-on: macos-latest@20210725.1
     steps:
     - name: Build ${{ env.PACKAGE_NAME }} + consumers
       run: |
