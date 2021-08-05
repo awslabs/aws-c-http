@@ -10,6 +10,7 @@
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
 #include <aws/common/log_writer.h>
+#include <aws/common/string.h>
 #include <aws/common/thread.h>
 #include <aws/common/uuid.h>
 #include <aws/io/channel_bootstrap.h>
@@ -82,6 +83,7 @@ struct tester {
     struct aws_tls_ctx *client_ctx;
     struct aws_tls_connection_options server_tls_connection_options;
     struct aws_tls_connection_options client_tls_connection_options;
+    struct aws_byte_buf *negotiated_protocol;
 
     /* If we need to wait for some async process*/
     struct aws_mutex wait_lock;
@@ -398,6 +400,9 @@ static int s_tester_clean_up(struct tester *tester) {
         aws_tls_ctx_release(tester->client_ctx);
         aws_tls_ctx_options_clean_up(&tester->client_ctx_options);
     }
+    if (tester->negotiated_protocol) {
+        aws_byte_buf_clean_up(tester->negotiated_protocol);
+    }
     aws_server_bootstrap_release(tester->server_bootstrap);
     aws_client_bootstrap_release(tester->client_bootstrap);
     aws_host_resolver_release(tester->host_resolver);
@@ -559,6 +564,77 @@ static int s_test_connection_h2_prior_knowledge_not_work_with_tls(struct aws_all
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(connection_h2_prior_knowledge_not_work_with_tls, s_test_connection_h2_prior_knowledge_not_work_with_tls);
+
+static void s_on_tester_negotiation_result(
+    struct aws_channel_handler *handler,
+    struct aws_channel_slot *slot,
+    int err_code,
+    void *user_data) {
+
+    (void)slot;
+    (void)err_code;
+    struct tester *tester = (struct tester *)user_data;
+    struct aws_byte_buf src = aws_tls_handler_protocol(handler);
+    aws_byte_buf_init_copy(tester->negotiated_protocol, tester->alloc, &src);
+}
+
+static int s_test_connection_customized_alpn(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+#ifdef __APPLE__ /* Something is wrong with APPLE */
+    return AWS_OP_SUCCESS;
+#endif
+    char customized_alpn_string[] = "myh2";
+    enum aws_http_version expected_version = AWS_HTTP_VERSION_2;
+    struct tester_options options = {
+        .alloc = allocator,
+        .no_connection = true,
+        .tls = true,
+        .server_alpn_list = "myh2;myh1.1;h2;http/1.1",
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, &options));
+
+    /* Connect with prior knowledge */
+    struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
+    s_client_connection_options_init_tester(&client_options, &tester);
+    ASSERT_SUCCESS(
+        s_tls_client_opt_tester_init(&tester, customized_alpn_string, aws_byte_cursor_from_c_str("localhost")));
+    aws_tls_connection_options_set_callbacks(
+        &tester.client_tls_connection_options, s_on_tester_negotiation_result, NULL, NULL, &tester);
+    client_options.tls_options = &tester.client_tls_connection_options;
+    /* create the alpn map */
+    struct aws_hash_table *alpn_map = aws_http_default_alpn_map_new(allocator);
+    /* We don't need to clean up the string as the map will own the string */
+    struct aws_string *alpn_string = aws_string_new_from_c_str(allocator, customized_alpn_string);
+    ASSERT_SUCCESS(aws_hash_table_put(alpn_map, alpn_string, (void *)expected_version, NULL));
+    client_options.alpn_string_map = alpn_map;
+    tester.client_options = client_options;
+
+    tester.server_connection_num = 0;
+    tester.client_connection_num = 0;
+    ASSERT_SUCCESS(aws_http_client_connect(&tester.client_options));
+    /* We should be safe to free the map */
+    aws_hash_table_clean_up(alpn_map);
+
+    /* Wait for server & client connections to finish setup */
+    tester.wait_client_connection_num = 1;
+    tester.wait_server_connection_num = 1;
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_setup_pred));
+
+#ifndef __APPLE__ /* Server side ALPN doesn't work for MacOS */
+    /* Assert that we have the negotiated protocol and the expected version */
+    ASSERT_INT_EQUALS(tester.connection_version, expected_version);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(tester.negotiated_protocol, customized_alpn_string));
+#endif
+    /* clean up */
+    release_all_client_connections(&tester);
+    release_all_server_connections(&tester);
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(connection_customized_alpn, s_test_connection_customized_alpn);
 
 static int s_test_connection_destroy_server_with_connection_existing(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
