@@ -22,6 +22,10 @@ static int s_stream_get_sent_error_code(struct aws_http_stream *stream_base, uin
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error);
+static int s_stream_reset_stream_internal(
+    struct aws_http_stream *stream_base,
+    uint32_t http2_error,
+    int aws_error_code);
 
 struct aws_http_stream_vtable s_h2_stream_vtable = {
     .destroy = s_stream_destroy,
@@ -287,6 +291,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     bool reset_called;
     size_t window_update_size;
     uint32_t user_reset_error_code;
+    int reset_aws_error_code;
 
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream);
@@ -297,6 +302,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         stream->synced_data.window_update_size = 0;
         reset_called = stream->synced_data.reset_called;
         user_reset_error_code = stream->synced_data.user_reset_error_code;
+        reset_aws_error_code = stream->synced_data.reset_aws_error_code;
 
         s_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
@@ -315,12 +321,13 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     if (reset_called) {
         struct aws_h2err h2err;
         h2err.h2_code = user_reset_error_code;
-        if (stream->base.server_data && stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL) {
+        if (user_reset_error_code == AWS_HTTP2_ERR_NO_ERROR && reset_aws_error_code == AWS_ERROR_HTTP_RST_STREAM_SENT &&
+            stream->base.server_data && stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL) {
             /* (RFC-7540 8.1) A server MAY request that the client abort transmission of a request without error by
              * sending a RST_STREAM with an error code of NO_ERROR after sending a complete response */
             h2err.aws_code = AWS_ERROR_SUCCESS;
         } else {
-            h2err.aws_code = AWS_ERROR_HTTP_RST_STREAM_SENT;
+            h2err.aws_code = reset_aws_error_code;
         }
         struct aws_h2err returned_h2err = s_send_rst_and_close_stream(stream, h2err);
         if (aws_h2err_failed(returned_h2err)) {
@@ -404,19 +411,20 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
             ERROR,
             stream,
             "The increment size is too big for HTTP/2 protocol, max flow-control "
-            "window size is 2147483647. We got %zu, which will cause the flow-control window to exceed the maximum",
+            "window size is 2**31 - 1. We got %zu, which will cause the flow-control window to exceed the maximum",
             increment_size);
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
 
-        struct aws_h2err returned_h2err = s_send_rst_and_close_stream(stream, aws_h2err_from_last_error());
-        if (aws_h2err_failed(returned_h2err)) {
-            aws_h2_connection_shutdown_due_to_write_err(connection, returned_h2err.aws_code);
-        }
-        return;
+        if (s_stream_reset_stream_internal(stream_base, AWS_HTTP2_ERR_INTERNAL_ERROR, AWS_ERROR_OVERFLOW_DETECTED))
+            aws_h2_connection_shutdown_due_to_write_err(connection, aws_last_error());
     }
+    return;
 }
 
-static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t http2_error) {
+static int s_stream_reset_stream_internal(
+    struct aws_http_stream *stream_base,
+    uint32_t http2_error,
+    int aws_error_code) {
 
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
@@ -433,6 +441,7 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t h
             cross_thread_work_should_schedule = !stream->synced_data.is_cross_thread_work_task_scheduled;
             stream->synced_data.reset_called = true;
             stream->synced_data.user_reset_error_code = http2_error;
+            stream->synced_data.reset_aws_error_code = aws_error_code;
         }
         s_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
@@ -456,6 +465,10 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t h
     }
 
     return AWS_OP_SUCCESS;
+}
+
+static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t http2_error) {
+    return s_stream_reset_stream_internal(stream_base, http2_error, AWS_ERROR_HTTP_RST_STREAM_SENT);
 }
 
 static int s_stream_get_received_error_code(struct aws_http_stream *stream_base, uint32_t *out_http2_error) {

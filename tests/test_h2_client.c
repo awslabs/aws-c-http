@@ -3571,6 +3571,53 @@ TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update) {
     return s_tester_clean_up();
 }
 
+TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update_overflow) {
+
+    ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, ctx));
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* call API to update the stream window and cause a overflow */
+    aws_http_stream_update_window(stream_tester.stream, INT32_MAX);
+    aws_http_stream_update_window(stream_tester.stream, INT32_MAX);
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* validate that stream completed with error */
+    ASSERT_TRUE(aws_http_connection_is_open(s_tester.connection));
+    ASSERT_TRUE(stream_tester.complete);
+    /* overflow happens */
+    ASSERT_INT_EQUALS(AWS_ERROR_OVERFLOW_DETECTED, stream_tester.on_complete_error_code);
+    /* validate that stream sent RST_STREAM */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *rst_stream_frame =
+        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_RST_STREAM, 0, NULL);
+    /* But the error code is not the same as user was trying to send */
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_INTERNAL_ERROR, rst_stream_frame->error_code);
+
+    /* clean up */
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+
+    return s_tester_clean_up();
+}
+
 /* Peer sends a flow-controlled frame when the connection window-size is not enough for it will result in connection
  * flow-control error */
 TEST_CASE(h2_client_manual_window_management_user_send_conn_window_update) {

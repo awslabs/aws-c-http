@@ -2155,7 +2155,7 @@ static bool s_connection_new_requests_allowed(const struct aws_http_connection *
 static int s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size) {
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     if (!increment_size) {
-        /* Instead of fail hard, just silently do nothing. */
+        /* Silently do nothing. */
         return AWS_OP_SUCCESS;
     }
     if (!connection_base->manual_window_management) {
@@ -2202,7 +2202,6 @@ static int s_connection_update_window(struct aws_http_connection *connection_bas
     }
 
     if (!connection_open) {
-        CONNECTION_LOG(DEBUG, connection, "Failed to update connection window, connection is closed or closing.");
         aws_h2_frame_destroy(connection_window_update_frame);
         return AWS_OP_SUCCESS;
     }
@@ -2212,7 +2211,8 @@ static int s_connection_update_window(struct aws_http_connection *connection_bas
             ERROR,
             connection,
             "The increment size is too big for HTTP/2 protocol, max flow-control "
-            "window size is 2147483647. We got %zu, which will cause the flow-control window to exceed the maximum",
+            "window size is 2**31 - 1. We got %" PRIu32
+            ", which will cause the flow-control window to exceed the maximum",
             increment_size);
         aws_h2_frame_destroy(connection_window_update_frame);
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);

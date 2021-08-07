@@ -82,6 +82,8 @@ struct aws_h2_stream {
 
         /* The aws_http2_error_code user wanted to send to remote peer via rst_stream. */
         uint32_t user_reset_error_code;
+        /* The aws error code when an internal error occurred and stream reset we want to infrom user about. */
+        int reset_aws_error_code;
 
         bool reset_called;
 

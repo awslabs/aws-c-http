@@ -562,7 +562,7 @@ int aws_http2_connection_get_received_goaway(
  *
  * If you are not connected, this call will have no effect.
  *
- * Fails when the input is invalid. The limit of the Maximum Size is 2147483647. If the increment size cause the
+ * Fails when the input is invalid. The limit of the Maximum Size is 2**31 - 1. If the increment size cause the
  * connection flow window exceeds the Maximun size, this call will fail.
  *
  * @param http2_connection HTTP/2 connection.
