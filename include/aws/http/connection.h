@@ -302,10 +302,10 @@ struct aws_http_client_connection_options {
 
     /**
      * Optional.
-     * When true, use prior knowledge to set up an HTTP/2 connection on a clear text
+     * When true, use prior knowledge to set up an HTTP/2 connection on a cleartext
      * connection.
-     * When tls_options is set, this will be ignored, and ALPN will determine the version
-     * of protocol to set up instead.
+     * When TLS is set and this is true, the connection will failed to be established,
+     * as prior knowledge only works for cleartext TLS.
      * Refer to RFC7540 3.4
      */
     bool prior_knowledge_http2;
