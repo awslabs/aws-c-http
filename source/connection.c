@@ -137,21 +137,29 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
         if (protocol.len) {
             bool customized = false;
             if (alpn_string_map) {
+                customized = true;
                 struct aws_string *negotiated_result = aws_string_new_from_buf(alloc, &protocol);
                 struct aws_hash_element *found = NULL;
                 aws_hash_table_find(alpn_string_map, (void *)negotiated_result, &found);
                 if (found) {
                     version = (enum aws_http_version)found->value;
-                    customized = true;
+                    AWS_LOGF_DEBUG(
+                        AWS_LS_HTTP_CONNECTION,
+                        "static: Customized ALPN protocol " PRInSTR " used. " PRInSTR " client connection established.",
+                        AWS_BYTE_BUF_PRI(protocol),
+                        AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(version)));
+                } else {
+                    AWS_LOGF_ERROR(
+                        AWS_LS_HTTP_CONNECTION,
+                        "static: Customized ALPN protocol " PRInSTR
+                        " used. However the it's not found in the ALPN map provided.",
+                        AWS_BYTE_BUF_PRI(protocol));
+                    version = AWS_HTTP_VERSION_UNKNOWN;
                 }
                 aws_string_destroy(negotiated_result);
             }
             if (customized) {
-                AWS_LOGF_DEBUG(
-                    AWS_LS_HTTP_CONNECTION,
-                    "static: Customized ALPN protocol " PRInSTR " used. Get " PRInSTR " client connection established.",
-                    AWS_BYTE_BUF_PRI(protocol),
-                    AWS_BYTE_CURSOR_PRI(aws_http_version_to_str(version)));
+                /* Do nothing */
             } else if (aws_string_eq_byte_buf(s_alpn_protocol_http_1_1, &protocol)) {
                 version = AWS_HTTP_VERSION_1_1;
             } else if (aws_string_eq_byte_buf(s_alpn_protocol_http_2, &protocol)) {
@@ -378,7 +386,7 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
     return connection->channel_slot->channel;
 }
 
-struct aws_hash_table *aws_http_default_alpn_map_new(struct aws_allocator *allocator) {
+struct aws_hash_table *aws_http_alpn_map_new(struct aws_allocator *allocator) {
     AWS_ASSERT(allocator);
     struct aws_hash_table *map = NULL;
     int result = aws_hash_table_init(
@@ -1052,7 +1060,7 @@ int aws_http_client_connect_internal(
     }
 
     if (options.alpn_string_map) {
-        alpn_string_map = aws_http_default_alpn_map_new(options.allocator);
+        alpn_string_map = aws_http_alpn_map_new(options.allocator);
         if (!alpn_string_map) {
             goto error;
         }

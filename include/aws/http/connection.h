@@ -444,12 +444,12 @@ AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
 
 /**
- * Helper function that returns a default map can be used in aws_http_client_connection_options as alpn_string_map.
+ * Helper function that returns an empty map can be used in aws_http_client_connection_options as alpn_string_map.
  * The caller owns the returned map.
  * The aws_string created as the key of the map will be owned by the map.
  */
 AWS_HTTP_API
-struct aws_hash_table *aws_http_default_alpn_map_new(struct aws_allocator *allocator);
+struct aws_hash_table *aws_http_alpn_map_new(struct aws_allocator *allocator);
 
 /**
  * Checks http proxy options for correctness

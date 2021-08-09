@@ -591,7 +591,7 @@ static int s_test_connection_customized_alpn(struct aws_allocator *allocator, vo
         &tester.client_tls_connection_options, s_on_tester_negotiation_result, NULL, NULL, &tester);
     client_options.tls_options = &tester.client_tls_connection_options;
     /* create the alpn map */
-    struct aws_hash_table *alpn_map = aws_http_default_alpn_map_new(allocator);
+    struct aws_hash_table *alpn_map = aws_http_alpn_map_new(allocator);
     /* We don't need to clean up the string as the map will own the string */
     struct aws_string *alpn_string = aws_string_new_from_c_str(allocator, customized_alpn_string);
     ASSERT_SUCCESS(aws_hash_table_put(alpn_map, alpn_string, (void *)expected_version, NULL));
@@ -623,6 +623,65 @@ static int s_test_connection_customized_alpn(struct aws_allocator *allocator, vo
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(connection_customized_alpn, s_test_connection_customized_alpn);
+
+static int s_test_connection_customized_alpn_error_with_unknow_return_string(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+#ifdef __APPLE__ /* Something is wrong with APPLE */
+    return AWS_OP_SUCCESS;
+#endif
+    char customized_alpn_string[] = "myh2";
+    struct tester_options options = {
+        .alloc = allocator,
+        .no_connection = true,
+        .tls = true,
+        .server_alpn_list = "myh2;myh1.1;h2;http/1.1",
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, &options));
+
+    /* Connect with ALPN and the customized alpn string map */
+    struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
+    s_client_connection_options_init_tester(&client_options, &tester);
+    ASSERT_SUCCESS(
+        s_tls_client_opt_tester_init(&tester, customized_alpn_string, aws_byte_cursor_from_c_str("localhost")));
+    aws_tls_connection_options_set_callbacks(
+        &tester.client_tls_connection_options, s_on_tester_negotiation_result, NULL, NULL, &tester);
+    client_options.tls_options = &tester.client_tls_connection_options;
+    /* create the alpn map */
+    struct aws_hash_table *alpn_map = aws_http_alpn_map_new(allocator);
+    /* put an empty ALPN map, you will not found the returned string, and should error out when trying to connect*/
+    client_options.alpn_string_map = alpn_map;
+    tester.client_options = client_options;
+
+    tester.server_connection_num = 0;
+    tester.client_connection_num = 0;
+    ASSERT_SUCCESS(aws_http_client_connect(&tester.client_options));
+    /* We should be safe to free the map */
+    aws_hash_table_clean_up(alpn_map);
+
+    /* Wait for server & client connections to finish setup */
+    tester.wait_client_connection_num = 1;
+    tester.wait_server_connection_num = 1;
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_setup_pred));
+
+#ifndef __APPLE__ /* Server side ALPN doesn't work for MacOS */
+    /* Assert that we have the negotiated protocol and error returned from callback */
+    ASSERT_INT_EQUALS(tester.connection_version, expected_version);
+    ASSERT_INT_EQUALS(tester.client_wait_result, AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
+#endif
+    /* clean up */
+    release_all_client_connections(&tester);
+    release_all_server_connections(&tester);
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    connection_customized_alpn_error_with_unknow_return_string,
+    s_test_connection_customized_alpn_error_with_unknow_return_string);
 
 static int s_test_connection_destroy_server_with_connection_existing(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
