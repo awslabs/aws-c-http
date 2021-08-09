@@ -32,11 +32,10 @@ static struct aws_http_connection_system_vtable s_default_system_vtable = {
 static const struct aws_http_connection_system_vtable *s_system_vtable_ptr = &s_default_system_vtable;
 
 void aws_http_client_bootstrap_destroy(struct aws_http_client_bootstrap *bootstrap) {
+    /* During allocating, the underlying stuctures should be allocated with the bootstrap by aws_mem_acquire_many. Thus,
+     * we only need to clean up the first pointer which is the boostrap */
     if (bootstrap->alpn_string_map) {
         aws_hash_table_clean_up(bootstrap->alpn_string_map);
-    }
-    if (bootstrap->http2_options.initial_settings_array) {
-        aws_mem_release(bootstrap->alloc, bootstrap->http2_options.initial_settings_array);
     }
     aws_mem_release(bootstrap->alloc, bootstrap);
 }
@@ -386,9 +385,9 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
     return connection->channel_slot->channel;
 }
 
-struct aws_hash_table *aws_http_alpn_map_new(struct aws_allocator *allocator) {
+int aws_http_alpn_map_init(struct aws_allocator *allocator, struct aws_hash_table *map) {
     AWS_ASSERT(allocator);
-    struct aws_hash_table *map = NULL;
+    AWS_ASSERT(map);
     int result = aws_hash_table_init(
         map,
         allocator,
@@ -398,16 +397,15 @@ struct aws_hash_table *aws_http_alpn_map_new(struct aws_allocator *allocator) {
         aws_hash_callback_string_destroy,
         NULL);
     if (result) {
+        /* OOM will crash */
         int error_code = aws_last_error();
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
             "Failed to initialize ALPN map with error code %d (%s)",
             error_code,
             aws_error_name(error_code));
-
-        return NULL;
     }
-    return map;
+    return result;
 }
 
 void aws_http_connection_acquire(struct aws_http_connection *connection) {
@@ -1060,8 +1058,7 @@ int aws_http_client_connect_internal(
     }
 
     if (options.alpn_string_map) {
-        alpn_string_map = aws_http_alpn_map_new(options.allocator);
-        if (!alpn_string_map) {
+        if (aws_http_alpn_map_init(options.allocator, alpn_string_map)) {
             goto error;
         }
         struct s_copy_alpn_string_map_context context;
@@ -1191,6 +1188,5 @@ uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *conn
     } else {
         connection->next_stream_id += 2;
     }
-
     return next_id;
 }

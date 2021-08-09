@@ -134,8 +134,8 @@ struct aws_http_client_bootstrap {
     aws_http_proxy_request_transform_fn *proxy_request_transform;
 
     struct aws_http1_connection_options http1_options;
-    struct aws_http2_connection_options http2_options;
-    struct aws_hash_table *alpn_string_map; /* Owns the hash table */
+    struct aws_http2_connection_options http2_options; /* allocated with bootstrap */
+    struct aws_hash_table *alpn_string_map;            /* allocated with bootstrap */
     struct aws_http_connection *connection;
 };
 

@@ -449,7 +449,7 @@ struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *
  * The aws_string created as the key of the map will be owned by the map.
  */
 AWS_HTTP_API
-struct aws_hash_table *aws_http_alpn_map_new(struct aws_allocator *allocator);
+int aws_http_alpn_map_init(struct aws_allocator *allocator, struct aws_hash_table *map);
 
 /**
  * Checks http proxy options for correctness

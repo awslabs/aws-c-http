@@ -46,7 +46,6 @@ struct tester_options {
 /* Singleton used by tests in this file */
 struct tester {
     struct aws_allocator *alloc;
-    struct aws_logger logger;
     struct aws_event_loop_group *event_loop_group;
     struct aws_host_resolver *host_resolver;
     struct aws_server_bootstrap *server_bootstrap;
@@ -83,7 +82,7 @@ struct tester {
     struct aws_tls_ctx *client_ctx;
     struct aws_tls_connection_options server_tls_connection_options;
     struct aws_tls_connection_options client_tls_connection_options;
-    struct aws_byte_buf *negotiated_protocol;
+    struct aws_byte_buf negotiated_protocol;
 
     /* If we need to wait for some async process*/
     struct aws_mutex wait_lock;
@@ -295,15 +294,6 @@ static int s_tester_init(struct tester *tester, const struct tester_options *opt
     tester->alloc = options->alloc;
 
     aws_http_library_init(options->alloc);
-
-    struct aws_logger_standard_options logger_options = {
-        .level = AWS_LOG_LEVEL_TRACE,
-        .file = stderr,
-    };
-
-    ASSERT_SUCCESS(aws_logger_init_standard(&tester->logger, tester->alloc, &logger_options));
-    aws_logger_set(&tester->logger);
-
     ASSERT_SUCCESS(aws_mutex_init(&tester->wait_lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&tester->wait_cvar));
 
@@ -400,16 +390,13 @@ static int s_tester_clean_up(struct tester *tester) {
         aws_tls_ctx_release(tester->client_ctx);
         aws_tls_ctx_options_clean_up(&tester->client_ctx_options);
     }
-    if (tester->negotiated_protocol) {
-        aws_byte_buf_clean_up(tester->negotiated_protocol);
-    }
+    aws_byte_buf_clean_up(&tester->negotiated_protocol);
     aws_server_bootstrap_release(tester->server_bootstrap);
     aws_client_bootstrap_release(tester->client_bootstrap);
     aws_host_resolver_release(tester->host_resolver);
     aws_event_loop_group_release(tester->event_loop_group);
 
     aws_http_library_clean_up();
-    aws_logger_clean_up(&tester->logger);
     aws_mutex_clean_up(&tester->wait_lock);
 
     return AWS_OP_SUCCESS;
@@ -563,7 +550,7 @@ static void s_on_tester_negotiation_result(
     (void)err_code;
     struct tester *tester = (struct tester *)user_data;
     struct aws_byte_buf src = aws_tls_handler_protocol(handler);
-    aws_byte_buf_init_copy(tester->negotiated_protocol, tester->alloc, &src);
+    aws_byte_buf_init_copy(&tester->negotiated_protocol, tester->alloc, &src);
 }
 
 static int s_test_connection_customized_alpn(struct aws_allocator *allocator, void *ctx) {
@@ -591,18 +578,20 @@ static int s_test_connection_customized_alpn(struct aws_allocator *allocator, vo
         &tester.client_tls_connection_options, s_on_tester_negotiation_result, NULL, NULL, &tester);
     client_options.tls_options = &tester.client_tls_connection_options;
     /* create the alpn map */
-    struct aws_hash_table *alpn_map = aws_http_alpn_map_new(allocator);
+    struct aws_hash_table alpn_map;
+    AWS_ZERO_STRUCT(alpn_map);
+    ASSERT_SUCCESS(aws_http_alpn_map_init(allocator, &alpn_map));
     /* We don't need to clean up the string as the map will own the string */
     struct aws_string *alpn_string = aws_string_new_from_c_str(allocator, customized_alpn_string);
-    ASSERT_SUCCESS(aws_hash_table_put(alpn_map, alpn_string, (void *)expected_version, NULL));
-    client_options.alpn_string_map = alpn_map;
+    ASSERT_SUCCESS(aws_hash_table_put(&alpn_map, alpn_string, (void *)expected_version, NULL));
+    client_options.alpn_string_map = &alpn_map;
     tester.client_options = client_options;
 
     tester.server_connection_num = 0;
     tester.client_connection_num = 0;
     ASSERT_SUCCESS(aws_http_client_connect(&tester.client_options));
     /* We should be safe to free the map */
-    aws_hash_table_clean_up(alpn_map);
+    aws_hash_table_clean_up(&alpn_map);
 
     /* Wait for server & client connections to finish setup */
     tester.wait_client_connection_num = 1;
@@ -612,7 +601,7 @@ static int s_test_connection_customized_alpn(struct aws_allocator *allocator, vo
 #ifndef __APPLE__ /* Server side ALPN doesn't work for MacOS */
     /* Assert that we have the negotiated protocol and the expected version */
     ASSERT_INT_EQUALS(tester.connection_version, expected_version);
-    ASSERT_TRUE(aws_byte_buf_eq_c_str(tester.negotiated_protocol, customized_alpn_string));
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&tester.negotiated_protocol, customized_alpn_string));
 #endif
     /* clean up */
     release_all_client_connections(&tester);
@@ -650,26 +639,28 @@ static int s_test_connection_customized_alpn_error_with_unknow_return_string(
         &tester.client_tls_connection_options, s_on_tester_negotiation_result, NULL, NULL, &tester);
     client_options.tls_options = &tester.client_tls_connection_options;
     /* create the alpn map */
-    struct aws_hash_table *alpn_map = aws_http_alpn_map_new(allocator);
+    struct aws_hash_table alpn_map;
+    AWS_ZERO_STRUCT(alpn_map);
+    ASSERT_SUCCESS(aws_http_alpn_map_init(allocator, &alpn_map));
     /* put an empty ALPN map, you will not found the returned string, and should error out when trying to connect*/
-    client_options.alpn_string_map = alpn_map;
+    client_options.alpn_string_map = &alpn_map;
     tester.client_options = client_options;
 
     tester.server_connection_num = 0;
     tester.client_connection_num = 0;
     ASSERT_SUCCESS(aws_http_client_connect(&tester.client_options));
     /* We should be safe to free the map */
-    aws_hash_table_clean_up(alpn_map);
+    aws_hash_table_clean_up(&alpn_map);
 
     /* Wait for server & client connections to finish setup */
     tester.wait_client_connection_num = 1;
     tester.wait_server_connection_num = 1;
-    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_setup_pred));
+    ASSERT_FAILS(s_tester_wait(&tester, s_tester_connection_setup_pred));
 
 #ifndef __APPLE__ /* Server side ALPN doesn't work for MacOS */
     /* Assert that we have the negotiated protocol and error returned from callback */
-    ASSERT_TRUE(aws_byte_buf_eq_c_str(tester.negotiated_protocol, customized_alpn_string));
-    ASSERT_INT_EQUALS(tester.client_wait_result, AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(&tester.negotiated_protocol, customized_alpn_string));
+    ASSERT_INT_EQUALS(aws_last_error(), AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
 #endif
     /* clean up */
     release_all_client_connections(&tester);
