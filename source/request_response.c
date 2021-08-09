@@ -44,6 +44,24 @@ struct aws_http_headers {
     struct aws_atomic_var refcount;
 };
 
+struct aws_pesudo_headers {
+    struct aws_allocator *alloc;
+    union {
+        struct aws_pesudo_headers_request_data {
+            struct aws_string *method;
+            struct aws_string *scheme;
+            struct aws_string *authority;
+            struct aws_string *path;
+        } request;
+        struct aws_pesudo_headers_response_data {
+            struct aws_string *status;
+        } response;
+    } subclass_data;
+
+    struct aws_pesudo_headers_request_data *request_data;
+    struct aws_pesudo_headers_response_data *response_data;
+};
+
 struct aws_http_headers *aws_http_headers_new(struct aws_allocator *allocator) {
     AWS_PRECONDITION(allocator);
 
@@ -321,8 +339,17 @@ struct aws_http_message {
     /* Data specific to the request or response subclasses */
     union {
         struct aws_http_message_request_data {
-            struct aws_string *method;
-            struct aws_string *path;
+            union {
+                struct aws_h1_message_request_data {
+                    struct aws_string *method;
+                    struct aws_string *path;
+                } h1_request;
+                struct aws_h2_message_request_data {
+                    struct aws_pesudo_headers *pesudo_headers;
+                } h2_request;
+            };
+            struct aws_h1_message_request_data *h1_data;
+            struct aws_h2_message_request_data *h2_data;
         } request;
         struct aws_http_message_response_data {
             int status;
