@@ -569,7 +569,7 @@ int aws_http2_connection_get_received_goaway(
  * @param increment_size The size to increment for the connection's flow control window
  */
 AWS_HTTP_API
-int aws_http2_connection_update_window(struct aws_http_connection *http2_connection, uint32_t increment_size);
+void aws_http2_connection_update_window(struct aws_http_connection *http2_connection, uint32_t increment_size);
 
 AWS_EXTERN_C_END
 

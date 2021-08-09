@@ -56,7 +56,7 @@ static struct aws_http_stream *s_connection_make_request(
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
-static int s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size);
+static void s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size);
 static int s_connection_change_settings(
     struct aws_http_connection *connection_base,
     const struct aws_http2_setting *settings_array,
@@ -2152,17 +2152,15 @@ static bool s_connection_new_requests_allowed(const struct aws_http_connection *
     return new_stream_error_code == 0;
 }
 
-static int s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size) {
+static void s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size) {
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     if (!increment_size) {
         /* Silently do nothing. */
-        return AWS_OP_SUCCESS;
     }
     if (!connection_base->manual_window_management) {
         /* auto-mode, manual update window is not supported, silently do nothing with warning log. */
         CONNECTION_LOG(
             DEBUG, connection, "Manual window management is off, update window operations are not supported.");
-        return AWS_OP_SUCCESS;
     }
     struct aws_h2_frame *connection_window_update_frame =
         aws_h2_frame_new_window_update(connection->base.alloc, 0, increment_size);
@@ -2172,7 +2170,7 @@ static int s_connection_update_window(struct aws_http_connection *connection_bas
             connection,
             "Failed to create WINDOW_UPDATE frame on connection, error %s",
             aws_error_name(aws_last_error()));
-        return AWS_OP_ERR;
+        /* OOM should result in a crash. And overflow is the only other failure reason here */
     }
 
     int err = 0;
@@ -2215,7 +2213,7 @@ static int s_connection_update_window(struct aws_http_connection *connection_bas
             ", which will cause the flow-control window to exceed the maximum",
             increment_size);
         aws_h2_frame_destroy(connection_window_update_frame);
-        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
     }
     return AWS_OP_SUCCESS;
 }
