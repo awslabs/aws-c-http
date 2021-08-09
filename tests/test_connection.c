@@ -545,20 +545,8 @@ static int s_test_connection_h2_prior_knowledge_not_work_with_tls(struct aws_all
 
     tester.server_connection_num = 0;
     tester.client_connection_num = 0;
-    ASSERT_SUCCESS(aws_http_client_connect(&tester.client_options));
-
-    /* Wait for server & client connections to finish setup */
-    tester.wait_client_connection_num = 1;
-    tester.wait_server_connection_num = 1;
-    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_setup_pred));
-
-    /* Assert that we made an http1.1 connection as TLS is set */
-    ASSERT_INT_EQUALS(tester.connection_version, AWS_HTTP_VERSION_1_1);
-
-    /* clean up */
-    release_all_client_connections(&tester);
-    release_all_server_connections(&tester);
-    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
+    /* prior knowledge only works with cleartext TCP */
+    ASSERT_FAILS(aws_http_client_connect(&tester.client_options));
 
     ASSERT_SUCCESS(s_tester_clean_up(&tester));
     return AWS_OP_SUCCESS;
