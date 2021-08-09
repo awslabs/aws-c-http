@@ -352,7 +352,16 @@ struct aws_http_message {
             struct aws_h2_message_request_data *h2_data;
         } request;
         struct aws_http_message_response_data {
-            int status;
+            union {
+                struct aws_h1_message_response_data {
+                    int status;
+                } h1_response;
+                struct aws_h2_message_response_data {
+                    struct aws_pesudo_headers *pesudo_headers;
+                } h2_response;
+            };
+            struct aws_h1_message_response_data *h1_data;
+            struct aws_h2_message_response_data *h2_data;
         } response;
     } subclass_data;
 
