@@ -87,7 +87,6 @@ typedef void(aws_http2_on_ping_complete_fn)(
  *      the callback. Make a deep copy if you wish to keep it longer.)
  * @param user_data User-data passed to the callback.
  */
-
 typedef void(aws_http2_on_goaway_received_fn)(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
@@ -300,6 +299,16 @@ struct aws_http_client_connection_options {
      * See `aws_http_on_client_connection_shutdown_fn`.
      */
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
+
+    /**
+     * Optional.
+     * When true, use prior knowledge to set up an HTTP/2 connection on a cleartext
+     * connection.
+     * When TLS is set and this is true, the connection will failed to be established,
+     * as prior knowledge only works for cleartext TLS.
+     * Refer to RFC7540 3.4
+     */
+    bool prior_knowledge_http2;
 
     /**
      * Options specific to HTTP/1.x connections.
