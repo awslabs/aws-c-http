@@ -1123,6 +1123,10 @@ error:
 
 int aws_http_client_connect(const struct aws_http_client_connection_options *options) {
     aws_http_fatal_assert_library_initialized();
+    if (options->prior_knowledge_http2 && options->tls_options) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: HTTP/2 prior knowledge only works with cleartext TCP.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
 
     if (options->proxy_options != NULL) {
         return aws_http_client_connect_via_proxy(options);
