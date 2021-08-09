@@ -668,7 +668,7 @@ static int s_test_connection_customized_alpn_error_with_unknow_return_string(
 
 #ifndef __APPLE__ /* Server side ALPN doesn't work for MacOS */
     /* Assert that we have the negotiated protocol and error returned from callback */
-    ASSERT_INT_EQUALS(tester.connection_version, expected_version);
+    ASSERT_TRUE(aws_byte_buf_eq_c_str(tester.negotiated_protocol, customized_alpn_string));
     ASSERT_INT_EQUALS(tester.client_wait_result, AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
 #endif
     /* clean up */
