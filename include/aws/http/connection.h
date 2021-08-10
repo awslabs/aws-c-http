@@ -562,14 +562,15 @@ int aws_http2_connection_get_received_goaway(
  *
  * If you are not connected, this call will have no effect.
  *
- * Fails when the input is invalid. The limit of the Maximum Size is 2**31 - 1. If the increment size cause the
- * connection flow window exceeds the Maximun size, this call will fail.
+ * Fails when the connection is not http2 connection.
+ * The limit of the Maximum Size is 2**31 - 1. If the increment size cause the connection flow window exceeds the
+ * Maximun size, this call will result in the connection lost.
  *
  * @param http2_connection HTTP/2 connection.
  * @param increment_size The size to increment for the connection's flow control window
  */
 AWS_HTTP_API
-void aws_http2_connection_update_window(struct aws_http_connection *http2_connection, uint32_t increment_size);
+int aws_http2_connection_update_window(struct aws_http_connection *http2_connection, uint32_t increment_size);
 
 AWS_EXTERN_C_END
 

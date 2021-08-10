@@ -3715,6 +3715,33 @@ TEST_CASE(h2_client_manual_window_management_user_send_conn_window_update) {
     return s_tester_clean_up();
 }
 
+TEST_CASE(h2_client_manual_window_management_user_send_connection_window_update_overflow) {
+
+    ASSERT_SUCCESS(s_manual_window_management_tester_init(allocator, ctx));
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* update the connection window to cause an overflow */
+    ASSERT_SUCCESS(aws_http2_connection_update_window(s_tester.connection, INT32_MAX));
+    ASSERT_SUCCESS(aws_http2_connection_update_window(s_tester.connection, INT32_MAX));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    /* validate that connection closed with error */
+    ASSERT_FALSE(aws_http_connection_is_open(s_tester.connection));
+    /* client should send GOAWAY */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    struct h2_decoded_frame *goaway =
+        h2_decode_tester_find_frame(&s_tester.peer.decode, AWS_H2_FRAME_T_GOAWAY, 0, NULL);
+    ASSERT_NOT_NULL(goaway);
+    ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_INTERNAL_ERROR, goaway->error_code);
+    ASSERT_UINT_EQUALS(0, goaway->goaway_last_stream_id);
+
+    /* clean up */
+    return s_tester_clean_up();
+}
+
 struct ping_user_data {
     uint64_t rtt_ns;
     int error_code;
