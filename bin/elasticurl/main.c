@@ -398,8 +398,10 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
 
     aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str(app_ctx->verb));
     aws_http_message_set_request_path(request, app_ctx->uri.path_and_query);
-    struct aws_http_header accept_header = {.name = aws_byte_cursor_from_c_str("accept"),
-                                            .value = aws_byte_cursor_from_c_str("*/*")};
+    struct aws_http_header accept_header = {
+        .name = aws_byte_cursor_from_c_str("accept"),
+        .value = aws_byte_cursor_from_c_str("*/*"),
+    };
     aws_http_message_add_header(request, accept_header);
 
     struct aws_http_header host_header = {.name = aws_byte_cursor_from_c_str("host"), .value = app_ctx->uri.host_name};
@@ -421,8 +423,10 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
             char content_length[64];
             AWS_ZERO_ARRAY(content_length);
             sprintf(content_length, "%" PRIi64, data_len);
-            struct aws_http_header content_length_header = {.name = aws_byte_cursor_from_c_str("content-length"),
-                                                            .value = aws_byte_cursor_from_c_str(content_length)};
+            struct aws_http_header content_length_header = {
+                .name = aws_byte_cursor_from_c_str("content-length"),
+                .value = aws_byte_cursor_from_c_str(content_length),
+            };
             aws_http_message_add_header(request, content_length_header);
             aws_http_message_set_body_stream(request, app_ctx->input_body);
         }
@@ -665,10 +669,6 @@ int main(int argc, char **argv) {
             port = app_ctx.uri.port;
         }
     } else {
-        if (app_ctx.required_http_version == AWS_HTTP_VERSION_2) {
-            fprintf(stderr, "Error, we don't support h2c, please use TLS for HTTP/2 connection");
-            exit(1);
-        }
         port = 80;
         if (app_ctx.uri.port) {
             port = app_ctx.uri.port;
@@ -711,6 +711,10 @@ int main(int argc, char **argv) {
         .on_setup = s_on_client_connection_setup,
         .on_shutdown = s_on_client_connection_shutdown,
     };
+    if (app_ctx.required_http_version == AWS_HTTP_VERSION_2 && !use_tls) {
+        /* Use prior knowledge to connect */
+        http_client_options.prior_knowledge_http2 = true;
+    }
     aws_http_client_connect(&http_client_options);
     aws_mutex_lock(&app_ctx.mutex);
     aws_condition_variable_wait_pred(&app_ctx.c_var, &app_ctx.mutex, s_completion_predicate, &app_ctx);
