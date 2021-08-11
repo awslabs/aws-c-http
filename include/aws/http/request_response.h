@@ -80,6 +80,14 @@ struct aws_http_header {
 struct aws_http_headers;
 
 /**
+ * Pseudo-header fields are not HTTP header fields.
+ * HTTP/2 uses the pseudo-header fields to convey the start-line in HTTP/1.x.
+ *
+ * All strings are copied and stored within this datastructure.
+ */
+struct aws_pesudo_headers;
+
+/**
  * Header block type.
  * INFORMATIONAL: Header block for 1xx informational (interim) responses.
  * MAIN: Main header block sent with request or response.
@@ -497,7 +505,114 @@ AWS_HTTP_API
 void aws_http_headers_clear(struct aws_http_headers *headers);
 
 /**
- * Create a new request message.
+ * Create a new request pesudo headers.
+ * The headers are empty, all fields are set separately.
+ *
+ * The caller has a hold on the object and must call aws_pesudo_headers_release() when they are done with it.
+ */
+AWS_HTTP_API
+struct aws_pesudo_headers *aws_pesudo_headers_new_request(struct aws_allocator *allocator);
+
+/**
+ * Create a new response pesudo headers.
+ * The headers are empty, all fields are set separately.
+ *
+ * The caller has a hold on the object and must call aws_pesudo_headers_release() when they are done with it.
+ */
+AWS_HTTP_API
+struct aws_pesudo_headers *aws_pesudo_headers_new_response(struct aws_allocator *allocator);
+
+/**
+ * Acquire a hold on the object, preventing it from being deleted until
+ * aws_pesudo_headers_release() is called by all those with a hold on it.
+ */
+AWS_HTTP_API
+void aws_pesudo_headers_acquire(struct aws_pesudo_headers *pesudo_headers);
+
+/**
+ * Release a hold on the object.
+ * The object is deleted when all holds on it are released.
+ */
+AWS_HTTP_API
+void aws_pesudo_headers_release(struct aws_pesudo_headers *pesudo_headers);
+
+/*
+ * Get the `:method` value (request pesudo headers only).
+ */
+AWS_HTTP_API
+int aws_pesudo_headers_get_request_method(
+    const struct aws_pesudo_headers *pesudo_headers,
+    struct aws_byte_cursor *out_method);
+
+/**
+ * Set `:method` (request pesudo headers only).
+ * The pesudo headers makes its own copy of the underlying string.
+ */
+AWS_HTTP_API
+int aws_pesudo_headers_set_request_method(struct aws_pesudo_headers *pesudo_headers, struct aws_byte_cursor method);
+
+/*
+ * Get the `:scheme` value (request pesudo headers only).
+ */
+AWS_HTTP_API
+int aws_pesudo_headers_get_request_scheme(
+    const struct aws_pesudo_headers *pesudo_headers,
+    struct aws_byte_cursor *out_scheme);
+
+/**
+ * Set `:scheme` (request pesudo headers only).
+ * The pesudo headers makes its own copy of the underlying string.
+ */
+AWS_HTTP_API
+int aws_pesudo_headers_set_request_scheme(struct aws_pesudo_headers *pesudo_headers, struct aws_byte_cursor scheme);
+
+/*
+ * Get the `:authority` value (request pesudo headers only).
+ */
+AWS_HTTP_API
+int aws_pesudo_headers_get_request_authority(
+    const struct aws_pesudo_headers *pesudo_headers,
+    struct aws_byte_cursor *out_authority);
+
+/**
+ * Set `:authority` (request pesudo headers only).
+ * The pesudo headers makes its own copy of the underlying string.
+ */
+AWS_HTTP_API
+int aws_pesudo_headers_set_request_authority(
+    struct aws_pesudo_headers *pesudo_headers,
+    struct aws_byte_cursor authority);
+
+/*
+ * Get the `:path` value (request pesudo headers only).
+ */
+AWS_HTTP_API
+int aws_pesudo_headers_get_request_path(
+    const struct aws_pesudo_headers *pesudo_headers,
+    struct aws_byte_cursor *out_path);
+
+/**
+ * Set `:path` (request pesudo headers only).
+ * The pesudo headers makes its own copy of the underlying string.
+ */
+AWS_HTTP_API
+int aws_pesudo_headers_set_request_path(struct aws_pesudo_headers *pesudo_headers, struct aws_byte_cursor path);
+
+/**
+ * Get `:status` (response pesudo headers only).
+ * If no status is set, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE is raised.
+ */
+AWS_HTTP_API
+int aws_pesudo_headers_get_response_status(const struct aws_pesudo_headers *pesudo_headers, int *out_status_code);
+
+/**
+ * Set `:status` (response pesudo headers only).
+ */
+AWS_HTTP_API
+int aws_pesudo_headers_set_response_status(struct aws_pesudo_headers *pesudo_headers, int status_code);
+
+/**
+ * Create a new request message. HTTP/1.1 request
  * The message is blank, all properties (method, path, etc) must be set individually.
  *
  * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
@@ -522,6 +637,15 @@ struct aws_http_message *aws_http_message_new_request_with_headers(
  */
 AWS_HTTP_API
 struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator);
+
+AWS_HTTP_API
+struct aws_http_message *aws_http2_message_new_request(struct aws_allocator *allocator);
+AWS_HTTP_API
+struct aws_http_message *aws_http2_message_new_request_with_pesudo_headers(
+    struct aws_allocator *allocator,
+    struct aws_pesudo_headers *pesudo_headers);
+AWS_HTTP_API
+struct aws_http_message *aws_http2_message_new_response(struct aws_allocator *allocator);
 
 /**
  * Acquire a hold on the object, preventing it from being deleted until

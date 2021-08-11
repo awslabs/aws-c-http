@@ -5,6 +5,7 @@
 
 #include <aws/common/array_list.h>
 #include <aws/common/mutex.h>
+#include <aws/common/ref_count.h>
 #include <aws/common/string.h>
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/request_response_impl.h>
@@ -44,8 +45,12 @@ struct aws_http_headers {
     struct aws_atomic_var refcount;
 };
 
+/**
+ * Refcounted to support multiple messages use the same pesudo headers.
+ */
 struct aws_pesudo_headers {
     struct aws_allocator *alloc;
+    struct aws_ref_count ref_count;
     union {
         struct aws_pesudo_headers_request_data {
             struct aws_string *method;
