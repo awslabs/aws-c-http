@@ -510,9 +510,6 @@ AWS_TEST_CASE(connection_h2_prior_knowledge, s_test_connection_h2_prior_knowledg
 
 static int s_test_connection_h2_prior_knowledge_not_work_with_tls(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
-#ifdef __APPLE__ /* Something is wrong with APPLE */
-    return AWS_OP_SUCCESS;
-#endif
     struct tester_options options = {
         .alloc = allocator,
         .no_connection = true,
@@ -555,9 +552,6 @@ static void s_on_tester_negotiation_result(
 
 static int s_test_connection_customized_alpn(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
-#ifdef __APPLE__ /* Something is wrong with APPLE */
-    return AWS_OP_SUCCESS;
-#endif
     char customized_alpn_string[] = "myh2";
     enum aws_http_version expected_version = AWS_HTTP_VERSION_2;
     struct tester_options options = {
@@ -617,9 +611,6 @@ static int s_test_connection_customized_alpn_error_with_unknow_return_string(
     struct aws_allocator *allocator,
     void *ctx) {
     (void)ctx;
-#ifdef __APPLE__ /* Something is wrong with APPLE */
-    return AWS_OP_SUCCESS;
-#endif
     char customized_alpn_string[] = "myh2";
     struct tester_options options = {
         .alloc = allocator,
