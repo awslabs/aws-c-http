@@ -85,7 +85,7 @@ struct aws_http_headers;
  *
  * All strings are copied and stored within this datastructure.
  */
-struct aws_pesudo_headers;
+struct aws_pseudo_headers;
 
 /**
  * Header block type.
@@ -505,111 +505,111 @@ AWS_HTTP_API
 void aws_http_headers_clear(struct aws_http_headers *headers);
 
 /**
- * Create a new request pesudo headers.
+ * Create a new request pseudo headers.
  * The headers are empty, all fields are set separately.
  *
- * The caller has a hold on the object and must call aws_pesudo_headers_release() when they are done with it.
+ * The caller has a hold on the object and must call aws_pseudo_headers_release() when they are done with it.
  */
 AWS_HTTP_API
-struct aws_pesudo_headers *aws_pesudo_headers_new_request(struct aws_allocator *allocator);
+struct aws_pseudo_headers *aws_pseudo_headers_new_request(struct aws_allocator *allocator);
 
 /**
- * Create a new response pesudo headers.
+ * Create a new response pseudo headers.
  * The headers are empty, all fields are set separately.
  *
- * The caller has a hold on the object and must call aws_pesudo_headers_release() when they are done with it.
+ * The caller has a hold on the object and must call aws_pseudo_headers_release() when they are done with it.
  */
 AWS_HTTP_API
-struct aws_pesudo_headers *aws_pesudo_headers_new_response(struct aws_allocator *allocator);
+struct aws_pseudo_headers *aws_pseudo_headers_new_response(struct aws_allocator *allocator);
 
 /**
  * Acquire a hold on the object, preventing it from being deleted until
- * aws_pesudo_headers_release() is called by all those with a hold on it.
+ * aws_pseudo_headers_release() is called by all those with a hold on it.
  */
 AWS_HTTP_API
-void aws_pesudo_headers_acquire(struct aws_pesudo_headers *pesudo_headers);
+void aws_pseudo_headers_acquire(struct aws_pseudo_headers *pseudo_headers);
 
 /**
  * Release a hold on the object.
  * The object is deleted when all holds on it are released.
  */
 AWS_HTTP_API
-void aws_pesudo_headers_release(struct aws_pesudo_headers *pesudo_headers);
+void aws_pseudo_headers_release(struct aws_pseudo_headers *pseudo_headers);
 
 /*
- * Get the `:method` value (request pesudo headers only).
+ * Get the `:method` value (request pseudo headers only).
  */
 AWS_HTTP_API
-int aws_pesudo_headers_get_request_method(
-    const struct aws_pesudo_headers *pesudo_headers,
+int aws_pseudo_headers_get_request_method(
+    const struct aws_pseudo_headers *pseudo_headers,
     struct aws_byte_cursor *out_method);
 
 /**
- * Set `:method` (request pesudo headers only).
- * The pesudo headers makes its own copy of the underlying string.
+ * Set `:method` (request pseudo headers only).
+ * The pseudo headers makes its own copy of the underlying string.
  */
 AWS_HTTP_API
-int aws_pesudo_headers_set_request_method(struct aws_pesudo_headers *pesudo_headers, struct aws_byte_cursor method);
+int aws_pseudo_headers_set_request_method(struct aws_pseudo_headers *pseudo_headers, struct aws_byte_cursor method);
 
 /*
- * Get the `:scheme` value (request pesudo headers only).
+ * Get the `:scheme` value (request pseudo headers only).
  */
 AWS_HTTP_API
-int aws_pesudo_headers_get_request_scheme(
-    const struct aws_pesudo_headers *pesudo_headers,
+int aws_pseudo_headers_get_request_scheme(
+    const struct aws_pseudo_headers *pseudo_headers,
     struct aws_byte_cursor *out_scheme);
 
 /**
- * Set `:scheme` (request pesudo headers only).
- * The pesudo headers makes its own copy of the underlying string.
+ * Set `:scheme` (request pseudo headers only).
+ * The pseudo headers makes its own copy of the underlying string.
  */
 AWS_HTTP_API
-int aws_pesudo_headers_set_request_scheme(struct aws_pesudo_headers *pesudo_headers, struct aws_byte_cursor scheme);
+int aws_pseudo_headers_set_request_scheme(struct aws_pseudo_headers *pseudo_headers, struct aws_byte_cursor scheme);
 
 /*
- * Get the `:authority` value (request pesudo headers only).
+ * Get the `:authority` value (request pseudo headers only).
  */
 AWS_HTTP_API
-int aws_pesudo_headers_get_request_authority(
-    const struct aws_pesudo_headers *pesudo_headers,
+int aws_pseudo_headers_get_request_authority(
+    const struct aws_pseudo_headers *pseudo_headers,
     struct aws_byte_cursor *out_authority);
 
 /**
- * Set `:authority` (request pesudo headers only).
- * The pesudo headers makes its own copy of the underlying string.
+ * Set `:authority` (request pseudo headers only).
+ * The pseudo headers makes its own copy of the underlying string.
  */
 AWS_HTTP_API
-int aws_pesudo_headers_set_request_authority(
-    struct aws_pesudo_headers *pesudo_headers,
+int aws_pseudo_headers_set_request_authority(
+    struct aws_pseudo_headers *pseudo_headers,
     struct aws_byte_cursor authority);
 
 /*
- * Get the `:path` value (request pesudo headers only).
+ * Get the `:path` value (request pseudo headers only).
  */
 AWS_HTTP_API
-int aws_pesudo_headers_get_request_path(
-    const struct aws_pesudo_headers *pesudo_headers,
+int aws_pseudo_headers_get_request_path(
+    const struct aws_pseudo_headers *pseudo_headers,
     struct aws_byte_cursor *out_path);
 
 /**
- * Set `:path` (request pesudo headers only).
- * The pesudo headers makes its own copy of the underlying string.
+ * Set `:path` (request pseudo headers only).
+ * The pseudo headers makes its own copy of the underlying string.
  */
 AWS_HTTP_API
-int aws_pesudo_headers_set_request_path(struct aws_pesudo_headers *pesudo_headers, struct aws_byte_cursor path);
+int aws_pseudo_headers_set_request_path(struct aws_pseudo_headers *pseudo_headers, struct aws_byte_cursor path);
 
 /**
- * Get `:status` (response pesudo headers only).
+ * Get `:status` (response pseudo headers only).
  * If no status is set, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE is raised.
  */
 AWS_HTTP_API
-int aws_pesudo_headers_get_response_status(const struct aws_pesudo_headers *pesudo_headers, int *out_status_code);
+int aws_pseudo_headers_get_response_status(const struct aws_pseudo_headers *pseudo_headers, int *out_status_code);
 
 /**
- * Set `:status` (response pesudo headers only).
+ * Set `:status` (response pseudo headers only).
  */
 AWS_HTTP_API
-int aws_pesudo_headers_set_response_status(struct aws_pesudo_headers *pesudo_headers, int status_code);
+int aws_pseudo_headers_set_response_status(struct aws_pseudo_headers *pseudo_headers, int status_code);
 
 /**
  * Create a new request message. HTTP/1.1 request
@@ -638,14 +638,38 @@ struct aws_http_message *aws_http_message_new_request_with_headers(
 AWS_HTTP_API
 struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator);
 
+/**
+ * xxx
+ */
 AWS_HTTP_API
 struct aws_http_message *aws_http2_message_new_request(struct aws_allocator *allocator);
+/**
+ * xxx
+ */
 AWS_HTTP_API
-struct aws_http_message *aws_http2_message_new_request_with_pesudo_headers(
+struct aws_http_message *aws_http2_message_new_request_with_pseudo_headers(
     struct aws_allocator *allocator,
-    struct aws_pesudo_headers *pesudo_headers);
+    struct aws_pseudo_headers *pseudo_headers);
+/**
+ * xxx
+ */
 AWS_HTTP_API
 struct aws_http_message *aws_http2_message_new_response(struct aws_allocator *allocator);
+
+/**
+ * Transform an HTTP/2 message to HTTP/1.1 message.
+ * Pesudo headers will be transformed to message start-line
+ * :authority will be transformed to host header.
+ */
+AWS_HTTP_API
+int aws_http2_message_to_http_message(struct aws_http_message *h2_message);
+/**
+ * Transform an HTTP/1.1 message to HTTP/2 message.
+ * Pesudo headers will be created from the context.
+ * (Maybe more, connection-specific header will be removed)
+ */
+AWS_HTTP_API
+int aws_http_message_to_http2_message(struct aws_http_message *h2_message);
 
 /**
  * Acquire a hold on the object, preventing it from being deleted until
