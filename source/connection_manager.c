@@ -16,8 +16,10 @@
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
+#include <aws/io/uri.h>
 
 #include <aws/common/clock.h>
+#include <aws/common/environment.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/linked_list.h>
 #include <aws/common/mutex.h>
@@ -26,6 +28,9 @@
 #if _MSC_VER
 #    pragma warning(disable : 4232) /* function pointer to dll symbol */
 #endif
+
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var, "HTTP_PROXY");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var, "HTTPS_PROXY");
 
 /*
  * Established connections not currently in use are tracked via this structure.
@@ -756,6 +761,42 @@ on_error:
     manager->cull_task = NULL;
 }
 
+static int s_proxy_uri_init_from_env_variable(struct aws_allocator *allocator, struct aws_uri *proxy_uri) {
+    /* HTTPS proxy preferred than HTTP proxy */
+    struct aws_string *proxy_uri_string = NULL;
+    bool secure = false;
+    if (aws_get_environment_value(allocator, s_https_proxy_env_var, &proxy_uri_string) == AWS_OP_SUCCESS &&
+        proxy_uri_string != NULL) {
+        secure = true;
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_CONNECTION_MANAGER, "HTTPS_PROXY environment found: %s", aws_string_c_str(proxy_uri_string));
+    } else if (
+        aws_get_environment_value(allocator, s_http_proxy_env_var, &proxy_uri_string) == AWS_OP_SUCCESS &&
+        proxy_uri_string != NULL) {
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_CONNECTION_MANAGER, "HTTP_PROXY environment found: %s", aws_string_c_str(proxy_uri_string));
+    } else {
+        proxy_uri = NULL;
+        return AWS_OP_SUCCESS;
+    }
+    struct aws_byte_cursor proxy_uri_cursor = aws_byte_cursor_from_string(proxy_uri_string);
+    if (aws_uri_init_parse(proxy_uri, allocator, &proxy_uri_cursor)) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "Could not parse found proxy URI.");
+        aws_string_destroy(proxy_uri_string);
+        return AWS_OP_ERR;
+    }
+    if (aws_byte_cursor_eq_ignore_case(&proxy_uri->scheme, &aws_http_scheme_http) == secure) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "%s set, but wrong scheme used in the proxy URI.",
+            secure ? "HTTPS_PROXY" : "HTTP_PROXY");
+        aws_string_destroy(proxy_uri_string);
+        return AWS_OP_ERR;
+    }
+    aws_string_destroy(proxy_uri_string);
+    return AWS_OP_SUCCESS;
+}
+
 struct aws_http_connection_manager *aws_http_connection_manager_new(
     struct aws_allocator *allocator,
     struct aws_http_connection_manager_options *options) {
@@ -808,9 +849,55 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     }
 
     if (options->proxy_options) {
+        /* if proxy options are set, ignore the environment variable */
         manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
         if (manager->proxy_config == NULL) {
             goto on_error;
+        }
+    } else {
+        struct aws_http_proxy_options *proxy_options = NULL;
+        struct aws_uri *proxy_uri = aws_mem_calloc(allocator, 1, sizeof(struct aws_uri));
+        /* HTTPS proxy preferred than HTTP proxy */
+        if (s_proxy_uri_init_from_env_variable(allocator, proxy_uri)) {
+            /* Envrionment is set but failed to parse it */
+            aws_mem_release(allocator, proxy_uri);
+            goto on_error;
+        }
+        if (proxy_uri) {
+            proxy_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_options));
+            proxy_options->host = proxy_uri->host_name;
+            proxy_options->port = proxy_uri->port;
+            /* Support basic authentication. */
+            if (proxy_uri->password.len) {
+                /* Has no empty password set */
+                struct aws_http_proxy_strategy_basic_auth_options config = {
+                    .proxy_connection_type = AWS_HPCT_HTTP_FORWARD,
+                    .user_name = proxy_uri->user,
+                    .password = proxy_uri->password,
+                };
+                struct aws_http_proxy_strategy *proxy_strategy =
+                    aws_http_proxy_strategy_new_basic_auth(allocator, &config);
+                proxy_options->proxy_strategy = proxy_strategy;
+            }
+
+            if (proxy_options) {
+                options->proxy_options = proxy_options;
+                manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
+                /* config has the deep copy of the needed options, we can clean up resources right after it */
+                options->proxy_options = NULL; /* it's nasty but simple */
+                if (proxy_options->proxy_strategy) {
+                    aws_http_proxy_strategy_release(proxy_options->proxy_strategy);
+                }
+                aws_mem_release(allocator, proxy_options);
+                proxy_options = NULL;
+                if (manager->proxy_config == NULL) {
+                    aws_uri_clean_up(proxy_uri);
+                    aws_mem_release(allocator, proxy_uri);
+                    goto on_error;
+                }
+            }
+            aws_uri_clean_up(proxy_uri);
+            aws_mem_release(allocator, proxy_uri);
         }
     }
 
