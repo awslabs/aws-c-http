@@ -562,6 +562,7 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
             options->proxy_options->host.ptr,
             options->proxy_options->host.len);
         ASSERT_TRUE(options->proxy_options->port == tester->verify_proxy_options->port);
+        // TODO: how to verify the proxy strategy properly?
     }
 
     struct mock_connection *connection = NULL;
