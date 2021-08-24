@@ -812,7 +812,10 @@ static int s_set_proxy_config_from_env_variable(
         proxy_options->port = proxy_uri->port;
         proxy_options->connection_type = options->proxy_env_var_settings.connection_type;
         /* Support basic authentication. */
-        if (proxy_uri->password.len) {
+        if (options->proxy_env_var_settings.proxy_strategy) {
+            proxy_options->proxy_strategy =
+                aws_http_proxy_strategy_acquire(options->proxy_env_var_settings.proxy_strategy);
+        } else if (proxy_uri->password.len) {
             /* Has no empty password set */
             struct aws_http_proxy_strategy_basic_auth_options config = {
                 .proxy_connection_type = proxy_options->connection_type,
@@ -830,7 +833,6 @@ static int s_set_proxy_config_from_env_variable(
             options->proxy_options = proxy_options;
             manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
             /* config has the deep copy of the needed options, we can clean up resources right after it */
-            options->proxy_options = NULL; /* it's nasty but simple */
             aws_http_proxy_strategy_release(proxy_options->proxy_strategy);
             aws_mem_release(allocator, proxy_options);
             proxy_options = NULL;
@@ -899,20 +901,40 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
             goto on_error;
         }
     }
-
-    if (options->proxy_options) {
-        /* if proxy options are set, ignore the environment variable */
-        manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
-        if (manager->proxy_config == NULL) {
-            goto on_error;
-        }
-    } else {
-        if (!options->proxy_env_var_settings.disable_env_var) {
+    struct aws_http_proxy_options *pre_proxy_options = options->proxy_options;
+    switch (options->proxy_env_var_settings.env_var_type) {
+        case AWS_CMPEV_ENABLE:
+        case AWS_CMPEV_DISABLE:
+            if (options->proxy_options) {
+                /* if proxy options are set, ignore the environment variable */
+                manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
+                if (manager->proxy_config == NULL) {
+                    goto on_error;
+                }
+            } else if (options->proxy_env_var_settings.env_var_type == AWS_CMPEV_ENABLE) {
+                if (s_set_proxy_config_from_env_variable(allocator, options, manager)) {
+                    options->proxy_options = pre_proxy_options;
+                    goto on_error;
+                }
+            }
+            break;
+        case AWS_CMPEV_OVER_MANUAL:
             if (s_set_proxy_config_from_env_variable(allocator, options, manager)) {
+                options->proxy_options = pre_proxy_options;
                 goto on_error;
             }
-        }
+            if ((options->proxy_options == pre_proxy_options) && pre_proxy_options) {
+                /* no proxy environment variable found */
+                manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
+                if (manager->proxy_config == NULL) {
+                    goto on_error;
+                }
+            }
+            break;
+        default:
+            break;
     }
+    options->proxy_options = pre_proxy_options;
 
     if (options->monitoring_options) {
         manager->monitoring_options = *options->monitoring_options;

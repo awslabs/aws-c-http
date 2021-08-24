@@ -24,6 +24,22 @@ typedef void(aws_http_connection_manager_on_connection_setup_fn)(
 
 typedef void(aws_http_connection_manager_shutdown_complete_fn)(void *user_data);
 
+enum aws_connection_manager_proxy_env_var_type {
+    /**
+     * Default.
+     * Enable get proxy URL from environment variable, when the manual proxy options of connection manager is not set.
+     */
+    AWS_CMPEV_ENABLE = 0,
+    /**
+     * Disable reading from environment variable for proxy.
+     */
+    AWS_CMPEV_DISABLE,
+    /**
+     * Read from environment variable will override the manual setting of proxy options for connection manager.
+     */
+    AWS_CMPEV_OVER_MANUAL,
+};
+
 /*
  * Connection manager configuration struct.
  *
@@ -48,12 +64,22 @@ struct aws_http_connection_manager_options {
      * Only works when proxy_options is not set. Zero out as default settings.
      */
     struct {
-        bool disable_env_var;
+        enum aws_connection_manager_proxy_env_var_type env_var_type;
         enum aws_http_proxy_connection_type connection_type;
         /*
-         * Optional tls options for proxy. (?)
+         * Optional.
+         * Tls for Local to proxy connection. Used when HTTPS_PROXY is set.
+         * Must be distinct from the the tls_connection_options from aws_http_connection_manager_options
          */
         const struct aws_tls_connection_options *tls_options;
+        /*
+         * Optional.
+         * The strategy to use when use proxy from environment variable.
+         * If set, the strategy will be used for all the proxy connections using envrionment variable.
+         * If not set, and basic authentication included in the URL from environment variable, basic authentication will
+         * be used.
+         */
+        struct aws_http_proxy_strategy *proxy_strategy;
     } proxy_env_var_settings;
 
     /*
