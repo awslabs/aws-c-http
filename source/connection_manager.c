@@ -823,7 +823,7 @@ static int s_set_proxy_config_from_env_variable(
             proxy_options->proxy_strategy = proxy_strategy;
         }
         if (aws_byte_cursor_eq_ignore_case(&proxy_uri->scheme, &aws_http_scheme_https)) {
-            struct aws_tls_connection_options *tls_connection_options;
+            proxy_options->tls_options = options->proxy_env_var_settings.tls_options;
         }
 
         if (proxy_options) {

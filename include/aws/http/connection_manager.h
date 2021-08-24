@@ -7,6 +7,7 @@
  */
 
 #include <aws/http/http.h>
+#include <aws/http/proxy.h>
 
 #include <aws/common/byte_buf.h>
 
@@ -52,7 +53,7 @@ struct aws_http_connection_manager_options {
         /*
          * Optional tls options for proxy. (?)
          */
-        const struct aws_tls_connection_options *tls_connection_options;
+        const struct aws_tls_connection_options *tls_options;
     } proxy_env_var_settings;
 
     /*
