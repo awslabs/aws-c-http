@@ -901,7 +901,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
             goto on_error;
         }
     }
-    struct aws_http_proxy_options *pre_proxy_options = options->proxy_options;
+    const struct aws_http_proxy_options *pre_proxy_options = options->proxy_options;
     switch (options->proxy_env_var_settings.env_var_type) {
         case AWS_CMPEV_ENABLE:
         case AWS_CMPEV_DISABLE:
