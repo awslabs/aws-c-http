@@ -768,13 +768,11 @@ static int s_proxy_uri_init_from_env_variable(struct aws_allocator *allocator, s
     if (aws_get_environment_value(allocator, s_https_proxy_env_var, &proxy_uri_string) == AWS_OP_SUCCESS &&
         proxy_uri_string != NULL) {
         secure = true;
-        AWS_LOGF_DEBUG(
-            AWS_LS_HTTP_CONNECTION_MANAGER, "HTTPS_PROXY environment found: %s", aws_string_c_str(proxy_uri_string));
+        AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION_MANAGER, "HTTPS_PROXY environment found");
     } else if (
         aws_get_environment_value(allocator, s_http_proxy_env_var, &proxy_uri_string) == AWS_OP_SUCCESS &&
         proxy_uri_string != NULL) {
-        AWS_LOGF_DEBUG(
-            AWS_LS_HTTP_CONNECTION_MANAGER, "HTTP_PROXY environment found: %s", aws_string_c_str(proxy_uri_string));
+        AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION_MANAGER, "HTTP_PROXY environment found");
     } else {
         proxy_uri = NULL;
         return AWS_OP_SUCCESS;
@@ -795,6 +793,60 @@ static int s_proxy_uri_init_from_env_variable(struct aws_allocator *allocator, s
     }
     aws_string_destroy(proxy_uri_string);
     return AWS_OP_SUCCESS;
+}
+
+static int s_set_proxy_config_from_env_variable(
+    struct aws_allocator *allocator,
+    struct aws_http_connection_manager_options *options,
+    struct aws_http_connection_manager *manager) {
+    struct aws_http_proxy_options *proxy_options = NULL;
+    struct aws_uri *proxy_uri = aws_mem_calloc(allocator, 1, sizeof(struct aws_uri));
+    /* HTTPS proxy preferred than HTTP proxy */
+    if (s_proxy_uri_init_from_env_variable(allocator, proxy_uri)) {
+        /* Envrionment is set but failed to parse it */
+        goto on_error;
+    }
+    if (proxy_uri) {
+        proxy_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_options));
+        proxy_options->host = proxy_uri->host_name;
+        proxy_options->port = proxy_uri->port;
+        proxy_options->connection_type = options->proxy_env_var_settings.connection_type;
+        /* Support basic authentication. */
+        if (proxy_uri->password.len) {
+            /* Has no empty password set */
+            struct aws_http_proxy_strategy_basic_auth_options config = {
+                .proxy_connection_type = proxy_options->connection_type,
+                .user_name = proxy_uri->user,
+                .password = proxy_uri->password,
+            };
+            struct aws_http_proxy_strategy *proxy_strategy = aws_http_proxy_strategy_new_basic_auth(allocator, &config);
+            proxy_options->proxy_strategy = proxy_strategy;
+        }
+        if (aws_byte_cursor_eq_ignore_case(&proxy_uri->scheme, &aws_http_scheme_https)) {
+            struct aws_tls_connection_options *tls_connection_options;
+        }
+
+        if (proxy_options) {
+            options->proxy_options = proxy_options;
+            manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
+            /* config has the deep copy of the needed options, we can clean up resources right after it */
+            options->proxy_options = NULL; /* it's nasty but simple */
+            aws_http_proxy_strategy_release(proxy_options->proxy_strategy);
+            aws_mem_release(allocator, proxy_options);
+            proxy_options = NULL;
+            if (manager->proxy_config == NULL) {
+                goto on_error;
+            }
+        }
+    }
+    aws_uri_clean_up(proxy_uri);
+    aws_mem_release(allocator, proxy_uri);
+    return AWS_OP_SUCCESS;
+on_error:
+    aws_uri_clean_up(proxy_uri);
+    aws_mem_release(allocator, proxy_uri);
+    aws_mem_release(allocator, proxy_uri);
+    return AWS_OP_ERR;
 }
 
 struct aws_http_connection_manager *aws_http_connection_manager_new(
@@ -855,49 +907,10 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
             goto on_error;
         }
     } else {
-        struct aws_http_proxy_options *proxy_options = NULL;
-        struct aws_uri *proxy_uri = aws_mem_calloc(allocator, 1, sizeof(struct aws_uri));
-        /* HTTPS proxy preferred than HTTP proxy */
-        if (s_proxy_uri_init_from_env_variable(allocator, proxy_uri)) {
-            /* Envrionment is set but failed to parse it */
-            aws_mem_release(allocator, proxy_uri);
-            goto on_error;
-        }
-        if (proxy_uri) {
-            proxy_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_options));
-            proxy_options->host = proxy_uri->host_name;
-            proxy_options->port = proxy_uri->port;
-            /* Support basic authentication. */
-            if (proxy_uri->password.len) {
-                /* Has no empty password set */
-                struct aws_http_proxy_strategy_basic_auth_options config = {
-                    .proxy_connection_type = AWS_HPCT_HTTP_FORWARD,
-                    .user_name = proxy_uri->user,
-                    .password = proxy_uri->password,
-                };
-                struct aws_http_proxy_strategy *proxy_strategy =
-                    aws_http_proxy_strategy_new_basic_auth(allocator, &config);
-                proxy_options->proxy_strategy = proxy_strategy;
+        if (!options->proxy_env_var_settings.disable_env_var) {
+            if (s_set_proxy_config_from_env_variable(allocator, options, manager)) {
+                goto on_error;
             }
-
-            if (proxy_options) {
-                options->proxy_options = proxy_options;
-                manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
-                /* config has the deep copy of the needed options, we can clean up resources right after it */
-                options->proxy_options = NULL; /* it's nasty but simple */
-                if (proxy_options->proxy_strategy) {
-                    aws_http_proxy_strategy_release(proxy_options->proxy_strategy);
-                }
-                aws_mem_release(allocator, proxy_options);
-                proxy_options = NULL;
-                if (manager->proxy_config == NULL) {
-                    aws_uri_clean_up(proxy_uri);
-                    aws_mem_release(allocator, proxy_uri);
-                    goto on_error;
-                }
-            }
-            aws_uri_clean_up(proxy_uri);
-            aws_mem_release(allocator, proxy_uri);
         }
     }
 

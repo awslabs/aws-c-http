@@ -37,10 +37,23 @@ struct aws_http_connection_manager_options {
     size_t initial_window_size;
     const struct aws_socket_options *socket_options;
     const struct aws_tls_connection_options *tls_connection_options;
-    const struct aws_http_proxy_options *proxy_options;
     const struct aws_http_connection_monitoring_options *monitoring_options;
     struct aws_byte_cursor host;
     uint16_t port;
+    /* Proxy configuration for http connection */
+    const struct aws_http_proxy_options *proxy_options;
+    /*
+     * Optional configuration for using proxy from environment variable.
+     * Only works when proxy_options is not set. Zero out as default settings.
+     */
+    struct {
+        bool disable_env_var;
+        enum aws_http_proxy_connection_type connection_type;
+        /*
+         * Optional tls options for proxy. (?)
+         */
+        const struct aws_tls_connection_options *tls_connection_options;
+    } proxy_env_var_settings;
 
     /*
      * Maximum number of connections this manager is allowed to contain
