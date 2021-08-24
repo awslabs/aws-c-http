@@ -68,6 +68,7 @@ struct aws_http_connection_manager_options {
         enum aws_http_proxy_connection_type connection_type;
         /*
          * Optional.
+         * Note: If not set, no tls will be used for HTTPS_PROXY.
          * Tls for Local to proxy connection. Used when HTTPS_PROXY is set.
          * Must be distinct from the the tls_connection_options from aws_http_connection_manager_options
          */
