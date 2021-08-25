@@ -461,7 +461,6 @@ add_net_test_case(test_connection_manager_idle_culling_many)
 add_net_test_case(test_connection_manager_idle_culling_mixture)
 add_net_test_case(test_connection_manager_read_http_proxy_ev)
 add_net_test_case(test_connection_manager_read_https_proxy_ev)
-# TODO conner case like both proxy options and env var set, HTTP and HTTPS set. I'll add them when we have an agreement on how we should deal with those case.
 
 # tests where we establish real connections
 add_net_test_case(test_connection_manager_single_connection)
@@ -470,6 +469,8 @@ add_net_test_case(test_connection_manager_acquire_release)
 add_net_test_case(test_connection_manager_close_and_release)
 add_net_test_case(test_connection_manager_acquire_release_mix)
 
+# Integration test that requires proxy envrionment in us-east-1 region.
+add_net_test_case(connection_manager_proxy_integration_forwarding_proxy_no_auth)
 
 add_test_case(h1_server_sanity_check)
 add_test_case(h1_server_receive_1line_request)
