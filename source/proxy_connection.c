@@ -1184,6 +1184,17 @@ struct aws_http_proxy_config *aws_http_proxy_config_new_tunneling_from_proxy_opt
     return s_aws_http_proxy_config_new(allocator, proxy_options, AWS_HPCT_HTTP_TUNNEL);
 }
 
+struct aws_http_proxy_config *aws_http_proxy_config_new_from_proxy_options(
+    struct aws_allocator *allocator,
+    const struct aws_http_proxy_options *proxy_options) {
+    if (proxy_options->connection_type == AWS_HPCT_HTTP_LEGACY) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_PROXY_NEGOTIATION, "LEGACY type is not supported to create proxy config");
+        return NULL;
+    }
+
+    return s_aws_http_proxy_config_new(allocator, proxy_options, proxy_options->connection_type);
+}
+
 struct aws_http_proxy_config *aws_http_proxy_config_new_clone(
     struct aws_allocator *allocator,
     const struct aws_http_proxy_config *proxy_config) {

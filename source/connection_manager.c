@@ -872,8 +872,7 @@ static int s_set_proxy_config_from_env_variable(
                 proxy_options->connection_type = AWS_HPCT_HTTP_FORWARD;
             }
         }
-        options->proxy_options = proxy_options; /* that's weird.///////////////////////////////////////////////////// */
-        manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
+        manager->proxy_config = aws_http_proxy_config_new_from_proxy_options(allocator, proxy_options);
         /* config has the deep copy of the needed options, we can clean up resources right after it */
         aws_tls_connection_options_clean_up(&default_tls_connection_options);
         aws_http_proxy_strategy_release(proxy_options->proxy_strategy);
