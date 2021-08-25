@@ -1045,3 +1045,170 @@ static int s_test_connection_manager_read_https_proxy_ev(struct aws_allocator *a
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_read_https_proxy_ev, s_test_connection_manager_read_https_proxy_ev);
+
+/**
+ * Proxy integration tests. Maybe we should move this to another file. But let's do it later. Someday.
+ * AWS_TEST_HTTP_PROXY_HOST - host address of the proxy to use for tests that make open connections to the proxy
+ * AWS_TEST_HTTP_PROXY_PORT - port to use for tests that make open connections to the proxy
+ * AWS_TEST_HTTPS_PROXY_HOST - host address of the proxy to use for tests that make tls-protected connections to the
+ *  proxy
+ * AWS_TEST_HTTPS_PROXY_PORT - port to use for tests that make tls-protected connections to the proxy
+ * AWS_TEST_HTTP_PROXY_BASIC_HOST - host address of the proxy to use for tests that make open connections to the proxy
+ *  with basic authentication
+ * AWS_TEST_HTTP_PROXY_BASIC_PORT - port to use for tests that make open connections to the proxy with basic
+ *  authentication
+ * AWS_TEST_BASIC_AUTH_USERNAME - username to use when using basic authentication to the proxy
+ * AWS_TEST_BASIC_AUTH_PASSWORD - password to use when using basic authentication to the proxy
+ *
+ * AWS_TEST_TLS_CERT_PATH - file path to certificate used to initialize the tls context of the mqtt connection
+ * AWS_TEST_TLS_KEY_PATH - file path to the key used to initialize the tls context of the mqtt connection
+ * AWS_TEST_TLS_ROOT_CERT_PATH - file path to the root CA used to initialize the tls context of the mqtt connection
+ */
+
+struct proxy_integration_configurations {
+    struct aws_allocator *allocator;
+    struct aws_string *http_proxy_host;
+    struct aws_string *http_proxy_port;
+    struct aws_string *https_proxy_host;
+    struct aws_string *https_proxy_port;
+    struct aws_string *http_proxy_basic_host;
+    struct aws_string *http_proxy_basic_port;
+    struct aws_string *basic_auth_username;
+    struct aws_string *basic_auth_password;
+    struct aws_string *tls_cert_path;
+    struct aws_string *tls_key_path;
+    struct aws_string *tls_root_cert_path;
+};
+
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_host_env_var, "AWS_TEST_HTTP_PROXY_HOST");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_port_env_var, "AWS_TEST_HTTP_PROXY_PORT");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_host_env_var, "AWS_TEST_HTTPS_PROXY_HOST");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_port_env_var, "AWS_TEST_HTTPS_PROXY_PORT");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_basic_host_env_var, "AWS_TEST_HTTP_PROXY_BASIC_HOST");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_basic_port_env_var, "AWS_TEST_HTTP_PROXY_BASIC_PORT");
+AWS_STATIC_STRING_FROM_LITERAL(s_basic_auth_username_env_var, "AWS_TEST_BASIC_AUTH_USERNAME");
+AWS_STATIC_STRING_FROM_LITERAL(s_basic_auth_password_env_var, "AWS_TEST_BASIC_AUTH_PASSWORD");
+AWS_STATIC_STRING_FROM_LITERAL(s_tls_cert_path_env_var, "AWS_TEST_TLS_CERT_PATH");
+AWS_STATIC_STRING_FROM_LITERAL(s_tls_key_path_env_var, "AWS_TEST_TLS_KEY_PATH");
+AWS_STATIC_STRING_FROM_LITERAL(s_tls_root_cert_path_env_var, "AWS_TEST_TLS_ROOT_CERT_PATH");
+
+static int s_get_proxy_environment_configurations(
+    struct aws_allocator *allocator,
+    struct proxy_integration_configurations *configs) {
+    /* get the envrionment configurations, and fail if any one is not set */
+    if (aws_get_environment_value(allocator, s_http_proxy_host_env_var, &configs->http_proxy_host) ||
+        configs->http_proxy_host == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_http_proxy_port_env_var, &configs->http_proxy_port) ||
+        configs->http_proxy_port == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_https_proxy_host_env_var, &configs->https_proxy_host) ||
+        configs->https_proxy_host == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_https_proxy_port_env_var, &configs->https_proxy_port) ||
+        configs->https_proxy_port == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_http_proxy_basic_host_env_var, &configs->http_proxy_basic_host) ||
+        configs->http_proxy_basic_host == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_http_proxy_basic_port_env_var, &configs->http_proxy_basic_port) ||
+        configs->http_proxy_basic_port == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_basic_auth_username_env_var, &configs->basic_auth_username) ||
+        configs->basic_auth_username == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_basic_auth_password_env_var, &configs->basic_auth_password) ||
+        configs->basic_auth_password == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_tls_cert_path_env_var, &configs->tls_cert_path) ||
+        configs->tls_cert_path == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_tls_key_path_env_var, &configs->tls_key_path) ||
+        configs->tls_key_path == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_tls_root_cert_path_env_var, &configs->tls_root_cert_path) ||
+        configs->tls_root_cert_path == NULL) {
+        return AWS_OP_ERR;
+    }
+    return AWS_OP_SUCCESS;
+}
+
+static void s_on_acquire_test_proxy_connection(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data) {
+    (void)error_code;
+    (void)user_data;
+
+    struct cm_tester *tester = &s_tester;
+
+    AWS_FATAL_ASSERT(aws_mutex_lock(&tester->lock) == AWS_OP_SUCCESS);
+
+    if (connection == NULL) {
+        ++tester->connection_errors;
+    } else {
+        aws_array_list_push_back(&tester->connections, &connection);
+    }
+
+    aws_condition_variable_notify_one(&tester->signal);
+
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&tester->lock) == AWS_OP_SUCCESS);
+}
+
+static void s_test_proxy_connections(size_t count) {
+    struct cm_tester *tester = &s_tester;
+
+    for (size_t i = 0; i < count; ++i) {
+        aws_http_connection_manager_acquire_connection(
+            tester->connection_manager, s_on_acquire_test_proxy_connection, tester);
+    }
+}
+
+static int s_proxy_integration_test_helper(
+    struct aws_allocator *allocator,
+    enum aws_http_proxy_connection_type connection_type,
+    enum aws_http_proxy_authentication_type auth_type,
+    bool use_env,
+    bool main_tls) {
+    struct proxy_integration_configurations configs;
+    AWS_ZERO_STRUCT(configs);
+    if (s_get_proxy_environment_configurations(allocator, &configs)) {
+        /* Proxy configurations are not set properly. Skip the test. */
+        return AWS_OP_SUCCESS;
+    }
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+        .use_proxy_env = use_env,
+        .use_tls = main_tls,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+    if ()
+
+        s_acquire_connections(1);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
+
+    ASSERT_SUCCESS(s_release_connections(1, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_test_connection_manager_single_connection(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+}
+AWS_TEST_CASE(test_connection_manager_single_connection, s_test_connection_manager_single_connection);
