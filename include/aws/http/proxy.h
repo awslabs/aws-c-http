@@ -124,8 +124,8 @@ typedef struct aws_string *(aws_http_proxy_negotiation_get_token_sync_fn)(void *
  * context intended to be used as part of a challenge-response flow.
  */
 typedef struct aws_string *(aws_http_proxy_negotiation_get_challenge_token_sync_fn)(
-    void *user_data, 
-    const struct aws_byte_cursor *challenge_context, 
+    void *user_data,
+    const struct aws_byte_cursor *challenge_context,
     int *out_error_code);
 
 /**
@@ -270,7 +270,7 @@ struct aws_http_proxy_negotiator {
 /*********************************************************************************************/
 
 typedef struct aws_http_proxy_negotiator *(aws_http_proxy_strategy_create_negotiator_fn)(
-    struct aws_http_proxy_strategy *proxy_strategy, 
+    struct aws_http_proxy_strategy *proxy_strategy,
     struct aws_allocator *allocator);
 
 struct aws_http_proxy_strategy_vtable {
