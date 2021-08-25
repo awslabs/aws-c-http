@@ -30,7 +30,9 @@
 #endif
 
 AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var, "HTTP_PROXY");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var_low, "http_proxy");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var, "HTTPS_PROXY");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var_low, "https_proxy");
 
 /*
  * Established connections not currently in use are tracked via this structure.
@@ -761,21 +763,35 @@ on_error:
     manager->cull_task = NULL;
 }
 
-static int s_proxy_uri_init_from_env_variable(struct aws_allocator *allocator, struct aws_uri *proxy_uri) {
-    /* HTTPS proxy preferred than HTTP proxy */
+static int s_proxy_uri_init_from_env_variable(
+    struct aws_allocator *allocator,
+    struct aws_http_connection_manager_options *options,
+    struct aws_uri *proxy_uri,
+    bool *found) {
     struct aws_string *proxy_uri_string = NULL;
-    bool secure = false;
-    if (aws_get_environment_value(allocator, s_https_proxy_env_var, &proxy_uri_string) == AWS_OP_SUCCESS &&
-        proxy_uri_string != NULL) {
-        secure = true;
-        AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION_MANAGER, "HTTPS_PROXY environment found");
-    } else if (
-        aws_get_environment_value(allocator, s_http_proxy_env_var, &proxy_uri_string) == AWS_OP_SUCCESS &&
-        proxy_uri_string != NULL) {
-        AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION_MANAGER, "HTTP_PROXY environment found");
+    *found = false;
+    if (options->tls_connection_options) {
+        if (aws_get_environment_value(allocator, s_https_proxy_env_var_low, &proxy_uri_string) == AWS_OP_SUCCESS &&
+            proxy_uri_string != NULL) {
+            AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION_MANAGER, "https_proxy environment found");
+        } else if (
+            aws_get_environment_value(allocator, s_https_proxy_env_var, &proxy_uri_string) == AWS_OP_SUCCESS &&
+            proxy_uri_string != NULL) {
+            AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION_MANAGER, "HTTPS_PROXY environment found");
+        } else {
+            return AWS_OP_SUCCESS;
+        }
     } else {
-        proxy_uri = NULL;
-        return AWS_OP_SUCCESS;
+        if (aws_get_environment_value(allocator, s_http_proxy_env_var_low, &proxy_uri_string) == AWS_OP_SUCCESS &&
+            proxy_uri_string != NULL) {
+            AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION_MANAGER, "http_proxy environment found");
+        } else if (
+            aws_get_environment_value(allocator, s_http_proxy_env_var, &proxy_uri_string) == AWS_OP_SUCCESS &&
+            proxy_uri_string != NULL) {
+            AWS_LOGF_DEBUG(AWS_LS_HTTP_CONNECTION_MANAGER, "HTTP_PROXY environment found");
+        } else {
+            return AWS_OP_SUCCESS;
+        }
     }
     struct aws_byte_cursor proxy_uri_cursor = aws_byte_cursor_from_string(proxy_uri_string);
     if (aws_uri_init_parse(proxy_uri, allocator, &proxy_uri_cursor)) {
@@ -783,14 +799,7 @@ static int s_proxy_uri_init_from_env_variable(struct aws_allocator *allocator, s
         aws_string_destroy(proxy_uri_string);
         return AWS_OP_ERR;
     }
-    if (aws_byte_cursor_eq_ignore_case(&proxy_uri->scheme, &aws_http_scheme_http) == secure) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION_MANAGER,
-            "%s set, but wrong scheme used in the proxy URI.",
-            secure ? "HTTPS_PROXY" : "HTTP_PROXY");
-        aws_string_destroy(proxy_uri_string);
-        return AWS_OP_ERR;
-    }
+    *found = true;
     aws_string_destroy(proxy_uri_string);
     return AWS_OP_SUCCESS;
 }
@@ -799,56 +808,85 @@ static int s_set_proxy_config_from_env_variable(
     struct aws_allocator *allocator,
     struct aws_http_connection_manager_options *options,
     struct aws_http_connection_manager *manager) {
+
     struct aws_http_proxy_options *proxy_options = NULL;
-    struct aws_uri *proxy_uri = aws_mem_calloc(allocator, 1, sizeof(struct aws_uri));
-    /* HTTPS proxy preferred than HTTP proxy */
-    if (s_proxy_uri_init_from_env_variable(allocator, proxy_uri)) {
+    struct aws_uri proxy_uri;
+    AWS_ZERO_STRUCT(proxy_uri);
+    bool found = false;
+    bool success = false;
+    if (s_proxy_uri_init_from_env_variable(allocator, options, &proxy_uri, &found)) {
         /* Envrionment is set but failed to parse it */
-        goto on_error;
+        goto done;
     }
-    if (proxy_uri) {
+    if (found) {
         proxy_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_proxy_options));
-        proxy_options->host = proxy_uri->host_name;
-        proxy_options->port = proxy_uri->port;
-        proxy_options->connection_type = options->proxy_env_var_settings.connection_type;
+        proxy_options->host = proxy_uri.host_name;
+        proxy_options->port = proxy_uri.port;
+        struct aws_tls_connection_options default_tls_connection_options;
+        AWS_ZERO_STRUCT(default_tls_connection_options);
+        if (aws_byte_cursor_eq_ignore_case(&proxy_uri.scheme, &aws_http_scheme_https)) {
+            if (options->proxy_env_var_settings.tls_options) {
+                proxy_options->tls_options = options->proxy_env_var_settings.tls_options;
+            } else {
+                struct aws_tls_ctx *tls_ctx = NULL;
+                struct aws_tls_ctx_options tls_ctx_options;
+                AWS_ZERO_STRUCT(tls_ctx_options);
+                /* create a default tls options */
+                aws_tls_ctx_options_init_default_client(&tls_ctx_options, allocator);
+                aws_tls_ctx_options_clean_up(&tls_ctx_options);
+                tls_ctx = aws_tls_client_ctx_new(allocator, &tls_ctx_options);
+                if (!tls_ctx) {
+                    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "Failed to create default TLS context.");
+                    goto done;
+                }
+                aws_tls_connection_options_init_from_ctx(&default_tls_connection_options, tls_ctx);
+                /* tls options hold a ref to the ctx */
+                aws_tls_ctx_release(tls_ctx);
+                if (aws_tls_connection_options_set_server_name(
+                        &default_tls_connection_options, allocator, &proxy_uri.host_name)) {
+                    AWS_LOGF_ERROR(
+                        AWS_LS_HTTP_CONNECTION_MANAGER, "Failed set server name for TLS connection options.");
+                    goto done;
+                }
+                proxy_options->tls_options = &default_tls_connection_options;
+            }
+        }
         /* Support basic authentication. */
-        if (options->proxy_env_var_settings.proxy_strategy) {
-            proxy_options->proxy_strategy =
-                aws_http_proxy_strategy_acquire(options->proxy_env_var_settings.proxy_strategy);
-        } else if (proxy_uri->password.len) {
+        if (proxy_uri.password.len) {
             /* Has no empty password set */
             struct aws_http_proxy_strategy_basic_auth_options config = {
                 .proxy_connection_type = proxy_options->connection_type,
-                .user_name = proxy_uri->user,
-                .password = proxy_uri->password,
+                .user_name = proxy_uri.user,
+                .password = proxy_uri.password,
             };
             struct aws_http_proxy_strategy *proxy_strategy = aws_http_proxy_strategy_new_basic_auth(allocator, &config);
             proxy_options->proxy_strategy = proxy_strategy;
         }
-        if (aws_byte_cursor_eq_ignore_case(&proxy_uri->scheme, &aws_http_scheme_https)) {
-            proxy_options->tls_options = options->proxy_env_var_settings.tls_options;
-        }
-
-        if (proxy_options) {
-            options->proxy_options = proxy_options;
-            manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
-            /* config has the deep copy of the needed options, we can clean up resources right after it */
-            aws_http_proxy_strategy_release(proxy_options->proxy_strategy);
-            aws_mem_release(allocator, proxy_options);
-            proxy_options = NULL;
-            if (manager->proxy_config == NULL) {
-                goto on_error;
+        proxy_options->connection_type = options->proxy_env_var_settings.connection_type;
+        if (!proxy_options->connection_type) {
+            if (options->tls_connection_options) {
+                /* Use Tunneling when main connection use TLS. */
+                proxy_options->connection_type = AWS_HPCT_HTTP_TUNNEL;
+            } else {
+                /* Use forwarding proxy when main connection use clear text. */
+                proxy_options->connection_type = AWS_HPCT_HTTP_FORWARD;
             }
         }
+        options->proxy_options = proxy_options; /* that's weird.///////////////////////////////////////////////////// */
+        manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
+        /* config has the deep copy of the needed options, we can clean up resources right after it */
+        aws_tls_connection_options_clean_up(&default_tls_connection_options);
+        aws_http_proxy_strategy_release(proxy_options->proxy_strategy);
+        aws_mem_release(allocator, proxy_options);
+        proxy_options = NULL;
+        if (manager->proxy_config == NULL) {
+            goto done;
+        }
     }
-    aws_uri_clean_up(proxy_uri);
-    aws_mem_release(allocator, proxy_uri);
-    return AWS_OP_SUCCESS;
-on_error:
-    aws_uri_clean_up(proxy_uri);
-    aws_mem_release(allocator, proxy_uri);
-    aws_mem_release(allocator, proxy_uri);
-    return AWS_OP_ERR;
+    success = true;
+done:
+    aws_uri_clean_up(&proxy_uri);
+    return success ? AWS_OP_SUCCESS : AWS_OP_ERR;
 }
 
 struct aws_http_connection_manager *aws_http_connection_manager_new(
@@ -901,40 +939,17 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
             goto on_error;
         }
     }
-    const struct aws_http_proxy_options *pre_proxy_options = options->proxy_options;
-    switch (options->proxy_env_var_settings.env_var_type) {
-        case AWS_CMPEV_ENABLE:
-        case AWS_CMPEV_DISABLE:
-            if (options->proxy_options) {
-                /* if proxy options are set, ignore the environment variable */
-                manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
-                if (manager->proxy_config == NULL) {
-                    goto on_error;
-                }
-            } else if (options->proxy_env_var_settings.env_var_type == AWS_CMPEV_ENABLE) {
-                if (s_set_proxy_config_from_env_variable(allocator, options, manager)) {
-                    options->proxy_options = pre_proxy_options;
-                    goto on_error;
-                }
-            }
-            break;
-        case AWS_CMPEV_OVER_MANUAL:
-            if (s_set_proxy_config_from_env_variable(allocator, options, manager)) {
-                options->proxy_options = pre_proxy_options;
-                goto on_error;
-            }
-            if ((options->proxy_options == pre_proxy_options) && pre_proxy_options) {
-                /* no proxy environment variable found */
-                manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
-                if (manager->proxy_config == NULL) {
-                    goto on_error;
-                }
-            }
-            break;
-        default:
-            break;
+    if (options->proxy_options) {
+        /* if proxy options are set, ignore the environment variable */
+        manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
+        if (manager->proxy_config == NULL) {
+            goto on_error;
+        }
+    } else if (options->proxy_env_var_settings.env_var_type == AWS_CMPEV_ENABLE) {
+        if (s_set_proxy_config_from_env_variable(allocator, options, manager)) {
+            goto on_error;
+        }
     }
-    options->proxy_options = pre_proxy_options;
 
     if (options->monitoring_options) {
         manager->monitoring_options = *options->monitoring_options;

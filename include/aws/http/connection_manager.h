@@ -27,17 +27,16 @@ typedef void(aws_http_connection_manager_shutdown_complete_fn)(void *user_data);
 enum aws_connection_manager_proxy_env_var_type {
     /**
      * Default.
-     * Enable get proxy URL from environment variable, when the manual proxy options of connection manager is not set.
-     */
-    AWS_CMPEV_ENABLE = 0,
-    /**
      * Disable reading from environment variable for proxy.
      */
-    AWS_CMPEV_DISABLE,
+    AWS_CMPEV_DISABLE = 0,
     /**
-     * Read from environment variable will override the manual setting of proxy options for connection manager.
+     * Enable get proxy URL from environment variable, when the manual proxy options of connection manager is not set.
+     * env HTTPS_PROXY/https_proxy will be checked when the main connection use tls.
+     * env HTTP_PROXY/http_proxy will be checked when the main connection NOT use tls.
+     * The lower case version has precedence.
      */
-    AWS_CMPEV_OVER_MANUAL,
+    AWS_CMPEV_ENABLE,
 };
 
 /*
@@ -60,27 +59,25 @@ struct aws_http_connection_manager_options {
     /* Proxy configuration for http connection */
     const struct aws_http_proxy_options *proxy_options;
     /*
-     * Optional configuration for using proxy from environment variable.
+     * Optional.
+     * Configuration for using proxy from environment variable.
      * Only works when proxy_options is not set. Zero out as default settings.
      */
     struct {
         enum aws_connection_manager_proxy_env_var_type env_var_type;
+        /*
+         * Optional.
+         * If not set:
+         * If tls options are provided (for the main connection) use tunnel proxy type
+         * If tls options are not provided (for the main connection) use forward proxy type
+         */
         enum aws_http_proxy_connection_type connection_type;
         /*
          * Optional.
-         * Note: If not set, no tls will be used for HTTPS_PROXY.
-         * Tls for Local to proxy connection. Used when HTTPS_PROXY is set.
+         * If not set, a default tls option will be created. when https used for Local to proxy connection.
          * Must be distinct from the the tls_connection_options from aws_http_connection_manager_options
          */
         const struct aws_tls_connection_options *tls_options;
-        /*
-         * Optional.
-         * The strategy to use when use proxy from environment variable.
-         * If set, the strategy will be used for all the proxy connections using envrionment variable.
-         * If not set, and basic authentication included in the URL from environment variable, basic authentication will
-         * be used.
-         */
-        struct aws_http_proxy_strategy *proxy_strategy;
     } proxy_env_var_settings;
 
     /*

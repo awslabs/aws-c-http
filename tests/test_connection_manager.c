@@ -30,6 +30,8 @@
 
 AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var, "HTTP_PROXY");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var, "HTTPS_PROXY");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_url_tls, "http://main-tls-host:80");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_url_clear_text, "http://main-clear-text-host:80");
 
 enum new_connection_result_type {
     AWS_NCRT_SUCCESS,
@@ -46,6 +48,8 @@ struct cm_tester_options {
     struct aws_allocator *allocator;
     struct aws_http_connection_manager_system_vtable *mock_table;
     struct aws_http_proxy_options *proxy_options;
+    bool use_proxy_env;
+    bool use_tls;
     size_t max_connections;
     uint64_t max_connection_idle_in_ms;
     uint64_t starting_mock_time;
@@ -177,8 +181,9 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         .bootstrap = tester->client_bootstrap,
         .initial_window_size = SIZE_MAX,
         .socket_options = &socket_options,
-        .tls_connection_options = NULL,
+        .tls_connection_options = options->use_tls ? &tester->tls_connection_options : NULL,
         .proxy_options = options->proxy_options,
+        .proxy_env_var_settings.env_var_type = options->use_proxy_env ? AWS_CMPEV_ENABLE : AWS_CMPEV_DISABLE,
         .host = aws_byte_cursor_from_c_str("www.google.com"),
         .port = 80,
         .max_connections = options->max_connections,
@@ -562,7 +567,7 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
             options->proxy_options->host.ptr,
             options->proxy_options->host.len);
         ASSERT_TRUE(options->proxy_options->port == tester->verify_proxy_options->port);
-        // TODO: how to verify the proxy strategy properly?
+        ASSERT_UINT_EQUALS(options->proxy_options->connection_type, tester->verify_proxy_options->connection_type);
     }
 
     struct mock_connection *connection = NULL;
@@ -979,19 +984,21 @@ AWS_TEST_CASE(test_connection_manager_idle_culling_mixture, s_test_connection_ma
 static int s_test_connection_manager_read_http_proxy_ev(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    struct aws_string *http_proxy_url = aws_string_new_from_c_str(allocator, "http://localhost:80");
-    ASSERT_SUCCESS(aws_set_environment_value(s_http_proxy_env_var, http_proxy_url));
+    ASSERT_SUCCESS(aws_set_environment_value(s_http_proxy_env_var, s_http_proxy_url_clear_text));
+    ASSERT_SUCCESS(aws_set_environment_value(s_https_proxy_env_var, s_http_proxy_url_tls));
     struct cm_tester_options options = {
         .allocator = allocator,
         .max_connections = 5,
         .mock_table = &s_synchronous_mocks,
+        .use_proxy_env = true,
     };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
     struct aws_http_proxy_options proxy_options;
     AWS_ZERO_STRUCT(proxy_options);
-    proxy_options.host = aws_byte_cursor_from_c_str("localhost");
+    proxy_options.host = aws_byte_cursor_from_c_str("main-clear-text-host");
     proxy_options.port = 80;
+    proxy_options.connection_type = AWS_HPCT_HTTP_FORWARD;
     s_tester.verify_proxy_options = &proxy_options;
 
     s_acquire_connections(1);
@@ -1001,7 +1008,6 @@ static int s_test_connection_manager_read_http_proxy_ev(struct aws_allocator *al
     ASSERT_SUCCESS(s_release_connections(1, false));
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
-    aws_string_destroy(http_proxy_url);
 
     return AWS_OP_SUCCESS;
 }
@@ -1010,19 +1016,22 @@ AWS_TEST_CASE(test_connection_manager_read_http_proxy_ev, s_test_connection_mana
 static int s_test_connection_manager_read_https_proxy_ev(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    struct aws_string *http_proxy_url = aws_string_new_from_c_str(allocator, "https://localhost:443");
-    ASSERT_SUCCESS(aws_set_environment_value(s_https_proxy_env_var, http_proxy_url));
+    ASSERT_SUCCESS(aws_set_environment_value(s_http_proxy_env_var, s_http_proxy_url_clear_text));
+    ASSERT_SUCCESS(aws_set_environment_value(s_https_proxy_env_var, s_http_proxy_url_tls));
     struct cm_tester_options options = {
         .allocator = allocator,
         .max_connections = 5,
         .mock_table = &s_synchronous_mocks,
+        .use_proxy_env = true,
+        .use_tls = true,
     };
 
     ASSERT_SUCCESS(s_cm_tester_init(&options));
     struct aws_http_proxy_options proxy_options;
     AWS_ZERO_STRUCT(proxy_options);
-    proxy_options.host = aws_byte_cursor_from_c_str("localhost");
-    proxy_options.port = 443;
+    proxy_options.host = aws_byte_cursor_from_c_str("main-tls-host");
+    proxy_options.port = 80;
+    proxy_options.connection_type = AWS_HPCT_HTTP_TUNNEL;
     s_tester.verify_proxy_options = &proxy_options;
 
     s_acquire_connections(1);
@@ -1032,7 +1041,6 @@ static int s_test_connection_manager_read_https_proxy_ev(struct aws_allocator *a
     ASSERT_SUCCESS(s_release_connections(1, false));
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
-    aws_string_destroy(http_proxy_url);
 
     return AWS_OP_SUCCESS;
 }
