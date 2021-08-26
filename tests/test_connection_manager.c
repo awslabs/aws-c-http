@@ -1304,10 +1304,7 @@ static int s_proxy_integration_test_helper(
     bool main_tls) {
     struct proxy_integration_configurations configs;
     AWS_ZERO_STRUCT(configs);
-    if (s_get_proxy_environment_configurations(allocator, &configs)) {
-        /* Proxy configurations are not set properly. Skip the test. */
-        return AWS_OP_SUCCESS;
-    }
+    ASSERT_SUCCESS(s_get_proxy_environment_configurations(allocator, &configs));
     /* not creating new strings */
     struct aws_http_proxy_options proxy_options = {
         .host = s_get_proxy_host_for_test(&configs, proxy_test_type, auth_type),
