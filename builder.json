@@ -14,7 +14,7 @@
         { "name": "aws-c-auth" }
     ],
     "test_steps": [
-        ["{python}", "{project_dir}/integration-testing/http_proxy_env_setup.py"],
+        ["bash", "{project_dir}/integration-testing/cm-integration-test-set.sh"],
         "test",
         ["{python}", "{project_dir}/integration-testing/http_client_test.py", "{install_dir}/bin/elasticurl{exe}"]
     ]
