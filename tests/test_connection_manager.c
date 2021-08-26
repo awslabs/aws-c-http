@@ -1073,7 +1073,6 @@ AWS_TEST_CASE(test_connection_manager_read_https_proxy_ev, s_test_connection_man
  */
 
 struct proxy_integration_configurations {
-    struct aws_allocator *allocator;
     struct aws_string *http_proxy_host;
     struct aws_string *http_proxy_port;
     struct aws_string *http_proxy_url;
@@ -1175,6 +1174,23 @@ static int s_get_proxy_environment_configurations(
         return AWS_OP_ERR;
     }
     return AWS_OP_SUCCESS;
+}
+
+static void s_proxy_environment_configurations_clean_up(struct proxy_integration_configurations *configs) {
+    aws_string_destroy(configs->http_proxy_host);
+    aws_string_destroy(configs->http_proxy_port);
+    aws_string_destroy(configs->http_proxy_url);
+    aws_string_destroy(configs->https_proxy_host);
+    aws_string_destroy(configs->https_proxy_port);
+    aws_string_destroy(configs->https_proxy_url);
+    aws_string_destroy(configs->http_proxy_basic_host);
+    aws_string_destroy(configs->http_proxy_basic_port);
+    aws_string_destroy(configs->http_proxy_basic_url);
+    aws_string_destroy(configs->basic_auth_username);
+    aws_string_destroy(configs->basic_auth_password);
+    aws_string_destroy(configs->tls_cert_path);
+    aws_string_destroy(configs->tls_key_path);
+    aws_string_destroy(configs->tls_root_cert_path);
 }
 
 static int s_response_status_code = 0;
@@ -1357,7 +1373,7 @@ static int s_proxy_integration_test_helper(
 
     aws_http_stream_release(stream);
     aws_http_message_destroy(request);
-
+    s_proxy_environment_configurations_clean_up(&configs);
     ASSERT_SUCCESS(s_release_connections(1, false));
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
