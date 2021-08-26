@@ -1360,8 +1360,7 @@ static int s_proxy_integration_test_helper(
         .on_complete = s_aws_http_on_stream_complete_proxy_test,
     };
     struct aws_http_connection *connection = NULL;
-    ASSERT_SUCCESS(aws_array_list_get_at(&s_tester.connections, &connection, 0));
-    // ASSERT_SUCCESS(aws_array_list_front(&s_tester.connections, &connection));
+    ASSERT_SUCCESS(aws_array_list_front(&s_tester.connections, &connection));
     struct aws_http_stream *stream = aws_http_connection_make_request(connection, &request_options);
     ASSERT_NOT_NULL(stream);
     aws_http_stream_activate(stream);
