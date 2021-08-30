@@ -288,12 +288,28 @@ static struct http_monitor_test_stats_event s_test_rw_above_events[] = {
 struct observer_cb_data {
     bool invoked;
     size_t nonce;
+    size_t number_of_stats;
+    struct aws_crt_statistics_socket socket_stats;
+    struct aws_crt_statistics_http1_channel http_stats;
 };
 static void s_observer_cb(size_t connection_nonce, const struct aws_array_list *stats, void *user_data) {
-    (void)stats;
     struct observer_cb_data *cb_data = user_data;
     cb_data->invoked = true;
     cb_data->nonce = connection_nonce;
+    cb_data->number_of_stats = aws_array_list_length(stats);
+
+    for (size_t i = 0; i < cb_data->number_of_stats; ++i) {
+        struct aws_crt_statistics_base *base_ptr = NULL;
+        aws_array_list_get_at(stats, (void **)&base_ptr, i);
+
+        if (base_ptr->category == AWSCRT_STAT_CAT_SOCKET) {
+            cb_data->socket_stats = *(struct aws_crt_statistics_socket *)base_ptr;
+        }
+
+        if (base_ptr->category == AWSCRT_STAT_CAT_HTTP1_CHANNEL) {
+            cb_data->http_stats = *(struct aws_crt_statistics_http1_channel *)base_ptr;
+        }
+    }
 }
 static int s_test_http_connection_monitor_rw_above(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -307,6 +323,13 @@ static int s_test_http_connection_monitor_rw_above(struct aws_allocator *allocat
     ASSERT_TRUE(result == AWS_OP_SUCCESS);
     ASSERT_TRUE(cb_data.invoked);
     ASSERT_TRUE(cb_data.nonce > 0);
+    ASSERT_UINT_EQUALS(2U, cb_data.number_of_stats);
+    ASSERT_UINT_EQUALS(s_test_rw_above_events[0].socket_stats.bytes_written, cb_data.socket_stats.bytes_written);
+    ASSERT_UINT_EQUALS(s_test_rw_above_events[0].socket_stats.bytes_read, cb_data.socket_stats.bytes_read);
+    ASSERT_UINT_EQUALS(
+        s_test_rw_above_events[0].http_stats.current_outgoing_stream_id, cb_data.http_stats.current_outgoing_stream_id);
+    ASSERT_UINT_EQUALS(
+        s_test_rw_above_events[0].http_stats.current_incoming_stream_id, cb_data.http_stats.current_incoming_stream_id);
 
     return AWS_OP_SUCCESS;
 }
