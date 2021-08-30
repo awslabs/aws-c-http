@@ -105,6 +105,8 @@ typedef void(aws_http2_on_remote_settings_change_fn)(
     size_t num_settings,
     void *user_data);
 
+typedef void(aws_http_statistics_observer_fn)(const struct aws_array_list *stats_list, void *user_data);
+
 /**
  * Configuration options for connection monitoring
  */
@@ -121,6 +123,17 @@ struct aws_http_connection_monitoring_options {
      * as unhealthy.
      */
     uint32_t allowable_throughput_failure_interval_seconds;
+
+    /**
+     * invoked on each statistics publish by the underlying IO channel. Install this callback to receive the statistics
+     * for observation. This field is optional.
+     */
+    aws_http_statistics_observer_fn *statistics_observer_fn;
+
+    /**
+     * user_data to be passed to statistics_observer_fn.
+     */
+    void *statistics_observer_user_data;
 };
 
 /**

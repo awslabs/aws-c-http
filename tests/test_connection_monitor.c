@@ -284,12 +284,22 @@ static struct http_monitor_test_stats_event s_test_rw_above_events[] = {
         .expected_throughput = 1000,
     },
 };
+
+static void s_observer_cb(const struct aws_array_list *stats, void *user_data) {
+    (void)stats;
+    bool *invoked = user_data;
+    *invoked = true;
+}
 static int s_test_http_connection_monitor_rw_above(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
+    bool invoked = false;
+    s_test_options.statistics_observer_fn = s_observer_cb;
+    s_test_options.statistics_observer_user_data = &invoked;
     int result = s_do_http_monitoring_test(
         allocator, &s_test_options, s_test_rw_above_events, AWS_ARRAY_SIZE(s_test_rw_above_events));
     ASSERT_TRUE(result == AWS_OP_SUCCESS);
+    ASSERT_TRUE(invoked);
 
     return AWS_OP_SUCCESS;
 }
