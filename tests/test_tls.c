@@ -132,7 +132,13 @@ static int s_test_tls_download_medium_file_general(
     aws_condition_variable_init(&test.wait_cvar);
 
     test.event_loop_group = aws_event_loop_group_new_default(test.alloc, 1, NULL);
-    test.host_resolver = aws_host_resolver_new_default(test.alloc, 1, test.event_loop_group, NULL);
+
+    struct aws_host_resolver_default_options resolver_options = {
+        .el_group = test.event_loop_group,
+        .max_entries = 1,
+    };
+
+    test.host_resolver = aws_host_resolver_new_default(test.alloc, &resolver_options);
 
     struct aws_client_bootstrap_options bootstrap_options = {
         .event_loop_group = test.event_loop_group,
@@ -207,16 +213,16 @@ static int s_test_tls_download_medium_file_general(
     aws_host_resolver_release(test.host_resolver);
     aws_event_loop_group_release(test.event_loop_group);
 
-    ASSERT_SUCCESS(aws_global_thread_creator_shutdown_wait_for(10));
-
     aws_tls_ctx_options_clean_up(&tls_ctx_options);
     aws_tls_connection_options_clean_up(&tls_connection_options);
     aws_tls_ctx_release(test.tls_ctx);
 
-    aws_mutex_clean_up(&test.wait_lock);
-    aws_condition_variable_clean_up(&test.wait_cvar);
     aws_uri_clean_up(&uri);
     aws_http_library_clean_up();
+
+    aws_mutex_clean_up(&test.wait_lock);
+    aws_condition_variable_clean_up(&test.wait_cvar);
+
     return AWS_OP_SUCCESS;
 }
 

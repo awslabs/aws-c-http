@@ -83,13 +83,15 @@ typedef void(aws_http2_on_ping_complete_fn)(
  *      peer, and are safe to retry on another connection.
  * @param http2_error_code The HTTP/2 error code (RFC-7540 section 7) sent by peer.
  *      `enum aws_http2_error_code` lists official codes.
+ * @param debug_data The debug data sent by peer. It can be empty. (NOTE: this data is only valid for the lifetime of
+ *      the callback. Make a deep copy if you wish to keep it longer.)
  * @param user_data User-data passed to the callback.
  */
-
 typedef void(aws_http2_on_goaway_received_fn)(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
     uint32_t http2_error_code,
+    struct aws_byte_cursor debug_data,
     void *user_data);
 
 /**
@@ -122,56 +124,7 @@ struct aws_http_connection_monitoring_options {
 };
 
 /**
- * Supported proxy authentication modes
- */
-enum aws_http_proxy_authentication_type {
-    AWS_HPAT_NONE = 0,
-    AWS_HPAT_BASIC,
-};
-
-/**
- * Options for http proxy server usage
- */
-struct aws_http_proxy_options {
-
-    /**
-     * Proxy host to connect to, in lieu of actual target
-     */
-    struct aws_byte_cursor host;
-
-    /**
-     * Port to make the proxy connection to
-     */
-    uint16_t port;
-
-    /**
-     * Optional.
-     * TLS configuration for the Local <-> Proxy connection
-     * Must be distinct from the the TLS options in the parent aws_http_connection_options struct
-     */
-    const struct aws_tls_connection_options *tls_options;
-
-    /**
-     * What type of proxy authentication to use, if any
-     */
-    enum aws_http_proxy_authentication_type auth_type;
-
-    /**
-     * Optional
-     * User name to use for authentication, basic only
-     */
-    struct aws_byte_cursor auth_username;
-
-    /**
-     * Optional
-     * Password to use for authentication, basic only
-     */
-    struct aws_byte_cursor auth_password;
-};
-
-/**
  * Options specific to HTTP/1.x connections.
- * Initialize with AWS_HTTP1_CONNECTION_OPTIONS_INIT to set default values.
  */
 struct aws_http1_connection_options {
     /**
@@ -191,7 +144,6 @@ struct aws_http1_connection_options {
 
 /**
  * Options specific to HTTP/2 connections.
- * Initialize with AWS_HTTP2_CONNECTION_OPTIONS_INIT to set default values.
  */
 struct aws_http2_connection_options {
     /**
@@ -220,7 +172,7 @@ struct aws_http2_connection_options {
     /**
      * Optional
      * The max number of recently-closed streams to remember.
-     * A default number is set by AWS_HTTP2_CONNECTION_OPTIONS_INIT.
+     * Set it to zero to use the default setting, AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS
      *
      * If the connection receives a frame for a closed stream,
      * the frame will be ignored or cause a connection error,
@@ -349,6 +301,16 @@ struct aws_http_client_connection_options {
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
 
     /**
+     * Optional.
+     * When true, use prior knowledge to set up an HTTP/2 connection on a cleartext
+     * connection.
+     * When TLS is set and this is true, the connection will failed to be established,
+     * as prior knowledge only works for cleartext TLS.
+     * Refer to RFC7540 3.4
+     */
+    bool prior_knowledge_http2;
+
+    /**
      * Options specific to HTTP/1.x connections.
      * Optional.
      * Ignored if connection is not HTTP/1.x.
@@ -384,12 +346,6 @@ struct aws_http2_setting {
 };
 
 /**
- * Initializes aws_http1_connection_options with default values.
- */
-#define AWS_HTTP1_CONNECTION_OPTIONS_INIT                                                                              \
-    { .read_buffer_capacity = 0 }
-
-/**
  * HTTP/2: Default value for max closed streams we will keep in memory.
  */
 #define AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS (32)
@@ -404,11 +360,6 @@ struct aws_http2_setting {
  */
 #define AWS_HTTP2_SETTINGS_COUNT (6)
 
-/**
- * Initializes aws_http2_connection_options with default values.
- */
-#define AWS_HTTP2_CONNECTION_OPTIONS_INIT                                                                              \
-    { .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS }
 /**
  * Initializes aws_http_client_connection_options with default values.
  */
@@ -481,6 +432,12 @@ enum aws_http_version aws_http_connection_get_version(const struct aws_http_conn
  */
 AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
+
+/**
+ * Checks http proxy options for correctness
+ */
+AWS_HTTP_API
+int aws_http_options_validate_proxy_configuration(const struct aws_http_client_connection_options *options);
 
 /**
  * Send a SETTINGS frame (HTTP/2 only).
@@ -587,7 +544,8 @@ int aws_http2_connection_get_sent_goaway(
 
 /**
  * Get data about the latest GOAWAY frame received from peer (HTTP/2 only).
- * If no GOAWAY has been received, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE will be raised.
+ * If no GOAWAY has been received, or the GOAWAY payload is still in transmitting,
+ * AWS_ERROR_HTTP_DATA_NOT_AVAILABLE will be raised.
  *
  * @param http2_connection HTTP/2 connection.
  * @param out_http2_error Gets set to HTTP/2 error code received in most recent GOAWAY.

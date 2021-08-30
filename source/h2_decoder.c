@@ -221,6 +221,14 @@ struct aws_h2_decoder {
         } flags;
     } frame_in_progress;
 
+    /* GOAWAY buffer */
+    struct aws_goaway_in_progress {
+        uint32_t last_stream;
+        uint32_t error_code;
+        /* Buffer of the received debug data in the latest goaway frame */
+        struct aws_byte_buf debug_data;
+    } goaway_in_progress;
+
     /* A header-block starts with a HEADERS or PUSH_PROMISE frame, followed by 0 or more CONTINUATION frames.
      * It's an error for any other frame-type or stream ID to arrive while a header-block is in progress.
      * The header-block ends when a frame has the END_HEADERS flag set. (RFC-7540 4.3) */
@@ -357,6 +365,7 @@ void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder) {
     aws_hpack_context_destroy(decoder->hpack);
     s_reset_header_block_in_progress(decoder);
     aws_byte_buf_clean_up(&decoder->header_block_in_progress.cookies);
+    aws_byte_buf_clean_up(&decoder->goaway_in_progress.debug_data);
     aws_mem_release(decoder->alloc, decoder);
 }
 
@@ -1017,8 +1026,14 @@ static struct aws_h2err s_state_fn_frame_goaway(struct aws_h2_decoder *decoder, 
     (void)succ;
 
     decoder->frame_in_progress.payload_len -= s_state_frame_goaway_requires_8_bytes;
-
-    DECODER_CALL_VTABLE_ARGS(decoder, on_goaway_begin, last_stream, error_code, decoder->frame_in_progress.payload_len);
+    uint32_t debug_data_length = decoder->frame_in_progress.payload_len;
+    /* Received new GOAWAY, clean up the previous one. Buffer it up and invoke the callback once the debug data decoded
+     * fully. */
+    decoder->goaway_in_progress.error_code = error_code;
+    decoder->goaway_in_progress.last_stream = last_stream;
+    int init_result = aws_byte_buf_init(&decoder->goaway_in_progress.debug_data, decoder->alloc, debug_data_length);
+    AWS_ASSERT(init_result == 0);
+    (void)init_result;
 
     return s_decoder_switch_state(decoder, &s_state_frame_goaway_debug_data);
 }
@@ -1034,12 +1049,21 @@ static struct aws_h2err s_state_fn_frame_goaway_debug_data(
 
     struct aws_byte_cursor debug_data = s_decoder_get_payload(decoder, input);
     if (debug_data.len > 0) {
-        DECODER_CALL_VTABLE_ARGS(decoder, on_goaway_i, debug_data);
+        /* As we initialized the buffer to the size of debug data, we can safely append here */
+        aws_byte_buf_append(&decoder->goaway_in_progress.debug_data, &debug_data);
     }
 
     /* If this is the last data in the frame, reset decoder */
     if (decoder->frame_in_progress.payload_len == 0) {
-        DECODER_CALL_VTABLE(decoder, on_goaway_end);
+        struct aws_byte_cursor debug_cursor = aws_byte_cursor_from_buf(&decoder->goaway_in_progress.debug_data);
+
+        DECODER_CALL_VTABLE_ARGS(
+            decoder,
+            on_goaway,
+            decoder->goaway_in_progress.last_stream,
+            decoder->goaway_in_progress.error_code,
+            debug_cursor);
+        aws_byte_buf_clean_up(&decoder->goaway_in_progress.debug_data);
         return s_decoder_reset_state(decoder);
     }
 

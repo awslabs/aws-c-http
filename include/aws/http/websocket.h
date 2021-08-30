@@ -266,7 +266,7 @@ typedef bool(aws_websocket_stream_outgoing_payload_fn)(
 
 /**
  * Called when a aws_websocket_send_frame() operation completes.
- * error_code will be non-zero if the operation was successful.
+ * error_code will be zero if the operation was successful.
  * "Success" does not guarantee that the peer actually received or processed the frame.
  * Invoked exactly once per sent frame on the websocket's event-loop thread.
  */

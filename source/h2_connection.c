@@ -140,10 +140,10 @@ static struct aws_h2err s_decoder_on_settings(
     void *userdata);
 static struct aws_h2err s_decoder_on_settings_ack(void *userdata);
 static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t window_size_increment, void *userdata);
-struct aws_h2err s_decoder_on_goaway_begin(
+struct aws_h2err s_decoder_on_goaway(
     uint32_t last_stream,
     uint32_t error_code,
-    uint32_t debug_data_length,
+    struct aws_byte_cursor debug_data,
     void *userdata);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
@@ -189,7 +189,7 @@ static const struct aws_h2_decoder_vtable s_h2_decoder_vtable = {
     .on_settings = s_decoder_on_settings,
     .on_settings_ack = s_decoder_on_settings_ack,
     .on_window_update = s_decoder_on_window_update,
-    .on_goaway_begin = s_decoder_on_goaway_begin,
+    .on_goaway = s_decoder_on_goaway,
 };
 
 static void s_lock_synced_data(struct aws_h2_connection *connection) {
@@ -291,7 +291,6 @@ static struct aws_h2_connection *s_connection_new(
     if (!connection) {
         return NULL;
     }
-
     connection->base.vtable = &s_h2_connection_vtable;
     connection->base.alloc = alloc;
     connection->base.channel_handler.vtable = &s_h2_connection_vtable.channel_handler_vtable;
@@ -342,9 +341,13 @@ static struct aws_h2_connection *s_connection_new(
             ERROR, connection, "Hashtable init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
         goto error;
     }
+    size_t max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS;
+    if (http2_options->max_closed_streams) {
+        max_closed_streams = http2_options->max_closed_streams;
+    }
 
     connection->thread_data.closed_streams =
-        aws_cache_new_fifo(alloc, aws_hash_ptr, aws_ptr_eq, NULL, NULL, http2_options->max_closed_streams);
+        aws_cache_new_fifo(alloc, aws_hash_ptr, aws_ptr_eq, NULL, NULL, max_closed_streams);
     if (!connection->thread_data.closed_streams) {
         CONNECTION_LOGF(
             ERROR, connection, "FIFO cache init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
@@ -1544,12 +1547,11 @@ static struct aws_h2err s_decoder_on_window_update(uint32_t stream_id, uint32_t 
     return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2err s_decoder_on_goaway_begin(
+struct aws_h2err s_decoder_on_goaway(
     uint32_t last_stream,
     uint32_t error_code,
-    uint32_t debug_data_length,
+    struct aws_byte_cursor debug_data,
     void *userdata) {
-    (void)debug_data_length;
     struct aws_h2_connection *connection = userdata;
 
     if (last_stream > connection->thread_data.goaway_received_last_stream_id) {
@@ -1594,13 +1596,12 @@ struct aws_h2err s_decoder_on_goaway_begin(
             s_stream_complete(connection, stream, AWS_ERROR_HTTP_GOAWAY_RECEIVED);
         }
     }
-
-    /* #TODO inform user about debug data by fire some kind of API. We buffer it at connection? Or we do a sperate
-     * callback on each part of it */
     if (connection->on_goaway_received) {
         /* Inform user about goaway received and the error code. */
-        connection->on_goaway_received(&connection->base, last_stream, error_code, connection->base.user_data);
+        connection->on_goaway_received(
+            &connection->base, last_stream, error_code, debug_data, connection->base.user_data);
     }
+
     return AWS_H2ERR_SUCCESS;
 }
 
@@ -2177,8 +2178,8 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
 
     int err = 0;
     bool cross_thread_work_should_schedule = false;
-    bool connection_open;
-    size_t sum_size;
+    bool connection_open = false;
+    size_t sum_size = 0;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
 
@@ -2517,17 +2518,22 @@ static int s_connection_get_received_goaway(
     uint32_t *out_last_stream_id) {
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
-    uint32_t received_last_stream_id;
-    uint32_t received_http2_error;
+    uint32_t received_last_stream_id = 0;
+    uint32_t received_http2_error = 0;
+    bool goaway_not_ready = false;
+    uint32_t max_stream_id = AWS_H2_STREAM_ID_MAX;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
-        received_last_stream_id = connection->synced_data.goaway_received_last_stream_id;
-        received_http2_error = connection->synced_data.goaway_received_http2_error_code;
+        if (connection->synced_data.goaway_received_last_stream_id == max_stream_id + 1) {
+            goaway_not_ready = true;
+        } else {
+            received_last_stream_id = connection->synced_data.goaway_received_last_stream_id;
+            received_http2_error = connection->synced_data.goaway_received_http2_error_code;
+        }
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 
-    uint32_t max_stream_id = AWS_H2_STREAM_ID_MAX;
-    if (received_last_stream_id == max_stream_id + 1) {
+    if (goaway_not_ready) {
         CONNECTION_LOG(ERROR, connection, "No GOAWAY has been received so far.");
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }

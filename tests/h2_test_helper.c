@@ -426,10 +426,10 @@ static struct aws_h2err s_decoder_on_ping_ack(uint8_t opaque_data[AWS_HTTP2_PING
     return AWS_H2ERR_SUCCESS;
 }
 
-static struct aws_h2err s_decoder_on_goaway_begin(
+static struct aws_h2err s_decoder_on_goaway(
     uint32_t last_stream,
     uint32_t error_code,
-    uint32_t debug_data_length,
+    struct aws_byte_cursor debug_data,
     void *userdata) {
 
     struct h2_decode_tester *decode_tester = userdata;
@@ -438,34 +438,9 @@ static struct aws_h2err s_decoder_on_goaway_begin(
 
     frame->goaway_last_stream_id = last_stream;
     frame->error_code = error_code;
-    frame->goaway_debug_data_remaining = debug_data_length;
-
-    return AWS_H2ERR_SUCCESS;
-}
-
-static struct aws_h2err s_decoder_on_goaway_i(struct aws_byte_cursor debug_data, void *userdata) {
-    struct h2_decode_tester *decode_tester = userdata;
-    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(decode_tester);
-
-    /* Validate */
-    AWS_FATAL_ASSERT(AWS_H2_FRAME_T_GOAWAY == frame->type);
-    AWS_FATAL_ASSERT(!frame->finished);
-    AWS_FATAL_ASSERT(frame->goaway_debug_data_remaining >= debug_data.len);
-
-    frame->goaway_debug_data_remaining -= (uint32_t)debug_data.len;
-
     /* Stash data */
     AWS_FATAL_ASSERT(0 == aws_byte_buf_append_dynamic(&frame->data, &debug_data));
-
-    return AWS_H2ERR_SUCCESS;
-}
-
-static struct aws_h2err s_decoder_on_goaway_end(void *userdata) {
-    struct h2_decode_tester *decode_tester = userdata;
     s_end_current_frame(decode_tester, AWS_H2_FRAME_T_GOAWAY, 0);
-
-    struct h2_decoded_frame *frame = h2_decode_tester_latest_frame(decode_tester);
-    AWS_FATAL_ASSERT(0 == frame->goaway_debug_data_remaining);
 
     return AWS_H2ERR_SUCCESS;
 }
@@ -498,9 +473,7 @@ static struct aws_h2_decoder_vtable s_decoder_vtable = {
     .on_settings_ack = s_decoder_on_settings_ack,
     .on_ping = s_decoder_on_ping,
     .on_ping_ack = s_decoder_on_ping_ack,
-    .on_goaway_begin = s_decoder_on_goaway_begin,
-    .on_goaway_i = s_decoder_on_goaway_i,
-    .on_goaway_end = s_decoder_on_goaway_end,
+    .on_goaway = s_decoder_on_goaway,
     .on_window_update = s_decoder_on_window_update,
 };
 
@@ -666,7 +639,7 @@ struct aws_input_stream_tester {
 
 static int s_aws_input_stream_tester_seek(
     struct aws_input_stream *stream,
-    aws_off_t offset,
+    int64_t offset,
     enum aws_stream_seek_basis basis) {
 
     struct aws_input_stream_tester *impl = stream->impl;

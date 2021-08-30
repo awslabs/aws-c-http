@@ -762,14 +762,20 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
 
     aws_http_fatal_assert_library_initialized();
 
-    if (!options || !options->socket_options || options->max_connections == 0) {
+    if (!options) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - options is null");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }
 
-    if (options->monitoring_options && !aws_http_connection_monitoring_options_is_valid(options->monitoring_options)) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION_MANAGER, "(static) invalid monitoring options for connection manager creation");
+    if (!options->socket_options) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - socket_options is null");
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
+
+    if (options->max_connections == 0) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - max_connections cannot be 0");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }
@@ -802,7 +808,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     }
 
     if (options->proxy_options) {
-        manager->proxy_config = aws_http_proxy_config_new(allocator, options->proxy_options);
+        manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
         if (manager->proxy_config == NULL) {
             goto on_error;
         }

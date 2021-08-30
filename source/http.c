@@ -86,8 +86,8 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_SERVER_CLOSED,
         "The http server is closed, no more connections will be accepted"),
     AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_PROXY_TLS_CONNECT_FAILED,
-        "Proxy tls connection establishment failed because the CONNECT call failed"),
+        AWS_ERROR_HTTP_PROXY_CONNECT_FAILED,
+        "Proxy-based connection establishment failed because the CONNECT call failed"),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CONNECTION_MANAGER_SHUTTING_DOWN,
         "Connection acquisition failed because connection manager is shutting down"),
@@ -115,6 +115,18 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_STREAM_HAS_COMPLETED,
         "HTTP-stream has completed, action cannot be performed."),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_PROXY_STRATEGY_NTLM_CHALLENGE_TOKEN_MISSING,
+        "NTLM Proxy strategy was initiated without a challenge token"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_PROXY_STRATEGY_TOKEN_RETRIEVAL_FAILURE,
+        "Failure in user code while retrieving proxy auth token"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_PROXY_CONNECT_FAILED_RETRYABLE,
+        "Proxy connection attempt failed but the negotiation could be continued on a new connection"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_PROTOCOL_SWITCH_FAILURE,
+        "Internal state failure prevent connection from switching protocols"),
 };
 /* clang-format on */
 
@@ -133,6 +145,10 @@ static struct aws_log_subject_info s_log_subject_infos[] = {
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "connection-manager", "HTTP connection manager"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET, "websocket", "Websocket"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET_SETUP, "websocket-setup", "Websocket setup"),
+    DEFINE_LOG_SUBJECT_INFO(
+        AWS_LS_HTTP_PROXY_NEGOTIATION,
+        "proxy-negotiation",
+        "Negotiating an http connection with a proxy server"),
 };
 
 static struct aws_log_subject_info_list s_log_subject_list = {
@@ -464,6 +480,7 @@ void aws_http_library_clean_up(void) {
     }
     s_library_initialized = false;
 
+    aws_thread_join_all_managed();
     aws_unregister_error_info(&s_error_list);
     aws_unregister_log_subject_info_list(&s_log_subject_list);
     s_methods_clean_up();

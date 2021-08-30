@@ -70,12 +70,13 @@ static void s_server_unlock_synced_data(struct aws_http_server *server) {
 }
 
 /* Determine the http-version, create appropriate type of connection, and insert it into the channel. */
-static struct aws_http_connection *s_connection_new(
+struct aws_http_connection *aws_http_connection_new_channel_handler(
     struct aws_allocator *alloc,
     struct aws_channel *channel,
     bool is_server,
     bool is_using_tls,
     bool manual_window_management,
+    bool prior_knowledge_http2,
     size_t initial_window_size,
     const struct aws_http1_connection_options *http1_options,
     const struct aws_http2_connection_options *http2_options) {
@@ -135,6 +136,10 @@ static struct aws_http_connection *s_connection_new(
                 version = AWS_HTTP_VERSION_1_1;
             }
         }
+    } else {
+        if (prior_knowledge_http2) {
+            version = AWS_HTTP_VERSION_2;
+        }
     }
 
     /* Create connection/handler */
@@ -178,11 +183,10 @@ static struct aws_http_connection *s_connection_new(
     }
 
     /* Connect handler and slot */
-    err = aws_channel_slot_set_handler(connection_slot, &connection->channel_handler);
-    if (err) {
+    if (aws_channel_slot_set_handler(connection_slot, &connection->channel_handler)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
-            "static: Failed to setting HTTP handler into slot on channel %p, error %d (%s).",
+            "static: Failed to set HTTP handler into slot on channel %p, error %d (%s).",
             (void *)channel,
             aws_last_error(),
             aws_error_name(aws_last_error()));
@@ -366,7 +370,7 @@ void aws_http_connection_release(struct aws_http_connection *connection) {
         /* When the channel's refcount reaches 0, it destroys its slots/handlers, which will destroy the connection */
         aws_channel_release_hold(connection->channel_slot->channel);
     } else {
-        AWS_ASSERT(prev_refcount != 0);
+        AWS_FATAL_ASSERT(prev_refcount != 0);
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_CONNECTION,
             "id=%p: Connection refcount released, %zu remaining.",
@@ -401,14 +405,17 @@ static void s_server_bootstrap_on_accept_channel_setup(
     }
     /* Create connection */
     /* TODO: expose http1/2 options to server API */
-    struct aws_http1_connection_options http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
-    struct aws_http2_connection_options http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
-    connection = s_connection_new(
+    struct aws_http1_connection_options http1_options;
+    AWS_ZERO_STRUCT(http1_options);
+    struct aws_http2_connection_options http2_options;
+    AWS_ZERO_STRUCT(http2_options);
+    connection = aws_http_connection_new_channel_handler(
         server->alloc,
         channel,
         true,
         server->is_using_tls,
         server->manual_window_management,
+        false, /* prior_knowledge_http2 */
         server->initial_window_size,
         &http1_options,
         &http2_options);
@@ -734,12 +741,13 @@ static void s_client_bootstrap_on_channel_setup(
 
     AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "static: Socket connected, creating client connection object.");
 
-    http_bootstrap->connection = s_connection_new(
+    http_bootstrap->connection = aws_http_connection_new_channel_handler(
         http_bootstrap->alloc,
         channel,
         false,
         http_bootstrap->is_using_tls,
         http_bootstrap->manual_window_management,
+        http_bootstrap->prior_knowledge_http2,
         http_bootstrap->initial_window_size,
         &http_bootstrap->http1_options,
         &http_bootstrap->http2_options);
@@ -885,7 +893,6 @@ int aws_http_client_connect_internal(
         AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: http connection options are null.");
         return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
     }
-
     struct aws_http_client_bootstrap *http_bootstrap = NULL;
     struct aws_string *host_name = NULL;
     int err = 0;
@@ -893,12 +900,14 @@ int aws_http_client_connect_internal(
     /* make copy of options, and add defaults for missing optional structs */
     struct aws_http_client_connection_options options = *orig_options;
 
-    const struct aws_http1_connection_options default_http1_options = AWS_HTTP1_CONNECTION_OPTIONS_INIT;
+    struct aws_http1_connection_options default_http1_options;
+    AWS_ZERO_STRUCT(default_http1_options);
     if (options.http1_options == NULL) {
         options.http1_options = &default_http1_options;
     }
 
-    const struct aws_http2_connection_options default_http2_options = AWS_HTTP2_CONNECTION_OPTIONS_INIT;
+    struct aws_http2_connection_options default_http2_options;
+    AWS_ZERO_STRUCT(default_http2_options);
     if (options.http2_options == NULL) {
         options.http2_options = &default_http2_options;
     }
@@ -932,6 +941,7 @@ int aws_http_client_connect_internal(
     http_bootstrap->alloc = options.allocator;
     http_bootstrap->is_using_tls = options.tls_options != NULL;
     http_bootstrap->manual_window_management = options.manual_window_management;
+    http_bootstrap->prior_knowledge_http2 = options.prior_knowledge_http2;
     http_bootstrap->initial_window_size = options.initial_window_size;
     http_bootstrap->user_data = options.user_data;
     http_bootstrap->on_setup = options.on_setup;
@@ -1000,6 +1010,10 @@ error:
 
 int aws_http_client_connect(const struct aws_http_client_connection_options *options) {
     aws_http_fatal_assert_library_initialized();
+    if (options->prior_knowledge_http2 && options->tls_options) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "static: HTTP/2 prior knowledge only works with cleartext TCP.");
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
 
     if (options->proxy_options != NULL) {
         return aws_http_client_connect_via_proxy(options);

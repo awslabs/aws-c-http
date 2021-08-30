@@ -17,6 +17,13 @@
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
 
+static const struct aws_http_header s_typical_request_headers[] = {
+    {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("amazon.com"),
+    },
+};
+
 static struct aws_logger s_logger;
 
 static void s_test_init(struct aws_allocator *allocator) {
@@ -432,4 +439,128 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_not_final_encoding_put
     aws_h1_encoder_clean_up(&encoder);
     s_test_clean_up();
     return AWS_OP_SUCCESS;
+}
+
+static int s_test_bad_request(
+    struct aws_allocator *allocator,
+    const char *method,
+    const char *path,
+    const struct aws_http_header *header_array,
+    size_t header_count,
+    int expected_error) {
+
+    s_test_init(allocator);
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    if (method) {
+        ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str(method)));
+    }
+    if (path) {
+        ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str(path)));
+    }
+    if (header_array) {
+        ASSERT_SUCCESS(aws_http_message_add_header_array(request, header_array, header_count));
+    }
+
+    struct aws_linked_list chunk_list;
+    aws_linked_list_init(&chunk_list);
+
+    struct aws_h1_encoder_message encoder_message;
+
+    ASSERT_ERROR(
+        expected_error, aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list));
+
+    aws_http_message_destroy(request);
+    aws_h1_encoder_message_clean_up(&encoder_message);
+    s_test_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+H1_ENCODER_TEST_CASE(h1_encoder_rejects_bad_method) {
+    (void)ctx;
+    return s_test_bad_request(
+        allocator,
+        "G@T" /*method*/,
+        "/" /*path*/,
+        s_typical_request_headers /*header_array*/,
+        AWS_ARRAY_SIZE(s_typical_request_headers) /*header_count*/,
+        AWS_ERROR_HTTP_INVALID_METHOD /*expected_error*/);
+}
+
+H1_ENCODER_TEST_CASE(h1_encoder_rejects_missing_method) {
+    (void)ctx;
+    return s_test_bad_request(
+        allocator,
+        NULL /*method*/,
+        "/" /*path*/,
+        s_typical_request_headers /*header_array*/,
+        AWS_ARRAY_SIZE(s_typical_request_headers) /*header_count*/,
+        AWS_ERROR_HTTP_INVALID_METHOD /*expected_error*/);
+}
+
+H1_ENCODER_TEST_CASE(h1_encoder_rejects_bad_path) {
+    (void)ctx;
+    return s_test_bad_request(
+        allocator,
+        "GET" /*method*/,
+        "/\r\n/index.html" /*path*/,
+        s_typical_request_headers /*header_array*/,
+        AWS_ARRAY_SIZE(s_typical_request_headers) /*header_count*/,
+        AWS_ERROR_HTTP_INVALID_PATH /*expected_error*/);
+}
+
+H1_ENCODER_TEST_CASE(h1_encoder_rejects_missing_path) {
+    (void)ctx;
+    return s_test_bad_request(
+        allocator,
+        "GET" /*method*/,
+        NULL /*path*/,
+        s_typical_request_headers /*header_array*/,
+        AWS_ARRAY_SIZE(s_typical_request_headers) /*header_count*/,
+        AWS_ERROR_HTTP_INVALID_PATH /*expected_error*/);
+}
+
+H1_ENCODER_TEST_CASE(h1_encoder_rejects_bad_header_name) {
+    (void)ctx;
+    const struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("amazon.com"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Line-\r\n-Folds"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("bad header name"),
+        },
+    };
+
+    return s_test_bad_request(
+        allocator,
+        "GET" /*method*/,
+        "/" /*path*/,
+        headers /*header_array*/,
+        AWS_ARRAY_SIZE(headers) /*header_count*/,
+        AWS_ERROR_HTTP_INVALID_HEADER_NAME /*expected_error*/);
+}
+
+H1_ENCODER_TEST_CASE(h1_encoder_rejects_bad_header_value) {
+    (void)ctx;
+    const struct aws_http_header headers[] = {
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("amazon.com"),
+        },
+        {
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("X-Line-Folds-Are-Bad-Mkay"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("item1,\r\n item2"),
+        },
+    };
+
+    return s_test_bad_request(
+        allocator,
+        "GET" /*method*/,
+        "/" /*path*/,
+        headers /*header_array*/,
+        AWS_ARRAY_SIZE(headers) /*header_count*/,
+        AWS_ERROR_HTTP_INVALID_HEADER_VALUE /*expected_error*/);
 }
