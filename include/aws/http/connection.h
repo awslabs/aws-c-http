@@ -105,7 +105,13 @@ typedef void(aws_http2_on_remote_settings_change_fn)(
     size_t num_settings,
     void *user_data);
 
-typedef void(aws_http_statistics_observer_fn)(const struct aws_array_list *stats_list, void *user_data);
+/**
+ * Callback invoked on each statistics sample.
+ *
+ * connection_nonce is unique to each connection for disambiguation of each callback per connection.
+ */
+typedef void(
+    aws_http_statistics_observer_fn)(size_t connection_nonce, const struct aws_array_list *stats_list, void *user_data);
 
 /**
  * Configuration options for connection monitoring
