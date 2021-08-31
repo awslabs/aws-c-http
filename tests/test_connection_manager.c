@@ -1336,6 +1336,7 @@ static int s_proxy_integration_test_helper(
     enum proxy_test_type proxy_test_type,
     enum aws_http_proxy_authentication_type auth_type,
     bool use_env) {
+    aws_http_library_init(allocator);
     struct proxy_integration_configurations configs;
     AWS_ZERO_STRUCT(configs);
     ASSERT_SUCCESS(s_get_proxy_environment_configurations(allocator, &configs));
@@ -1417,6 +1418,7 @@ static int s_proxy_integration_test_helper(
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
     aws_tls_connection_options_clean_up(&proxy_tls_options);
+    aws_http_library_clean_up();
 
     return AWS_OP_SUCCESS;
 }
@@ -1543,7 +1545,7 @@ static int s_test_connection_manager_proxy_integration_forwarding_proxy_basic_au
     struct aws_allocator *allocator,
     void *ctx) {
     (void)ctx;
-    return s_proxy_integration_test_helper(allocator, TUNNELING_DOUBLE_TLS, AWS_HPAT_BASIC, false /*use_env*/);
+    return s_proxy_integration_test_helper(allocator, FORWARDING, AWS_HPAT_BASIC, false /*use_env*/);
 }
 AWS_TEST_CASE(
     connection_manager_proxy_integration_forwarding_proxy_basic_auth,
@@ -1553,7 +1555,7 @@ static int s_test_connection_manager_proxy_integration_forwarding_proxy_basic_au
     struct aws_allocator *allocator,
     void *ctx) {
     (void)ctx;
-    return s_proxy_integration_test_helper(allocator, TUNNELING_DOUBLE_TLS, AWS_HPAT_BASIC, true /*use_env*/);
+    return s_proxy_integration_test_helper(allocator, FORWARDING, AWS_HPAT_BASIC, true /*use_env*/);
 }
 AWS_TEST_CASE(
     connection_manager_proxy_integration_forwarding_proxy_basic_auth_env,
