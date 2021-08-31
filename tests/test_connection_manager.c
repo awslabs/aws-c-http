@@ -1321,10 +1321,10 @@ static int s_get_tls_options_from_proxy_test_type(
         if (!tls_ctx) {
             return AWS_OP_ERR;
         }
-        aws_tls_connection_options_init_from_ctx(&proxy_tls_options, tls_ctx);
+        aws_tls_connection_options_init_from_ctx(proxy_tls_options, tls_ctx);
         /* tls options hold a ref to the ctx */
         aws_tls_ctx_release(tls_ctx);
-        if (aws_tls_connection_options_set_server_name(&proxy_tls_options, allocator, &host_name)) {
+        if (aws_tls_connection_options_set_server_name(proxy_tls_options, allocator, &host_name)) {
             return AWS_OP_ERR;
         }
     }
