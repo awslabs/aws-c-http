@@ -1387,3 +1387,13 @@ static int s_test_connection_manager_proxy_integration_forwarding_proxy_no_auth(
 AWS_TEST_CASE(
     connection_manager_proxy_integration_forwarding_proxy_no_auth,
     s_test_connection_manager_proxy_integration_forwarding_proxy_no_auth);
+
+static int s_test_connection_manager_proxy_integration_forwarding_proxy_no_auth_env(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(allocator, FORWARDING, AWS_HPAT_NONE, true /*use_env*/, false /*main_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_forwarding_proxy_no_auth_env,
+    s_test_connection_manager_proxy_integration_forwarding_proxy_no_auth_env);
