@@ -843,8 +843,8 @@ static int s_set_proxy_config_from_env_variable(
                 AWS_ZERO_STRUCT(tls_ctx_options);
                 /* create a default tls options */
                 aws_tls_ctx_options_init_default_client(&tls_ctx_options, allocator);
-                aws_tls_ctx_options_clean_up(&tls_ctx_options);
                 tls_ctx = aws_tls_client_ctx_new(allocator, &tls_ctx_options);
+                aws_tls_ctx_options_clean_up(&tls_ctx_options);
                 if (!tls_ctx) {
                     AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "Failed to create default TLS context.");
                     goto done;

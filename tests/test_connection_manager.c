@@ -1304,6 +1304,33 @@ static bool s_get_use_tls_from_proxy_test_type(enum proxy_test_type test_type) {
     return true;
 }
 
+static int s_get_tls_options_from_proxy_test_type(
+    struct aws_allocator *allocator,
+    enum proxy_test_type proxy_test_type,
+    struct aws_tls_connection_options *proxy_tls_options,
+    struct aws_byte_cursor host_name) {
+    if (proxy_test_type == TUNNELING_DOUBLE_TLS) {
+        struct aws_tls_ctx *tls_ctx = NULL;
+        struct aws_tls_ctx_options tls_ctx_options;
+        AWS_ZERO_STRUCT(tls_ctx_options);
+        /* create a default tls options */
+        aws_tls_ctx_options_init_default_client(&tls_ctx_options, allocator);
+        aws_tls_ctx_options_set_verify_peer(&tls_ctx_options, false);
+        tls_ctx = aws_tls_client_ctx_new(allocator, &tls_ctx_options);
+        aws_tls_ctx_options_clean_up(&tls_ctx_options);
+        if (!tls_ctx) {
+            return AWS_OP_ERR;
+        }
+        aws_tls_connection_options_init_from_ctx(&proxy_tls_options, tls_ctx);
+        /* tls options hold a ref to the ctx */
+        aws_tls_ctx_release(tls_ctx);
+        if (aws_tls_connection_options_set_server_name(&proxy_tls_options, allocator, &host_name)) {
+            return AWS_OP_ERR;
+        }
+    }
+    return AWS_OP_SUCCESS;
+}
+
 static int s_proxy_integration_test_helper(
     struct aws_allocator *allocator,
     enum proxy_test_type proxy_test_type,
@@ -1313,10 +1340,18 @@ static int s_proxy_integration_test_helper(
     AWS_ZERO_STRUCT(configs);
     ASSERT_SUCCESS(s_get_proxy_environment_configurations(allocator, &configs));
     /* not creating new strings */
+    struct aws_tls_connection_options proxy_tls_options;
+    AWS_ZERO_STRUCT(proxy_tls_options);
+    ASSERT_SUCCESS(s_get_tls_options_from_proxy_test_type(
+        allocator,
+        proxy_test_type,
+        &proxy_tls_options,
+        s_get_proxy_host_for_test(&configs, proxy_test_type, auth_type)));
     struct aws_http_proxy_options proxy_options = {
         .host = s_get_proxy_host_for_test(&configs, proxy_test_type, auth_type),
         .port = s_get_proxy_port_for_test(&configs, proxy_test_type, auth_type),
         .connection_type = s_get_proxy_connection_type_for_test(proxy_test_type),
+        .tls_options = proxy_test_type == TUNNELING_DOUBLE_TLS ? &proxy_tls_options : NULL,
         .auth_type = auth_type,
         .auth_username = aws_byte_cursor_from_string(configs.basic_auth_username),
         .auth_password = aws_byte_cursor_from_string(configs.basic_auth_password),
@@ -1381,6 +1416,7 @@ static int s_proxy_integration_test_helper(
     ASSERT_SUCCESS(s_release_connections(1, false));
 
     ASSERT_SUCCESS(s_cm_tester_clean_up());
+    aws_tls_connection_options_clean_up(&proxy_tls_options);
 
     return AWS_OP_SUCCESS;
 }
