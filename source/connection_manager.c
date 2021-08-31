@@ -843,6 +843,8 @@ static int s_set_proxy_config_from_env_variable(
                 AWS_ZERO_STRUCT(tls_ctx_options);
                 /* create a default tls options */
                 aws_tls_ctx_options_init_default_client(&tls_ctx_options, allocator);
+                /* turn off verify peer for proxy connection setup by default */
+                aws_tls_ctx_options_set_verify_peer(&tls_ctx_options, false);
                 tls_ctx = aws_tls_client_ctx_new(allocator, &tls_ctx_options);
                 aws_tls_ctx_options_clean_up(&tls_ctx_options);
                 if (!tls_ctx) {
