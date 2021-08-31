@@ -824,6 +824,16 @@ static int s_set_proxy_config_from_env_variable(
         proxy_options->port = proxy_uri.port;
         struct aws_tls_connection_options default_tls_connection_options;
         AWS_ZERO_STRUCT(default_tls_connection_options);
+        proxy_options->connection_type = options->proxy_env_var_settings.connection_type;
+        if (!proxy_options->connection_type) {
+            if (options->tls_connection_options) {
+                /* Use Tunneling when main connection use TLS. */
+                proxy_options->connection_type = AWS_HPCT_HTTP_TUNNEL;
+            } else {
+                /* Use forwarding proxy when main connection use clear text. */
+                proxy_options->connection_type = AWS_HPCT_HTTP_FORWARD;
+            }
+        }
         if (aws_byte_cursor_eq_ignore_case(&proxy_uri.scheme, &aws_http_scheme_https)) {
             if (options->proxy_env_var_settings.tls_options) {
                 proxy_options->tls_options = options->proxy_env_var_settings.tls_options;
@@ -861,16 +871,6 @@ static int s_set_proxy_config_from_env_variable(
             };
             struct aws_http_proxy_strategy *proxy_strategy = aws_http_proxy_strategy_new_basic_auth(allocator, &config);
             proxy_options->proxy_strategy = proxy_strategy;
-        }
-        proxy_options->connection_type = options->proxy_env_var_settings.connection_type;
-        if (!proxy_options->connection_type) {
-            if (options->tls_connection_options) {
-                /* Use Tunneling when main connection use TLS. */
-                proxy_options->connection_type = AWS_HPCT_HTTP_TUNNEL;
-            } else {
-                /* Use forwarding proxy when main connection use clear text. */
-                proxy_options->connection_type = AWS_HPCT_HTTP_FORWARD;
-            }
         }
         manager->proxy_config = aws_http_proxy_config_new_from_proxy_options(allocator, proxy_options);
         /* config has the deep copy of the needed options, we can clean up resources right after it */

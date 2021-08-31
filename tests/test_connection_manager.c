@@ -1279,7 +1279,6 @@ static struct aws_string *s_get_proxy_url_for_test(
     enum proxy_test_type proxy_test_type,
     enum aws_http_proxy_authentication_type auth_type) {
     if (auth_type == AWS_HPAT_BASIC) {
-
         return configs->http_proxy_basic_url;
     }
     if (proxy_test_type == TUNNELING_DOUBLE_TLS) {
