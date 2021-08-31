@@ -176,7 +176,9 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     tester->tls_ctx = aws_tls_client_ctx_new(options->allocator, &tester->tls_ctx_options);
     ASSERT_NOT_NULL(tester->tls_ctx);
 
+    struct aws_byte_cursor server_name = aws_byte_cursor_from_c_str("www.google.com");
     aws_tls_connection_options_init_from_ctx(&tester->tls_connection_options, tester->tls_ctx);
+    aws_tls_connection_options_set_server_name(&tester->tls_connection_options, options->allocator, &server_name);
 
     tester->verify_proxy_options = options->proxy_options;
 
@@ -187,7 +189,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         .tls_connection_options = options->use_tls ? &tester->tls_connection_options : NULL,
         .proxy_options = options->proxy_options,
         .proxy_env_var_settings.env_var_type = options->use_proxy_env ? AWS_CMPEV_ENABLE : AWS_CMPEV_DISABLE,
-        .host = aws_byte_cursor_from_c_str("www.google.com"),
+        .host = server_name,
         .port = options->use_tls ? 443 : 80,
         .max_connections = options->max_connections,
         .shutdown_complete_user_data = tester,
