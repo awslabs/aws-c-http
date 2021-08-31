@@ -124,12 +124,4 @@ int proxy_tester_verify_connection_attempt_was_to_proxy(
 
 struct testing_channel *proxy_tester_get_current_channel(struct proxy_tester *tester);
 
-/* Given a connection, test the proxy request works fine */
-int proxy_request_test(
-    struct proxy_tester *tester,
-    struct aws_http_connection *client_connection,
-    struct aws_byte_cursor method,
-    struct aws_byte_cursor path,
-    struct aws_byte_cursor host);
-
 #endif /* AWS_HTTP_PROXY_TEST_HELPER_H */
