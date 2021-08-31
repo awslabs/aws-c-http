@@ -106,6 +106,14 @@ typedef void(aws_http2_on_remote_settings_change_fn)(
     void *user_data);
 
 /**
+ * Callback invoked on each statistics sample.
+ *
+ * connection_nonce is unique to each connection for disambiguation of each callback per connection.
+ */
+typedef void(
+    aws_http_statistics_observer_fn)(size_t connection_nonce, const struct aws_array_list *stats_list, void *user_data);
+
+/**
  * Configuration options for connection monitoring
  */
 struct aws_http_connection_monitoring_options {
@@ -121,6 +129,17 @@ struct aws_http_connection_monitoring_options {
      * as unhealthy.
      */
     uint32_t allowable_throughput_failure_interval_seconds;
+
+    /**
+     * invoked on each statistics publish by the underlying IO channel. Install this callback to receive the statistics
+     * for observation. This field is optional.
+     */
+    aws_http_statistics_observer_fn *statistics_observer_fn;
+
+    /**
+     * user_data to be passed to statistics_observer_fn.
+     */
+    void *statistics_observer_user_data;
 };
 
 /**

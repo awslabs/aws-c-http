@@ -69,6 +69,11 @@ static void s_process_statistics(
         }
     }
 
+    if (impl->options.statistics_observer_fn) {
+        impl->options.statistics_observer_fn(
+            (size_t)(uintptr_t)(context), stats_list, impl->options.statistics_observer_user_data);
+    }
+
     struct aws_channel *channel = context;
 
     uint64_t bytes_per_second = 0;
