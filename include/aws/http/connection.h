@@ -463,18 +463,17 @@ AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
 
 /**
- * Helper function that initializes an ALPN map copied from the *src map.
+ * Initialize an map copied from the *src map, which maps `struct aws_string *` to `enum aws_http_version`.
  */
 AWS_HTTP_API
 int aws_http_alpn_map_init_copy(
     struct aws_allocator *allocator,
     struct aws_hash_table *dest,
-    const struct aws_hash_table *src);
+    struct aws_hash_table *src);
 
 /**
- * Helper function that initializes an empty map can be used in aws_http_client_connection_options as alpn_string_map.
- * The caller owns the returned map.
- * The aws_string created as the key of the map will be owned by the map.
+ * Initialize an empty hash-table that maps `struct aws_string *` to `enum aws_http_version`.
+ * This map can used in aws_http_client_connections_options.alpn_string_map.
  */
 AWS_HTTP_API
 int aws_http_alpn_map_init(struct aws_allocator *allocator, struct aws_hash_table *map);
