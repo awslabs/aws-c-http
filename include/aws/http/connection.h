@@ -444,7 +444,16 @@ AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
 
 /**
- * Helper function that returns an empty map can be used in aws_http_client_connection_options as alpn_string_map.
+ * Helper function that initializes an ALPN map copied from the *src map.
+ */
+AWS_HTTP_API
+int aws_http_alpn_map_init_copy(
+    struct aws_allocator *allocator,
+    struct aws_hash_table *dest,
+    const struct aws_hash_table *src);
+
+/**
+ * Helper function that initializes an empty map can be used in aws_http_client_connection_options as alpn_string_map.
  * The caller owns the returned map.
  * The aws_string created as the key of the map will be owned by the map.
  */

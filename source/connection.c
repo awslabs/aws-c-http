@@ -33,7 +33,7 @@ static const struct aws_http_connection_system_vtable *s_system_vtable_ptr = &s_
 
 void aws_http_client_bootstrap_destroy(struct aws_http_client_bootstrap *bootstrap) {
     /* During allocating, the underlying stuctures should be allocated with the bootstrap by aws_mem_acquire_many. Thus,
-     * we only need to clean up the first pointer which is the boostrap */
+     * we only need to clean up the first pointer which is the bootstrap */
     if (bootstrap->alpn_string_map) {
         aws_hash_table_clean_up(bootstrap->alpn_string_map);
     }
@@ -976,6 +976,30 @@ static int s_copy_alpn_string_map(void *context, struct aws_hash_element *item) 
     return AWS_COMMON_HASH_TABLE_ITER_CONTINUE;
 }
 
+int aws_http_alpn_map_init_copy(
+    struct aws_allocator *allocator,
+    struct aws_hash_table *dest,
+    const struct aws_hash_table *src) {
+    if (aws_http_alpn_map_init(allocator, dest)) {
+        return AWS_OP_ERR;
+    }
+    struct s_copy_alpn_string_map_context context;
+    context.allocator = allocator;
+    context.map = dest;
+    /* make a deep copy of the map */
+    if (aws_hash_table_foreach(src, s_copy_alpn_string_map, &context)) {
+        int error_code = aws_last_error();
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "Failed to copy ALPN map with error code %d (%s)",
+            error_code,
+            aws_error_name(error_code));
+        aws_hash_table_clean_up(dest);
+        return AWS_OP_ERR;
+    }
+    return AWS_OP_SUCCESS;
+}
+
 int aws_http_client_connect_internal(
     const struct aws_http_client_connection_options *orig_options,
     aws_http_proxy_request_transform_fn *proxy_request_transform) {
@@ -1058,20 +1082,7 @@ int aws_http_client_connect_internal(
     }
 
     if (options.alpn_string_map) {
-        if (aws_http_alpn_map_init(options.allocator, alpn_string_map)) {
-            goto error;
-        }
-        struct s_copy_alpn_string_map_context context;
-        context.allocator = options.allocator;
-        context.map = alpn_string_map;
-        /* make a deep copy of the map */
-        if (aws_hash_table_foreach(options.alpn_string_map, s_copy_alpn_string_map, &context)) {
-            int error_code = aws_last_error();
-            AWS_LOGF_ERROR(
-                AWS_LS_HTTP_CONNECTION,
-                "Failed to copy ALPN map with error code %d (%s)",
-                error_code,
-                aws_error_name(error_code));
+        if (aws_http_alpn_map_init_copy(options.allocator, alpn_string_map, options.alpn_string_map)) {
             goto error;
         }
         http_bootstrap->alpn_string_map = alpn_string_map;
