@@ -141,7 +141,7 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
                 struct aws_hash_element *found = NULL;
                 aws_hash_table_find(alpn_string_map, (void *)negotiated_result, &found);
                 if (found) {
-                    version = (int)found->value;
+                    version = (enum aws_http_version)(size_t)found->value;
                     AWS_LOGF_DEBUG(
                         AWS_LS_HTTP_CONNECTION,
                         "static: Customized ALPN protocol " PRInSTR " used. " PRInSTR " client connection established.",
