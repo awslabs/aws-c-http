@@ -536,6 +536,7 @@ static int s_aws_http_apply_http_connection_to_proxied_channel(struct aws_http_p
         context->original_manual_window_management,
         false, /* prior_knowledge_http2 */
         context->original_initial_window_size,
+        NULL, /* alpn_string_map */
         &context->original_http1_options,
         NULL); /* TODO: support http2 options */
     if (connection == NULL) {
