@@ -577,7 +577,7 @@ static int s_test_connection_customized_alpn(struct aws_allocator *allocator, vo
     ASSERT_SUCCESS(aws_http_alpn_map_init(allocator, &alpn_map));
     /* We don't need to clean up the string as the map will own the string */
     struct aws_string *alpn_string = aws_string_new_from_c_str(allocator, customized_alpn_string);
-    ASSERT_SUCCESS(aws_hash_table_put(&alpn_map, alpn_string, (void *)expected_version, NULL));
+    ASSERT_SUCCESS(aws_hash_table_put(&alpn_map, alpn_string, (void *)(size_t)expected_version, NULL));
     client_options.alpn_string_map = &alpn_map;
     tester.client_options = client_options;
 
