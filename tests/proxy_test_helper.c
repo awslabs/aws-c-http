@@ -235,7 +235,8 @@ int proxy_tester_clean_up(struct proxy_tester *tester) {
             if (i + 1 < channel_count) {
                 wrapper.bootstrap->on_shutdown(tester->client_connection, 0, wrapper.bootstrap->user_data);
             }
-            aws_mem_release(tester->alloc, wrapper.bootstrap);
+
+            aws_http_client_bootstrap_destroy(wrapper.bootstrap);
         }
     }
 

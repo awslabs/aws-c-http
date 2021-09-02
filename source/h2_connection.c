@@ -2522,8 +2522,8 @@ static int s_connection_get_received_goaway(
     uint32_t *out_last_stream_id) {
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
-    uint32_t received_last_stream_id;
-    uint32_t received_http2_error;
+    uint32_t received_last_stream_id = 0;
+    uint32_t received_http2_error = 0;
     bool goaway_not_ready = false;
     uint32_t max_stream_id = AWS_H2_STREAM_ID_MAX;
     { /* BEGIN CRITICAL SECTION */
