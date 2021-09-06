@@ -106,6 +106,14 @@ typedef void(aws_http2_on_remote_settings_change_fn)(
     void *user_data);
 
 /**
+ * Callback invoked on each statistics sample.
+ *
+ * connection_nonce is unique to each connection for disambiguation of each callback per connection.
+ */
+typedef void(
+    aws_http_statistics_observer_fn)(size_t connection_nonce, const struct aws_array_list *stats_list, void *user_data);
+
+/**
  * Configuration options for connection monitoring
  */
 struct aws_http_connection_monitoring_options {
@@ -121,6 +129,17 @@ struct aws_http_connection_monitoring_options {
      * as unhealthy.
      */
     uint32_t allowable_throughput_failure_interval_seconds;
+
+    /**
+     * invoked on each statistics publish by the underlying IO channel. Install this callback to receive the statistics
+     * for observation. This field is optional.
+     */
+    aws_http_statistics_observer_fn *statistics_observer_fn;
+
+    /**
+     * user_data to be passed to statistics_observer_fn.
+     */
+    void *statistics_observer_user_data;
 };
 
 /**
@@ -311,6 +330,16 @@ struct aws_http_client_connection_options {
     bool prior_knowledge_http2;
 
     /**
+     * Optional.
+     * Pointer to the hash map containing the ALPN string to protocol to use.
+     * Hash from `struct aws_string *` to `enum aws_http_version`.
+     * If not set, only the predefined string `h2` and `http/1.1` will be recognized. Other negotiated ALPN string will
+     * result in a HTTP1/1 connection
+     * Note: Connection will keep a deep copy of the table and the strings.
+     */
+    struct aws_hash_table *alpn_string_map;
+
+    /**
      * Options specific to HTTP/1.x connections.
      * Optional.
      * Ignored if connection is not HTTP/1.x.
@@ -432,6 +461,22 @@ enum aws_http_version aws_http_connection_get_version(const struct aws_http_conn
  */
 AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
+
+/**
+ * Initialize an map copied from the *src map, which maps `struct aws_string *` to `enum aws_http_version`.
+ */
+AWS_HTTP_API
+int aws_http_alpn_map_init_copy(
+    struct aws_allocator *allocator,
+    struct aws_hash_table *dest,
+    struct aws_hash_table *src);
+
+/**
+ * Initialize an empty hash-table that maps `struct aws_string *` to `enum aws_http_version`.
+ * This map can used in aws_http_client_connections_options.alpn_string_map.
+ */
+AWS_HTTP_API
+int aws_http_alpn_map_init(struct aws_allocator *allocator, struct aws_hash_table *map);
 
 /**
  * Checks http proxy options for correctness
