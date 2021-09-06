@@ -181,6 +181,46 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_mess
     AWS_ASSERT(wrote_all);
 }
 
+/* @graebm would it be worthwhile to extract the inner part of this loop into a function shared by my headers count, and
+ * the scan function? */
+static size_t s_headers_size(const struct aws_http_header *headers) {
+    const size_t num_headers = aws_http_headers_get_header_count(headers);
+    size_t total = 0;
+    for (int i = 0; i < num_headers; i++) {
+        struct aws_http_header header;
+        aws_http_headers_get_index(headers, &header, i);
+        int err = 0;
+        err |= aws_add_size_checked(header.name.len, total, &total);
+        err |= aws_add_size_checked(header.value.len, total, &total);
+        err |= aws_add_size_checked(4, total, &total); /* ": " + "\r\n" */
+        if (err) {
+            return AWS_OP_ERR;
+        }
+    }
+    return total;
+}
+
+/* same as s_write_headers, but takes just the headers, instead of the whole message. @graebm can I delete write
+ * headers, and use this instead? */
+static void s_headers_to_buffer(struct aws_byte_buf *dst, const struct aws_http_header *headers) {
+
+    const size_t num_headers = aws_http_headers_get_header_count(headers);
+
+    bool wrote_all = true;
+    for (size_t i = 0; i < num_headers; ++i) {
+        struct aws_http_header header;
+        aws_http_headers_get_header(headers, &header, i);
+
+        /* header-line: "{name}: {value}\r\n" */
+        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.name);
+        wrote_all &= aws_byte_buf_write_u8(dst, ':');
+        wrote_all &= aws_byte_buf_write_u8(dst, ' ');
+        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.value);
+        wrote_all &= s_write_crlf(dst);
+    }
+    AWS_ASSERT(wrote_all);
+}
+
 int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
@@ -441,6 +481,23 @@ static void s_populate_chunk_line_buffer(
     }
     wrote_chunk_line &= s_write_crlf(chunk_line);
     AWS_ASSERT(wrote_chunk_line);
+}
+
+struct aws_h1_trailer *aws_h1_trailer_new(
+    struct aws_allocator *allocator,
+    const struct aws_http1_trailer_options *options) {
+    /* Allocate trailer along with storage for the trailer-line */
+    struct aws_h1_trailer *trailer = aws_mem_acquire(allocator, sizeof(struct aws_h1_trailer));
+    if (!trailer) {
+        return aws_last_error();
+    }
+    size_t trailer_size = s_headers_size(options->trailing_headers);
+    if (aws_byte_buf_init(&trailer->trailer_data, allocator, trailer_size)) {
+        aws_mem_release(allocator, trailer);
+        return aws_last_error();
+    }
+    trailer->allocator = allocator;
+    return trailer;
 }
 
 struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const struct aws_http1_chunk_options *options) {
@@ -748,11 +805,11 @@ static int s_state_fn_chunk_end(struct aws_h1_encoder *encoder, struct aws_byte_
 
 /* Write out trailer after last chunk */
 static int s_state_fn_chunk_trailer(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
-    /* We don't currently have API calls that lets users add trailing headers,
-     * so just write out the final CRLF */
-    bool done = s_write_crlf(dst);
+    /* how does the data make it from synched data to encoder->message? Do I need to do anything extra */
+    bool done;
+    bool done = s_encode_buf(encoder, dst, &encoder->message->trailer->trailer_data);
     if (!done) {
-        /* Remain in this state until done writing out CRLF */
+        /* Remain in this state until we're done writing out body */
         return AWS_OP_SUCCESS;
     }
 

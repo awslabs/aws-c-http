@@ -19,6 +19,11 @@ struct aws_h1_chunk {
     struct aws_byte_buf chunk_line;
 };
 
+struct aws_h1_trailer {
+    struct aws_allocator *allocator;
+    struct aws_byte_buf trailer_data;
+};
+
 /**
  * Message to be submitted to encoder.
  * Contains data necessary for encoder to write an outgoing request or response.
@@ -35,6 +40,7 @@ struct aws_h1_encoder_message {
      * If list goes empty, encoder waits for more chunks to arrive.
      * A chunk with data_size=0 means "final chunk" */
     struct aws_linked_list *pending_chunk_list;
+    struct aws_h1_trailer *trailer;
 
     /* If non-zero, length of unchunked body to send */
     uint64_t content_length;

@@ -356,6 +356,20 @@ struct aws_http1_chunk_options {
     void *user_data;
 };
 
+struct aws_http1_trailer_options {
+
+    /**
+     * list of trailing headers to send as part of the chunked trailer
+     */
+
+    const struct aws_http_headers *trailing_headers;
+
+    /**
+     * User provided data passed to the on_complete callback on its invocation.
+     */
+    void *user_data;
+};
+
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
     { .self_size = sizeof(struct aws_http_request_handler_options), }
 
@@ -627,6 +641,10 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
 AWS_HTTP_API int aws_http1_stream_write_chunk(
     struct aws_http_stream *http1_stream,
     const struct aws_http1_chunk_options *options);
+
+AWS_HTTP_API int aws_http1_stream_write_chunked_trailer(
+    struct aws_http_stream *http1_stream,
+    const struct aws_http1_trailer_options *options);
 
 /**
  * Get the message's aws_http_headers.

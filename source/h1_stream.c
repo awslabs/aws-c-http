@@ -225,11 +225,94 @@ static int s_stream_write_chunk(struct aws_http_stream *stream_base, const struc
     return AWS_OP_SUCCESS;
 }
 
+static int s_stream_write_trailer(
+    struct aws_http_stream *stream_base,
+    const struct aws_http1_trailer_options *options) {
+    AWS_PRECONDITION(stream_base);
+    AWS_PRECONDITION(options);
+    struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
+
+    struct aws_h1_trailer *trailer = aws_h1_trailer_new(stream_base->alloc, options);
+    if (AWS_UNLIKELY(NULL == trailer)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Failed to initialize streamed trailer, error %d (%s).",
+            (void *)stream_base,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+
+    int error_code = 0;
+    bool should_schedule_task = false;
+
+    { /* BEGIN CRITICAL SECTION */
+        s_stream_lock_synced_data(stream);
+        /* Can only add trailers while stream is active. */
+        if (stream->synced_data.api_state != AWS_H1_STREAM_API_STATE_ACTIVE) {
+            error_code = (stream->synced_data.api_state == AWS_H1_STREAM_API_STATE_INIT)
+                             ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
+                             : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
+            goto unlock;
+        }
+
+        /* @graebm section 4.1 of the RFC suggests to me that this check is still necesssary, but I'm uncertain */
+        /* Prevent user trying to submit chunked trailers without having set the required headers.
+         * This check also prevents a server-user submitting trailers before the response has been submitted. */
+        if (!stream->synced_data.using_chunked_encoding) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Cannot write trailers without 'transfer-encoding: chunked' header.",
+                (void *)stream_base);
+            error_code = AWS_ERROR_INVALID_STATE;
+            goto unlock;
+        }
+
+        /* success */
+        /* @grabm is this the correct way to deal with shared cross thread date? */
+        stream->synced_data.pending_trailer = trailer;
+        should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
+        stream->synced_data.is_cross_thread_work_task_scheduled = true;
+
+    unlock:
+        s_stream_unlock_synced_data(stream);
+    } /* END CRITICAL SECTION */
+
+    if (error_code) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Failed to add trailer, error %d (%s)",
+            (void *)stream_base,
+            error_code,
+            aws_error_name(error_code));
+
+        aws_h1_trailer_destroy(trailer);
+        return aws_raise_error(error_code);
+    }
+
+    /* should I log the trailer size? would require a bit of editing */
+    AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Adding trailer to stream", (void *)stream);
+
+    if (should_schedule_task) {
+        /* Keep stream alive until task completes */
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Scheduling stream cross-thread work task.", (void *)stream_base);
+        aws_channel_schedule_task_now(
+            stream->base.owning_connection->channel_slot->channel, &stream->cross_thread_work_task);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM, "id=%p: Stream cross-thread work task was already scheduled.", (void *)stream_base);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 static const struct aws_http_stream_vtable s_stream_vtable = {
     .destroy = s_stream_destroy,
     .update_window = s_stream_update_window,
     .activate = aws_h1_stream_activate,
     .http1_write_chunk = s_stream_write_chunk,
+    .http1_write_trailer = s_stream_write_trailer,
     .http2_reset_stream = NULL,
     .http2_get_received_error_code = NULL,
     .http2_get_sent_error_code = NULL,

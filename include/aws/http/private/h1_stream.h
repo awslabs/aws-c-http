@@ -79,6 +79,10 @@ struct aws_h1_stream {
          * but haven't yet moved to encoder_message.pending_chunk_list where the encoder will find them. */
         struct aws_linked_list pending_chunk_list;
 
+        /* trailing headers which have been submitted by user,
+         * but haven't yet moved to encoder_message.pending_trailer where the encoder will find them. */
+        struct aws_h1_trailer *pending_trailer;
+
         enum aws_h1_stream_api_state api_state;
 
         /* Sum of all aws_http_stream_update_window() calls that haven't yet moved to thread_data.stream_window */
