@@ -3678,7 +3678,7 @@ TEST_CASE(h2_client_manual_window_management_user_send_conn_window_update) {
         }
         /* manually update the stream and connection flow-control window. */
         aws_http_stream_update_window(stream_tester.stream, body_size);
-        aws_http2_connection_update_window(s_tester.connection, body_size);
+        aws_http2_connection_update_window(s_tester.connection, (uint32_t)body_size);
         testing_channel_drain_queued_tasks(&s_tester.testing_channel);
         ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
