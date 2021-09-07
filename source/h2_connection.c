@@ -268,6 +268,7 @@ static void s_stop(
 
 void aws_h2_connection_shutdown_due_to_write_err(struct aws_h2_connection *connection, int error_code) {
     AWS_PRECONDITION(error_code);
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
     if (connection->thread_data.channel_shutdown_waiting_for_goaway_to_be_written) {
         /* If shutdown is waiting for writes to complete, but writes are now broken,
@@ -2198,13 +2199,10 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
     if (err) {
-        CONNECTION_LOGF(
+        CONNECTION_LOG(
             ERROR,
             connection,
-            "The increment size is too big for HTTP/2 protocol, max flow-control "
-            "window size is 2**31 - 1. We got %" PRIu32
-            ", which will cause the flow-control window to exceed the maximum",
-            increment_size);
+            "The connection's flow-control windows has been incremented beyond 2**31 -1, the max for HTTP/2. The ");
         aws_h2_frame_destroy(connection_window_update_frame);
         goto overflow;
     }

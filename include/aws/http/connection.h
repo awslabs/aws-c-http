@@ -525,7 +525,7 @@ int aws_http2_connection_ping(
  * @param out_settings fixed size array of aws_http2_setting gets set to the local settings
  */
 AWS_HTTP_API
-int aws_http2_connection_get_local_settings(
+void aws_http2_connection_get_local_settings(
     const struct aws_http_connection *http2_connection,
     struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
 
@@ -536,7 +536,7 @@ int aws_http2_connection_get_local_settings(
  * @param out_settings fixed size array of aws_http2_setting gets set to  the remote settings
  */
 AWS_HTTP_API
-int aws_http2_connection_get_remote_settings(
+void aws_http2_connection_get_remote_settings(
     const struct aws_http_connection *http2_connection,
     struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
 
@@ -616,7 +616,7 @@ int aws_http2_connection_get_received_goaway(
  *
  * If you are not connected, this call will have no effect.
  *
- * Fails when the connection is not http2 connection.
+ * Crashes when the connection is not http2 connection.
  * The limit of the Maximum Size is 2**31 - 1. If the increment size cause the connection flow window exceeds the
  * Maximun size, this call will result in the connection lost.
  *
@@ -624,7 +624,7 @@ int aws_http2_connection_get_received_goaway(
  * @param increment_size The size to increment for the connection's flow control window
  */
 AWS_HTTP_API
-int aws_http2_connection_update_window(struct aws_http_connection *http2_connection, uint32_t increment_size);
+void aws_http2_connection_update_window(struct aws_http_connection *http2_connection, uint32_t increment_size);
 
 AWS_EXTERN_C_END
 

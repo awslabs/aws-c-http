@@ -22,10 +22,7 @@ static int s_stream_get_sent_error_code(struct aws_http_stream *stream_base, uin
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error);
-static int s_stream_reset_stream_internal(
-    struct aws_http_stream *stream_base,
-    uint32_t http2_error,
-    int aws_error_code);
+static int s_stream_reset_stream_internal(struct aws_http_stream *stream_base, struct aws_h2err stream_error);
 
 struct aws_http_stream_vtable s_h2_stream_vtable = {
     .destroy = s_stream_destroy,
@@ -255,7 +252,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     stream->sent_reset_error_code = -1;
     stream->received_reset_error_code = -1;
 
-    stream->synced_data.user_reset_error_code = AWS_HTTP2_ERR_COUNT;
+    stream->synced_data.reset_error.h2_code = AWS_HTTP2_ERR_COUNT;
     stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_INIT;
     if (aws_mutex_init(&stream->synced_data.lock)) {
         AWS_H2_STREAM_LOGF(
@@ -290,8 +287,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     bool ignore_window_update = (aws_h2_stream_get_state(stream) == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE);
     bool reset_called;
     size_t window_update_size;
-    uint32_t user_reset_error_code;
-    int reset_aws_error_code;
+    struct aws_h2err reset_error;
 
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream);
@@ -301,8 +297,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         window_update_size = stream->synced_data.window_update_size;
         stream->synced_data.window_update_size = 0;
         reset_called = stream->synced_data.reset_called;
-        user_reset_error_code = stream->synced_data.user_reset_error_code;
-        reset_aws_error_code = stream->synced_data.reset_aws_error_code;
+        reset_error = stream->synced_data.reset_error;
 
         s_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
@@ -320,15 +315,7 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
 
     if (reset_called) {
         struct aws_h2err h2err;
-        h2err.h2_code = user_reset_error_code;
-        if (user_reset_error_code == AWS_HTTP2_ERR_NO_ERROR && reset_aws_error_code == AWS_ERROR_HTTP_RST_STREAM_SENT &&
-            stream->base.server_data && stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL) {
-            /* (RFC-7540 8.1) A server MAY request that the client abort transmission of a request without error by
-             * sending a RST_STREAM with an error code of NO_ERROR after sending a complete response */
-            h2err.aws_code = AWS_ERROR_SUCCESS;
-        } else {
-            h2err.aws_code = reset_aws_error_code;
-        }
+        h2err = reset_error;
         struct aws_h2err returned_h2err = s_send_rst_and_close_stream(stream, h2err);
         if (aws_h2err_failed(returned_h2err)) {
             aws_h2_connection_shutdown_due_to_write_err(connection, returned_h2err.aws_code);
@@ -407,24 +394,23 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
     if (err) {
         /* The increment_size is still not 100% safe, since we cannot control the incoming data frame. So just
          * ruled out the value that is obviously wrong values */
-        AWS_H2_STREAM_LOGF(
+        AWS_H2_STREAM_LOG(
             ERROR,
             stream,
-            "The increment size is too big for HTTP/2 protocol, max flow-control "
-            "window size is 2**31 - 1. We got %zu, which will cause the flow-control window to exceed the maximum",
-            increment_size);
+            "The stream's flow-control window has been incremented beyond 2**31 -1, the max for HTTP/2. The stream "
+            "will close.");
         aws_raise_error(AWS_ERROR_OVERFLOW_DETECTED);
-
-        if (s_stream_reset_stream_internal(stream_base, AWS_HTTP2_ERR_INTERNAL_ERROR, AWS_ERROR_OVERFLOW_DETECTED))
-            aws_h2_connection_shutdown_due_to_write_err(connection, aws_last_error());
+        struct aws_h2err stream_error = {
+            .aws_code = AWS_ERROR_OVERFLOW_DETECTED,
+            .h2_code = AWS_HTTP2_ERR_INTERNAL_ERROR,
+        };
+        /* Only when stream is not initialized reset will fail. So, we can assert it to be succeed. */
+        AWS_FATAL_ASSERT(s_stream_reset_stream_internal(stream_base, stream_error) == AWS_OP_SUCCESS);
     }
     return;
 }
 
-static int s_stream_reset_stream_internal(
-    struct aws_http_stream *stream_base,
-    uint32_t http2_error,
-    int aws_error_code) {
+static int s_stream_reset_stream_internal(struct aws_http_stream *stream_base, struct aws_h2err stream_error) {
 
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
@@ -440,12 +426,16 @@ static int s_stream_reset_stream_internal(
         if (!reset_called && !stream_is_init) {
             cross_thread_work_should_schedule = !stream->synced_data.is_cross_thread_work_task_scheduled;
             stream->synced_data.reset_called = true;
-            stream->synced_data.user_reset_error_code = http2_error;
-            stream->synced_data.reset_aws_error_code = aws_error_code;
+            stream->synced_data.reset_error = stream_error;
         }
         s_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
 
+    if (stream_is_init) {
+        AWS_H2_STREAM_LOG(
+            ERROR, stream, "Reset stream failed. Stream is in initialized state, please activate the stream first.");
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
     if (cross_thread_work_should_schedule) {
         AWS_H2_STREAM_LOG(TRACE, stream, "Scheduling stream cross-thread work task");
         /* increment the refcount of stream to keep it alive until the task runs */
@@ -453,13 +443,6 @@ static int s_stream_reset_stream_internal(
         aws_channel_schedule_task_now(connection->base.channel_slot->channel, &stream->cross_thread_work_task);
         return AWS_OP_SUCCESS;
     }
-
-    if (stream_is_init) {
-        AWS_H2_STREAM_LOG(
-            ERROR, stream, "Reset stream failed. Stream is in initialized state, please activate the stream first.");
-        return aws_raise_error(AWS_ERROR_INVALID_STATE);
-    }
-
     if (reset_called) {
         AWS_H2_STREAM_LOG(DEBUG, stream, "Reset stream ignored. Reset stream has been called already.");
     }
@@ -468,7 +451,12 @@ static int s_stream_reset_stream_internal(
 }
 
 static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t http2_error) {
-    return s_stream_reset_stream_internal(stream_base, http2_error, AWS_ERROR_HTTP_RST_STREAM_SENT);
+    struct aws_h2err stream_error = {
+        .aws_code = AWS_ERROR_HTTP_RST_STREAM_SENT,
+        .h2_code = http2_error,
+    };
+
+    return s_stream_reset_stream_internal(stream_base, stream_error);
 }
 
 static int s_stream_get_received_error_code(struct aws_http_stream *stream_base, uint32_t *out_http2_error) {
