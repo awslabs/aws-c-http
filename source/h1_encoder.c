@@ -194,7 +194,8 @@ static size_t s_headers_size(const struct aws_http_headers *headers) {
         err |= aws_add_size_checked(header.value.len, total, &total);
         err |= aws_add_size_checked(4, total, &total); /* ": " + "\r\n" */
         if (err) {
-            return AWS_OP_ERR;
+            /* this message could be better, also should this fail in some way? */
+            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "failed to calculate header size");
         }
     }
     return total;
