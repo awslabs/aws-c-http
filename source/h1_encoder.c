@@ -812,7 +812,13 @@ static int s_state_fn_chunk_end(struct aws_h1_encoder *encoder, struct aws_byte_
 /* Write out trailer after last chunk */
 static int s_state_fn_chunk_trailer(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
     /* how does the data make it from synched data to encoder->message? Do I need to do anything extra */
-    bool done = s_encode_buf(encoder, dst, &encoder->message->trailer->trailer_data);
+    bool done;
+    /* if a chunked trailer was set */
+    if (encoder->message->trailer) {
+        done = s_encode_buf(encoder, dst, &encoder->message->trailer->trailer_data);
+    } else {
+        done = s_write_crlf(dst);
+    }
     if (!done) {
         /* Remain in this state until we're done writing out body */
         return AWS_OP_SUCCESS;
