@@ -496,6 +496,7 @@ struct aws_h1_trailer *aws_h1_trailer_new(
         aws_mem_release(allocator, trailer);
         return NULL;
     }
+    s_headers_to_buffer(&trailer->trailer_data, options->trailing_headers);
     trailer->allocator = allocator;
     return trailer;
 }
