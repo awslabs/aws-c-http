@@ -77,9 +77,14 @@ struct aws_h1_encoder {
 };
 
 struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const struct aws_http1_chunk_options *options);
+struct aws_h1_trailer *aws_h1_trailer_new(
+    struct aws_allocator *allocator,
+    const struct aws_http1_trailer_options *options);
 
 /* Just destroy the chunk (don't fire callback) */
 void aws_h1_chunk_destroy(struct aws_h1_chunk *chunk);
+
+void aws_h1_trailer_destroy(struct aws_h1_trailer *trailer);
 
 /* Destroy chunk and fire its completion callback */
 void aws_h1_chunk_complete_and_destroy(struct aws_h1_chunk *chunk, struct aws_http_stream *http_stream, int error_code);

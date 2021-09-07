@@ -575,7 +575,7 @@ int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, const str
 
 int aws_http1_stream_write_trailer(
     struct aws_http_stream *http1_stream,
-    const struct aws_http1_chunked_trailer_options *options) {
+    const struct aws_http1_trailer_options *options) {
     AWS_PRECONDITION(http1_stream);
     AWS_PRECONDITION(http1_stream->vtable);
     AWS_PRECONDITION(options);

@@ -183,12 +183,12 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_mess
 
 /* @graebm would it be worthwhile to extract the inner part of this loop into a function shared by my headers count, and
  * the scan function? */
-static size_t s_headers_size(const struct aws_http_header *headers) {
-    const size_t num_headers = aws_http_headers_get_header_count(headers);
+static size_t s_headers_size(const struct aws_http_headers *headers) {
+    const size_t num_headers = aws_http_headers_count(headers);
     size_t total = 0;
-    for (int i = 0; i < num_headers; i++) {
+    for (size_t i = 0; i < num_headers; i++) {
         struct aws_http_header header;
-        aws_http_headers_get_index(headers, &header, i);
+        aws_http_headers_get_index(headers, i, &header);
         int err = 0;
         err |= aws_add_size_checked(header.name.len, total, &total);
         err |= aws_add_size_checked(header.value.len, total, &total);
@@ -202,14 +202,14 @@ static size_t s_headers_size(const struct aws_http_header *headers) {
 
 /* same as s_write_headers, but takes just the headers, instead of the whole message. @graebm can I delete write
  * headers, and use this instead? */
-static void s_headers_to_buffer(struct aws_byte_buf *dst, const struct aws_http_header *headers) {
+static void s_headers_to_buffer(struct aws_byte_buf *dst, const struct aws_http_headers *headers) {
 
-    const size_t num_headers = aws_http_headers_get_header_count(headers);
+    const size_t num_headers = aws_http_headers_count(headers);
 
     bool wrote_all = true;
     for (size_t i = 0; i < num_headers; ++i) {
         struct aws_http_header header;
-        aws_http_headers_get_header(headers, &header, i);
+        aws_http_headers_get_index(headers, i, &header);
 
         /* header-line: "{name}: {value}\r\n" */
         wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.name);
@@ -489,15 +489,21 @@ struct aws_h1_trailer *aws_h1_trailer_new(
     /* Allocate trailer along with storage for the trailer-line */
     struct aws_h1_trailer *trailer = aws_mem_acquire(allocator, sizeof(struct aws_h1_trailer));
     if (!trailer) {
-        return aws_last_error();
+        return NULL;
     }
     size_t trailer_size = s_headers_size(options->trailing_headers);
     if (aws_byte_buf_init(&trailer->trailer_data, allocator, trailer_size)) {
         aws_mem_release(allocator, trailer);
-        return aws_last_error();
+        return NULL;
     }
     trailer->allocator = allocator;
     return trailer;
+}
+
+void aws_h1_trailer_destroy(struct aws_h1_trailer *trailer) {
+    AWS_PRECONDITION(trailer);
+    aws_byte_buf_clean_up(&trailer->trailer_data);
+    aws_mem_release(trailer->allocator, trailer);
 }
 
 struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const struct aws_http1_chunk_options *options) {
@@ -806,7 +812,6 @@ static int s_state_fn_chunk_end(struct aws_h1_encoder *encoder, struct aws_byte_
 /* Write out trailer after last chunk */
 static int s_state_fn_chunk_trailer(struct aws_h1_encoder *encoder, struct aws_byte_buf *dst) {
     /* how does the data make it from synched data to encoder->message? Do I need to do anything extra */
-    bool done;
     bool done = s_encode_buf(encoder, dst, &encoder->message->trailer->trailer_data);
     if (!done) {
         /* Remain in this state until we're done writing out body */
