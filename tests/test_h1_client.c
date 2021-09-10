@@ -326,6 +326,59 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body_chunked) {
     return AWS_OP_SUCCESS;
 }
 
+H1_CLIENT_TEST_CASE(h1_client_request_send_chunked_trailer) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+    struct aws_http_headers *trailers = aws_http_headers_new(allocator);
+    const struct aws_http_header trailer = {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("trailer"),
+    };
+    aws_http_headers_add_header(trailers, &trailer);
+
+    /* send request */
+    struct aws_http_message *request = s_new_default_chunked_put_request(allocator);
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+
+    /* Initialize and send the stream chunks */
+    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
+    struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, &body);
+    struct aws_http1_chunk_options options = s_default_chunk_options(body_stream, body.len);
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
+    ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
+    ASSERT_SUCCESS(aws_http1_stream_add_chunked_trailer(stream, trailers));
+    ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
+                           "Transfer-Encoding: chunked\r\n"
+                           "\r\n"
+                           "10\r\n"
+                           "write more tests"
+                           "\r\n"
+                           "0\r\n"
+                           "chunked: trailer"
+                           "\r\n";
+
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
+
+    /* clean up */
+    aws_http_headers_release(trailers);
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 H1_CLIENT_TEST_CASE(h1_client_request_send_chunked_extensions) {
     (void)ctx;
     struct tester tester;

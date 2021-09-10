@@ -356,20 +356,6 @@ struct aws_http1_chunk_options {
     void *user_data;
 };
 
-struct aws_http1_trailer_options {
-
-    /**
-     * list of trailing headers to send as part of the chunked trailer
-     */
-
-    const struct aws_http_headers *trailing_headers;
-
-    /**
-     * User provided data passed to the on_complete callback on its invocation.
-     */
-    void *user_data;
-};
-
 #define AWS_HTTP_REQUEST_HANDLER_OPTIONS_INIT                                                                          \
     { .self_size = sizeof(struct aws_http_request_handler_options), }
 
@@ -642,9 +628,43 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
     struct aws_http_stream *http1_stream,
     const struct aws_http1_chunk_options *options);
 
-AWS_HTTP_API int aws_http1_stream_write_chunked_trailer(
+/**
+ * Add a list of headers to be added as trailing headers sent after the last chunk is sent.
+ * The stream must have specified "chunked" in a "transfer-encoding" header. The stream should also have
+ * a "Trailer" header field which indicates the fields present in the trailer.
+ *
+ * fields necessary for message framing (e.g., Transfer-Encoding and Content-Length),
+ * routing (e.g., Host), request modifiers (e.g., controls and conditionals in Section 5 of [RFC7231]),
+ * authentication (e.g., see [RFC7235] and [RFC6265]), response control data (e.g., see Section 7.1 of [RFC7231]),
+ * or determining how to process the payload (e.g., Content-Encoding, Content-Type, Content-Range, and Trailer)
+ * must not be used.
+ *
+ * For client streams, activate() must be called before any chunks are submitted.
+ *
+ * // Is this correct?
+ * // For server streams, the response must be submitted before any chunks.
+ *
+ * aws_http1_stream_add_chunked_trailer must be called before the final size 0 chunk, and at the moment can only
+ * be called once, though this could change if need be.
+ *
+ * Returns AWS_OP_SUCCESS if the chunk has been submitted.
+ *
+ * // currently don't have a completion callback field, is it necessary?
+ * The trailers's completion callback will be invoked when the HTTP-stream is done with the
+ * trailer data, whether or not it was successfully sent (see `aws_http1_stream_write_chunk_complete_fn`).
+ * The trailer data must remain valid until the completion callback is invoked.
+ *
+ * Returns AWS_OP_ERR and raises an error if the chunk could not be submitted.
+ *
+ * // currently don't have a completion callback field, is it necessary?
+ * In this case, the trailers's completion callback will never be invoked.
+ * Note that it is always possible for the HTTP-stream to terminate unexpectedly
+ * prior to this call being made, in which case the error raised is
+ * AWS_ERROR_HTTP_STREAM_HAS_COMPLETE.
+ */
+AWS_HTTP_API int aws_http1_stream_add_chunked_trailer(
     struct aws_http_stream *http1_stream,
-    const struct aws_http1_trailer_options *options);
+    const struct aws_http_headers *trailing_headers);
 
 /**
  * Get the message's aws_http_headers.
@@ -755,7 +775,7 @@ AWS_HTTP_API int aws_http_stream_activate(struct aws_http_stream *stream);
 AWS_HTTP_API
 struct aws_http_connection *aws_http_stream_get_connection(const struct aws_http_stream *stream);
 
-/* Only valid in "request" streams, once response headers start arriving */
+/* Only valid in "request" streams, once response headers start arrivi ng */
 AWS_HTTP_API
 int aws_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status);
 

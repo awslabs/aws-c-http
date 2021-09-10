@@ -162,14 +162,14 @@ static bool s_write_crlf(struct aws_byte_buf *dst) {
     return aws_byte_buf_write_from_whole_cursor(dst, crlf_cursor);
 }
 
-static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_message *message) {
+static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_headers *headers) {
 
-    const size_t num_headers = aws_http_message_get_header_count(message);
+    const size_t num_headers = aws_http_headers_count(headers);
 
     bool wrote_all = true;
     for (size_t i = 0; i < num_headers; ++i) {
         struct aws_http_header header;
-        aws_http_message_get_header(message, &header, i);
+        aws_http_headers_get_index(headers, i, &header);
 
         /* header-line: "{name}: {value}\r\n" */
         wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.name);
@@ -183,7 +183,7 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_mess
 
 /* @graebm would it be worthwhile to extract the inner part of this loop into a function shared by my headers count, and
  * the scan function? */
-static size_t s_headers_size(const struct aws_http_headers *headers) {
+static int s_headers_size(const struct aws_http_headers *headers, size_t *out_size) {
     const size_t num_headers = aws_http_headers_count(headers);
     size_t total = 0;
     for (size_t i = 0; i < num_headers; i++) {
@@ -194,32 +194,12 @@ static size_t s_headers_size(const struct aws_http_headers *headers) {
         err |= aws_add_size_checked(header.value.len, total, &total);
         err |= aws_add_size_checked(4, total, &total); /* ": " + "\r\n" */
         if (err) {
-            /* this message could be better, also should this fail in some way? */
-            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "failed to calculate header size");
+            return AWS_OP_ERR;
         }
+        *out_size = total;
+        return AWS_OP_SUCCESS;
     }
     return total;
-}
-
-/* same as s_write_headers, but takes just the headers, instead of the whole message. @graebm can I delete write
- * headers, and use this instead? */
-static void s_headers_to_buffer(struct aws_byte_buf *dst, const struct aws_http_headers *headers) {
-
-    const size_t num_headers = aws_http_headers_count(headers);
-
-    bool wrote_all = true;
-    for (size_t i = 0; i < num_headers; ++i) {
-        struct aws_http_header header;
-        aws_http_headers_get_index(headers, i, &header);
-
-        /* header-line: "{name}: {value}\r\n" */
-        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.name);
-        wrote_all &= aws_byte_buf_write_u8(dst, ':');
-        wrote_all &= aws_byte_buf_write_u8(dst, ' ');
-        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.value);
-        wrote_all &= s_write_crlf(dst);
-    }
-    AWS_ASSERT(wrote_all);
 }
 
 int aws_h1_encoder_message_init_from_request(
@@ -305,7 +285,7 @@ int aws_h1_encoder_message_init_from_request(
     wrote_all &= aws_byte_buf_write_from_whole_cursor(&message->outgoing_head_buf, version);
     wrote_all &= s_write_crlf(&message->outgoing_head_buf);
 
-    s_write_headers(&message->outgoing_head_buf, request);
+    s_write_headers(&message->outgoing_head_buf, aws_http_message_get_const_headers(request));
 
     wrote_all &= s_write_crlf(&message->outgoing_head_buf);
     (void)wrote_all;
@@ -393,7 +373,7 @@ int aws_h1_encoder_message_init_from_response(
     wrote_all &= aws_byte_buf_write_from_whole_cursor(&message->outgoing_head_buf, status_text);
     wrote_all &= s_write_crlf(&message->outgoing_head_buf);
 
-    s_write_headers(&message->outgoing_head_buf, response);
+    s_write_headers(&message->outgoing_head_buf, aws_http_message_get_const_headers(response));
 
     wrote_all &= s_write_crlf(&message->outgoing_head_buf);
     (void)wrote_all;
@@ -486,18 +466,23 @@ static void s_populate_chunk_line_buffer(
 
 struct aws_h1_trailer *aws_h1_trailer_new(
     struct aws_allocator *allocator,
-    const struct aws_http1_trailer_options *options) {
+    const struct aws_http_headers *trailing_headers) {
     /* Allocate trailer along with storage for the trailer-line */
-    struct aws_h1_trailer *trailer = aws_mem_acquire(allocator, sizeof(struct aws_h1_trailer));
+    size_t trailer_size;
+    if (s_headers_size(trailing_headers, &trailer_size)) {
+        return NULL;
+    }
+
+    struct aws_h1_trailer *trailer = aws_mem_calloc(allocator, 1, sizeof(struct aws_h1_trailer));
     if (!trailer) {
         return NULL;
     }
-    size_t trailer_size = s_headers_size(options->trailing_headers);
+
     if (aws_byte_buf_init(&trailer->trailer_data, allocator, trailer_size)) {
         aws_mem_release(allocator, trailer);
         return NULL;
     }
-    s_headers_to_buffer(&trailer->trailer_data, options->trailing_headers);
+    s_write_headers(&trailer->trailer_data, trailing_headers);
     trailer->allocator = allocator;
     return trailer;
 }

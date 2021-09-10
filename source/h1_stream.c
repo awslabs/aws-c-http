@@ -61,6 +61,9 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     bool found_chunks = !aws_linked_list_empty(&stream->synced_data.pending_chunk_list);
     aws_linked_list_move_all_back(&stream->thread_data.pending_chunk_list, &stream->synced_data.pending_chunk_list);
 
+    /* should the synced data be zeroed here? */
+    stream->thread_data.pending_trailer = stream->synced_data.pending_trailer;
+
     bool has_outgoing_response = stream->synced_data.has_outgoing_response;
 
     uint64_t pending_window_update = stream->synced_data.pending_window_update;
@@ -184,6 +187,13 @@ static int s_stream_write_chunk(struct aws_http_stream *stream_base, const struc
             goto unlock;
         }
 
+        if (stream->synced_data.has_final_chunk) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM, "id=%p: Cannot write additional chunk after final chunk.", (void *)stream_base);
+            error_code = AWS_ERROR_INVALID_STATE;
+            goto unlock;
+        }
+
         /* success */
         aws_linked_list_push_back(&stream->synced_data.pending_chunk_list, &chunk->node);
         should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
@@ -227,12 +237,12 @@ static int s_stream_write_chunk(struct aws_http_stream *stream_base, const struc
 
 static int s_stream_write_trailer(
     struct aws_http_stream *stream_base,
-    const struct aws_http1_trailer_options *options) {
+    const struct aws_http_headers *trailing_headers) {
     AWS_PRECONDITION(stream_base);
-    AWS_PRECONDITION(options);
+    AWS_PRECONDITION(trailing_headers);
     struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
 
-    struct aws_h1_trailer *trailer = aws_h1_trailer_new(stream_base->alloc, options);
+    struct aws_h1_trailer *trailer = aws_h1_trailer_new(stream_base->alloc, trailing_headers);
     if (AWS_UNLIKELY(NULL == trailer)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_STREAM,
@@ -268,8 +278,19 @@ static int s_stream_write_trailer(
             goto unlock;
         }
 
-        /* success */
-        /* @grabm is this the correct way to deal with shared cross thread date? */
+        if (stream->synced_data.has_added_trailer) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Cannot write trailers twice.", (void *)stream_base);
+            error_code = AWS_ERROR_INVALID_STATE;
+            goto unlock;
+        }
+
+        if (stream->synced_data.has_final_chunk) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Cannot write trailers after final chunk.", (void *)stream_base);
+            error_code = AWS_ERROR_INVALID_STATE;
+            goto unlock;
+        }
+
+        stream->synced_data.has_added_trailer = true;
         stream->synced_data.pending_trailer = trailer;
         should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
         stream->synced_data.is_cross_thread_work_task_scheduled = true;
