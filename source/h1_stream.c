@@ -23,6 +23,9 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
         aws_linked_list_empty(&stream->synced_data.pending_chunk_list) &&
         "Chunks should be marked complete before stream destroyed");
 
+    if (stream->thread_data.pending_trailer.trailer_set) {
+        aws_h1_trailer_destroy(&stream->thread_data.pending_trailer);
+    }
     aws_h1_encoder_message_clean_up(&stream->encoder_message);
     aws_byte_buf_clean_up(&stream->incoming_storage_buf);
     aws_mem_release(stream->base.alloc, stream);
@@ -291,13 +294,15 @@ static int s_stream_write_trailer(
         }
 
         stream->synced_data.has_added_trailer = true;
-        stream->synced_data.pending_trailer = trailer;
+        stream->synced_data.pending_trailer = *trailer;
         should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
         stream->synced_data.is_cross_thread_work_task_scheduled = true;
 
     unlock:
         s_stream_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
+
+    aws_mem_release(stream_base->alloc, trailer);
 
     if (error_code) {
         AWS_LOGF_ERROR(
@@ -407,7 +412,8 @@ struct aws_h1_stream *aws_h1_stream_new_request(
             &stream->encoder_message,
             client_connection->alloc,
             options->request,
-            &stream->thread_data.pending_chunk_list)) {
+            &stream->thread_data.pending_chunk_list,
+            &stream->thread_data.pending_trailer)) {
         goto error;
     }
 
@@ -468,7 +474,8 @@ int aws_h1_stream_send_response(struct aws_h1_stream *stream, struct aws_http_me
             stream->base.alloc,
             response,
             body_headers_ignored,
-            &stream->thread_data.pending_chunk_list)) {
+            &stream->thread_data.pending_chunk_list,
+            &stream->thread_data.pending_trailer)) {
         error_code = aws_last_error();
         goto error;
     }

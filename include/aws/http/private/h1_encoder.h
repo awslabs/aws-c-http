@@ -20,8 +20,8 @@ struct aws_h1_chunk {
 };
 
 struct aws_h1_trailer {
-    struct aws_allocator *allocator;
-    struct aws_byte_buf trailer_data;
+    struct aws_byte_buf *trailer_data;
+    bool trailer_set;
 };
 
 /**
@@ -40,6 +40,9 @@ struct aws_h1_encoder_message {
      * If list goes empty, encoder waits for more chunks to arrive.
      * A chunk with data_size=0 means "final chunk" */
     struct aws_linked_list *pending_chunk_list;
+
+    /* Pointer to chunked_trailer, used for chunked_trailer.
+     * Trailer is owned by aws_h1_stream. */
     struct aws_h1_trailer *trailer;
 
     /* If non-zero, length of unchunked body to send */
@@ -99,14 +102,16 @@ int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *request,
-    struct aws_linked_list *pending_chunk_list);
+    struct aws_linked_list *pending_chunk_list,
+    struct aws_h1_trailer *chunked_trailer);
 
 int aws_h1_encoder_message_init_from_response(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *response,
     bool body_headers_ignored,
-    struct aws_linked_list *pending_chunk_list);
+    struct aws_linked_list *pending_chunk_list,
+    struct aws_h1_trailer *chunked_trailer);
 
 AWS_HTTP_API
 void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message);

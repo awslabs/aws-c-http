@@ -63,7 +63,7 @@ struct aws_h1_stream {
         struct aws_linked_list pending_chunk_list;
 
         /* trailing headers which have been submitted by user */
-        struct aws_h1_trailer *pending_trailer;
+        struct aws_h1_trailer pending_trailer;
 
         /* Size of stream's flow-control window.
          * Only body data (not headers, etc) counts against the stream's flow-control window. */
@@ -84,7 +84,7 @@ struct aws_h1_stream {
 
         /* trailing headers which have been submitted by user,
          * but haven't yet moved to encoder_message where the encoder will find them. */
-        struct aws_h1_trailer *pending_trailer;
+        struct aws_h1_trailer pending_trailer;
 
         enum aws_h1_stream_api_state api_state;
 
