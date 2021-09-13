@@ -181,14 +181,45 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_head
     AWS_ASSERT(wrote_all);
 }
 
-/* @graebm would it be worthwhile to extract the inner part of this loop into a function shared by my headers count, and
- * the scan function? */
 static int s_headers_size(const struct aws_http_headers *headers, size_t *out_size) {
     const size_t num_headers = aws_http_headers_count(headers);
     size_t total = 0;
     for (size_t i = 0; i < num_headers; i++) {
         struct aws_http_header header;
         aws_http_headers_get_index(headers, i, &header);
+        /* Validate header field-name (RFC-7230 3.2): field-name = token */
+        if (!aws_strutil_is_http_token(header.name)) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Header name is invalid");
+            return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_NAME);
+        }
+
+        /* Validate header field-value.
+         * The value itself isn't supposed to have whitespace on either side,
+         * but we'll trim it off before validation so we don't start needlessly
+         * failing requests that used to work before we added validation.
+         * This should be OK because field-value can be sent with any amount
+         * of whitespace around it, which the other side will just ignore (RFC-7230 3.2):
+         * header-field = field-name ":" OWS field-value OWS */
+        struct aws_byte_cursor field_value = aws_strutil_trim_http_whitespace(header.value);
+        if (!aws_strutil_is_http_field_value(field_value)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=static: Header '" PRInSTR "' has invalid value",
+                AWS_BYTE_CURSOR_PRI(header.name));
+            return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+        }
+
+        /* @graebm should I be more discerning about which headers I ban? I figure any header in the enum is used in
+         * some way for message framing which is banned as per the rfc */
+        enum aws_http_header_name name_enum = aws_http_str_to_header_name(header.name);
+        if (name_enum != AWS_HTTP_HEADER_UNKNOWN) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=static: Trailing Header '" PRInSTR "' has invalid value",
+                AWS_BYTE_CURSOR_PRI(header.name));
+            return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+        }
+
         int err = 0;
         err |= aws_add_size_checked(header.name.len, total, &total);
         err |= aws_add_size_checked(header.value.len, total, &total);

@@ -195,6 +195,9 @@ static int s_stream_write_chunk(struct aws_http_stream *stream_base, const struc
         }
 
         /* success */
+        if (chunk->data_size == 0) {
+            stream->synced_data.has_final_chunk = true;
+        }
         aws_linked_list_push_back(&stream->synced_data.pending_chunk_list, &chunk->node);
         should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
         stream->synced_data.is_cross_thread_work_task_scheduled = true;
@@ -266,9 +269,6 @@ static int s_stream_write_trailer(
             goto unlock;
         }
 
-        /* @graebm section 4.1 of the RFC suggests to me that this check is still necesssary, but I'm uncertain */
-        /* Prevent user trying to submit chunked trailers without having set the required headers.
-         * This check also prevents a server-user submitting trailers before the response has been submitted. */
         if (!stream->synced_data.using_chunked_encoding) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_STREAM,
