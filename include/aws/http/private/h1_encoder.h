@@ -20,8 +20,8 @@ struct aws_h1_chunk {
 };
 
 struct aws_h1_trailer {
-    struct aws_byte_buf *trailer_data;
-    bool trailer_set;
+    struct aws_allocator *allocator;
+    struct aws_byte_buf trailer_data;
 };
 
 /**
@@ -102,16 +102,14 @@ int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *request,
-    struct aws_linked_list *pending_chunk_list,
-    struct aws_h1_trailer *chunked_trailer);
+    struct aws_linked_list *pending_chunk_list);
 
 int aws_h1_encoder_message_init_from_response(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *response,
     bool body_headers_ignored,
-    struct aws_linked_list *pending_chunk_list,
-    struct aws_h1_trailer *chunked_trailer);
+    struct aws_linked_list *pending_chunk_list);
 
 AWS_HTTP_API
 void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message);

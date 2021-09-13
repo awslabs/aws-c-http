@@ -206,8 +206,7 @@ int aws_h1_encoder_message_init_from_request(
     struct aws_h1_encoder_message *message,
     struct aws_allocator *allocator,
     const struct aws_http_message *request,
-    struct aws_linked_list *pending_chunk_list,
-    struct aws_h1_trailer *chunked_trailer) {
+    struct aws_linked_list *pending_chunk_list) {
 
     AWS_PRECONDITION(aws_linked_list_is_valid(pending_chunk_list));
 
@@ -215,7 +214,6 @@ int aws_h1_encoder_message_init_from_request(
 
     message->body = aws_http_message_get_body_stream(request);
     message->pending_chunk_list = pending_chunk_list;
-    message->trailer = chunked_trailer;
 
     struct aws_byte_cursor method;
     int err = aws_http_message_get_request_method(request, &method);
@@ -304,8 +302,7 @@ int aws_h1_encoder_message_init_from_response(
     struct aws_allocator *allocator,
     const struct aws_http_message *response,
     bool body_headers_ignored,
-    struct aws_linked_list *pending_chunk_list,
-    struct aws_h1_trailer *chunked_trailer) {
+    struct aws_linked_list *pending_chunk_list) {
 
     AWS_PRECONDITION(aws_linked_list_is_valid(pending_chunk_list));
 
@@ -313,7 +310,6 @@ int aws_h1_encoder_message_init_from_response(
 
     message->body = aws_http_message_get_body_stream(response);
     message->pending_chunk_list = pending_chunk_list;
-    message->trailer = chunked_trailer;
 
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
 
@@ -393,6 +389,9 @@ error:
 
 void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message) {
     aws_byte_buf_clean_up(&message->outgoing_head_buf);
+    if (message->trailer) {
+        aws_h1_trailer_destroy(message->trailer);
+    }
     AWS_ZERO_STRUCT(*message);
 }
 
@@ -477,27 +476,25 @@ struct aws_h1_trailer *aws_h1_trailer_new(
         return NULL;
     }
 
-    struct aws_byte_buf *buf = aws_mem_calloc(allocator, 1, sizeof(struct aws_byte_buf));
     struct aws_h1_trailer *trailer = aws_mem_calloc(allocator, 1, sizeof(struct aws_h1_trailer));
+    trailer->allocator = allocator;
     if (!trailer) {
         return NULL;
     }
 
-    if (aws_byte_buf_init(buf, allocator, trailer_size)) {
+    if (aws_byte_buf_init(&trailer->trailer_data, allocator, trailer_size)) {
         aws_mem_release(allocator, trailer);
-        aws_mem_release(allocator, buf);
         return NULL;
     }
-    trailer->trailer_data = buf;
-    s_write_headers(trailer->trailer_data, trailing_headers);
-    trailer->trailer_set = true;
+    s_write_headers(&trailer->trailer_data, trailing_headers);
     return trailer;
 }
 
 void aws_h1_trailer_destroy(struct aws_h1_trailer *trailer) {
+    /* should this check be here? it makes it so that I need to check before calling this function */
     AWS_PRECONDITION(trailer);
-    aws_byte_buf_clean_up(trailer->trailer_data);
-    trailer->trailer_set = false;
+    aws_byte_buf_clean_up(&trailer->trailer_data);
+    aws_mem_release(trailer->allocator, trailer);
 }
 
 struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const struct aws_http1_chunk_options *options) {
@@ -808,8 +805,8 @@ static int s_state_fn_chunk_trailer(struct aws_h1_encoder *encoder, struct aws_b
     /* how does the data make it from synched data to encoder->message? Do I need to do anything extra */
     bool done;
     /* if a chunked trailer was set */
-    if (encoder->message->trailer->trailer_set) {
-        done = s_encode_buf(encoder, dst, encoder->message->trailer->trailer_data);
+    if (encoder->message->trailer) {
+        done = s_encode_buf(encoder, dst, &encoder->message->trailer->trailer_data);
     } else {
         done = s_write_crlf(dst);
     }

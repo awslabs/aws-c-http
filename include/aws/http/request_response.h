@@ -648,19 +648,6 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
  * be called once, though this could change if need be.
  *
  * Returns AWS_OP_SUCCESS if the chunk has been submitted.
- *
- * // currently don't have a completion callback field, is it necessary?
- * The trailers's completion callback will be invoked when the HTTP-stream is done with the
- * trailer data, whether or not it was successfully sent (see `aws_http1_stream_write_chunk_complete_fn`).
- * The trailer data must remain valid until the completion callback is invoked.
- *
- * Returns AWS_OP_ERR and raises an error if the chunk could not be submitted.
- *
- * // currently don't have a completion callback field, is it necessary?
- * In this case, the trailers's completion callback will never be invoked.
- * Note that it is always possible for the HTTP-stream to terminate unexpectedly
- * prior to this call being made, in which case the error raised is
- * AWS_ERROR_HTTP_STREAM_HAS_COMPLETE.
  */
 AWS_HTTP_API int aws_http1_stream_add_chunked_trailer(
     struct aws_http_stream *http1_stream,
