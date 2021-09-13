@@ -7,6 +7,7 @@
  */
 
 #include <aws/http/http.h>
+#include <aws/http/proxy.h>
 
 struct aws_client_bootstrap;
 struct aws_socket_options;
@@ -142,6 +143,42 @@ struct aws_http_connection_monitoring_options {
     void *statistics_observer_user_data;
 };
 
+enum aws_http_proxy_env_var_type {
+    /**
+     * Default.
+     * Disable reading from environment variable for proxy.
+     */
+    AWS_HPEV_DISABLE = 0,
+    /**
+     * Enable get proxy URL from environment variable, when the manual proxy options of connection manager is not set.
+     * env HTTPS_PROXY/https_proxy will be checked when the main connection use tls.
+     * env HTTP_PROXY/http_proxy will be checked when the main connection NOT use tls.
+     * The lower case version has precedence.
+     */
+    AWS_HPEV_ENABLE,
+};
+
+/*
+ * Configuration for using proxy from environment variable.
+ * Zero out as default settings.
+ */
+struct proxy_env_var_settings {
+    enum aws_http_proxy_env_var_type env_var_type;
+    /*
+     * Optional.
+     * If not set:
+     * If tls options are provided (for the main connection) use tunnel proxy type
+     * If tls options are not provided (for the main connection) use forward proxy type
+     */
+    enum aws_http_proxy_connection_type connection_type;
+    /*
+     * Optional.
+     * If not set, a default tls option will be created. when https used for Local to proxy connection.
+     * Must be distinct from the the tls_connection_options from aws_http_connection_manager_options
+     */
+    const struct aws_tls_connection_options *tls_options;
+};
+
 /**
  * Options specific to HTTP/1.x connections.
  */
@@ -269,6 +306,13 @@ struct aws_http_client_connection_options {
      * Relevant fields are copied internally.
      */
     const struct aws_http_proxy_options *proxy_options;
+
+    /*
+     * Optional.
+     * Configuration for using proxy from environment variable.
+     * Only works when proxy_options is not set.
+     */
+    const struct proxy_env_var_settings *proxy_ev_settings;
 
     /**
      * Optional

@@ -88,6 +88,7 @@ struct cm_tester {
     struct aws_mutex mock_time_lock;
     uint64_t mock_time;
 
+    struct proxy_env_var_settings proxy_ev_settings;
     bool proxy_request_complete;
     bool proxy_request_successful;
 };
@@ -181,6 +182,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     aws_tls_connection_options_set_server_name(&tester->tls_connection_options, options->allocator, &server_name);
 
     tester->verify_proxy_options = options->proxy_options;
+    tester->proxy_ev_settings.env_var_type = options->use_proxy_env ? AWS_HPEV_ENABLE : AWS_HPEV_DISABLE;
 
     struct aws_http_connection_manager_options cm_options = {
         .bootstrap = tester->client_bootstrap,
@@ -188,7 +190,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         .socket_options = &socket_options,
         .tls_connection_options = options->use_tls ? &tester->tls_connection_options : NULL,
         .proxy_options = options->proxy_options,
-        .proxy_env_var_settings.env_var_type = options->use_proxy_env ? AWS_CMPEV_ENABLE : AWS_CMPEV_DISABLE,
+        .proxy_ev_settings = &tester->proxy_ev_settings,
         .host = server_name,
         .port = options->use_tls ? 443 : 80,
         .max_connections = options->max_connections,
