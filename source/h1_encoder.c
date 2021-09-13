@@ -196,10 +196,9 @@ static int s_headers_size(const struct aws_http_headers *headers, size_t *out_si
         if (err) {
             return AWS_OP_ERR;
         }
-        *out_size = total;
-        return AWS_OP_SUCCESS;
     }
-    return total;
+    *out_size = total;
+    return AWS_OP_SUCCESS;
 }
 
 int aws_h1_encoder_message_init_from_request(
