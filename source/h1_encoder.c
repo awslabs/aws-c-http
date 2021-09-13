@@ -471,7 +471,7 @@ struct aws_h1_trailer *aws_h1_trailer_new(
     struct aws_allocator *allocator,
     const struct aws_http_headers *trailing_headers) {
     /* Allocate trailer along with storage for the trailer-line */
-    size_t trailer_size;
+    size_t trailer_size = 0;
     if (s_headers_size(trailing_headers, &trailer_size)) {
         return NULL;
     }
