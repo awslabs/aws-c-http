@@ -299,8 +299,6 @@ static int s_stream_write_trailer(
         s_stream_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
 
-    aws_mem_release(stream_base->alloc, trailer);
-
     if (error_code) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_STREAM,
