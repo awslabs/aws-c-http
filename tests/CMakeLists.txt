@@ -461,9 +461,6 @@ add_net_test_case(test_connection_manager_proxy_setup_shutdown)
 add_net_test_case(test_connection_manager_idle_culling_single)
 add_net_test_case(test_connection_manager_idle_culling_many)
 add_net_test_case(test_connection_manager_idle_culling_mixture)
-# they should be moved to connection test?
-# add_net_test_case(test_connection_manager_read_http_proxy_ev)
-# add_net_test_case(test_connection_manager_read_https_proxy_ev)
 
 # tests where we establish real connections
 add_net_test_case(test_connection_manager_single_connection)
@@ -473,7 +470,7 @@ add_net_test_case(test_connection_manager_close_and_release)
 add_net_test_case(test_connection_manager_acquire_release_mix)
 
 # Integration test that requires proxy envrionment in us-east-1 region.
-if (ENABLE_CM_PROXY_INTEGRATION_TESTS)
+if (ENABLE_PROXY_INTEGRATION_TESTS)
     add_net_test_case(connection_manager_proxy_integration_forwarding_proxy_no_auth)
     add_net_test_case(connection_manager_proxy_integration_forwarding_proxy_no_auth_env)
     add_net_test_case(connection_manager_proxy_integration_legacy_http_no_auth)
@@ -553,17 +550,6 @@ add_test_case(test_https_tunnel_proxy_connection_success)
 add_test_case(test_http_tunnel_proxy_connection_failure_connect)
 add_test_case(test_https_tunnel_proxy_connection_failure_connect)
 add_test_case(test_https_tunnel_proxy_connection_failure_tls)
-
-# integration  tests that require a locally-installed proxy server
-if (ENABLE_PROXY_INTEGRATION_TESTS)
-    add_test_case(test_http_proxy_connection_options_star)
-    add_test_case(test_http_proxy_connection_new_destroy)
-    add_test_case(test_http_proxy_connection_get)
-    add_test_case(test_https_proxy_connection_new_destroy)
-    add_test_case(test_https_proxy_connection_get)
-    add_test_case(test_nested_https_proxy_connection_get)
-    add_test_case(test_proxy_sequential_negotiation)
-endif()
 
 add_test_case(test_http_connection_monitor_options_is_valid)
 add_test_case(test_http_connection_monitor_rw_above)
