@@ -818,12 +818,6 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
             goto on_error;
         }
     }
-    if (manager->proxy_ev_settings.tls_options) {
-        manager->proxy_ev_tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
-        if (aws_tls_connection_options_copy(manager->proxy_ev_tls_options, manager->proxy_ev_settings.tls_options)) {
-            goto on_error;
-        }
-    }
 
     if (options->monitoring_options) {
         manager->monitoring_options = *options->monitoring_options;
@@ -843,6 +837,12 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->max_connection_idle_in_milliseconds = options->max_connection_idle_in_milliseconds;
     if (options->proxy_ev_settings) {
         manager->proxy_ev_settings = *options->proxy_ev_settings;
+    }
+    if (manager->proxy_ev_settings.tls_options) {
+        manager->proxy_ev_tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
+        if (aws_tls_connection_options_copy(manager->proxy_ev_tls_options, manager->proxy_ev_settings.tls_options)) {
+            goto on_error;
+        }
     }
     s_schedule_connection_culling(manager);
 
