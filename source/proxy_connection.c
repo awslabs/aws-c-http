@@ -1131,6 +1131,7 @@ static int s_connect_proxy(const struct aws_http_client_connection_options *opti
 
 static int s_connect_proxy_via_env_variable(const struct aws_http_client_connection_options *options) {
     struct aws_http_proxy_options proxy_options;
+    AWS_ZERO_STRUCT(proxy_options);
     struct aws_uri proxy_uri;
     AWS_ZERO_STRUCT(proxy_uri);
     bool found = false;
