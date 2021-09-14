@@ -841,8 +841,9 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->shutdown_complete_user_data = options->shutdown_complete_user_data;
     manager->enable_read_back_pressure = options->enable_read_back_pressure;
     manager->max_connection_idle_in_milliseconds = options->max_connection_idle_in_milliseconds;
-    manager->proxy_ev_settings = *options->proxy_ev_settings;
-
+    if (options->proxy_ev_settings) {
+        manager->proxy_ev_settings = *options->proxy_ev_settings;
+    }
     s_schedule_connection_culling(manager);
 
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Successfully created", (void *)manager);
