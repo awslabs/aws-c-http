@@ -843,7 +843,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         if (aws_tls_connection_options_copy(manager->proxy_ev_tls_options, manager->proxy_ev_settings.tls_options)) {
             goto on_error;
         }
-        manager->proxy_ev_settings.tls_options = &manager->proxy_ev_tls_options;
+        manager->proxy_ev_settings.tls_options = manager->proxy_ev_tls_options;
     }
     s_schedule_connection_culling(manager);
 
