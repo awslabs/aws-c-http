@@ -46,27 +46,6 @@ enum aws_http_proxy_env_var_type {
     AWS_HPEV_ENABLE,
 };
 
-/*
- * Configuration for using proxy from environment variable.
- * Zero out as default settings.
- */
-struct proxy_env_var_settings {
-    enum aws_http_proxy_env_var_type env_var_type;
-    /*
-     * Optional.
-     * If not set:
-     * If tls options are provided (for the main connection) use tunnel proxy type
-     * If tls options are not provided (for the main connection) use forward proxy type
-     */
-    enum aws_http_proxy_connection_type connection_type;
-    /*
-     * Optional.
-     * If not set, a default tls option will be created. when https used for Local to proxy connection.
-     * Must be distinct from the the tls_connection_options from aws_http_connection_manager_options
-     */
-    const struct aws_tls_connection_options *tls_options;
-};
-
 /**
  * Supported proxy connection types
  */
@@ -90,6 +69,27 @@ enum aws_http_proxy_connection_type {
      * Works for both plaintext and tls connections.
      */
     AWS_HPCT_HTTP_TUNNEL,
+};
+
+/*
+ * Configuration for using proxy from environment variable.
+ * Zero out as default settings.
+ */
+struct proxy_env_var_settings {
+    enum aws_http_proxy_env_var_type env_var_type;
+    /*
+     * Optional.
+     * If not set:
+     * If tls options are provided (for the main connection) use tunnel proxy type
+     * If tls options are not provided (for the main connection) use forward proxy type
+     */
+    enum aws_http_proxy_connection_type connection_type;
+    /*
+     * Optional.
+     * If not set, a default tls option will be created. when https used for Local to proxy connection.
+     * Must be distinct from the the tls_connection_options from aws_http_connection_manager_options
+     */
+    const struct aws_tls_connection_options *tls_options;
 };
 
 struct aws_http_proxy_strategy;

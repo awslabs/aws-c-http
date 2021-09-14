@@ -30,8 +30,6 @@
 
 AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var, "HTTP_PROXY");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var, "HTTPS_PROXY");
-AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_url_tls, "http://main-tls-host:80");
-AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_url_clear_text, "http://main-clear-text-host:80");
 
 enum new_connection_result_type {
     AWS_NCRT_SUCCESS,
