@@ -50,7 +50,7 @@ struct cm_tester_options {
     struct aws_http_proxy_options *proxy_options;
     bool use_proxy_env;
     bool use_tls;
-    bool env_configured_tls;
+    struct aws_tls_connection_options *env_configured_tls;
     size_t max_connections;
     uint64_t max_connection_idle_in_ms;
     uint64_t starting_mock_time;
@@ -187,7 +187,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     struct aws_tls_connection_options default_tls_connection_options;
     AWS_ZERO_STRUCT(default_tls_connection_options);
     if (options->env_configured_tls) {
-        aws_tls_connection_options_init_from_ctx(&default_tls_connection_options, tester->tls_ctx);
+        ASSERT_SUCCESS(aws_tls_connection_options_copy(&default_tls_connection_options, options->env_configured_tls));
         tester->proxy_ev_settings.tls_options = &default_tls_connection_options;
     }
 
@@ -1379,7 +1379,7 @@ static int s_proxy_integration_test_helper(
         .allocator = allocator,
         .max_connections = 5,
         .use_proxy_env = use_env,
-        .env_configured_tls = configured_tls,
+        .env_configured_tls = &proxy_tls_options,
         .proxy_options = use_env ? NULL : &proxy_options,
         .use_tls = s_get_use_tls_from_proxy_test_type(proxy_test_type),
     };
