@@ -1134,6 +1134,8 @@ static int s_connect_proxy_via_env_variable(const struct aws_http_client_connect
     AWS_ZERO_STRUCT(proxy_options);
     struct aws_uri proxy_uri;
     AWS_ZERO_STRUCT(proxy_uri);
+    struct aws_tls_connection_options default_tls_connection_options;
+    AWS_ZERO_STRUCT(default_tls_connection_options);
     bool found = false;
     bool success = false;
     if (s_proxy_uri_init_from_env_variable(options->allocator, options, &proxy_uri, &found)) {
@@ -1143,8 +1145,6 @@ static int s_connect_proxy_via_env_variable(const struct aws_http_client_connect
     if (found) {
         proxy_options.host = proxy_uri.host_name;
         proxy_options.port = proxy_uri.port;
-        struct aws_tls_connection_options default_tls_connection_options;
-        AWS_ZERO_STRUCT(default_tls_connection_options);
         proxy_options.connection_type = options->proxy_ev_settings->connection_type;
         if (!proxy_options.connection_type) {
             if (options->tls_options) {
@@ -1191,9 +1191,7 @@ static int s_connect_proxy_via_env_variable(const struct aws_http_client_connect
                 .user_name = proxy_uri.user,
                 .password = proxy_uri.password,
             };
-            struct aws_http_proxy_strategy *proxy_strategy =
-                aws_http_proxy_strategy_new_basic_auth(options->allocator, &config);
-            proxy_options.proxy_strategy = proxy_strategy;
+            proxy_options.proxy_strategy = aws_http_proxy_strategy_new_basic_auth(options->allocator, &config);
         }
     }
     struct aws_http_client_connection_options copied_options = *options;
@@ -1203,6 +1201,8 @@ static int s_connect_proxy_via_env_variable(const struct aws_http_client_connect
     }
     success = true;
 done:
+    aws_tls_connection_options_clean_up(&default_tls_connection_options);
+    aws_http_proxy_strategy_release(proxy_options.proxy_strategy);
     aws_uri_clean_up(&proxy_uri);
     return success ? AWS_OP_SUCCESS : AWS_OP_ERR;
 }
