@@ -34,6 +34,8 @@ AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var_low, "http_proxy");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var, "HTTPS_PROXY");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var_low, "https_proxy");
 
+AWS_STATIC_STRING_FROM_LITERAL(s_proxy_verify_peer_env_var, "PROXY_VERIFY_PEER");
+
 static struct aws_http_proxy_system_vtable s_default_vtable = {
     .setup_client_tls = &aws_channel_setup_client_tls,
 };
@@ -1129,6 +1131,45 @@ static int s_connect_proxy(const struct aws_http_client_connection_options *opti
     }
 }
 
+static int s_setup_proxy_tls_env_variable(
+    const struct aws_http_client_connection_options *options,
+    struct aws_tls_connection_options *default_tls_connection_options,
+    struct aws_http_proxy_options *proxy_options,
+    struct aws_uri *proxy_uri) {
+    if (options->proxy_ev_settings->tls_options) {
+        proxy_options->tls_options = options->proxy_ev_settings->tls_options;
+    } else {
+        struct aws_tls_ctx *tls_ctx = NULL;
+        struct aws_tls_ctx_options tls_ctx_options;
+        AWS_ZERO_STRUCT(tls_ctx_options);
+        /* create a default tls options */
+        aws_tls_ctx_options_init_default_client(&tls_ctx_options, options->allocator);
+        struct aws_string *proxy_verify_peer_string = NULL;
+        if (aws_get_environment_value(options->allocator, s_proxy_verify_peer_env_var, &proxy_verify_peer_string) ==
+                AWS_OP_SUCCESS &&
+            proxy_verify_peer_string != NULL && aws_string_eq_c_str(proxy_verify_peer_string, "off")) {
+            /* turn off the peer verification, if setup from envrionment variable. Mostly for testing. */
+            aws_tls_ctx_options_set_verify_peer(&tls_ctx_options, false);
+        }
+        tls_ctx = aws_tls_client_ctx_new(options->allocator, &tls_ctx_options);
+        aws_tls_ctx_options_clean_up(&tls_ctx_options);
+        if (!tls_ctx) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "Failed to create default TLS context.");
+            return AWS_OP_ERR;
+        }
+        aws_tls_connection_options_init_from_ctx(&default_tls_connection_options, tls_ctx);
+        /* tls options hold a ref to the ctx */
+        aws_tls_ctx_release(tls_ctx);
+        if (aws_tls_connection_options_set_server_name(
+                &default_tls_connection_options, options->allocator, &proxy_uri->host_name)) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "Failed set server name for TLS connection options.");
+            return AWS_OP_ERR;
+        }
+        proxy_options->tls_options = &default_tls_connection_options;
+    }
+    return AWS_OP_SUCCESS;
+}
+
 static int s_connect_proxy_via_env_variable(const struct aws_http_client_connection_options *options) {
     struct aws_http_proxy_options proxy_options;
     AWS_ZERO_STRUCT(proxy_options);
@@ -1146,7 +1187,7 @@ static int s_connect_proxy_via_env_variable(const struct aws_http_client_connect
         proxy_options.host = proxy_uri.host_name;
         proxy_options.port = proxy_uri.port;
         proxy_options.connection_type = options->proxy_ev_settings->connection_type;
-        if (!proxy_options.connection_type) {
+        if (proxy_options.connection_type == AWS_HPCT_HTTP_LEGACY) {
             if (options->tls_options) {
                 /* Use Tunneling when main connection use TLS. */
                 proxy_options.connection_type = AWS_HPCT_HTTP_TUNNEL;
@@ -1156,31 +1197,8 @@ static int s_connect_proxy_via_env_variable(const struct aws_http_client_connect
             }
         }
         if (aws_byte_cursor_eq_ignore_case(&proxy_uri.scheme, &aws_http_scheme_https)) {
-            if (options->proxy_ev_settings->tls_options) {
-                proxy_options.tls_options = options->proxy_ev_settings->tls_options;
-            } else {
-                struct aws_tls_ctx *tls_ctx = NULL;
-                struct aws_tls_ctx_options tls_ctx_options;
-                AWS_ZERO_STRUCT(tls_ctx_options);
-                /* create a default tls options */
-                aws_tls_ctx_options_init_default_client(&tls_ctx_options, options->allocator);
-                /* turn off verify peer for proxy connection setup by default */
-                aws_tls_ctx_options_set_verify_peer(&tls_ctx_options, false);
-                tls_ctx = aws_tls_client_ctx_new(options->allocator, &tls_ctx_options);
-                aws_tls_ctx_options_clean_up(&tls_ctx_options);
-                if (!tls_ctx) {
-                    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "Failed to create default TLS context.");
-                    goto done;
-                }
-                aws_tls_connection_options_init_from_ctx(&default_tls_connection_options, tls_ctx);
-                /* tls options hold a ref to the ctx */
-                aws_tls_ctx_release(tls_ctx);
-                if (aws_tls_connection_options_set_server_name(
-                        &default_tls_connection_options, options->allocator, &proxy_uri.host_name)) {
-                    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "Failed set server name for TLS connection options.");
-                    goto done;
-                }
-                proxy_options.tls_options = &default_tls_connection_options;
+            if (s_setup_proxy_tls_env_variable(options, &default_tls_connection_options, &proxy_options, &proxy_uri)) {
+                goto done;
             }
         }
         /* Support basic authentication. */

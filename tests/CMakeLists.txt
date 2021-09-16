@@ -470,6 +470,7 @@ add_net_test_case(test_connection_manager_close_and_release)
 add_net_test_case(test_connection_manager_acquire_release_mix)
 
 # Integration test that requires proxy envrionment in us-east-1 region.
+# TODO: test the server name validation properly
 if (ENABLE_PROXY_INTEGRATION_TESTS)
     add_net_test_case(connection_manager_proxy_integration_forwarding_proxy_no_auth)
     add_net_test_case(connection_manager_proxy_integration_forwarding_proxy_no_auth_env)

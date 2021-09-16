@@ -1,6 +1,7 @@
 PROXY_SETUP=/tmp/setup_proxy_test_env.sh
 if [ -f "$PROXY_SETUP" ]; then
     source $PROXY_SETUP
+    export PROXY_VERIFY_PEER=off
     echo "setting proxy integration test envrionment"
 fi
 
