@@ -1157,15 +1157,15 @@ static int s_setup_proxy_tls_env_variable(
             AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "Failed to create default TLS context.");
             return AWS_OP_ERR;
         }
-        aws_tls_connection_options_init_from_ctx(&default_tls_connection_options, tls_ctx);
+        aws_tls_connection_options_init_from_ctx(default_tls_connection_options, tls_ctx);
         /* tls options hold a ref to the ctx */
         aws_tls_ctx_release(tls_ctx);
         if (aws_tls_connection_options_set_server_name(
-                &default_tls_connection_options, options->allocator, &proxy_uri->host_name)) {
+                default_tls_connection_options, options->allocator, &proxy_uri->host_name)) {
             AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "Failed set server name for TLS connection options.");
             return AWS_OP_ERR;
         }
-        proxy_options->tls_options = &default_tls_connection_options;
+        proxy_options->tls_options = default_tls_connection_options;
     }
     return AWS_OP_SUCCESS;
 }
