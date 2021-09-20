@@ -34,7 +34,7 @@ AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var_low, "http_proxy");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var, "HTTPS_PROXY");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var_low, "https_proxy");
 
-AWS_STATIC_STRING_FROM_LITERAL(s_proxy_verify_peer_env_var, "AWS_PROXY_VERIFY_PEER");
+AWS_STATIC_STRING_FROM_LITERAL(s_proxy_no_verify_peer_env_var, "AWS_PROXY_NO_VERIFY_PEER");
 
 static struct aws_http_proxy_system_vtable s_default_vtable = {
     .setup_client_tls = &aws_channel_setup_client_tls,
@@ -1144,13 +1144,13 @@ static int s_setup_proxy_tls_env_variable(
         AWS_ZERO_STRUCT(tls_ctx_options);
         /* create a default tls options */
         aws_tls_ctx_options_init_default_client(&tls_ctx_options, options->allocator);
-        struct aws_string *proxy_verify_peer_string = NULL;
-        if (aws_get_environment_value(options->allocator, s_proxy_verify_peer_env_var, &proxy_verify_peer_string) ==
-                AWS_OP_SUCCESS &&
-            proxy_verify_peer_string != NULL && aws_string_eq_c_str(proxy_verify_peer_string, "off")) {
+        struct aws_string *proxy_no_verify_peer_string = NULL;
+        if (aws_get_environment_value(
+                options->allocator, s_proxy_no_verify_peer_env_var, &proxy_no_verify_peer_string) == AWS_OP_SUCCESS &&
+            proxy_no_verify_peer_string != NULL) {
             /* turn off the peer verification, if setup from envrionment variable. Mostly for testing. */
             aws_tls_ctx_options_set_verify_peer(&tls_ctx_options, false);
-            aws_string_destroy(proxy_verify_peer_string);
+            aws_string_destroy(proxy_no_verify_peer_string);
         }
         tls_ctx = aws_tls_client_ctx_new(options->allocator, &tls_ctx_options);
         aws_tls_ctx_options_clean_up(&tls_ctx_options);
