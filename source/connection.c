@@ -1147,7 +1147,12 @@ int aws_http_client_connect(const struct aws_http_client_connection_options *opt
     if (options->proxy_options != NULL) {
         return aws_http_client_connect_via_proxy(options);
     } else {
-        return aws_http_client_connect_internal(options, NULL);
+        if (!options->proxy_ev_settings || options->proxy_ev_settings->env_var_type != AWS_HPEV_ENABLE) {
+            return aws_http_client_connect_internal(options, NULL);
+        } else {
+            /* Proxy through envrionment variable is enabled */
+            return aws_http_client_connect_via_proxy(options);
+        }
     }
 }
 

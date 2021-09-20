@@ -5,7 +5,7 @@ if (POLICY CMP0069)
     cmake_policy(SET CMP0069 NEW) # Enable LTO/IPO if available in the compiler, see AwsCFlags
 endif()
 
-option(ENABLE_PROXY_INTEGRATION_TESTS "Whether to run the proxy integration tests that rely on a proxy server installed and running locally" OFF)
+option(ENABLE_PROXY_INTEGRATION_TESTS "Whether to run the proxy integration tests that rely on pre-configured proxy" OFF)
 
 if (DEFINED CMAKE_PREFIX_PATH)
     file(TO_CMAKE_PATH "${CMAKE_PREFIX_PATH}" CMAKE_PREFIX_PATH)
