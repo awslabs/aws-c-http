@@ -471,6 +471,43 @@ static int s_test_connection_setup_shutdown_tls(struct aws_allocator *allocator,
 }
 AWS_TEST_CASE(connection_setup_shutdown_tls, s_test_connection_setup_shutdown_tls);
 
+static int s_test_connection_setup_shutdown_proxy_setting_on_ev_not_found(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    struct tester_options options = {
+        .alloc = allocator,
+        .no_connection = true,
+    };
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, &options));
+    struct aws_http_client_connection_options client_options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
+    struct proxy_env_var_settings proxy_ev_settings;
+    AWS_ZERO_STRUCT(proxy_ev_settings);
+    proxy_ev_settings.env_var_type = AWS_HPEV_ENABLE;
+    client_options.proxy_ev_settings = &proxy_ev_settings;
+
+    s_client_connection_options_init_tester(&client_options, &tester);
+    tester.client_options = client_options;
+
+    tester.server_connection_num = 0;
+    tester.client_connection_num = 0;
+    ASSERT_SUCCESS(aws_http_client_connect(&tester.client_options));
+
+    /* Wait for server & client connections to finish setup */
+    tester.wait_client_connection_num = 1;
+    tester.wait_server_connection_num = 1;
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_setup_pred));
+
+    release_all_client_connections(&tester);
+    release_all_server_connections(&tester);
+    ASSERT_SUCCESS(s_tester_wait(&tester, s_tester_connection_shutdown_pred));
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    connection_setup_shutdown_proxy_setting_on_ev_not_found,
+    s_test_connection_setup_shutdown_proxy_setting_on_ev_not_found);
+
 static int s_test_connection_h2_prior_knowledge(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     struct tester_options options = {

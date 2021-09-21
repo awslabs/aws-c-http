@@ -1190,7 +1190,7 @@ static int s_connect_proxy_via_env_variable(const struct aws_http_client_connect
         proxy_options.connection_type = options->proxy_ev_settings->connection_type;
         if (proxy_options.connection_type == AWS_HPCT_HTTP_LEGACY) {
             if (options->tls_options) {
-                /* Use Tunneling when main connection use TLS. */
+                /* Use tunneling when main connection use TLS. */
                 proxy_options.connection_type = AWS_HPCT_HTTP_TUNNEL;
             } else {
                 /* Use forwarding proxy when main connection use clear text. */
@@ -1212,6 +1212,9 @@ static int s_connect_proxy_via_env_variable(const struct aws_http_client_connect
             };
             proxy_options.proxy_strategy = aws_http_proxy_strategy_new_basic_auth(options->allocator, &config);
         }
+    } else {
+        success = true;
+        goto done;
     }
     struct aws_http_client_connection_options copied_options = *options;
     copied_options.proxy_options = &proxy_options;
@@ -1223,6 +1226,10 @@ done:
     aws_tls_connection_options_clean_up(&default_tls_connection_options);
     aws_http_proxy_strategy_release(proxy_options.proxy_strategy);
     aws_uri_clean_up(&proxy_uri);
+    if (success && !found) {
+        /* Successfully, but no envrionment variable found. Connect without proxy */
+        return aws_http_client_connect_internal(options, NULL);
+    }
     return success ? AWS_OP_SUCCESS : AWS_OP_ERR;
 }
 
