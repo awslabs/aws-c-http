@@ -34,7 +34,9 @@ AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var_low, "http_proxy");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var, "HTTPS_PROXY");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var_low, "https_proxy");
 
+#ifndef BYO_CRYPTO
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_no_verify_peer_env_var, "AWS_PROXY_NO_VERIFY_PEER");
+#endif
 
 static struct aws_http_proxy_system_vtable s_default_vtable = {
     .setup_client_tls = &aws_channel_setup_client_tls,
