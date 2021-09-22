@@ -1136,6 +1136,8 @@ static int s_setup_proxy_tls_env_variable(
     struct aws_tls_connection_options *default_tls_connection_options,
     struct aws_http_proxy_options *proxy_options,
     struct aws_uri *proxy_uri) {
+    (void)default_tls_connection_options;
+    (void)proxy_uri;
     if (options->proxy_ev_settings->tls_options) {
         proxy_options->tls_options = options->proxy_ev_settings->tls_options;
     } else {
