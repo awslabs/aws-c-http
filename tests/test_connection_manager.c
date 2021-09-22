@@ -8,8 +8,10 @@
 #include <aws/common/array_list.h>
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
+#include <aws/common/environment.h>
 #include <aws/common/logging.h>
 #include <aws/common/mutex.h>
+#include <aws/common/string.h>
 #include <aws/common/thread.h>
 #include <aws/common/uuid.h>
 #include <aws/http/connection.h>
@@ -26,6 +28,9 @@
 #    pragma warning(disable : 4232) /* function pointer to dll symbol */
 #endif
 
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var, "HTTP_PROXY");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var, "HTTPS_PROXY");
+
 enum new_connection_result_type {
     AWS_NCRT_SUCCESS,
     AWS_NCRT_ERROR_VIA_CALLBACK,
@@ -41,6 +46,9 @@ struct cm_tester_options {
     struct aws_allocator *allocator;
     struct aws_http_connection_manager_system_vtable *mock_table;
     struct aws_http_proxy_options *proxy_options;
+    bool use_proxy_env;
+    bool use_tls;
+    struct aws_tls_connection_options *env_configured_tls;
     size_t max_connections;
     uint64_t max_connection_idle_in_ms;
     uint64_t starting_mock_time;
@@ -58,7 +66,7 @@ struct cm_tester {
     struct aws_tls_ctx *tls_ctx;
     struct aws_tls_ctx_options tls_ctx_options;
     struct aws_tls_connection_options tls_connection_options;
-    struct aws_http_proxy_options *proxy_options;
+    struct aws_http_proxy_options *verify_proxy_options;
 
     struct aws_mutex lock;
     struct aws_condition_variable signal;
@@ -78,6 +86,10 @@ struct cm_tester {
 
     struct aws_mutex mock_time_lock;
     uint64_t mock_time;
+
+    struct proxy_env_var_settings proxy_ev_settings;
+    bool proxy_request_complete;
+    bool proxy_request_successful;
 };
 
 static struct cm_tester s_tester;
@@ -164,18 +176,28 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     tester->tls_ctx = aws_tls_client_ctx_new(options->allocator, &tester->tls_ctx_options);
     ASSERT_NOT_NULL(tester->tls_ctx);
 
+    struct aws_byte_cursor server_name = aws_byte_cursor_from_c_str("www.google.com");
     aws_tls_connection_options_init_from_ctx(&tester->tls_connection_options, tester->tls_ctx);
+    aws_tls_connection_options_set_server_name(&tester->tls_connection_options, options->allocator, &server_name);
 
-    tester->proxy_options = options->proxy_options;
+    tester->verify_proxy_options = options->proxy_options;
+    tester->proxy_ev_settings.env_var_type = options->use_proxy_env ? AWS_HPEV_ENABLE : AWS_HPEV_DISABLE;
+    struct aws_tls_connection_options default_tls_connection_options;
+    AWS_ZERO_STRUCT(default_tls_connection_options);
+    if (options->env_configured_tls) {
+        ASSERT_SUCCESS(aws_tls_connection_options_copy(&default_tls_connection_options, options->env_configured_tls));
+        tester->proxy_ev_settings.tls_options = &default_tls_connection_options;
+    }
 
     struct aws_http_connection_manager_options cm_options = {
         .bootstrap = tester->client_bootstrap,
         .initial_window_size = SIZE_MAX,
         .socket_options = &socket_options,
-        .tls_connection_options = NULL,
-        .proxy_options = tester->proxy_options,
-        .host = aws_byte_cursor_from_c_str("www.google.com"),
-        .port = 80,
+        .tls_connection_options = options->use_tls ? &tester->tls_connection_options : NULL,
+        .proxy_options = options->proxy_options,
+        .proxy_ev_settings = &tester->proxy_ev_settings,
+        .host = server_name,
+        .port = options->use_tls ? 443 : 80,
         .max_connections = options->max_connections,
         .shutdown_complete_user_data = tester,
         .shutdown_complete_callback = s_cm_tester_on_cm_shutdown_complete,
@@ -188,6 +210,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
 
     tester->connection_manager = aws_http_connection_manager_new(tester->allocator, &cm_options);
     ASSERT_NOT_NULL(tester->connection_manager);
+    aws_tls_connection_options_clean_up(&default_tls_connection_options);
 
     if (options->mock_table) {
         aws_http_connection_manager_set_system_vtable(tester->connection_manager, options->mock_table);
@@ -550,13 +573,14 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
     ASSERT_SUCCESS(aws_mutex_unlock(&tester->lock));
 
     /* Verify that any proxy options have been propagated to the connection attempt */
-    if (tester->proxy_options) {
+    if (tester->verify_proxy_options) {
         ASSERT_BIN_ARRAYS_EQUALS(
-            tester->proxy_options->host.ptr,
-            tester->proxy_options->host.len,
+            tester->verify_proxy_options->host.ptr,
+            tester->verify_proxy_options->host.len,
             options->proxy_options->host.ptr,
             options->proxy_options->host.len);
-        ASSERT_TRUE(options->proxy_options->port == tester->proxy_options->port);
+        ASSERT_TRUE(options->proxy_options->port == tester->verify_proxy_options->port);
+        ASSERT_UINT_EQUALS(options->proxy_options->connection_type, tester->verify_proxy_options->connection_type);
     }
 
     struct mock_connection *connection = NULL;
@@ -969,3 +993,629 @@ static int s_test_connection_manager_idle_culling_mixture(struct aws_allocator *
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_idle_culling_mixture, s_test_connection_manager_idle_culling_mixture);
+
+/**
+ * Proxy integration tests. Maybe we should move this to another file. But let's do it later. Someday.
+ * AWS_TEST_HTTP_PROXY_HOST - host address of the proxy to use for tests that make open connections to the proxy
+ * AWS_TEST_HTTP_PROXY_PORT - port to use for tests that make open connections to the proxy
+ * AWS_TEST_HTTP_PROXY_URL - whole URL to use for tests that make open connections to the proxy
+ * AWS_TEST_HTTPS_PROXY_HOST - host address of the proxy to use for tests that make tls-protected connections to the
+ *  proxy
+ * AWS_TEST_HTTPS_PROXY_PORT - port to use for tests that make tls-protected connections to the proxy
+ * AWS_TEST_HTTPS_PROXY_URL - whole URL to use for tests that make tls-protected connections to the proxy
+ * AWS_TEST_HTTP_PROXY_BASIC_HOST - host address of the proxy to use for tests that make open connections to the proxy
+ *  with basic authentication
+ * AWS_TEST_HTTP_PROXY_BASIC_PORT - port to use for tests that make open connections to the proxy with basic
+ *  authentication
+ * AWS_TEST_HTTP_PROXY_BASIC_URL - whole URL to use for tests that make open connections to the proxy with basic
+ *  authentication
+ * AWS_TEST_BASIC_AUTH_USERNAME - username to use when using basic authentication to the proxy
+ * AWS_TEST_BASIC_AUTH_PASSWORD - password to use when using basic authentication to the proxy
+ *
+ * AWS_TEST_TLS_CERT_PATH - file path to certificate used to initialize the tls context of the mqtt connection
+ * AWS_TEST_TLS_KEY_PATH - file path to the key used to initialize the tls context of the mqtt connection
+ * AWS_TEST_TLS_ROOT_CERT_PATH - file path to the root CA used to initialize the tls context of the mqtt connection
+ */
+
+struct proxy_integration_configurations {
+    struct aws_string *http_proxy_host;
+    struct aws_string *http_proxy_port;
+    struct aws_string *http_proxy_url;
+    struct aws_string *https_proxy_host;
+    struct aws_string *https_proxy_port;
+    struct aws_string *https_proxy_url;
+    struct aws_string *http_proxy_basic_host;
+    struct aws_string *http_proxy_basic_port;
+    struct aws_string *http_proxy_basic_url;
+    struct aws_string *basic_auth_username;
+    struct aws_string *basic_auth_password;
+    struct aws_string *tls_cert_path;
+    struct aws_string *tls_key_path;
+    struct aws_string *tls_root_cert_path;
+};
+
+enum proxy_test_type {
+    FORWARDING = 0,
+    TUNNELING_HTTP = 1,
+    TUNNELING_HTTPS = 2,
+    TUNNELING_DOUBLE_TLS = 3,
+    LEGACY_HTTP = 4,
+    LEGACY_HTTPS = 5,
+};
+
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_host_env_var, "AWS_TEST_HTTP_PROXY_HOST");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_port_env_var, "AWS_TEST_HTTP_PROXY_PORT");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_url_env_var, "AWS_TEST_HTTP_PROXY_URL");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_host_env_var, "AWS_TEST_HTTPS_PROXY_HOST");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_port_env_var, "AWS_TEST_HTTPS_PROXY_PORT");
+AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_url_env_var, "AWS_TEST_HTTPS_PROXY_URL");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_basic_host_env_var, "AWS_TEST_HTTP_PROXY_BASIC_HOST");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_basic_port_env_var, "AWS_TEST_HTTP_PROXY_BASIC_PORT");
+AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_basic_url_env_var, "AWS_TEST_HTTP_PROXY_BASIC_URL");
+AWS_STATIC_STRING_FROM_LITERAL(s_basic_auth_username_env_var, "AWS_TEST_BASIC_AUTH_USERNAME");
+AWS_STATIC_STRING_FROM_LITERAL(s_basic_auth_password_env_var, "AWS_TEST_BASIC_AUTH_PASSWORD");
+AWS_STATIC_STRING_FROM_LITERAL(s_tls_cert_path_env_var, "AWS_TEST_TLS_CERT_PATH");
+AWS_STATIC_STRING_FROM_LITERAL(s_tls_key_path_env_var, "AWS_TEST_TLS_KEY_PATH");
+AWS_STATIC_STRING_FROM_LITERAL(s_tls_root_cert_path_env_var, "AWS_TEST_TLS_ROOT_CERT_PATH");
+
+static int s_get_proxy_environment_configurations(
+    struct aws_allocator *allocator,
+    struct proxy_integration_configurations *configs) {
+    /* get the envrionment configurations, and fail if any one is not set */
+    if (aws_get_environment_value(allocator, s_http_proxy_host_env_var, &configs->http_proxy_host) ||
+        configs->http_proxy_host == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_http_proxy_port_env_var, &configs->http_proxy_port) ||
+        configs->http_proxy_port == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_http_proxy_url_env_var, &configs->http_proxy_url) ||
+        configs->http_proxy_url == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_https_proxy_host_env_var, &configs->https_proxy_host) ||
+        configs->https_proxy_host == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_https_proxy_port_env_var, &configs->https_proxy_port) ||
+        configs->https_proxy_port == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_https_proxy_url_env_var, &configs->https_proxy_url) ||
+        configs->https_proxy_url == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_http_proxy_basic_host_env_var, &configs->http_proxy_basic_host) ||
+        configs->http_proxy_basic_host == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_http_proxy_basic_port_env_var, &configs->http_proxy_basic_port) ||
+        configs->http_proxy_basic_port == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_http_proxy_basic_url_env_var, &configs->http_proxy_basic_url) ||
+        configs->http_proxy_basic_url == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_basic_auth_username_env_var, &configs->basic_auth_username) ||
+        configs->basic_auth_username == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_basic_auth_password_env_var, &configs->basic_auth_password) ||
+        configs->basic_auth_password == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_tls_cert_path_env_var, &configs->tls_cert_path) ||
+        configs->tls_cert_path == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_tls_key_path_env_var, &configs->tls_key_path) ||
+        configs->tls_key_path == NULL) {
+        return AWS_OP_ERR;
+    }
+    if (aws_get_environment_value(allocator, s_tls_root_cert_path_env_var, &configs->tls_root_cert_path) ||
+        configs->tls_root_cert_path == NULL) {
+        return AWS_OP_ERR;
+    }
+    return AWS_OP_SUCCESS;
+}
+
+static void s_proxy_environment_configurations_clean_up(struct proxy_integration_configurations *configs) {
+    aws_string_destroy(configs->http_proxy_host);
+    aws_string_destroy(configs->http_proxy_port);
+    aws_string_destroy(configs->http_proxy_url);
+    aws_string_destroy(configs->https_proxy_host);
+    aws_string_destroy(configs->https_proxy_port);
+    aws_string_destroy(configs->https_proxy_url);
+    aws_string_destroy(configs->http_proxy_basic_host);
+    aws_string_destroy(configs->http_proxy_basic_port);
+    aws_string_destroy(configs->http_proxy_basic_url);
+    aws_string_destroy(configs->basic_auth_username);
+    aws_string_destroy(configs->basic_auth_password);
+    aws_string_destroy(configs->tls_cert_path);
+    aws_string_destroy(configs->tls_key_path);
+    aws_string_destroy(configs->tls_root_cert_path);
+}
+
+static int s_response_status_code = 0;
+static bool s_is_proxy_request_complete(void *context) {
+    (void)context;
+
+    struct cm_tester *tester = &s_tester;
+
+    return tester->proxy_request_complete;
+}
+
+static int s_wait_on_proxy_request_complete(void) {
+    struct cm_tester *tester = &s_tester;
+
+    ASSERT_SUCCESS(aws_mutex_lock(&tester->lock));
+
+    int signal_error =
+        aws_condition_variable_wait_pred(&tester->signal, &tester->lock, s_is_proxy_request_complete, tester);
+
+    ASSERT_SUCCESS(aws_mutex_unlock(&tester->lock));
+    return signal_error;
+}
+
+static int s_aws_http_on_incoming_header_block_done_proxy_test(
+    struct aws_http_stream *stream,
+    enum aws_http_header_block header_block,
+    void *user_data) {
+    (void)header_block;
+    (void)user_data;
+
+    struct cm_tester *tester = &s_tester;
+    if (aws_http_stream_get_incoming_response_status(stream, &s_response_status_code) == AWS_OP_SUCCESS) {
+        aws_mutex_lock(&tester->lock);
+        tester->proxy_request_successful = s_response_status_code == 200;
+        aws_mutex_unlock(&tester->lock);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+static void s_aws_http_on_stream_complete_proxy_test(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)stream;
+    (void)error_code;
+    (void)user_data;
+
+    struct cm_tester *tester = &s_tester;
+
+    aws_mutex_lock(&tester->lock);
+    tester->proxy_request_complete = true;
+    aws_mutex_unlock(&tester->lock);
+    aws_condition_variable_notify_one(&tester->signal);
+}
+
+static struct aws_byte_cursor s_get_proxy_host_for_test(
+    struct proxy_integration_configurations *configs,
+    enum proxy_test_type proxy_test_type,
+    enum aws_http_proxy_authentication_type auth_type) {
+    struct aws_string *host_string;
+    if (auth_type == AWS_HPAT_BASIC) {
+        host_string = configs->http_proxy_basic_host;
+    } else if (proxy_test_type == TUNNELING_DOUBLE_TLS) {
+        host_string = configs->https_proxy_host;
+    } else {
+        host_string = configs->http_proxy_host;
+    }
+    return aws_byte_cursor_from_string(host_string);
+}
+static uint16_t s_get_proxy_port_for_test(
+    struct proxy_integration_configurations *configs,
+    enum proxy_test_type proxy_test_type,
+    enum aws_http_proxy_authentication_type auth_type) {
+    struct aws_string *port_string;
+    if (auth_type == AWS_HPAT_BASIC) {
+        port_string = configs->http_proxy_basic_port;
+    } else if (proxy_test_type == TUNNELING_DOUBLE_TLS) {
+        port_string = configs->https_proxy_port;
+    } else {
+        port_string = configs->http_proxy_port;
+    }
+    return (uint16_t)atoi(aws_string_c_str(port_string));
+}
+static struct aws_string *s_get_proxy_url_for_test(
+    struct proxy_integration_configurations *configs,
+    enum proxy_test_type proxy_test_type,
+    enum aws_http_proxy_authentication_type auth_type) {
+    if (auth_type == AWS_HPAT_BASIC) {
+        return configs->http_proxy_basic_url;
+    }
+    if (proxy_test_type == TUNNELING_DOUBLE_TLS) {
+        return configs->https_proxy_url;
+    }
+    return configs->http_proxy_url;
+}
+static int s_get_proxy_connection_type_for_test(enum proxy_test_type proxy_test_type) {
+    if (proxy_test_type == FORWARDING) {
+        return AWS_HPCT_HTTP_FORWARD;
+    }
+    if (proxy_test_type == TUNNELING_DOUBLE_TLS || proxy_test_type == TUNNELING_HTTP ||
+        proxy_test_type == TUNNELING_HTTPS) {
+        return AWS_HPCT_HTTP_TUNNEL;
+    }
+    return AWS_HPCT_HTTP_LEGACY;
+}
+
+static bool s_get_use_tls_from_proxy_test_type(enum proxy_test_type test_type) {
+    if (test_type == FORWARDING || test_type == LEGACY_HTTP || test_type == TUNNELING_HTTP) {
+        return false;
+    }
+    return true;
+}
+
+static int s_get_tls_options_from_proxy_test_type(
+    struct aws_allocator *allocator,
+    enum proxy_test_type proxy_test_type,
+    struct aws_tls_connection_options *proxy_tls_options,
+    struct aws_byte_cursor host_name) {
+    if (proxy_test_type == TUNNELING_DOUBLE_TLS) {
+        struct aws_tls_ctx *tls_ctx = NULL;
+        struct aws_tls_ctx_options tls_ctx_options;
+        AWS_ZERO_STRUCT(tls_ctx_options);
+        /* create a default tls options */
+        aws_tls_ctx_options_init_default_client(&tls_ctx_options, allocator);
+        aws_tls_ctx_options_set_verify_peer(&tls_ctx_options, false);
+        tls_ctx = aws_tls_client_ctx_new(allocator, &tls_ctx_options);
+        aws_tls_ctx_options_clean_up(&tls_ctx_options);
+        if (!tls_ctx) {
+            return AWS_OP_ERR;
+        }
+        aws_tls_connection_options_init_from_ctx(proxy_tls_options, tls_ctx);
+        /* tls options hold a ref to the ctx */
+        aws_tls_ctx_release(tls_ctx);
+        if (aws_tls_connection_options_set_server_name(proxy_tls_options, allocator, &host_name)) {
+            return AWS_OP_ERR;
+        }
+    }
+    return AWS_OP_SUCCESS;
+}
+
+static int s_proxy_integration_test_helper(
+    struct aws_allocator *allocator,
+    enum proxy_test_type proxy_test_type,
+    enum aws_http_proxy_authentication_type auth_type,
+    bool use_env,
+    bool configured_tls) {
+    aws_http_library_init(allocator);
+    struct proxy_integration_configurations configs;
+    AWS_ZERO_STRUCT(configs);
+    ASSERT_SUCCESS(s_get_proxy_environment_configurations(allocator, &configs));
+    /* not creating new strings */
+    struct aws_tls_connection_options proxy_tls_options;
+    AWS_ZERO_STRUCT(proxy_tls_options);
+    ASSERT_SUCCESS(s_get_tls_options_from_proxy_test_type(
+        allocator,
+        proxy_test_type,
+        &proxy_tls_options,
+        s_get_proxy_host_for_test(&configs, proxy_test_type, auth_type)));
+    struct aws_http_proxy_options proxy_options = {
+        .host = s_get_proxy_host_for_test(&configs, proxy_test_type, auth_type),
+        .port = s_get_proxy_port_for_test(&configs, proxy_test_type, auth_type),
+        .connection_type = s_get_proxy_connection_type_for_test(proxy_test_type),
+        .tls_options = proxy_test_type == TUNNELING_DOUBLE_TLS ? &proxy_tls_options : NULL,
+        .auth_type = auth_type,
+        .auth_username = aws_byte_cursor_from_string(configs.basic_auth_username),
+        .auth_password = aws_byte_cursor_from_string(configs.basic_auth_password),
+    };
+    if (use_env) {
+        /* set the environment variables */
+        struct aws_string *proxy_url = s_get_proxy_url_for_test(&configs, proxy_test_type, auth_type);
+        ASSERT_SUCCESS(aws_set_environment_value(s_http_proxy_env_var, proxy_url));
+        ASSERT_SUCCESS(aws_set_environment_value(s_https_proxy_env_var, proxy_url));
+    }
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+        .use_proxy_env = use_env,
+        .env_configured_tls = configured_tls ? &proxy_tls_options : NULL,
+        .proxy_options = use_env ? NULL : &proxy_options,
+        .use_tls = s_get_use_tls_from_proxy_test_type(proxy_test_type),
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_acquire_connections(1);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
+
+    /* Have a connection now, need to make a request and verify the request made successfully */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET"));
+    aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/"));
+
+    struct aws_http_header host_header = {
+        .name = aws_byte_cursor_from_c_str("Host"),
+        .value = aws_byte_cursor_from_c_str("www.google.com"),
+    };
+    aws_http_message_add_header(request, host_header);
+
+    struct aws_http_header accept_header = {
+        .name = aws_byte_cursor_from_c_str("Accept"),
+        .value = aws_byte_cursor_from_c_str("*/*"),
+    };
+    aws_http_message_add_header(request, accept_header);
+
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .user_data = &s_tester,
+        .on_response_header_block_done = s_aws_http_on_incoming_header_block_done_proxy_test,
+        .on_complete = s_aws_http_on_stream_complete_proxy_test,
+    };
+    struct aws_http_connection *connection = NULL;
+    ASSERT_SUCCESS(aws_array_list_front(&s_tester.connections, &connection));
+    struct aws_http_stream *stream = aws_http_connection_make_request(connection, &request_options);
+    ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
+
+    ASSERT_SUCCESS(s_wait_on_proxy_request_complete());
+    ASSERT_TRUE(s_response_status_code == 200);
+
+    aws_http_stream_release(stream);
+    aws_http_message_destroy(request);
+    s_proxy_environment_configurations_clean_up(&configs);
+    ASSERT_SUCCESS(s_release_connections(1, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+    aws_tls_connection_options_clean_up(&proxy_tls_options);
+    aws_http_library_clean_up();
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_test_connection_manager_proxy_integration_forwarding_proxy_no_auth(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, FORWARDING, AWS_HPAT_NONE, false /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_forwarding_proxy_no_auth,
+    s_test_connection_manager_proxy_integration_forwarding_proxy_no_auth);
+
+static int s_test_connection_manager_proxy_integration_forwarding_proxy_no_auth_env(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, FORWARDING, AWS_HPAT_NONE, true /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_forwarding_proxy_no_auth_env,
+    s_test_connection_manager_proxy_integration_forwarding_proxy_no_auth_env);
+
+static int s_test_connection_manager_proxy_integration_legacy_http_no_auth(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, LEGACY_HTTP, AWS_HPAT_NONE, false /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_legacy_http_no_auth,
+    s_test_connection_manager_proxy_integration_legacy_http_no_auth);
+
+static int s_test_connection_manager_proxy_integration_legacy_http_no_auth_env(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, LEGACY_HTTP, AWS_HPAT_NONE, true /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_legacy_http_no_auth_env,
+    s_test_connection_manager_proxy_integration_legacy_http_no_auth_env);
+
+static int s_test_connection_manager_proxy_integration_legacy_https_no_auth(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, LEGACY_HTTPS, AWS_HPAT_NONE, false /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_legacy_https_no_auth,
+    s_test_connection_manager_proxy_integration_legacy_https_no_auth);
+
+static int s_test_connection_manager_proxy_integration_legacy_https_no_auth_env(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, LEGACY_HTTPS, AWS_HPAT_NONE, true /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_legacy_https_no_auth_env,
+    s_test_connection_manager_proxy_integration_legacy_https_no_auth_env);
+
+static int s_test_connection_manager_proxy_integration_tunneling_proxy_http_no_auth(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, TUNNELING_HTTP, AWS_HPAT_NONE, false /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_tunneling_proxy_http_no_auth,
+    s_test_connection_manager_proxy_integration_tunneling_proxy_http_no_auth);
+
+static int s_test_connection_manager_proxy_integration_tunneling_proxy_http_no_auth_env(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, TUNNELING_HTTP, AWS_HPAT_NONE, true /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_tunneling_proxy_http_no_auth_env,
+    s_test_connection_manager_proxy_integration_tunneling_proxy_http_no_auth_env);
+
+static int s_test_connection_manager_proxy_integration_tunneling_proxy_https_no_auth(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, TUNNELING_HTTPS, AWS_HPAT_NONE, false /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_tunneling_proxy_https_no_auth,
+    s_test_connection_manager_proxy_integration_tunneling_proxy_https_no_auth);
+
+static int s_test_connection_manager_proxy_integration_tunneling_proxy_https_no_auth_env(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, TUNNELING_HTTPS, AWS_HPAT_NONE, true /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_tunneling_proxy_https_no_auth_env,
+    s_test_connection_manager_proxy_integration_tunneling_proxy_https_no_auth_env);
+
+static int s_test_connection_manager_proxy_integration_tunneling_proxy_double_tls_no_auth(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, TUNNELING_DOUBLE_TLS, AWS_HPAT_NONE, false /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_tunneling_proxy_double_tls_no_auth,
+    s_test_connection_manager_proxy_integration_tunneling_proxy_double_tls_no_auth);
+
+static int s_test_connection_manager_proxy_integration_tunneling_proxy_double_tls_no_auth_env(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, TUNNELING_DOUBLE_TLS, AWS_HPAT_NONE, true /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_tunneling_proxy_double_tls_no_auth_env,
+    s_test_connection_manager_proxy_integration_tunneling_proxy_double_tls_no_auth_env);
+
+static int s_test_connection_manager_proxy_integration_tunneling_proxy_double_tls_no_auth_configured_tls_env(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    /* TLS set from settings instead of creating temporary one */
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, TUNNELING_DOUBLE_TLS, AWS_HPAT_NONE, true /*use_env*/, true /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_tunneling_proxy_double_tls_no_auth_configured_tls_env,
+    s_test_connection_manager_proxy_integration_tunneling_proxy_double_tls_no_auth_configured_tls_env);
+
+static int s_test_connection_manager_proxy_integration_forwarding_proxy_basic_auth(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, FORWARDING, AWS_HPAT_BASIC, false /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_forwarding_proxy_basic_auth,
+    s_test_connection_manager_proxy_integration_forwarding_proxy_basic_auth);
+
+static int s_test_connection_manager_proxy_integration_forwarding_proxy_basic_auth_env(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, FORWARDING, AWS_HPAT_BASIC, true /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_forwarding_proxy_basic_auth_env,
+    s_test_connection_manager_proxy_integration_forwarding_proxy_basic_auth_env);
+
+static int s_test_connection_manager_proxy_integration_legacy_http_basic_auth(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, LEGACY_HTTP, AWS_HPAT_BASIC, false /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_legacy_http_basic_auth,
+    s_test_connection_manager_proxy_integration_legacy_http_basic_auth);
+
+static int s_test_connection_manager_proxy_integration_legacy_http_basic_auth_env(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, LEGACY_HTTP, AWS_HPAT_BASIC, true /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_legacy_http_basic_auth_env,
+    s_test_connection_manager_proxy_integration_legacy_http_basic_auth_env);
+
+static int s_test_connection_manager_proxy_integration_legacy_https_basic_auth(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, LEGACY_HTTPS, AWS_HPAT_BASIC, false /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_legacy_https_basic_auth,
+    s_test_connection_manager_proxy_integration_legacy_https_basic_auth);
+
+static int s_test_connection_manager_proxy_integration_legacy_https_basic_auth_env(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, LEGACY_HTTPS, AWS_HPAT_BASIC, true /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_legacy_https_basic_auth_env,
+    s_test_connection_manager_proxy_integration_legacy_https_basic_auth_env);
+
+static int s_test_connection_manager_proxy_integration_tunneling_proxy_http_basic_auth(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, TUNNELING_HTTP, AWS_HPAT_BASIC, false /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_tunneling_proxy_http_basic_auth,
+    s_test_connection_manager_proxy_integration_tunneling_proxy_http_basic_auth);
+
+static int s_test_connection_manager_proxy_integration_tunneling_proxy_http_basic_auth_env(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, TUNNELING_HTTP, AWS_HPAT_BASIC, true /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_tunneling_proxy_http_basic_auth_env,
+    s_test_connection_manager_proxy_integration_tunneling_proxy_http_basic_auth_env);
+
+static int s_test_connection_manager_proxy_integration_tunneling_proxy_https_basic_auth(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, TUNNELING_HTTPS, AWS_HPAT_BASIC, false /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_tunneling_proxy_https_basic_auth,
+    s_test_connection_manager_proxy_integration_tunneling_proxy_https_basic_auth);
+
+static int s_test_connection_manager_proxy_integration_tunneling_proxy_https_basic_auth_env(
+    struct aws_allocator *allocator,
+    void *ctx) {
+    (void)ctx;
+    return s_proxy_integration_test_helper(
+        allocator, TUNNELING_HTTPS, AWS_HPAT_BASIC, true /*use_env*/, false /*configured_tls*/);
+}
+AWS_TEST_CASE(
+    connection_manager_proxy_integration_tunneling_proxy_https_basic_auth_env,
+    s_test_connection_manager_proxy_integration_tunneling_proxy_https_basic_auth_env);

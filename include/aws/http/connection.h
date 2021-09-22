@@ -7,6 +7,7 @@
  */
 
 #include <aws/http/http.h>
+#include <aws/http/proxy.h>
 
 struct aws_client_bootstrap;
 struct aws_socket_options;
@@ -269,6 +270,13 @@ struct aws_http_client_connection_options {
      * Relevant fields are copied internally.
      */
     const struct aws_http_proxy_options *proxy_options;
+
+    /*
+     * Optional.
+     * Configuration for using proxy from environment variable.
+     * Only works when proxy_options is not set.
+     */
+    const struct proxy_env_var_settings *proxy_ev_settings;
 
     /**
      * Optional

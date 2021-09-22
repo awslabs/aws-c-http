@@ -14,7 +14,7 @@
         { "name": "aws-c-auth" }
     ],
     "test_steps": [
-        "test",
+        ["bash", "{project_dir}/.builder/action/aws-c-http-test.sh"],
         ["{python}", "{project_dir}/integration-testing/http_client_test.py", "{install_dir}/bin/elasticurl{exe}"]
     ]
 }
