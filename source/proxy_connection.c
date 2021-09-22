@@ -34,7 +34,9 @@ AWS_STATIC_STRING_FROM_LITERAL(s_http_proxy_env_var_low, "http_proxy");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var, "HTTPS_PROXY");
 AWS_STATIC_STRING_FROM_LITERAL(s_https_proxy_env_var_low, "https_proxy");
 
+#ifndef BYO_CRYPTO
 AWS_STATIC_STRING_FROM_LITERAL(s_proxy_no_verify_peer_env_var, "AWS_PROXY_NO_VERIFY_PEER");
+#endif
 
 static struct aws_http_proxy_system_vtable s_default_vtable = {
     .setup_client_tls = &aws_channel_setup_client_tls,
@@ -1136,9 +1138,18 @@ static int s_setup_proxy_tls_env_variable(
     struct aws_tls_connection_options *default_tls_connection_options,
     struct aws_http_proxy_options *proxy_options,
     struct aws_uri *proxy_uri) {
+    (void)default_tls_connection_options;
+    (void)proxy_uri;
     if (options->proxy_ev_settings->tls_options) {
         proxy_options->tls_options = options->proxy_ev_settings->tls_options;
     } else {
+#ifdef BYO_CRYPTO
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "Failed making default TLS context because of BYO_CRYPTO, set up the tls_options for proxy_env_settings to "
+            "make it work.");
+        return AWS_OP_ERR;
+#else
         struct aws_tls_ctx *tls_ctx = NULL;
         struct aws_tls_ctx_options tls_ctx_options;
         AWS_ZERO_STRUCT(tls_ctx_options);
@@ -1167,6 +1178,7 @@ static int s_setup_proxy_tls_env_variable(
             return AWS_OP_ERR;
         }
         proxy_options->tls_options = default_tls_connection_options;
+#endif
     }
     return AWS_OP_SUCCESS;
 }
