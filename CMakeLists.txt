@@ -96,9 +96,10 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
         COMPONENT Development)
 
 include(CTest)
-if (NOT BYO_CRYPTO AND BUILD_TESTING)
-    add_subdirectory(tests)
-
+if (BUILD_TESTING)
+    if(NOT BYO_CRYPTO)
+        add_subdirectory(tests)
+        endif()
     if (NOT CMAKE_CROSSCOMPILING )
         add_subdirectory(bin/elasticurl)
     endif()
