@@ -1008,5 +1008,13 @@ static int s_stream_write_data(struct aws_http_stream *stream_base, const struct
     (void)stream;
     (void)connection;
     (void)options;
+    /* Steps
+     * 1) Add options->data stream to current outgoing message on stream, if it's finished, otherwise queue on stream
+     * 2) if needed, push stream back onto connection->outgoing_streams_list so it will be polled
+     * 3) When stream hits EOF, return a new state that will follow the same logic as a stall,
+     *    but put stream back into evented_streams_list
+     * 4) Repeat until closed
+     */
+
     return AWS_OP_SUCCESS;
 }
