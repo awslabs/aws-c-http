@@ -1139,6 +1139,13 @@ static int s_setup_proxy_tls_env_variable(
     if (options->proxy_ev_settings->tls_options) {
         proxy_options->tls_options = options->proxy_ev_settings->tls_options;
     } else {
+#ifdef BYO_CRYPTO
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION,
+            "Failed making default TLS context because of BYO_CRYPTO, set up the tls_options for proxy_env_settings to "
+            "make it work.");
+        return AWS_OP_ERR;
+#endif
         struct aws_tls_ctx *tls_ctx = NULL;
         struct aws_tls_ctx_options tls_ctx_options;
         AWS_ZERO_STRUCT(tls_ctx_options);
