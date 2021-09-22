@@ -5,8 +5,13 @@ import subprocess
 import sys
 import urllib.request
 import unittest
+import os
 
 TIMEOUT = 100
+
+if os.getenv("BYO_CRYPTO") is not None:
+    print('BYO_CRYPTO, not running integration test')
+    sys.exit(0)
 
 # Accepting multiple args so we can pass something like: python elasticurl.py
 elasticurl_cmd_prefix = sys.argv[1:]
