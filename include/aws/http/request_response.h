@@ -233,6 +233,12 @@ struct aws_http_make_request_options {
      * See `aws_http_on_stream_complete_fn`.
      */
     aws_http_on_stream_complete_fn *on_complete;
+
+    /**
+     * When using h2, request body data will be provided over time. The body stream on the request will only be
+     * read when body data has been supplied via `aws_http2_stream_write_data`
+     */
+    bool h2_use_evented_body_stream;
 };
 
 struct aws_http_request_handler_options {
@@ -287,6 +293,21 @@ struct aws_http_request_handler_options {
 };
 
 /**
+ * Invoked when the data stream of an outgoing HTTP write operation is no longer in use.
+ * This is always invoked on the HTTP connection's event-loop thread.
+ *
+ * @param stream        HTTP-stream this write operation was submitted to.
+ * @param error_code    If error_code is AWS_ERROR_SUCCESS (0), the data was successfully sent.
+ *                      Any other error_code indicates that the HTTP-stream is in the process of terminating.
+ *                      If the error_code is AWS_ERROR_HTTP_STREAM_HAS_COMPLETED,
+ *                      the stream's termination has nothing to do with this write operation.
+ *                      Any other non-zero error code indicates a problem with this particular write
+ *                      operation's data.
+ * @param user_data     User data for this write operation.
+ */
+typedef void aws_http_stream_write_complete_fn(struct aws_http_stream *stream, int error_code, void *user_data);
+
+/**
  * Invoked when the data of an outgoing HTTP/1.1 chunk is no longer in use.
  * This is always invoked on the HTTP connection's event-loop thread.
  *
@@ -298,7 +319,7 @@ struct aws_http_request_handler_options {
  *                      Any other non-zero error code indicates a problem with this particular chunk's data.
  * @param user_data     User data for this chunk.
  */
-typedef void aws_http1_stream_write_chunk_complete_fn(struct aws_http_stream *stream, int error_code, void *user_data);
+typedef aws_http_stream_write_complete_fn aws_http1_stream_write_chunk_complete_fn;
 
 /**
  * HTTP/1.1 chunk extension for chunked encoding.
@@ -349,6 +370,27 @@ struct aws_http1_chunk_options {
      * See `aws_http1_stream_write_chunk_complete_fn`.
      */
     aws_http1_stream_write_chunk_complete_fn *on_complete;
+
+    /**
+     * User provided data passed to the on_complete callback on its invocation.
+     */
+    void *user_data;
+};
+
+typedef aws_http_stream_write_complete_fn aws_h2_stream_write_data_complete_fn;
+
+/**
+ * Encoding options for manual H2 data frame writes
+ */
+struct aws_h2_data_options {
+    struct aws_input_stream *data;
+
+    /**
+     * Invoked when the data stream is no longer in use, whether or not it was successfully sent.
+     * Optional.
+     * See `aws_http1_stream_write_chunk_complete_fn`.
+     */
+    aws_h2_stream_write_data_complete_fn *on_complete;
 
     /**
      * User provided data passed to the on_complete callback on its invocation.
@@ -627,6 +669,8 @@ void aws_http_message_set_body_stream(struct aws_http_message *message, struct a
 AWS_HTTP_API int aws_http1_stream_write_chunk(
     struct aws_http_stream *http1_stream,
     const struct aws_http1_chunk_options *options);
+
+AWS_HTTP_API int aws_h2_stream_write_data(struct aws_http_stream *h2_stream, const struct aws_h2_data_options *options);
 
 /**
  * Get the message's aws_http_headers.

@@ -326,6 +326,7 @@ static struct aws_h2_connection *s_connection_new(
     aws_linked_list_init(&connection->thread_data.pending_settings_queue);
     aws_linked_list_init(&connection->thread_data.pending_ping_queue);
     aws_linked_list_init(&connection->thread_data.stalled_window_streams_list);
+    aws_linked_list_init(&connection->thread_data.evented_streams_list);
     aws_linked_list_init(&connection->thread_data.outgoing_frames_queue);
 
     if (aws_mutex_init(&connection->synced_data.lock)) {
@@ -448,6 +449,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
         !aws_hash_table_is_valid(&connection->thread_data.active_streams_map) ||
         aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0);
 
+    AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.evented_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stalled_window_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.outgoing_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_stream_list));
