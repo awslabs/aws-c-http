@@ -4553,7 +4553,7 @@ struct h2_client_manual_data_write_ctx {
 };
 
 static void s_h2_client_manual_data_write_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
-    AWS_ASSERT(error_code == 0);
+    AWS_ASSERT(error_code == 0 || error_code == AWS_HTTP2_ERR_STREAM_CLOSED);
     struct aws_input_stream *data_stream = user_data;
     aws_input_stream_destroy(data_stream);
 }
@@ -4561,7 +4561,7 @@ static void s_h2_client_manual_data_write_on_complete(struct aws_http_stream *st
 static struct aws_input_stream *s_h2_client_manual_data_write_generate_data(
     struct h2_client_manual_data_write_ctx *ctx) {
     struct aws_byte_cursor data = aws_byte_cursor_from_buf(&ctx->data);
-    data.len = rand() % data.len;
+    data.len = aws_max_size(rand() % ctx->data.capacity, 1);
     return aws_input_stream_new_from_cursor(ctx->allocator, &data);
 }
 
@@ -4607,10 +4607,20 @@ TEST_CASE(h2_client_manual_data_write) {
             .user_data = data_stream,
         };
         ASSERT_SUCCESS(aws_h2_stream_write_data(stream, &write));
+        if (idx % 10 == 0) {
+            h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer);
+        }
     }
+
+    h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer);
+
+    aws_http_message_release(request);
+    aws_http_stream_release(stream);
 
     /* close the connection */
     aws_http_connection_close(s_tester.connection);
+
+    aws_byte_buf_clean_up(&test_ctx.data);
 
     /* clean up */
     return s_tester_clean_up();
