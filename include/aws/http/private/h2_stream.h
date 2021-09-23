@@ -100,7 +100,7 @@ struct aws_h2_stream {
         /* any data streams sent manually via aws_h2_stream_write_data */
         struct aws_linked_list pending_write_list; /* aws_h2_stream_pending_data */
 
-        /* indicates that the stream is currently in the evented_streams_list and is
+        /* indicates that the stream is currently in the waiting_streams_list and is
          * asleep. Moving the stream back to the outgoing_streams_list in the connection
          * will awaken it
          */
