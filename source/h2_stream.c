@@ -1088,6 +1088,7 @@ static int s_stream_write_data(struct aws_http_stream *stream_base, const struct
     if (stream->synced_data.waiting_for_writes) {
         /* queue the stream for wake up */
         aws_linked_list_push_back(&connection->synced_data.pending_resume_list, &stream->node);
+        stream->synced_data.waiting_for_writes = false;
     }
     s_unlock_synced_data(stream);
 

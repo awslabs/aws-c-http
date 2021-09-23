@@ -235,8 +235,8 @@ struct aws_http_make_request_options {
     aws_http_on_stream_complete_fn *on_complete;
 
     /**
-     * When using h2, request body data will be provided over time. The body stream on the request will only be
-     * read when body data has been supplied via `aws_http2_stream_write_data`
+     * When using h2, request body data will be provided over time. The stream will only be polled for writing
+     * when data has been supplied via `aws_h2_stream_write_data`
      */
     bool h2_use_manual_data_writes;
 };
