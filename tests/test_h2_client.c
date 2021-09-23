@@ -4558,7 +4558,8 @@ static void s_h2_client_manual_data_write_on_complete(struct aws_http_stream *st
     aws_input_stream_destroy(data_stream);
 }
 
-static struct aws_input_stream *s_h2_client_manual_data_write_generate_data(struct h2_client_manual_data_write_ctx *ctx) {
+static struct aws_input_stream *s_h2_client_manual_data_write_generate_data(
+    struct h2_client_manual_data_write_ctx *ctx) {
     struct aws_byte_cursor data = aws_byte_cursor_from_buf(&ctx->data);
     data.len = rand() % data.len;
     return aws_input_stream_new_from_cursor(ctx->allocator, &data);
