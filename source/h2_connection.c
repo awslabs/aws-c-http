@@ -792,6 +792,7 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
     struct aws_linked_list *outgoing_streams_list = &connection->thread_data.outgoing_streams_list;
     struct aws_linked_list *stalled_window_streams_list = &connection->thread_data.stalled_window_streams_list;
+    struct aws_linked_list *waiting_streams_list = &connection->thread_data.evented_streams_list;
 
     /* If a stream stalls, put it in this list until the function ends so we don't keep trying to read from it.
      * We put it back at the end of function. */
@@ -851,6 +852,9 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
                 break;
             case AWS_H2_DATA_ENCODE_ONGOING_BODY_STALLED:
                 aws_linked_list_push_back(&stalled_streams_list, node);
+                break;
+            case AWS_H2_DATA_ENCODE_ONGOING_BODY_WAITING:
+                aws_linked_list_push_back(waiting_streams_list, node);
                 break;
             case AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED:
                 aws_linked_list_push_back(stalled_window_streams_list, node);

@@ -53,7 +53,7 @@ enum aws_h2_stream_api_state {
     AWS_H2_STREAM_API_STATE_COMPLETE,
 };
 
-/* list storable version of aws_h2_data_options */
+/* represents a write operation, which will be turned into a data frame */
 struct aws_h2_stream_data_write {
     struct aws_linked_list_node node;
     struct aws_input_stream *data_stream;
@@ -110,7 +110,7 @@ struct aws_h2_stream {
     /* Set only at construction time, indicates that this stream should sleep after headers are sent
      * until data is queued via aws_h2_stream_write_data
      */
-    bool use_evented_writes;
+    bool use_manual_writes;
 
     /* Store the sent reset HTTP/2 error code, set to -1, if none has sent so far */
     int64_t sent_reset_error_code;

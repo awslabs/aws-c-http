@@ -238,7 +238,7 @@ struct aws_http_make_request_options {
      * When using h2, request body data will be provided over time. The body stream on the request will only be
      * read when body data has been supplied via `aws_http2_stream_write_data`
      */
-    bool h2_use_evented_body_stream;
+    bool h2_use_manual_data_writes;
 };
 
 struct aws_http_request_handler_options {
@@ -670,7 +670,9 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
     struct aws_http_stream *http1_stream,
     const struct aws_http1_chunk_options *options);
 
-AWS_HTTP_API int aws_h2_stream_write_data(struct aws_http_stream *h2_stream, const struct aws_h2_data_write_options *options);
+AWS_HTTP_API int aws_h2_stream_write_data(
+    struct aws_http_stream *h2_stream,
+    const struct aws_h2_data_write_options *options);
 
 /**
  * Get the message's aws_http_headers.
