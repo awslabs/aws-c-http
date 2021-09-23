@@ -4554,6 +4554,8 @@ struct h2_client_manual_data_write_ctx {
 
 static void s_h2_client_manual_data_write_on_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
     AWS_ASSERT(error_code == 0 || error_code == AWS_HTTP2_ERR_STREAM_CLOSED);
+    (void)stream;
+    (void)error_code;
     struct aws_input_stream *data_stream = user_data;
     aws_input_stream_destroy(data_stream);
 }
