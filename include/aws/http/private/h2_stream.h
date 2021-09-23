@@ -53,6 +53,14 @@ enum aws_h2_stream_api_state {
     AWS_H2_STREAM_API_STATE_COMPLETE,
 };
 
+/* list storable version of aws_h2_data_options */
+struct aws_h2_stream_data_write {
+    struct aws_linked_list_node node;
+    struct aws_input_stream *data_stream;
+    aws_h2_stream_write_data_complete_fn *on_complete;
+    void *user_data;
+};
+
 struct aws_h2_stream {
     struct aws_http_stream base;
 
@@ -68,6 +76,7 @@ struct aws_h2_stream {
          * We leave it up to the remote peer to detect whether the max window size has been exceeded. */
         int64_t window_size_self;
         struct aws_http_message *outgoing_message;
+        struct aws_h2_stream_data_write *outgoing_write;
         bool received_main_headers;
     } thread_data;
 
@@ -87,7 +96,21 @@ struct aws_h2_stream {
 
         /* Simplified stream state. */
         enum aws_h2_stream_api_state api_state;
+
+        /* any data streams sent manually via aws_h2_stream_write_data */
+        struct aws_linked_list pending_write_list; /* aws_h2_stream_pending_data */
+
+        /* indicates that the stream is currently in the evented_streams_list and is
+         * asleep. Moving the stream back to the outgoing_streams_list in the connection
+         * will awaken it
+         */
+        bool waiting_for_writes;
     } synced_data;
+
+    /* Set only at construction time, indicates that this stream should sleep after headers are sent
+     * until data is queued via aws_h2_stream_write_data
+     */
+    bool use_evented_writes;
 
     /* Store the sent reset HTTP/2 error code, set to -1, if none has sent so far */
     int64_t sent_reset_error_code;

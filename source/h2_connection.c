@@ -321,6 +321,7 @@ static struct aws_h2_connection *s_connection_new(
     aws_linked_list_init(&connection->synced_data.pending_settings_list);
     aws_linked_list_init(&connection->synced_data.pending_ping_list);
     aws_linked_list_init(&connection->synced_data.pending_goaway_list);
+    aws_linked_list_init(&connection->synced_data.pending_resume_list);
 
     aws_linked_list_init(&connection->thread_data.outgoing_streams_list);
     aws_linked_list_init(&connection->thread_data.pending_settings_queue);
@@ -1953,6 +1954,9 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
     struct aws_linked_list pending_goaway;
     aws_linked_list_init(&pending_goaway);
 
+    struct aws_linked_list pending_resume;
+    aws_linked_list_init(&pending_resume);
+
     size_t window_update_size;
     int new_stream_error_code;
     { /* BEGIN CRITICAL SECTION */
@@ -1964,6 +1968,7 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         aws_linked_list_swap_contents(&connection->synced_data.pending_settings_list, &pending_settings);
         aws_linked_list_swap_contents(&connection->synced_data.pending_ping_list, &pending_ping);
         aws_linked_list_swap_contents(&connection->synced_data.pending_goaway_list, &pending_goaway);
+        aws_linked_list_swap_contents(&connection->synced_data.pending_resume_list, &pending_resume);
         window_update_size = connection->synced_data.window_update_size;
         connection->synced_data.window_update_size = 0;
         new_stream_error_code = connection->synced_data.new_stream_error_code;
@@ -2008,6 +2013,16 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         struct aws_h2_pending_goaway *goaway = AWS_CONTAINER_OF(node, struct aws_h2_pending_goaway, node);
         s_send_goaway(connection, goaway->http2_error, goaway->allow_more_streams, &goaway->debug_data);
         aws_mem_release(connection->base.alloc, goaway);
+    }
+
+    /* re-awaken sleeping streams */
+    while (!aws_linked_list_empty(&pending_resume)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&pending_resume);
+        struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
+        aws_mutex_lock(&stream->synced_data.lock);
+        stream->synced_data.waiting_for_writes = false;
+        aws_linked_list_push_back(&connection->thread_data.outgoing_streams_list, node);
+        aws_mutex_unlock(&stream->synced_data.lock);
     }
     /* It's likely that frames were queued while processing cross-thread work.
      * If so, try writing them now */

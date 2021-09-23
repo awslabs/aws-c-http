@@ -135,6 +135,9 @@ struct aws_h2_connection {
         /* New `aws_h2_pending_goaway *` created by user that haven't sent yet */
         struct aws_linked_list pending_goaway_list;
 
+        /* Existing `aws_h2_stream *` that has new data and needs to be moved to outgoing_streams_list again */
+        struct aws_linked_list pending_resume_list;
+
         bool is_cross_thread_work_task_scheduled;
 
         /* The window_update value for `thread_data.window_size_self` that haven't applied yet */

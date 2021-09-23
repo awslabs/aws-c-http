@@ -585,6 +585,42 @@ error:
     return AWS_OP_ERR;
 }
 
+static int s_h2_stream_evented_write_complete(struct aws_h2_stream *stream, bool *body_stalled) {
+    AWS_PRECONDITION(body_stalled);
+
+    /* finish/clean up the current write operation */
+    struct aws_h2_stream_data_write *write_op = stream->thread_data.outgoing_write;
+    write_op->on_complete(&stream->base, AWS_OP_SUCCESS, write_op->user_data);
+    aws_mem_release(stream->base.alloc, write_op);
+    stream->thread_data.outgoing_write = NULL;
+
+    s_lock_synced_data(stream);
+    {
+        /* check to see if there are more queued writes */
+        if (!aws_linked_list_empty(&stream->synced_data.pending_write_list)) {
+            /* Advance to the next write op for next time */
+            struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->synced_data.pending_write_list);
+            struct aws_h2_stream_data_write *pending_write =
+                AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
+            stream->thread_data.outgoing_write = pending_write;
+            *body_stalled = false;
+        } else {
+            /* no more data, put the stream to sleep */
+            struct aws_h2_connection *connection = s_get_h2_connection(stream);
+            stream->synced_data.waiting_for_writes = true;
+            aws_linked_list_push_back(&connection->thread_data.evented_streams_list, &stream->node);
+            *body_stalled = true;
+        }
+    }
+    s_unlock_synced_data(stream);
+    return AWS_OP_SUCCESS;
+}
+
+static struct aws_input_stream *s_h2_stream_get_data_stream(struct aws_h2_stream *stream) {
+    return stream->use_evented_writes ? stream->thread_data.outgoing_write->data_stream
+                                      : aws_http_message_get_body_stream(stream->thread_data.outgoing_message);
+}
+
 int aws_h2_stream_encode_data_frame(
     struct aws_h2_stream *stream,
     struct aws_h2_frame_encoder *encoder,
@@ -605,7 +641,7 @@ int aws_h2_stream_encode_data_frame(
     }
 
     *data_encode_status = AWS_H2_DATA_ENCODE_COMPLETE;
-    struct aws_input_stream *body = aws_http_message_get_body_stream(stream->thread_data.outgoing_message);
+    struct aws_input_stream *body = s_h2_stream_get_data_stream(stream);
     AWS_ASSERT(body);
 
     bool body_complete;
@@ -629,6 +665,12 @@ int aws_h2_stream_encode_data_frame(
             aws_h2_connection_shutdown_due_to_write_err(connection, returned_h2err.aws_code);
         }
         return AWS_OP_SUCCESS;
+    }
+
+    /* EOF/complete on input stream for evented writes just means move to the next one */
+    if (body_complete && stream->use_evented_writes) {
+        s_h2_stream_evented_write_complete(stream, &body_stalled);
+        body_complete = false;
     }
 
     if (body_complete) {
@@ -1015,6 +1057,22 @@ static int s_stream_write_data(struct aws_http_stream *stream_base, const struct
      *    but put stream back into evented_streams_list
      * 4) Repeat until closed
      */
+
+    /* queue this new write into the pending write list for the stream */
+    struct aws_h2_stream_data_write *pending_write =
+        aws_mem_calloc(connection->base.alloc, 1, sizeof(struct aws_h2_stream_data_write));
+    pending_write->data_stream = options->data;
+    pending_write->on_complete = options->on_complete;
+    pending_write->user_data = options->user_data;
+
+    s_lock_synced_data(stream);
+    aws_linked_list_push_back(&stream->synced_data.pending_write_list, &pending_write->node);
+    /* If the stream is currently asleep */
+    if (stream->synced_data.waiting_for_writes) {
+        /* queue the stream for wake up */
+        aws_linked_list_push_back(&connection->synced_data.pending_resume_list, &stream->node);
+    }
+    s_unlock_synced_data(stream);
 
     return AWS_OP_SUCCESS;
 }
