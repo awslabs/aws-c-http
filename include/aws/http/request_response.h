@@ -388,7 +388,7 @@ struct aws_h2_data_options {
     /**
      * Invoked when the data stream is no longer in use, whether or not it was successfully sent.
      * Optional.
-     * See `aws_http1_stream_write_chunk_complete_fn`.
+     * See `aws_h2_stream_write_data_complete_fn`.
      */
     aws_h2_stream_write_data_complete_fn *on_complete;
 
