@@ -19,7 +19,7 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
 static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t http2_error);
 static int s_stream_get_received_error_code(struct aws_http_stream *stream_base, uint32_t *out_http2_error);
 static int s_stream_get_sent_error_code(struct aws_http_stream *stream_base, uint32_t *out_http2_error);
-static int s_stream_write_data(struct aws_http_stream *stream_base, const struct aws_h2_data_options *options);
+static int s_stream_write_data(struct aws_http_stream *stream_base, const struct aws_h2_data_write_options *options);
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error);
@@ -1044,7 +1044,7 @@ struct aws_h2err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *strea
     return AWS_H2ERR_SUCCESS;
 }
 
-static int s_stream_write_data(struct aws_http_stream *stream_base, const struct aws_h2_data_options *options) {
+static int s_stream_write_data(struct aws_http_stream *stream_base, const struct aws_h2_data_write_options *options) {
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
     (void)stream;

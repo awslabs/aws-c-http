@@ -382,7 +382,7 @@ typedef aws_http_stream_write_complete_fn aws_h2_stream_write_data_complete_fn;
 /**
  * Encoding options for manual H2 data frame writes
  */
-struct aws_h2_data_options {
+struct aws_h2_data_write_options {
     struct aws_input_stream *data;
 
     /**
@@ -670,7 +670,7 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
     struct aws_http_stream *http1_stream,
     const struct aws_http1_chunk_options *options);
 
-AWS_HTTP_API int aws_h2_stream_write_data(struct aws_http_stream *h2_stream, const struct aws_h2_data_options *options);
+AWS_HTTP_API int aws_h2_stream_write_data(struct aws_http_stream *h2_stream, const struct aws_h2_data_write_options *options);
 
 /**
  * Get the message's aws_http_headers.

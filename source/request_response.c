@@ -573,7 +573,7 @@ int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, const str
     return http1_stream->vtable->http1_write_chunk(http1_stream, options);
 }
 
-int aws_h2_stream_write_data(struct aws_http_stream *h2_stream, const struct aws_h2_data_options *options) {
+int aws_h2_stream_write_data(struct aws_http_stream *h2_stream, const struct aws_h2_data_write_options *options) {
     AWS_PRECONDITION(h2_stream);
     AWS_PRECONDITION(h2_stream->vtable);
     AWS_PRECONDITION(h2_stream->vtable->http2_write_data);
