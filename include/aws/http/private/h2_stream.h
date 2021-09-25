@@ -57,7 +57,7 @@ enum aws_h2_stream_api_state {
 struct aws_h2_stream_data_write {
     struct aws_linked_list_node node;
     struct aws_input_stream *data_stream;
-    aws_h2_stream_write_data_complete_fn *on_complete;
+    aws_http2_stream_write_data_complete_fn *on_complete;
     void *user_data;
 };
 
@@ -101,7 +101,7 @@ struct aws_h2_stream {
         /* Simplified stream state. */
         enum aws_h2_stream_api_state api_state;
 
-        /* any data streams sent manually via aws_h2_stream_write_data */
+        /* any data streams sent manually via aws_http2_stream_write_data */
         struct aws_linked_list pending_write_list; /* aws_h2_stream_pending_data */
 
         /* indicates that the stream is currently in the waiting_streams_list and is
@@ -112,7 +112,7 @@ struct aws_h2_stream {
     } synced_data;
 
     /* Set only at construction time, indicates that this stream should sleep after headers are sent
-     * until data is queued via aws_h2_stream_write_data
+     * until data is queued via aws_http2_stream_write_data
      */
     bool use_manual_writes;
 

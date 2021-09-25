@@ -4586,7 +4586,7 @@ TEST_CASE(h2_client_manual_data_write) {
     struct aws_http_make_request_options request_options = {
         .self_size = sizeof(request_options),
         .request = request,
-        .h2_use_manual_data_writes = true,
+        .http2_use_manual_data_writes = true,
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
     ASSERT_NOT_NULL(stream);
@@ -4605,17 +4605,19 @@ TEST_CASE(h2_client_manual_data_write) {
     for (int idx = 0; idx < 1000; ++idx) {
         aws_thread_current_sleep(rand() % (1000 * 1000));
         struct aws_input_stream *data_stream = s_h2_client_manual_data_write_generate_data(&test_ctx);
-        struct aws_h2_data_write_options write = {
+        struct aws_http2_stream_write_data_options write = {
             .data = data_stream,
             .on_complete = s_h2_client_manual_data_write_on_complete,
             .user_data = data_stream,
         };
-        ASSERT_SUCCESS(aws_h2_stream_write_data(stream, &write));
+        ASSERT_SUCCESS(aws_http2_stream_write_data(stream, &write));
         if (idx % 10 == 0) {
+            testing_channel_drain_queued_tasks(&s_tester.testing_channel);
             h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer);
         }
     }
 
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer);
 
     aws_http_message_release(request);

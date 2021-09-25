@@ -235,10 +235,10 @@ struct aws_http_make_request_options {
     aws_http_on_stream_complete_fn *on_complete;
 
     /**
-     * When using h2, request body data will be provided over time. The stream will only be polled for writing
-     * when data has been supplied via `aws_h2_stream_write_data`
+     * When using HTTP/2, request body data will be provided over time. The stream will only be polled for writing
+     * when data has been supplied via `aws_http2_stream_write_data`
      */
-    bool h2_use_manual_data_writes;
+    bool http2_use_manual_data_writes;
 };
 
 struct aws_http_request_handler_options {
@@ -377,20 +377,20 @@ struct aws_http1_chunk_options {
     void *user_data;
 };
 
-typedef aws_http_stream_write_complete_fn aws_h2_stream_write_data_complete_fn;
+typedef aws_http_stream_write_complete_fn aws_http2_stream_write_data_complete_fn;
 
 /**
  * Encoding options for manual H2 data frame writes
  */
-struct aws_h2_data_write_options {
+struct aws_http2_stream_write_data_options {
     struct aws_input_stream *data;
 
     /**
      * Invoked when the data stream is no longer in use, whether or not it was successfully sent.
      * Optional.
-     * See `aws_h2_stream_write_data_complete_fn`.
+     * See `aws_http2_stream_write_data_complete_fn`.
      */
-    aws_h2_stream_write_data_complete_fn *on_complete;
+    aws_http2_stream_write_data_complete_fn *on_complete;
 
     /**
      * User provided data passed to the on_complete callback on its invocation.
@@ -670,9 +670,29 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
     struct aws_http_stream *http1_stream,
     const struct aws_http1_chunk_options *options);
 
-AWS_HTTP_API int aws_h2_stream_write_data(
-    struct aws_http_stream *h2_stream,
-    const struct aws_h2_data_write_options *options);
+/**
+ * Submit a DATA frame to be sent on an HTTP/2 stream
+ * The stream must have specified `http2_use_manual_data_writes` during request creation.
+ * For client streams, activate() must be called before any frames are submitted.
+ * For server streams, the response headers must be submitted before any frames.
+ * @return AWS_OP_SUCCESS if the write was queued, or else AWS_OP_ERROR indicating the attempt raised an error code,
+ *         usually due to incorrect configuration of the stream, or attempts to send data after the stream is closed.
+ *
+ * Typical usage will be something like:
+ * options.http2_use_manual_data_writes = true;
+ * stream = aws_http_connection_make_request(connection, &options);
+ * aws_http_stream_activate(stream);
+ * ...
+ * struct aws_http2_stream_write_data_options write;
+ * aws_http2_stream_write_data(stream, &write);
+ * ...
+ * aws_http_stream_close(stream); // done writing frames
+ * ...
+ * aws_http_stream_release(stream);
+ */
+AWS_HTTP_API int aws_http2_stream_write_data(
+    struct aws_http_stream *http2_stream,
+    const struct aws_http2_stream_write_data_options *options);
 
 /**
  * Get the message's aws_http_headers.

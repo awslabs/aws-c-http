@@ -19,7 +19,9 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
 static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t http2_error);
 static int s_stream_get_received_error_code(struct aws_http_stream *stream_base, uint32_t *out_http2_error);
 static int s_stream_get_sent_error_code(struct aws_http_stream *stream_base, uint32_t *out_http2_error);
-static int s_stream_write_data(struct aws_http_stream *stream_base, const struct aws_h2_data_write_options *options);
+static int s_stream_write_data(
+    struct aws_http_stream *stream_base,
+    const struct aws_http2_stream_write_data_options *options);
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error);
@@ -248,7 +250,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
 
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
-    stream->use_manual_writes = options->h2_use_manual_data_writes;
+    stream->use_manual_writes = options->http2_use_manual_data_writes;
     stream->thread_data.outgoing_message = options->request;
     /* init outgoing write queue */
     aws_linked_list_init(&stream->thread_data.outgoing_writes);
@@ -375,6 +377,11 @@ static void s_stream_data_write_destroy(
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
     AWS_PRECONDITION(stream_base);
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
+
+    /* This will have been called already from connection closing the stream, but if the stream never successfully
+     * activated, we need to make sure we clean up any queued writes. The call is idempotent.
+     */
+    aws_h2_stream_on_closed(stream, AWS_HTTP2_ERR_STREAM_CLOSED);
 
     AWS_H2_STREAM_LOG(DEBUG, stream, "Destroying stream");
     aws_mutex_clean_up(&stream->synced_data.lock);
@@ -643,7 +650,7 @@ static inline bool s_h2_stream_has_outgoing_writes(struct aws_h2_stream *stream)
 
 static void s_h2_stream_manual_write_complete(struct aws_h2_stream *stream, bool *body_stalled) {
     AWS_PRECONDITION(body_stalled);
-    AWS_PRECONDITION(!aws_linked_list_empty(&stream->thread_data.outgoing_writes));
+    AWS_PRECONDITION(s_h2_stream_has_outgoing_writes(stream));
 
     /* finish/clean up the current write operation */
     struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
@@ -656,7 +663,7 @@ static void s_h2_stream_manual_write_complete(struct aws_h2_stream *stream, bool
 
 static struct aws_input_stream *s_h2_stream_get_data_stream(struct aws_h2_stream *stream) {
     AWS_PRECONDITION(s_h2_stream_has_outgoing_writes(stream));
-    struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
+    struct aws_linked_list_node *node = aws_linked_list_front(&stream->thread_data.outgoing_writes);
     struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
     return write->data_stream;
 }
@@ -707,15 +714,14 @@ int aws_h2_stream_encode_data_frame(
         return AWS_OP_SUCCESS;
     }
 
-    /* EOF/complete on input stream for manual writes just means move to the next one, the body
-     * never truly completes until the stream is closed
-     */
-    if (body_complete && stream->use_manual_writes) {
+    if (body_complete) {
         s_h2_stream_manual_write_complete(stream, &body_stalled);
-        body_complete = false;
     }
 
-    if (body_complete) {
+    /* body_complete for manual writes just means the current outgoing_write is complete. The body is not complete
+     * for real until the stream is told to close
+     */
+    if (body_complete && !stream->use_manual_writes) {
         if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_REMOTE) {
             /* Both sides have sent END_STREAM */
             stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
@@ -1090,7 +1096,9 @@ struct aws_h2err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *strea
     return AWS_H2ERR_SUCCESS;
 }
 
-static int s_stream_write_data(struct aws_http_stream *stream_base, const struct aws_h2_data_write_options *options) {
+static int s_stream_write_data(
+    struct aws_http_stream *stream_base,
+    const struct aws_http2_stream_write_data_options *options) {
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
 
