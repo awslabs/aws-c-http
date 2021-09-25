@@ -740,9 +740,9 @@ int aws_h2_stream_encode_data_frame(
         *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING;
         if (body_stalled) {
             if (stream->use_manual_writes) {
-                *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING_BODY_WAITING;
+                *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING_WAITING_FOR_DATA;
             } else {
-                *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING_BODY_STALLED;
+                *data_encode_status = AWS_H2_DATA_ENCODE_ONGOING_BODY_STREAM_STALLED;
             }
         }
         if (stream->thread_data.window_size_peer <= AWS_H2_MIN_WINDOW_SIZE) {

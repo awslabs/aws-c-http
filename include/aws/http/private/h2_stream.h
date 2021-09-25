@@ -144,7 +144,7 @@ void aws_h2_stream_on_closed(struct aws_h2_stream *stream, int error_code);
  * data_encode_status:
  * AWS_H2_DATA_ENCODE_COMPLETE: Finished encoding data for the stream
  * AWS_H2_DATA_ENCODE_ONGOING: Stream has more data to send.
- * AWS_H2_DATA_ENCODE_ONGOING_BODY_STALLED: Stream has more data to send, but it's not ready right now
+ * AWS_H2_DATA_ENCODE_ONGOING_BODY_STREAM_STALLED: Stream has more data to send, but it's not ready right now
  * AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED: Stream has more data to send but its window size is too small, and stream
  * will be moved to stalled_window_stream_list */
 int aws_h2_stream_encode_data_frame(
