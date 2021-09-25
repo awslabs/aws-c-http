@@ -2027,10 +2027,7 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
     /* re-awaken sleeping streams */
     while (!aws_linked_list_empty(&pending_resume)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&pending_resume);
-        struct aws_h2_stream *stream = AWS_CONTAINER_OF(node, struct aws_h2_stream, node);
-        aws_mutex_lock(&stream->synced_data.lock);
         aws_linked_list_push_back(&connection->thread_data.outgoing_streams_list, node);
-        aws_mutex_unlock(&stream->synced_data.lock);
     }
     /* It's likely that frames were queued while processing cross-thread work.
      * If so, try writing them now */
