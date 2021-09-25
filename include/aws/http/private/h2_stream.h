@@ -136,6 +136,9 @@ struct aws_h2err aws_h2_stream_window_size_change(struct aws_h2_stream *stream, 
 /* Connection is ready to send frames from stream now */
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data);
 
+/* Connection is closing stream for one reason or another, clean up any pending writes/resources */
+void aws_h2_stream_on_closed(struct aws_h2_stream *stream, int error_code);
+
 /* Connection is ready to send data from stream now.
  * Stream may complete itself during this call.
  * data_encode_status:

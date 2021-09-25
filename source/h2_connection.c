@@ -1721,6 +1721,8 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
         aws_linked_list_remove(&stream->node);
     }
 
+    aws_h2_stream_on_closed(stream, error_code);
+
     /* Invoke callback */
     if (stream->base.on_complete) {
         stream->base.on_complete(&stream->base, error_code, stream->base.user_data);

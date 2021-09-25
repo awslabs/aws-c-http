@@ -248,6 +248,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
 
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
+    stream->use_manual_writes = options->h2_use_manual_data_writes;
     stream->thread_data.outgoing_message = options->request;
     /* init outgoing write queue */
     aws_linked_list_init(&stream->thread_data.outgoing_writes);
@@ -359,11 +360,14 @@ end:
     aws_http_stream_release(&stream->base);
 }
 
-static void s_stream_data_write_destroy(struct aws_h2_stream *stream, struct aws_h2_stream_data_write *write) {
+static void s_stream_data_write_destroy(
+    struct aws_h2_stream *stream,
+    struct aws_h2_stream_data_write *write,
+    int error_code) {
     AWS_PRECONDITION(stream);
     AWS_PRECONDITION(write);
     if (write->on_complete) {
-        write->on_complete(&stream->base, AWS_HTTP2_ERR_STREAM_CLOSED, write->user_data);
+        write->on_complete(&stream->base, error_code, write->user_data);
     }
     aws_mem_release(stream->base.alloc, write);
 }
@@ -376,21 +380,25 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     aws_mutex_clean_up(&stream->synced_data.lock);
     aws_http_message_release(stream->thread_data.outgoing_message);
 
+    aws_mem_release(stream->base.alloc, stream);
+}
+
+void aws_h2_stream_on_closed(struct aws_h2_stream *stream, int error_code) {
     /* clean up any outgoing writes */
     while (!aws_linked_list_empty(&stream->thread_data.outgoing_writes)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
         struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
-        s_stream_data_write_destroy(stream, write);
+        s_stream_data_write_destroy(stream, write, error_code);
     }
 
     /* clean up any pending writes */
+    s_lock_synced_data(stream);
     while (!aws_linked_list_empty(&stream->synced_data.pending_write_list)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->synced_data.pending_write_list);
         struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
-        s_stream_data_write_destroy(stream, write);
+        s_stream_data_write_destroy(stream, write, error_code);
     }
-
-    aws_mem_release(stream->base.alloc, stream);
+    s_unlock_synced_data(stream);
 }
 
 static void s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size) {
@@ -640,7 +648,7 @@ static void s_h2_stream_manual_write_complete(struct aws_h2_stream *stream, bool
     /* finish/clean up the current write operation */
     struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
     struct aws_h2_stream_data_write *write_op = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
-    s_stream_data_write_destroy(stream, write_op);
+    s_stream_data_write_destroy(stream, write_op, AWS_OP_SUCCESS);
 
     /* check to see if there are more queued writes */
     *body_stalled = !s_h2_stream_has_outgoing_writes(stream);
@@ -1085,24 +1093,35 @@ struct aws_h2err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *strea
 static int s_stream_write_data(struct aws_http_stream *stream_base, const struct aws_h2_data_write_options *options) {
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
-    (void)stream;
-    (void)connection;
-    (void)options;
 
-    /* queue this new write into the pending write list for the stream */
-    struct aws_h2_stream_data_write *pending_write =
-        aws_mem_calloc(connection->base.alloc, 1, sizeof(struct aws_h2_stream_data_write));
-    pending_write->data_stream = options->data;
-    pending_write->on_complete = options->on_complete;
-    pending_write->user_data = options->user_data;
+    if (!stream->use_manual_writes) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "Cannot write DATA frames to an HTTP2 connection that is not configured to accept manual writes");
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
 
     s_lock_synced_data(stream);
-    aws_linked_list_push_back(&stream->synced_data.pending_write_list, &pending_write->node);
-    /* If the stream is currently asleep */
-    if (stream->synced_data.waiting_for_writes) {
-        /* queue the stream for wake up */
-        aws_linked_list_push_back(&connection->synced_data.pending_resume_list, &stream->node);
-        stream->synced_data.waiting_for_writes = false;
+    {
+        if (stream->synced_data.api_state != AWS_H2_STREAM_API_STATE_ACTIVE) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "Cannot write DATA frames to an inactive or closed stream");
+            return aws_raise_error(AWS_ERROR_INVALID_STATE);
+        }
+
+        /* queue this new write into the pending write list for the stream */
+        struct aws_h2_stream_data_write *pending_write =
+            aws_mem_calloc(connection->base.alloc, 1, sizeof(struct aws_h2_stream_data_write));
+        pending_write->data_stream = options->data;
+        pending_write->on_complete = options->on_complete;
+        pending_write->user_data = options->user_data;
+        aws_linked_list_push_back(&stream->synced_data.pending_write_list, &pending_write->node);
+
+        /* If the stream is currently asleep */
+        if (stream->synced_data.waiting_for_writes) {
+            /* queue the stream for wake up */
+            aws_linked_list_push_back(&connection->synced_data.pending_resume_list, &stream->node);
+            stream->synced_data.waiting_for_writes = false;
+        }
     }
     s_unlock_synced_data(stream);
 
