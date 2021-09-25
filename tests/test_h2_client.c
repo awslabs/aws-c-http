@@ -4591,6 +4591,8 @@ TEST_CASE(h2_client_manual_data_write) {
     struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
     ASSERT_NOT_NULL(stream);
 
+    aws_http_stream_activate(stream);
+
     struct aws_byte_buf payload;
     aws_byte_buf_init(&payload, allocator, 64 * 1024 * 1024);
 

@@ -76,7 +76,11 @@ struct aws_h2_stream {
          * We leave it up to the remote peer to detect whether the max window size has been exceeded. */
         int64_t window_size_self;
         struct aws_http_message *outgoing_message;
-        struct aws_h2_stream_data_write *outgoing_write;
+        /* all queued writes. If the message provides a body stream, it will be first in this list
+         * This list can drain, which results in the stream being put to sleep (moved to waiting_streams_list in
+         * h2_connection).
+         */
+        struct aws_linked_list outgoing_writes; /* aws_h2_pending_data */
         bool received_main_headers;
     } thread_data;
 

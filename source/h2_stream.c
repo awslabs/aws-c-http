@@ -249,7 +249,17 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
     stream->thread_data.outgoing_message = options->request;
-    stream->thread_data.outgoing_write = NULL;
+    /* init outgoing write queue */
+    aws_linked_list_init(&stream->thread_data.outgoing_writes);
+
+    /* if there's a request body to write, add it as the first outgoing write */
+    struct aws_input_stream *body_stream = aws_http_message_get_body_stream(options->request);
+    if (body_stream) {
+        struct aws_h2_stream_data_write *body_write =
+            aws_mem_calloc(stream->base.alloc, 1, sizeof(struct aws_h2_stream_data_write));
+        body_write->data_stream = body_stream;
+        aws_linked_list_push_back(&stream->thread_data.outgoing_writes, &body_write->node);
+    }
 
     stream->sent_reset_error_code = -1;
     stream->received_reset_error_code = -1;
@@ -292,6 +302,9 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     size_t window_update_size;
     uint32_t user_reset_error_code;
 
+    struct aws_linked_list pending_writes;
+    aws_linked_list_init(&pending_writes);
+
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream);
         stream->synced_data.is_cross_thread_work_task_scheduled = false;
@@ -301,6 +314,9 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         stream->synced_data.window_update_size = 0;
         reset_called = stream->synced_data.reset_called;
         user_reset_error_code = stream->synced_data.user_reset_error_code;
+
+        /* copy out pending writes */
+        aws_linked_list_swap_contents(&pending_writes, &stream->synced_data.pending_write_list);
 
         s_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
@@ -332,6 +348,9 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         }
     }
 
+    /* move any pending writes to the outgoing write queue */
+    aws_linked_list_move_all_back(&stream->thread_data.outgoing_writes, &pending_writes);
+
     /* It's likely that frames were queued while processing cross-thread work.
      * If so, try writing them now */
     aws_h2_try_write_outgoing_frames(connection);
@@ -357,10 +376,13 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     aws_mutex_clean_up(&stream->synced_data.lock);
     aws_http_message_release(stream->thread_data.outgoing_message);
 
-    /* chuck the outgoing write on the pending list for unified clean up */
-    if (stream->thread_data.outgoing_write) {
-        aws_linked_list_push_front(&stream->synced_data.pending_write_list, &stream->thread_data.outgoing_write->node);
+    /* clean up any outgoing writes */
+    while (!aws_linked_list_empty(&stream->thread_data.outgoing_writes)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
+        struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
+        s_stream_data_write_destroy(stream, write);
     }
+
     /* clean up any pending writes */
     while (!aws_linked_list_empty(&stream->synced_data.pending_write_list)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->synced_data.pending_write_list);
@@ -607,36 +629,28 @@ error:
     return AWS_OP_ERR;
 }
 
+static inline bool s_h2_stream_has_outgoing_writes(struct aws_h2_stream *stream) {
+    return !aws_linked_list_empty(&stream->thread_data.outgoing_writes);
+}
+
 static void s_h2_stream_manual_write_complete(struct aws_h2_stream *stream, bool *body_stalled) {
     AWS_PRECONDITION(body_stalled);
+    AWS_PRECONDITION(!aws_linked_list_empty(&stream->thread_data.outgoing_writes));
 
     /* finish/clean up the current write operation */
-    struct aws_h2_stream_data_write *write_op = stream->thread_data.outgoing_write;
+    struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
+    struct aws_h2_stream_data_write *write_op = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
     s_stream_data_write_destroy(stream, write_op);
-    stream->thread_data.outgoing_write = NULL;
 
-    s_lock_synced_data(stream);
-    {
-        /* check to see if there are more queued writes */
-        if (!aws_linked_list_empty(&stream->synced_data.pending_write_list)) {
-            /* Advance to the next write op for next time */
-            struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->synced_data.pending_write_list);
-            struct aws_h2_stream_data_write *pending_write =
-                AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
-            stream->thread_data.outgoing_write = pending_write;
-            *body_stalled = false;
-        } else {
-            /* no more data, put the stream to sleep */
-            stream->synced_data.waiting_for_writes = true;
-            *body_stalled = true;
-        }
-    }
-    s_unlock_synced_data(stream);
+    /* check to see if there are more queued writes */
+    *body_stalled = !s_h2_stream_has_outgoing_writes(stream);
 }
 
 static struct aws_input_stream *s_h2_stream_get_data_stream(struct aws_h2_stream *stream) {
-    return stream->use_manual_writes ? stream->thread_data.outgoing_write->data_stream
-                                     : aws_http_message_get_body_stream(stream->thread_data.outgoing_message);
+    AWS_PRECONDITION(s_h2_stream_has_outgoing_writes(stream));
+    struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
+    struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
+    return write->data_stream;
 }
 
 int aws_h2_stream_encode_data_frame(
@@ -668,7 +682,7 @@ int aws_h2_stream_encode_data_frame(
             encoder,
             stream->base.id,
             body,
-            true /*body_ends_stream*/,
+            !stream->use_manual_writes /*body_ends_stream*/,
             0 /*pad_length*/,
             &stream->thread_data.window_size_peer,
             &connection->thread_data.window_size_peer,

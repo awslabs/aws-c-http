@@ -854,7 +854,10 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
                 aws_linked_list_push_back(&stalled_streams_list, node);
                 break;
             case AWS_H2_DATA_ENCODE_ONGOING_BODY_WAITING:
+                aws_mutex_lock(&stream->synced_data.lock);
+                stream->synced_data.waiting_for_writes = true;
                 aws_linked_list_push_back(waiting_streams_list, node);
+                aws_mutex_unlock(&stream->synced_data.lock);
                 break;
             case AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED:
                 aws_linked_list_push_back(stalled_window_streams_list, node);
