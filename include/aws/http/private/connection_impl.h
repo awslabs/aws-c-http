@@ -42,9 +42,9 @@ struct aws_http_connection_vtable {
     void (*close)(struct aws_http_connection *connection);
     bool (*is_open)(const struct aws_http_connection *connection);
     bool (*new_requests_allowed)(const struct aws_http_connection *connection);
-    void (*update_window)(struct aws_http_connection *connection, size_t increment_size);
 
     /* HTTP/2 specific functions */
+    void (*update_window)(struct aws_http_connection *connection, uint32_t increment_size);
     int (*change_settings)(
         struct aws_http_connection *http2_connection,
         const struct aws_http2_setting *settings_array,
@@ -125,6 +125,7 @@ struct aws_http_client_bootstrap {
     struct aws_allocator *alloc;
     bool is_using_tls;
     bool manual_window_management;
+    bool prior_knowledge_http2;
     size_t initial_window_size;
     struct aws_http_connection_monitoring_options monitoring_options;
     void *user_data;
@@ -133,11 +134,14 @@ struct aws_http_client_bootstrap {
     aws_http_proxy_request_transform_fn *proxy_request_transform;
 
     struct aws_http1_connection_options http1_options;
-    struct aws_http2_connection_options http2_options;
+    struct aws_http2_connection_options http2_options; /* allocated with bootstrap */
+    struct aws_hash_table *alpn_string_map;            /* allocated with bootstrap */
     struct aws_http_connection *connection;
 };
 
 AWS_EXTERN_C_BEGIN
+AWS_HTTP_API
+void aws_http_client_bootstrap_destroy(struct aws_http_client_bootstrap *bootstrap);
 
 AWS_HTTP_API
 void aws_http_connection_set_system_vtable(const struct aws_http_connection_system_vtable *system_vtable);
@@ -179,7 +183,9 @@ uint32_t aws_http_connection_get_next_stream_id(struct aws_http_connection *conn
  * @param is_server should the handler behave like an http server
  * @param is_using_tls is tls is being used (do an alpn check of the to-the-left channel handler)
  * @param manual_window_management is manual window management enabled
+ * @param prior_knowledge_http2 prior knowledge about http2 connection to be used
  * @param initial_window_size what should the initial window size be
+ * @param alpn_string_map the customized ALPN string map from `struct aws_string *` to `enum aws_http_version`.
  * @param http1_options http1 options
  * @param http2_options http2 options
  * @return a new http connection or NULL on failure
@@ -191,7 +197,9 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
     bool is_server,
     bool is_using_tls,
     bool manual_window_management,
+    bool prior_knowledge_http2,
     size_t initial_window_size,
+    const struct aws_hash_table *alpn_string_map,
     const struct aws_http1_connection_options *http1_options,
     const struct aws_http2_connection_options *http2_options);
 

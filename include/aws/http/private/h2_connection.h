@@ -263,7 +263,7 @@ int aws_h2_connection_send_rst_and_close_reserved_stream(
     uint32_t h2_error_code);
 
 /**
- * Error happens while writing into channel, shutdown the connection.
+ * Error happens while writing into channel, shutdown the connection. Only called within the eventloop thread
  */
 void aws_h2_connection_shutdown_due_to_write_err(struct aws_h2_connection *connection, int error_code);
 

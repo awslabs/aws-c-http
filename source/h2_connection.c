@@ -56,7 +56,7 @@ static struct aws_http_stream *s_connection_make_request(
 static void s_connection_close(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
-static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size);
+static void s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size);
 static int s_connection_change_settings(
     struct aws_http_connection *connection_base,
     const struct aws_http2_setting *settings_array,
@@ -268,6 +268,7 @@ static void s_stop(
 
 void aws_h2_connection_shutdown_due_to_write_err(struct aws_h2_connection *connection, int error_code) {
     AWS_PRECONDITION(error_code);
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
     if (connection->thread_data.channel_shutdown_waiting_for_goaway_to_be_written) {
         /* If shutdown is waiting for writes to complete, but writes are now broken,
@@ -2152,28 +2153,29 @@ static bool s_connection_new_requests_allowed(const struct aws_http_connection *
     return new_stream_error_code == 0;
 }
 
-static void s_connection_update_window(struct aws_http_connection *connection_base, size_t increment_size) {
+static void s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size) {
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     if (!increment_size) {
+        /* Silently do nothing. */
         return;
     }
     if (!connection_base->manual_window_management) {
-        /* auto-mode, manual update window is not supported */
+        /* auto-mode, manual update window is not supported, silently do nothing with warning log. */
         CONNECTION_LOG(
-            WARN, connection, "Manual window management is off, update window operations are not supported.");
+            DEBUG, connection, "Manual window management is off, update window operations are not supported.");
         return;
     }
-    /* Type cast the increment size here, if overflow happens, we will detect it later, and the frame will be destroyed
-     */
     struct aws_h2_frame *connection_window_update_frame =
-        aws_h2_frame_new_window_update(connection->base.alloc, 0, (uint32_t)increment_size);
+        aws_h2_frame_new_window_update(connection->base.alloc, 0, increment_size);
     if (!connection_window_update_frame) {
         CONNECTION_LOGF(
             ERROR,
             connection,
             "Failed to create WINDOW_UPDATE frame on connection, error %s",
             aws_error_name(aws_last_error()));
-        return;
+        /* OOM should result in a crash. And the increment size is too huge is the only other failure case, which will
+         * result in overflow. */
+        goto overflow;
     }
 
     int err = 0;
@@ -2196,6 +2198,14 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
         }
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
+    if (err) {
+        CONNECTION_LOG(
+            ERROR,
+            connection,
+            "The connection's flow-control windows has been incremented beyond 2**31 -1, the max for HTTP/2. The ");
+        aws_h2_frame_destroy(connection_window_update_frame);
+        goto overflow;
+    }
 
     if (cross_thread_work_should_schedule) {
         CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
@@ -2203,25 +2213,19 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
     }
 
     if (!connection_open) {
-        CONNECTION_LOG(ERROR, connection, "Failed to update connection window, connection is closed or closing.");
-        aws_raise_error(AWS_ERROR_INVALID_STATE);
+        /* connection already closed, just do nothing */
         aws_h2_frame_destroy(connection_window_update_frame);
         return;
     }
-
-    if (err) {
-        /* The increment_size is still not 100% safe, since we cannot control the incoming data frame. So just
-         * ruled out the value that is obviously wrong values */
-        CONNECTION_LOGF(
-            ERROR,
-            connection,
-            "The increment size is too big for HTTP/2 protocol, max flow-control "
-            "window size is 2147483647. We got %zu, which will cause the flow-control window to exceed the maximum",
-            increment_size);
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        aws_h2_frame_destroy(connection_window_update_frame);
-        return;
-    }
+    return;
+overflow:
+    /* Shutdown the connection as overflow detected */
+    s_stop(
+        connection,
+        false /*stop_reading*/,
+        false /*stop_writing*/,
+        true /*schedule_shutdown*/,
+        AWS_ERROR_OVERFLOW_DETECTED);
 }
 
 static int s_connection_change_settings(
@@ -2371,7 +2375,9 @@ static int s_connection_send_goaway(
         connection_open = connection->synced_data.is_open;
         if (!connection_open) {
             s_unlock_synced_data(connection);
-            goto closed;
+            CONNECTION_LOG(DEBUG, connection, "Goaway not sent, connection is closed or closing.");
+            aws_mem_release(connection->base.alloc, pending_goaway);
+            goto done;
         }
         was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
         connection->synced_data.is_cross_thread_work_task_scheduled = true;
@@ -2392,12 +2398,8 @@ static int s_connection_send_goaway(
         CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
         aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
     }
+done:
     return AWS_OP_SUCCESS;
-
-closed:
-    CONNECTION_LOG(ERROR, connection, "Failed to send goaway, connection is closed or closing.");
-    aws_mem_release(connection->base.alloc, pending_goaway);
-    return aws_raise_error(AWS_ERROR_INVALID_STATE);
 }
 
 static void s_get_settings_general(
@@ -2518,8 +2520,8 @@ static int s_connection_get_received_goaway(
     uint32_t *out_last_stream_id) {
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
-    uint32_t received_last_stream_id;
-    uint32_t received_http2_error;
+    uint32_t received_last_stream_id = 0;
+    uint32_t received_http2_error = 0;
     bool goaway_not_ready = false;
     uint32_t max_stream_id = AWS_H2_STREAM_ID_MAX;
     { /* BEGIN CRITICAL SECTION */

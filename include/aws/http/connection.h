@@ -7,6 +7,7 @@
  */
 
 #include <aws/http/http.h>
+#include <aws/http/proxy.h>
 
 struct aws_client_bootstrap;
 struct aws_socket_options;
@@ -87,7 +88,6 @@ typedef void(aws_http2_on_ping_complete_fn)(
  *      the callback. Make a deep copy if you wish to keep it longer.)
  * @param user_data User-data passed to the callback.
  */
-
 typedef void(aws_http2_on_goaway_received_fn)(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
@@ -107,6 +107,14 @@ typedef void(aws_http2_on_remote_settings_change_fn)(
     void *user_data);
 
 /**
+ * Callback invoked on each statistics sample.
+ *
+ * connection_nonce is unique to each connection for disambiguation of each callback per connection.
+ */
+typedef void(
+    aws_http_statistics_observer_fn)(size_t connection_nonce, const struct aws_array_list *stats_list, void *user_data);
+
+/**
  * Configuration options for connection monitoring
  */
 struct aws_http_connection_monitoring_options {
@@ -122,6 +130,17 @@ struct aws_http_connection_monitoring_options {
      * as unhealthy.
      */
     uint32_t allowable_throughput_failure_interval_seconds;
+
+    /**
+     * invoked on each statistics publish by the underlying IO channel. Install this callback to receive the statistics
+     * for observation. This field is optional.
+     */
+    aws_http_statistics_observer_fn *statistics_observer_fn;
+
+    /**
+     * user_data to be passed to statistics_observer_fn.
+     */
+    void *statistics_observer_user_data;
 };
 
 /**
@@ -252,6 +271,13 @@ struct aws_http_client_connection_options {
      */
     const struct aws_http_proxy_options *proxy_options;
 
+    /*
+     * Optional.
+     * Configuration for using proxy from environment variable.
+     * Only works when proxy_options is not set.
+     */
+    const struct proxy_env_var_settings *proxy_ev_settings;
+
     /**
      * Optional
      * Configuration options related to connection health monitoring
@@ -270,6 +296,9 @@ struct aws_http_client_connection_options {
      * If a stream's flow-control window reaches 0, no further data will be received.
      * The user must call aws_http_stream_update_window() to increment the stream's
      * window and keep data flowing.
+     *
+     * If you created a HTTP/2 connection, it will also control the connection window
+     * management.
      */
     bool manual_window_management;
 
@@ -300,6 +329,26 @@ struct aws_http_client_connection_options {
      * See `aws_http_on_client_connection_shutdown_fn`.
      */
     aws_http_on_client_connection_shutdown_fn *on_shutdown;
+
+    /**
+     * Optional.
+     * When true, use prior knowledge to set up an HTTP/2 connection on a cleartext
+     * connection.
+     * When TLS is set and this is true, the connection will failed to be established,
+     * as prior knowledge only works for cleartext TLS.
+     * Refer to RFC7540 3.4
+     */
+    bool prior_knowledge_http2;
+
+    /**
+     * Optional.
+     * Pointer to the hash map containing the ALPN string to protocol to use.
+     * Hash from `struct aws_string *` to `enum aws_http_version`.
+     * If not set, only the predefined string `h2` and `http/1.1` will be recognized. Other negotiated ALPN string will
+     * result in a HTTP1/1 connection
+     * Note: Connection will keep a deep copy of the table and the strings.
+     */
+    struct aws_hash_table *alpn_string_map;
 
     /**
      * Options specific to HTTP/1.x connections.
@@ -407,13 +456,6 @@ bool aws_http_connection_new_requests_allowed(const struct aws_http_connection *
 AWS_HTTP_API
 bool aws_http_connection_is_client(const struct aws_http_connection *connection);
 
-/**
- * DEPRECATED
- * TODO: Delete once this is removed from H2.
- */
-AWS_HTTP_API
-void aws_http_connection_update_window(struct aws_http_connection *connection, size_t increment_size);
-
 AWS_HTTP_API
 enum aws_http_version aws_http_connection_get_version(const struct aws_http_connection *connection);
 
@@ -423,6 +465,22 @@ enum aws_http_version aws_http_connection_get_version(const struct aws_http_conn
  */
 AWS_HTTP_API
 struct aws_channel *aws_http_connection_get_channel(struct aws_http_connection *connection);
+
+/**
+ * Initialize an map copied from the *src map, which maps `struct aws_string *` to `enum aws_http_version`.
+ */
+AWS_HTTP_API
+int aws_http_alpn_map_init_copy(
+    struct aws_allocator *allocator,
+    struct aws_hash_table *dest,
+    struct aws_hash_table *src);
+
+/**
+ * Initialize an empty hash-table that maps `struct aws_string *` to `enum aws_http_version`.
+ * This map can used in aws_http_client_connections_options.alpn_string_map.
+ */
+AWS_HTTP_API
+int aws_http_alpn_map_init(struct aws_allocator *allocator, struct aws_hash_table *map);
 
 /**
  * Checks http proxy options for correctness
@@ -475,7 +533,7 @@ int aws_http2_connection_ping(
  * @param out_settings fixed size array of aws_http2_setting gets set to the local settings
  */
 AWS_HTTP_API
-int aws_http2_connection_get_local_settings(
+void aws_http2_connection_get_local_settings(
     const struct aws_http_connection *http2_connection,
     struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
 
@@ -486,7 +544,7 @@ int aws_http2_connection_get_local_settings(
  * @param out_settings fixed size array of aws_http2_setting gets set to  the remote settings
  */
 AWS_HTTP_API
-int aws_http2_connection_get_remote_settings(
+void aws_http2_connection_get_remote_settings(
     const struct aws_http_connection *http2_connection,
     struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT]);
 
@@ -499,6 +557,8 @@ int aws_http2_connection_get_remote_settings(
  * This call can be used to gracefully warn the peer of an impending shutdown
  * (http2_error=0, allow_more_streams=true), or to customize the final GOAWAY
  * frame that is sent by this connection.
+ *
+ * The other end may not receive the goaway, if the connection already closed.
  *
  * @param http2_connection HTTP/2 connection.
  * @param http2_error The HTTP/2 error code (RFC-7540 section 7) to send.
@@ -547,6 +607,32 @@ int aws_http2_connection_get_received_goaway(
     struct aws_http_connection *http2_connection,
     uint32_t *out_http2_error,
     uint32_t *out_last_stream_id);
+
+/**
+ * Increment the connection's flow-control window to keep data flowing (HTTP/2 only).
+ *
+ * If the connection was created with `manual_window_management` set true,
+ * the flow-control window of the connection will shrink as body data is received for all the streams created on it.
+ * (headers, padding, and other metadata do not affect the window).
+ * The initial connection flow-control window is 65,535.
+ * Once the connection's flow-control window reaches to 0, all the streams on the connection stop receiving any further
+ * data.
+ *
+ * If `manual_window_management` is false, this call will have no effect.
+ * The connection maintains its flow-control windows such that
+ * no back-pressure is applied and data arrives as fast as possible.
+ *
+ * If you are not connected, this call will have no effect.
+ *
+ * Crashes when the connection is not http2 connection.
+ * The limit of the Maximum Size is 2**31 - 1. If the increment size cause the connection flow window exceeds the
+ * Maximum size, this call will result in the connection lost.
+ *
+ * @param http2_connection HTTP/2 connection.
+ * @param increment_size The size to increment for the connection's flow control window
+ */
+AWS_HTTP_API
+void aws_http2_connection_update_window(struct aws_http_connection *http2_connection, uint32_t increment_size);
 
 AWS_EXTERN_C_END
 
