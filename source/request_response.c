@@ -5,7 +5,6 @@
 
 #include <aws/common/array_list.h>
 #include <aws/common/mutex.h>
-#include <aws/common/ref_count.h>
 #include <aws/common/string.h>
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/request_response_impl.h>
@@ -43,28 +42,6 @@ struct aws_http_headers {
     struct aws_allocator *alloc;
     struct aws_array_list array_list; /* Contains aws_http_header */
     struct aws_atomic_var refcount;
-};
-
-/**
- * Refcounted to support multiple messages use the same pesudo headers.
- */
-struct aws_pesudo_headers {
-    struct aws_allocator *alloc;
-    struct aws_ref_count ref_count;
-    union {
-        struct aws_pesudo_headers_request_data {
-            struct aws_string *method;
-            struct aws_string *scheme;
-            struct aws_string *authority;
-            struct aws_string *path;
-        } request;
-        struct aws_pesudo_headers_response_data {
-            struct aws_string *status;
-        } response;
-    } subclass_data;
-
-    struct aws_pesudo_headers_request_data *request_data;
-    struct aws_pesudo_headers_response_data *response_data;
 };
 
 struct aws_http_headers *aws_http_headers_new(struct aws_allocator *allocator) {
@@ -344,29 +321,11 @@ struct aws_http_message {
     /* Data specific to the request or response subclasses */
     union {
         struct aws_http_message_request_data {
-            union {
-                struct aws_h1_message_request_data {
-                    struct aws_string *method;
-                    struct aws_string *path;
-                } h1_request;
-                struct aws_h2_message_request_data {
-                    struct aws_pesudo_headers *pesudo_headers;
-                } h2_request;
-            };
-            struct aws_h1_message_request_data *h1_data;
-            struct aws_h2_message_request_data *h2_data;
+            struct aws_string *method;
+            struct aws_string *path;
         } request;
         struct aws_http_message_response_data {
-            union {
-                struct aws_h1_message_response_data {
-                    int status;
-                } h1_response;
-                struct aws_h2_message_response_data {
-                    struct aws_pesudo_headers *pesudo_headers;
-                } h2_response;
-            };
-            struct aws_h1_message_response_data *h1_data;
-            struct aws_h2_message_response_data *h2_data;
+            int status;
         } response;
     } subclass_data;
 
