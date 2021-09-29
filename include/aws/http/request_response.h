@@ -586,13 +586,25 @@ struct aws_http_message *aws_http_message_new_request_with_headers(
     struct aws_http_headers *existing_headers);
 
 /**
- * Create a new response message.
+ * Create a new response message. HTTP/1.1 response
  * The message is blank, all properties (status, headers, etc) must be set individually.
  *
  * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
  */
 AWS_HTTP_API
 struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator);
+
+/**
+ * Create a new request message. HTTP/2 request
+ * The message is blank, all properties (method, path, etc) must be set individually.
+ *
+ * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
+ */
+AWS_HTTP_API
+struct aws_http_message *aws_http2_message_new_request(struct aws_allocator *allocator);
+
+AWS_HTTP_API
+struct aws_http_message *aws_http2_message_new_response(struct aws_allocator *allocator);
 
 /**
  * Create an HTTP/2 message from HTTP/1.1 message.

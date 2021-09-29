@@ -317,6 +317,7 @@ struct aws_http_message {
     struct aws_http_headers *headers;
     struct aws_input_stream *body_stream;
     struct aws_atomic_var refcount;
+    enum aws_http_version http_version;
 
     /* Data specific to the request or response subclasses */
     union {
@@ -387,11 +388,13 @@ error:
 
 static struct aws_http_message *s_message_new_request_common(
     struct aws_allocator *allocator,
-    struct aws_http_headers *existing_headers) {
+    struct aws_http_headers *existing_headers,
+    enum aws_http_version version) {
 
     struct aws_http_message *message = s_message_new_common(allocator, existing_headers);
     if (message) {
         message->request_data = &message->subclass_data.request;
+        message->http_version = version;
     }
     return message;
 }
@@ -403,12 +406,12 @@ struct aws_http_message *aws_http_message_new_request_with_headers(
     AWS_PRECONDITION(allocator);
     AWS_PRECONDITION(existing_headers);
 
-    return s_message_new_request_common(allocator, existing_headers);
+    return s_message_new_request_common(allocator, existing_headers, AWS_HTTP_VERSION_1_1);
 }
 
 struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allocator) {
     AWS_PRECONDITION(allocator);
-    return s_message_new_request_common(allocator, NULL);
+    return s_message_new_request_common(allocator, NULL, AWS_HTTP_VERSION_1_1);
 }
 
 struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator) {
@@ -418,6 +421,7 @@ struct aws_http_message *aws_http_message_new_response(struct aws_allocator *all
     if (message) {
         message->response_data = &message->subclass_data.response;
         message->response_data->status = AWS_HTTP_STATUS_CODE_UNKNOWN;
+        message->http_version = AWS_HTTP_VERSION_1_1;
     }
     return message;
 }
@@ -483,9 +487,19 @@ int aws_http_message_get_request_method(
     AWS_PRECONDITION(out_method);
     AWS_PRECONDITION(request_message->request_data);
 
-    if (request_message->request_data && request_message->request_data->method) {
-        *out_method = aws_byte_cursor_from_string(request_message->request_data->method);
-        return AWS_OP_SUCCESS;
+    if (request_message->request_data) {
+        switch (request_message->http_version) {
+            case AWS_HTTP_VERSION_1_1:
+                if (request_message->request_data->method) {
+                    *out_method = aws_byte_cursor_from_string(request_message->request_data->method);
+                    return AWS_OP_SUCCESS;
+                }
+                break;
+            case AWS_HTTP_VERSION_2:
+                return aws_h2_headers_get_request_method(request_message->headers, out_method);
+            default:
+                return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+        }
     }
 
     AWS_ZERO_STRUCT(*out_method);
