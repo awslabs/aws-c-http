@@ -278,26 +278,33 @@ int aws_http_headers_get_index(
     return aws_array_list_get_at(&headers->array_list, out_header, index);
 }
 
-/* Zero end_index means search until end of the array */
 static int s_http_headers_get_impl(
     const struct aws_http_headers *headers,
     struct aws_byte_cursor name,
     struct aws_byte_cursor *out_value,
-    size_t end_index) {
+    bool pseudo_headers) {
 
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(out_value);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
+    if (pseudo_headers) {
+        AWS_PRECONDITION(aws_strutil_is_http_pseudo_header_name(name));
+    }
 
     struct aws_http_header *header = NULL;
-    size_t end = end_index ? end_index : aws_http_headers_count(headers);
-    for (size_t i = 0; i < end; ++i) {
+    const size_t count = aws_http_headers_count(headers);
+    for (size_t i = 0; i < count; ++i) {
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
         AWS_ASSUME(header);
 
         if (aws_http_header_name_eq(header->name, name)) {
             *out_value = header->value;
             return AWS_OP_SUCCESS;
+        }
+        if (pseudo_headers) {
+            if (!aws_strutil_is_http_pseudo_header_name(header->name)) {
+                break;
+            }
         }
     }
 
@@ -308,7 +315,7 @@ int aws_http_headers_get(
     const struct aws_http_headers *headers,
     struct aws_byte_cursor name,
     struct aws_byte_cursor *out_value) {
-    return s_http_headers_get_impl(headers, name, out_value, 0 /*end_index*/);
+    return s_http_headers_get_impl(headers, name, out_value, false /*pseudo_headers*/);
 }
 
 bool aws_http_headers_has(const struct aws_http_headers *headers, struct aws_byte_cursor name) {
@@ -323,30 +330,29 @@ bool aws_http_headers_has(const struct aws_http_headers *headers, struct aws_byt
 int aws_http2_headers_get_request_method(
     const struct aws_http_headers *h2_headers,
     struct aws_byte_cursor *out_method) {
-    /* There will be at most 4 pseudo headers for request, and they should be always in the front of the list */
-    return s_http_headers_get_impl(h2_headers, aws_http_header_method, out_method, 4 /*end_index*/);
+    return s_http_headers_get_impl(h2_headers, aws_http_header_method, out_method, true /*pseudo_headers*/);
 }
 
 int aws_http2_headers_get_request_scheme(
     const struct aws_http_headers *h2_headers,
     struct aws_byte_cursor *out_scheme) {
-    return s_http_headers_get_impl(h2_headers, aws_http_header_scheme, out_scheme, 4 /*end_index*/);
+    return s_http_headers_get_impl(h2_headers, aws_http_header_scheme, out_scheme, true /*pseudo_headers*/);
 }
 
 int aws_http2_headers_get_request_authority(
     const struct aws_http_headers *h2_headers,
     struct aws_byte_cursor *out_authority) {
-    return s_http_headers_get_impl(h2_headers, aws_http_header_authority, out_authority, 4 /*end_index*/);
+    return s_http_headers_get_impl(h2_headers, aws_http_header_authority, out_authority, true /*pseudo_headers*/);
 }
 
 int aws_http2_headers_get_request_path(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_path) {
-    return s_http_headers_get_impl(h2_headers, aws_http_header_path, out_path, 4 /*end_index*/);
+    return s_http_headers_get_impl(h2_headers, aws_http_header_path, out_path, true /*pseudo_headers*/);
 }
 
 int aws_http2_headers_get_response_status(const struct aws_http_headers *h2_headers, int *out_status_code) {
     struct aws_byte_cursor status_code_cur;
-    /* There will be at most 1 pseudo headers for response, and should be always in the front of the list */
-    int return_code = s_http_headers_get_impl(h2_headers, aws_http_header_status, &status_code_cur, 1 /*end_index*/);
+    int return_code =
+        s_http_headers_get_impl(h2_headers, aws_http_header_status, &status_code_cur, true /*pseudo_headers*/);
     if (return_code == AWS_OP_SUCCESS) {
         uint64_t code_val_u64;
         if (aws_strutil_read_unsigned_num(status_code_cur, &code_val_u64)) {
