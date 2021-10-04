@@ -386,8 +386,10 @@ static int s_message_handles_oom_attempt(struct aws_http_message *request) {
     for (size_t i = 0; i < 128; ++i) {
         snprintf(name_buf, sizeof(name_buf), "Name-%zu", i);
         snprintf(name_buf, sizeof(name_buf), "Value-%zu", i);
-        struct aws_http_header header = {.name = aws_byte_cursor_from_c_str(name_buf),
-                                         .value = aws_byte_cursor_from_c_str(value_buf)};
+        struct aws_http_header header = {
+            .name = aws_byte_cursor_from_c_str(name_buf),
+            .value = aws_byte_cursor_from_c_str(value_buf),
+        };
         ASSERT_SUCCESS(aws_http_message_add_header(request, header));
     }
 
@@ -395,8 +397,10 @@ static int s_message_handles_oom_attempt(struct aws_http_message *request) {
     for (size_t i = 0; i < 128; ++i) {
         snprintf(name_buf, sizeof(name_buf), "New-Name-%zu", i);
         snprintf(name_buf, sizeof(name_buf), "New-Value-%zu", i);
-        struct aws_http_header header = {.name = aws_byte_cursor_from_c_str(name_buf),
-                                         .value = aws_byte_cursor_from_c_str(value_buf)};
+        struct aws_http_header header = {
+            .name = aws_byte_cursor_from_c_str(name_buf),
+            .value = aws_byte_cursor_from_c_str(value_buf),
+        };
         ASSERT_SUCCESS(aws_http_headers_set(aws_http_message_get_headers(request), header.name, header.value));
     }
 

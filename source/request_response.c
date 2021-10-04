@@ -176,12 +176,16 @@ int aws_http_headers_erase_index(struct aws_http_headers *headers, size_t index)
 }
 
 /* Erase entries with name, stop at end_index */
-static int s_http_headers_erase(struct aws_http_headers *headers, struct aws_byte_cursor name, size_t end_index) {
+static int s_http_headers_erase(
+    struct aws_http_headers *headers,
+    struct aws_byte_cursor name,
+    size_t start_index,
+    size_t end_index) {
     bool erased_any = false;
     struct aws_http_header *header = NULL;
 
     /* Iterating in reverse is simpler */
-    for (size_t n = end_index; n > 0; --n) {
+    for (size_t n = end_index; n > start_index; --n) {
         const size_t i = n - 1;
 
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
@@ -204,7 +208,7 @@ int aws_http_headers_erase(struct aws_http_headers *headers, struct aws_byte_cur
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
 
-    return s_http_headers_erase(headers, name, aws_http_headers_count(headers));
+    return s_http_headers_erase(headers, name, 0, aws_http_headers_count(headers));
 }
 
 int aws_http_headers_erase_value(
@@ -257,13 +261,13 @@ int aws_http_headers_set(struct aws_http_headers *headers, struct aws_byte_curso
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&name) && aws_byte_cursor_is_valid(&value));
 
-    const size_t count = aws_http_headers_count(headers);
-    /* Erase pre-existing headers AFTER add, in case name or value was referencing their memory. */
-    s_http_headers_erase(headers, name, count);
+    const size_t prev_count = aws_http_headers_count(headers);
     if (aws_http_headers_add(headers, name, value)) {
-        // TODO error handling, or...
         return AWS_OP_ERR;
     }
+    const size_t start = aws_strutil_is_http_pseudo_header_name(name) ? 1 : 0;
+    /* Erase pre-existing headers AFTER add, in case name or value was referencing their memory. */
+    s_http_headers_erase(headers, name, start, prev_count);
     return AWS_OP_SUCCESS;
 }
 
@@ -351,10 +355,6 @@ int aws_http2_headers_get_request_authority(
     return s_http_headers_get_impl(h2_headers, aws_http_header_authority, out_authority, true /*pseudo_headers*/);
 }
 
-int aws_http2_headers_get_request_path(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_path) {
-    return s_http_headers_get_impl(h2_headers, aws_http_header_path, out_path, true /*pseudo_headers*/);
-}
-
 int aws_http2_headers_get_response_status(const struct aws_http_headers *h2_headers, int *out_status_code) {
     struct aws_byte_cursor status_code_cur;
     int return_code =
@@ -367,6 +367,30 @@ int aws_http2_headers_get_response_status(const struct aws_http_headers *h2_head
         *out_status_code = (int)code_val_u64;
     }
     return return_code;
+}
+
+int aws_http2_headers_set_request_method(struct aws_http_headers *h2_headers, struct aws_byte_cursor method) {
+    return aws_http_headers_set(h2_headers, aws_http_header_method, method);
+}
+
+int aws_http2_headers_set_request_scheme(struct aws_http_headers *h2_headers, struct aws_byte_cursor scheme) {
+    return aws_http_headers_set(h2_headers, aws_http_header_scheme, scheme);
+}
+
+int aws_http2_headers_set_request_authority(struct aws_http_headers *h2_headers, struct aws_byte_cursor authority) {
+    return aws_http_headers_set(h2_headers, aws_http_header_authority, authority);
+}
+
+int aws_http2_headers_set_request_path(struct aws_http_headers *h2_headers, struct aws_byte_cursor path) {
+    return aws_http_headers_set(h2_headers, aws_http_header_path, path);
+}
+
+int aws_http2_headers_set_response_status(struct aws_http_headers *h2_headers, int status_code) {
+    /* Status code must fit in 3 digits */
+    char status_code_str[4] = "XXX";
+    snprintf(status_code_str, sizeof(status_code_str), "%03d", status_code);
+    struct aws_byte_cursor status_code_cur = aws_byte_cursor_from_c_str(status_code_str);
+    return aws_http_headers_set(h2_headers, aws_http_header_status, status_code_cur);
 }
 
 struct aws_http_message {
