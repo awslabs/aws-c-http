@@ -114,9 +114,14 @@ int aws_http_headers_add_header(struct aws_http_headers *headers, const struct a
     struct aws_byte_buf strbuf = aws_byte_buf_from_empty_array(strmem, total_len);
     aws_byte_buf_append_and_update(&strbuf, &header_copy.name);
     aws_byte_buf_append_and_update(&strbuf, &header_copy.value);
-
-    if (aws_array_list_push_back(&headers->array_list, &header_copy)) {
-        goto error;
+    if (aws_strutil_is_http_pseudo_header_name(header_copy.name)) {
+        if (aws_array_list_push_front(&headers->array_list, &header_copy)) {
+            goto error;
+        }
+    } else {
+        if (aws_array_list_push_back(&headers->array_list, &header_copy)) {
+            goto error;
+        }
     }
 
     return AWS_OP_SUCCESS;
