@@ -355,6 +355,10 @@ int aws_http2_headers_get_request_authority(
     return s_http_headers_get_impl(h2_headers, aws_http_header_authority, out_authority, true /*pseudo_headers*/);
 }
 
+int aws_http2_headers_get_request_path(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_path) {
+    return s_http_headers_get_impl(h2_headers, aws_http_header_path, out_path, true /*pseudo_headers*/);
+}
+
 int aws_http2_headers_get_response_status(const struct aws_http_headers *h2_headers, int *out_status_code) {
     struct aws_byte_cursor status_code_cur;
     int return_code =
