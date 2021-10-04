@@ -77,8 +77,10 @@ struct aws_http_header {
  * - Headers with different names could be in any order, relative to one another.
  *   If "A: one" is seen before "B: bee" in one iteration, you might see "B: bee" before "A: one" on the next.
  *
- * For pseudo headers of HTTP/2, those will always be added to the front of the list. Other than that, pseudo headers
- * are the same as normal headers.
+ * For pseudo headers of HTTP/2, you should set it from aws_http2_headers_set_* or aws_http_headers_set after normal
+ * headers are added. From set, the pseudo headers will be added in the front.
+ * Other than that, pseudo headers are the same as normal headers, which means if you add pseudo
+ * headers to headers after normal headers, it will still be accepted until the headers are sent
  */
 struct aws_http_headers;
 
@@ -399,21 +401,21 @@ AWS_HTTP_API
 void aws_http_headers_release(struct aws_http_headers *headers);
 
 /**
- * Add a header.
+ * Add a header to the back of list.
  * The underlying strings are copied.
  */
 AWS_HTTP_API
 int aws_http_headers_add_header(struct aws_http_headers *headers, const struct aws_http_header *header);
 
 /**
- * Add a header.
+ * Add a header to the back of list.
  * The underlying strings are copied.
  */
 AWS_HTTP_API
 int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value);
 
 /**
- * Add an array of headers.
+ * Add an array of headers to the back of list.
  * The underlying strings are copied.
  */
 AWS_HTTP_API

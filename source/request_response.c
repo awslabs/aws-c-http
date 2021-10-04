@@ -89,7 +89,11 @@ void aws_http_headers_acquire(struct aws_http_headers *headers) {
     aws_atomic_fetch_add(&headers->refcount, 1);
 }
 
-int aws_http_headers_add_header(struct aws_http_headers *headers, const struct aws_http_header *header) {
+static int s_http_headers_add_header_impl(
+    struct aws_http_headers *headers,
+    const struct aws_http_header *header,
+    bool front) {
+
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(header);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&header->name) && aws_byte_cursor_is_valid(&header->value));
@@ -114,7 +118,7 @@ int aws_http_headers_add_header(struct aws_http_headers *headers, const struct a
     struct aws_byte_buf strbuf = aws_byte_buf_from_empty_array(strmem, total_len);
     aws_byte_buf_append_and_update(&strbuf, &header_copy.name);
     aws_byte_buf_append_and_update(&strbuf, &header_copy.value);
-    if (aws_strutil_is_http_pseudo_header_name(header_copy.name)) {
+    if (front) {
         if (aws_array_list_push_front(&headers->array_list, &header_copy)) {
             goto error;
         }
@@ -129,6 +133,10 @@ int aws_http_headers_add_header(struct aws_http_headers *headers, const struct a
 error:
     aws_mem_release(headers->alloc, strmem);
     return AWS_OP_ERR;
+}
+
+int aws_http_headers_add_header(struct aws_http_headers *headers, const struct aws_http_header *header) {
+    return s_http_headers_add_header_impl(headers, header, false /*front*/);
 }
 
 int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value) {
@@ -262,10 +270,12 @@ int aws_http_headers_set(struct aws_http_headers *headers, struct aws_byte_curso
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&name) && aws_byte_cursor_is_valid(&value));
 
     const size_t prev_count = aws_http_headers_count(headers);
-    if (aws_http_headers_add(headers, name, value)) {
+    bool pseudo = aws_strutil_is_http_pseudo_header_name(name);
+    const size_t start = pseudo ? 1 : 0;
+    struct aws_http_header header = {.name = name, .value = value};
+    if (s_http_headers_add_header_impl(headers, &header, pseudo)) {
         return AWS_OP_ERR;
     }
-    const size_t start = aws_strutil_is_http_pseudo_header_name(name) ? 1 : 0;
     /* Erase pre-existing headers AFTER add, in case name or value was referencing their memory. */
     s_http_headers_erase(headers, name, start, prev_count);
     return AWS_OP_SUCCESS;

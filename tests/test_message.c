@@ -159,47 +159,6 @@ TEST_CASE(headers_add) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(headers_add_pseudo_headers) {
-    (void)ctx;
-    struct aws_http_headers *headers = aws_http_headers_new(allocator);
-    ASSERT_NOT_NULL(headers);
-
-    char name_src[] = "Host";
-    char value_src[] = "example.com";
-
-    char pseudo_name_src[] = ":method";
-    char pseudo_value_src[] = "GET";
-    char wrong_pseudo_name_src[] = ":Method";
-    char wrong_pseudo_value_src[] = "GET";
-    ASSERT_SUCCESS(
-        aws_http_headers_add(headers, aws_byte_cursor_from_c_str(name_src), aws_byte_cursor_from_c_str(value_src)));
-    ASSERT_SUCCESS(aws_http_headers_add(
-        headers, aws_byte_cursor_from_c_str(pseudo_name_src), aws_byte_cursor_from_c_str(pseudo_value_src)));
-    /* We don't validate the correctness of the header name until send it out to the wire. */
-    ASSERT_SUCCESS(aws_http_headers_add(
-        headers,
-        aws_byte_cursor_from_c_str(wrong_pseudo_name_src),
-        aws_byte_cursor_from_c_str(wrong_pseudo_value_src)));
-
-    ASSERT_UINT_EQUALS(3, aws_http_headers_count(headers));
-
-    /* Mutilate source strings to be sure the datastructure isn't referencing their memory */
-    pseudo_name_src[0] = 0;
-    pseudo_value_src[0] = 0;
-
-    /* pseudo headers should be the front of the list */
-    struct aws_http_header get;
-    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 0, &get));
-    ASSERT_SUCCESS(s_check_header_eq(get, ":method", "GET"));
-    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 1, &get));
-    ASSERT_SUCCESS(s_check_header_eq(get, name_src, value_src));
-    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 2, &get));
-    ASSERT_SUCCESS(s_check_header_eq(get, wrong_pseudo_name_src, wrong_pseudo_value_src));
-
-    aws_http_headers_release(headers);
-    return AWS_OP_SUCCESS;
-}
-
 TEST_CASE(headers_add_array) {
     (void)ctx;
     struct aws_http_headers *headers = aws_http_headers_new(allocator);
@@ -363,7 +322,7 @@ TEST_CASE(headers_clear) {
     return AWS_OP_SUCCESS;
 }
 
-TEST_CASE(h2_headers_pseudos_get_set) {
+TEST_CASE(h2_headers_request_pseudos_get_set) {
     (void)ctx;
     struct aws_http_headers *headers = aws_http_headers_new(allocator);
     ASSERT_NOT_NULL(headers);
@@ -403,6 +362,42 @@ TEST_CASE(h2_headers_pseudos_get_set) {
     ASSERT_SUCCESS(s_check_header_eq(get_header, "Cookie", "a=1"));
     ASSERT_SUCCESS(aws_http2_headers_get_request_method(headers, &get));
     ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, "PUT"));
+
+    aws_http_headers_release(headers);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h2_headers_response_pseudos_get_set) {
+    (void)ctx;
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
+    const struct aws_http_header src_headers[] = {
+        s_make_header("Host", "example.com"),
+        s_make_header("Cookie", "a=1"),
+    };
+    ASSERT_SUCCESS(aws_http_headers_add_array(headers, src_headers, AWS_ARRAY_SIZE(src_headers)));
+
+    ASSERT_SUCCESS(aws_http2_headers_set_response_status(headers, 200));
+
+    /* pseudo headers should be in the front of headers */
+    int get;
+    ASSERT_SUCCESS(aws_http2_headers_get_response_status(headers, &get));
+    ASSERT_INT_EQUALS(get, 200);
+    /* normal headers should be the end of the headers list */
+    struct aws_http_header get_header;
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 1, &get_header));
+    ASSERT_SUCCESS(s_check_header_eq(get_header, "Host", "example.com"));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 2, &get_header));
+    ASSERT_SUCCESS(s_check_header_eq(get_header, "Cookie", "a=1"));
+
+    /* overwrite method should not change the normal headers */
+    ASSERT_SUCCESS(aws_http2_headers_set_response_status(headers, 404));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 1, &get_header));
+    ASSERT_SUCCESS(s_check_header_eq(get_header, "Host", "example.com"));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 2, &get_header));
+    ASSERT_SUCCESS(s_check_header_eq(get_header, "Cookie", "a=1"));
+    ASSERT_SUCCESS(aws_http2_headers_get_response_status(headers, &get));
+    ASSERT_INT_EQUALS(get, 404);
 
     aws_http_headers_release(headers);
     return AWS_OP_SUCCESS;
