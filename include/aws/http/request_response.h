@@ -79,7 +79,6 @@ struct aws_http_header {
  *
  * For pseudo headers of HTTP/2, those will always be added to the front of the list. Other than that, pseudo headers
  * are the same as normal headers.
- * Note: API around this structure will treat headers starting with ":" as pseudo headers.
  */
 struct aws_http_headers;
 
@@ -504,33 +503,33 @@ void aws_http_headers_clear(struct aws_http_headers *headers);
  * Get the `:method` value (HTTP/2 headers only).
  */
 AWS_HTTP_API
-int aws_h2_headers_get_request_method(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_method);
+int aws_http2_headers_get_request_method(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_method);
 
 /**
  * Set `:method` (HTTP/2 headers only).
  * The headers makes its own copy of the underlying string.
  */
 AWS_HTTP_API
-int aws_h2_headers_set_request_method(struct aws_http_headers *h2_headers, struct aws_byte_cursor method);
+int aws_http2_headers_set_request_method(struct aws_http_headers *h2_headers, struct aws_byte_cursor method);
 
 /*
  * Get the `:scheme` value (HTTP/2 headers only).
  */
 AWS_HTTP_API
-int aws_h2_headers_get_request_scheme(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_scheme);
+int aws_http2_headers_get_request_scheme(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_scheme);
 
 /**
  * Set `:scheme` (request pseudo headers only).
  * The pseudo headers makes its own copy of the underlying string.
  */
 AWS_HTTP_API
-int aws_h2_headers_set_request_scheme(struct aws_http_headers *h2_headers, struct aws_byte_cursor scheme);
+int aws_http2_headers_set_request_scheme(struct aws_http_headers *h2_headers, struct aws_byte_cursor scheme);
 
 /*
  * Get the `:authority` value (request pseudo headers only).
  */
 AWS_HTTP_API
-int aws_h2_headers_get_request_authority(
+int aws_http2_headers_get_request_authority(
     const struct aws_http_headers *h2_headers,
     struct aws_byte_cursor *out_authority);
 
@@ -539,37 +538,39 @@ int aws_h2_headers_get_request_authority(
  * The pseudo headers makes its own copy of the underlying string.
  */
 AWS_HTTP_API
-int aws_h2_headers_set_request_authority(struct aws_http_headers *h2_headers, struct aws_byte_cursor authority);
+int aws_http2_headers_set_request_authority(struct aws_http_headers *h2_headers, struct aws_byte_cursor authority);
 
 /*
  * Get the `:path` value (request pseudo headers only).
  */
 AWS_HTTP_API
-int aws_h2_headers_get_request_path(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_path);
+int aws_http2_headers_get_request_path(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_path);
 
 /**
  * Set `:path` (request pseudo headers only).
  * The pseudo headers makes its own copy of the underlying string.
  */
 AWS_HTTP_API
-int aws_h2_headers_set_request_path(struct aws_http_headers *h2_headers, struct aws_byte_cursor path);
+int aws_http2_headers_set_request_path(struct aws_http_headers *h2_headers, struct aws_byte_cursor path);
 
 /**
  * Get `:status` (response pseudo headers only).
  * If no status is set, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE is raised.
  */
 AWS_HTTP_API
-int aws_h2_headers_get_response_status(const struct aws_http_headers *h2_headers, int *out_status_code);
+int aws_http2_headers_get_response_status(const struct aws_http_headers *h2_headers, int *out_status_code);
 
 /**
  * Set `:status` (response pseudo headers only).
  */
 AWS_HTTP_API
-int aws_h2_headers_set_response_status(struct aws_http_headers *h2_headers, int status_code);
+int aws_http2_headers_set_response_status(struct aws_http_headers *h2_headers, int status_code);
 
 /**
  * Create a new request message. HTTP/1.1 request
  * The message is blank, all properties (method, path, etc) must be set individually.
+ * If HTTP/1.1 message used in HTTP/2 connection, the transformation will be automatically applied.
+ * A HTTP/2 message will created and sent based on the HTTP/1.1 message.
  *
  * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
  */
@@ -588,6 +589,8 @@ struct aws_http_message *aws_http_message_new_request_with_headers(
 /**
  * Create a new response message. HTTP/1.1 response
  * The message is blank, all properties (status, headers, etc) must be set individually.
+ * If HTTP/1.1 message used in HTTP/2 connection, the transformation will be automatically applied.
+ * A HTTP/2 message will created and sent based on the HTTP/1.1 message.
  *
  * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
  */
@@ -605,15 +608,6 @@ struct aws_http_message *aws_http2_message_new_request(struct aws_allocator *all
 
 AWS_HTTP_API
 struct aws_http_message *aws_http2_message_new_response(struct aws_allocator *allocator);
-
-/**
- * Create an HTTP/2 message from HTTP/1.1 message.
- * pseudo headers will be created from the context and added to the headers of new message.
- * Normal headers will be copied to the headers of new message.
- * TODO: (Maybe more, connection-specific header will be removed, etc...)
- */
-AWS_HTTP_API
-struct aws_http_message *aws_http2_message_new_from_http1(struct aws_http_message *http1_msg);
 
 /**
  * Acquire a hold on the object, preventing it from being deleted until

@@ -144,6 +144,7 @@ add_test_case(strutil_is_lowercase_http_token)
 add_test_case(strutil_is_http_field_value)
 add_test_case(strutil_is_http_reason_phrase)
 add_test_case(strutil_is_http_request_target)
+add_test_case(strutil_is_http_pseudo_header_name)
 
 add_net_test_case(tls_download_medium_file_h1)
 add_net_test_case(tls_download_medium_file_h2)

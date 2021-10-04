@@ -27,6 +27,12 @@ bool aws_http_header_name_eq(struct aws_byte_cursor name_a, struct aws_byte_curs
     return aws_byte_cursor_eq_ignore_case(&name_a, &name_b);
 }
 
+bool aws_http_header_name_is_pesudo_headers(struct aws_byte_cursor name) {
+    if ()
+}
+
+bool aws_http_header_is_pesudo_headers(struct aws_http_header header) {}
+
 /**
  * -- Datastructure Notes --
  * Headers are stored in a linear array, rather than a hash-table of arrays.
@@ -252,13 +258,12 @@ int aws_http_headers_set(struct aws_http_headers *headers, struct aws_byte_curso
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&name) && aws_byte_cursor_is_valid(&value));
 
-    const size_t prev_count = aws_http_headers_count(headers);
+    const size_t count = aws_http_headers_count(headers);
+    /* Erase pre-existing headers AFTER add, in case name or value was referencing their memory. */
+    s_http_headers_erase(headers, name, count);
     if (aws_http_headers_add(headers, name, value)) {
         return AWS_OP_ERR;
     }
-
-    /* Erase pre-existing headers AFTER add, in case name or value was referencing their memory. */
-    s_http_headers_erase(headers, name, prev_count);
     return AWS_OP_SUCCESS;
 }
 
@@ -486,7 +491,7 @@ int aws_http_message_get_request_method(
     AWS_PRECONDITION(request_message);
     AWS_PRECONDITION(out_method);
     AWS_PRECONDITION(request_message->request_data);
-
+    int error = AWS_ERROR_HTTP_DATA_NOT_AVAILABLE;
     if (request_message->request_data) {
         switch (request_message->http_version) {
             case AWS_HTTP_VERSION_1_1:
@@ -496,14 +501,14 @@ int aws_http_message_get_request_method(
                 }
                 break;
             case AWS_HTTP_VERSION_2:
-                return aws_h2_headers_get_request_method(request_message->headers, out_method);
+                return aws_http2_headers_get_request_method(request_message->headers, out_method);
             default:
-                return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+                error = AWS_ERROR_UNIMPLEMENTED;
         }
     }
 
     AWS_ZERO_STRUCT(*out_method);
-    return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
+    return aws_raise_error(error);
 }
 
 int aws_http_message_set_request_path(struct aws_http_message *request_message, struct aws_byte_cursor path) {

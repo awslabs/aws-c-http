@@ -261,3 +261,22 @@ bool aws_strutil_is_http_request_target(struct aws_byte_cursor cursor) {
 
     return true;
 }
+
+bool aws_strutil_is_http_pseudo_header_name(struct aws_byte_cursor cursor) {
+    if (cursor.len == 0) {
+        return false;
+    }
+    const uint8_t c = cursor.ptr[0];
+    if (c != ':') {
+        /* short cut */
+        return false;
+    }
+    if (aws_byte_cursor_eq_c_str(&cursor, &aws_http_header_method) ||
+        aws_byte_cursor_eq_c_str(&cursor, &aws_http_header_scheme) ||
+        aws_byte_cursor_eq_c_str(&cursor, &aws_http_header_authority) ||
+        aws_byte_cursor_eq_c_str(&cursor, &aws_http_header_path) ||
+        aws_byte_cursor_eq_c_str(&cursor, &aws_http_header_status)) {
+        return true;
+    }
+    return false;
+}

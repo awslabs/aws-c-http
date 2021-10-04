@@ -114,5 +114,11 @@ bool aws_strutil_is_http_reason_phrase(struct aws_byte_cursor cursor);
 AWS_HTTP_API
 bool aws_strutil_is_http_request_target(struct aws_byte_cursor cursor);
 
+/**
+ * Return whether this ASCII/UTF-8 sequence is a valid HTTP pseudo header name.
+ */
+AWS_HTTP_API
+bool aws_strutil_is_http_pseudo_header_name(struct aws_byte_cursor cursor);
+
 AWS_EXTERN_C_END
 #endif /* AWS_HTTP_STRUTIL_H */
