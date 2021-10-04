@@ -601,7 +601,7 @@ struct aws_http_message *aws_http_message_new_response(struct aws_allocator *all
 
 /**
  * Create a new request message. HTTP/2 request
- * pesudo headers need to be set from aws_http2_headers_set_* to the headers of the aws_http_message.
+ * pesudo headers need to be set from aws_http2_headers_set_request_* to the headers of the aws_http_message.
  * Will be errored out if used in HTTP/1.1 connection.
  *
  * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
@@ -609,6 +609,13 @@ struct aws_http_message *aws_http_message_new_response(struct aws_allocator *all
 AWS_HTTP_API
 struct aws_http_message *aws_http2_message_new_request(struct aws_allocator *allocator);
 
+/**
+ * Create a new response message. HTTP/2 response
+ * pesudo headers need to be set from aws_http2_headers_set_response_status to the headers of the aws_http_message.
+ * Will be errored out if used in HTTP/1.1 connection.
+ *
+ * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
+ */
 AWS_HTTP_API
 struct aws_http_message *aws_http2_message_new_response(struct aws_allocator *allocator);
 
