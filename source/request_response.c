@@ -27,12 +27,6 @@ bool aws_http_header_name_eq(struct aws_byte_cursor name_a, struct aws_byte_curs
     return aws_byte_cursor_eq_ignore_case(&name_a, &name_b);
 }
 
-bool aws_http_header_name_is_pesudo_headers(struct aws_byte_cursor name) {
-    if ()
-}
-
-bool aws_http_header_is_pesudo_headers(struct aws_http_header header) {}
-
 /**
  * -- Datastructure Notes --
  * Headers are stored in a linear array, rather than a hash-table of arrays.
@@ -284,14 +278,18 @@ int aws_http_headers_get_index(
     return aws_array_list_get_at(&headers->array_list, out_header, index);
 }
 
-int aws_http_headers_get(
+static int s_http_headers_get_impl(
     const struct aws_http_headers *headers,
     struct aws_byte_cursor name,
-    struct aws_byte_cursor *out_value) {
+    struct aws_byte_cursor *out_value,
+    bool pseudo_headers) {
 
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(out_value);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
+    if (pseudo_headers) {
+        AWS_PRECONDITION(aws_strutil_is_http_pseudo_header_name(name));
+    }
 
     struct aws_http_header *header = NULL;
     const size_t count = aws_http_headers_count(headers);
@@ -303,9 +301,21 @@ int aws_http_headers_get(
             *out_value = header->value;
             return AWS_OP_SUCCESS;
         }
+        if (pseudo_headers) {
+            if (!aws_strutil_is_http_pseudo_header_name(header->name)) {
+                break;
+            }
+        }
     }
 
     return aws_raise_error(AWS_ERROR_HTTP_HEADER_NOT_FOUND);
+}
+
+int aws_http_headers_get(
+    const struct aws_http_headers *headers,
+    struct aws_byte_cursor name,
+    struct aws_byte_cursor *out_value) {
+    return s_http_headers_get_impl(headers, name, out_value, false /*pseudo_headers*/);
 }
 
 bool aws_http_headers_has(const struct aws_http_headers *headers, struct aws_byte_cursor name) {
@@ -315,6 +325,42 @@ bool aws_http_headers_has(const struct aws_http_headers *headers, struct aws_byt
         return false;
     }
     return true;
+}
+
+int aws_http2_headers_get_request_method(
+    const struct aws_http_headers *h2_headers,
+    struct aws_byte_cursor *out_method) {
+    return s_http_headers_get_impl(h2_headers, aws_http_header_method, out_method, true /*pseudo_headers*/);
+}
+
+int aws_http2_headers_get_request_scheme(
+    const struct aws_http_headers *h2_headers,
+    struct aws_byte_cursor *out_scheme) {
+    return s_http_headers_get_impl(h2_headers, aws_http_header_scheme, out_scheme, true /*pseudo_headers*/);
+}
+
+int aws_http2_headers_get_request_authority(
+    const struct aws_http_headers *h2_headers,
+    struct aws_byte_cursor *out_authority) {
+    return s_http_headers_get_impl(h2_headers, aws_http_header_authority, out_authority, true /*pseudo_headers*/);
+}
+
+int aws_http2_headers_get_request_path(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_path) {
+    return s_http_headers_get_impl(h2_headers, aws_http_header_path, out_path, true /*pseudo_headers*/);
+}
+
+int aws_http2_headers_get_response_status(const struct aws_http_headers *h2_headers, int *out_status_code) {
+    struct aws_byte_cursor status_code_cur;
+    int return_code =
+        s_http_headers_get_impl(h2_headers, aws_http_header_status, &status_code_cur, true /*pseudo_headers*/);
+    if (return_code == AWS_OP_SUCCESS) {
+        uint64_t code_val_u64;
+        if (aws_strutil_read_unsigned_num(status_code_cur, &code_val_u64)) {
+            return AWS_OP_ERR;
+        }
+        *out_status_code = (int)code_val_u64;
+    }
+    return return_code;
 }
 
 struct aws_http_message {
