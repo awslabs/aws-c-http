@@ -261,6 +261,7 @@ int aws_http_headers_set(struct aws_http_headers *headers, struct aws_byte_curso
     /* Erase pre-existing headers AFTER add, in case name or value was referencing their memory. */
     s_http_headers_erase(headers, name, count);
     if (aws_http_headers_add(headers, name, value)) {
+        // TODO error handling, or...
         return AWS_OP_ERR;
     }
     return AWS_OP_SUCCESS;
