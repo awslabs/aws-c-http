@@ -5,13 +5,11 @@ if [ -f "$PROXY_SETUP" ]; then
     echo "setting proxy integration test environment"
 fi
 
-pushd .
-
-if [ -d "./build/aws-c-http/"]; then
+if [ -d "./build/aws-c-http/" ]; then
     # This is the directory (relative to repo root) that will contain the build when the repo is built directly by the
     # builder
     cd ./build/aws-c-http/
-elif [ -d "../../aws-c-http"]; then
+elif [ -d "../../aws-c-http" ]; then
     # This is the directory (relative to repo root) that will contain the build when the repo is built as an upstream
     # consumer
     cd ../../aws-c-http
@@ -19,4 +17,3 @@ fi
 
 ctest --output-on-failure
 
-popd
