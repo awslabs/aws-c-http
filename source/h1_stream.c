@@ -61,8 +61,8 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     bool found_chunks = !aws_linked_list_empty(&stream->synced_data.pending_chunk_list);
     aws_linked_list_move_all_back(&stream->thread_data.pending_chunk_list, &stream->synced_data.pending_chunk_list);
 
-    /* should the synced data be zeroed here? */
     stream->encoder_message.trailer = stream->synced_data.pending_trailer;
+    stream->synced_data.pending_trailer = NULL;
 
     bool has_outgoing_response = stream->synced_data.has_outgoing_response;
 
@@ -238,9 +238,7 @@ static int s_stream_write_chunk(struct aws_http_stream *stream_base, const struc
     return AWS_OP_SUCCESS;
 }
 
-static int s_stream_write_trailer(
-    struct aws_http_stream *stream_base,
-    const struct aws_http_headers *trailing_headers) {
+static int s_stream_add_trailer(struct aws_http_stream *stream_base, const struct aws_http_headers *trailing_headers) {
     AWS_PRECONDITION(stream_base);
     AWS_PRECONDITION(trailing_headers);
     struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
@@ -311,7 +309,6 @@ static int s_stream_write_trailer(
         return aws_raise_error(error_code);
     }
 
-    /* should I log the trailer size? would require a bit of editing */
     AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Adding trailer to stream", (void *)stream);
 
     if (should_schedule_task) {
@@ -333,7 +330,7 @@ static const struct aws_http_stream_vtable s_stream_vtable = {
     .update_window = s_stream_update_window,
     .activate = aws_h1_stream_activate,
     .http1_write_chunk = s_stream_write_chunk,
-    .http1_write_trailer = s_stream_write_trailer,
+    .http1_add_trailer = s_stream_add_trailer,
     .http2_reset_stream = NULL,
     .http2_get_received_error_code = NULL,
     .http2_get_sent_error_code = NULL,

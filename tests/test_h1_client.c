@@ -335,7 +335,12 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_chunked_trailer) {
         .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked"),
         .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("trailer"),
     };
+    const struct aws_http_header trailer1 = {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("another"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("test"),
+    };
     aws_http_headers_add_header(trailers, &trailer);
+    aws_http_headers_add_header(trailers, &trailer1);
 
     /* send request */
     struct aws_http_message *request = s_new_default_chunked_put_request(allocator);
@@ -366,6 +371,8 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_chunked_trailer) {
                            "\r\n"
                            "0\r\n"
                            "chunked: trailer"
+                           "\r\n"
+                           "another: test"
                            "\r\n";
 
     ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));

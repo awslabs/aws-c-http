@@ -62,7 +62,7 @@ struct aws_h1_stream {
          * Encoder completes/frees/pops front chunk when it's done sending. */
         struct aws_linked_list pending_chunk_list;
 
-        struct aws_h1_encoder_message *message;
+        struct aws_h1_encoder_message message;
 
         /* Size of stream's flow-control window.
          * Only body data (not headers, etc) counts against the stream's flow-control window. */

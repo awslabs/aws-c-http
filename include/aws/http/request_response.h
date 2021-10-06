@@ -633,16 +633,12 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
  * The stream must have specified "chunked" in a "transfer-encoding" header. The stream should also have
  * a "Trailer" header field which indicates the fields present in the trailer.
  *
- * fields necessary for message framing (e.g., Transfer-Encoding and Content-Length),
- * routing (e.g., Host), request modifiers (e.g., controls and conditionals in Section 5 of [RFC7231]),
- * authentication (e.g., see [RFC7235] and [RFC6265]), response control data (e.g., see Section 7.1 of [RFC7231]),
- * or determining how to process the payload (e.g., Content-Encoding, Content-Type, Content-Range, and Trailer)
- * must not be used.
+ * Certain headers are forbidden in the trailer (e.g., Transfer-Encoding, Content-Length, Host). See RFC-7541
+ * Section 4.1.2 for more details.
  *
  * For client streams, activate() must be called before any chunks are submitted.
  *
- * // Is this correct?
- * // For server streams, the response must be submitted before any chunks.
+ * For server streams, the response must be submitted before the trailer can be added
  *
  * aws_http1_stream_add_chunked_trailer must be called before the final size 0 chunk, and at the moment can only
  * be called once, though this could change if need be.
@@ -762,7 +758,7 @@ AWS_HTTP_API int aws_http_stream_activate(struct aws_http_stream *stream);
 AWS_HTTP_API
 struct aws_http_connection *aws_http_stream_get_connection(const struct aws_http_stream *stream);
 
-/* Only valid in "request" streams, once response headers start arrivi ng */
+/* Only valid in "request" streams, once response headers start arriving */
 AWS_HTTP_API
 int aws_http_stream_get_incoming_response_status(const struct aws_http_stream *stream, int *out_status);
 

@@ -579,7 +579,7 @@ int aws_http1_stream_add_chunked_trailer(
     AWS_PRECONDITION(http1_stream);
     AWS_PRECONDITION(http1_stream->vtable);
     AWS_PRECONDITION(trailing_headers);
-    if (!http1_stream->vtable->http1_write_trailer) {
+    if (!http1_stream->vtable->http1_add_trailer) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_STREAM,
             "id=%p: HTTP/1 stream only function invoked on other stream, ignoring call.",
@@ -587,7 +587,7 @@ int aws_http1_stream_add_chunked_trailer(
         return aws_raise_error(AWS_ERROR_INVALID_STATE);
     }
 
-    return http1_stream->vtable->http1_write_trailer(http1_stream, trailing_headers);
+    return http1_stream->vtable->http1_add_trailer(http1_stream, trailing_headers);
 }
 
 struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_message *message) {

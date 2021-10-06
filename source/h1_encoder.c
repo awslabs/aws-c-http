@@ -419,9 +419,7 @@ error:
 
 void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message) {
     aws_byte_buf_clean_up(&message->outgoing_head_buf);
-    if (message->trailer) {
-        aws_h1_trailer_destroy(message->trailer);
-    }
+    aws_h1_trailer_destroy(message->trailer);
     AWS_ZERO_STRUCT(*message);
 }
 
@@ -507,10 +505,10 @@ struct aws_h1_trailer *aws_h1_trailer_new(
     }
 
     struct aws_h1_trailer *trailer = aws_mem_calloc(allocator, 1, sizeof(struct aws_h1_trailer));
-    trailer->allocator = allocator;
     if (!trailer) {
         return NULL;
     }
+    trailer->allocator = allocator;
 
     if (aws_byte_buf_init(&trailer->trailer_data, allocator, trailer_size)) {
         aws_mem_release(allocator, trailer);
@@ -522,7 +520,9 @@ struct aws_h1_trailer *aws_h1_trailer_new(
 
 void aws_h1_trailer_destroy(struct aws_h1_trailer *trailer) {
     /* should this check be here? it makes it so that I need to check before calling this function */
-    AWS_PRECONDITION(trailer);
+    if (trailer == NULL) {
+        return;
+    }
     aws_byte_buf_clean_up(&trailer->trailer_data);
     aws_mem_release(trailer->allocator, trailer);
 }
@@ -840,7 +840,7 @@ static int s_state_fn_chunk_trailer(struct aws_h1_encoder *encoder, struct aws_b
         done = s_write_crlf(dst);
     }
     if (!done) {
-        /* Remain in this state until we're done writing out body */
+        /* Remain in this state until we're done writing out trailer */
         return AWS_OP_SUCCESS;
     }
 
