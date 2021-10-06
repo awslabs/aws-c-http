@@ -5,7 +5,7 @@ if [ -f "$PROXY_SETUP" ]; then
     echo "setting proxy integration test environment"
 fi
 
-pushd
+pushd .
 
 if [ -d "./build/aws-c-http/"]; then
     # This is the directory (relative to repo root) that will contain the build when the repo is built directly by the
