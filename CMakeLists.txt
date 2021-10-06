@@ -5,7 +5,7 @@ if (POLICY CMP0069)
     cmake_policy(SET CMP0069 NEW) # Enable LTO/IPO if available in the compiler, see AwsCFlags
 endif()
 
-option(ENABLE_PROXY_INTEGRATION_TESTS "Whether to run the proxy integration tests that rely on a proxy server installed and running locally" OFF)
+option(ENABLE_PROXY_INTEGRATION_TESTS "Whether to run the proxy integration tests that rely on pre-configured proxy" OFF)
 
 if (DEFINED CMAKE_PREFIX_PATH)
     file(TO_CMAKE_PATH "${CMAKE_PREFIX_PATH}" CMAKE_PREFIX_PATH)
@@ -96,10 +96,9 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
         COMPONENT Development)
 
 include(CTest)
-if (BUILD_TESTING)
+if (NOT BYO_CRYPTO AND BUILD_TESTING)
     add_subdirectory(tests)
-
-    if (NOT CMAKE_CROSSCOMPILING )
+    if (NOT CMAKE_CROSSCOMPILING)
         add_subdirectory(bin/elasticurl)
     endif()
 endif()

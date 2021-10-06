@@ -16,6 +16,7 @@
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
+#include <aws/io/uri.h>
 
 #include <aws/common/clock.h>
 #include <aws/common/hash_table.h>
@@ -209,6 +210,8 @@ struct aws_http_connection_manager {
     struct aws_http_proxy_config *proxy_config;
     struct aws_http_connection_monitoring_options monitoring_options;
     struct aws_string *host;
+    struct proxy_env_var_settings proxy_ev_settings;
+    struct aws_tls_connection_options *proxy_ev_tls_options;
     uint16_t port;
 
     /*
@@ -632,7 +635,10 @@ static void s_aws_http_connection_manager_finish_destroy(struct aws_http_connect
         aws_tls_connection_options_clean_up(manager->tls_connection_options);
         aws_mem_release(manager->allocator, manager->tls_connection_options);
     }
-
+    if (manager->proxy_ev_tls_options) {
+        aws_tls_connection_options_clean_up(manager->proxy_ev_tls_options);
+        aws_mem_release(manager->allocator, manager->proxy_ev_tls_options);
+    }
     if (manager->proxy_config) {
         aws_http_proxy_config_destroy(manager->proxy_config);
     }
@@ -806,7 +812,6 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
             goto on_error;
         }
     }
-
     if (options->proxy_options) {
         manager->proxy_config = aws_http_proxy_config_new_from_manager_options(allocator, options);
         if (manager->proxy_config == NULL) {
@@ -830,7 +835,16 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->shutdown_complete_user_data = options->shutdown_complete_user_data;
     manager->enable_read_back_pressure = options->enable_read_back_pressure;
     manager->max_connection_idle_in_milliseconds = options->max_connection_idle_in_milliseconds;
-
+    if (options->proxy_ev_settings) {
+        manager->proxy_ev_settings = *options->proxy_ev_settings;
+    }
+    if (manager->proxy_ev_settings.tls_options) {
+        manager->proxy_ev_tls_options = aws_mem_calloc(allocator, 1, sizeof(struct aws_tls_connection_options));
+        if (aws_tls_connection_options_copy(manager->proxy_ev_tls_options, manager->proxy_ev_settings.tls_options)) {
+            goto on_error;
+        }
+        manager->proxy_ev_settings.tls_options = manager->proxy_ev_tls_options;
+    }
     s_schedule_connection_culling(manager);
 
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Successfully created", (void *)manager);
@@ -907,6 +921,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.on_setup = s_aws_http_connection_manager_on_connection_setup;
     options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
     options.manual_window_management = manager->enable_read_back_pressure;
+    options.proxy_ev_settings = &manager->proxy_ev_settings;
 
     if (aws_http_connection_monitoring_options_is_valid(&manager->monitoring_options)) {
         options.monitoring_options = &manager->monitoring_options;

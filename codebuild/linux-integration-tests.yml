@@ -1,0 +1,25 @@
+version: 0.2
+#this build spec assumes the manylinux1 image for pypi
+#additional packages we installed: cmake 3.5, libcrypto 1.1.0j, gcc 4.8.4
+phases:
+  install:
+    commands:
+      - add-apt-repository ppa:ubuntu-toolchain-r/test
+      - apt-get update -y
+      - apt-get install gcc-7 cmake ninja-build python3 -y
+  pre_build:
+    commands:
+      - export CC=gcc-7
+      - export BUILDER_VERSION=v0.8.27
+      - export BUILDER_SOURCE=releases
+      - export BUILDER_HOST=https://d19elf31gohf1l.cloudfront.net
+  build:
+    commands:
+      - echo Build started on `date`
+      - aws s3 cp s3://aws-crt-test-stuff/setup_proxy_test_env.sh /tmp/setup_proxy_test_env.sh
+      - chmod a+xr /tmp/setup_proxy_test_env.sh
+      - python3 -c "from urllib.request import urlretrieve; urlretrieve('$BUILDER_HOST/$BUILDER_SOURCE/$BUILDER_VERSION/builder.pyz', 'builder.pyz')"
+      - python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_PROXY_INTEGRATION_TESTS=ON
+  post_build:
+    commands:
+      - echo Build completed on `date`
