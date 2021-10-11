@@ -267,9 +267,9 @@ struct aws_h2_stream *aws_h2_stream_new_request(
         body_write->data_stream = body_stream;
         aws_linked_list_push_back(&stream->thread_data.outgoing_writes, &body_write->node);
     }
-  
+
     stream->sent_reset_error_code = -1;
-    stream->received_reset_error_code = -1;   
+    stream->received_reset_error_code = -1;
     stream->synced_data.reset_error.h2_code = AWS_HTTP2_ERR_COUNT;
     stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_INIT;
     aws_linked_list_init(&stream->synced_data.pending_write_list);
