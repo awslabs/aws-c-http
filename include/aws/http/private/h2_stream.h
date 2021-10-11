@@ -97,6 +97,7 @@ struct aws_h2_stream {
         uint32_t user_reset_error_code;
 
         bool reset_called;
+        bool end_called;
 
         /* Simplified stream state. */
         enum aws_h2_stream_api_state api_state;

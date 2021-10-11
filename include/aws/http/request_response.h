@@ -686,13 +686,19 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
  * struct aws_http2_stream_write_data_options write;
  * aws_http2_stream_write_data(stream, &write);
  * ...
- * aws_http_stream_close(stream); // done writing frames
+ * aws_http_stream_end(stream); // done writing frames
  * ...
  * aws_http_stream_release(stream);
  */
 AWS_HTTP_API int aws_http2_stream_write_data(
     struct aws_http_stream *http2_stream,
     const struct aws_http2_stream_write_data_options *options);
+
+/**
+ * Indicates that no more writes will be made to this stream
+ * @see `aws_http2_stream_write_data` for an example
+ */
+AWS_HTTP_API int aws_http2_stream_end(struct aws_http_stream *http2_stream);
 
 /**
  * Get the message's aws_http_headers.

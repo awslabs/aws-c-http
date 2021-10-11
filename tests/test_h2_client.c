@@ -4617,6 +4617,8 @@ TEST_CASE(h2_client_manual_data_write) {
         }
     }
 
+    ASSERT_SUCCESS(aws_http2_stream_end(stream));
+
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer);
 

@@ -584,6 +584,14 @@ int aws_http2_stream_write_data(
     return http2_stream->vtable->http2_write_data(http2_stream, options);
 }
 
+int aws_http2_stream_end(struct aws_http_stream *http2_stream) {
+    AWS_PRECONDITION(http2_stream);
+    AWS_PRECONDITION(http2_stream->vtable);
+    AWS_PRECONDITION(http2_stream->vtable->http2_end_stream);
+
+    return http2_stream->vtable->http2_end_stream(http2_stream);
+}
+
 struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_message *message) {
     AWS_PRECONDITION(message);
     return message->body_stream;

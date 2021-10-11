@@ -25,6 +25,7 @@ struct aws_http_stream_vtable {
     int (*http2_write_data)(
         struct aws_http_stream *http2_stream,
         const struct aws_http2_stream_write_data_options *options);
+    int (*http2_end_stream)(struct aws_http_stream *http2_stream);
 };
 
 /**

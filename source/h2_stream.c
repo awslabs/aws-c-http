@@ -10,6 +10,7 @@
 #include <aws/http/status_code.h>
 #include <aws/io/channel.h>
 #include <aws/io/logging.h>
+#include <aws/io/stream.h>
 
 /* Apple toolchains such as xcode and swiftpm define the DEBUG symbol. undef it here so we can actually use the token */
 #undef DEBUG
@@ -22,6 +23,7 @@ static int s_stream_get_sent_error_code(struct aws_http_stream *stream_base, uin
 static int s_stream_write_data(
     struct aws_http_stream *stream_base,
     const struct aws_http2_stream_write_data_options *options);
+static int s_stream_end(struct aws_http_stream *stream_base);
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status);
 static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream, struct aws_h2err stream_error);
@@ -35,6 +37,7 @@ struct aws_http_stream_vtable s_h2_stream_vtable = {
     .http2_get_received_error_code = s_stream_get_received_error_code,
     .http2_get_sent_error_code = s_stream_get_sent_error_code,
     .http2_write_data = s_stream_write_data,
+    .http2_end_stream = s_stream_end,
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state) {
@@ -689,15 +692,18 @@ int aws_h2_stream_encode_data_frame(
 
     *data_encode_status = AWS_H2_DATA_ENCODE_COMPLETE;
     struct aws_input_stream *body = s_h2_stream_get_data_stream(stream);
+    int64_t body_length = 0;
+    aws_input_stream_get_length(body, &body_length);
     AWS_ASSERT(body);
 
     bool body_complete;
     bool body_stalled;
+    bool body_ends_stream = !stream->use_manual_writes || (stream->use_manual_writes && body_length == 0);
     if (aws_h2_encode_data_frame(
             encoder,
             stream->base.id,
             body,
-            !stream->use_manual_writes /*body_ends_stream*/,
+            body_ends_stream,
             0 /*pad_length*/,
             &stream->thread_data.window_size_peer,
             &connection->thread_data.window_size_peer,
@@ -1112,8 +1118,19 @@ static int s_stream_write_data(
     s_lock_synced_data(stream);
     {
         if (stream->synced_data.api_state != AWS_H2_STREAM_API_STATE_ACTIVE) {
-            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "Cannot write DATA frames to an inactive or closed stream");
+            s_unlock_synced_data(stream);
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "Cannot write DATA frames to an inactive or closed stream, stream=%p",
+                (void *)stream_base);
             return aws_raise_error(AWS_ERROR_INVALID_STATE);
+        }
+
+        if (stream->synced_data.end_called) {
+            s_unlock_synced_data(stream);
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM, "Cannot write DATA frames to a stream after end, stream=%p", (void *)stream_base);
+            return AWS_OP_SUCCESS;
         }
 
         /* queue this new write into the pending write list for the stream */
@@ -1134,4 +1151,67 @@ static int s_stream_write_data(
     s_unlock_synced_data(stream);
 
     return AWS_OP_SUCCESS;
+}
+
+static void s_stream_end_stream_destroy(struct aws_input_stream *stream) {
+    (void)stream;
+}
+
+static int s_stream_end_stream_get_length(struct aws_input_stream *stream, int64_t *length) {
+    (void)stream;
+    *length = 0;
+    return AWS_OP_SUCCESS;
+}
+
+static int s_stream_end_stream_get_status(struct aws_input_stream *stream, struct aws_stream_status *status) {
+    (void)stream;
+    AWS_PRECONDITION(status);
+    status->is_end_of_stream = true;
+    status->is_valid = true;
+    return AWS_OP_SUCCESS;
+}
+
+static int s_stream_end_stream_read(struct aws_input_stream *stream, struct aws_byte_buf *buffer) {
+    (void)stream;
+    (void)buffer;
+    return AWS_OP_SUCCESS;
+}
+
+static struct aws_input_stream_vtable s_stream_end_stream_vtable = {
+    .destroy = s_stream_end_stream_destroy,
+    .get_length = s_stream_end_stream_get_length,
+    .get_status = s_stream_end_stream_get_status,
+    .read = s_stream_end_stream_read,
+    .seek = NULL,
+};
+
+/* virtual stream whose only job is to communicate EOF and end the DATA frame body write */
+static struct aws_input_stream s_stream_end_stream = {
+    .vtable = &s_stream_end_stream_vtable,
+    .allocator = NULL,
+    .impl = NULL,
+};
+
+static int s_stream_end(struct aws_http_stream *stream_base) {
+    struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
+
+    if (!stream->use_manual_writes) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "Cannot end HTTP2 stream that is not using manual writes");
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    s_lock_synced_data(stream);
+    if (stream->synced_data.end_called) {
+        s_unlock_synced_data(stream);
+        AWS_LOGF_WARN(AWS_LS_HTTP_STREAM, "Ignoring redundant request to end stream %p", (void *)stream_base);
+        return AWS_OP_SUCCESS;
+    }
+    stream->synced_data.end_called = true;
+    s_unlock_synced_data(stream);
+
+    /* enqueue an empty write to end data transmission */
+    struct aws_http2_stream_write_data_options write = {
+        .data = &s_stream_end_stream,
+    };
+    return s_stream_write_data(stream_base, &write);
 }
