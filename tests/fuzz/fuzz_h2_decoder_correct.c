@@ -43,7 +43,9 @@ static struct aws_http_headers *s_generate_headers(
         aws_http_headers_add_header(headers, &path);
 
         struct aws_http_header authority = {
-            .name = aws_http_header_authority, .value = aws_byte_cursor_from_c_str("example.com")};
+            .name = aws_http_header_authority,
+            .value = aws_byte_cursor_from_c_str("example.com"),
+        };
         aws_http_headers_add_header(headers, &authority);
 
     } else if (header_style == HEADER_STYLE_RESPONSE) {
