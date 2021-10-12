@@ -522,7 +522,7 @@ struct aws_h1_trailer *aws_h1_trailer_new(
 
     aws_byte_buf_init(&trailer->trailer_data, allocator, trailer_size); /* cannot fail */
     s_write_headers(&trailer->trailer_data, trailing_headers);
-    AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "trailer size is %d", trailer_size);
+    AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "trailer size is %zu", trailer_size);
     if (trailer_size > 0) { /* \r\n if there are any trailers written */
         AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "writing carriage return");
         AWS_ASSERT(s_write_crlf(&trailer->trailer_data));
