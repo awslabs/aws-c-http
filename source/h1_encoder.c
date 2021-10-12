@@ -530,7 +530,9 @@ struct aws_h1_trailer *aws_h1_trailer_new(
         trailer->trailer_data.capacity);
     if (trailer_size > 0) { /* \r\n if there are any trailers written */
         AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "writing carriage return");
-        AWS_ASSERT(s_write_crlf(&trailer->trailer_data));
+        bool crlf_result = s_write_crlf(&trailer->trailer_data);
+        AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "crlf result is %s", crlf_result ? "true" : "false");
+        // AWS_ASSERT();
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_STREAM,
             "trailer.data post crlf len, capacity is %zu, %zu",
