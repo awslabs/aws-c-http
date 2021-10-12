@@ -147,7 +147,7 @@ static void s_clean_up_monitor_test(void) {
         if (request_info) {
             aws_http_message_destroy(request_info->request);
             aws_http_stream_release(request_info->stream);
-            aws_input_stream_destroy(request_info->body);
+            aws_input_stream_release(request_info->body);
         }
     }
 

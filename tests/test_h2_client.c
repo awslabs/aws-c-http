@@ -315,7 +315,7 @@ TEST_CASE(h2_client_auto_ping_ack_higher_priority) {
     /* clean up */
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -764,7 +764,7 @@ TEST_CASE(h2_client_stream_err_state_forbids_frame) {
     aws_http_headers_release(response_headers);
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -1497,7 +1497,7 @@ TEST_CASE(h2_client_stream_send_data) {
     aws_http_headers_release(response_headers);
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -1645,7 +1645,7 @@ TEST_CASE(h2_client_stream_send_lots_of_data) {
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
         client_stream_tester_clean_up(&stream_testers[i]);
         aws_http_message_release(requests[i]);
-        aws_input_stream_destroy(request_bodies[i]);
+        aws_input_stream_release(request_bodies[i]);
         aws_byte_buf_clean_up(&request_body_bufs[i]);
     }
     return s_tester_clean_up();
@@ -1719,7 +1719,7 @@ TEST_CASE(h2_client_stream_send_stalled_data) {
     /* clean up */
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -1831,7 +1831,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_stream_window_size) {
     aws_http_headers_release(response_headers);
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -1941,7 +1941,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_negative_stream_window_size) 
     aws_http_headers_release(response_headers);
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -2065,7 +2065,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_window_size) {
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
         client_stream_tester_clean_up(&stream_testers[i]);
         aws_http_message_release(requests[i]);
-        aws_input_stream_destroy(request_bodies[i]);
+        aws_input_stream_release(request_bodies[i]);
         aws_byte_buf_clean_up(&request_body_bufs[i]);
     }
     return s_tester_clean_up();
@@ -2268,7 +2268,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
         client_stream_tester_clean_up(&stream_testers[i]);
         aws_http_message_release(requests[i]);
-        aws_input_stream_destroy(request_bodies[i]);
+        aws_input_stream_release(request_bodies[i]);
         aws_byte_buf_clean_up(&request_body_bufs[i]);
     }
     return s_tester_clean_up();
@@ -2789,7 +2789,7 @@ TEST_CASE(h2_client_stream_receive_end_stream_before_done_sending) {
     aws_http_headers_release(response_headers);
     client_stream_tester_clean_up(&stream_tester);
     aws_http_message_release(request);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -2861,7 +2861,7 @@ TEST_CASE(h2_client_stream_receive_end_stream_and_rst_before_done_sending) {
     aws_http_headers_release(response_headers);
     client_stream_tester_clean_up(&stream_tester);
     aws_http_message_release(request);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -2906,7 +2906,7 @@ TEST_CASE(h2_client_stream_err_input_stream_failure) {
     /* clean up */
     client_stream_tester_clean_up(&stream_tester);
     aws_http_message_release(request);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 

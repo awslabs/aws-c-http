@@ -33,7 +33,7 @@ static void s_destroy_stream_on_complete(struct aws_http_stream *stream, int err
     (void)stream;
     (void)error_code;
     struct aws_input_stream *data_stream = user_data;
-    aws_input_stream_destroy(data_stream);
+    aws_input_stream_release(data_stream);
 }
 
 static struct aws_http1_chunk_options s_default_chunk_options(struct aws_input_stream *stream, size_t stream_size) {
@@ -274,7 +274,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body) {
     ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
 
     /* clean up */
-    aws_input_stream_destroy(body_stream);
+    aws_input_stream_release(body_stream);
     aws_http_message_destroy(request);
     aws_http_stream_release(stream);
 
@@ -489,7 +489,7 @@ static void s_on_chunk_complete_write_another_chunk(struct aws_http_stream *stre
     AWS_FATAL_ASSERT(0 == error_code);
     struct chunk_that_writes_another *chunk = user_data;
 
-    aws_input_stream_destroy(chunk->body_data);
+    aws_input_stream_release(chunk->body_data);
 
     const struct aws_byte_cursor chunk2_body = aws_byte_cursor_from_c_str("chunk 2.");
     struct aws_input_stream *chunk2_body_stream = aws_input_stream_new_from_cursor(chunk->allocator, &chunk2_body);
@@ -680,7 +680,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_content_length_0_ok) {
     ASSERT_SUCCESS(testing_channel_check_written_message_str(&tester.testing_channel, expected));
 
     /* clean up */
-    aws_input_stream_destroy(body_stream);
+    aws_input_stream_release(body_stream);
     aws_http_message_destroy(request);
     aws_http_stream_release(stream);
 
@@ -833,7 +833,7 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_large_body) {
         &tester.testing_channel, allocator, aws_byte_cursor_from_buf(&expected_buf)));
 
     /* clean up */
-    aws_input_stream_destroy(body_stream);
+    aws_input_stream_release(body_stream);
     aws_http_message_destroy(request);
     aws_http_stream_release(stream);
 
@@ -2657,7 +2657,7 @@ static int s_test_content_length_mismatch_is_error(
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_OUTGOING_STREAM_LENGTH_INCORRECT, completion_error_code);
 
     /* clean up */
-    aws_input_stream_destroy(body_stream);
+    aws_input_stream_release(body_stream);
     aws_http_message_destroy(request);
     aws_http_stream_release(stream);
 

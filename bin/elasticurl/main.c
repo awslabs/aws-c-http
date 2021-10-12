@@ -747,7 +747,7 @@ int main(int argc, char **argv) {
     }
 
     if (app_ctx.input_body) {
-        aws_input_stream_destroy(app_ctx.input_body);
+        aws_input_stream_release(app_ctx.input_body);
     }
 
     if (app_ctx.input_file) {

@@ -209,7 +209,7 @@ static int s_server_request_clean_up(void) {
     for (int i = 0; i < s_tester.request_num; i++) {
         aws_http_stream_release(s_tester.requests[i].request_handler);
         aws_byte_buf_clean_up(&s_tester.requests[i].storage);
-        aws_input_stream_destroy(s_tester.requests[i].response_body);
+        aws_input_stream_release(s_tester.requests[i].response_body);
     }
     return AWS_OP_SUCCESS;
 }

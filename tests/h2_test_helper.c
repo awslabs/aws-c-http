@@ -598,7 +598,7 @@ int h2_fake_peer_send_data_frame(
     ASSERT_TRUE(msg->message_data.len != 0);
 
     ASSERT_SUCCESS(testing_channel_push_read_message(peer->testing_channel, msg));
-    aws_input_stream_destroy(body_stream);
+    aws_input_stream_release(body_stream);
     return AWS_OP_SUCCESS;
 }
 
@@ -677,7 +677,7 @@ static int s_aws_input_stream_tester_get_length(struct aws_input_stream *stream,
 static void s_aws_input_stream_tester_destroy(struct aws_input_stream *stream) {
     if (stream) {
         struct aws_input_stream_tester *impl = stream->impl;
-        aws_input_stream_destroy(impl->cursor_stream);
+        aws_input_stream_release(impl->cursor_stream);
         aws_mem_release(stream->allocator, stream);
     }
 }
@@ -689,6 +689,14 @@ static struct aws_input_stream_vtable s_aws_input_stream_tester_vtable = {
     .get_length = s_aws_input_stream_tester_get_length,
     .destroy = s_aws_input_stream_tester_destroy,
 };
+
+void s_aws_input_stream_tester_on_zero(struct aws_input_stream *stream) {
+    if (stream != NULL) {
+        AWS_ASSERT(stream->vtable && stream->vtable->destroy);
+
+        stream->vtable->destroy(stream);
+    }
+}
 
 struct aws_input_stream *aws_input_stream_new_tester(struct aws_allocator *alloc, struct aws_byte_cursor cursor) {
 
@@ -709,6 +717,7 @@ struct aws_input_stream *aws_input_stream_new_tester(struct aws_allocator *alloc
 
     impl->cursor_stream = aws_input_stream_new_from_cursor(alloc, &cursor);
     AWS_FATAL_ASSERT(impl->cursor_stream);
+    aws_ref_count_init(&stream->ref_count, stream, (aws_simple_completion_callback *)s_aws_input_stream_tester_on_zero);
 
     return stream;
 }
