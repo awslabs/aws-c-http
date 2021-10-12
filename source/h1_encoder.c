@@ -156,32 +156,7 @@ static int s_scan_outgoing_headers(
     return AWS_OP_SUCCESS;
 }
 
-static bool s_write_crlf(struct aws_byte_buf *dst) {
-    AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
-    struct aws_byte_cursor crlf_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("\r\n");
-    return aws_byte_buf_write_from_whole_cursor(dst, crlf_cursor);
-}
-
-static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_headers *headers) {
-
-    const size_t num_headers = aws_http_headers_count(headers);
-
-    bool wrote_all = true;
-    for (size_t i = 0; i < num_headers; ++i) {
-        struct aws_http_header header;
-        aws_http_headers_get_index(headers, i, &header);
-
-        /* header-line: "{name}: {value}\r\n" */
-        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.name);
-        wrote_all &= aws_byte_buf_write_u8(dst, ':');
-        wrote_all &= aws_byte_buf_write_u8(dst, ' ');
-        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.value);
-        wrote_all &= s_write_crlf(dst);
-    }
-    AWS_ASSERT(wrote_all);
-}
-
-static int s_headers_size(const struct aws_http_headers *headers, size_t *out_size) {
+static int s_scan_outgoing_trailer(const struct aws_http_headers *headers, size_t *out_size) {
     const size_t num_headers = aws_http_headers_count(headers);
     size_t total = 0;
     for (size_t i = 0; i < num_headers; i++) {
@@ -209,15 +184,25 @@ static int s_headers_size(const struct aws_http_headers *headers, size_t *out_si
             return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
         }
 
-        /* @graebm should I be more discerning about which headers I ban? I figure any header in the enum is used in
-         * some way for message framing which is banned as per the rfc */
         enum aws_http_header_name name_enum = aws_http_str_to_header_name(header.name);
-        if (name_enum != AWS_HTTP_HEADER_UNKNOWN) {
+        if (name_enum == AWS_HTTP_HEADER_TRANSFER_ENCODING || name_enum == AWS_HTTP_HEADER_CONTENT_LENGTH ||
+            name_enum == AWS_HTTP_HEADER_HOST || name_enum == AWS_HTTP_HEADER_EXPECT ||
+            name_enum == AWS_HTTP_HEADER_CACHE_CONTROL || name_enum == AWS_HTTP_HEADER_MAX_FORWARDS ||
+            name_enum == AWS_HTTP_HEADER_PRAGMA || name_enum == AWS_HTTP_HEADER_RANGE ||
+            name_enum == AWS_HTTP_HEADER_TE || name_enum == AWS_HTTP_HEADER_CONTENT_ENCODING ||
+            name_enum == AWS_HTTP_HEADER_CONTENT_TYPE || name_enum == AWS_HTTP_HEADER_CONTENT_RANGE ||
+            name_enum == AWS_HTTP_HEADER_TRAILER || name_enum == AWS_HTTP_HEADER_WWW_AUTHENTICATE ||
+            name_enum == AWS_HTTP_HEADER_AUTHORIZATION || name_enum == AWS_HTTP_HEADER_PROXY_AUTHENTICATE ||
+            name_enum == AWS_HTTP_HEADER_PROXY_AUTHORIZATION || name_enum == AWS_HTTP_HEADER_SET_COOKIE ||
+            name_enum == AWS_HTTP_HEADER_COOKIE || name_enum == AWS_HTTP_HEADER_AGE ||
+            name_enum == AWS_HTTP_HEADER_EXPIRES || name_enum == AWS_HTTP_HEADER_DATE ||
+            name_enum == AWS_HTTP_HEADER_LOCATION || name_enum == AWS_HTTP_HEADER_RETRY_AFTER ||
+            name_enum == AWS_HTTP_HEADER_VARY || name_enum == AWS_HTTP_HEADER_WARNING) {
             AWS_LOGF_ERROR(
                 AWS_LS_HTTP_STREAM,
                 "id=static: Trailing Header '" PRInSTR "' has invalid value",
                 AWS_BYTE_CURSOR_PRI(header.name));
-            return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
+            return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_FIELD);
         }
 
         int err = 0;
@@ -228,8 +213,36 @@ static int s_headers_size(const struct aws_http_headers *headers, size_t *out_si
             return AWS_OP_ERR;
         }
     }
+    if (aws_add_size_checked(4, total, &total)) { /* "\r\n" */
+        return AWS_OP_ERR;
+    }
     *out_size = total;
     return AWS_OP_SUCCESS;
+}
+
+static bool s_write_crlf(struct aws_byte_buf *dst) {
+    AWS_PRECONDITION(aws_byte_buf_is_valid(dst));
+    struct aws_byte_cursor crlf_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("\r\n");
+    return aws_byte_buf_write_from_whole_cursor(dst, crlf_cursor);
+}
+
+static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_headers *headers) {
+
+    const size_t num_headers = aws_http_headers_count(headers);
+
+    bool wrote_all = true;
+    for (size_t i = 0; i < num_headers; ++i) {
+        struct aws_http_header header;
+        aws_http_headers_get_index(headers, i, &header);
+
+        /* header-line: "{name}: {value}\r\n" */
+        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.name);
+        wrote_all &= aws_byte_buf_write_u8(dst, ':');
+        wrote_all &= aws_byte_buf_write_u8(dst, ' ');
+        wrote_all &= aws_byte_buf_write_from_whole_cursor(dst, header.value);
+        wrote_all &= s_write_crlf(dst);
+    }
+    AWS_ASSERT(wrote_all);
 }
 
 int aws_h1_encoder_message_init_from_request(
@@ -500,26 +513,20 @@ struct aws_h1_trailer *aws_h1_trailer_new(
     const struct aws_http_headers *trailing_headers) {
     /* Allocate trailer along with storage for the trailer-line */
     size_t trailer_size = 0;
-    if (s_headers_size(trailing_headers, &trailer_size)) {
+    if (s_scan_outgoing_trailer(trailing_headers, &trailer_size)) {
         return NULL;
     }
 
     struct aws_h1_trailer *trailer = aws_mem_calloc(allocator, 1, sizeof(struct aws_h1_trailer));
-    if (!trailer) {
-        return NULL;
-    }
     trailer->allocator = allocator;
 
-    if (aws_byte_buf_init(&trailer->trailer_data, allocator, trailer_size)) {
-        aws_mem_release(allocator, trailer);
-        return NULL;
-    }
+    aws_byte_buf_init(&trailer->trailer_data, allocator, trailer_size); /* cannot fail */
     s_write_headers(&trailer->trailer_data, trailing_headers);
+    AWS_ASSERT(s_write_crlf(&trailer->trailer_data));
     return trailer;
 }
 
 void aws_h1_trailer_destroy(struct aws_h1_trailer *trailer) {
-    /* should this check be here? it makes it so that I need to check before calling this function */
     if (trailer == NULL) {
         return;
     }
