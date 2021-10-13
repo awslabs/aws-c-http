@@ -59,6 +59,7 @@ struct aws_h2_stream_data_write {
     struct aws_input_stream *data_stream;
     aws_http2_stream_write_data_complete_fn *on_complete;
     void *user_data;
+    bool end_stream;
 };
 
 struct aws_h2_stream {
@@ -111,11 +112,6 @@ struct aws_h2_stream {
          */
         bool waiting_for_writes;
     } synced_data;
-
-    /* Set only at construction time, indicates that this stream should sleep after headers are sent
-     * until data is queued via aws_http2_stream_write_data
-     */
-    bool use_manual_writes;
 
     /* Store the sent reset HTTP/2 error code, set to -1, if none has sent so far */
     int64_t sent_reset_error_code;
