@@ -451,6 +451,7 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
         !aws_hash_table_is_valid(&connection->thread_data.active_streams_map) ||
         aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0);
 
+    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_resume_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.waiting_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stalled_window_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.outgoing_streams_list));
