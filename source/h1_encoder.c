@@ -460,12 +460,13 @@ struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const str
     chunk->user_data = options->user_data;
     chunk->chunk_line = aws_byte_buf_from_empty_array(chunk_line_storage, chunk_line_size);
     s_populate_chunk_line_buffer(&chunk->chunk_line, options);
-
+    aws_input_stream_acquire(chunk->data);
     return chunk;
 }
 
 void aws_h1_chunk_destroy(struct aws_h1_chunk *chunk) {
     AWS_PRECONDITION(chunk);
+    aws_input_stream_release(chunk->data);
     aws_mem_release(chunk->allocator, chunk);
 }
 

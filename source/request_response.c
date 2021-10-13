@@ -441,7 +441,7 @@ void aws_http_message_release(struct aws_http_message *message) {
         }
 
         aws_http_headers_release(message->headers);
-
+        aws_input_stream_release(message->body_stream);
         aws_mem_release(message->allocator, message);
     } else {
         AWS_ASSERT(prev_refcount != 0);
@@ -556,6 +556,7 @@ int aws_http_message_set_response_status(struct aws_http_message *response_messa
 void aws_http_message_set_body_stream(struct aws_http_message *message, struct aws_input_stream *body_stream) {
     AWS_PRECONDITION(message);
     message->body_stream = body_stream;
+    aws_input_stream_acquire(body_stream);
 }
 
 int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, const struct aws_http1_chunk_options *options) {
