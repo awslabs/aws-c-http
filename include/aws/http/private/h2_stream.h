@@ -80,7 +80,7 @@ struct aws_h2_stream {
          * This list can drain, which results in the stream being put to sleep (moved to waiting_streams_list in
          * h2_connection).
          */
-        struct aws_linked_list outgoing_writes; /* aws_h2_pending_data */
+        struct aws_linked_list outgoing_writes; /* aws_http2_stream_data_write */
         bool received_main_headers;
     } thread_data;
 
@@ -142,12 +142,8 @@ void aws_h2_stream_on_closed(struct aws_h2_stream *stream, int error_code);
 
 /* Connection is ready to send data from stream now.
  * Stream may complete itself during this call.
- * data_encode_status:
- * AWS_H2_DATA_ENCODE_COMPLETE: Finished encoding data for the stream
- * AWS_H2_DATA_ENCODE_ONGOING: Stream has more data to send.
- * AWS_H2_DATA_ENCODE_ONGOING_BODY_STREAM_STALLED: Stream has more data to send, but it's not ready right now
- * AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED: Stream has more data to send but its window size is too small, and stream
- * will be moved to stalled_window_stream_list */
+ * data_encode_status: see `aws_h2_data_encode_status`
+ */
 int aws_h2_stream_encode_data_frame(
     struct aws_h2_stream *stream,
     struct aws_h2_frame_encoder *encoder,
