@@ -568,9 +568,16 @@ int aws_http_message_set_request_method(struct aws_http_message *request_message
     AWS_PRECONDITION(request_message->request_data);
 
     if (request_message->request_data) {
-        return s_set_string_from_cursor(&request_message->request_data->method, method, request_message->allocator);
+        switch (request_message->http_version) {
+            case AWS_HTTP_VERSION_1_1:
+                return s_set_string_from_cursor(
+                    &request_message->request_data->method, method, request_message->allocator);
+            case AWS_HTTP_VERSION_2:
+                return aws_http2_headers_set_request_method(request_message->headers, method);
+            default:
+                return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+        }
     }
-
     return aws_raise_error(AWS_ERROR_INVALID_STATE);
 }
 
@@ -607,7 +614,14 @@ int aws_http_message_set_request_path(struct aws_http_message *request_message, 
     AWS_PRECONDITION(request_message->request_data);
 
     if (request_message->request_data) {
-        return s_set_string_from_cursor(&request_message->request_data->path, path, request_message->allocator);
+        switch (request_message->http_version) {
+            case AWS_HTTP_VERSION_1_1:
+                return s_set_string_from_cursor(&request_message->request_data->path, path, request_message->allocator);
+            case AWS_HTTP_VERSION_2:
+                return aws_http2_headers_set_request_path(request_message->headers, path);
+            default:
+                return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+        }
     }
 
     return aws_raise_error(AWS_ERROR_INVALID_STATE);
@@ -621,9 +635,19 @@ int aws_http_message_get_request_path(
     AWS_PRECONDITION(out_path);
     AWS_PRECONDITION(request_message->request_data);
 
-    if (request_message->request_data && request_message->request_data->path) {
-        *out_path = aws_byte_cursor_from_string(request_message->request_data->path);
-        return AWS_OP_SUCCESS;
+    if (request_message->request_data) {
+        switch (request_message->http_version) {
+            case AWS_HTTP_VERSION_1_1:
+                if (request_message->request_data->path) {
+                    *out_path = aws_byte_cursor_from_string(request_message->request_data->path);
+                    return AWS_OP_SUCCESS;
+                }
+                break;
+            case AWS_HTTP_VERSION_2:
+                return aws_http2_headers_get_request_path(request_message->headers, out_path);
+            default:
+                return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+        }
     }
 
     AWS_ZERO_STRUCT(*out_path);
@@ -637,9 +661,19 @@ int aws_http_message_get_response_status(const struct aws_http_message *response
 
     *out_status_code = AWS_HTTP_STATUS_CODE_UNKNOWN;
 
-    if (response_message->response_data && (response_message->response_data->status != AWS_HTTP_STATUS_CODE_UNKNOWN)) {
-        *out_status_code = response_message->response_data->status;
-        return AWS_OP_SUCCESS;
+    if (response_message->response_data) {
+        switch (response_message->http_version) {
+            case AWS_HTTP_VERSION_1_1:
+                if (response_message->response_data->status != AWS_HTTP_STATUS_CODE_UNKNOWN) {
+                    *out_status_code = response_message->response_data->status;
+                    return AWS_OP_SUCCESS;
+                }
+                break;
+            case AWS_HTTP_VERSION_2:
+                return aws_http2_headers_get_response_status(response_message->headers, out_status_code);
+            default:
+                return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+        }
     }
 
     return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
@@ -652,8 +686,15 @@ int aws_http_message_set_response_status(struct aws_http_message *response_messa
     if (response_message->response_data) {
         /* Status code must be printable with exactly 3 digits */
         if (status_code >= 0 && status_code <= 999) {
-            response_message->response_data->status = status_code;
-            return AWS_OP_SUCCESS;
+            switch (response_message->http_version) {
+                case AWS_HTTP_VERSION_1_1:
+                    response_message->response_data->status = status_code;
+                    return AWS_OP_SUCCESS;
+                case AWS_HTTP_VERSION_2:
+                    return aws_http2_headers_set_response_status(response_message->headers, status_code);
+                default:
+                    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+            }
         }
 
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_STATUS_CODE);
