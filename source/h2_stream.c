@@ -385,16 +385,10 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
 }
 
 void aws_h2_stream_on_closed(struct aws_h2_stream *stream, int error_code) {
-    /* clean up any outgoing writes */
-    while (!aws_linked_list_empty(&stream->thread_data.outgoing_writes)) {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
-        struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
-        AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "Stream closing, cancelling active write of stream %p", (void*)write->data_stream);
-        s_stream_data_write_destroy(stream, write, error_code);
-    }
-
     /* clean up any pending writes */
     s_lock_synced_data(stream);
+    /* The stream is complete now, this will prevent further writes from being queued */
+    stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_COMPLETE;
     while (!aws_linked_list_empty(&stream->synced_data.pending_write_list)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->synced_data.pending_write_list);
         struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
@@ -402,6 +396,14 @@ void aws_h2_stream_on_closed(struct aws_h2_stream *stream, int error_code) {
         s_stream_data_write_destroy(stream, write, error_code);
     }
     s_unlock_synced_data(stream);
+
+    /* clean up any outgoing writes */
+    while (!aws_linked_list_empty(&stream->thread_data.outgoing_writes)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
+        struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
+        AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "Stream closing, cancelling active write of stream %p", (void*)write->data_stream);
+        s_stream_data_write_destroy(stream, write, error_code);
+    }
 }
 
 static void s_stream_update_window(struct aws_http_stream *stream_base, size_t increment_size) {
