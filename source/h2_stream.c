@@ -389,6 +389,7 @@ void aws_h2_stream_on_closed(struct aws_h2_stream *stream, int error_code) {
     while (!aws_linked_list_empty(&stream->thread_data.outgoing_writes)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
         struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
+        AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "Stream closing, cancelling active write of stream %p", (void*)write->data_stream);
         s_stream_data_write_destroy(stream, write, error_code);
     }
 
@@ -397,6 +398,7 @@ void aws_h2_stream_on_closed(struct aws_h2_stream *stream, int error_code) {
     while (!aws_linked_list_empty(&stream->synced_data.pending_write_list)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->synced_data.pending_write_list);
         struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
+        AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "Stream closing, cancelling pending write of stream %p", (void*)write->data_stream);
         s_stream_data_write_destroy(stream, write, error_code);
     }
     s_unlock_synced_data(stream);
@@ -728,7 +730,8 @@ int aws_h2_stream_encode_data_frame(
         s_h2_stream_manual_write_complete(stream, &body_stalled);
     }
 
-    /* body_complete for manual writes just means the current outgoing_write is complete. The body is not complete
+    /*
+     * body_complete for manual writes just means the current outgoing_write is complete. The body is not complete
      * for real until the stream is told to close
      */
     if (body_complete && !stream->use_manual_writes) {
