@@ -604,59 +604,6 @@ struct aws_h2err aws_h2_stream_window_size_change(struct aws_h2_stream *stream, 
     return AWS_H2ERR_SUCCESS;
 }
 
-int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data) {
-    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
-
-    struct aws_h2_connection *connection = s_get_h2_connection(stream);
-
-    /* Create HEADERS frame */
-    struct aws_http_message *msg = stream->thread_data.outgoing_message;
-    bool has_body_stream = aws_http_message_get_body_stream(msg) != NULL;
-    struct aws_http_headers *h2_headers = aws_h2_create_headers_from_request(msg, stream->base.alloc);
-    if (!h2_headers) {
-        AWS_H2_STREAM_LOGF(
-            ERROR, stream, "Failed to create HTTP/2 style headers from request %s", aws_error_name(aws_last_error()));
-        goto error;
-    }
-    struct aws_h2_frame *headers_frame = aws_h2_frame_new_headers(
-        stream->base.alloc,
-        stream->base.id,
-        h2_headers,
-        !has_body_stream /* end_stream */,
-        0 /* padding - not currently configurable via public API */,
-        NULL /* priority - not currently configurable via public API */);
-
-    /* Release refcount of h2_headers here, let frame take the full ownership of it */
-    aws_http_headers_release(h2_headers);
-    if (!headers_frame) {
-        AWS_H2_STREAM_LOGF(ERROR, stream, "Failed to create HEADERS frame: %s", aws_error_name(aws_last_error()));
-        goto error;
-    }
-
-    /* Initialize the flow-control window size */
-    stream->thread_data.window_size_peer =
-        connection->thread_data.settings_peer[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
-    stream->thread_data.window_size_self =
-        connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
-
-    if (has_body_stream) {
-        /* If stream has DATA to send, put it in the outgoing_streams_list, and we'll send data later */
-        stream->thread_data.state = AWS_H2_STREAM_STATE_OPEN;
-        AWS_H2_STREAM_LOG(TRACE, stream, "Sending HEADERS. State -> OPEN");
-    } else {
-        /* If stream has no body, then HEADERS frame marks the end of outgoing data */
-        stream->thread_data.state = AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL;
-        AWS_H2_STREAM_LOG(TRACE, stream, "Sending HEADERS with END_STREAM. State -> HALF_CLOSED_LOCAL");
-    }
-
-    *out_has_outgoing_data = has_body_stream;
-    aws_h2_connection_enqueue_outgoing_frame(connection, headers_frame);
-    return AWS_OP_SUCCESS;
-
-error:
-    return AWS_OP_ERR;
-}
-
 static inline bool s_h2_stream_has_outgoing_writes(struct aws_h2_stream *stream) {
     return !aws_linked_list_empty(&stream->thread_data.outgoing_writes);
 }
@@ -690,6 +637,60 @@ static struct aws_input_stream *s_h2_stream_get_data_stream(struct aws_h2_stream
 static bool s_h2_stream_current_write_ends_stream(struct aws_h2_stream *stream) {
     struct aws_h2_stream_data_write *write = s_h2_stream_get_current_write(stream);
     return write->end_stream;
+}
+
+int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data) {
+    AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
+
+    struct aws_h2_connection *connection = s_get_h2_connection(stream);
+
+    /* Create HEADERS frame */
+    struct aws_http_message *msg = stream->thread_data.outgoing_message;
+    bool has_body_stream = aws_http_message_get_body_stream(msg) != NULL;
+    bool write_ends_stream = !s_h2_stream_has_outgoing_writes(stream) || s_h2_stream_current_write_ends_stream(stream);
+    struct aws_http_headers *h2_headers = aws_h2_create_headers_from_request(msg, stream->base.alloc);
+    if (!h2_headers) {
+        AWS_H2_STREAM_LOGF(
+            ERROR, stream, "Failed to create HTTP/2 style headers from request %s", aws_error_name(aws_last_error()));
+        goto error;
+    }
+    struct aws_h2_frame *headers_frame = aws_h2_frame_new_headers(
+        stream->base.alloc,
+        stream->base.id,
+        h2_headers,
+        !has_body_stream && write_ends_stream/* end_stream */,
+        0 /* padding - not currently configurable via public API */,
+        NULL /* priority - not currently configurable via public API */);
+
+    /* Release refcount of h2_headers here, let frame take the full ownership of it */
+    aws_http_headers_release(h2_headers);
+    if (!headers_frame) {
+        AWS_H2_STREAM_LOGF(ERROR, stream, "Failed to create HEADERS frame: %s", aws_error_name(aws_last_error()));
+        goto error;
+    }
+
+    /* Initialize the flow-control window size */
+    stream->thread_data.window_size_peer =
+        connection->thread_data.settings_peer[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
+    stream->thread_data.window_size_self =
+        connection->thread_data.settings_self[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
+
+    if (has_body_stream) {
+        /* If stream has DATA to send, put it in the outgoing_streams_list, and we'll send data later */
+        stream->thread_data.state = AWS_H2_STREAM_STATE_OPEN;
+        AWS_H2_STREAM_LOG(TRACE, stream, "Sending HEADERS. State -> OPEN");
+    } else {
+        /* If stream has no body, then HEADERS frame marks the end of outgoing data */
+        stream->thread_data.state = AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL;
+        AWS_H2_STREAM_LOG(TRACE, stream, "Sending HEADERS with END_STREAM. State -> HALF_CLOSED_LOCAL");
+    }
+
+    *out_has_outgoing_data = has_body_stream;
+    aws_h2_connection_enqueue_outgoing_frame(connection, headers_frame);
+    return AWS_OP_SUCCESS;
+
+error:
+    return AWS_OP_ERR;
 }
 
 int aws_h2_stream_encode_data_frame(
