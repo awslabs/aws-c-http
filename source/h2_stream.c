@@ -1145,7 +1145,9 @@ static int s_stream_write_data(
     struct aws_http_stream *stream_base,
     const struct aws_http2_stream_write_data_options *options) {
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
+    struct aws_h2_connection *connection = s_get_h2_connection(stream);
 
+    bool schedule_cross_thread_work = false;
     s_lock_synced_data(stream);
     {
         if (stream->synced_data.api_state != AWS_H2_STREAM_API_STATE_ACTIVE) {
@@ -1165,8 +1167,17 @@ static int s_stream_write_data(
         }
 
         s_stream_queue_pending_write(stream, options->data, options->on_complete, options->user_data, false);
+        schedule_cross_thread_work = !stream->synced_data.is_cross_thread_work_task_scheduled;
+        stream->synced_data.is_cross_thread_work_task_scheduled = true;
     }
     s_unlock_synced_data(stream);
+
+    if (schedule_cross_thread_work) {
+        AWS_H2_STREAM_LOG(TRACE, stream, "Scheduling stream cross-thread work task");
+        /* increment the refcount of stream to keep it alive until the task runs */
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &stream->cross_thread_work_task);
+    }
 
     return AWS_OP_SUCCESS;
 }
@@ -1212,7 +1223,9 @@ static struct aws_input_stream s_stream_end_stream = {
 
 static int s_stream_end(struct aws_http_stream *stream_base) {
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
+    struct aws_h2_connection *connection = s_get_h2_connection(stream);
 
+    bool schedule_cross_thread_work = false;
     s_lock_synced_data(stream);
     {
         if (stream->synced_data.end_called) {
@@ -1222,8 +1235,17 @@ static int s_stream_end(struct aws_http_stream *stream_base) {
         }
         stream->synced_data.end_called = true;
         s_stream_queue_pending_write(stream, &s_stream_end_stream, NULL, NULL, true);
+        schedule_cross_thread_work = !stream->synced_data.is_cross_thread_work_task_scheduled;
+        stream->synced_data.is_cross_thread_work_task_scheduled = true;
     }
     s_unlock_synced_data(stream);
+
+    if (schedule_cross_thread_work) {
+        AWS_H2_STREAM_LOG(TRACE, stream, "Scheduling stream cross-thread work task");
+        /* increment the refcount of stream to keep it alive until the task runs */
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
+        aws_channel_schedule_task_now(connection->base.channel_slot->channel, &stream->cross_thread_work_task);
+    }
 
     return AWS_OP_SUCCESS;
 }
