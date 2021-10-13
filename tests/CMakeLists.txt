@@ -441,6 +441,7 @@ add_test_case(h2_client_request_apis_failed_after_connection_begin_shutdown)
 add_test_case(h2_client_get_local_settings)
 add_test_case(h2_client_get_remote_settings)
 add_test_case(h2_client_manual_data_write)
+add_test_case(h2_client_manual_data_write_no_data)
 
 add_test_case(server_new_destroy)
 add_test_case(connection_setup_shutdown)

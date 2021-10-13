@@ -4678,7 +4678,6 @@ TEST_CASE(h2_client_manual_data_write) {
 
     /* Simulate writes coming in over time */
     for (int idx = 0; idx < 1000; ++idx) {
-        aws_thread_current_sleep(rand() % (1000 * 1000));
         struct aws_input_stream *data_stream = s_h2_client_manual_data_write_generate_data(&test_ctx);
         struct aws_http2_stream_write_data_options write = {
             .data = data_stream,
@@ -4688,14 +4687,14 @@ TEST_CASE(h2_client_manual_data_write) {
         ASSERT_SUCCESS(aws_http2_stream_write_data(stream, &write));
         if (idx % 10 == 0) {
             testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-            h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer);
+            ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
         }
     }
 
     ASSERT_SUCCESS(aws_http2_stream_end(stream));
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
-    h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     aws_http_message_release(request);
     aws_http_stream_release(stream);
@@ -4704,6 +4703,47 @@ TEST_CASE(h2_client_manual_data_write) {
     aws_http_connection_close(s_tester.connection);
 
     aws_byte_buf_clean_up(&test_ctx.data);
+
+    /* clean up */
+    return s_tester_clean_up();
+}
+
+TEST_CASE(h2_client_manual_data_write_no_data) {
+
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+    /* get connection preface and acks out of the way */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .http2_use_manual_data_writes = true,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
+    ASSERT_NOT_NULL(stream);
+
+    aws_http_stream_activate(stream);
+
+    ASSERT_SUCCESS(aws_http2_stream_end(stream));
+
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    aws_http_message_release(request);
+    aws_http_stream_release(stream);
+
+    /* close the connection */
+    aws_http_connection_close(s_tester.connection);
 
     /* clean up */
     return s_tester_clean_up();
