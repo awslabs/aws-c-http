@@ -394,7 +394,8 @@ void aws_h2_stream_on_closed(struct aws_h2_stream *stream, int error_code) {
     while (!aws_linked_list_empty(&stream->synced_data.pending_write_list)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->synced_data.pending_write_list);
         struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
-        AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "Stream closing, cancelling pending write of stream %p", (void*)write->data_stream);
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_STREAM, "Stream closing, cancelling pending write of stream %p", (void *)write->data_stream);
         s_stream_data_write_destroy(stream, write, error_code);
     }
     s_unlock_synced_data(stream);
@@ -403,7 +404,8 @@ void aws_h2_stream_on_closed(struct aws_h2_stream *stream, int error_code) {
     while (!aws_linked_list_empty(&stream->thread_data.outgoing_writes)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
         struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
-        AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "Stream closing, cancelling active write of stream %p", (void*)write->data_stream);
+        AWS_LOGF_DEBUG(
+            AWS_LS_HTTP_STREAM, "Stream closing, cancelling active write of stream %p", (void *)write->data_stream);
         s_stream_data_write_destroy(stream, write, error_code);
     }
 }
@@ -658,7 +660,7 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
         stream->base.alloc,
         stream->base.id,
         h2_headers,
-        !has_body_stream && write_ends_stream/* end_stream */,
+        !has_body_stream && write_ends_stream /* end_stream */,
         0 /* padding - not currently configurable via public API */,
         NULL /* priority - not currently configurable via public API */);
 
@@ -1123,7 +1125,12 @@ struct aws_h2err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *strea
     return AWS_H2ERR_SUCCESS;
 }
 
-static void s_stream_queue_pending_write(struct aws_h2_stream *stream, struct aws_input_stream *data, aws_http2_stream_write_data_complete_fn *on_complete, void *user_data, bool end_stream) {
+static void s_stream_queue_pending_write(
+    struct aws_h2_stream *stream,
+    struct aws_input_stream *data,
+    aws_http2_stream_write_data_complete_fn *on_complete,
+    void *user_data,
+    bool end_stream) {
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
     /* queue this new write into the pending write list for the stream */
     struct aws_h2_stream_data_write *pending_write =
