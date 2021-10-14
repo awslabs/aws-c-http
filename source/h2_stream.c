@@ -620,7 +620,7 @@ static void s_h2_stream_write_data_complete(struct aws_h2_stream *stream, bool *
     const bool ending_stream = write_op->end_stream;
     s_stream_data_write_destroy(stream, write_op, AWS_OP_SUCCESS);
 
-    /* check to see if there are more queued writes */
+    /* check to see if there are more queued writes or stream_end was called */
     *body_stalled = !ending_stream && !s_h2_stream_has_outgoing_writes(stream);
 }
 
