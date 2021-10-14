@@ -646,6 +646,12 @@ AWS_HTTP_API
 bool aws_http_message_is_response(const struct aws_http_message *message);
 
 /**
+ * Get the protocol version of the http message.
+ */
+AWS_HTTP_API
+enum aws_http_version aws_http_message_get_protocol_version(struct aws_http_message *message);
+
+/**
  * Get the method (request messages only).
  */
 AWS_HTTP_API

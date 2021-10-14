@@ -562,6 +562,11 @@ bool aws_http_message_is_response(const struct aws_http_message *message) {
     return message->response_data;
 }
 
+enum aws_http_version aws_http_message_get_protocol_version(struct aws_http_message *message) {
+    AWS_PRECONDITION(message);
+    return message->http_version;
+}
+
 int aws_http_message_set_request_method(struct aws_http_message *request_message, struct aws_byte_cursor method) {
     AWS_PRECONDITION(request_message);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&method));
