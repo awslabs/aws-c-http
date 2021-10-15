@@ -6,7 +6,7 @@
 #include <aws/common/string.h>
 #include <aws/http/request_response.h>
 #include <aws/http/status_code.h>
-#include <aws/testing/aws_test_allocators.h>
+#include <aws/testing/aws_test_harness.h>
 
 #define TEST_CASE(NAME)                                                                                                \
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
@@ -400,46 +400,5 @@ static int s_message_handles_oom_attempt(struct aws_http_message *request) {
         ASSERT_SUCCESS(aws_http_headers_set(aws_http_message_get_headers(request), header.name, header.value));
     }
 
-    return AWS_OP_SUCCESS;
-}
-
-TEST_CASE(message_handles_oom) {
-    (void)ctx;
-    struct aws_allocator timebomb_alloc;
-    ASSERT_SUCCESS(aws_timebomb_allocator_init(&timebomb_alloc, allocator, SIZE_MAX));
-
-    bool test_succeeded = false;
-    size_t allocations_until_failure;
-    for (allocations_until_failure = 0; allocations_until_failure < 10000; ++allocations_until_failure) {
-        /* Allow one more allocation each time we loop. */
-        aws_timebomb_allocator_reset_countdown(&timebomb_alloc, allocations_until_failure);
-
-        /* Create a request, then do a bunch of stuff with it. */
-        struct aws_http_message *request = aws_http_message_new_request(&timebomb_alloc);
-        int err = 0;
-        if (request) {
-            err = s_message_handles_oom_attempt(request);
-            if (err) {
-                /* Ensure failure was due to OOM */
-                ASSERT_INT_EQUALS(AWS_ERROR_OOM, aws_last_error());
-            } else {
-                test_succeeded = true;
-            }
-
-            aws_http_message_destroy(request);
-        } else {
-            /* Ensure failure was due to OOM */
-            ASSERT_INT_EQUALS(AWS_ERROR_OOM, aws_last_error());
-        }
-
-        if (test_succeeded) {
-            break;
-        }
-    }
-
-    ASSERT_TRUE(test_succeeded);
-    ASSERT_TRUE(allocations_until_failure > 2); /* Assert that this did fail a few times */
-
-    aws_timebomb_allocator_clean_up(&timebomb_alloc);
     return AWS_OP_SUCCESS;
 }
