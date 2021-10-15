@@ -250,7 +250,12 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     enum aws_http_version message_version = aws_http_message_get_protocol_version(options->request);
     switch (message_version) {
         case AWS_HTTP_VERSION_1_1:
-            stream->thread_data.outgoing_message = aws_http2_message_new_from_http1(options->request);
+            stream->thread_data.outgoing_message =
+                aws_http2_message_new_from_http1(options->request, stream->base.alloc);
+            if (!stream->thread_data.outgoing_message) {
+                AWS_H2_STREAM_LOG(ERROR, stream, "Stream failed to create the http2 message from http1 message");
+                goto error;
+            }
             break;
         case AWS_HTTP_VERSION_2:
             stream->thread_data.outgoing_message = options->request;
@@ -557,13 +562,11 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
 
     /* Create HEADERS frame */
     struct aws_http_message *msg = stream->thread_data.outgoing_message;
+    /* Should be ensured when the stream is created */
+    AWS_ASSERT(aws_http_message_get_protocol_version(msg) == AWS_HTTP_VERSION_2);
     bool has_body_stream = aws_http_message_get_body_stream(msg) != NULL;
-    struct aws_http_headers *h2_headers = aws_h2_create_headers_from_request(msg, stream->base.alloc);
-    if (!h2_headers) {
-        AWS_H2_STREAM_LOGF(
-            ERROR, stream, "Failed to create HTTP/2 style headers from request %s", aws_error_name(aws_last_error()));
-        goto error;
-    }
+    struct aws_http_headers *h2_headers = aws_http_message_get_headers(msg);
+
     struct aws_h2_frame *headers_frame = aws_h2_frame_new_headers(
         stream->base.alloc,
         stream->base.id,
@@ -572,8 +575,6 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
         0 /* padding - not currently configurable via public API */,
         NULL /* priority - not currently configurable via public API */);
 
-    /* Release refcount of h2_headers here, let frame take the full ownership of it */
-    aws_http_headers_release(h2_headers);
     if (!headers_frame) {
         AWS_H2_STREAM_LOGF(ERROR, stream, "Failed to create HEADERS frame: %s", aws_error_name(aws_last_error()));
         goto error;

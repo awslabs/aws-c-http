@@ -4,6 +4,7 @@
  */
 
 #include <aws/common/string.h>
+#include <aws/http/private/request_response_impl.h>
 #include <aws/http/request_response.h>
 #include <aws/http/status_code.h>
 #include <aws/testing/aws_test_harness.h>
@@ -11,6 +12,8 @@
 #define TEST_CASE(NAME)                                                                                                \
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
+#define DEFINE_HEADER(NAME, VALUE)                                                                                     \
+    { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
 
 TEST_CASE(message_sanity_check) {
     (void)ctx;
@@ -447,5 +450,66 @@ TEST_CASE(message_with_existing_headers) {
 
     /* clean up*/
     aws_http_message_release(message);
+    return AWS_OP_SUCCESS;
+}
+
+static int s_compare_headers(const struct aws_http_headers *expected, const struct aws_http_headers *got) {
+
+    ASSERT_UINT_EQUALS(aws_http_headers_count(expected), aws_http_headers_count(got));
+    for (size_t i = 0; i < aws_http_headers_count(expected); ++i) {
+        struct aws_http_header expected_field;
+        aws_http_headers_get_index(expected, i, &expected_field);
+
+        struct aws_http_header got_field;
+        aws_http_headers_get_index(got, i, &got_field);
+
+        ASSERT_TRUE(aws_byte_cursor_eq(&expected_field.name, &got_field.name));
+        ASSERT_TRUE(aws_byte_cursor_eq(&expected_field.value, &got_field.value));
+        ASSERT_INT_EQUALS(expected_field.compression, got_field.compression);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that h2 can split cookie headers from request, if we need to compress it use cache. */
+TEST_CASE(h2_message_with_cookie_headers) {
+    (void)ctx;
+    aws_http_library_init(allocator);
+
+    /* send a request with cookie headers */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    char method[] = "GET";
+    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str(method)));
+    char path[] = "/";
+    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str(path)));
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER("cookie", "a=b; c=d; e=f"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct aws_http_message *h2_request = aws_http2_message_new_from_http1(request, allocator);
+    struct aws_http_headers *h2_headers = aws_http_message_get_headers(h2_request);
+
+    /* set expected h2 style headers */
+    struct aws_http_header expected_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+        DEFINE_HEADER("cookie", "a=b"),
+        DEFINE_HEADER("cookie", "c=d"),
+        DEFINE_HEADER("cookie", "e=f"),
+    };
+    struct aws_http_headers *expected_headers = aws_http_headers_new(allocator);
+    ASSERT_SUCCESS(
+        aws_http_headers_add_array(expected_headers, expected_headers_src, AWS_ARRAY_SIZE(expected_headers_src)));
+
+    ASSERT_SUCCESS(s_compare_headers(expected_headers, h2_headers));
+
+    /* clean up */
+    aws_http_message_release(h2_request);
+    aws_http_headers_release(expected_headers);
+    aws_http_message_release(request);
+    aws_http_library_clean_up();
     return AWS_OP_SUCCESS;
 }

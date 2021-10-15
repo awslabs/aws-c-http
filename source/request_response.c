@@ -820,7 +820,6 @@ struct aws_http_message *aws_http2_message_new_from_http1(
     struct aws_allocator *alloc) {
 
     struct aws_http_headers *old_headers = aws_http_message_get_headers(http1_msg);
-    bool is_pseudoheader = false;
     struct aws_http_header header_iter;
     struct aws_byte_buf lower_name_buf;
     AWS_ZERO_STRUCT(lower_name_buf);
@@ -833,6 +832,10 @@ struct aws_http_message *aws_http2_message_new_from_http1(
     /* Set pesudo headers from HTTP/1.1 message */
     struct aws_byte_cursor method;
     if (aws_http_message_get_request_method(http1_msg, &method)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_GENERAL,
+            "Failed to create http2 message from http1 message, ip: %p, due to no method found.",
+            (void *)http1_msg);
         /* error will happen when the request is invalid */
         aws_raise_error(AWS_ERROR_HTTP_INVALID_METHOD);
         goto error;
@@ -858,7 +861,11 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         }
     }
     struct aws_byte_cursor path_cursor;
-    if (aws_http_message_get_request_path(copied_headers, &path_cursor)) {
+    if (aws_http_message_get_request_path(http1_msg, &path_cursor)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_GENERAL,
+            "Failed to create http2 message from http1 message, ip: %p, due to no path found.",
+            (void *)http1_msg);
         aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
         goto error;
     }
@@ -910,6 +917,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         aws_byte_buf_reset(&lower_name_buf, false);
     }
     aws_byte_buf_clean_up(&lower_name_buf);
+    /* TODO: Refcount the input stream of old message */
 
     return message;
 error:

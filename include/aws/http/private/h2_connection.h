@@ -221,12 +221,6 @@ struct aws_http_connection *aws_http_connection_new_http2_client(
     bool manual_window_management,
     const struct aws_http2_connection_options *http2_options);
 
-/* Transform the request to h2 style headers */
-AWS_HTTP_API
-struct aws_http_headers *aws_h2_create_headers_from_request(
-    struct aws_http_message *request,
-    struct aws_allocator *alloc);
-
 AWS_EXTERN_C_END
 
 /* Private functions called from multiple .c files... */
