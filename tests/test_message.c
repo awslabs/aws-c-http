@@ -368,37 +368,3 @@ TEST_CASE(message_with_existing_headers) {
     aws_http_message_release(message);
     return AWS_OP_SUCCESS;
 }
-
-/* Do every operation that involves allocating some memory */
-static int s_message_handles_oom_attempt(struct aws_http_message *request) {
-    ASSERT_NOT_NULL(request);
-
-    /* Set, and then overwrite, method and path */
-    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("POST")));
-    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
-    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET")));
-    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/chat")));
-
-    /* Add a lot of headers, enough to force the underlying array-list to expand.
-     * (just loop through the list above again and again) */
-    char name_buf[16];
-    char value_buf[16];
-    for (size_t i = 0; i < 128; ++i) {
-        snprintf(name_buf, sizeof(name_buf), "Name-%zu", i);
-        snprintf(name_buf, sizeof(name_buf), "Value-%zu", i);
-        struct aws_http_header header = {.name = aws_byte_cursor_from_c_str(name_buf),
-                                         .value = aws_byte_cursor_from_c_str(value_buf)};
-        ASSERT_SUCCESS(aws_http_message_add_header(request, header));
-    }
-
-    /* Overwrite all the headers */
-    for (size_t i = 0; i < 128; ++i) {
-        snprintf(name_buf, sizeof(name_buf), "New-Name-%zu", i);
-        snprintf(name_buf, sizeof(name_buf), "New-Value-%zu", i);
-        struct aws_http_header header = {.name = aws_byte_cursor_from_c_str(name_buf),
-                                         .value = aws_byte_cursor_from_c_str(value_buf)};
-        ASSERT_SUCCESS(aws_http_headers_set(aws_http_message_get_headers(request), header.name, header.value));
-    }
-
-    return AWS_OP_SUCCESS;
-}
