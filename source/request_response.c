@@ -509,16 +509,33 @@ struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allo
     return s_message_new_request_common(allocator, NULL, AWS_HTTP_VERSION_1_1);
 }
 
-struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator) {
+struct aws_http_message *aws_http2_message_new_request(struct aws_allocator *allocator) {
+    AWS_PRECONDITION(allocator);
+    return s_message_new_request_common(allocator, NULL, AWS_HTTP_VERSION_2);
+}
+
+static struct aws_http_message *s_http_message_new_response_common(
+    struct aws_allocator *allocator,
+    enum aws_http_version version) {
     AWS_PRECONDITION(allocator);
 
     struct aws_http_message *message = s_message_new_common(allocator, NULL);
     if (message) {
         message->response_data = &message->subclass_data.response;
         message->response_data->status = AWS_HTTP_STATUS_CODE_UNKNOWN;
-        message->http_version = AWS_HTTP_VERSION_1_1;
+        message->http_version = version;
     }
     return message;
+}
+
+struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator) {
+    AWS_PRECONDITION(allocator);
+    return s_http_message_new_response_common(allocator, AWS_HTTP_VERSION_1_1);
+}
+
+struct aws_http_message *aws_http2_message_new_response(struct aws_allocator *allocator) {
+    AWS_PRECONDITION(allocator);
+    return s_http_message_new_response_common(allocator, AWS_HTTP_VERSION_2);
 }
 
 void aws_http_message_destroy(struct aws_http_message *message) {
