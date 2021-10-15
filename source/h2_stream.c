@@ -247,7 +247,20 @@ struct aws_h2_stream *aws_h2_stream_new_request(
 
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
-    stream->thread_data.outgoing_message = options->request;
+    enum aws_http_version message_version = aws_http_message_get_protocol_version(options->request);
+    switch (message_version) {
+        case AWS_HTTP_VERSION_1_1:
+            stream->thread_data.outgoing_message = aws_http2_message_new_from_http1(options->request);
+            break;
+        case AWS_HTTP_VERSION_2:
+            stream->thread_data.outgoing_message = options->request;
+            aws_http_message_acquire(stream->thread_data.outgoing_message);
+            break;
+        default:
+            /* Not supported */
+            aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
+            goto error;
+    }
 
     stream->sent_reset_error_code = -1;
     stream->received_reset_error_code = -1;
@@ -257,13 +270,15 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     if (aws_mutex_init(&stream->synced_data.lock)) {
         AWS_H2_STREAM_LOGF(
             ERROR, stream, "Mutex init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
-        aws_mem_release(stream->base.alloc, stream);
-        return NULL;
+        goto error;
     }
-    aws_http_message_acquire(stream->thread_data.outgoing_message);
     aws_channel_task_init(
         &stream->cross_thread_work_task, s_stream_cross_thread_work_task, stream, "HTTP/2 stream cross-thread work");
     return stream;
+error:
+    aws_http_message_release(stream->thread_data.outgoing_message);
+    aws_mem_release(stream->base.alloc, stream);
+    return NULL;
 }
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {

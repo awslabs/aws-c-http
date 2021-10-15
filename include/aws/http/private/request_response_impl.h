@@ -61,4 +61,15 @@ struct aws_http_stream {
     struct aws_http_stream_server_data *server_data;
 };
 
+/**
+ * Create an HTTP/2 message from HTTP/1.1 message.
+ * pseudo headers will be created from the context and added to the headers of new message.
+ * Normal headers will be copied to the headers of new message.
+ * TODO: (Maybe more, connection-specific header will be removed, etc...)
+ * TODO: REFCOUNT INPUT_STREAMS!!! And make it public.
+ */
+struct aws_http_message *aws_http2_message_new_from_http1(
+    struct aws_http_message *http1_msg,
+    struct aws_allocator *alloc);
+
 #endif /* AWS_HTTP_REQUEST_RESPONSE_IMPL_H */
