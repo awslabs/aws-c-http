@@ -457,10 +457,8 @@ static struct aws_http_message *s_message_new_common(
     struct aws_allocator *allocator,
     struct aws_http_headers *existing_headers) {
 
+    /* allocation cannot fail */
     struct aws_http_message *message = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_message));
-    if (!message) {
-        goto error;
-    }
 
     message->allocator = allocator;
     aws_atomic_init_int(&message->refcount, 1);
@@ -823,11 +821,15 @@ struct aws_http_message *aws_http2_message_new_from_http1(
 
     struct aws_http_headers *old_headers = aws_http_message_get_headers(http1_msg);
     bool is_pseudoheader = false;
-    struct aws_http_headers *copied_headers = aws_http_headers_new(alloc);
     struct aws_http_header header_iter;
     struct aws_byte_buf lower_name_buf;
     AWS_ZERO_STRUCT(lower_name_buf);
-
+    struct aws_http_message *message = aws_http_message_is_request(http1_msg) ? aws_http2_message_new_request(alloc)
+                                                                              : aws_http2_message_new_response(alloc);
+    struct aws_http_headers *copied_headers = message->headers;
+    if (!message) {
+        return NULL;
+    }
     /* Set pesudo headers from HTTP/1.1 message */
     struct aws_byte_cursor method;
     if (aws_http_message_get_request_method(http1_msg, &method)) {
@@ -908,12 +910,10 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         aws_byte_buf_reset(&lower_name_buf, false);
     }
     aws_byte_buf_clean_up(&lower_name_buf);
-    struct aws_http_message *message = aws_http_message_is_request(http1_msg) ? aws_http2_message_new_request(alloc)
-                                                                              : aws_http2_message_new_response(alloc);
 
-    return result;
+    return message;
 error:
-    aws_http_headers_release(result);
+    aws_http_message_release(message);
     aws_byte_buf_clean_up(&lower_name_buf);
     return NULL;
 }
