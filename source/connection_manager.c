@@ -59,7 +59,11 @@ bool aws_http_connection_manager_system_vtable_is_valid(const struct aws_http_co
            table->is_connection_available;
 }
 
-enum aws_http_connection_manager_state_type { AWS_HCMST_UNINITIALIZED, AWS_HCMST_READY, AWS_HCMST_SHUTTING_DOWN };
+enum aws_http_connection_manager_state_type {
+    AWS_HCMST_UNINITIALIZED,
+    AWS_HCMST_READY,
+    AWS_HCMST_SHUTTING_DOWN,
+};
 
 /**
  * Vocabulary
@@ -111,7 +115,7 @@ enum aws_http_connection_manager_state_type { AWS_HCMST_UNINITIALIZED, AWS_HCMST
  * than crash or underflow.  While in this state, we wait for a set of tracking counters to all fall to zero:
  *
  *   pending_connect_count - the # of unresolved calls to the http layer's connect logic
- *   open_connection_count - the # of connections for whom the release callback (from http) has not been invoked
+ *   open_connection_count - the # of connections for whom the shutdown callback (from http) has not been invoked
  *   vended_connection_count - the # of connections held by external users that haven't been released.  Under correct
  *      usage this should be zero before SHUTTING_DOWN is entered, but we attempt to handle incorrect usage gracefully.
  *
@@ -200,6 +204,9 @@ struct aws_http_connection_manager {
      */
     size_t open_connection_count;
 
+    /* Expected http version to get */
+    enum aws_http_version expected_version;
+
     /*
      * All the options needed to create an http connection
      */
@@ -213,6 +220,7 @@ struct aws_http_connection_manager {
     struct proxy_env_var_settings proxy_ev_settings;
     struct aws_tls_connection_options *proxy_ev_tls_options;
     uint16_t port;
+    struct aws_http2_connection_manager_options *h2_cm_options;
 
     /*
      * The maximum number of connections this manager should ever have at once.
@@ -250,6 +258,30 @@ struct aws_http_connection_manager {
      */
     struct aws_task *cull_task;
     struct aws_event_loop *cull_event_loop;
+
+    /**
+     * HTTP/2 connection specified structure.
+     *
+     * HTTP/2 connections will be stored in a table and maintain a refcount of the external user using the connection.
+     * - Once user want to acquire a connection:
+     *   - CM checks all the idle connections first, if there is one, give it to user and remove it from idle
+     *      connections.
+     *   - If no idle connections, CM checks all the existing connections to see any connections can accept more
+     *      streams, return the first available one.
+     *   - If no connections are available for new streams, CM tries to create a new connection or wait for
+     *      available. Same as HTTP/1 connection here.
+     * - Once user release a connection back:
+     *   - CM will get the connection from the table and check the refcount of the connection from external users, if no
+     *      external users using the connection, CM will do the same process as HTTP/1 does, which is checks if the
+     *      connection has been closed, CM will just release the resource of the connections, else put it into the idle
+     *      list.
+     *   - If the connection is still used by external users, CM will just decrease the refcount and do nothing.
+     */
+    /**
+     * The table that stores all the http2 connection that are opened by manager and still open.
+     * Hash from `aws_http_connection *` to `refcount (Not sure if a single refcount or aws_refcount is easier)`
+     */
+    struct aws_hash_table *h2_connection_table;
 };
 
 struct aws_http_connection_manager_snapshot {

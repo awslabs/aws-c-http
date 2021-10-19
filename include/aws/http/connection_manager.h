@@ -24,6 +24,16 @@ typedef void(aws_http_connection_manager_on_connection_setup_fn)(
 
 typedef void(aws_http_connection_manager_shutdown_complete_fn)(void *user_data);
 
+/**
+ * HTTP2 specific connection manager configuration.
+ * See `aws_http2_connection_options`
+ */
+struct aws_http2_connection_manager_options {
+    struct aws_http2_setting *initial_settings_array;
+    size_t num_initial_settings;
+    size_t max_closed_streams;
+};
+
 /*
  * Connection manager configuration struct.
  *
@@ -31,11 +41,7 @@ typedef void(aws_http_connection_manager_shutdown_complete_fn)(void *user_data);
  * the maximum number of connections to ever have in existence.
  */
 struct aws_http_connection_manager_options {
-    /*
-     * http connection configuration
-     */
     struct aws_client_bootstrap *bootstrap;
-    size_t initial_window_size;
     const struct aws_socket_options *socket_options;
     const struct aws_tls_connection_options *tls_connection_options;
     const struct aws_http_connection_monitoring_options *monitoring_options;
@@ -43,13 +49,36 @@ struct aws_http_connection_manager_options {
     uint16_t port;
     /* Proxy configuration for http connection */
     const struct aws_http_proxy_options *proxy_options;
-
     /*
      * Optional.
      * Configuration for using proxy from environment variable.
      * Only works when proxy_options is not set.
      */
     const struct proxy_env_var_settings *proxy_ev_settings;
+    /**
+     * Set to true to manually manage the flow-control window of each stream for the connections made.
+     */
+    bool enable_read_back_pressure;
+    size_t initial_window_size;
+
+    /**
+     * Optional.
+     * The expected http version to get from the manager.
+     * Default to be AWS_HTTP_VERSION_1_1.
+     *
+     * If set to AWS_HTTP_VERSION_2:
+     *  - If tls is not set, manager will use prior knowledge to set up http2 connection
+     *  - If tls is set, manager will try to do ALPN to set up the connection.
+     *  - If failed to get a HTTP/2 connection (server offers an HTTP/1 connection or something), the acquire of
+     *    connection will FAIL
+     */
+    enum aws_http_version expected_version;
+
+    /**
+     * Optional.
+     * Ignored if expected_version is not set to AWS_HTTP_VERSION_2.
+     */
+    struct aws_http2_connection_manager_options *http2_options;
 
     /*
      * Maximum number of connections this manager is allowed to contain
@@ -63,11 +92,6 @@ struct aws_http_connection_manager_options {
      */
     void *shutdown_complete_user_data;
     aws_http_connection_manager_shutdown_complete_fn *shutdown_complete_callback;
-
-    /**
-     * If set to true, the read back pressure mechanism will be enabled.
-     */
-    bool enable_read_back_pressure;
 
     /**
      * If set to a non-zero value, then connections that stay in the pool longer than the specified
