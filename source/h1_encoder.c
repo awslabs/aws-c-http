@@ -213,7 +213,7 @@ static int s_scan_outgoing_trailer(const struct aws_http_headers *headers, size_
             return AWS_OP_ERR;
         }
     }
-    if (total > 0 && aws_add_size_checked(2, total, &total)) { /* "\r\n" */
+    if (aws_add_size_checked(2, total, &total)) { /* "\r\n" */
         return AWS_OP_ERR;
     }
     *out_size = total;
@@ -522,9 +522,7 @@ struct aws_h1_trailer *aws_h1_trailer_new(
 
     aws_byte_buf_init(&trailer->trailer_data, allocator, trailer_size); /* cannot fail */
     s_write_headers(&trailer->trailer_data, trailing_headers);
-    if (trailer_size > 0) { /* \r\n if there are any trailers written */
-        s_write_crlf(&trailer->trailer_data);
-    }
+    s_write_crlf(&trailer->trailer_data); /* \r\n */
     return trailer;
 }
 

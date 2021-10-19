@@ -455,7 +455,8 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_empty_chunked_trailer) {
                            "10\r\n"
                            "write more tests"
                            "\r\n"
-                           "0\r\n";
+                           "0\r\n"
+                           "\r\n";
 
     ASSERT_SUCCESS(chunked_test_helper(&body, trailers, expected, tester, allocator));
     /* clean up */
