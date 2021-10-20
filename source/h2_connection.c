@@ -1904,6 +1904,7 @@ static void s_move_stream_to_thread(
     uint32_t max_concurrent_streams = connection->thread_data.settings_peer[AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS];
     if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) >= max_concurrent_streams) {
         AWS_H2_STREAM_LOG(ERROR, stream, "Failed activating stream, max concurrent streams are reached");
+        aws_raise_error(AWS_ERROR_HTTP_STREAM_EXCEED_MAX_CONCURRENT);
         goto error;
     }
 
