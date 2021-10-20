@@ -76,11 +76,6 @@ struct aws_http_header {
  *
  * - Headers with different names could be in any order, relative to one another.
  *   If "A: one" is seen before "B: bee" in one iteration, you might see "B: bee" before "A: one" on the next.
- *
- * For pseudo headers of HTTP/2, you should set it from aws_http2_headers_set_* or aws_http_headers_set after normal
- * headers are added. From set, the pseudo headers will be added in the front.
- * Other than that, pseudo headers are the same as normal headers, which means if you add pseudo
- * headers to headers after normal headers, it will still be accepted until the headers are sent
  */
 struct aws_http_headers;
 
@@ -401,21 +396,21 @@ AWS_HTTP_API
 void aws_http_headers_release(struct aws_http_headers *headers);
 
 /**
- * Add a header to the back of list.
+ * Add a header.
  * The underlying strings are copied.
  */
 AWS_HTTP_API
 int aws_http_headers_add_header(struct aws_http_headers *headers, const struct aws_http_header *header);
 
 /**
- * Add a header to the back of list.
+ * Add a header.
  * The underlying strings are copied.
  */
 AWS_HTTP_API
 int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value);
 
 /**
- * Add an array of headers to the back of list.
+ * Add an array of headers.
  * The underlying strings are copied.
  */
 AWS_HTTP_API
@@ -569,7 +564,7 @@ AWS_HTTP_API
 int aws_http2_headers_set_response_status(struct aws_http_headers *h2_headers, int status_code);
 
 /**
- * Create a new request message. HTTP/1.1 request
+ * Create a new HTTP/1.1 request message.
  * The message is blank, all properties (method, path, etc) must be set individually.
  * If HTTP/1.1 message used in HTTP/2 connection, the transformation will be automatically applied.
  * A HTTP/2 message will created and sent based on the HTTP/1.1 message.
@@ -589,10 +584,8 @@ struct aws_http_message *aws_http_message_new_request_with_headers(
     struct aws_http_headers *existing_headers);
 
 /**
- * Create a new response message. HTTP/1.1 response
+ * Create a new HTTP/1.1 response message.
  * The message is blank, all properties (status, headers, etc) must be set individually.
- * If HTTP/1.1 message used in HTTP/2 connection, the transformation will be automatically applied.
- * A HTTP/2 message will created and sent based on the HTTP/1.1 message.
  *
  * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
  */
@@ -600,7 +593,7 @@ AWS_HTTP_API
 struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator);
 
 /**
- * Create a new request message. HTTP/2 request
+ * Create a new HTTP/2 request message.
  * pesudo headers need to be set from aws_http2_headers_set_request_* to the headers of the aws_http_message.
  * Will be errored out if used in HTTP/1.1 connection.
  *
@@ -610,7 +603,7 @@ AWS_HTTP_API
 struct aws_http_message *aws_http2_message_new_request(struct aws_allocator *allocator);
 
 /**
- * Create a new response message. HTTP/2 response
+ * Create a new HTTP/2 response message.
  * pesudo headers need to be set from aws_http2_headers_set_response_status to the headers of the aws_http_message.
  * Will be errored out if used in HTTP/1.1 connection.
  *
@@ -649,7 +642,7 @@ bool aws_http_message_is_response(const struct aws_http_message *message);
  * Get the protocol version of the http message.
  */
 AWS_HTTP_API
-enum aws_http_version aws_http_message_get_protocol_version(struct aws_http_message *message);
+enum aws_http_version aws_http_message_get_protocol_version(const struct aws_http_message *message);
 
 /**
  * Get the method (request messages only).

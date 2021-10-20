@@ -115,7 +115,7 @@ AWS_HTTP_API
 bool aws_strutil_is_http_request_target(struct aws_byte_cursor cursor);
 
 /**
- * Return whether this ASCII/UTF-8 sequence is a valid HTTP pseudo header name.
+ * Return whether this ASCII/UTF-8 sequence start with ":" or not as the requirement for pseudo headers.
  */
 AWS_HTTP_API
 bool aws_strutil_is_http_pseudo_header_name(struct aws_byte_cursor cursor);
