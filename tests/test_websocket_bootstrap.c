@@ -10,7 +10,7 @@
 #include <aws/http/request_response.h>
 #include <aws/io/logging.h>
 #include <aws/io/uri.h>
-#include <aws/testing/aws_test_allocators.h>
+#include <aws/testing/aws_test_harness.h>
 
 #if _MSC_VER
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
@@ -601,47 +601,6 @@ TEST_CASE(websocket_boot_fail_at_new_handler) {
 
 TEST_CASE(websocket_boot_report_unexpected_http_shutdown) {
     return s_websocket_boot_fail_at_step_test(allocator, ctx, BOOT_STEP_HTTP_SHUTDOWN);
-}
-
-/* Run connection process with an allocator that fakes running out of memory after N allocations. */
-TEST_CASE(websocket_boot_fail_because_oom) {
-    (void)ctx;
-
-    struct aws_allocator timebomb_alloc;
-    ASSERT_SUCCESS(aws_timebomb_allocator_init(&timebomb_alloc, allocator, SIZE_MAX));
-
-    /* Only use the timebomb allocator with actual the tester, not the logger or other systems. */
-    s_tester.alloc = &timebomb_alloc;
-
-    ASSERT_SUCCESS(s_tester_init(allocator));
-
-    /* In a loop, keep trying to connect, allowing more and more allocations to succeed,
-     * until the connection completes successfully */
-    bool websocket_connect_eventually_succeeded = false;
-    const int max_tries = 10000;
-    int timer;
-    for (timer = 0; timer < max_tries; ++timer) {
-        aws_timebomb_allocator_reset_countdown(&timebomb_alloc, timer);
-
-        int websocket_connect_error_code;
-        ASSERT_SUCCESS(s_drive_websocket_connect(&websocket_connect_error_code));
-
-        if (websocket_connect_error_code) {
-            /* Assert that proper error code bubbled all the way out */
-            ASSERT_TRUE(websocket_connect_error_code == AWS_ERROR_OOM);
-        } else {
-            /* Break out of loop once websocket_connect() succeeds. */
-            websocket_connect_eventually_succeeded = true;
-            break;
-        }
-    }
-
-    ASSERT_TRUE(websocket_connect_eventually_succeeded);
-    ASSERT_TRUE(timer >= 2); /* Assert that we actually did fail a few times */
-
-    ASSERT_SUCCESS(s_tester_clean_up());
-    aws_timebomb_allocator_clean_up(&timebomb_alloc);
-    return AWS_OP_SUCCESS;
 }
 
 /* Check that AWS_WEBSOCKET_MAX_HANDSHAKE_KEY_LENGTH is sufficiently large */
