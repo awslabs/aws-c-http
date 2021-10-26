@@ -724,6 +724,27 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
     const struct aws_http1_chunk_options *options);
 
 /**
+ * Add a list of headers to be added as trailing headers sent after the last chunk is sent.
+ * The stream must have specified "chunked" in a "transfer-encoding" header. The stream should also have
+ * a "Trailer" header field which indicates the fields present in the trailer.
+ *
+ * Certain headers are forbidden in the trailer (e.g., Transfer-Encoding, Content-Length, Host). See RFC-7541
+ * Section 4.1.2 for more details.
+ *
+ * For client streams, activate() must be called before any chunks are submitted.
+ *
+ * For server streams, the response must be submitted before the trailer can be added
+ *
+ * aws_http1_stream_add_chunked_trailer must be called before the final size 0 chunk, and at the moment can only
+ * be called once, though this could change if need be.
+ *
+ * Returns AWS_OP_SUCCESS if the chunk has been submitted.
+ */
+AWS_HTTP_API int aws_http1_stream_add_chunked_trailer(
+    struct aws_http_stream *http1_stream,
+    const struct aws_http_headers *trailing_headers);
+
+/**
  * Get the message's aws_http_headers.
  *
  * This datastructure has more functions for inspecting and modifying headers than

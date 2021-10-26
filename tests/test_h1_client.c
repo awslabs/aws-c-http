@@ -326,6 +326,409 @@ H1_CLIENT_TEST_CASE(h1_client_request_send_body_chunked) {
     return AWS_OP_SUCCESS;
 }
 
+int chunked_test_helper(
+    const struct aws_byte_cursor *body,
+    struct aws_http_headers *trailers,
+    const char *expected,
+    struct tester tester,
+    struct aws_allocator *allocator) {
+
+    /* send request */
+    struct aws_http_message *request = s_new_default_chunked_put_request(allocator);
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+
+    /* Initialize and send the stream chunks */
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
+    if (body != NULL) {
+        struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, body);
+        struct aws_http1_chunk_options options = s_default_chunk_options(body_stream, body->len);
+        ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
+    }
+    ASSERT_SUCCESS(aws_http1_stream_add_chunked_trailer(stream, trailers));
+    ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* check result */
+    ASSERT_SUCCESS(testing_channel_check_written_messages_str(&tester.testing_channel, allocator, expected));
+
+    /* clean up */
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+    return AWS_OP_SUCCESS;
+}
+
+int chunked_trailer_succeed(
+    const struct aws_byte_cursor *body,
+    struct aws_http_headers *trailers,
+    struct tester tester,
+    struct aws_allocator *allocator) {
+
+    /* send request */
+    struct aws_http_message *request = s_new_default_chunked_put_request(allocator);
+    struct aws_http_make_request_options opt = {
+        .self_size = sizeof(opt),
+        .request = request,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(tester.connection, &opt);
+    ASSERT_NOT_NULL(stream);
+
+    /* Initialize and send the stream chunks */
+    ASSERT_SUCCESS(aws_http_stream_activate(stream));
+    if (body != NULL) {
+        struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(allocator, body);
+        struct aws_http1_chunk_options options = s_default_chunk_options(body_stream, body->len);
+        ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream, &options));
+    }
+
+    /* kind of gross, but good enough for now */
+    int err = aws_http1_stream_add_chunked_trailer(stream, trailers);
+    if (err) {
+        aws_http_message_destroy(request);
+        aws_http_stream_release(stream);
+        return err;
+    }
+    ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream));
+
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    /* clean up */
+    aws_http_message_destroy(request);
+    aws_http_stream_release(stream);
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_request_send_chunked_trailer) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+    struct aws_http_headers *trailers = aws_http_headers_new(allocator);
+    const struct aws_http_header trailer = {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("chunked"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("trailer"),
+    };
+    const struct aws_http_header trailer1 = {
+        .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("another"),
+        .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("test"),
+    };
+    aws_http_headers_add_header(trailers, &trailer);
+    aws_http_headers_add_header(trailers, &trailer1);
+
+    /* Initialize and send the stream chunks */
+    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
+
+    const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
+                           "Transfer-Encoding: chunked\r\n"
+                           "\r\n"
+                           "10\r\n"
+                           "write more tests"
+                           "\r\n"
+                           "0\r\n"
+                           "chunked: trailer\r\n"
+                           "another: test\r\n"
+                           "\r\n";
+
+    ASSERT_SUCCESS(chunked_test_helper(&body, trailers, expected, tester, allocator));
+    /* clean up */
+    aws_http_headers_release(trailers);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_request_send_empty_chunked_trailer) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+    struct aws_http_headers *trailers = aws_http_headers_new(allocator);
+
+    /* Initialize and send the stream chunks */
+    static const struct aws_byte_cursor body = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("write more tests");
+
+    const char *expected = "PUT /plan.txt HTTP/1.1\r\n"
+                           "Transfer-Encoding: chunked\r\n"
+                           "\r\n"
+                           "10\r\n"
+                           "write more tests"
+                           "\r\n"
+                           "0\r\n"
+                           "\r\n";
+
+    ASSERT_SUCCESS(chunked_test_helper(&body, trailers, expected, tester, allocator));
+    /* clean up */
+    aws_http_headers_release(trailers);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
+H1_CLIENT_TEST_CASE(h1_client_request_forbidden_trailer) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct aws_http_headers *success = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        success,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("should"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("succeed"),
+        });
+    struct aws_http_headers *transfer_encoding = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        transfer_encoding,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Transfer-Encoding"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("gzip, chunked"),
+        });
+    struct aws_http_headers *content_length = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        content_length,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Content-Length"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("3495"),
+        });
+    struct aws_http_headers *host = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        host,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Host"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("www.example.org"),
+        });
+    struct aws_http_headers *cache_control = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        cache_control,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Cache-Control"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("private"),
+        });
+    struct aws_http_headers *expect = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        expect,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Expect"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("100-continue"),
+        });
+    struct aws_http_headers *max_forwards = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        max_forwards,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("max-forwards"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("123"),
+        });
+    struct aws_http_headers *pragma = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        pragma,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("pragma"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("no-cache"),
+        });
+    struct aws_http_headers *range = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        range,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("range"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("bytes=0-1023"),
+        });
+    struct aws_http_headers *te = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        te,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("te"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("trailers, deflate;q=0.5"),
+        });
+    struct aws_http_headers *www_authenticate = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        www_authenticate,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("www-authenticate"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(
+                "Newauth realm=\"apps\", type=1,title=\"Login to \"apps\"\", Basic realm=\"simple\""),
+        });
+    struct aws_http_headers *authorization = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        authorization,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("authorization"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("credentials"),
+        });
+    struct aws_http_headers *proxy_authenticate = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        proxy_authenticate,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("proxy-authenticate"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Basic YWxhZGRpbjpvcGVuc2VzYW1l"),
+        });
+    struct aws_http_headers *proxy_authorization = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        proxy_authorization,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("proxy-authorization"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("credentials"),
+        });
+    struct aws_http_headers *set_cookie = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        set_cookie,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("set-cookie"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("sessionId=38afes7a8"),
+        });
+    struct aws_http_headers *cookie = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        cookie,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("cookie"),
+            .value =
+                AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("PHPSESSID=298zf09hf012fh2; csrftoken=u32t4o3tb3gg43; _gat=1"),
+        });
+    struct aws_http_headers *age = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        age,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("age"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("24"),
+        });
+    struct aws_http_headers *expires = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        expires,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("expires"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Wed, 21 Oct 2015 07:28:00 GMT"),
+        });
+    struct aws_http_headers *date = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        date,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("date"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Wed, 21 Oct 2015 07:28:00 GMT"),
+        });
+    struct aws_http_headers *location = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        location,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("location"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("/index.html"),
+        });
+    struct aws_http_headers *retry_after = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        retry_after,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("retry-after"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("120"),
+        });
+    struct aws_http_headers *vary = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        vary,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("vary"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("User-Agent"),
+        });
+
+    struct aws_http_headers *warning = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        warning,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("warning"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("110 anderson/1.3.37 \"Response is stale\""),
+        });
+    struct aws_http_headers *content_encoding = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        content_encoding,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("content-encoding"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("gzip"),
+        });
+
+    struct aws_http_headers *content_type = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        content_type,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("content-type"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("text/html"),
+        });
+    struct aws_http_headers *content_range = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        content_range,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("content-range"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("bytes 200-1000/67589"),
+        });
+
+    struct aws_http_headers *trailer = aws_http_headers_new(allocator);
+    aws_http_headers_add_header(
+        trailer,
+        &(struct aws_http_header){
+            .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("trailer"),
+            .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("Expires"),
+        });
+
+    ASSERT_SUCCESS(chunked_trailer_succeed(NULL, success, tester, allocator));
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, transfer_encoding, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, content_length, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, host, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, cache_control, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, expect, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, max_forwards, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, pragma, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, range, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, te, tester, allocator));
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, www_authenticate, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, authorization, tester, allocator));
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, proxy_authenticate, tester, allocator));
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, proxy_authorization, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, set_cookie, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, cookie, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, age, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, expires, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, date, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, location, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, retry_after, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, vary, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, warning, tester, allocator));
+    ASSERT_ERROR(
+        AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, content_encoding, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, content_type, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, content_range, tester, allocator));
+    ASSERT_ERROR(AWS_ERROR_HTTP_INVALID_HEADER_FIELD, chunked_trailer_succeed(NULL, trailer, tester, allocator));
+    /* clean up */
+    aws_http_headers_release(success);
+    aws_http_headers_release(transfer_encoding);
+    aws_http_headers_release(content_length);
+    aws_http_headers_release(host);
+    aws_http_headers_release(cache_control);
+    aws_http_headers_release(expect);
+    aws_http_headers_release(max_forwards);
+    aws_http_headers_release(pragma);
+    aws_http_headers_release(range);
+    aws_http_headers_release(te);
+    aws_http_headers_release(www_authenticate);
+    aws_http_headers_release(authorization);
+    aws_http_headers_release(proxy_authenticate);
+    aws_http_headers_release(proxy_authorization);
+    aws_http_headers_release(set_cookie);
+    aws_http_headers_release(cookie);
+    aws_http_headers_release(age);
+    aws_http_headers_release(expires);
+    aws_http_headers_release(date);
+    aws_http_headers_release(location);
+    aws_http_headers_release(retry_after);
+    aws_http_headers_release(vary);
+    aws_http_headers_release(warning);
+    aws_http_headers_release(content_encoding);
+    aws_http_headers_release(content_type);
+    aws_http_headers_release(content_range);
+    aws_http_headers_release(trailer);
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    return AWS_OP_SUCCESS;
+}
+
 H1_CLIENT_TEST_CASE(h1_client_request_send_chunked_extensions) {
     (void)ctx;
     struct tester tester;

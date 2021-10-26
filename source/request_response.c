@@ -742,6 +742,23 @@ int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, const str
     return http1_stream->vtable->http1_write_chunk(http1_stream, options);
 }
 
+int aws_http1_stream_add_chunked_trailer(
+    struct aws_http_stream *http1_stream,
+    const struct aws_http_headers *trailing_headers) {
+    AWS_PRECONDITION(http1_stream);
+    AWS_PRECONDITION(http1_stream->vtable);
+    AWS_PRECONDITION(trailing_headers);
+    if (!http1_stream->vtable->http1_add_trailer) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: HTTP/1 stream only function invoked on other stream, ignoring call.",
+            (void *)http1_stream);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    return http1_stream->vtable->http1_add_trailer(http1_stream, trailing_headers);
+}
+
 struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_message *message) {
     AWS_PRECONDITION(message);
     return message->body_stream;
