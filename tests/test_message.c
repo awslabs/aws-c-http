@@ -452,21 +452,3 @@ TEST_CASE(message_with_existing_headers) {
     aws_http_message_release(message);
     return AWS_OP_SUCCESS;
 }
-
-static int s_compare_headers(const struct aws_http_headers *expected, const struct aws_http_headers *got) {
-
-    ASSERT_UINT_EQUALS(aws_http_headers_count(expected), aws_http_headers_count(got));
-    for (size_t i = 0; i < aws_http_headers_count(expected); ++i) {
-        struct aws_http_header expected_field;
-        aws_http_headers_get_index(expected, i, &expected_field);
-
-        struct aws_http_header got_field;
-        aws_http_headers_get_index(got, i, &got_field);
-
-        ASSERT_TRUE(aws_byte_cursor_eq(&expected_field.name, &got_field.name));
-        ASSERT_TRUE(aws_byte_cursor_eq(&expected_field.value, &got_field.value));
-        ASSERT_INT_EQUALS(expected_field.compression, got_field.compression);
-    }
-
-    return AWS_OP_SUCCESS;
-}

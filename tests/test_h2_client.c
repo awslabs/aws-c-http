@@ -592,6 +592,56 @@ TEST_CASE(h2_client_stream_with_h1_request_message) {
     return s_tester_clean_up();
 }
 
+/* Test that h2 stream can split the cookies header correctly */
+TEST_CASE(h2_client_stream_with_cookies_headers) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send an h1 request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_message_set_request_method(request, aws_http_method_get));
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER("Accept", "*/*"),
+        DEFINE_HEADER("Host", "example.com"),
+        DEFINE_HEADER("cookie", "a=b; c=d; e=f"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+
+    /* set expected h2 style headers */
+    struct aws_http_header expected_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":authority", "example.com"),
+        DEFINE_HEADER(":path", "/"),
+        DEFINE_HEADER("accept", "*/*"),
+        DEFINE_HEADER("cookie", "a=b; c=d; e=f"),
+    };
+    struct aws_http_headers *expected_headers = aws_http_headers_new(allocator);
+    ASSERT_SUCCESS(
+        aws_http_headers_add_array(expected_headers, expected_headers_src, AWS_ARRAY_SIZE(expected_headers_src)));
+    /* validate sent request, */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct h2_decoded_frame *sent_headers_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
+    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_HEADERS, sent_headers_frame->type);
+    ASSERT_TRUE(sent_headers_frame->end_stream);
+    ASSERT_SUCCESS(s_compare_headers(expected_headers, sent_headers_frame->headers));
+
+    /* clean up */
+    aws_http_headers_release(expected_headers);
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
 /* Receiving malformed headers should result in a "Stream Error", not a "Connection Error". */
 TEST_CASE(h2_client_stream_err_malformed_header) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
