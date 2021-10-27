@@ -34,7 +34,6 @@ add_test_case(message_request_path)
 add_test_case(message_response_status)
 add_test_case(message_refcounts)
 add_test_case(message_with_existing_headers)
-add_test_case(h2_message_with_cookie_headers)
 
 add_test_case(h1_test_get_request)
 add_test_case(h1_test_request_bad_version)
