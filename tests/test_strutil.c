@@ -357,8 +357,8 @@ static int s_strutil_is_http_pseudo_header_name(struct aws_allocator *allocator,
     ASSERT_FALSE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str("")));
 
     /* Bad to have other values */
-    ASSERT_FALSE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str(":connect")));
-    ASSERT_FALSE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str(":Method")));
+    ASSERT_FALSE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str("connect")));
+    ASSERT_FALSE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str("Method")));
     ASSERT_FALSE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str("httpCRT")));
     return 0;
 }

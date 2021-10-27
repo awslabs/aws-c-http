@@ -136,7 +136,18 @@ error:
 }
 
 int aws_http_headers_add_header(struct aws_http_headers *headers, const struct aws_http_header *header) {
-    return s_http_headers_add_header_impl(headers, header, false /*front*/);
+    /* Add pseudo headers to the front and not checking any violation until we send the header to the wire */
+    bool pseudo = aws_strutil_is_http_pseudo_header_name(header->name);
+    bool front = false;
+    if (pseudo && aws_http_headers_count(headers)) {
+        struct aws_http_header last_header;
+        /* TODO: instead if checking the last header, maybe we can add the pesudo headers to the end of the existing
+         * pesudo headers, which needs to insert to the middle of the array list. */
+        AWS_ZERO_STRUCT(last_header);
+        aws_http_headers_get_index(headers, aws_http_headers_count(headers) - 1, &last_header);
+        front = !aws_strutil_is_http_pseudo_header_name(last_header.name);
+    }
+    return s_http_headers_add_header_impl(headers, header, front);
 }
 
 int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value) {
@@ -298,18 +309,14 @@ int aws_http_headers_get_index(
     return aws_array_list_get_at(&headers->array_list, out_header, index);
 }
 
-static int s_http_headers_get_impl(
+int aws_http_headers_get(
     const struct aws_http_headers *headers,
     struct aws_byte_cursor name,
-    struct aws_byte_cursor *out_value,
-    bool pseudo_headers) {
+    struct aws_byte_cursor *out_value) {
 
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(out_value);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
-    if (pseudo_headers) {
-        AWS_PRECONDITION(aws_strutil_is_http_pseudo_header_name(name));
-    }
 
     struct aws_http_header *header = NULL;
     const size_t count = aws_http_headers_count(headers);
@@ -321,21 +328,9 @@ static int s_http_headers_get_impl(
             *out_value = header->value;
             return AWS_OP_SUCCESS;
         }
-        if (pseudo_headers) {
-            if (!aws_strutil_is_http_pseudo_header_name(header->name)) {
-                break;
-            }
-        }
     }
 
     return aws_raise_error(AWS_ERROR_HTTP_HEADER_NOT_FOUND);
-}
-
-int aws_http_headers_get(
-    const struct aws_http_headers *headers,
-    struct aws_byte_cursor name,
-    struct aws_byte_cursor *out_value) {
-    return s_http_headers_get_impl(headers, name, out_value, false /*pseudo_headers*/);
 }
 
 bool aws_http_headers_has(const struct aws_http_headers *headers, struct aws_byte_cursor name) {
@@ -350,29 +345,28 @@ bool aws_http_headers_has(const struct aws_http_headers *headers, struct aws_byt
 int aws_http2_headers_get_request_method(
     const struct aws_http_headers *h2_headers,
     struct aws_byte_cursor *out_method) {
-    return s_http_headers_get_impl(h2_headers, aws_http_header_method, out_method, true /*pseudo_headers*/);
+    return aws_http_headers_get(h2_headers, aws_http_header_method, out_method);
 }
 
 int aws_http2_headers_get_request_scheme(
     const struct aws_http_headers *h2_headers,
     struct aws_byte_cursor *out_scheme) {
-    return s_http_headers_get_impl(h2_headers, aws_http_header_scheme, out_scheme, true /*pseudo_headers*/);
+    return aws_http_headers_get(h2_headers, aws_http_header_scheme, out_scheme);
 }
 
 int aws_http2_headers_get_request_authority(
     const struct aws_http_headers *h2_headers,
     struct aws_byte_cursor *out_authority) {
-    return s_http_headers_get_impl(h2_headers, aws_http_header_authority, out_authority, true /*pseudo_headers*/);
+    return aws_http_headers_get(h2_headers, aws_http_header_authority, out_authority);
 }
 
 int aws_http2_headers_get_request_path(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_path) {
-    return s_http_headers_get_impl(h2_headers, aws_http_header_path, out_path, true /*pseudo_headers*/);
+    return aws_http_headers_get(h2_headers, aws_http_header_path, out_path);
 }
 
 int aws_http2_headers_get_response_status(const struct aws_http_headers *h2_headers, int *out_status_code) {
     struct aws_byte_cursor status_code_cur;
-    int return_code =
-        s_http_headers_get_impl(h2_headers, aws_http_header_status, &status_code_cur, true /*pseudo_headers*/);
+    int return_code = aws_http_headers_get(h2_headers, aws_http_header_status, &status_code_cur);
     if (return_code == AWS_OP_SUCCESS) {
         uint64_t code_val_u64;
         if (aws_strutil_read_unsigned_num(status_code_cur, &code_val_u64)) {
@@ -401,7 +395,10 @@ int aws_http2_headers_set_request_path(struct aws_http_headers *h2_headers, stru
 
 int aws_http2_headers_set_response_status(struct aws_http_headers *h2_headers, int status_code) {
     /* Status code must fit in 3 digits */
-    char status_code_str[4] = "XXX";
+    if (status_code < 0 || status_code > 999) {
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+    char status_code_str[4] = "000";
     snprintf(status_code_str, sizeof(status_code_str), "%03d", status_code);
     struct aws_byte_cursor status_code_cur = aws_byte_cursor_from_c_str(status_code_str);
     return aws_http_headers_set(h2_headers, aws_http_header_status, status_code_cur);
@@ -577,7 +574,7 @@ bool aws_http_message_is_response(const struct aws_http_message *message) {
     return message->response_data;
 }
 
-enum aws_http_version aws_http_message_get_protocol_version(struct aws_http_message *message) {
+enum aws_http_version aws_http_message_get_protocol_version(const struct aws_http_message *message) {
     AWS_PRECONDITION(message);
     return message->http_version;
 }
@@ -741,6 +738,23 @@ int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, const str
     }
 
     return http1_stream->vtable->http1_write_chunk(http1_stream, options);
+}
+
+int aws_http1_stream_add_chunked_trailer(
+    struct aws_http_stream *http1_stream,
+    const struct aws_http_headers *trailing_headers) {
+    AWS_PRECONDITION(http1_stream);
+    AWS_PRECONDITION(http1_stream->vtable);
+    AWS_PRECONDITION(trailing_headers);
+    if (!http1_stream->vtable->http1_add_trailer) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: HTTP/1 stream only function invoked on other stream, ignoring call.",
+            (void *)http1_stream);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    return http1_stream->vtable->http1_add_trailer(http1_stream, trailing_headers);
 }
 
 struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_message *message) {
