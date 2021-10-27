@@ -253,7 +253,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
             stream->thread_data.outgoing_message =
                 aws_http2_message_new_from_http1(options->request, stream->base.alloc);
             if (!stream->thread_data.outgoing_message) {
-                AWS_H2_STREAM_LOG(ERROR, stream, "Stream failed to create the http2 message from http1 message");
+                AWS_H2_STREAM_LOG(ERROR, stream, "Stream failed to create the HTTP/2 message from HTTP/1.1 message");
                 goto error;
             }
             stream->backup_outgoing_message = options->request;
