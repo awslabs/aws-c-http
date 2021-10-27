@@ -136,15 +136,15 @@ error:
 }
 
 int aws_http_headers_add_header(struct aws_http_headers *headers, const struct aws_http_header *header) {
-    /* Add pesudo headers to the front and not checking any violation until we send the header to the wire */
-    bool pesudo = aws_strutil_is_http_pseudo_header_name(header->name);
+    /* Add pseudo headers to the front and not checking any violation until we send the header to the wire */
+    bool pseudo = aws_strutil_is_http_pseudo_header_name(header->name);
     bool front = false;
-    if (pesudo && aws_http_headers_count(headers)) {
+    if (pseudo && aws_http_headers_count(headers)) {
         struct aws_http_header last_header;
+        /* TODO: instead if checking the last header, maybe we can add the pesudo headers to the end of the existing
+         * pesudo headers, which needs to insert to the middle of the array list. */
         AWS_ZERO_STRUCT(last_header);
-        if (aws_http_headers_get_index(headers, aws_http_headers_count(headers) - 1, &last_header)) {
-            return AWS_OP_ERR;
-        }
+        aws_http_headers_get_index(headers, aws_http_headers_count(headers) - 1, &last_header);
         front = !aws_strutil_is_http_pseudo_header_name(last_header.name);
     }
     return s_http_headers_add_header_impl(headers, header, front);
