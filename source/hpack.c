@@ -4,6 +4,8 @@
  */
 #include <aws/http/private/hpack.h>
 
+#include <aws/http/private/http_impl.h>
+#include <aws/http/private/strutil.h>
 #include <aws/http/request_response.h>
 
 #include <aws/compression/huffman.h>
@@ -1459,7 +1461,22 @@ int aws_hpack_encode_header_block(
     for (size_t i = 0; i < num_headers; ++i) {
         struct aws_http_header header;
         aws_http_headers_get_index(headers, i, &header);
-        if (s_encode_header_field(context, &header, output)) {
+        if (header.compression == AWS_HTTP_HEADER_COMPRESSION_USE_CACHE &&
+            aws_http_lowercase_str_to_header_name(header.name) == AWS_HTTP_HEADER_COOKIE) {
+            /* Split the cookie header into chunks for improving the compression. */
+            struct aws_byte_cursor cookie_chunk;
+            AWS_ZERO_STRUCT(cookie_chunk);
+            while (aws_byte_cursor_next_split(&header.value, ';', &cookie_chunk)) {
+                struct aws_http_header chunk_header = {
+                    .compression = AWS_HTTP_HEADER_COMPRESSION_USE_CACHE,
+                    .name = header.name,
+                    .value = aws_strutil_trim_http_whitespace(cookie_chunk),
+                };
+                if (s_encode_header_field(context, &chunk_header, output)) {
+                    return AWS_OP_ERR;
+                }
+            }
+        } else if (s_encode_header_field(context, &header, output)) {
             return AWS_OP_ERR;
         }
     }

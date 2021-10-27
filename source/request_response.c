@@ -141,8 +141,8 @@ int aws_http_headers_add_header(struct aws_http_headers *headers, const struct a
     bool front = false;
     if (pseudo && aws_http_headers_count(headers)) {
         struct aws_http_header last_header;
-        /* TODO: instead if checking the last header, maybe we can add the pesudo headers to the end of the existing
-         * pesudo headers, which needs to insert to the middle of the array list. */
+        /* TODO: instead if checking the last header, maybe we can add the pseudo headers to the end of the existing
+         * pseudo headers, which needs to insert to the middle of the array list. */
         AWS_ZERO_STRUCT(last_header);
         aws_http_headers_get_index(headers, aws_http_headers_count(headers) - 1, &last_header);
         front = !aws_strutil_is_http_pseudo_header_name(last_header.name);
@@ -843,7 +843,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
     if (!message) {
         return NULL;
     }
-    /* Set pesudo headers from HTTP/1.1 message */
+    /* Set pseudo headers from HTTP/1.1 message */
     struct aws_byte_cursor method;
     if (aws_http_message_get_request_method(http1_msg, &method)) {
         AWS_LOGF_ERROR(
@@ -866,7 +866,8 @@ struct aws_http_message *aws_http2_message_new_from_http1(
     if (aws_http_headers_add(copied_headers, aws_http_header_scheme, scheme_cursor)) {
         goto error;
     }
-    /* Set an empty authority for now, if host header field is found, we set it as the value of host */
+
+    /* if host header found, add it as :authority */
     struct aws_byte_cursor authority_cursor;
     struct aws_byte_cursor host_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("host");
     if (!aws_http_headers_get(old_headers, host_cursor, &authority_cursor)) {
@@ -878,7 +879,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
     if (aws_http_message_get_request_path(http1_msg, &path_cursor)) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_GENERAL,
-            "Failed to create http2 message from http1 message, ip: %p, due to no path found.",
+            "Failed to create HTTP/2 message from HTTP/1 message, ip: %p, due to no path found.",
             (void *)http1_msg);
         aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
         goto error;
@@ -901,23 +902,6 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         struct aws_byte_cursor lower_name_cursor = aws_byte_cursor_from_buf(&lower_name_buf);
         enum aws_http_header_name name_enum = aws_http_lowercase_str_to_header_name(lower_name_cursor);
         switch (name_enum) {
-            case AWS_HTTP_HEADER_COOKIE:
-                /* split cookie if USE CACHE */
-                if (header_iter.compression == AWS_HTTP_HEADER_COMPRESSION_USE_CACHE) {
-                    struct aws_byte_cursor cookie_chunk;
-                    AWS_ZERO_STRUCT(cookie_chunk);
-                    while (aws_byte_cursor_next_split(&header_iter.value, ';', &cookie_chunk)) {
-                        if (aws_http_headers_add(
-                                copied_headers, lower_name_cursor, aws_strutil_trim_http_whitespace(cookie_chunk))) {
-                            goto error;
-                        }
-                    }
-                } else {
-                    if (aws_http_headers_add(copied_headers, lower_name_cursor, header_iter.value)) {
-                        goto error;
-                    }
-                }
-                break;
             case AWS_HTTP_HEADER_HOST:
                 /* host header has been converted to :authority, do nothing here */
                 break;

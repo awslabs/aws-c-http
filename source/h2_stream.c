@@ -256,6 +256,8 @@ struct aws_h2_stream *aws_h2_stream_new_request(
                 AWS_H2_STREAM_LOG(ERROR, stream, "Stream failed to create the http2 message from http1 message");
                 goto error;
             }
+            stream->backup_outgoing_message = options->request;
+            aws_http_message_acquire(stream->backup_outgoing_message);
             break;
         case AWS_HTTP_VERSION_2:
             stream->thread_data.outgoing_message = options->request;
@@ -281,8 +283,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
         &stream->cross_thread_work_task, s_stream_cross_thread_work_task, stream, "HTTP/2 stream cross-thread work");
     return stream;
 error:
-    aws_http_message_release(stream->thread_data.outgoing_message);
-    aws_mem_release(stream->base.alloc, stream);
+    s_stream_destroy(&stream->base);
     return NULL;
 }
 
@@ -355,6 +356,7 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     AWS_H2_STREAM_LOG(DEBUG, stream, "Destroying stream");
     aws_mutex_clean_up(&stream->synced_data.lock);
     aws_http_message_release(stream->thread_data.outgoing_message);
+    aws_http_message_release(stream->backup_outgoing_message);
 
     aws_mem_release(stream->base.alloc, stream);
 }
