@@ -497,8 +497,77 @@ AWS_HTTP_API
 void aws_http_headers_clear(struct aws_http_headers *headers);
 
 /**
- * Create a new request message.
+ * Get the `:method` value (HTTP/2 headers only).
+ */
+AWS_HTTP_API
+int aws_http2_headers_get_request_method(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_method);
+
+/**
+ * Set `:method` (HTTP/2 headers only).
+ * The headers makes its own copy of the underlying string.
+ */
+AWS_HTTP_API
+int aws_http2_headers_set_request_method(struct aws_http_headers *h2_headers, struct aws_byte_cursor method);
+
+/*
+ * Get the `:scheme` value (HTTP/2 headers only).
+ */
+AWS_HTTP_API
+int aws_http2_headers_get_request_scheme(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_scheme);
+
+/**
+ * Set `:scheme` (request pseudo headers only).
+ * The pseudo headers makes its own copy of the underlying string.
+ */
+AWS_HTTP_API
+int aws_http2_headers_set_request_scheme(struct aws_http_headers *h2_headers, struct aws_byte_cursor scheme);
+
+/*
+ * Get the `:authority` value (request pseudo headers only).
+ */
+AWS_HTTP_API
+int aws_http2_headers_get_request_authority(
+    const struct aws_http_headers *h2_headers,
+    struct aws_byte_cursor *out_authority);
+
+/**
+ * Set `:authority` (request pseudo headers only).
+ * The pseudo headers makes its own copy of the underlying string.
+ */
+AWS_HTTP_API
+int aws_http2_headers_set_request_authority(struct aws_http_headers *h2_headers, struct aws_byte_cursor authority);
+
+/*
+ * Get the `:path` value (request pseudo headers only).
+ */
+AWS_HTTP_API
+int aws_http2_headers_get_request_path(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_path);
+
+/**
+ * Set `:path` (request pseudo headers only).
+ * The pseudo headers makes its own copy of the underlying string.
+ */
+AWS_HTTP_API
+int aws_http2_headers_set_request_path(struct aws_http_headers *h2_headers, struct aws_byte_cursor path);
+
+/**
+ * Get `:status` (response pseudo headers only).
+ * If no status is set, AWS_ERROR_HTTP_DATA_NOT_AVAILABLE is raised.
+ */
+AWS_HTTP_API
+int aws_http2_headers_get_response_status(const struct aws_http_headers *h2_headers, int *out_status_code);
+
+/**
+ * Set `:status` (response pseudo headers only).
+ */
+AWS_HTTP_API
+int aws_http2_headers_set_response_status(struct aws_http_headers *h2_headers, int status_code);
+
+/**
+ * Create a new HTTP/1.1 request message.
  * The message is blank, all properties (method, path, etc) must be set individually.
+ * If HTTP/1.1 message used in HTTP/2 connection, the transformation will be automatically applied.
+ * A HTTP/2 message will created and sent based on the HTTP/1.1 message.
  *
  * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
  */
@@ -515,13 +584,33 @@ struct aws_http_message *aws_http_message_new_request_with_headers(
     struct aws_http_headers *existing_headers);
 
 /**
- * Create a new response message.
+ * Create a new HTTP/1.1 response message.
  * The message is blank, all properties (status, headers, etc) must be set individually.
  *
  * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
  */
 AWS_HTTP_API
 struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator);
+
+/**
+ * Create a new HTTP/2 request message.
+ * pseudo headers need to be set from aws_http2_headers_set_request_* to the headers of the aws_http_message.
+ * Will be errored out if used in HTTP/1.1 connection.
+ *
+ * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
+ */
+AWS_HTTP_API
+struct aws_http_message *aws_http2_message_new_request(struct aws_allocator *allocator);
+
+/**
+ * Create a new HTTP/2 response message.
+ * pseudo headers need to be set from aws_http2_headers_set_response_status to the headers of the aws_http_message.
+ * Will be errored out if used in HTTP/1.1 connection.
+ *
+ * The caller has a hold on the object and must call aws_http_message_release() when they are done with it.
+ */
+AWS_HTTP_API
+struct aws_http_message *aws_http2_message_new_response(struct aws_allocator *allocator);
 
 /**
  * Acquire a hold on the object, preventing it from being deleted until
@@ -548,6 +637,12 @@ bool aws_http_message_is_request(const struct aws_http_message *message);
 
 AWS_HTTP_API
 bool aws_http_message_is_response(const struct aws_http_message *message);
+
+/**
+ * Get the protocol version of the http message.
+ */
+AWS_HTTP_API
+enum aws_http_version aws_http_message_get_protocol_version(const struct aws_http_message *message);
 
 /**
  * Get the method (request messages only).

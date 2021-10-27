@@ -340,3 +340,25 @@ static int s_strutil_is_http_request_target(struct aws_allocator *allocator, voi
 
     return 0;
 }
+
+AWS_TEST_CASE(strutil_is_http_pseudo_header_name, s_strutil_is_http_pseudo_header_name);
+static int s_strutil_is_http_pseudo_header_name(struct aws_allocator *allocator, void *ctx) {
+    (void)allocator;
+    (void)ctx;
+
+    /* sanity check */
+    ASSERT_TRUE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str(":method")));
+    ASSERT_TRUE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str(":scheme")));
+    ASSERT_TRUE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str(":authority")));
+    ASSERT_TRUE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str(":path")));
+    ASSERT_TRUE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str(":status")));
+
+    /* Bad to have empty value */
+    ASSERT_FALSE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str("")));
+
+    /* Bad to have other values */
+    ASSERT_FALSE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str("connect")));
+    ASSERT_FALSE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str("Method")));
+    ASSERT_FALSE(aws_strutil_is_http_pseudo_header_name(aws_byte_cursor_from_c_str("httpCRT")));
+    return 0;
+}
