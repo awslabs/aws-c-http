@@ -147,7 +147,7 @@ struct aws_websocket_client_connection_options {
      * aws_websocket_client_connect() deep-copies all contents except the `aws_tls_ctx`,
      * which must outlive the the connection.
      */
-    struct aws_tls_connection_options *tls_options;
+    const struct aws_tls_connection_options *tls_options;
 
     /**
      * Optional
