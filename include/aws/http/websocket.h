@@ -140,7 +140,7 @@ struct aws_websocket_client_connection_options {
      * Required.
      * aws_websocket_client_connect() makes a copy.
      */
-    struct aws_socket_options *socket_options;
+    const struct aws_socket_options *socket_options;
 
     /**
      * Optional.
@@ -153,7 +153,7 @@ struct aws_websocket_client_connection_options {
      * Optional
      * Configuration options related to http proxy usage.
      */
-    struct aws_http_proxy_options *proxy_options;
+    const struct aws_http_proxy_options *proxy_options;
 
     /**
      * Required.
