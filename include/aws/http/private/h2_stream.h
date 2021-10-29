@@ -80,9 +80,9 @@ struct aws_h2_stream {
         /* The window_update value for `thread_data.window_size_self` that haven't applied yet */
         size_t window_update_size;
 
-        /* The aws_http2_error_code user wanted to send to remote peer via rst_stream. */
-        uint32_t user_reset_error_code;
-
+        /* The combined aws_http2_error_code user wanted to send to remote peer via rst_stream and internal aws error
+         * code we want to inform user about. */
+        struct aws_h2err reset_error;
         bool reset_called;
 
         /* Simplified stream state. */

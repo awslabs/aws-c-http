@@ -89,7 +89,11 @@ void aws_http_headers_acquire(struct aws_http_headers *headers) {
     aws_atomic_fetch_add(&headers->refcount, 1);
 }
 
-int aws_http_headers_add_header(struct aws_http_headers *headers, const struct aws_http_header *header) {
+static int s_http_headers_add_header_impl(
+    struct aws_http_headers *headers,
+    const struct aws_http_header *header,
+    bool front) {
+
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(header);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&header->name) && aws_byte_cursor_is_valid(&header->value));
@@ -114,9 +118,14 @@ int aws_http_headers_add_header(struct aws_http_headers *headers, const struct a
     struct aws_byte_buf strbuf = aws_byte_buf_from_empty_array(strmem, total_len);
     aws_byte_buf_append_and_update(&strbuf, &header_copy.name);
     aws_byte_buf_append_and_update(&strbuf, &header_copy.value);
-
-    if (aws_array_list_push_back(&headers->array_list, &header_copy)) {
-        goto error;
+    if (front) {
+        if (aws_array_list_push_front(&headers->array_list, &header_copy)) {
+            goto error;
+        }
+    } else {
+        if (aws_array_list_push_back(&headers->array_list, &header_copy)) {
+            goto error;
+        }
     }
 
     return AWS_OP_SUCCESS;
@@ -124,6 +133,21 @@ int aws_http_headers_add_header(struct aws_http_headers *headers, const struct a
 error:
     aws_mem_release(headers->alloc, strmem);
     return AWS_OP_ERR;
+}
+
+int aws_http_headers_add_header(struct aws_http_headers *headers, const struct aws_http_header *header) {
+    /* Add pseudo headers to the front and not checking any violation until we send the header to the wire */
+    bool pseudo = aws_strutil_is_http_pseudo_header_name(header->name);
+    bool front = false;
+    if (pseudo && aws_http_headers_count(headers)) {
+        struct aws_http_header last_header;
+        /* TODO: instead if checking the last header, maybe we can add the pesudo headers to the end of the existing
+         * pesudo headers, which needs to insert to the middle of the array list. */
+        AWS_ZERO_STRUCT(last_header);
+        aws_http_headers_get_index(headers, aws_http_headers_count(headers) - 1, &last_header);
+        front = !aws_strutil_is_http_pseudo_header_name(last_header.name);
+    }
+    return s_http_headers_add_header_impl(headers, header, front);
 }
 
 int aws_http_headers_add(struct aws_http_headers *headers, struct aws_byte_cursor name, struct aws_byte_cursor value) {
@@ -171,12 +195,16 @@ int aws_http_headers_erase_index(struct aws_http_headers *headers, size_t index)
 }
 
 /* Erase entries with name, stop at end_index */
-static int s_http_headers_erase(struct aws_http_headers *headers, struct aws_byte_cursor name, size_t end_index) {
+static int s_http_headers_erase(
+    struct aws_http_headers *headers,
+    struct aws_byte_cursor name,
+    size_t start_index,
+    size_t end_index) {
     bool erased_any = false;
     struct aws_http_header *header = NULL;
 
     /* Iterating in reverse is simpler */
-    for (size_t n = end_index; n > 0; --n) {
+    for (size_t n = end_index; n > start_index; --n) {
         const size_t i = n - 1;
 
         aws_array_list_get_at_ptr(&headers->array_list, (void **)&header, i);
@@ -199,7 +227,7 @@ int aws_http_headers_erase(struct aws_http_headers *headers, struct aws_byte_cur
     AWS_PRECONDITION(headers);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&name));
 
-    return s_http_headers_erase(headers, name, aws_http_headers_count(headers));
+    return s_http_headers_erase(headers, name, 0, aws_http_headers_count(headers));
 }
 
 int aws_http_headers_erase_value(
@@ -253,12 +281,14 @@ int aws_http_headers_set(struct aws_http_headers *headers, struct aws_byte_curso
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&name) && aws_byte_cursor_is_valid(&value));
 
     const size_t prev_count = aws_http_headers_count(headers);
-    if (aws_http_headers_add(headers, name, value)) {
+    bool pseudo = aws_strutil_is_http_pseudo_header_name(name);
+    const size_t start = pseudo ? 1 : 0;
+    struct aws_http_header header = {.name = name, .value = value};
+    if (s_http_headers_add_header_impl(headers, &header, pseudo)) {
         return AWS_OP_ERR;
     }
-
     /* Erase pre-existing headers AFTER add, in case name or value was referencing their memory. */
-    s_http_headers_erase(headers, name, prev_count);
+    s_http_headers_erase(headers, name, start, prev_count);
     return AWS_OP_SUCCESS;
 }
 
@@ -312,11 +342,74 @@ bool aws_http_headers_has(const struct aws_http_headers *headers, struct aws_byt
     return true;
 }
 
+int aws_http2_headers_get_request_method(
+    const struct aws_http_headers *h2_headers,
+    struct aws_byte_cursor *out_method) {
+    return aws_http_headers_get(h2_headers, aws_http_header_method, out_method);
+}
+
+int aws_http2_headers_get_request_scheme(
+    const struct aws_http_headers *h2_headers,
+    struct aws_byte_cursor *out_scheme) {
+    return aws_http_headers_get(h2_headers, aws_http_header_scheme, out_scheme);
+}
+
+int aws_http2_headers_get_request_authority(
+    const struct aws_http_headers *h2_headers,
+    struct aws_byte_cursor *out_authority) {
+    return aws_http_headers_get(h2_headers, aws_http_header_authority, out_authority);
+}
+
+int aws_http2_headers_get_request_path(const struct aws_http_headers *h2_headers, struct aws_byte_cursor *out_path) {
+    return aws_http_headers_get(h2_headers, aws_http_header_path, out_path);
+}
+
+int aws_http2_headers_get_response_status(const struct aws_http_headers *h2_headers, int *out_status_code) {
+    struct aws_byte_cursor status_code_cur;
+    int return_code = aws_http_headers_get(h2_headers, aws_http_header_status, &status_code_cur);
+    if (return_code == AWS_OP_SUCCESS) {
+        uint64_t code_val_u64;
+        if (aws_strutil_read_unsigned_num(status_code_cur, &code_val_u64)) {
+            return AWS_OP_ERR;
+        }
+        *out_status_code = (int)code_val_u64;
+    }
+    return return_code;
+}
+
+int aws_http2_headers_set_request_method(struct aws_http_headers *h2_headers, struct aws_byte_cursor method) {
+    return aws_http_headers_set(h2_headers, aws_http_header_method, method);
+}
+
+int aws_http2_headers_set_request_scheme(struct aws_http_headers *h2_headers, struct aws_byte_cursor scheme) {
+    return aws_http_headers_set(h2_headers, aws_http_header_scheme, scheme);
+}
+
+int aws_http2_headers_set_request_authority(struct aws_http_headers *h2_headers, struct aws_byte_cursor authority) {
+    return aws_http_headers_set(h2_headers, aws_http_header_authority, authority);
+}
+
+int aws_http2_headers_set_request_path(struct aws_http_headers *h2_headers, struct aws_byte_cursor path) {
+    return aws_http_headers_set(h2_headers, aws_http_header_path, path);
+}
+
+int aws_http2_headers_set_response_status(struct aws_http_headers *h2_headers, int status_code) {
+    /* Status code must fit in 3 digits */
+    if (status_code < 0 || status_code > 999) {
+        return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+    }
+    char status_code_str[4] = "000";
+    snprintf(status_code_str, sizeof(status_code_str), "%03d", status_code);
+    struct aws_byte_cursor status_code_cur = aws_byte_cursor_from_c_str(status_code_str);
+    return aws_http_headers_set(h2_headers, aws_http_header_status, status_code_cur);
+}
+
 struct aws_http_message {
     struct aws_allocator *allocator;
     struct aws_http_headers *headers;
     struct aws_input_stream *body_stream;
     struct aws_atomic_var refcount;
+    enum aws_http_version http_version;
 
     /* Data specific to the request or response subclasses */
     union {
@@ -387,11 +480,13 @@ error:
 
 static struct aws_http_message *s_message_new_request_common(
     struct aws_allocator *allocator,
-    struct aws_http_headers *existing_headers) {
+    struct aws_http_headers *existing_headers,
+    enum aws_http_version version) {
 
     struct aws_http_message *message = s_message_new_common(allocator, existing_headers);
     if (message) {
         message->request_data = &message->subclass_data.request;
+        message->http_version = version;
     }
     return message;
 }
@@ -403,23 +498,41 @@ struct aws_http_message *aws_http_message_new_request_with_headers(
     AWS_PRECONDITION(allocator);
     AWS_PRECONDITION(existing_headers);
 
-    return s_message_new_request_common(allocator, existing_headers);
+    return s_message_new_request_common(allocator, existing_headers, AWS_HTTP_VERSION_1_1);
 }
 
 struct aws_http_message *aws_http_message_new_request(struct aws_allocator *allocator) {
     AWS_PRECONDITION(allocator);
-    return s_message_new_request_common(allocator, NULL);
+    return s_message_new_request_common(allocator, NULL, AWS_HTTP_VERSION_1_1);
 }
 
-struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator) {
+struct aws_http_message *aws_http2_message_new_request(struct aws_allocator *allocator) {
+    AWS_PRECONDITION(allocator);
+    return s_message_new_request_common(allocator, NULL, AWS_HTTP_VERSION_2);
+}
+
+static struct aws_http_message *s_http_message_new_response_common(
+    struct aws_allocator *allocator,
+    enum aws_http_version version) {
     AWS_PRECONDITION(allocator);
 
     struct aws_http_message *message = s_message_new_common(allocator, NULL);
     if (message) {
         message->response_data = &message->subclass_data.response;
         message->response_data->status = AWS_HTTP_STATUS_CODE_UNKNOWN;
+        message->http_version = version;
     }
     return message;
+}
+
+struct aws_http_message *aws_http_message_new_response(struct aws_allocator *allocator) {
+    AWS_PRECONDITION(allocator);
+    return s_http_message_new_response_common(allocator, AWS_HTTP_VERSION_1_1);
+}
+
+struct aws_http_message *aws_http2_message_new_response(struct aws_allocator *allocator) {
+    AWS_PRECONDITION(allocator);
+    return s_http_message_new_response_common(allocator, AWS_HTTP_VERSION_2);
 }
 
 void aws_http_message_destroy(struct aws_http_message *message) {
@@ -463,15 +576,27 @@ bool aws_http_message_is_response(const struct aws_http_message *message) {
     return message->response_data;
 }
 
+enum aws_http_version aws_http_message_get_protocol_version(const struct aws_http_message *message) {
+    AWS_PRECONDITION(message);
+    return message->http_version;
+}
+
 int aws_http_message_set_request_method(struct aws_http_message *request_message, struct aws_byte_cursor method) {
     AWS_PRECONDITION(request_message);
     AWS_PRECONDITION(aws_byte_cursor_is_valid(&method));
     AWS_PRECONDITION(request_message->request_data);
 
     if (request_message->request_data) {
-        return s_set_string_from_cursor(&request_message->request_data->method, method, request_message->allocator);
+        switch (request_message->http_version) {
+            case AWS_HTTP_VERSION_1_1:
+                return s_set_string_from_cursor(
+                    &request_message->request_data->method, method, request_message->allocator);
+            case AWS_HTTP_VERSION_2:
+                return aws_http2_headers_set_request_method(request_message->headers, method);
+            default:
+                return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+        }
     }
-
     return aws_raise_error(AWS_ERROR_INVALID_STATE);
 }
 
@@ -482,14 +607,24 @@ int aws_http_message_get_request_method(
     AWS_PRECONDITION(request_message);
     AWS_PRECONDITION(out_method);
     AWS_PRECONDITION(request_message->request_data);
-
-    if (request_message->request_data && request_message->request_data->method) {
-        *out_method = aws_byte_cursor_from_string(request_message->request_data->method);
-        return AWS_OP_SUCCESS;
+    int error = AWS_ERROR_HTTP_DATA_NOT_AVAILABLE;
+    if (request_message->request_data) {
+        switch (request_message->http_version) {
+            case AWS_HTTP_VERSION_1_1:
+                if (request_message->request_data->method) {
+                    *out_method = aws_byte_cursor_from_string(request_message->request_data->method);
+                    return AWS_OP_SUCCESS;
+                }
+                break;
+            case AWS_HTTP_VERSION_2:
+                return aws_http2_headers_get_request_method(request_message->headers, out_method);
+            default:
+                error = AWS_ERROR_UNIMPLEMENTED;
+        }
     }
 
     AWS_ZERO_STRUCT(*out_method);
-    return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
+    return aws_raise_error(error);
 }
 
 int aws_http_message_set_request_path(struct aws_http_message *request_message, struct aws_byte_cursor path) {
@@ -498,7 +633,14 @@ int aws_http_message_set_request_path(struct aws_http_message *request_message, 
     AWS_PRECONDITION(request_message->request_data);
 
     if (request_message->request_data) {
-        return s_set_string_from_cursor(&request_message->request_data->path, path, request_message->allocator);
+        switch (request_message->http_version) {
+            case AWS_HTTP_VERSION_1_1:
+                return s_set_string_from_cursor(&request_message->request_data->path, path, request_message->allocator);
+            case AWS_HTTP_VERSION_2:
+                return aws_http2_headers_set_request_path(request_message->headers, path);
+            default:
+                return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+        }
     }
 
     return aws_raise_error(AWS_ERROR_INVALID_STATE);
@@ -512,9 +654,19 @@ int aws_http_message_get_request_path(
     AWS_PRECONDITION(out_path);
     AWS_PRECONDITION(request_message->request_data);
 
-    if (request_message->request_data && request_message->request_data->path) {
-        *out_path = aws_byte_cursor_from_string(request_message->request_data->path);
-        return AWS_OP_SUCCESS;
+    if (request_message->request_data) {
+        switch (request_message->http_version) {
+            case AWS_HTTP_VERSION_1_1:
+                if (request_message->request_data->path) {
+                    *out_path = aws_byte_cursor_from_string(request_message->request_data->path);
+                    return AWS_OP_SUCCESS;
+                }
+                break;
+            case AWS_HTTP_VERSION_2:
+                return aws_http2_headers_get_request_path(request_message->headers, out_path);
+            default:
+                return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+        }
     }
 
     AWS_ZERO_STRUCT(*out_path);
@@ -528,9 +680,19 @@ int aws_http_message_get_response_status(const struct aws_http_message *response
 
     *out_status_code = AWS_HTTP_STATUS_CODE_UNKNOWN;
 
-    if (response_message->response_data && (response_message->response_data->status != AWS_HTTP_STATUS_CODE_UNKNOWN)) {
-        *out_status_code = response_message->response_data->status;
-        return AWS_OP_SUCCESS;
+    if (response_message->response_data) {
+        switch (response_message->http_version) {
+            case AWS_HTTP_VERSION_1_1:
+                if (response_message->response_data->status != AWS_HTTP_STATUS_CODE_UNKNOWN) {
+                    *out_status_code = response_message->response_data->status;
+                    return AWS_OP_SUCCESS;
+                }
+                break;
+            case AWS_HTTP_VERSION_2:
+                return aws_http2_headers_get_response_status(response_message->headers, out_status_code);
+            default:
+                return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+        }
     }
 
     return aws_raise_error(AWS_ERROR_HTTP_DATA_NOT_AVAILABLE);
@@ -543,8 +705,15 @@ int aws_http_message_set_response_status(struct aws_http_message *response_messa
     if (response_message->response_data) {
         /* Status code must be printable with exactly 3 digits */
         if (status_code >= 0 && status_code <= 999) {
-            response_message->response_data->status = status_code;
-            return AWS_OP_SUCCESS;
+            switch (response_message->http_version) {
+                case AWS_HTTP_VERSION_1_1:
+                    response_message->response_data->status = status_code;
+                    return AWS_OP_SUCCESS;
+                case AWS_HTTP_VERSION_2:
+                    return aws_http2_headers_set_response_status(response_message->headers, status_code);
+                default:
+                    return aws_raise_error(AWS_ERROR_UNIMPLEMENTED);
+            }
         }
 
         return aws_raise_error(AWS_ERROR_HTTP_INVALID_STATUS_CODE);
@@ -571,6 +740,23 @@ int aws_http1_stream_write_chunk(struct aws_http_stream *http1_stream, const str
     }
 
     return http1_stream->vtable->http1_write_chunk(http1_stream, options);
+}
+
+int aws_http1_stream_add_chunked_trailer(
+    struct aws_http_stream *http1_stream,
+    const struct aws_http_headers *trailing_headers) {
+    AWS_PRECONDITION(http1_stream);
+    AWS_PRECONDITION(http1_stream->vtable);
+    AWS_PRECONDITION(trailing_headers);
+    if (!http1_stream->vtable->http1_add_trailer) {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: HTTP/1 stream only function invoked on other stream, ignoring call.",
+            (void *)http1_stream);
+        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+    }
+
+    return http1_stream->vtable->http1_add_trailer(http1_stream, trailing_headers);
 }
 
 struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_message *message) {
