@@ -415,7 +415,7 @@ static int s_stream_reset_stream_internal(struct aws_http_stream *stream_base, s
     bool reset_called;
     bool stream_is_init;
     bool cross_thread_work_should_schedule = false;
-    AWS_H2_STREAM_LOG(
+    AWS_H2_STREAM_LOGF(
         TRACE,
         stream,
         "Sending reset stream, with aws error %d (%s) and http2 error (%s)",

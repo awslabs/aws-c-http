@@ -2218,6 +2218,11 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
         aws_h2_frame_destroy(connection_window_update_frame);
         return;
     }
+    CONNECTION_LOGF(
+        TRACE,
+        connection,
+        "User requested to update the HTTP/2 connection's flow-control windows by" PRId32,
+        increment_size);
     return;
 overflow:
     /* Shutdown the connection as overflow detected */
