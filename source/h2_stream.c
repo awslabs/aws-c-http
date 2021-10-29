@@ -415,13 +415,6 @@ static int s_stream_reset_stream_internal(struct aws_http_stream *stream_base, s
     bool reset_called;
     bool stream_is_init;
     bool cross_thread_work_should_schedule = false;
-    AWS_H2_STREAM_LOGF(
-        TRACE,
-        stream,
-        "Sending reset stream, with aws error %d (%s) and http2 error (%s)",
-        stream_error.aws_code,
-        aws_error_name(stream_error.aws_code),
-        aws_http2_error_code_to_str(http2_error));
 
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream);
@@ -464,9 +457,10 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t h
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
-        "id=%p: User requested reset stream with error %s",
+        "id=%p: User requested RST_STREAM with error code %s (0x%x)",
         (void *)stream_base,
-        aws_http2_error_code_to_str(http2_error));
+        aws_http2_error_code_to_str(http2_error),
+        http2_error);
     return s_stream_reset_stream_internal(stream_base, stream_error);
 }
 
