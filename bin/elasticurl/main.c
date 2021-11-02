@@ -390,7 +390,10 @@ static void s_on_stream_complete_fn(struct aws_http_stream *stream, int error_co
 }
 
 static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_ctx) {
-    struct aws_http_message *request = aws_http_message_new_request(app_ctx->allocator);
+
+    struct aws_http_message *request = app_ctx->required_http_version == AWS_HTTP_VERSION_2
+                                           ? aws_http2_message_new_request(app_ctx->allocator)
+                                           : aws_http_message_new_request(app_ctx->allocator);
     if (request == NULL) {
         fprintf(stderr, "failed to allocate request\n");
         exit(1);
