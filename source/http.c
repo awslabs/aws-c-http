@@ -473,6 +473,8 @@ const char *aws_http_status_text(int status_code) {
             return "Not Extended";
         case AWS_HTTP_STATUS_CODE_511_NETWORK_AUTHENTICATION_REQUIRED:
             return "Network Authentication Required";
+        case AWS_ERROR_HTTP_MAX_CONCURRENT_STREAMS_EXCEEDED:
+            return "Max concurrent stream reached";
         default:
             return "";
     }

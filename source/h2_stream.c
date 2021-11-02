@@ -454,6 +454,12 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t h
         .h2_code = http2_error,
     };
 
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_STREAM,
+        "id=%p: User requested RST_STREAM with error code %s (0x%x)",
+        (void *)stream_base,
+        aws_http2_error_code_to_str(http2_error),
+        http2_error);
     return s_stream_reset_stream_internal(stream_base, stream_error);
 }
 
