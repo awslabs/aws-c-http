@@ -453,7 +453,6 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t h
         .aws_code = AWS_ERROR_HTTP_RST_STREAM_SENT,
         .h2_code = http2_error,
     };
-    struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM,
