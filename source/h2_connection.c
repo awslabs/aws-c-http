@@ -2221,7 +2221,7 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
     CONNECTION_LOGF(
         TRACE,
         connection,
-        "User requested to update the HTTP/2 connection's flow-control windows by" PRIu32 ".",
+        "User requested to update the HTTP/2 connection's flow-control windows by %" PRIu32 ".",
         increment_size);
     return;
 overflow:
