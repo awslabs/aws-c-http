@@ -844,51 +844,60 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         return NULL;
     }
     /* Set pseudo headers from HTTP/1.1 message */
-    struct aws_byte_cursor method;
-    if (aws_http_message_get_request_method(http1_msg, &method)) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_GENERAL,
-            "Failed to create http2 message from http1 message, ip: %p, due to no method found.",
-            (void *)http1_msg);
-        /* error will happen when the request is invalid */
-        aws_raise_error(AWS_ERROR_HTTP_INVALID_METHOD);
-        goto error;
-    }
-    /* Use add intead of set method to avoid push front to the array list */
-    if (aws_http_headers_add(copied_headers, aws_http_header_method, method)) {
-        goto error;
-    }
-    /**
-     * we set a default value, "https", for now.
-     * TODO: as we support prior knowledge, we may also want to support http?
-     */
-    struct aws_byte_cursor scheme_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https");
-    if (aws_http_headers_add(copied_headers, aws_http_header_scheme, scheme_cursor)) {
-        goto error;
-    }
+    if (aws_http_message_is_request(http1_msg)) {
+        struct aws_byte_cursor method;
+        if (aws_http_message_get_request_method(http1_msg, &method)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_GENERAL,
+                "Failed to create HTTP/2 message from HTTP/1 message, ip: %p, due to no method found.",
+                (void *)http1_msg);
+            /* error will happen when the request is invalid */
+            aws_raise_error(AWS_ERROR_HTTP_INVALID_METHOD);
+            goto error;
+        }
+        /* Use add intead of set method to avoid push front to the array list */
+        if (aws_http_headers_add(copied_headers, aws_http_header_method, method)) {
+            goto error;
+        }
+        /**
+         * we set a default value, "https", for now.
+         * TODO: as we support prior knowledge, we may also want to support http?
+         */
+        struct aws_byte_cursor scheme_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https");
+        if (aws_http_headers_add(copied_headers, aws_http_header_scheme, scheme_cursor)) {
+            goto error;
+        }
+        /* :authority SHOULD NOT be created when translating HTTP/1 request.(RFC 7540 8.1.2.3) */
 
-    /* if host header found, add it as :authority */
-    struct aws_byte_cursor authority_cursor;
-    struct aws_byte_cursor host_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("host");
-    if (!aws_http_headers_get(old_headers, host_cursor, &authority_cursor)) {
-        if (aws_http_headers_add(copied_headers, aws_http_header_authority, authority_cursor)) {
+        struct aws_byte_cursor path_cursor;
+        if (aws_http_message_get_request_path(http1_msg, &path_cursor)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_GENERAL,
+                "Failed to create HTTP/2 message from HTTP/1 message, ip: %p, due to no path found.",
+                (void *)http1_msg);
+            aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
+            goto error;
+        }
+        if (aws_http_headers_add(copied_headers, aws_http_header_path, path_cursor)) {
+            goto error;
+        }
+    } else {
+        int status = 0;
+        if (aws_http_message_get_response_status(http1_msg, &status)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_GENERAL,
+                "Failed to create HTTP/2 response message from HTTP/1 response message, ip: %p, due to no status "
+                "found.",
+                (void *)http1_msg);
+            /* error will happen when the request is invalid */
+            aws_raise_error(AWS_ERROR_HTTP_INVALID_STATUS_CODE);
+            goto error;
+        }
+        if (aws_http2_headers_set_response_status(copied_headers, status)) {
             goto error;
         }
     }
-    struct aws_byte_cursor path_cursor;
-    if (aws_http_message_get_request_path(http1_msg, &path_cursor)) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_GENERAL,
-            "Failed to create HTTP/2 message from HTTP/1 message, ip: %p, due to no path found.",
-            (void *)http1_msg);
-        aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
-        goto error;
-    }
-    if (aws_http_headers_add(copied_headers, aws_http_header_path, path_cursor)) {
-        goto error;
-    }
 
-    /* if pseudoheader is included in message, we just convert all the headers from old_headers to result */
     if (aws_byte_buf_init(&lower_name_buf, alloc, 256)) {
         goto error;
     }
@@ -900,17 +909,10 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         /* append lower case name to the buffer */
         aws_byte_buf_append_with_lookup(&lower_name_buf, &header_iter.name, aws_lookup_table_to_lower_get());
         struct aws_byte_cursor lower_name_cursor = aws_byte_cursor_from_buf(&lower_name_buf);
-        enum aws_http_header_name name_enum = aws_http_lowercase_str_to_header_name(lower_name_cursor);
-        switch (name_enum) {
-            case AWS_HTTP_HEADER_HOST:
-                /* host header has been converted to :authority, do nothing here */
-                break;
-            /* TODO: handle connection-specific header field (RFC7540 8.1.2.2) */
-            default:
-                if (aws_http_headers_add(copied_headers, lower_name_cursor, header_iter.value)) {
-                    goto error;
-                }
-                break;
+
+        /* TODO: handle connection-specific header field (RFC7540 8.1.2.2) */
+        if (aws_http_headers_add(copied_headers, lower_name_cursor, header_iter.value)) {
+            goto error;
         }
         aws_byte_buf_reset(&lower_name_buf, false);
     }
