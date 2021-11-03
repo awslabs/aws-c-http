@@ -247,7 +247,27 @@ struct aws_h2_stream *aws_h2_stream_new_request(
 
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
-    stream->thread_data.outgoing_message = options->request;
+    enum aws_http_version message_version = aws_http_message_get_protocol_version(options->request);
+    switch (message_version) {
+        case AWS_HTTP_VERSION_1_1:
+            stream->thread_data.outgoing_message =
+                aws_http2_message_new_from_http1(options->request, stream->base.alloc);
+            if (!stream->thread_data.outgoing_message) {
+                AWS_H2_STREAM_LOG(ERROR, stream, "Stream failed to create the HTTP/2 message from HTTP/1.1 message");
+                goto error;
+            }
+            stream->backup_outgoing_message = options->request;
+            aws_http_message_acquire(stream->backup_outgoing_message);
+            break;
+        case AWS_HTTP_VERSION_2:
+            stream->thread_data.outgoing_message = options->request;
+            aws_http_message_acquire(stream->thread_data.outgoing_message);
+            break;
+        default:
+            /* Not supported */
+            aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
+            goto error;
+    }
 
     stream->sent_reset_error_code = -1;
     stream->received_reset_error_code = -1;
@@ -257,13 +277,14 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     if (aws_mutex_init(&stream->synced_data.lock)) {
         AWS_H2_STREAM_LOGF(
             ERROR, stream, "Mutex init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
-        aws_mem_release(stream->base.alloc, stream);
-        return NULL;
+        goto error;
     }
-    aws_http_message_acquire(stream->thread_data.outgoing_message);
     aws_channel_task_init(
         &stream->cross_thread_work_task, s_stream_cross_thread_work_task, stream, "HTTP/2 stream cross-thread work");
     return stream;
+error:
+    s_stream_destroy(&stream->base);
+    return NULL;
 }
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
@@ -335,6 +356,7 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     AWS_H2_STREAM_LOG(DEBUG, stream, "Destroying stream");
     aws_mutex_clean_up(&stream->synced_data.lock);
     aws_http_message_release(stream->thread_data.outgoing_message);
+    aws_http_message_release(stream->backup_outgoing_message);
 
     aws_mem_release(stream->base.alloc, stream);
 }
@@ -548,13 +570,11 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
 
     /* Create HEADERS frame */
     struct aws_http_message *msg = stream->thread_data.outgoing_message;
+    /* Should be ensured when the stream is created */
+    AWS_ASSERT(aws_http_message_get_protocol_version(msg) == AWS_HTTP_VERSION_2);
     bool has_body_stream = aws_http_message_get_body_stream(msg) != NULL;
-    struct aws_http_headers *h2_headers = aws_h2_create_headers_from_request(msg, stream->base.alloc);
-    if (!h2_headers) {
-        AWS_H2_STREAM_LOGF(
-            ERROR, stream, "Failed to create HTTP/2 style headers from request %s", aws_error_name(aws_last_error()));
-        goto error;
-    }
+    struct aws_http_headers *h2_headers = aws_http_message_get_headers(msg);
+
     struct aws_h2_frame *headers_frame = aws_h2_frame_new_headers(
         stream->base.alloc,
         stream->base.id,
@@ -563,8 +583,6 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
         0 /* padding - not currently configurable via public API */,
         NULL /* priority - not currently configurable via public API */);
 
-    /* Release refcount of h2_headers here, let frame take the full ownership of it */
-    aws_http_headers_release(h2_headers);
     if (!headers_frame) {
         AWS_H2_STREAM_LOGF(ERROR, stream, "Failed to create HEADERS frame: %s", aws_error_name(aws_last_error()));
         goto error;

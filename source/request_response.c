@@ -141,8 +141,8 @@ int aws_http_headers_add_header(struct aws_http_headers *headers, const struct a
     bool front = false;
     if (pseudo && aws_http_headers_count(headers)) {
         struct aws_http_header last_header;
-        /* TODO: instead if checking the last header, maybe we can add the pesudo headers to the end of the existing
-         * pesudo headers, which needs to insert to the middle of the array list. */
+        /* TODO: instead if checking the last header, maybe we can add the pseudo headers to the end of the existing
+         * pseudo headers, which needs to insert to the middle of the array list. */
         AWS_ZERO_STRUCT(last_header);
         aws_http_headers_get_index(headers, aws_http_headers_count(headers) - 1, &last_header);
         front = !aws_strutil_is_http_pseudo_header_name(last_header.name);
@@ -454,10 +454,8 @@ static struct aws_http_message *s_message_new_common(
     struct aws_allocator *allocator,
     struct aws_http_headers *existing_headers) {
 
+    /* allocation cannot fail */
     struct aws_http_message *message = aws_mem_calloc(allocator, 1, sizeof(struct aws_http_message));
-    if (!message) {
-        goto error;
-    }
 
     message->allocator = allocator;
     aws_atomic_init_int(&message->refcount, 1);
@@ -829,6 +827,103 @@ struct aws_http_stream *aws_http_connection_make_request(
     }
 
     return stream;
+}
+
+struct aws_http_message *aws_http2_message_new_from_http1(
+    struct aws_http_message *http1_msg,
+    struct aws_allocator *alloc) {
+
+    struct aws_http_headers *old_headers = aws_http_message_get_headers(http1_msg);
+    struct aws_http_header header_iter;
+    struct aws_byte_buf lower_name_buf;
+    AWS_ZERO_STRUCT(lower_name_buf);
+    struct aws_http_message *message = aws_http_message_is_request(http1_msg) ? aws_http2_message_new_request(alloc)
+                                                                              : aws_http2_message_new_response(alloc);
+    struct aws_http_headers *copied_headers = message->headers;
+    if (!message) {
+        return NULL;
+    }
+    /* Set pseudo headers from HTTP/1.1 message */
+    if (aws_http_message_is_request(http1_msg)) {
+        struct aws_byte_cursor method;
+        if (aws_http_message_get_request_method(http1_msg, &method)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_GENERAL,
+                "Failed to create HTTP/2 message from HTTP/1 message, ip: %p, due to no method found.",
+                (void *)http1_msg);
+            /* error will happen when the request is invalid */
+            aws_raise_error(AWS_ERROR_HTTP_INVALID_METHOD);
+            goto error;
+        }
+        /* Use add intead of set method to avoid push front to the array list */
+        if (aws_http_headers_add(copied_headers, aws_http_header_method, method)) {
+            goto error;
+        }
+        /**
+         * we set a default value, "https", for now.
+         * TODO: as we support prior knowledge, we may also want to support http?
+         */
+        struct aws_byte_cursor scheme_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https");
+        if (aws_http_headers_add(copied_headers, aws_http_header_scheme, scheme_cursor)) {
+            goto error;
+        }
+        /* :authority SHOULD NOT be created when translating HTTP/1 request.(RFC 7540 8.1.2.3) */
+
+        struct aws_byte_cursor path_cursor;
+        if (aws_http_message_get_request_path(http1_msg, &path_cursor)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_GENERAL,
+                "Failed to create HTTP/2 message from HTTP/1 message, ip: %p, due to no path found.",
+                (void *)http1_msg);
+            aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
+            goto error;
+        }
+        if (aws_http_headers_add(copied_headers, aws_http_header_path, path_cursor)) {
+            goto error;
+        }
+    } else {
+        int status = 0;
+        if (aws_http_message_get_response_status(http1_msg, &status)) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_GENERAL,
+                "Failed to create HTTP/2 response message from HTTP/1 response message, ip: %p, due to no status "
+                "found.",
+                (void *)http1_msg);
+            /* error will happen when the request is invalid */
+            aws_raise_error(AWS_ERROR_HTTP_INVALID_STATUS_CODE);
+            goto error;
+        }
+        if (aws_http2_headers_set_response_status(copied_headers, status)) {
+            goto error;
+        }
+    }
+
+    if (aws_byte_buf_init(&lower_name_buf, alloc, 256)) {
+        goto error;
+    }
+    for (size_t iter = 0; iter < aws_http_headers_count(old_headers); iter++) {
+        /* name should be converted to lower case */
+        if (aws_http_headers_get_index(old_headers, iter, &header_iter)) {
+            goto error;
+        }
+        /* append lower case name to the buffer */
+        aws_byte_buf_append_with_lookup(&lower_name_buf, &header_iter.name, aws_lookup_table_to_lower_get());
+        struct aws_byte_cursor lower_name_cursor = aws_byte_cursor_from_buf(&lower_name_buf);
+
+        /* TODO: handle connection-specific header field (RFC7540 8.1.2.2) */
+        if (aws_http_headers_add(copied_headers, lower_name_cursor, header_iter.value)) {
+            goto error;
+        }
+        aws_byte_buf_reset(&lower_name_buf, false);
+    }
+    aws_byte_buf_clean_up(&lower_name_buf);
+    /* TODO: Refcount the input stream of old message */
+
+    return message;
+error:
+    aws_http_message_release(message);
+    aws_byte_buf_clean_up(&lower_name_buf);
+    return NULL;
 }
 
 int aws_http_stream_activate(struct aws_http_stream *stream) {

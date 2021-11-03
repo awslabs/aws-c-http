@@ -390,7 +390,10 @@ static void s_on_stream_complete_fn(struct aws_http_stream *stream, int error_co
 }
 
 static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_ctx) {
-    struct aws_http_message *request = aws_http_message_new_request(app_ctx->allocator);
+
+    struct aws_http_message *request = app_ctx->required_http_version == AWS_HTTP_VERSION_2
+                                           ? aws_http2_message_new_request(app_ctx->allocator)
+                                           : aws_http_message_new_request(app_ctx->allocator);
     if (request == NULL) {
         fprintf(stderr, "failed to allocate request\n");
         exit(1);
@@ -398,15 +401,22 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
 
     aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str(app_ctx->verb));
     aws_http_message_set_request_path(request, app_ctx->uri.path_and_query);
+    if (app_ctx->required_http_version == AWS_HTTP_VERSION_2) {
+        struct aws_http_headers *h2_headers = aws_http_message_get_headers(request);
+        aws_http2_headers_set_request_scheme(h2_headers, app_ctx->uri.scheme);
+        aws_http2_headers_set_request_authority(h2_headers, app_ctx->uri.host_name);
+    } else {
+        struct aws_http_header host_header = {
+            .name = aws_byte_cursor_from_c_str("host"),
+            .value = app_ctx->uri.host_name,
+        };
+        aws_http_message_add_header(request, host_header);
+    }
     struct aws_http_header accept_header = {
         .name = aws_byte_cursor_from_c_str("accept"),
         .value = aws_byte_cursor_from_c_str("*/*"),
     };
     aws_http_message_add_header(request, accept_header);
-
-    struct aws_http_header host_header = {.name = aws_byte_cursor_from_c_str("host"), .value = app_ctx->uri.host_name};
-    aws_http_message_add_header(request, host_header);
-
     struct aws_http_header user_agent_header = {
         .name = aws_byte_cursor_from_c_str("user-agent"),
         .value = aws_byte_cursor_from_c_str("elasticurl 1.0, Powered by the AWS Common Runtime.")};

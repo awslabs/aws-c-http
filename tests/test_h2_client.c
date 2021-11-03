@@ -148,7 +148,7 @@ TEST_CASE(h2_client_stream_create) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* create request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header headers[] = {
@@ -184,7 +184,7 @@ TEST_CASE(h2_client_unactivated_stream_cleans_up) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* create request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header headers[] = {
@@ -275,7 +275,7 @@ TEST_CASE(h2_client_auto_ping_ack_higher_priority) {
     size_t frames_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -356,47 +356,6 @@ static int s_compare_headers(const struct aws_http_headers *expected, const stru
     return AWS_OP_SUCCESS;
 }
 
-/* Test that h2 can split cookie headers from request, if we need to compress it use cache. */
-TEST_CASE(h2_client_request_cookie_headers) {
-    (void)ctx;
-    aws_http_library_init(allocator);
-
-    /* send a request with cookie headers */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
-    ASSERT_NOT_NULL(request);
-    struct aws_http_header request_headers_src[] = {
-        DEFINE_HEADER(":method", "GET"),
-        DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":path", "/"),
-        DEFINE_HEADER("cookie", "a=b; c=d; e=f"),
-    };
-    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
-
-    struct aws_http_headers *h2_headers = aws_h2_create_headers_from_request(request, allocator);
-
-    /* set expected h2 style headers */
-    struct aws_http_header expected_headers_src[] = {
-        DEFINE_HEADER(":method", "GET"),
-        DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":path", "/"),
-        DEFINE_HEADER("cookie", "a=b"),
-        DEFINE_HEADER("cookie", "c=d"),
-        DEFINE_HEADER("cookie", "e=f"),
-    };
-    struct aws_http_headers *expected_headers = aws_http_headers_new(allocator);
-    ASSERT_SUCCESS(
-        aws_http_headers_add_array(expected_headers, expected_headers_src, AWS_ARRAY_SIZE(expected_headers_src)));
-
-    ASSERT_SUCCESS(s_compare_headers(expected_headers, h2_headers));
-
-    /* clean up */
-    aws_http_headers_release(h2_headers);
-    aws_http_headers_release(expected_headers);
-    aws_http_message_release(request);
-    aws_http_library_clean_up();
-    return AWS_OP_SUCCESS;
-}
-
 /* Test that a simple request/response can be carried to completion.
  * The request consists of a single HEADERS frame and the response consists of a single HEADERS frame. */
 TEST_CASE(h2_client_stream_complete) {
@@ -407,7 +366,7 @@ TEST_CASE(h2_client_stream_complete) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -467,7 +426,7 @@ TEST_CASE(h2_client_close) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -514,7 +473,7 @@ TEST_CASE(h2_client_connection_init_settings_applied_after_ack_by_peer) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -610,9 +569,59 @@ TEST_CASE(h2_client_stream_with_h1_request_message) {
     struct aws_http_header expected_headers_src[] = {
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":authority", "example.com"),
         DEFINE_HEADER(":path", "/"),
         DEFINE_HEADER("accept", "*/*"),
+        DEFINE_HEADER("host", "example.com"),
+    };
+    struct aws_http_headers *expected_headers = aws_http_headers_new(allocator);
+    ASSERT_SUCCESS(
+        aws_http_headers_add_array(expected_headers, expected_headers_src, AWS_ARRAY_SIZE(expected_headers_src)));
+    /* validate sent request, */
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+
+    struct h2_decoded_frame *sent_headers_frame = h2_decode_tester_latest_frame(&s_tester.peer.decode);
+    ASSERT_INT_EQUALS(AWS_H2_FRAME_T_HEADERS, sent_headers_frame->type);
+    ASSERT_TRUE(sent_headers_frame->end_stream);
+    ASSERT_SUCCESS(s_compare_headers(expected_headers, sent_headers_frame->headers));
+
+    /* clean up */
+    aws_http_headers_release(expected_headers);
+    aws_http_message_release(request);
+    client_stream_tester_clean_up(&stream_tester);
+    return s_tester_clean_up();
+}
+
+/* Test that h2 stream can split the cookies header correctly */
+TEST_CASE(h2_client_stream_with_cookies_headers) {
+    ASSERT_SUCCESS(s_tester_init(allocator, ctx));
+
+    /* fake peer sends connection preface */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
+    testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+
+    /* send an h1 request */
+    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_message_set_request_method(request, aws_http_method_get));
+    AWS_FATAL_ASSERT(AWS_OP_SUCCESS == aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER("Accept", "*/*"),
+        DEFINE_HEADER("Host", "example.com"),
+        DEFINE_HEADER("cookie", "a=b; c=d; e=f"),
+    };
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct client_stream_tester stream_tester;
+    ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, request));
+
+    /* set expected h2 style headers */
+    struct aws_http_header expected_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/"),
+        DEFINE_HEADER("accept", "*/*"),
+        DEFINE_HEADER("host", "example.com"),
+        DEFINE_HEADER("cookie", "a=b; c=d; e=f"),
     };
     struct aws_http_headers *expected_headers = aws_http_headers_new(allocator);
     ASSERT_SUCCESS(
@@ -642,7 +651,7 @@ TEST_CASE(h2_client_stream_err_malformed_header) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -697,7 +706,7 @@ TEST_CASE(h2_client_stream_err_state_forbids_frame) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -817,7 +826,7 @@ TEST_CASE(h2_client_stream_ignores_some_frames_received_soon_after_closing) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -878,7 +887,7 @@ TEST_CASE(h2_client_stream_receive_info_headers) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -945,7 +954,7 @@ TEST_CASE(h2_client_stream_err_receive_info_headers_after_main) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -1015,7 +1024,7 @@ TEST_CASE(h2_client_stream_receive_trailing_headers) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -1079,7 +1088,7 @@ TEST_CASE(h2_client_stream_err_receive_trailing_before_main) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -1138,7 +1147,7 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_soon_after_closing) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -1200,7 +1209,7 @@ TEST_CASE(h2_client_stream_err_stream_frames_received_soon_after_rst_stream_rece
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -1273,7 +1282,7 @@ TEST_CASE(h2_client_conn_err_stream_frames_received_after_removed_from_cache) {
 
     /* fill out the cache */
     for (size_t i = 0; i < NUM_STREAMS; i++) {
-        requests[i] = aws_http_message_new_request(allocator);
+        requests[i] = aws_http2_message_new_request(allocator);
         aws_http_message_add_header_array(requests[i], request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
         ASSERT_SUCCESS(s_stream_tester_init(&stream_tester[i], requests[i]));
         testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -1330,7 +1339,7 @@ TEST_CASE(h2_client_stream_receive_data) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -1388,7 +1397,7 @@ TEST_CASE(h2_client_stream_err_receive_data_before_headers) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -1434,7 +1443,7 @@ TEST_CASE(h2_client_stream_send_data) {
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -1541,7 +1550,7 @@ TEST_CASE(h2_client_stream_send_lots_of_data) {
     struct aws_input_stream *request_bodies[NUM_STREAMS];
     struct client_stream_tester stream_testers[NUM_STREAMS];
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
-        requests[i] = aws_http_message_new_request(allocator);
+        requests[i] = aws_http2_message_new_request(allocator);
         aws_http_message_add_header_array(requests[i], request_headers_src[i], AWS_ARRAY_SIZE(request_headers_src[i]));
 
         /* fill first body with "aaaa...", second with "bbbb...", etc */
@@ -1662,7 +1671,7 @@ TEST_CASE(h2_client_stream_send_stalled_data) {
 
     /* get request ready
      * the body_stream will stall and provide no data when we try to read from it */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -1771,7 +1780,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_stream_window_size) {
     size_t frames_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -1854,7 +1863,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_negative_stream_window_size) 
     size_t frames_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -1977,7 +1986,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_window_size) {
     struct aws_input_stream *request_bodies[NUM_STREAMS];
     struct client_stream_tester stream_testers[NUM_STREAMS];
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
-        requests[i] = aws_http_message_new_request(allocator);
+        requests[i] = aws_http2_message_new_request(allocator);
         aws_http_message_add_header_array(requests[i], request_headers_src[i], AWS_ARRAY_SIZE(request_headers_src[i]));
 
         /* fill first body with "aaaa...", second with "bbbb...", etc */
@@ -2109,7 +2118,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
     struct aws_input_stream *request_bodies[NUM_STREAMS];
     struct client_stream_tester stream_testers[NUM_STREAMS];
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
-        requests[i] = aws_http_message_new_request(allocator);
+        requests[i] = aws_http2_message_new_request(allocator);
         aws_http_message_add_header_array(requests[i], request_headers_src[i], AWS_ARRAY_SIZE(request_headers_src[i]));
 
         /* fill first body with "aaaa...", second with "bbbb...", etc */
@@ -2283,7 +2292,7 @@ TEST_CASE(h2_client_stream_send_window_update) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -2367,7 +2376,7 @@ TEST_CASE(h2_client_stream_err_received_data_flow_control) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -2477,7 +2486,7 @@ TEST_CASE(h2_client_conn_err_received_data_flow_control) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -2559,7 +2568,7 @@ static int s_invalid_window_update(
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -2652,7 +2661,7 @@ TEST_CASE(h2_client_conn_err_initial_window_size_settings_cause_window_exceed_ma
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -2726,7 +2735,7 @@ TEST_CASE(h2_client_stream_receive_end_stream_before_done_sending) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     /* get request ready */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -2804,7 +2813,7 @@ TEST_CASE(h2_client_stream_receive_end_stream_and_rst_before_done_sending) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     /* get request ready */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -2874,7 +2883,7 @@ TEST_CASE(h2_client_stream_err_input_stream_failure) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     /* get request ready */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -2919,7 +2928,7 @@ TEST_CASE(h2_client_stream_err_receive_rst_stream) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -2970,7 +2979,7 @@ TEST_CASE(h2_client_push_promise_automatically_rejected) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -3088,7 +3097,7 @@ TEST_CASE(h2_client_conn_receive_goaway) {
     };
     struct client_stream_tester stream_testers[NUM_STREAMS];
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
-        requests[i] = aws_http_message_new_request(allocator);
+        requests[i] = aws_http2_message_new_request(allocator);
         aws_http_message_add_header_array(requests[i], request_headers_src[i], AWS_ARRAY_SIZE(request_headers_src[i]));
     }
     /* Send the first two requests */
@@ -3284,7 +3293,7 @@ TEST_CASE(h2_client_change_settings_succeed) {
     /* Check the callback has fired after the second settings ack frame, the error code we got is NO_ERROR(0) */
     ASSERT_INT_EQUALS(0, callback_error_code);
 
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -3392,7 +3401,7 @@ TEST_CASE(h2_client_manual_window_management_disabled_auto_window_update) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -3491,7 +3500,7 @@ TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update) {
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -3581,7 +3590,7 @@ TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update_over
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -3630,7 +3639,7 @@ TEST_CASE(h2_client_manual_window_management_user_send_conn_window_update) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -3993,7 +4002,7 @@ TEST_CASE(h2_client_stream_reset_stream) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -4043,7 +4052,7 @@ TEST_CASE(h2_client_stream_reset_ignored_stream_closed) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -4091,7 +4100,7 @@ TEST_CASE(h2_client_stream_reset_failed_before_activate_called) {
     /* get connection preface and acks out of the way */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -4136,7 +4145,7 @@ TEST_CASE(h2_client_stream_keeps_alive_for_cross_thread_task) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -4204,7 +4213,7 @@ TEST_CASE(h2_client_stream_get_received_reset_error_code) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -4252,7 +4261,7 @@ TEST_CASE(h2_client_stream_get_sent_reset_error_code) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     /* send request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -4307,7 +4316,7 @@ TEST_CASE(h2_client_new_request_allowed) {
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
     /* prepare request */
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header headers[] = {
@@ -4589,7 +4598,7 @@ TEST_CASE(h2_client_request_apis_failed_after_connection_begin_shutdown) {
     /* get connection preface and acks out of the way */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
