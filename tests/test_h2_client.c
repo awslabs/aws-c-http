@@ -569,9 +569,9 @@ TEST_CASE(h2_client_stream_with_h1_request_message) {
     struct aws_http_header expected_headers_src[] = {
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":authority", "example.com"),
         DEFINE_HEADER(":path", "/"),
         DEFINE_HEADER("accept", "*/*"),
+        DEFINE_HEADER("host", "example.com"),
     };
     struct aws_http_headers *expected_headers = aws_http_headers_new(allocator);
     ASSERT_SUCCESS(
@@ -618,9 +618,9 @@ TEST_CASE(h2_client_stream_with_cookies_headers) {
     struct aws_http_header expected_headers_src[] = {
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":authority", "example.com"),
         DEFINE_HEADER(":path", "/"),
         DEFINE_HEADER("accept", "*/*"),
+        DEFINE_HEADER("host", "example.com"),
         DEFINE_HEADER("cookie", "a=b; c=d; e=f"),
     };
     struct aws_http_headers *expected_headers = aws_http_headers_new(allocator);
