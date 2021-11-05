@@ -79,7 +79,7 @@ class SimpleTests(unittest.TestCase):
 
     def test_simple_post_h1(self):
         """make a simple POST request via HTTP/1.1 to make sure sending data succeeds"""
-        simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http1_1', '-P', '-H', '\"content-type: application/json\"', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'http://httpbin.org/post']
+        simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http1_1', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'http://httpbin.org/post']
         run_command(simple_post_args)
 
     def test_simple_download_h1(self):
@@ -97,7 +97,7 @@ class SimpleTests(unittest.TestCase):
 
     def test_simple_post_h2(self):
         """make a simple POST request via HTTP2 to make sure sending data succeeds"""
-        simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '-i','--http2', '-P', '-H', '\"content-type: application/json\"', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'https://httpbin.org/post']
+        simple_post_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '--http2', '-P', '-H', 'content-type: application/json', '-i', '-d', '\"{\'test\':\'testval\'}\"', 'https://httpbin.org/post']
         run_command(simple_post_args)
 
     def test_simple_download_h2(self):
