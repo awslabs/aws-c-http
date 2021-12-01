@@ -300,8 +300,11 @@ static struct aws_h2_connection *s_connection_new(
     connection->base.http_version = AWS_HTTP_VERSION_2;
     /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
     connection->base.next_stream_id = (server ? 2 : 1);
+    /* Stream window management */
     connection->base.manual_window_management = manual_window_management;
 
+    /* Connection window management */
+    connection->conn_manual_window_management = http2_options->conn_manual_window_management;
     connection->on_goaway_received = http2_options->on_goaway_received;
     connection->on_remote_settings_change = http2_options->on_remote_settings_change;
 
@@ -1175,8 +1178,8 @@ struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_le
         }
     }
 
-    /* if manual_window_management is false, we will automatically maintain the connection self window size */
-    if (payload_len != 0 && !connection->base.manual_window_management) {
+    /* if conn_manual_window_management is false, we will automatically maintain the connection self window size */
+    if (payload_len != 0 && !connection->conn_manual_window_management) {
         struct aws_h2_frame *connection_window_update_frame =
             aws_h2_frame_new_window_update(connection->base.alloc, 0, payload_len);
         if (!connection_window_update_frame) {
@@ -2056,10 +2059,12 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
         /* Silently do nothing. */
         return;
     }
-    if (!connection_base->manual_window_management) {
+    if (!connection->conn_manual_window_management) {
         /* auto-mode, manual update window is not supported, silently do nothing with warning log. */
         CONNECTION_LOG(
-            DEBUG, connection, "Manual window management is off, update window operations are not supported.");
+            DEBUG,
+            connection,
+            "Connection manual window management is off, update window operations are not supported.");
         return;
     }
     struct aws_h2_frame *connection_window_update_frame =
