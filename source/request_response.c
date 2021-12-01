@@ -843,7 +843,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
     if (!message) {
         return NULL;
     }
-    AWS_LOGF_TRACE(AWS_LS_HTTP_GENERAL, "Creating HTTP/2 message from HTTP/1 message ip: %p", (void *)http1_msg)
+    AWS_LOGF_TRACE(AWS_LS_HTTP_GENERAL, "Creating HTTP/2 message from HTTP/1 message id: %p", (void *)http1_msg)
     /* Set pseudo headers from HTTP/1.1 message */
     if (aws_http_message_is_request(http1_msg)) {
         struct aws_byte_cursor method;
@@ -862,7 +862,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         }
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_GENERAL,
-            "Added header \"%.*s %.*s\" to new HTTP/2 header",
+            "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
             (int)aws_http_header_method.len,
             aws_http_header_method.ptr,
             (int)method.len,
@@ -877,7 +877,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         }
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_GENERAL,
-            "Added header \"%.*s %.*s\" to new HTTP/2 header",
+            "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
             (int)aws_http_header_scheme.len,
             aws_http_header_scheme.ptr,
             (int)scheme_cursor.len,
@@ -898,7 +898,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         }
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_GENERAL,
-            "Added header \"%.*s %.*s\" to new HTTP/2 header",
+            "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
             (int)aws_http_header_path.len,
             aws_http_header_path.ptr,
             (int)path_cursor.len,
@@ -920,7 +920,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         }
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_GENERAL,
-            "Added header \"%.*s %d\" to new HTTP/2 header",
+            "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
             (int)aws_http_header_status.len,
             aws_http_header_status.ptr,
             status);
@@ -944,7 +944,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         }
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_GENERAL,
-            "Added header \"%.*s %.*s\" to new HTTP/2 header",
+            "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
             (int)lower_name_cursor.len,
             lower_name_cursor.ptr,
             (int)header_iter.value.len,

@@ -368,7 +368,7 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
     if (!increment_size) {
         return;
     }
-    if (!connection->base.manual_window_management) {
+    if (!connection->base.stream_manual_window_management) {
         /* auto-mode, manual update window is not supported */
         AWS_H2_STREAM_LOG(
             DEBUG, stream, "Manual window management is off, update window operations are not supported.");
@@ -875,7 +875,7 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
 
     /* send a stream window_update frame to automatically maintain the stream self window size, if
      * manual_window_management is not set */
-    if (payload_len != 0 && !end_stream && !stream->base.owning_connection->manual_window_management) {
+    if (payload_len != 0 && !end_stream && !stream->base.owning_connection->stream_manual_window_management) {
         struct aws_h2_frame *stream_window_update_frame =
             aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, payload_len);
         if (!stream_window_update_frame) {

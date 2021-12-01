@@ -106,7 +106,7 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
         return;
     }
 
-    if (!stream_base->owning_connection->manual_window_management) {
+    if (!stream_base->owning_connection->stream_manual_window_management) {
         return;
     }
 

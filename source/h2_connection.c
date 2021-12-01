@@ -301,7 +301,7 @@ static struct aws_h2_connection *s_connection_new(
     /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
     connection->base.next_stream_id = (server ? 2 : 1);
     /* Stream window management */
-    connection->base.manual_window_management = manual_window_management;
+    connection->base.stream_manual_window_management = manual_window_management;
 
     /* Connection window management */
     connection->conn_manual_window_management = http2_options->conn_manual_window_management;
