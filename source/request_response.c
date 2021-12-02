@@ -920,7 +920,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         }
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_GENERAL,
-            "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
+            "Added header to new HTTP/2 header - \"%.*s\": \"%d\" ",
             (int)aws_http_header_status.len,
             aws_http_header_status.ptr,
             status);
