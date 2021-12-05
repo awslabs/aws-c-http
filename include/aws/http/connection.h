@@ -231,6 +231,8 @@ struct aws_http2_connection_options {
      * further data.
      * The user must call aws_http2_connection_update_window() to increment the connection's
      * window and keep data flowing.
+     * Note: the padding of data frame counts to the flow-control window.
+     * But, the client will always automatically update the window for padding even for manual window update.
      */
     bool conn_manual_window_management;
 };
@@ -317,7 +319,8 @@ struct aws_http_client_connection_options {
      *
      * If you created a HTTP/2 connection, it will ONLY control the stream window
      * management. Connection window management is controlled by
-     * conn_manual_window_management.
+     * conn_manual_window_management. Note: the padding of data frame counts to the flow-control window.
+     * But, the client will always automatically update the window for padding even for manual window update.
      */
     bool manual_window_management;
 

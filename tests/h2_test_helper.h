@@ -230,6 +230,17 @@ int h2_fake_peer_send_data_frame(
     bool end_stream);
 
 /**
+ * Encode the entire byte cursor into a single DATA frame.
+ * Fails if the cursor is too large for this to work.
+ */
+int h2_fake_peer_send_data_frame_with_padding_length(
+    struct h2_fake_peer *peer,
+    uint32_t stream_id,
+    struct aws_byte_cursor data,
+    bool end_stream,
+    uint8_t padding_length);
+
+/**
  * Encode the entire string into a single DATA frame.
  * Fails if the string is too large for this to work.
  */

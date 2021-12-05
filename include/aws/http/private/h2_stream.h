@@ -146,6 +146,7 @@ struct aws_h2err aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *str
 struct aws_h2err aws_h2_stream_on_decoder_data_begin(
     struct aws_h2_stream *stream,
     uint32_t payload_len,
+    uint32_t auto_managed_win_len,
     bool end_stream);
 struct aws_h2err aws_h2_stream_on_decoder_data_i(struct aws_h2_stream *stream, struct aws_byte_cursor data);
 struct aws_h2err aws_h2_stream_on_decoder_window_update(

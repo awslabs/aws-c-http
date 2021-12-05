@@ -127,6 +127,7 @@ static struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t p
 static struct aws_h2err s_decoder_on_data_begin(
     uint32_t stream_id,
     uint32_t payload_len,
+    uint32_t auto_managed_win_len,
     bool end_stream,
     void *userdata);
 static struct aws_h2err s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
@@ -1149,7 +1150,28 @@ struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised
     return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, bool end_stream, void *userdata) {
+static int s_connection_send_update_window(struct aws_h2_connection *connection, uint32_t window_size) {
+    struct aws_h2_frame *connection_window_update_frame =
+        aws_h2_frame_new_window_update(connection->base.alloc, 0, window_size);
+    if (!connection_window_update_frame) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "WINDOW_UPDATE frame on connection failed to be sent, error %s",
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+    aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
+    connection->thread_data.window_size_self += window_size;
+    return AWS_OP_SUCCESS;
+}
+
+struct aws_h2err s_decoder_on_data_begin(
+    uint32_t stream_id,
+    uint32_t payload_len,
+    uint32_t auto_managed_win_len,
+    bool end_stream,
+    void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
     /* A receiver that receives a flow-controlled frame MUST always account for its contribution against the connection
@@ -1165,6 +1187,19 @@ struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_le
         return aws_h2err_from_h2_code(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR);
     }
 
+    if (auto_managed_win_len) {
+        /* Update the padding for user, as we don't offer user any info about padding */
+        if (s_connection_send_update_window(connection, auto_managed_win_len)) {
+            return aws_h2err_from_last_error();
+        }
+        CONNECTION_LOGF(
+            INFO,
+            connection,
+            "DATA with %" PRIu32
+            " padding. Updating the window for padding and one byte for padding length automatically.",
+            auto_managed_win_len - 1 /* one byte for padding length */);
+    }
+
     struct aws_h2_stream *stream;
     struct aws_h2err err = s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_DATA, &stream);
     if (aws_h2err_failed(err)) {
@@ -1172,26 +1207,24 @@ struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_le
     }
 
     if (stream) {
-        err = aws_h2_stream_on_decoder_data_begin(stream, payload_len, end_stream);
+        err = aws_h2_stream_on_decoder_data_begin(stream, payload_len, auto_managed_win_len, end_stream);
         if (aws_h2err_failed(err)) {
             return err;
         }
     }
+    /* padding and padding length has been update already. Decoder should have already checked the length is valid */
+    payload_len -= auto_managed_win_len;
 
     /* if conn_manual_window_management is false, we will automatically maintain the connection self window size */
     if (payload_len != 0 && !connection->conn_manual_window_management) {
-        struct aws_h2_frame *connection_window_update_frame =
-            aws_h2_frame_new_window_update(connection->base.alloc, 0, payload_len);
-        if (!connection_window_update_frame) {
-            CONNECTION_LOGF(
-                ERROR,
-                connection,
-                "WINDOW_UPDATE frame on connection failed to be sent, error %s",
-                aws_error_name(aws_last_error()));
+        if (s_connection_send_update_window(connection, payload_len)) {
             return aws_h2err_from_last_error();
         }
-        aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
-        connection->thread_data.window_size_self += payload_len;
+        CONNECTION_LOGF(
+            INFO,
+            connection,
+            "Connection with no manual window management, updating window with size %" PRIu32 " automatically.",
+            payload_len);
     }
 
     return AWS_H2ERR_SUCCESS;
