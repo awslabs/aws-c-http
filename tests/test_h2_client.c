@@ -3656,7 +3656,7 @@ TEST_CASE(h2_client_manual_window_management_user_send_stream_window_update_with
     ASSERT_TRUE(aws_byte_buf_write_u8_n(&response_body_bufs, (uint8_t)'a', data_length));
     struct aws_byte_cursor body_cursor = aws_byte_cursor_from_buf(&response_body_bufs);
     ASSERT_SUCCESS(h2_fake_peer_send_data_frame_with_padding_length(
-        &s_tester.peer, stream_id, body_cursor, false /*end_stream*/, padding_length));
+        &s_tester.peer, stream_id, body_cursor, false /*end_stream*/, (uint8_t)padding_length));
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* validate no window_update frame for stream sent automatically */
@@ -3905,10 +3905,10 @@ TEST_CASE(h2_client_manual_window_management_user_send_conn_window_update_with_p
     for (size_t i = 0; i < body_number; i++) {
         if (i == body_number - 1) {
             ASSERT_SUCCESS(h2_fake_peer_send_data_frame_with_padding_length(
-                &s_tester.peer, stream_id, body_cursor, true /*end_stream*/, padding_size));
+                &s_tester.peer, stream_id, body_cursor, true /*end_stream*/, (uint8_t)padding_size));
         } else {
             ASSERT_SUCCESS(h2_fake_peer_send_data_frame_with_padding_length(
-                &s_tester.peer, stream_id, body_cursor, false /*end_stream*/, padding_size));
+                &s_tester.peer, stream_id, body_cursor, false /*end_stream*/, (uint8_t)padding_size));
         }
         testing_channel_drain_queued_tasks(&s_tester.testing_channel);
         ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
