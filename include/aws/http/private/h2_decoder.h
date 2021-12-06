@@ -52,9 +52,8 @@ struct aws_h2_decoder_vtable {
      * No other decoder callbacks will occur in this time */
     struct aws_h2err (*on_data_begin)(
         uint32_t stream_id,
-        uint32_t payload_len,          /* Whole payload length including padding and padding length */
-        uint32_t auto_managed_win_len, /* The length of padding and the byte for padding length, which is the
-                                        automatically managed by the client */
+        uint32_t payload_len,         /* Whole payload length including padding and padding length */
+        uint32_t total_padding_bytes, /* The length of padding and the byte for padding length */
         bool end_stream,
         void *userdata);
     struct aws_h2err (*on_data_i)(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);

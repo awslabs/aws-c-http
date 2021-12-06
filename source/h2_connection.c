@@ -127,7 +127,7 @@ static struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t p
 static struct aws_h2err s_decoder_on_data_begin(
     uint32_t stream_id,
     uint32_t payload_len,
-    uint32_t auto_managed_win_len,
+    uint32_t total_padding_bytes,
     bool end_stream,
     void *userdata);
 static struct aws_h2err s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
@@ -1169,7 +1169,7 @@ static int s_connection_send_update_window(struct aws_h2_connection *connection,
 struct aws_h2err s_decoder_on_data_begin(
     uint32_t stream_id,
     uint32_t payload_len,
-    uint32_t auto_managed_win_len,
+    uint32_t total_padding_bytes,
     bool end_stream,
     void *userdata) {
     struct aws_h2_connection *connection = userdata;
@@ -1187,19 +1187,6 @@ struct aws_h2err s_decoder_on_data_begin(
         return aws_h2err_from_h2_code(AWS_HTTP2_ERR_FLOW_CONTROL_ERROR);
     }
 
-    if (auto_managed_win_len) {
-        /* Update the padding for user, as we don't offer user any info about padding */
-        if (s_connection_send_update_window(connection, auto_managed_win_len)) {
-            return aws_h2err_from_last_error();
-        }
-        CONNECTION_LOGF(
-            INFO,
-            connection,
-            "DATA with %" PRIu32
-            " padding. Updating the window for padding and one byte for padding length automatically.",
-            auto_managed_win_len - 1 /* one byte for padding length */);
-    }
-
     struct aws_h2_stream *stream;
     struct aws_h2err err = s_get_active_stream_for_incoming_frame(connection, stream_id, AWS_H2_FRAME_T_DATA, &stream);
     if (aws_h2err_failed(err)) {
@@ -1207,13 +1194,28 @@ struct aws_h2err s_decoder_on_data_begin(
     }
 
     if (stream) {
-        err = aws_h2_stream_on_decoder_data_begin(stream, payload_len, auto_managed_win_len, end_stream);
+        err = aws_h2_stream_on_decoder_data_begin(stream, payload_len, total_padding_bytes, end_stream);
         if (aws_h2err_failed(err)) {
             return err;
         }
     }
-    /* padding and padding length has been update already. Decoder should have already checked the length is valid */
-    payload_len -= auto_managed_win_len;
+
+    if (total_padding_bytes && connection->conn_manual_window_management) {
+        /**
+         * Automatically update the flow-window to account for padding, even if "manual window management"
+         * is enabled. We do this because the current API doesn't have any way to inform the user about padding,
+         * so we can't expect them to manage it themselves.
+         */
+        if (s_connection_send_update_window(connection, total_padding_bytes)) {
+            return aws_h2err_from_last_error();
+        }
+        CONNECTION_LOGF(
+            DEBUG,
+            connection,
+            "DATA with %" PRIu32
+            " padding. Updating the window for padding and one byte for padding length automatically.",
+            total_padding_bytes - 1 /* one byte for padding length */);
+    }
 
     /* if conn_manual_window_management is false, we will automatically maintain the connection self window size */
     if (payload_len != 0 && !connection->conn_manual_window_management) {
@@ -1221,7 +1223,7 @@ struct aws_h2err s_decoder_on_data_begin(
             return aws_h2err_from_last_error();
         }
         CONNECTION_LOGF(
-            INFO,
+            TRACE,
             connection,
             "Connection with no manual window management, updating window with size %" PRIu32 " automatically.",
             payload_len);
