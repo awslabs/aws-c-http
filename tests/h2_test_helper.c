@@ -294,10 +294,10 @@ static struct aws_h2err s_decoder_on_push_promise_end(uint32_t stream_id, bool m
 static struct aws_h2err s_decoder_on_data_begin(
     uint32_t stream_id,
     uint32_t payload_len,
-    uint32_t auto_managed_win_len,
+    uint32_t total_padding_bytes,
     bool end_stream,
     void *userdata) {
-    (void)auto_managed_win_len;
+    (void)total_padding_bytes;
     struct h2_decode_tester *decode_tester = userdata;
     struct h2_decoded_frame *frame;
     s_begin_new_frame(decode_tester, AWS_H2_FRAME_T_DATA, stream_id, &frame);
