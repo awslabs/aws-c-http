@@ -891,7 +891,7 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
     }
     stream->thread_data.window_size_self -= payload_len;
 
-    if (total_padding_bytes && !end_stream && stream->base.owning_connection->stream_manual_window_management) {
+    if (total_padding_bytes != 0 && !end_stream && stream->base.owning_connection->stream_manual_window_management) {
         /**
          * Automatically update the flow-window to account for padding, even if "manual window management"
          * is enabled. We do this because the current API doesn't have any way to inform the user about padding,
