@@ -215,6 +215,26 @@ struct aws_http2_connection_options {
      * See `aws_http2_on_remote_settings_change_fn`.
      */
     aws_http2_on_remote_settings_change_fn *on_remote_settings_change;
+
+    /**
+     * Optional.
+     * Set to true to manually manage the flow-control window of whole HTTP/2 connection.
+     *
+     * If false, the connection will maintain its flow-control windows such that
+     * no back-pressure is applied and data arrives as fast as possible.
+     *
+     * If true, the flow-control window of the whole connection will shrink as body data
+     * is received (headers, padding, and other metadata do not affect the window) for every streams
+     * created on this connection.
+     * The initial connection flow-control window is 65,535.
+     * Once the connection's flow-control window reaches to 0, all the streams on the connection stop receiving any
+     * further data.
+     * The user must call aws_http2_connection_update_window() to increment the connection's
+     * window and keep data flowing.
+     * Note: the padding of data frame counts to the flow-control window.
+     * But, the client will always automatically update the window for padding even for manual window update.
+     */
+    bool conn_manual_window_management;
 };
 
 /**
@@ -297,8 +317,10 @@ struct aws_http_client_connection_options {
      * The user must call aws_http_stream_update_window() to increment the stream's
      * window and keep data flowing.
      *
-     * If you created a HTTP/2 connection, it will also control the connection window
-     * management.
+     * If you created a HTTP/2 connection, it will ONLY control the stream window
+     * management. Connection window management is controlled by
+     * conn_manual_window_management. Note: the padding of data frame counts to the flow-control window.
+     * But, the client will always automatically update the window for padding even for manual window update.
      */
     bool manual_window_management;
 
@@ -611,14 +633,14 @@ int aws_http2_connection_get_received_goaway(
 /**
  * Increment the connection's flow-control window to keep data flowing (HTTP/2 only).
  *
- * If the connection was created with `manual_window_management` set true,
+ * If the connection was created with `conn_manual_window_management` set true,
  * the flow-control window of the connection will shrink as body data is received for all the streams created on it.
  * (headers, padding, and other metadata do not affect the window).
  * The initial connection flow-control window is 65,535.
  * Once the connection's flow-control window reaches to 0, all the streams on the connection stop receiving any further
  * data.
  *
- * If `manual_window_management` is false, this call will have no effect.
+ * If `conn_manual_window_management` is false, this call will have no effect.
  * The connection maintains its flow-control windows such that
  * no back-pressure is applied and data arrives as fast as possible.
  *

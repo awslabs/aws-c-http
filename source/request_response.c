@@ -843,6 +843,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
     if (!message) {
         return NULL;
     }
+    AWS_LOGF_TRACE(AWS_LS_HTTP_GENERAL, "Creating HTTP/2 message from HTTP/1 message id: %p", (void *)http1_msg)
     /* Set pseudo headers from HTTP/1.1 message */
     if (aws_http_message_is_request(http1_msg)) {
         struct aws_byte_cursor method;
@@ -859,6 +860,13 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         if (aws_http_headers_add(copied_headers, aws_http_header_method, method)) {
             goto error;
         }
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_GENERAL,
+            "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
+            (int)aws_http_header_method.len,
+            aws_http_header_method.ptr,
+            (int)method.len,
+            method.ptr);
         /**
          * we set a default value, "https", for now.
          * TODO: as we support prior knowledge, we may also want to support http?
@@ -867,6 +875,13 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         if (aws_http_headers_add(copied_headers, aws_http_header_scheme, scheme_cursor)) {
             goto error;
         }
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_GENERAL,
+            "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
+            (int)aws_http_header_scheme.len,
+            aws_http_header_scheme.ptr,
+            (int)scheme_cursor.len,
+            scheme_cursor.ptr);
         /* :authority SHOULD NOT be created when translating HTTP/1 request.(RFC 7540 8.1.2.3) */
 
         struct aws_byte_cursor path_cursor;
@@ -881,6 +896,13 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         if (aws_http_headers_add(copied_headers, aws_http_header_path, path_cursor)) {
             goto error;
         }
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_GENERAL,
+            "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
+            (int)aws_http_header_path.len,
+            aws_http_header_path.ptr,
+            (int)path_cursor.len,
+            path_cursor.ptr);
     } else {
         int status = 0;
         if (aws_http_message_get_response_status(http1_msg, &status)) {
@@ -896,6 +918,12 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         if (aws_http2_headers_set_response_status(copied_headers, status)) {
             goto error;
         }
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_GENERAL,
+            "Added header to new HTTP/2 header - \"%.*s\": \"%d\" ",
+            (int)aws_http_header_status.len,
+            aws_http_header_status.ptr,
+            status);
     }
 
     if (aws_byte_buf_init(&lower_name_buf, alloc, 256)) {
@@ -914,9 +942,17 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         if (aws_http_headers_add(copied_headers, lower_name_cursor, header_iter.value)) {
             goto error;
         }
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_GENERAL,
+            "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
+            (int)lower_name_cursor.len,
+            lower_name_cursor.ptr,
+            (int)header_iter.value.len,
+            header_iter.value.ptr);
         aws_byte_buf_reset(&lower_name_buf, false);
     }
     aws_byte_buf_clean_up(&lower_name_buf);
+    aws_http_message_set_body_stream(message, aws_http_message_get_body_stream(http1_msg));
     /* TODO: Refcount the input stream of old message */
 
     return message;

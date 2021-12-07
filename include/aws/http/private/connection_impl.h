@@ -116,7 +116,7 @@ struct aws_http_connection {
     struct aws_http_connection_client_data *client_data;
     struct aws_http_connection_server_data *server_data;
 
-    bool manual_window_management;
+    bool stream_manual_window_management;
 };
 
 /* Gets a client connection up and running.
@@ -124,7 +124,7 @@ struct aws_http_connection {
 struct aws_http_client_bootstrap {
     struct aws_allocator *alloc;
     bool is_using_tls;
-    bool manual_window_management;
+    bool stream_manual_window_management;
     bool prior_knowledge_http2;
     size_t initial_window_size;
     struct aws_http_connection_monitoring_options monitoring_options;

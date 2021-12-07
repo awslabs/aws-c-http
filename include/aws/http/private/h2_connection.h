@@ -26,6 +26,8 @@ struct aws_h2_connection {
     struct aws_channel_task cross_thread_work_task;
     struct aws_channel_task outgoing_frames_task;
 
+    bool conn_manual_window_management;
+
     /* Only the event-loop thread may touch this data */
     struct {
         struct aws_h2_decoder *decoder;

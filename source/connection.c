@@ -779,7 +779,7 @@ static void s_client_bootstrap_on_channel_setup(
         channel,
         false,
         http_bootstrap->is_using_tls,
-        http_bootstrap->manual_window_management,
+        http_bootstrap->stream_manual_window_management,
         http_bootstrap->prior_knowledge_http2,
         http_bootstrap->initial_window_size,
         http_bootstrap->alpn_string_map,
@@ -1036,7 +1036,7 @@ int aws_http_client_connect_internal(
 
     http_bootstrap->alloc = options.allocator;
     http_bootstrap->is_using_tls = options.tls_options != NULL;
-    http_bootstrap->manual_window_management = options.manual_window_management;
+    http_bootstrap->stream_manual_window_management = options.manual_window_management;
     http_bootstrap->prior_knowledge_http2 = options.prior_knowledge_http2;
     http_bootstrap->initial_window_size = options.initial_window_size;
     http_bootstrap->user_data = options.user_data;

@@ -127,6 +127,7 @@ static struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t p
 static struct aws_h2err s_decoder_on_data_begin(
     uint32_t stream_id,
     uint32_t payload_len,
+    uint32_t total_padding_bytes,
     bool end_stream,
     void *userdata);
 static struct aws_h2err s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
@@ -300,8 +301,11 @@ static struct aws_h2_connection *s_connection_new(
     connection->base.http_version = AWS_HTTP_VERSION_2;
     /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
     connection->base.next_stream_id = (server ? 2 : 1);
-    connection->base.manual_window_management = manual_window_management;
+    /* Stream window management */
+    connection->base.stream_manual_window_management = manual_window_management;
 
+    /* Connection window management */
+    connection->conn_manual_window_management = http2_options->conn_manual_window_management;
     connection->on_goaway_received = http2_options->on_goaway_received;
     connection->on_remote_settings_change = http2_options->on_remote_settings_change;
 
@@ -1146,7 +1150,28 @@ struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised
     return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, bool end_stream, void *userdata) {
+static int s_connection_send_update_window(struct aws_h2_connection *connection, uint32_t window_size) {
+    struct aws_h2_frame *connection_window_update_frame =
+        aws_h2_frame_new_window_update(connection->base.alloc, 0, window_size);
+    if (!connection_window_update_frame) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "WINDOW_UPDATE frame on connection failed to be sent, error %s",
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+    aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
+    connection->thread_data.window_size_self += window_size;
+    return AWS_OP_SUCCESS;
+}
+
+struct aws_h2err s_decoder_on_data_begin(
+    uint32_t stream_id,
+    uint32_t payload_len,
+    uint32_t total_padding_bytes,
+    bool end_stream,
+    void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
     /* A receiver that receives a flow-controlled frame MUST always account for its contribution against the connection
@@ -1169,26 +1194,39 @@ struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_le
     }
 
     if (stream) {
-        err = aws_h2_stream_on_decoder_data_begin(stream, payload_len, end_stream);
+        err = aws_h2_stream_on_decoder_data_begin(stream, payload_len, total_padding_bytes, end_stream);
         if (aws_h2err_failed(err)) {
             return err;
         }
     }
 
-    /* if manual_window_management is false, we will automatically maintain the connection self window size */
-    if (payload_len != 0 && !connection->base.manual_window_management) {
-        struct aws_h2_frame *connection_window_update_frame =
-            aws_h2_frame_new_window_update(connection->base.alloc, 0, payload_len);
-        if (!connection_window_update_frame) {
-            CONNECTION_LOGF(
-                ERROR,
-                connection,
-                "WINDOW_UPDATE frame on connection failed to be sent, error %s",
-                aws_error_name(aws_last_error()));
+    if (total_padding_bytes != 0 && connection->conn_manual_window_management) {
+        /**
+         * Automatically update the flow-window to account for padding, even if "manual window management"
+         * is enabled. We do this because the current API doesn't have any way to inform the user about padding,
+         * so we can't expect them to manage it themselves.
+         */
+        if (s_connection_send_update_window(connection, total_padding_bytes)) {
             return aws_h2err_from_last_error();
         }
-        aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
-        connection->thread_data.window_size_self += payload_len;
+        CONNECTION_LOGF(
+            DEBUG,
+            connection,
+            "DATA with %" PRIu32
+            " padding. Updating the window for padding and one byte for padding length automatically.",
+            total_padding_bytes - 1 /* one byte for padding length */);
+    }
+
+    /* if conn_manual_window_management is false, we will automatically maintain the connection self window size */
+    if (payload_len != 0 && !connection->conn_manual_window_management) {
+        if (s_connection_send_update_window(connection, payload_len)) {
+            return aws_h2err_from_last_error();
+        }
+        CONNECTION_LOGF(
+            TRACE,
+            connection,
+            "Connection with no manual window management, updating window with size %" PRIu32 " automatically.",
+            payload_len);
     }
 
     return AWS_H2ERR_SUCCESS;
@@ -2056,10 +2094,12 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
         /* Silently do nothing. */
         return;
     }
-    if (!connection_base->manual_window_management) {
+    if (!connection->conn_manual_window_management) {
         /* auto-mode, manual update window is not supported, silently do nothing with warning log. */
         CONNECTION_LOG(
-            DEBUG, connection, "Manual window management is off, update window operations are not supported.");
+            DEBUG,
+            connection,
+            "Connection manual window management is off, update window operations are not supported.");
         return;
     }
     struct aws_h2_frame *connection_window_update_frame =
