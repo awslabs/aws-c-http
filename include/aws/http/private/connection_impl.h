@@ -201,7 +201,8 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
     size_t initial_window_size,
     const struct aws_hash_table *alpn_string_map,
     const struct aws_http1_connection_options *http1_options,
-    const struct aws_http2_connection_options *http2_options);
+    const struct aws_http2_connection_options *http2_options,
+    void *connection_user_data);
 
 AWS_EXTERN_C_END
 

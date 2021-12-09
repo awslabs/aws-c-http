@@ -176,7 +176,7 @@ struct aws_http2_connection_options {
 
     /**
      * Required
-     * The num of settings to change.
+     * The num of settings to change (Length of the initial_settings_array).
      */
     size_t num_initial_settings;
 

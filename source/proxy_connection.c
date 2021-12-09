@@ -548,7 +548,8 @@ static int s_aws_http_apply_http_connection_to_proxied_channel(struct aws_http_p
         context->original_initial_window_size,
         NULL, /* alpn_string_map */
         &context->original_http1_options,
-        NULL); /* TODO: support http2 options */
+        NULL,
+        context->original_user_data); /* TODO: support http2 options */
     if (connection == NULL) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
@@ -558,8 +559,6 @@ static int s_aws_http_apply_http_connection_to_proxied_channel(struct aws_http_p
 
         return AWS_OP_ERR;
     }
-
-    connection->user_data = context->original_user_data;
 
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,

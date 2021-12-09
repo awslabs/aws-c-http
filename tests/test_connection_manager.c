@@ -52,6 +52,7 @@ struct cm_tester_options {
     size_t max_connections;
     uint64_t max_connection_idle_in_ms;
     uint64_t starting_mock_time;
+    bool http2;
 };
 
 struct cm_tester {
@@ -172,8 +173,12 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     };
 
     aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, options->allocator);
+    if (options->http2) {
+        ASSERT_SUCCESS(aws_tls_ctx_options_set_alpn_list(&tester->tls_ctx_options, "h2"));
+    }
 
     tester->tls_ctx = aws_tls_client_ctx_new(options->allocator, &tester->tls_ctx_options);
+
     ASSERT_NOT_NULL(tester->tls_ctx);
 
     struct aws_byte_cursor server_name = aws_byte_cursor_from_c_str("www.google.com");
@@ -202,6 +207,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         .shutdown_complete_user_data = tester,
         .shutdown_complete_callback = s_cm_tester_on_cm_shutdown_complete,
         .max_connection_idle_in_milliseconds = options->max_connection_idle_in_ms,
+        .prior_knowledge_http2 = !options->use_tls && options->http2,
     };
 
     if (options->mock_table) {
@@ -455,6 +461,56 @@ static int s_test_connection_manager_single_connection(struct aws_allocator *all
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_single_connection, s_test_connection_manager_single_connection);
+
+static int s_test_connection_manager_single_http2_connection(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+        .http2 = true,
+        .use_tls = true,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_acquire_connections(1);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
+
+    ASSERT_SUCCESS(s_release_connections(1, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_single_http2_connection, s_test_connection_manager_single_http2_connection);
+
+static int s_test_connection_manager_single_http2_connection_failed(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    /* google don't support prior_knowledge, so, this will fail to create the connection. Check we are good when acquire
+     * failed. */
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+        .http2 = true,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_acquire_connections(1);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
+
+    ASSERT_SUCCESS(s_release_connections(1, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_connection_manager_single_http2_connection_failed,
+    s_test_connection_manager_single_http2_connection_failed);
 
 static int s_test_connection_manager_many_connections(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;

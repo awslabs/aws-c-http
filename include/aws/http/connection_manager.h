@@ -41,6 +41,45 @@ struct aws_http_connection_manager_options {
     const struct aws_http_connection_monitoring_options *monitoring_options;
     struct aws_byte_cursor host;
     uint16_t port;
+
+    /**
+     * Optional.
+     * HTTP/2 specific configuration.
+     */
+    bool prior_knowledge_http2;
+    /**
+     * Optional
+     * The data of settings to change for initial settings.
+     * Note: each setting has its boundary. If settings_array is not set, num_settings has to be 0 to send an empty
+     * SETTINGS frame.
+     * All HTTP/2 connections created by connection manager will be applied to this initial settings successfully.
+     */
+    struct aws_http2_setting *initial_settings_array;
+    /**
+     * Optional
+     * The num of settings to change (Length of the initial_settings_array).
+     */
+    size_t num_initial_settings;
+    /**
+     * Optional
+     * The max number of recently-closed streams to remember.
+     * Set it to zero to use the default setting, AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS
+     *
+     * If the connection receives a frame for a closed stream,
+     * the frame will be ignored or cause a connection error,
+     * depending on the frame type and how the stream was closed.
+     * Remembering more streams reduces the chances that a late frame causes
+     * a connection error, but costs some memory.
+     */
+    size_t max_closed_streams;
+    /**
+     * Optional.
+     * Set to true to manually manage the flow-control window of whole HTTP/2 connection.
+     * For HTTP/2 Connection, if you want to manually manage the stream level flow-control window, use
+     * enable_read_back_pressure.
+     */
+    bool http2_conn_manual_window_management;
+
     /* Proxy configuration for http connection */
     const struct aws_http_proxy_options *proxy_options;
 
