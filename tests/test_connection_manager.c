@@ -53,6 +53,8 @@ struct cm_tester_options {
     uint64_t max_connection_idle_in_ms;
     uint64_t starting_mock_time;
     bool http2;
+    struct aws_http2_setting *initial_settings_array;
+    size_t num_initial_settings;
 };
 
 struct cm_tester {
@@ -208,6 +210,8 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         .shutdown_complete_callback = s_cm_tester_on_cm_shutdown_complete,
         .max_connection_idle_in_milliseconds = options->max_connection_idle_in_ms,
         .prior_knowledge_http2 = !options->use_tls && options->http2,
+        .initial_settings_array = options->initial_settings_array,
+        .num_initial_settings = options->num_initial_settings,
     };
 
     if (options->mock_table) {
@@ -511,6 +515,36 @@ static int s_test_connection_manager_single_http2_connection_failed(struct aws_a
 AWS_TEST_CASE(
     test_connection_manager_single_http2_connection_failed,
     s_test_connection_manager_single_http2_connection_failed);
+
+static int s_test_connection_manager_single_http2_connection_with_settings(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_ENABLE_PUSH, .value = 0},
+    };
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+        .http2 = true,
+        .use_tls = true,
+        .initial_settings_array = settings_array,
+        .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_acquire_connections(1);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
+
+    ASSERT_SUCCESS(s_release_connections(1, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_connection_manager_single_http2_connection_with_settings,
+    s_test_connection_manager_single_http2_connection_with_settings);
 
 static int s_test_connection_manager_many_connections(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;

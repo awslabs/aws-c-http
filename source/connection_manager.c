@@ -217,8 +217,7 @@ struct aws_http_connection_manager {
      * HTTP/2 specific.
      */
     bool prior_knowledge_http2;
-    struct aws_http2_setting *initial_settings_array;
-    size_t num_initial_settings;
+    struct aws_array_list *initial_settings;
     size_t max_closed_streams;
     bool http2_conn_manual_window_management;
 
@@ -639,8 +638,9 @@ static void s_aws_http_connection_manager_finish_destroy(struct aws_http_connect
     AWS_FATAL_ASSERT(aws_linked_list_empty(&manager->idle_connections));
 
     aws_string_destroy(manager->host);
-    if (manager->initial_settings_array) {
-        aws_mem_release(manager->allocator, manager->initial_settings_array);
+    if (manager->initial_settings) {
+        aws_array_list_clean_up(manager->initial_settings);
+        aws_mem_release(manager->allocator, manager->initial_settings);
     }
     if (manager->tls_connection_options) {
         aws_tls_connection_options_clean_up(manager->tls_connection_options);
@@ -858,10 +858,11 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     }
     manager->prior_knowledge_http2 = options->prior_knowledge_http2;
     if (options->num_initial_settings > 0) {
-        manager->initial_settings_array =
-            aws_mem_calloc(allocator, options->num_initial_settings, sizeof(struct aws_http2_setting));
+        manager->initial_settings = aws_mem_calloc(allocator, 1, sizeof(struct aws_array_list));
+        aws_array_list_init_dynamic(
+            manager->initial_settings, allocator, options->num_initial_settings, sizeof(struct aws_http2_setting));
         memcpy(
-            manager->initial_settings_array,
+            manager->initial_settings->data,
             options->initial_settings_array,
             options->num_initial_settings * sizeof(struct aws_http2_setting));
     }
@@ -956,8 +957,10 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
 
     struct aws_http2_connection_options h2_options;
     AWS_ZERO_STRUCT(h2_options);
-    h2_options.initial_settings_array = manager->initial_settings_array;
-    h2_options.num_initial_settings = manager->num_initial_settings;
+    if (manager->initial_settings) {
+        h2_options.initial_settings_array = manager->initial_settings->data;
+        h2_options.num_initial_settings = aws_array_list_length(manager->initial_settings);
+    }
     h2_options.max_closed_streams = manager->max_closed_streams;
     h2_options.conn_manual_window_management = manager->http2_conn_manual_window_management;
     h2_options.on_goaway_received = s_aws_http_connection_manager_h2_on_goaway_received;
@@ -1258,9 +1261,10 @@ static void s_aws_http_connection_manager_h2_on_goaway_received(
         debug_data.ptr);
 
     struct aws_connection_management_transaction work;
-    aws_mutex_lock(&manager->lock);
+    s_aws_connection_management_transaction_init(&work, manager);
     /* Release this connection as no new stream will be allowed */
     work.connection_to_release = http2_connection;
+    aws_mutex_lock(&manager->lock);
     s_aws_http_connection_manager_build_transaction(&work);
     aws_mutex_unlock(&manager->lock);
     s_aws_http_connection_manager_execute_transaction(&work);
@@ -1293,6 +1297,8 @@ static void s_aws_http_connection_manager_on_connection_setup(
     aws_mutex_lock(&manager->lock);
 
     bool is_shutting_down = manager->state == AWS_HCMST_SHUTTING_DOWN;
+
+    AWS_FATAL_ASSERT(manager->pending_connects_count > 0);
     --manager->pending_connects_count;
 
     if (connection != NULL) {
