@@ -895,7 +895,6 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: release", (void *)manager);
 
     aws_mutex_lock(&manager->lock);
-    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "locked aws_http_connection_manager_release");
 
     if (manager->external_ref_count > 0) {
         manager->external_ref_count -= 1;
@@ -1062,7 +1061,6 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
          * a callback.  So we need to re-lock and update the state ourselves.
          */
         aws_mutex_lock(&manager->lock);
-        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "locked s_aws_http_connection_manager_execute_transaction");
 
         AWS_FATAL_ASSERT(manager->pending_connects_count >= new_connection_failures);
         manager->pending_connects_count -= new_connection_failures;
@@ -1139,7 +1137,6 @@ void aws_http_connection_manager_acquire_connection(
     s_aws_connection_management_transaction_init(&work, manager);
 
     aws_mutex_lock(&manager->lock);
-    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "locked aws_http_connection_manager_acquire_connection");
 
     if (manager->state != AWS_HCMST_READY) {
         AWS_LOGF_ERROR(
@@ -1206,7 +1203,6 @@ int aws_http_connection_manager_release_connection(
         AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Releasing connection (id=%p)", (void *)manager, (void *)connection);
 
     aws_mutex_lock(&manager->lock);
-    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "locked aws_http_connection_manager_release_connection");
 
     /* We're probably hosed in this case, but let's not underflow */
     if (manager->vended_connection_count == 0) {
@@ -1263,7 +1259,6 @@ static void s_aws_http_connection_manager_h2_on_goaway_received(
 
     struct aws_connection_management_transaction work;
     aws_mutex_lock(&manager->lock);
-    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "locked s_aws_http_connection_manager_h2_on_goaway_received");
     /* Release this connection as no new stream will be allowed */
     work.connection_to_release = http2_connection;
     s_aws_http_connection_manager_build_transaction(&work);
@@ -1296,7 +1291,6 @@ static void s_aws_http_connection_manager_on_connection_setup(
     }
 
     aws_mutex_lock(&manager->lock);
-    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "locked s_aws_http_connection_manager_on_connection_setup");
 
     bool is_shutting_down = manager->state == AWS_HCMST_SHUTTING_DOWN;
     --manager->pending_connects_count;
@@ -1357,7 +1351,6 @@ static void s_aws_http_connection_manager_on_connection_shutdown(
     s_aws_connection_management_transaction_init(&work, manager);
 
     aws_mutex_lock(&manager->lock);
-    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "locked s_aws_http_connection_manager_on_connection_shutdown");
 
     AWS_FATAL_ASSERT(manager->open_connection_count > 0);
     --manager->open_connection_count;
@@ -1401,7 +1394,6 @@ static void s_cull_idle_connections(struct aws_http_connection_manager *manager)
     s_aws_connection_management_transaction_init(&work, manager);
 
     aws_mutex_lock(&manager->lock);
-    AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "locked s_cull_idle_connections");
 
     /* Only if we're not shutting down */
     if (manager->state == AWS_HCMST_READY) {
