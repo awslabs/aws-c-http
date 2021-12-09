@@ -534,6 +534,30 @@ static int s_test_connection_manager_many_connections(struct aws_allocator *allo
 }
 AWS_TEST_CASE(test_connection_manager_many_connections, s_test_connection_manager_many_connections);
 
+static int s_test_connection_manager_many_http2_connections(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 20,
+        .http2 = true,
+        .use_tls = true,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_acquire_connections(20);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(20));
+
+    ASSERT_SUCCESS(s_release_connections(20, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_many_http2_connections, s_test_connection_manager_many_http2_connections);
+
 static int s_test_connection_manager_acquire_release(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
