@@ -930,11 +930,6 @@ static void s_aws_http_connection_manager_on_connection_shutdown(
     int error_code,
     void *user_data);
 
-static void s_aws_http_connection_manager_h2_on_initial_settings_completed(
-    struct aws_http_connection *http2_connection,
-    int error_code,
-    void *user_data);
-
 static void s_aws_http_connection_manager_h2_on_goaway_received(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
@@ -966,7 +961,6 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     h2_options.num_initial_settings = manager->num_initial_settings;
     h2_options.max_closed_streams = manager->max_closed_streams;
     h2_options.conn_manual_window_management = manager->http2_conn_manual_window_management;
-    h2_options.on_initial_settings_completed = s_aws_http_connection_manager_h2_on_initial_settings_completed;
     h2_options.on_goaway_received = s_aws_http_connection_manager_h2_on_goaway_received;
 
     options.http2_options = &h2_options;
@@ -1248,55 +1242,6 @@ release:
     return result;
 }
 
-static void s_aws_http_connection_manager_h2_on_initial_settings_completed(
-    struct aws_http_connection *http2_connection,
-    int error_code,
-    void *user_data) {
-
-    struct aws_http_connection_manager *manager = user_data;
-    struct aws_connection_management_transaction work;
-    s_aws_connection_management_transaction_init(&work, manager);
-
-    aws_mutex_lock(&manager->lock);
-    AWS_FATAL_ASSERT(manager->pending_connects_count > 0);
-    --manager->pending_connects_count;
-    AWS_LOGF_ERROR(
-        AWS_LS_HTTP_CONNECTION_MANAGER, "locked s_aws_http_connection_manager_h2_on_initial_settings_completed");
-    bool is_shutting_down = manager->state == AWS_HCMST_SHUTTING_DOWN;
-    if (error_code) {
-        /*
-         * in this case, it's similar to on_set_up failed, but the on_shutdown will be invoked after, so, we increase
-         * the open_connection_count as well. And release the half opened connection.
-         */
-        while (manager->pending_acquisition_count > manager->pending_connects_count) {
-            AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: Failing excess connection acquisition with error code %d",
-                (void *)manager,
-                (int)error_code);
-            s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &work.completions);
-        }
-        work.connection_to_release = http2_connection;
-    } else if (is_shutting_down || s_idle_connection(manager, http2_connection)) {
-        /*
-         * release it immediately
-         */
-        AWS_LOGF_DEBUG(
-            AWS_LS_HTTP_CONNECTION_MANAGER,
-            "id=%p: New HTTP/2 connection (id=%p) releasing immediately",
-            (void *)manager,
-            (void *)http2_connection);
-        work.connection_to_release = http2_connection;
-    }
-    ++manager->open_connection_count;
-
-    s_aws_http_connection_manager_build_transaction(&work);
-
-    aws_mutex_unlock(&manager->lock);
-
-    s_aws_http_connection_manager_execute_transaction(&work);
-}
-
 static void s_aws_http_connection_manager_h2_on_goaway_received(
     struct aws_http_connection *http2_connection,
     uint32_t last_stream_id,
@@ -1354,21 +1299,9 @@ static void s_aws_http_connection_manager_on_connection_setup(
     AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION_MANAGER, "locked s_aws_http_connection_manager_on_connection_setup");
 
     bool is_shutting_down = manager->state == AWS_HCMST_SHUTTING_DOWN;
-    bool is_h2 = aws_http_connection_get_version(connection) == AWS_HTTP_VERSION_2;
-    if (is_h2 && connection != NULL) {
-        /* The on_initial_settings_completed will be invoked. Let's wait for that to finish the connect process. */
-        AWS_LOGF_DEBUG(
-            AWS_LS_HTTP_CONNECTION_MANAGER,
-            "id=%p: New HTTP/2 connection (id=%p) set up, waiting for initial settings to complete the connecting "
-            "process",
-            (void *)manager,
-            (void *)connection);
-        goto http2;
-    }
     --manager->pending_connects_count;
 
     if (connection != NULL) {
-        /* Don't put HTTP/2 connection to idle until the initial settings are applied. */
         if (is_shutting_down || s_idle_connection(manager, connection)) {
             /*
              * release it immediately
@@ -1398,7 +1331,7 @@ static void s_aws_http_connection_manager_on_connection_setup(
             s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &work.completions);
         }
     }
-http2:
+
     s_aws_http_connection_manager_build_transaction(&work);
 
     aws_mutex_unlock(&manager->lock);
