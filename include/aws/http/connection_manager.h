@@ -7,7 +7,6 @@
  */
 
 #include <aws/http/http.h>
-#include <aws/http/proxy.h>
 
 #include <aws/common/byte_buf.h>
 
@@ -16,6 +15,7 @@ struct aws_http_connection;
 struct aws_http_connection_manager;
 struct aws_socket_options;
 struct aws_tls_connection_options;
+struct proxy_env_var_settings;
 
 typedef void(aws_http_connection_manager_on_connection_setup_fn)(
     struct aws_http_connection *connection,
