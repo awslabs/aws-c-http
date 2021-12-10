@@ -32,7 +32,7 @@ typedef void(aws_http_connection_manager_shutdown_complete_fn)(void *user_data);
  */
 struct aws_http_connection_manager_options {
     /*
-     * http connection configuration
+     * http connection configuration, check `struct aws_http_client_connection_options` for details of each config
      */
     struct aws_client_bootstrap *bootstrap;
     size_t initial_window_size;
