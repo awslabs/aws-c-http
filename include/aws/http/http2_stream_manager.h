@@ -8,6 +8,13 @@
 
 #include <aws/http/http.h>
 
+typedef void(aws_http2_stream_manager_on_connection_setup_fn)(
+    struct aws_http_connection *connection,
+    int error_code,
+    void *user_data);
+
+typedef void(aws_http2_stream_manager_shutdown_complete_fn)(void *user_data);
+
 /*
  * HTTP/2 stream manager configuration struct.
  *
@@ -16,28 +23,42 @@
  */
 struct aws_http2_stream_manager_options {
     /**
-     * Required.
-     * Configure the connection pool under the hood.
+     * basic http connection configuration
+     * TODO: Refact this part to struct aws_http_connection_config and share between different level of options?
      */
-    const struct aws_http_connection_manager_options *connection_manager_options;
+    struct aws_client_bootstrap *bootstrap;
+    const struct aws_socket_options *socket_options;
+    /**
+     * If TLS options is set, you also need to handle ALPN, otherwise, may not able to get HTTP/2 connection and fail
+     * the stream manager.
+     * If TLS options not set, prior knowledge will be used.
+     */
+    const struct aws_tls_connection_options *tls_connection_options;
+    struct aws_byte_cursor host;
+    uint16_t port;
+
+    /* Connection monitor for the underlying connections made */
+    const struct aws_http_connection_monitoring_options *monitoring_options;
 
     /**
-     * Options specific to HTTP/2 connections.
-     * Optional.
-     * Ignored if connection is not HTTP/2.
-     * If connection is HTTP/2 and options were not specified, default values are used.
+     * Scaling options, an enum choice?
      */
-    const struct aws_http2_connection_options *http2_options;
 
     /**
-     * Optional.
-     * When true, use prior knowledge to set up an HTTP/2 connection on a cleartext
-     * connection.
-     * When TLS is set and this is true, the connection will failed to be established,
-     * as prior knowledge only works for cleartext TLS.
-     * Refer to RFC7540 3.4
+     *
      */
-    bool prior_knowledge_http2;
+    void *shutdown_complete_user_data;
+    aws_http2_stream_manager_shutdown_complete_fn *shutdown_complete_callback;
+
+    /*
+     * Maximum number of connections this manager is allowed to contain. (???)
+     */
+    size_t max_connections;
+
+    /**
+     * If set to true, the read back pressure mechanism will be enabled.
+     */
+    bool enable_read_back_pressure;
 };
 
 AWS_EXTERN_C_BEGIN

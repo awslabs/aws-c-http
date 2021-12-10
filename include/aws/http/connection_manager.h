@@ -41,12 +41,12 @@ struct aws_http_connection_manager_options {
     const struct aws_http_connection_monitoring_options *monitoring_options;
     struct aws_byte_cursor host;
     uint16_t port;
+    bool prior_knowledge_http2;
 
     /**
      * Optional.
      * HTTP/2 specific configuration.
      */
-    bool prior_knowledge_http2;
     /**
      * Optional
      * The data of settings to change for initial settings.
