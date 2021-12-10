@@ -5,6 +5,7 @@
 
 #include <aws/http/connection.h>
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/proxy.h>
 #include <aws/http/server.h>
 
 #include <aws/common/clock.h>

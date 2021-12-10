@@ -7,7 +7,6 @@
  */
 
 #include <aws/http/http.h>
-#include <aws/http/proxy.h>
 
 #include <aws/common/byte_buf.h>
 
@@ -16,6 +15,7 @@ struct aws_http_connection;
 struct aws_http_connection_manager;
 struct aws_socket_options;
 struct aws_tls_connection_options;
+struct proxy_env_var_settings;
 
 typedef void(aws_http_connection_manager_on_connection_setup_fn)(
     struct aws_http_connection *connection,
@@ -32,7 +32,7 @@ typedef void(aws_http_connection_manager_shutdown_complete_fn)(void *user_data);
  */
 struct aws_http_connection_manager_options {
     /*
-     * http connection configuration
+     * http connection configuration, check `struct aws_http_client_connection_options` for details of each config
      */
     struct aws_client_bootstrap *bootstrap;
     size_t initial_window_size;
@@ -41,6 +41,17 @@ struct aws_http_connection_manager_options {
     const struct aws_http_connection_monitoring_options *monitoring_options;
     struct aws_byte_cursor host;
     uint16_t port;
+    bool prior_knowledge_http2;
+
+    /**
+     * Optional.
+     * HTTP/2 specific configuration. Check `struct aws_http2_connection_options` for details of each config
+     */
+    struct aws_http2_setting *initial_settings_array;
+    size_t num_initial_settings;
+    size_t max_closed_streams;
+    bool http2_conn_manual_window_management;
+
     /* Proxy configuration for http connection */
     const struct aws_http_proxy_options *proxy_options;
 
