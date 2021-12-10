@@ -312,12 +312,12 @@ struct aws_http_client_connection_options {
      *
      * If true, the flow-control window of each stream will shrink as body data
      * is received (headers, padding, and other metadata do not affect the window).
-     * `initial_window_size` determines the starting size of each stream's window.
-     * If a stream's flow-control window reaches 0, no further data will be received.
-     * The user must call aws_http_stream_update_window() to increment the stream's
-     * window and keep data flowing.
+     * `initial_window_size` determines the starting size of each stream's window for HTTP/1 stream, while HTTP/2 stream
+     * will use the settings AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE to inform the other side about read back pressure If
+     * a stream's flow-control window reaches 0, no further data will be received. The user must call
+     * aws_http_stream_update_window() to increment the stream's window and keep data flowing.
      *
-     * If you created a HTTP/2 connection, it will ONLY control the stream window
+     * If a HTTP/2 connection created, it will ONLY control the stream window
      * management. Connection window management is controlled by
      * conn_manual_window_management. Note: the padding of data frame counts to the flow-control window.
      * But, the client will always automatically update the window for padding even for manual window update.
@@ -325,9 +325,12 @@ struct aws_http_client_connection_options {
     bool manual_window_management;
 
     /**
-     * The starting size of each HTTP stream's flow-control window.
+     * The starting size of each HTTP stream's flow-control window for HTTP/1 connection.
      * Required if `manual_window_management` is true,
      * ignored if `manual_window_management` is false.
+     *
+     * Always ignored when HTTP/2 connection created. The initial window size is controlled by the settings,
+     * `AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE`
      */
     size_t initial_window_size;
 
@@ -563,7 +566,7 @@ void aws_http2_connection_get_local_settings(
  * Get the settings received from remote peer, which we are using to restricts the message to send.
  *
  * @param http2_connection HTTP/2 connection.
- * @param out_settings fixed size array of aws_http2_setting gets set to the remote settings
+ * @param out_settings fixed size array of aws_http2_setting gets set to  the remote settings
  */
 AWS_HTTP_API
 void aws_http2_connection_get_remote_settings(
