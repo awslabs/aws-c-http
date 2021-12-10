@@ -7,12 +7,12 @@
  */
 
 #include <aws/http/http.h>
-#include <aws/http/proxy.h>
 
 struct aws_client_bootstrap;
 struct aws_socket_options;
 struct aws_tls_connection_options;
 struct aws_http2_setting;
+struct proxy_env_var_settings;
 
 /**
  * An HTTP connection.
