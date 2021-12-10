@@ -313,8 +313,9 @@ struct aws_http_client_connection_options {
      * If true, the flow-control window of each stream will shrink as body data
      * is received (headers, padding, and other metadata do not affect the window).
      * `initial_window_size` determines the starting size of each stream's window for HTTP/1 stream, while HTTP/2 stream
-     * will use the settings AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE to inform the other side about read back pressure If
-     * a stream's flow-control window reaches 0, no further data will be received. The user must call
+     * will use the settings AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE to inform the other side about read back pressure
+     *
+     * If a stream's flow-control window reaches 0, no further data will be received. The user must call
      * aws_http_stream_update_window() to increment the stream's window and keep data flowing.
      *
      * If a HTTP/2 connection created, it will ONLY control the stream window
