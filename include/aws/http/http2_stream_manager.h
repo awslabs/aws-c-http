@@ -9,12 +9,23 @@
 #include <aws/http/http.h>
 
 struct aws_http2_stream_manager;
+struct aws_client_bootstrap;
+struct aws_http_connection;
+struct aws_http_connection_manager;
+struct aws_socket_options;
+struct aws_tls_connection_options;
+struct proxy_env_var_settings;
+struct aws_http2_setting;
+struct aws_http_make_request_options;
+struct aws_http_stream;
 
-typedef void(aws_http2_stream_manager_on_stream_acquired_fn)(
-    struct aws_http_stream *connection,
-    int error_code,
-    void *user_data);
+typedef void(
+    aws_http2_stream_manager_on_stream_acquired_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
 
+/**
+ * Invoked asynchronously when the stream manager has been shutdown completely.
+ * Never invoked when `aws_http2_stream_manager_new` failed.
+ */
 typedef void(aws_http2_stream_manager_shutdown_complete_fn)(void *user_data);
 
 /*
@@ -39,19 +50,9 @@ struct aws_http2_stream_manager_options {
     struct aws_byte_cursor host;
     uint16_t port;
 
-    /* Connection monitor for the underlying connections made */
-    const struct aws_http_connection_monitoring_options *monitoring_options;
-
     /**
-     * Scaling options, an enum choice?
+     * HTTP/2 Stream window control.
      */
-
-    /**
-     *
-     */
-    void *shutdown_complete_user_data;
-    aws_http2_stream_manager_shutdown_complete_fn *shutdown_complete_callback;
-
     /**
      * If set to true, the read back pressure mechanism will be enabled for streams created.
      * The initial window size can be set through `initial window size`
@@ -62,15 +63,24 @@ struct aws_http2_stream_manager_options {
      * If set, it will be sent to the peer as the `AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE` in the initial settings for
      * HTTP/2 connection.
      * If not set, the default will be used, which is 65,535 (2^16-1)(RFC-7540 6.5.2)
+     * Ignored if enable_read_back_pressure is false.
      */
     size_t initial_window_size;
 
-    /*
-     * CM specific config. Should we expose them???
+    /* Connection monitor for the underlying connections made */
+    const struct aws_http_connection_monitoring_options *monitoring_options;
+
+    /* Proxy configuration for underlying http connection */
+    const struct aws_http_proxy_options *proxy_options;
+    const struct proxy_env_var_settings *proxy_ev_settings;
+
+    size_t max_connections; /* That's probably people will want to set */
+
+    /**
+     *
      */
-    size_t max_connections;                       /* That's probably people will want to set */
-    uint64_t max_connection_idle_in_milliseconds; /* Feel like we should not expose this... The details stream manager
-                                                     user probably not care about */
+    void *shutdown_complete_user_data;
+    aws_http2_stream_manager_shutdown_complete_fn *shutdown_complete_callback;
 };
 
 AWS_EXTERN_C_BEGIN

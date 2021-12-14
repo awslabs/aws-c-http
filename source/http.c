@@ -143,6 +143,7 @@ static struct aws_log_subject_info s_log_subject_infos[] = {
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_SERVER, "http-server", "HTTP server socket listening for incoming connections"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_STREAM, "http-stream", "HTTP request-response exchange"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "connection-manager", "HTTP connection manager"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP2_STREAM_MANAGER, "http2-stream-manager", "HTTP/2 stream manager"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET, "websocket", "Websocket"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET_SETUP, "websocket-setup", "Websocket setup"),
     DEFINE_LOG_SUBJECT_INFO(

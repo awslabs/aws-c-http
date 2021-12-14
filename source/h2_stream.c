@@ -226,9 +226,6 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     AWS_PRECONDITION(options);
 
     struct aws_h2_stream *stream = aws_mem_calloc(client_connection->alloc, 1, sizeof(struct aws_h2_stream));
-    if (!stream) {
-        return NULL;
-    }
 
     /* Initialize base stream */
     stream->base.vtable = &s_h2_stream_vtable;

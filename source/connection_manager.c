@@ -1126,10 +1126,6 @@ void aws_http_connection_manager_acquire_connection(
 
     struct aws_http_connection_acquisition *request =
         aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_http_connection_acquisition));
-    if (request == NULL) {
-        callback(NULL, aws_last_error(), user_data);
-        return;
-    }
 
     request->allocator = manager->allocator;
     request->callback = callback;
@@ -1163,9 +1159,6 @@ void aws_http_connection_manager_acquire_connection(
 static int s_idle_connection(struct aws_http_connection_manager *manager, struct aws_http_connection *connection) {
     struct aws_idle_connection *idle_connection =
         aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_idle_connection));
-    if (idle_connection == NULL) {
-        return AWS_OP_ERR;
-    }
 
     idle_connection->allocator = manager->allocator;
     idle_connection->connection = connection;

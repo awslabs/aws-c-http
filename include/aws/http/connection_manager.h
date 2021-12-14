@@ -16,6 +16,7 @@ struct aws_http_connection_manager;
 struct aws_socket_options;
 struct aws_tls_connection_options;
 struct proxy_env_var_settings;
+struct aws_http2_setting;
 
 typedef void(aws_http_connection_manager_on_connection_setup_fn)(
     struct aws_http_connection *connection,
