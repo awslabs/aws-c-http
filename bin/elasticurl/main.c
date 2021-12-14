@@ -389,9 +389,11 @@ static void s_on_stream_complete_fn(struct aws_http_stream *stream, int error_co
     aws_http_stream_release(stream);
 }
 
-static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_ctx) {
+static struct aws_http_message *s_build_http_request(
+    struct elasticurl_ctx *app_ctx,
+    enum aws_http_version protocol_version) {
 
-    struct aws_http_message *request = app_ctx->required_http_version == AWS_HTTP_VERSION_2
+    struct aws_http_message *request = protocol_version == AWS_HTTP_VERSION_2
                                            ? aws_http2_message_new_request(app_ctx->allocator)
                                            : aws_http_message_new_request(app_ctx->allocator);
     if (request == NULL) {
@@ -401,11 +403,13 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
 
     aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str(app_ctx->verb));
     aws_http_message_set_request_path(request, app_ctx->uri.path_and_query);
-    if (app_ctx->required_http_version == AWS_HTTP_VERSION_2) {
+    if (protocol_version == AWS_HTTP_VERSION_2) {
         struct aws_http_headers *h2_headers = aws_http_message_get_headers(request);
         aws_http2_headers_set_request_scheme(h2_headers, app_ctx->uri.scheme);
         aws_http2_headers_set_request_authority(h2_headers, app_ctx->uri.host_name);
     } else {
+        struct aws_http_headers *h2_headers = aws_http_message_get_headers(request);
+        aws_http2_headers_set_request_authority(h2_headers, app_ctx->uri.host_name);
         struct aws_http_header host_header = {
             .name = aws_byte_cursor_from_c_str("host"),
             .value = app_ctx->uri.host_name,
@@ -419,7 +423,8 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
     aws_http_message_add_header(request, accept_header);
     struct aws_http_header user_agent_header = {
         .name = aws_byte_cursor_from_c_str("user-agent"),
-        .value = aws_byte_cursor_from_c_str("elasticurl 1.0, Powered by the AWS Common Runtime.")};
+        .value = aws_byte_cursor_from_c_str("elasticurl 1.0, Powered by the AWS Common Runtime."),
+    };
     aws_http_message_add_header(request, user_agent_header);
 
     if (app_ctx->input_body) {
@@ -453,7 +458,8 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
 
         struct aws_http_header custom_header = {
             .name = aws_byte_cursor_from_array(app_ctx->header_lines[i], delimiter - app_ctx->header_lines[i]),
-            .value = aws_byte_cursor_from_c_str(delimiter + 1)};
+            .value = aws_byte_cursor_from_c_str(delimiter + 1),
+        };
         aws_http_message_add_header(request, custom_header);
     }
 
@@ -482,7 +488,7 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     }
 
     app_ctx->connection = connection;
-    app_ctx->request = s_build_http_request(app_ctx);
+    app_ctx->request = s_build_http_request(app_ctx, aws_http_connection_get_version(connection));
 
     /* If async signing function is set, invoke it. It must invoke the signing complete callback when it's done. */
     if (app_ctx->signing_function) {
