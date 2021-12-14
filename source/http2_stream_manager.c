@@ -251,6 +251,13 @@ static bool s_check_connection_available_synced(struct aws_h2_sm_connection *sm_
     if (aws_http_connection_new_requests_allowed(sm_connection)) {
         struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT];
         aws_http2_connection_get_remote_settings(sm_connection->connection, out_settings);
+        struct aws_http2_setting max_concurrent_stream_setting =
+            out_settings[AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS - 1];
+        /* The out_settings will have index equals to the id minus one */
+        AWS_FATAL_ASSERT(max_concurrent_stream_setting.id == AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS);
+        if (sm_connection->num_streams_open < max_concurrent_stream_setting.value) {
+            return true;
+        }
     }
     return false;
 }
@@ -278,36 +285,12 @@ void aws_http2_stream_manager_acquire_stream(
             AWS_FATAL_ASSERT(
                 aws_array_list_get_at(&stream_manager->synced_data.connections_list, &sm_connection, 0) &&
                 "Failed to fetch connection from stream manager connections_list");
-            if (sm_connection.new_stream_available) {
-                /**
-                 * TODO: check the setting of the connection about MAX_CONCURRENT_STREAMS everytime??? Otherwise, the
-                 * connection will fail the stream with AWS_ERROR_HTTP_MAX_CONCURRENT_STREAMS_EXCEEDED, but, we already
-                 * hand the stream to our user, which will not be something the user want to handle.
-                 */
+            if (s_check_connection_available_synced(&sm_connection)) {
                 new_stream = aws_http_connection_make_request(sm_connection.connection, options);
-                if (new_stream) {
-                    /* happy case, we did it. */
-                    goto unlock;
+                if (!new_stream) {
+                    error_code = aws_last_error();
                 }
-                /* make request failed, check why */
-                switch (aws_last_error()) {
-                    case AWS_ERROR_HTTP_GOAWAY_RECEIVED:
-                    case AWS_ERROR_HTTP_CONNECTION_CLOSED:
-                        /**
-                         * The connection cannot be used any more, release it back to the CM.
-                         * TODO: we are not moving the sm_connection out the list?
-                         */
-                        sm_connection.new_stream_available = false;
-                        AWS_FATAL_ASSERT(aws_http_connection_manager_release_connection(
-                            stream_manager->connection_manager, sm_connection.connection));
-                        sm_connection.connection = NULL;
-                        break;
-
-                    default:
-                        /* any other errors will not need a new connection */
-                        error_code = aws_last_error();
-                        goto unlock;
-                }
+                goto unlock;
             }
         }
     unlock:
