@@ -7,6 +7,7 @@
 #    pragma warning(disable : 4204) /* non-constant aggregate initializer */
 #endif
 
+#include <aws/common/device_random.h>
 #include <aws/common/mutex.h>
 #include <aws/common/ref_count.h>
 #include <aws/http/connection.h>
@@ -31,6 +32,79 @@ struct aws_h2_sm_pending_stream_acquisition {
     void *user_data;
 };
 
+/**
+ * Vocabulary
+ *    Acquisition - a request by a user for a stream
+ *    Pending Acquisition - a request by a user for a new stream that has not been completed.  It may be
+ *      waiting on connection manager to vend a connection, a release by another user, or the manager itself.
+ *    Connection to Acquire - a request of connection needed to be required from connection manager, but has not been
+ *      sent yet
+ *    Connection Acquiring - a request to the connection manager layer for a new connection that has not been
+ *      resolved yet
+ *
+ * Requirements/Assumptions
+ *    (1) Don't invoke user callbacks while holding the internal state lock
+ *    (2) Don't invoke downstream connection manager and http calls while holding the internal state lock
+ *    (3) Only log unusual or rare events while the lock is held.  Common-path logging should be while it is
+ *        not held.
+ *    (4) Don't crash or do awful things (leaking resources is ok though) if the interface contract
+ *        (ref counting + balanced acquire/release of connections) is violated by the user
+ *
+ *  In order to fulfill (1) and (2), all side-effecting operations within the connection manager follow a pattern:
+ *    (1) Lock
+ *    (2) Make state changes based on the operation
+ *    (3) Build a set of work (completions, connect calls, releases, self-destruction) as appropriate to the operation
+ *    (4) Unlock
+ *    (5) Execute the task set
+ *
+ *   Asynchronous work order failures are handled in the async callback, but immediate failures require
+ *   us to relock and update the internal state.  When there's an immediate connect failure, we use a
+ *   conservative policy to fail all excess (beyond the # of pending connects) acquisitions; this allows us
+ *   to avoid a possible recursive invocation (and potential failures) to connect again.
+ *
+ * Stream Manager Lifecycle:
+ * Our stream manager implementation also has a reasonably complex lifecycle.
+ *
+ * - Vended Stream Lifecycle:
+ *    (1) HTTP level completed callback.
+ *    (3) User will keep it alive until calling aws_http2_stream_manager_stream_release or aws_http_stream_release.
+ *          Note: Even if aws_http_stream_release called, the stream will die but stream manager will not die until
+ *          aws_http2_stream_manager_stream_release called. So, recommend to call
+ *          aws_http2_stream_manager_stream_release directly
+ *
+ * - Internal Connections Lifecycle:
+ *    (1) Stream Manager doesn't really control the lifecycle of connections. This's more about when Stream Manager
+ *          release holding it.
+ *    (2) All streams created from the connection dies, release holding it.
+ *    (3) Connection cannot create any new requests, release holding it.
+ *
+ * - Internal Connection Manager Lifecycle:
+ *      Has the exact same Lifecycle as Stream Manager, which means when Stream Manager starts to destroy, Connection
+ *      Manager will start its shutdown process. And when Connection Manager finish shutdown, the Stream Manager will
+ *      finish shutdown right after it.
+ *
+ * - Stream Manager Lifecycle:
+ *    (1) External refcount
+ *    (2) All state around the life cycle is protected by a lock.
+ *    (3) Over the course of its lifetime, a stream manager moves through two states:
+ *
+ *        - READY - streams may be acquired and released.  When the external ref count for the manager
+ *          drops to zero, the manager moves to:
+ *
+ *        - SHUTTING_DOWN - streams may no longer be acquired (how could they if the external
+ *          ref count was accurate?) but in case of user ref errors, we simply fail attempts to do so rather
+ *          than crash or underflow.  While in this state, we wait for a set of tracking counters to all fall to zero:
+ *            - connection_acquiring_count - the # of unresolved calls to the connection manager layer
+ *            - open_stream_count - the # of streams for whom the completed callback (from http) has not been invoked
+ *            - vended_stream_count - the # of streams held by external users that haven't been released.  Under correct
+ *                  usage this should be zero before SHUTTING_DOWN is entered, but we attempt to handle incorrect usage
+ *                  gracefully.
+ *
+ *      In short: No connections acquiring, no streams alive and no streams not released to stream manger. Underlying
+ *          logic will be no connections held by stream manager(All streams dies, the connections will be released back
+ *          to connection manager). Starting that point, underlying connection manager can die and stream manager will
+ *          die right after it finishes shutdown.
+ */
 struct aws_http2_stream_manager {
     struct aws_allocator *allocator;
     void *shutdown_complete_user_data;
@@ -73,6 +147,39 @@ struct aws_http2_stream_manager {
 
     } synced_data;
 };
+
+/*
+ * Encompasses all of the external operations that need to be done for various
+ * events:
+ *  - User level:
+ *   stream manager release
+ *   stream release
+ *   stream acquire
+ *  - Internal eventloop (anther thread):
+ *   connection_acquired
+ *   stream_completed
+ *  - Internal (can happen from any thread):
+ *   connection acquire
+ *   connection release
+ *
+ * The transaction is built under the manager's lock (and the internal state is updated optimistically),
+ * but then executed outside of it.
+ */
+struct aws_http2_stream_management_transaction {
+    struct aws_http2_stream_manager *stream_manager;
+    struct aws_allocator *allocator;
+    // struct aws_linked_list completions;
+    // struct aws_http_connection_manager_snapshot snapshot;
+    // size_t new_connections;
+    size_t connection_to_release_index; /* index of connection in the array list to release */
+    bool should_destroy_manager;
+};
+
+static void s_aws_stream_management_transaction_init() {}
+static void s_aws_stream_management_transaction_clean_up() {}
+/* *_synced should only be called with LOCK HELD */
+static void s_aws_http2_stream_manager_build_transaction_synced() {}
+static void s_aws_http2_stream_manager_execute_transaction() {}
 
 static void s_lock_synced_data(struct aws_http2_stream_manager *stream_manager) {
     int err = aws_mutex_lock(&stream_manager->synced_data.lock);
@@ -247,8 +354,14 @@ static void s_async_acquire_stream_synced(
 }
 
 /* *_synced should only be called with LOCK HELD */
-static bool s_check_connection_available_synced(struct aws_h2_sm_connection *sm_connection) {
-    if (aws_http_connection_new_requests_allowed(sm_connection)) {
+static bool s_check_connection_available_and_clean_up_synced(
+    struct aws_h2_sm_connection *sm_connection,
+    struct aws_http2_stream_manager *stream_manager,
+    bool last_element) {
+    if (!sm_connection->connection) {
+        return false;
+    }
+    if (aws_http_connection_new_requests_allowed(sm_connection->connection)) {
         struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT];
         aws_http2_connection_get_remote_settings(sm_connection->connection, out_settings);
         struct aws_http2_setting max_concurrent_stream_setting =
@@ -258,8 +371,32 @@ static bool s_check_connection_available_synced(struct aws_h2_sm_connection *sm_
         if (sm_connection->num_streams_open < max_concurrent_stream_setting.value) {
             return true;
         }
+    } else {
+        /* the connection is not allowed to make any new request, release it back to CM. */
+        /* TODO: we are not moving the sm_connection out the list? */
+        AWS_FATAL_ASSERT(aws_http_connection_manager_release_connection(
+            stream_manager->connection_manager, sm_connection->connection));
+        sm_connection->connection = NULL;
+        /* For performance, we only remove the connection from the list as it's the last element */
+        if (last_element) {
+            aws_array_list_pop_back(&stream_manager->synced_data.connections_list);
+        }
     }
     return false;
+}
+
+/* *_synced should only be called with LOCK HELD. Return AWS_OP_ERROR when it failed to pick a valid connection. */
+static int s_pick_valid_connection_from_connections_list_synced(
+    struct aws_http2_stream_manager *stream_manager,
+    struct aws_h2_sm_connection *sm_connection) {
+    size_t num_connections = aws_array_list_length(&stream_manager->synced_data.connections_list);
+    /* use the best of two algorithm to select the connection with the lowest load. */
+    uint64_t random_64_bit_num = 0;
+    aws_device_random_u64(&random_64_bit_num);
+    size_t random_num_a = random_64_bit_num % num_connections;
+    aws_device_random_u64(&random_64_bit_num);
+    size_t random_num_b = random_64_bit_num % num_connections;
+    /* TODO... */
 }
 
 void aws_http2_stream_manager_acquire_stream(
@@ -274,25 +411,28 @@ void aws_http2_stream_manager_acquire_stream(
     int error_code = AWS_ERROR_SUCCESS;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
-        if (aws_array_list_length(&stream_manager->synced_data.connections_list) == 0) {
+        size_t num_connections = aws_array_list_length(&stream_manager->synced_data.connections_list);
+        if (num_connections == 0) {
             /* If there is no connection opening, we need to async acquiring a stream */
             s_async_acquire_stream_synced(stream_manager, options, callback, user_data, &should_acquire_connection);
             goto unlock;
         }
-        if (aws_array_list_length(&stream_manager->synced_data.connections_list) == 1) {
-            struct aws_h2_sm_connection sm_connection;
-            /* get at only fails when index is invalid */
-            AWS_FATAL_ASSERT(
-                aws_array_list_get_at(&stream_manager->synced_data.connections_list, &sm_connection, 0) &&
-                "Failed to fetch connection from stream manager connections_list");
-            if (s_check_connection_available_synced(&sm_connection)) {
-                new_stream = aws_http_connection_make_request(sm_connection.connection, options);
-                if (!new_stream) {
-                    error_code = aws_last_error();
-                }
-                goto unlock;
-            }
+
+        struct aws_h2_sm_connection sm_connection;
+        AWS_ZERO_STRUCT(sm_connection);
+        if (s_pick_valid_connection_from_connections_list_synced(stream_manager, &sm_connection)) {
+            /* No valid connection found, need to async acquiring a stream */
+            s_async_acquire_stream_synced(stream_manager, options, callback, user_data, &should_acquire_connection);
+            goto unlock;
         }
+        /* get at only fails when index is invalid */
+        /* TODO: COULD THIS BE DEAD LOCK?????? */
+        /* MAYBE COPY THE SIMILAR LOGIC FROM CM */
+        new_stream = aws_http_connection_make_request(sm_connection.connection, options);
+        if (!new_stream) {
+            error_code = aws_last_error();
+        }
+
     unlock:
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */

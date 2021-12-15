@@ -100,6 +100,11 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
  * Acquire a stream from stream manager.
  * When stream manager has connection available for more stream, the callback will be invoked synchronously.
  * Otherwise, the stream manager will asynchronously acquire a new connection when possible.
+ *
+ * You must call aws_http_stream_activate to begin execution of the request. Note aws_http_stream_activate can fail
+ * because of the underlying connection lifetime(GOAWAY received or connection shutting down). For those case, release
+ * the stream back to stream manager and acquire a new one is recommended.
+ *
  * `aws_http2_stream_manager_stream_release` will need to be invoked to make sure the resource cleaned up properly.
  *
  * @param http2_stream_manager
