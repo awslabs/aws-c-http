@@ -19,6 +19,10 @@
     AWS_LOGF_##level(AWS_LS_HTTP2_STREAM_MANAGER, "id=%p: " text, (void *)(stream_manager), __VA_ARGS__)
 #define STREAM_MANAGER_LOG(level, stream_manager, text) STREAM_MANAGER_LOGF(level, stream_manager, "%s", text)
 
+/**
+ * TODO: system vtable for unit test to mock
+ */
+
 struct aws_h2_sm_connection {
     struct aws_http_connection *connection;
     uint32_t num_streams_open;
@@ -28,8 +32,53 @@ struct aws_h2_sm_pending_stream_acquisition {
     struct aws_allocator *allocator;
     struct aws_linked_list_node node;
     struct aws_http_make_request_options options;
+    struct aws_http_connection *connection; /* The connection to make request to. Kept alive by this struct. Keep NULL,
+                                               until find available one and move it to the pending_make_requests list */
     aws_http2_stream_manager_on_stream_acquired_fn *callback;
     void *user_data;
+};
+
+static struct aws_h2_sm_pending_stream_acquisition *s_new_pending_stream_acquisition(
+    struct aws_allocator *allocator,
+    const struct aws_http_make_request_options *options,
+    aws_http2_stream_manager_on_stream_acquired_fn *callback,
+    void *user_data) {
+    struct aws_h2_sm_pending_stream_acquisition *pending_acquisition =
+        aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_sm_pending_stream_acquisition));
+
+    /* Copy the options and keep the underlying message alive */
+    pending_acquisition->options = *options;
+    aws_http_message_acquire(pending_acquisition->options.request);
+    pending_acquisition->callback = callback;
+    pending_acquisition->user_data = user_data;
+    pending_acquisition->allocator = allocator;
+    return pending_acquisition;
+}
+
+static void s_pending_stream_acquisition_destroy(struct aws_h2_sm_pending_stream_acquisition *pending_acquisition) {
+    if (pending_acquisition == NULL) {
+        return;
+    }
+    if (pending_acquisition->connection) {
+        aws_http_connection_release(pending_acquisition->connection);
+    }
+    aws_http_message_release(pending_acquisition->options.request);
+    aws_mem_release(pending_acquisition->allocator, pending_acquisition);
+    return;
+}
+
+/* Acquisition completed, but callback haven't invoked yet. */
+struct aws_h2_sm_completed_acquisition {
+    struct aws_allocator *allocator;
+    struct aws_linked_list_node node;
+    struct aws_http2_stream_manager *manager; /* Only used by logging */
+    aws_http2_stream_manager_on_stream_acquired_fn *callback;
+    void *user_data;
+    struct aws_http_stream *connection;
+    int error_code;
+    /* FROM CM: For some workloads, going ahead and moving the connection callback to the connection's thread is
+     * a substantial performance improvement so let's do that */
+    // struct aws_channel_task acquisition_task; TODO: do we need this?
 };
 
 /**
@@ -44,11 +93,11 @@ struct aws_h2_sm_pending_stream_acquisition {
  *
  * Requirements/Assumptions
  *    (1) Don't invoke user callbacks while holding the internal state lock
- *    (2) Don't invoke downstream connection manager and http calls while holding the internal state lock
- *    (3) Only log unusual or rare events while the lock is held.  Common-path logging should be while it is
- *        not held.
+ *    (2) Don't invoke downstream connection manager and http calls that have callbacks while holding the internal state
+ *          lock
+ *    (3) Only log unusual or rare events while the lock is held.  Common-path logging should be while it is not held.
  *    (4) Don't crash or do awful things (leaking resources is ok though) if the interface contract
- *        (ref counting + balanced acquire/release of connections) is violated by the user
+ *          (ref counting + balanced acquire/release of connections) is violated by the user
  *
  *  In order to fulfill (1) and (2), all side-effecting operations within the connection manager follow a pattern:
  *    (1) Lock
@@ -148,7 +197,7 @@ struct aws_http2_stream_manager {
     } synced_data;
 };
 
-/*
+/**
  * Encompasses all of the external operations that need to be done for various
  * events:
  *  - User level:
@@ -168,18 +217,15 @@ struct aws_http2_stream_manager {
 struct aws_http2_stream_management_transaction {
     struct aws_http2_stream_manager *stream_manager;
     struct aws_allocator *allocator;
-    // struct aws_linked_list completions;
+    struct aws_linked_list completions; /* List of aws_h2_sm_completed_acquisition */
     // struct aws_http_connection_manager_snapshot snapshot;
-    // size_t new_connections;
-    size_t connection_to_release_index; /* index of connection in the array list to release */
+    size_t new_connections;
+    struct aws_http_stream *stream_to_release;
+    struct aws_http_connection *connection_to_release;
+    struct aws_linked_list
+        pending_make_requests; /* List of aws_h2_sm_pending_stream_acquisition with chosen connection */
     bool should_destroy_manager;
 };
-
-static void s_aws_stream_management_transaction_init() {}
-static void s_aws_stream_management_transaction_clean_up() {}
-/* *_synced should only be called with LOCK HELD */
-static void s_aws_http2_stream_manager_build_transaction_synced() {}
-static void s_aws_http2_stream_manager_execute_transaction() {}
 
 static void s_lock_synced_data(struct aws_http2_stream_manager *stream_manager) {
     int err = aws_mutex_lock(&stream_manager->synced_data.lock);
@@ -191,6 +237,84 @@ static void s_unlock_synced_data(struct aws_http2_stream_manager *stream_manager
     int err = aws_mutex_unlock(&stream_manager->synced_data.lock);
     AWS_ASSERT(!err && "unlock failed");
     (void)err;
+}
+
+static void s_aws_stream_management_transaction_init() {}
+static void s_aws_stream_management_transaction_clean_up() {}
+/* *_synced should only be called with LOCK HELD */
+static void s_aws_http2_stream_manager_build_transaction_synced() {}
+
+static void s_aws_http2_stream_manager_complete_acquisitions(
+    struct aws_linked_list *acquisitions,
+    struct aws_allocator *allocator) {
+    /* Invoke callbacks, and probably task??? TODO: acquisition_task? */
+}
+
+/* NEVER invoke with lock held */
+static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stream_management_transaction *work) {
+
+    struct aws_http2_stream_manager *stream_manager = work->stream_manager;
+
+    /* Step1: Release stream */
+    if (work->stream_to_release) {
+        /* TODO: Log */
+        aws_http_stream_release(work->stream_to_release);
+    }
+
+    /* Step2: Release connection */
+    if (work->connection_to_release) {
+        /* TODO: log */
+        AWS_FATAL_ASSERT(aws_http_connection_manager_release_connection(
+            stream_manager->connection_manager, work->connection_to_release));
+    }
+
+    /* Step3: Make request. The work should know what connection for the request to be made. */
+    while (!aws_linked_list_empty(&work->pending_make_requests)) {
+        /* The completions can also fail as the connection can be unavilable after the decision made. We just fail the
+         * acquisition, as user will have similar issue when they activate the stream */
+        /* TODO: log */
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&work->pending_make_requests);
+        struct aws_h2_sm_pending_stream_acquisition *pending_acquisition =
+            AWS_CONTAINER_OF(node, struct aws_h2_sm_pending_stream_acquisition, node);
+
+        AWS_ASSERT(
+            pending_acquisition->connection &&
+            "Stream manager internal bug: connection is not decided when complete acquisitions");
+
+        struct aws_http_stream *new_stream =
+            aws_http_connection_make_request(pending_acquisition->connection, &pending_acquisition->options);
+        int error_code = AWS_ERROR_SUCCESS;
+        if (!new_stream) {
+            /* TODO: log */
+            { /* BEGIN CRITICAL SECTION */
+                // s_lock_synced_data(pending_acquisition->);
+                /* TODO: update the stream open in the connection. Update the total streams vented. */
+            }
+            error_code = aws_last_error();
+        }
+        /* TODO: invoke the callback. TODO: acquisition_task? */
+        s_pending_stream_acquisition_destroy(pending_acquisition);
+    }
+
+    /* Step4: Invoke the callback for the acquisition that cannot find a connection (connection failed to be acquired)
+     */
+
+    /* Step5: Acquire connections if needed */
+    for (size_t i = 0; i < work->new_connections; ++i) {
+        aws_http_connection_manager_acquire_connection(stream_manager, s_sm_on_connection_acquired, stream_manager);
+    }
+
+    /*
+     * Step 6 - destroy the manager if necessary
+     */
+    if (should_destroy) {
+        s_stream_manager_start_destroy(stream_manager);
+    }
+
+    /*
+     * Step 7 - Clean up work.  Do this here rather than at the end of every caller.
+     */
+    s_aws_stream_management_transaction_clean_up(work);
 }
 
 void s_stream_manager_destroy_final(struct aws_http2_stream_manager *stream_manager) {
@@ -302,32 +426,6 @@ void aws_http2_stream_manager_release(struct aws_http2_stream_manager *stream_ma
     aws_ref_count_release(&stream_manager->ref_count);
 }
 
-static struct aws_h2_sm_pending_stream_acquisition *s_new_pending_stream_acquisition(
-    struct aws_allocator *allocator,
-    const struct aws_http_make_request_options *options,
-    aws_http2_stream_manager_on_stream_acquired_fn *callback,
-    void *user_data) {
-    struct aws_h2_sm_pending_stream_acquisition *pending_acquisition =
-        aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_sm_pending_stream_acquisition));
-
-    /* Copy the options and keep the underlying message alive */
-    pending_acquisition->options = *options;
-    aws_http_message_acquire(pending_acquisition->options.request);
-    pending_acquisition->callback = callback;
-    pending_acquisition->user_data = user_data;
-    pending_acquisition->allocator = allocator;
-    return pending_acquisition;
-}
-
-static void s_pending_stream_acquisition_destroy(struct aws_h2_sm_pending_stream_acquisition *pending_acquisition) {
-    if (pending_acquisition == NULL) {
-        return;
-    }
-    aws_http_message_release(pending_acquisition->options.request);
-    aws_mem_release(pending_acquisition->allocator, pending_acquisition);
-    return;
-}
-
 /* *_synced should only be called with LOCK HELD */
 static void s_async_acquire_stream_synced(
     struct aws_http2_stream_manager *stream_manager,
@@ -406,45 +504,47 @@ void aws_http2_stream_manager_acquire_stream(
     void *user_data) {
     AWS_PRECONDITION(stream_manager);
 
-    bool should_acquire_connection = false;
-    struct aws_http_stream *new_stream = NULL;
-    int error_code = AWS_ERROR_SUCCESS;
-    { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(stream_manager);
-        size_t num_connections = aws_array_list_length(&stream_manager->synced_data.connections_list);
-        if (num_connections == 0) {
-            /* If there is no connection opening, we need to async acquiring a stream */
-            s_async_acquire_stream_synced(stream_manager, options, callback, user_data, &should_acquire_connection);
-            goto unlock;
-        }
+    /* Previous logic are wrong (DEAD LOCK). Keep it for probably future reference? */
 
-        struct aws_h2_sm_connection sm_connection;
-        AWS_ZERO_STRUCT(sm_connection);
-        if (s_pick_valid_connection_from_connections_list_synced(stream_manager, &sm_connection)) {
-            /* No valid connection found, need to async acquiring a stream */
-            s_async_acquire_stream_synced(stream_manager, options, callback, user_data, &should_acquire_connection);
-            goto unlock;
-        }
-        /* get at only fails when index is invalid */
-        /* TODO: COULD THIS BE DEAD LOCK?????? */
-        /* MAYBE COPY THE SIMILAR LOGIC FROM CM */
-        new_stream = aws_http_connection_make_request(sm_connection.connection, options);
-        if (!new_stream) {
-            error_code = aws_last_error();
-        }
+    // bool should_acquire_connection = false;
+    // struct aws_http_stream *new_stream = NULL;
+    // int error_code = AWS_ERROR_SUCCESS;
+    // { /* BEGIN CRITICAL SECTION */
+    //     s_lock_synced_data(stream_manager);
+    //     size_t num_connections = aws_array_list_length(&stream_manager->synced_data.connections_list);
+    //     if (num_connections == 0) {
+    //         /* If there is no connection opening, we need to async acquiring a stream */
+    //         s_async_acquire_stream_synced(stream_manager, options, callback, user_data, &should_acquire_connection);
+    //         goto unlock;
+    //     }
 
-    unlock:
-        s_unlock_synced_data(stream_manager);
-    } /* END CRITICAL SECTION */
-    if (should_acquire_connection) {
-        aws_http_connection_manager_acquire_connection(
-            stream_manager->connection_manager, s_on_connection_acquired, stream_manager);
-    }
-    /* invoke callback synchronosly */
-    if (new_stream) {
-        callback(new_stream, error_code, user_data);
-    } else if (error_code) {
-        callback(new_stream, error_code, user_data);
-    }
+    //     struct aws_h2_sm_connection sm_connection;
+    //     AWS_ZERO_STRUCT(sm_connection);
+    //     if (s_pick_valid_connection_from_connections_list_synced(stream_manager, &sm_connection)) {
+    //         /* No valid connection found, need to async acquiring a stream */
+    //         s_async_acquire_stream_synced(stream_manager, options, callback, user_data, &should_acquire_connection);
+    //         goto unlock;
+    //     }
+    //     /* get at only fails when index is invalid */
+    //     /* TODO: COULD THIS BE DEAD LOCK?????? */
+    //     /* MAYBE COPY THE SIMILAR LOGIC FROM CM */
+    //     new_stream = aws_http_connection_make_request(sm_connection.connection, options);
+    //     if (!new_stream) {
+    //         error_code = aws_last_error();
+    //     }
+
+    // unlock:
+    //     s_unlock_synced_data(stream_manager);
+    // } /* END CRITICAL SECTION */
+    // if (should_acquire_connection) {
+    //     aws_http_connection_manager_acquire_connection(
+    //         stream_manager->connection_manager, s_on_connection_acquired, stream_manager);
+    // }
+    // /* invoke callback synchronosly */
+    // if (new_stream) {
+    //     callback(new_stream, error_code, user_data);
+    // } else if (error_code) {
+    //     callback(new_stream, error_code, user_data);
+    // }
     return;
 }
