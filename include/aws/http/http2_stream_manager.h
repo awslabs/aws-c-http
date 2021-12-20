@@ -19,6 +19,12 @@ struct aws_http2_setting;
 struct aws_http_make_request_options;
 struct aws_http_stream;
 
+/**
+ * Always invoked asynchronously when the stream was created, successfully or not.
+ * When stream is NULL, error code will be set to indicate what happened.
+ * If there is a stream returned, you own the stream completely.
+ * Invoked on the same thread as other callback of the stream, which will be the thread of the connection.
+ */
 typedef void(
     aws_http2_stream_manager_on_stream_acquired_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
 
@@ -28,7 +34,7 @@ typedef void(
  */
 typedef void(aws_http2_stream_manager_shutdown_complete_fn)(void *user_data);
 
-/*
+/**
  * HTTP/2 stream manager configuration struct.
  *
  * Contains all of the configuration needed to create an http2 connection as well as
@@ -37,7 +43,6 @@ typedef void(aws_http2_stream_manager_shutdown_complete_fn)(void *user_data);
 struct aws_http2_stream_manager_options {
     /**
      * basic http connection configuration
-     * TODO: Refact this part to struct aws_http_connection_config and share between different level of options?
      */
     struct aws_client_bootstrap *bootstrap;
     const struct aws_socket_options *socket_options;
@@ -52,8 +57,6 @@ struct aws_http2_stream_manager_options {
 
     /**
      * HTTP/2 Stream window control.
-     */
-    /**
      * If set to true, the read back pressure mechanism will be enabled for streams created.
      * The initial window size can be set through `initial window size`
      */
@@ -70,17 +73,46 @@ struct aws_http2_stream_manager_options {
     /* Connection monitor for the underlying connections made */
     const struct aws_http_connection_monitoring_options *monitoring_options;
 
-    /* Proxy configuration for underlying http connection */
+    /* Optional. Proxy configuration for underlying http connection */
     const struct aws_http_proxy_options *proxy_options;
     const struct proxy_env_var_settings *proxy_ev_settings;
-
-    size_t max_connections; /* That's probably people will want to set */
+    /**
+     * Optional.
+     * Default is no limit. 0 will be considered as using the default value.
+     * The ideal number of concurrent streams for a connection. Stream manager will try to create a new connection if
+     * one connection reaches this number. But, if the max connections reaches, manager will reuse connections to create
+     * the acquired steams as much as possible. */
+    size_t ideal_concurrent_streams_per_connection;
+    /**
+     * Optional.
+     * Default is no limit. 0 will be considered as using the default value.
+     * The real number of concurrent streams per connection will be controlled by the minmal value of the setting from
+     * other end and the value here.
+     */
+    size_t max_concurrent_streams_per_connection;
+    /**
+     * Required.
+     * The max number of connections will be open at same time. If all the connections are full, manager will wait until
+     * available to vender more streams */
+    size_t max_connections;
 
     /**
-     *
+     * Required.
+     * When the stream manager finishes deleting all the resources, the callback will be invoked.
      */
     void *shutdown_complete_user_data;
     aws_http2_stream_manager_shutdown_complete_fn *shutdown_complete_callback;
+};
+
+struct aws_http2_stream_manager_acquire_stream_options {
+    /**
+     * Required.
+     * Invoked when the stream finishes acquiring by stream manager.
+     */
+    aws_http2_stream_manager_on_stream_acquired_fn *callback;
+    void *user_data;
+    /* see `aws_http_make_request_options` */
+    const struct aws_http_make_request_options *options;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -97,15 +129,12 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     struct aws_http2_stream_manager_options *options);
 
 /**
- * Acquire a stream from stream manager.
- * When stream manager has connection available for more stream, the callback will be invoked synchronously.
- * Otherwise, the stream manager will asynchronously acquire a new connection when possible.
+ * Acquire a stream from stream manager asynchronously.
  *
+ * TODO: We can probably not require activate, but it will always not hurt if you activate as a normal stream.
  * You must call aws_http_stream_activate to begin execution of the request. Note aws_http_stream_activate can fail
  * because of the underlying connection lifetime(GOAWAY received or connection shutting down). For those case, release
- * the stream back to stream manager and acquire a new one is recommended.
- *
- * `aws_http2_stream_manager_stream_release` will need to be invoked to make sure the resource cleaned up properly.
+ * the stream and acquire a new one is recommended.
  *
  * @param http2_stream_manager
  * @param options
@@ -115,18 +144,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
 AWS_HTTP_API
 void aws_http2_stream_manager_acquire_stream(
     struct aws_http2_stream_manager *http2_stream_manager,
-    const struct aws_http_make_request_options *options,
-    aws_http2_stream_manager_on_stream_acquired_fn *callback,
-    void *user_data);
-
-/**
- * Release the stream back to the stream manager.
- * This will not cancel the stream, callbacks will still be invoked if the stream is still in progress.
- *
- * @param stream
- */
-AWS_HTTP_API
-void aws_http2_stream_manager_stream_release(struct aws_http_stream *stream);
+    const struct aws_http2_stream_manager_acquire_stream_options *acquire_stream_option);
 
 AWS_EXTERN_C_END
 #endif /* AWS_HTTP2_STREAM_MANAGER_H */

@@ -23,6 +23,12 @@
  * TODO: system vtable for unit test to mock
  */
 
+enum aws_http2_stream_manager_state_type {
+    AWS_H2SMST_UNINITIALIZED,
+    AWS_H2SMST_READY,
+    AWS_H2SMST_SHUTTING_DOWN,
+};
+
 struct aws_h2_sm_connection {
     struct aws_http_connection *connection;
     uint32_t num_streams_open;
@@ -82,6 +88,21 @@ struct aws_h2_sm_completed_acquisition {
 };
 
 /**
+ * Main actions:
+ * - Acquire stream from user
+ *      - Check a connection to make stream
+ *          - Check how many stream the connection made
+ *          - Check the connection is still available? (Full or dead)
+ *      - Or make a new connection
+ *          - Acquiring a new connection and wait until CM to finish.
+ * - Stream completed from HTTP
+ *      - Update the connection of how many streams opening
+ *      - Connection may be back to available.
+ * - Connection acquired from CM
+ *      - Finishes the pending stream acquiring on this connection as much as possible
+ */
+
+/**
  * Vocabulary
  *    Acquisition - a request by a user for a stream
  *    Pending Acquisition - a request by a user for a new stream that has not been completed.  It may be
@@ -94,7 +115,8 @@ struct aws_h2_sm_completed_acquisition {
  * Requirements/Assumptions
  *    (1) Don't invoke user callbacks while holding the internal state lock
  *    (2) Don't invoke downstream connection manager and http calls that have callbacks while holding the internal state
- *          lock
+ *          lock TODO: this requirement is in doubt, if we can make all the callbacks invoked asyned, we can remvoe
+ *          this.
  *    (3) Only log unusual or rare events while the lock is held.  Common-path logging should be while it is not held.
  *    (4) Don't crash or do awful things (leaking resources is ok though) if the interface contract
  *          (ref counting + balanced acquire/release of connections) is violated by the user
@@ -167,13 +189,19 @@ struct aws_http2_stream_manager {
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
     struct {
         struct aws_mutex lock;
+        /*
+         * A manager can be in one of two states, READY or SHUTTING_DOWN.  The state transition
+         * takes place when ref_count drops to zero.
+         */
+        enum aws_http2_stream_manager_state_type state;
         /**
          * Array list of aws_h2_sm_connection
          */
         struct aws_array_list connections_list;
 
         /**
-         * The set of all incomplete stream acquisition requests, list of `struct aws_h2_sm_pending_stream_acquisition*`
+         * The set of all incomplete stream acquisition requests (haven't decide what connection to make the request
+         * to), list of `struct aws_h2_sm_pending_stream_acquisition*`
          */
         struct aws_linked_list pending_acquisitions;
 
@@ -187,6 +215,15 @@ struct aws_http2_stream_manager {
          * The number of new connections we acquiring from the connection manager.
          */
         size_t connections_acquiring;
+
+        /**
+         * The number of streams that opened and not completed yet.
+         */
+        size_t open_stream_count;
+        /**
+         * The number of streams that user acquired from us and not released back yet.
+         */
+        size_t vended_stream_count;
 
         /**
          * Number of max concurrent streams for new connection. We assume the connections we make will have the same
@@ -217,7 +254,7 @@ struct aws_http2_stream_manager {
 struct aws_http2_stream_management_transaction {
     struct aws_http2_stream_manager *stream_manager;
     struct aws_allocator *allocator;
-    struct aws_linked_list completions; /* List of aws_h2_sm_completed_acquisition */
+    // struct aws_linked_list completions; /* List of aws_h2_sm_completed_acquisition */
     // struct aws_http_connection_manager_snapshot snapshot;
     size_t new_connections;
     struct aws_http_stream *stream_to_release;
@@ -239,10 +276,50 @@ static void s_unlock_synced_data(struct aws_http2_stream_manager *stream_manager
     (void)err;
 }
 
-static void s_aws_stream_management_transaction_init() {}
+/* *_synced should only be called with LOCK HELD or from another synced function */
+static bool s_aws_http2_stream_manager_should_destroy_synced(struct aws_http2_stream_manager *stream_manager) {
+    if (stream_manager->synced_data.state != AWS_H2SMST_SHUTTING_DOWN) {
+        return false;
+    }
+
+    if (stream_manager->synced_data.connections_acquiring > 0 || stream_manager->synced_data.vended_stream_count > 0 ||
+        stream_manager->synced_data.open_stream_count > 0) {
+        return false;
+    }
+
+    /* If there is no outstanding streams, the connections list should be empty. */
+    AWS_ASSERT(aws_array_list_length(&stream_manager->synced_data.connections_list) == 0);
+
+    return true;
+}
+
+static void s_aws_stream_management_transaction_init(
+    struct aws_http2_stream_management_transaction *work,
+    struct aws_http2_stream_manager *stream_manager) {
+    AWS_ZERO_STRUCT(*work);
+
+    aws_linked_list_init(&work->pending_make_requests);
+    work->stream_manager = stream_manager;
+    work->allocator = stream_manager->allocator;
+}
+
 static void s_aws_stream_management_transaction_clean_up() {}
-/* *_synced should only be called with LOCK HELD */
-static void s_aws_http2_stream_manager_build_transaction_synced() {}
+
+/* *_synced should only be called with LOCK HELD or from another synced function */
+static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2_stream_management_transaction *work) {
+    struct aws_http2_stream_manager *stream_manager = work->stream_manager;
+    if (stream_manager->synced_data.state == AWS_H2SMST_READY) {
+
+    } else {
+        while (!aws_linked_list_empty(&stream_manager->synced_data.pending_acquisitions)) {
+            /* TODO: Log */
+            /* TODO: move all of them to a list to complete them with error */
+        }
+        /* log */
+        stream_manager->synced_data.pending_acquisition_count = 0;
+        work->should_destroy_manager = s_aws_http2_stream_manager_should_destroy_synced(stream_manager);
+    }
+}
 
 static void s_aws_http2_stream_manager_complete_acquisitions(
     struct aws_linked_list *acquisitions,
@@ -254,6 +331,7 @@ static void s_aws_http2_stream_manager_complete_acquisitions(
 static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stream_management_transaction *work) {
 
     struct aws_http2_stream_manager *stream_manager = work->stream_manager;
+    bool should_destroy = work->should_destroy_manager;
 
     /* Step1: Release stream */
     if (work->stream_to_release) {
@@ -287,8 +365,9 @@ static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stre
         if (!new_stream) {
             /* TODO: log */
             { /* BEGIN CRITICAL SECTION */
-                // s_lock_synced_data(pending_acquisition->);
+                // s_lock_synced_data(stream_manager);
                 /* TODO: update the stream open in the connection. Update the total streams vented. */
+                /* TODO: Check the state is shutting down or not? If shutting down, check update should destroy. */
             }
             error_code = aws_last_error();
         }
@@ -301,7 +380,8 @@ static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stre
 
     /* Step5: Acquire connections if needed */
     for (size_t i = 0; i < work->new_connections; ++i) {
-        aws_http_connection_manager_acquire_connection(stream_manager, s_sm_on_connection_acquired, stream_manager);
+        aws_http_connection_manager_acquire_connection(
+            stream_manager->connection_manager, s_sm_on_connection_acquired, stream_manager);
     }
 
     /*
@@ -346,9 +426,25 @@ void s_stream_manager_on_cm_shutdown_complete(void *user_data) {
     s_stream_manager_destroy_final(stream_manager);
 }
 
-void s_stream_manager_start_destroy(struct aws_http2_stream_manager *stream_manger) {
-    STREAM_MANAGER_LOG(TRACE, stream_manger, "Last refcount released, start to destroy the stream manager");
-    aws_http_connection_manager_release(stream_manger->connection_manager);
+void s_stream_manager_start_destroy(struct aws_http2_stream_manager *stream_manager) {
+    aws_http_connection_manager_release(stream_manager->connection_manager);
+}
+
+void s_stream_manager_on_zero_external_ref(struct aws_http2_stream_manager *stream_manager) {
+    STREAM_MANAGER_LOG(
+        TRACE,
+        stream_manager,
+        "Last refcount released, manager stop accpectin new stream request and will start to clean up when not "
+        "outstanding tasks remaining.");
+    struct aws_http2_stream_management_transaction work;
+    s_aws_stream_management_transaction_init(&work, stream_manager);
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(stream_manager);
+        stream_manager->synced_data.state = AWS_H2SMST_SHUTTING_DOWN;
+        s_aws_http2_stream_manager_build_transaction_synced(&work);
+        s_unlock_synced_data(stream_manager);
+    } /* END CRITICAL SECTION */
+    s_aws_http2_stream_manager_execute_transaction(&work);
 }
 
 struct aws_http2_stream_manager *aws_http2_stream_manager_new(
@@ -370,7 +466,9 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     }
 
     aws_ref_count_init(
-        &stream_manager->ref_count, stream_manager, (aws_simple_completion_callback *)s_stream_manager_start_destroy);
+        &stream_manager->ref_count,
+        stream_manager,
+        (aws_simple_completion_callback *)s_stream_manager_on_zero_external_ref);
 
     struct aws_http2_setting initial_settings_array[1] = {
         {
@@ -401,6 +499,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         goto on_error;
     }
     /* Nothing can fail after here */
+    stream_manager->synced_data.state = AWS_H2SMST_READY;
     stream_manager->shutdown_complete_callback = options->shutdown_complete_callback;
     stream_manager->shutdown_complete_user_data = options->shutdown_complete_user_data;
     /* There is no default settings and no limits (within UINT_32) to the concurrent stream, set it to UINT32_MAX */
@@ -426,8 +525,8 @@ void aws_http2_stream_manager_release(struct aws_http2_stream_manager *stream_ma
     aws_ref_count_release(&stream_manager->ref_count);
 }
 
-/* *_synced should only be called with LOCK HELD */
-static void s_async_acquire_stream_synced(
+/* *_synced should only be called with LOCK HELD or from another synced function */
+static void s_pending_acquire_stream_synced(
     struct aws_http2_stream_manager *stream_manager,
     const struct aws_http_make_request_options *options,
     aws_http2_stream_manager_on_stream_acquired_fn *callback,
@@ -451,11 +550,10 @@ static void s_async_acquire_stream_synced(
     }
 }
 
-/* *_synced should only be called with LOCK HELD */
+/* *_synced should only be called with LOCK HELD or from another synced function */
 static bool s_check_connection_available_and_clean_up_synced(
     struct aws_h2_sm_connection *sm_connection,
-    struct aws_http2_stream_manager *stream_manager,
-    bool last_element) {
+    struct aws_http2_stream_manager *stream_manager) {
     if (!sm_connection->connection) {
         return false;
     }
@@ -475,15 +573,23 @@ static bool s_check_connection_available_and_clean_up_synced(
         AWS_FATAL_ASSERT(aws_http_connection_manager_release_connection(
             stream_manager->connection_manager, sm_connection->connection));
         sm_connection->connection = NULL;
-        /* For performance, we only remove the connection from the list as it's the last element */
-        if (last_element) {
-            aws_array_list_pop_back(&stream_manager->synced_data.connections_list);
+        /* For performance, we only remove the connection from end of the list until no empty connection */
+        struct aws_array_list *sm_connections_list = &stream_manager->synced_data.connections_list;
+        while (aws_array_list_length(sm_connections_list) != 0) {
+            struct aws_h2_sm_connection end_sm_connection;
+            AWS_ZERO_STRUCT(end_sm_connection);
+            aws_array_list_back(sm_connections_list, &end_sm_connection);
+            if (end_sm_connection.connection) {
+                break;
+            }
+            aws_array_list_pop_back(sm_connections_list);
         }
     }
     return false;
 }
 
-/* *_synced should only be called with LOCK HELD. Return AWS_OP_ERROR when it failed to pick a valid connection. */
+/* *_synced should only be called with LOCK HELD or from another synced function. Return AWS_OP_ERROR when it failed to
+ * pick a valid connection. */
 static int s_pick_valid_connection_from_connections_list_synced(
     struct aws_http2_stream_manager *stream_manager,
     struct aws_h2_sm_connection *sm_connection) {
@@ -503,6 +609,19 @@ void aws_http2_stream_manager_acquire_stream(
     aws_http2_stream_manager_on_stream_acquired_fn *callback,
     void *user_data) {
     AWS_PRECONDITION(stream_manager);
+    struct aws_http2_stream_management_transaction work;
+    s_aws_stream_management_transaction_init(&work, stream_manager);
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(stream_manager);
+        struct aws_h2_sm_pending_stream_acquisition *pending_acquisition =
+            s_new_pending_stream_acquisition(stream_manager->allocator, options, callback, user_data);
+        aws_linked_list_push_back(&stream_manager->synced_data.pending_acquisitions, &pending_acquisition->node);
+        stream_manager->synced_data.pending_acquisition_count++;
+
+        s_aws_http2_stream_manager_build_transaction_synced(&work);
+        s_unlock_synced_data(stream_manager);
+    } /* END CRITICAL SECTION */
+    s_aws_http2_stream_manager_execute_transaction(&work);
 
     /* Previous logic are wrong (DEAD LOCK). Keep it for probably future reference? */
 
@@ -514,16 +633,16 @@ void aws_http2_stream_manager_acquire_stream(
     //     size_t num_connections = aws_array_list_length(&stream_manager->synced_data.connections_list);
     //     if (num_connections == 0) {
     //         /* If there is no connection opening, we need to async acquiring a stream */
-    //         s_async_acquire_stream_synced(stream_manager, options, callback, user_data, &should_acquire_connection);
-    //         goto unlock;
+    //         s_async_acquire_stream_synced(stream_manager, options, callback, user_data,
+    //         &should_acquire_connection); goto unlock;
     //     }
 
     //     struct aws_h2_sm_connection sm_connection;
     //     AWS_ZERO_STRUCT(sm_connection);
     //     if (s_pick_valid_connection_from_connections_list_synced(stream_manager, &sm_connection)) {
     //         /* No valid connection found, need to async acquiring a stream */
-    //         s_async_acquire_stream_synced(stream_manager, options, callback, user_data, &should_acquire_connection);
-    //         goto unlock;
+    //         s_async_acquire_stream_synced(stream_manager, options, callback, user_data,
+    //         &should_acquire_connection); goto unlock;
     //     }
     //     /* get at only fails when index is invalid */
     //     /* TODO: COULD THIS BE DEAD LOCK?????? */
