@@ -754,7 +754,7 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_i(
         /* Client */
         if (name_enum == AWS_HTTP_HEADER_STATUS) {
             uint64_t status_code;
-            int err = aws_strutil_read_unsigned_num(header->value, &status_code);
+            int err = aws_byte_cursor_utf8_parse_u64(header->value, &status_code);
             AWS_ASSERT(!err && "Invalid :status value. Decoder should have already validated this");
             (void)err;
 
