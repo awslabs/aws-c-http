@@ -369,7 +369,7 @@ int aws_http2_headers_get_response_status(const struct aws_http_headers *h2_head
     int return_code = aws_http_headers_get(h2_headers, aws_http_header_status, &status_code_cur);
     if (return_code == AWS_OP_SUCCESS) {
         uint64_t code_val_u64;
-        if (aws_strutil_read_unsigned_num(status_code_cur, &code_val_u64)) {
+        if (aws_byte_cursor_utf8_parse_u64(status_code_cur, &code_val_u64)) {
             return AWS_OP_ERR;
         }
         *out_status_code = (int)code_val_u64;

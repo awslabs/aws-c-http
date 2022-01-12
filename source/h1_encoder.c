@@ -68,7 +68,7 @@ static int s_scan_outgoing_headers(
             } break;
             case AWS_HTTP_HEADER_CONTENT_LENGTH: {
                 has_content_length_header = true;
-                if (aws_strutil_read_unsigned_num(field_value, &encoder_message->content_length)) {
+                if (aws_byte_cursor_utf8_parse_u64(field_value, &encoder_message->content_length)) {
                     AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=static: Invalid Content-Length");
                     return aws_raise_error(AWS_ERROR_HTTP_INVALID_HEADER_VALUE);
                 }

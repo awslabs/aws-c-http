@@ -1164,7 +1164,7 @@ static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
         struct aws_byte_cursor status_value =
             aws_byte_cursor_from_string(current_block->pseudoheader_values[PSEUDOHEADER_STATUS]);
         uint64_t status_code;
-        if (status_value.len != 3 || aws_strutil_read_unsigned_num(status_value, &status_code)) {
+        if (status_value.len != 3 || aws_byte_cursor_utf8_parse_u64(status_value, &status_code)) {
             DECODER_LOG(ERROR, decoder, ":status header has invalid value");
             DECODER_LOGF(DEBUG, decoder, "Bad :status value is '" PRInSTR "'", AWS_BYTE_CURSOR_PRI(status_value));
             goto malformed;
