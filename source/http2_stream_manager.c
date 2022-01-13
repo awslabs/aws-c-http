@@ -435,11 +435,12 @@ void s_sm_connection_destroy(struct aws_h2_sm_connection *sm_connection) {
 static void s_sm_on_connection_acquired(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct aws_http2_stream_manager *stream_manager = user_data;
     struct aws_http2_stream_management_transaction work;
+    /* TODO: log */
     s_aws_stream_management_transaction_init(&work, stream_manager);
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
         --stream_manager->synced_data.connections_acquiring;
-        if (error_code) {
+        if (error_code || !connection || aws_http_connection_get_version(connection) != AWS_HTTP_VERSION_2) {
             uint8_t connection_failed = ++stream_manager->synced_data.num_connection_acquire_fails;
             if (connection_failed >= stream_manager->num_connection_acquire_retries) {
                 /* Shutdown the stream manager. */
@@ -447,7 +448,7 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
             }
         } else if (stream_manager->synced_data.state == AWS_H2SMST_SHUTTING_DOWN) {
             /* Release the acquired connection */
-            aws_http_connection_manager_release_connection(&stream_manager->connection_manager, connection);
+            aws_http_connection_manager_release_connection(stream_manager->connection_manager, connection);
         } else {
             stream_manager->synced_data.num_connection_acquire_fails = 0;
             struct aws_h2_sm_connection *sm_connection = s_sm_connection_new(stream_manager, connection);
