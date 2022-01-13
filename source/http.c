@@ -83,14 +83,17 @@ static struct aws_error_info s_errors[] = {
         AWS_ERROR_HTTP_CONNECTION_MANAGER_VENDED_CONNECTION_UNDERFLOW,
         "Release called when the connection manager's vended connection count was zero"),
     AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_CONNECTION_MANAGER_SHUTTING_DOWN,
+        "Connection acquisition failed because connection manager is shutting down"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN,
+        "Stream acquisition failed because stream manager is shutting down"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_SERVER_CLOSED,
         "The http server is closed, no more connections will be accepted"),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_PROXY_CONNECT_FAILED,
         "Proxy-based connection establishment failed because the CONNECT call failed"),
-    AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_CONNECTION_MANAGER_SHUTTING_DOWN,
-        "Connection acquisition failed because connection manager is shutting down"),
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_CHANNEL_THROUGHPUT_FAILURE,
         "Http connection channel shut down due to failure to meet throughput minimum"),
