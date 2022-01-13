@@ -342,7 +342,7 @@ static int s_linestate_chunk_size(struct aws_h1_decoder *decoder, struct aws_byt
         return AWS_OP_ERR;
     }
 
-    int err = aws_strutil_read_unsigned_hex(size, &decoder->chunk_size);
+    int err = aws_byte_cursor_utf8_parse_u64_hex(size, &decoder->chunk_size);
     if (err) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Failed to parse size of incoming chunk.", decoder->logging_id);
         AWS_LOGF_DEBUG(
@@ -457,7 +457,7 @@ static int s_linestate_header(struct aws_h1_decoder *decoder, struct aws_byte_cu
                 return aws_raise_error(AWS_ERROR_HTTP_PROTOCOL_ERROR);
             }
 
-            if (aws_strutil_read_unsigned_num(header.value_data, &decoder->content_length)) {
+            if (aws_byte_cursor_utf8_parse_u64(header.value_data, &decoder->content_length)) {
                 AWS_LOGF_ERROR(
                     AWS_LS_HTTP_STREAM,
                     "id=%p: Incoming content-length header has invalid value.",
@@ -693,7 +693,7 @@ static int s_linestate_response(struct aws_h1_decoder *decoder, struct aws_byte_
 
     /* Status-code is a 3-digit integer. RFC7230 section 3.1.2 */
     uint64_t code_val_u64;
-    err = aws_strutil_read_unsigned_num(code, &code_val_u64);
+    err = aws_byte_cursor_utf8_parse_u64(code, &code_val_u64);
     if (err || code.len != 3 || code_val_u64 > 999) {
         AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Incoming response has invalid status code.", decoder->logging_id);
         AWS_LOGF_DEBUG(
