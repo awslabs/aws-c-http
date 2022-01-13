@@ -131,10 +131,6 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
 /**
  * Acquire a stream from stream manager asynchronously.
  *
- * TODO: We can probably not require activate, but it will always not hurt if you activate as a normal stream.
- * You must call aws_http_stream_activate to begin execution of the request. Note aws_http_stream_activate can fail
- * because of the underlying connection lifetime(GOAWAY received or connection shutting down). For those case, release
- * the stream and acquire a new one is recommended.
  *
  * @param http2_stream_manager
  * @param options
