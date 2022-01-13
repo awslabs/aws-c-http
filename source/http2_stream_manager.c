@@ -313,6 +313,7 @@ static void s_aws_stream_management_transaction_init(
 }
 
 static void s_aws_stream_management_transaction_clean_up(struct aws_http2_stream_management_transaction *work) {
+    (void)work;
     AWS_ASSERT(aws_linked_list_empty(&work->pending_make_requests));
 }
 
