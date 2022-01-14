@@ -204,7 +204,7 @@ struct aws_http2_stream_manager {
      * The real number of concurrent streams per connection will be controlled by the minmal value of the setting from
      * other end and the value here.
      */
-    size_t max_concurrent_streams_per_connection;
+    uint32_t max_concurrent_streams_per_connection;
     /**
      * Number of we tolarate the underlying connection acquiring failures
      */
@@ -591,7 +591,7 @@ static void s_stream_finishes_internal(
             " is larger than the setting from the other side. Update the concurrent stream "
             "limit of connection:%p, to limit from other side. which=%" PRIu32 "",
             sm_connection->max_concurrent_streams,
-            sm_connection->connection,
+            (void *)sm_connection->connection,
             remote_max_con_streams);
     }
     struct aws_http2_stream_management_transaction work;
@@ -607,7 +607,7 @@ static void s_stream_finishes_internal(
                 DEBUG,
                 stream_manager,
                 "connection:%p back to available, assigned stream=%zu, max concurrent streams=%" PRIu32 "",
-                sm_connection->connection,
+                (void *)sm_connection->connection,
                 current_stream_assigned,
                 sm_connection->max_concurrent_streams);
             bool added = false;
@@ -658,8 +658,8 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
         TRACE,
         stream_manager,
         "Make request task running for acquisition:%p from connection:%p thread",
-        pending_acquisition,
-        sm_connection->connection);
+        (void *)pending_acquisition,
+        (void *)sm_connection->connection);
     bool is_shutting_down = false;
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
@@ -673,7 +673,7 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
      * to a closed connection. */
     if (status != AWS_TASK_STATUS_RUN_READY) {
         STREAM_MANAGER_LOGF(
-            ERROR, stream_manager, "acquisition:%p failed as the task is cancelled.", pending_acquisition);
+            ERROR, stream_manager, "acquisition:%p failed as the task is cancelled.", (void *)pending_acquisition);
         error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
         goto error;
     }
@@ -682,7 +682,7 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
             ERROR,
             stream_manager,
             "acquisition:%p failed as stream manager is shutting down before task runs.",
-            pending_acquisition);
+            (void *)pending_acquisition);
         error_code = AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN;
         goto error;
     }
@@ -702,7 +702,7 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
             ERROR,
             stream_manager,
             "acquisition:%p failed as HTTP level make request failed with error: %d(%s).",
-            pending_acquisition,
+            (void *)pending_acquisition,
             error_code,
             aws_error_str(error_code));
         goto error;
@@ -719,7 +719,7 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
             ERROR,
             stream_manager,
             "acquisition:%p failed as stream activate failed with error: %d(%s).",
-            pending_acquisition,
+            (void *)pending_acquisition,
             error_code,
             aws_error_str(error_code));
         if (pending_acquisition->options.on_complete) {
@@ -755,7 +755,7 @@ static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stre
             DEBUG,
             stream_manager,
             "Release connection:%p back to connection manager as no outstanding streams",
-            work->sm_connection_to_release->connection);
+            (void *)work->sm_connection_to_release->connection);
         s_sm_connection_destroy(work->sm_connection_to_release);
     }
 
@@ -775,8 +775,8 @@ static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stre
             TRACE,
             stream_manager,
             "acquisition:%p is scheduled to be made request from connection:%p thread",
-            pending_acquisition,
-            pending_acquisition->sm_connection->connection);
+            (void *)pending_acquisition,
+            (void *)pending_acquisition->sm_connection->connection);
         /**
          * schedule a task from the connection's event loop to make request, so that:
          * - We can activate the stream for user and then invoked the callback
@@ -961,7 +961,8 @@ void aws_http2_stream_manager_acquire_stream(
         acquire_stream_option->options,
         acquire_stream_option->callback,
         acquire_stream_option->user_data);
-    STREAM_MANAGER_LOGF(TRACE, stream_manager, "Stream Manager creates acquisition:%p for user", pending_acquisition);
+    STREAM_MANAGER_LOGF(
+        TRACE, stream_manager, "Stream Manager creates acquisition:%p for user", (void *)pending_acquisition);
     s_aws_stream_management_transaction_init(&work, stream_manager);
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
