@@ -68,7 +68,7 @@ struct aws_http2_stream_manager_options {
      * If not set, the default will be used, which is 65,535 (2^16-1)(RFC-7540 6.5.2)
      * Ignored if enable_read_back_pressure is false.
      */
-    size_t initial_window_size;
+    uint32_t initial_window_size;
 
     /* Connection monitor for the underlying connections made */
     const struct aws_http_connection_monitoring_options *monitoring_options;

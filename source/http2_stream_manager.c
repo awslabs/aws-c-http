@@ -41,9 +41,9 @@ enum aws_http2_stream_manager_state_type {
 struct aws_h2_sm_connection {
     struct aws_http2_stream_manager *stream_manager;
     struct aws_http_connection *connection;
-    size_t num_streams_assigned;   /* From a stream assigned to the connection until the stream completed
-                                                     or failed to be created from the connection. */
-    size_t max_concurrent_streams; /* lower bound between user configured and the other side */
+    size_t num_streams_assigned;     /* From a stream assigned to the connection until the stream completed
+                                                       or failed to be created from the connection. */
+    uint32_t max_concurrent_streams; /* lower bound between user configured and the other side */
 };
 
 /* Live from the user request to acquire a stream to the stream completed. */
