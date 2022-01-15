@@ -537,11 +537,11 @@ void aws_http_message_destroy(struct aws_http_message *message) {
     aws_http_message_release(message);
 }
 
-void aws_http_message_release(struct aws_http_message *message) {
+struct aws_http_message *aws_http_message_release(struct aws_http_message *message) {
     /* Note that release() may also be used by new() functions to clean up if something goes wrong */
     AWS_PRECONDITION(!message || message->allocator);
     if (!message) {
-        return;
+        return NULL;
     }
 
     size_t prev_refcount = aws_atomic_fetch_sub(&message->refcount, 1);
@@ -557,11 +557,16 @@ void aws_http_message_release(struct aws_http_message *message) {
     } else {
         AWS_ASSERT(prev_refcount != 0);
     }
+
+    return NULL;
 }
 
-void aws_http_message_acquire(struct aws_http_message *message) {
-    AWS_PRECONDITION(message);
-    aws_atomic_fetch_add(&message->refcount, 1);
+struct aws_http_message *aws_http_message_acquire(struct aws_http_message *message) {
+    if (message != NULL) {
+        aws_atomic_fetch_add(&message->refcount, 1);
+    }
+
+    return message;
 }
 
 bool aws_http_message_is_request(const struct aws_http_message *message) {

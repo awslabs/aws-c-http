@@ -617,14 +617,14 @@ struct aws_http_message *aws_http2_message_new_response(struct aws_allocator *al
  * aws_http_message_release() is called by all those with a hold on it.
  */
 AWS_HTTP_API
-void aws_http_message_acquire(struct aws_http_message *message);
+struct aws_http_message *aws_http_message_acquire(struct aws_http_message *message);
 
 /**
  * Release a hold on the object.
  * The object is deleted when all holds on it are released.
  */
 AWS_HTTP_API
-void aws_http_message_release(struct aws_http_message *message);
+struct aws_http_message *aws_http_message_release(struct aws_http_message *message);
 
 /**
  * Deprecated. This is equivalent to aws_http_message_release().
