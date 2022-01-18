@@ -511,9 +511,10 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
         /* TODO: If user activate the stream in the callback and the activate failed........... */
         pending_acquisition->callback(stream, error_code, pending_acquisition->user_data);
     }
-    if (aws_http_stream_activate(stream)) {
-        /* Activate failed, the on_completed callback will NOT be invoked from HTTP, but we already told user about the
-         * stream. Invoke the user completed callback here */
+    /* It's possible that user released stream from callback, check the stream is still alive */
+    if (stream == NULL || aws_http_stream_activate(stream)) {
+        /* Activate failed, the on_completed callback will NOT be invoked from HTTP, but we already told user about
+         * the stream. Invoke the user completed callback here */
         error_code = aws_last_error();
         STREAM_MANAGER_LOGF(
             ERROR,
@@ -524,7 +525,7 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
             aws_error_str(error_code));
         if (pending_acquisition->options.on_complete) {
             pending_acquisition->options.on_complete(stream, error_code, pending_acquisition->options.user_data);
-            goto activate_failed;
+            goto after_cb_failed;
         }
     }
     /* Happy case, the complete callback will be invoked, and we clean things up at the callback, but we can release the
@@ -536,7 +537,7 @@ error:
     if (pending_acquisition->callback) {
         pending_acquisition->callback(NULL, error_code, pending_acquisition->user_data);
     }
-activate_failed:
+after_cb_failed:
     s_pending_stream_acquisition_destroy(pending_acquisition);
     /* task should happen after destroy, as the task can trigger the whole stream manager to be destroyed */
     s_stream_finishes_internal(sm_connection, stream_manager, error_code);

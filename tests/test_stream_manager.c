@@ -65,9 +65,6 @@ struct sm_tester {
     struct aws_array_list mock_connections;
     aws_http_on_client_connection_shutdown_fn *release_connection_fn;
 
-    struct aws_mutex mock_time_lock;
-    uint64_t mock_time;
-
     struct proxy_env_var_settings proxy_ev_settings;
     bool proxy_request_complete;
     bool proxy_request_successful;
