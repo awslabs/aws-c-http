@@ -44,6 +44,7 @@ struct sm_tester {
 
     struct aws_http2_stream_manager *stream_manager;
 
+    struct aws_string *host;
     struct aws_tls_ctx *tls_ctx;
     struct aws_tls_ctx_options tls_ctx_options;
     struct aws_tls_connection_options tls_connection_options;
@@ -136,7 +137,8 @@ static int s_tester_init(struct sm_tester_options *options) {
 
     ASSERT_NOT_NULL(s_tester.tls_ctx);
 
-    struct aws_byte_cursor server_name = aws_byte_cursor_from_c_str("www.amazon.com");
+    s_tester.host = aws_string_new_from_c_str(alloc, "www.google.com");
+    struct aws_byte_cursor server_name = aws_byte_cursor_from_string(s_tester.host);
     aws_tls_connection_options_init_from_ctx(&s_tester.tls_connection_options, s_tester.tls_ctx);
     aws_tls_connection_options_set_server_name(&s_tester.tls_connection_options, alloc, &server_name);
 
@@ -190,6 +192,7 @@ static int s_tester_clean_up(void) {
     aws_mutex_clean_up(&s_tester.lock);
     aws_condition_variable_clean_up(&s_tester.signal);
     aws_array_list_clean_up(&s_tester.streams);
+    aws_string_destroy(s_tester.host);
 
     return AWS_OP_SUCCESS;
 }
@@ -237,6 +240,7 @@ static int s_sm_stream_acquiring(int num_streams) {
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
         DEFINE_HEADER(":path", "/"),
+        DEFINE_HEADER(":authority", aws_string_c_str(s_tester.host)),
     };
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
     struct aws_http_make_request_options request_options = {
