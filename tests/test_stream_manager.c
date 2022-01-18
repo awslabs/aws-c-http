@@ -195,6 +195,7 @@ static int s_tester_clean_up(void) {
 }
 
 static void s_sm_tester_on_stream_acquired(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)user_data;
 
     AWS_FATAL_ASSERT(aws_mutex_lock(&s_tester.lock) == AWS_OP_SUCCESS);
 
