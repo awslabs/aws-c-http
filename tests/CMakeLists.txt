@@ -584,6 +584,11 @@ add_test_case(test_http_stats_split_across_gather_boundary)
 add_test_case(test_http_stats_pipelined)
 add_test_case(test_http_stats_multiple_requests_with_gap)
 
+add_test_case(h2_sm_sanity_check)
+
+add_net_test_case(h2_sm_acquire_stream)
+add_net_test_case(h2_sm_acquire_stream_multiple_connections)
+
 set(TEST_BINARY_NAME ${PROJECT_NAME}-tests)
 
 generate_test_driver(${TEST_BINARY_NAME})
