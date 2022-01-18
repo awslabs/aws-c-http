@@ -19,6 +19,7 @@
 
 #include <aws/http/http2_stream_manager.h>
 #include <aws/http/private/http2_stream_manager_impl.h>
+#include <aws/http/private/request_response_impl.h>
 
 #include <inttypes.h>
 
@@ -507,12 +508,15 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
             aws_error_str(error_code));
         goto error;
     }
+    /* Acquire stream to avoid the case stream is released before or during active */
+    /* TODO: expose stream acquire??? */
+    aws_atomic_fetch_add(&stream->refcount, 1);
     if (pending_acquisition->callback) {
         /* TODO: If user activate the stream in the callback and the activate failed........... */
         pending_acquisition->callback(stream, error_code, pending_acquisition->user_data);
     }
     /* It's possible that user released stream from callback, check the stream is still alive */
-    if (stream == NULL || aws_http_stream_activate(stream)) {
+    if (aws_http_stream_activate(stream)) {
         /* Activate failed, the on_completed callback will NOT be invoked from HTTP, but we already told user about
          * the stream. Invoke the user completed callback here */
         error_code = aws_last_error();
@@ -525,9 +529,13 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
             aws_error_str(error_code));
         if (pending_acquisition->options.on_complete) {
             pending_acquisition->options.on_complete(stream, error_code, pending_acquisition->options.user_data);
-            goto after_cb_failed;
         }
+        /* Release the stream as we keep it alive before */
+        aws_http_stream_release(stream);
+        goto after_cb_failed;
     }
+    /* Release the stream as we keep it alive before */
+    aws_http_stream_release(stream);
     /* Happy case, the complete callback will be invoked, and we clean things up at the callback, but we can release the
      * request now */
     aws_http_message_release(pending_acquisition->request);
