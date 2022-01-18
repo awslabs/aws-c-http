@@ -315,6 +315,14 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
                 (void *)connection);
             /* Release the acquired connection */
             re_error |= aws_http_connection_manager_release_connection(stream_manager->connection_manager, connection);
+        } else if (stream_manager->synced_data.pending_acquisition_count == 0) {
+            STREAM_MANAGER_LOGF(
+                DEBUG,
+                stream_manager,
+                "No pending acquisition, release the connection=%p acquired immediately",
+                (void *)connection);
+            /* Release the acquired connection */
+            re_error |= aws_http_connection_manager_release_connection(stream_manager->connection_manager, connection);
         } else {
             stream_manager->synced_data.num_connection_acquire_fails = 0;
             struct aws_h2_sm_connection *sm_connection = s_sm_connection_new(stream_manager, connection);
