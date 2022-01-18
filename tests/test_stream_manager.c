@@ -157,6 +157,8 @@ static int s_tester_init(struct sm_tester_options *options) {
 }
 
 static void s_release_all_streams(void) {
+
+    AWS_FATAL_ASSERT(aws_mutex_lock(&s_tester.lock) == AWS_OP_SUCCESS);
     size_t release_count = aws_array_list_length(&s_tester.streams);
     for (size_t i = 0; i < release_count; ++i) {
         struct aws_http_stream *stream = NULL;
@@ -166,6 +168,7 @@ static void s_release_all_streams(void) {
         aws_http_stream_release(stream);
         aws_array_list_pop_back(&s_tester.streams);
     }
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.lock) == AWS_OP_SUCCESS);
 }
 
 static int s_tester_clean_up(void) {
