@@ -35,7 +35,6 @@ struct sm_tester_options {
     struct aws_allocator *alloc;
     struct aws_http_connection_manager_system_vtable *mock_table;
     bool no_http2;
-    bool mock;
     size_t max_connections;
     size_t ideal_concurrent_streams_per_connection;
     uint32_t max_concurrent_streams_per_connection;
@@ -60,15 +59,19 @@ struct sm_tester {
     struct aws_condition_variable signal;
 
     struct aws_array_list streams;
-    size_t streams_errors;
+    size_t acquiring_stream_errors;
+    size_t stream_complete_errors;
     int error_code;
+    int stream_completed_error_code;
 
     size_t wait_for_stream_count;
     bool is_shutdown_complete;
 
     /* Fake HTTP/2 connection */
     size_t wait_for_fake_connection_count;
+    size_t offer_closed_connection_count;
     struct aws_array_list fake_connections;
+    bool release_sm_during_connection_acquiring;
 };
 
 static struct sm_tester s_tester;
@@ -94,6 +97,22 @@ static struct sm_fake_connection *s_get_fake_connection(size_t i) {
     struct sm_fake_connection *fake_connection = NULL;
     aws_array_list_get_at(&s_tester.fake_connections, &fake_connection, i);
     return fake_connection;
+}
+
+static int s_fake_connection_set_remote_max_concurrent_streams(
+    struct sm_fake_connection *fake_connection,
+    uint32_t max_concurrent_stream) {
+    /* fake peer sends settings and change the remote settings */
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, .value = max_concurrent_stream},
+    };
+
+    struct aws_h2_frame *settings_frame =
+        aws_h2_frame_new_settings(s_tester.allocator, settings_array, AWS_ARRAY_SIZE(settings_array), false /*ack*/);
+    ASSERT_NOT_NULL(settings_frame);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&fake_connection->peer, settings_frame));
+    testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
+    return AWS_OP_SUCCESS;
 }
 
 static struct sm_fake_connection *s_sm_fake_connection_new(void) {
@@ -225,7 +244,10 @@ static void s_release_all_streams(void) {
     AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.lock) == AWS_OP_SUCCESS);
 }
 
-static void s_fake_peer_complete_all_streams(struct sm_fake_connection *fake_connection) {
+/* complete first num_streams_to_complete. If num_streams_to_complete is zero, complete all the streams. */
+static void s_fake_connection_complete_streams(
+    struct sm_fake_connection *fake_connection,
+    int num_streams_to_complete) {
 
     testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
 
@@ -236,13 +258,17 @@ static void s_fake_peer_complete_all_streams(struct sm_fake_connection *fake_con
     };
     struct aws_http_headers *response_headers = aws_http_headers_new(s_tester.allocator);
     aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
-    size_t release_count = h2_decode_tester_frame_count(&fake_connection->peer.decode);
-    for (size_t i = 0; i < release_count; ++i) {
+    size_t frames_count = h2_decode_tester_frame_count(&fake_connection->peer.decode);
+    int streams_completed = 0;
+    for (size_t i = 0; i < frames_count; ++i) {
         struct h2_decoded_frame *frame = h2_decode_tester_get_frame(&fake_connection->peer.decode, i);
         if (frame->end_stream) {
             struct aws_h2_frame *response_frame = aws_h2_frame_new_headers(
                 s_tester.allocator, frame->stream_id, response_headers, true /*end_stream*/, 0, NULL);
             AWS_FATAL_ASSERT(h2_fake_peer_send_frame(&fake_connection->peer, response_frame) == AWS_OP_SUCCESS);
+            if (num_streams_to_complete && ++streams_completed >= num_streams_to_complete) {
+                break;
+            }
         }
     }
     aws_http_headers_release(response_headers);
@@ -261,6 +287,30 @@ static void s_clean_fake_connections(void) {
         s_sm_fake_connection_destroy(fake_connection);
     }
     aws_array_list_clean_up(&s_tester.fake_connections);
+}
+
+static void s_drain_all_fake_connection_testing_channel(void) {
+    size_t count = aws_array_list_length(&s_tester.fake_connections);
+    for (size_t i = 0; i < count; ++i) {
+        struct sm_fake_connection *fake_connection = NULL;
+        aws_array_list_get_at(&s_tester.fake_connections, &fake_connection, i);
+        testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
+    }
+}
+
+static int s_complete_all_fake_connection_streams(bool settings_needed) {
+    size_t count = aws_array_list_length(&s_tester.fake_connections);
+    for (size_t i = 0; i < count; ++i) {
+        struct sm_fake_connection *fake_connection = NULL;
+        ASSERT_SUCCESS(aws_array_list_get_at(&s_tester.fake_connections, &fake_connection, i));
+        if (settings_needed) {
+            ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&fake_connection->peer));
+        }
+        /* complete all the streams from the fake connection */
+        s_fake_connection_complete_streams(fake_connection, 0 /*all streams*/);
+        testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
+    }
+    return AWS_OP_SUCCESS;
 }
 
 static int s_tester_clean_up(void) {
@@ -294,7 +344,7 @@ static void s_sm_tester_on_stream_acquired(struct aws_http_stream *stream, int e
     AWS_FATAL_ASSERT(aws_mutex_lock(&s_tester.lock) == AWS_OP_SUCCESS);
 
     if (error_code) {
-        ++s_tester.streams_errors;
+        ++s_tester.acquiring_stream_errors;
         s_tester.error_code = error_code;
     } else {
         aws_array_list_push_back(&s_tester.streams, &stream);
@@ -307,7 +357,8 @@ static void s_sm_tester_on_stream_acquired(struct aws_http_stream *stream, int e
 
 static bool s_is_stream_reply_count_at_least(void *context) {
     (void)context;
-    return s_tester.wait_for_stream_count <= aws_array_list_length(&s_tester.streams) + s_tester.streams_errors;
+    return s_tester.wait_for_stream_count <=
+           aws_array_list_length(&s_tester.streams) + s_tester.acquiring_stream_errors;
 }
 
 static int s_wait_on_streams_reply_count(size_t count) {
@@ -319,6 +370,17 @@ static int s_wait_on_streams_reply_count(size_t count) {
 
     ASSERT_SUCCESS(aws_mutex_unlock(&s_tester.lock));
     return signal_error;
+}
+
+static void s_sm_tester_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
+    (void)user_data;
+    (void)stream;
+    AWS_FATAL_ASSERT(aws_mutex_lock(&s_tester.lock) == AWS_OP_SUCCESS);
+    if (error_code) {
+        ++s_tester.stream_complete_errors;
+        s_tester.stream_completed_error_code = error_code;
+    }
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.lock) == AWS_OP_SUCCESS);
 }
 
 static int s_sm_stream_acquiring(int num_streams) {
@@ -336,6 +398,7 @@ static int s_sm_stream_acquiring(int num_streams) {
         .self_size = sizeof(request_options),
         .request = request,
         .user_data = &s_tester,
+        .on_complete = s_sm_tester_on_stream_complete,
     };
     struct aws_http2_stream_manager_acquire_stream_options acquire_stream_option = {
         .options = &request_options,
@@ -378,7 +441,11 @@ static int s_wait_on_fake_connection_count(size_t count) {
 
 static int s_aws_http_connection_manager_create_connection_sync_mock(
     const struct aws_http_client_connection_options *options) {
-    /* TODO: multiple connections */
+    if (s_tester.release_sm_during_connection_acquiring) {
+        /* TODO: release stream manager will invoke all the callback SYNCLY, we should try to invoke all callback async
+         * for a better life */
+        aws_http2_stream_manager_release(s_tester.stream_manager);
+    }
     AWS_FATAL_ASSERT(aws_mutex_lock(&s_tester.lock) == AWS_OP_SUCCESS);
 
     struct sm_fake_connection *fake_connection = s_sm_fake_connection_new();
@@ -395,6 +462,9 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
         ASSERT_SUCCESS(aws_channel_slot_insert_end(fake_connection->testing_channel.channel, slot));
         ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &connection->channel_handler));
         connection->vtable->on_channel_handler_installed(&connection->channel_handler, slot);
+    }
+    if (aws_array_list_length(&s_tester.fake_connections) < s_tester.offer_closed_connection_count) {
+        aws_http_connection_close(connection);
     }
     options->on_setup(connection, AWS_ERROR_SUCCESS, options->user_data);
     fake_connection->connection = connection;
@@ -416,6 +486,7 @@ static void s_override_cm_connect_function(aws_http_connection_manager_create_co
 }
 
 TEST_CASE(h2_sm_mock_connection) {
+    (void)ctx;
     struct sm_tester_options options = {
         .max_connections = 5,
         .alloc = allocator,
@@ -426,19 +497,236 @@ TEST_CASE(h2_sm_mock_connection) {
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     /* waiting for one fake connection made */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
-    struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
-    testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
+    s_drain_all_fake_connection_testing_channel();
     ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_to_acquire));
-    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&fake_connection->peer));
-    /* complete all the streams from the fake connection */
-    s_fake_peer_complete_all_streams(fake_connection);
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams(true /*Settings needed*/));
 
+    return s_tester_clean_up();
+}
+
+TEST_CASE(h2_sm_mock_multiple_connections) {
+    (void)ctx;
+    uint32_t max_concurrent_streams_per_connection = 3;
+    int num_streams_to_acquire = 9;
+    int num_expected_connection = num_streams_to_acquire / max_concurrent_streams_per_connection;
+    if (num_streams_to_acquire % max_concurrent_streams_per_connection) {
+        ++num_expected_connection;
+    }
+    struct sm_tester_options options = {
+        .max_connections = 5,
+        .max_concurrent_streams_per_connection = max_concurrent_streams_per_connection,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_streams_to_acquire));
+    /* waiting for one fake connection made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(num_expected_connection));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_streams_to_acquire));
+    ASSERT_TRUE(aws_array_list_length(&s_tester.fake_connections) == num_expected_connection);
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams(true /*Settings needed*/));
+
+    return s_tester_clean_up();
+}
+
+TEST_CASE(h2_sm_mock_close_connection) {
+    (void)ctx;
+    uint32_t max_concurrent_streams_per_connection = 3;
+    int num_streams_to_acquire = 3;
+    int num_expected_connection = num_streams_to_acquire / max_concurrent_streams_per_connection;
+    if (num_streams_to_acquire % max_concurrent_streams_per_connection) {
+        ++num_expected_connection;
+    }
+    struct sm_tester_options options = {
+        .max_connections = 5,
+        .max_concurrent_streams_per_connection = max_concurrent_streams_per_connection,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    /* The first offered connection is a closed connection */
+    s_tester.offer_closed_connection_count = 1;
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_streams_to_acquire));
+    /* waiting for one fake connection made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(num_expected_connection));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_streams_to_acquire));
+    ASSERT_INT_EQUALS(num_streams_to_acquire, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, s_tester.error_code);
+    ASSERT_TRUE(aws_array_list_length(&s_tester.fake_connections) == num_expected_connection);
+    /* No succeed streams */
+    ASSERT_TRUE(aws_array_list_length(&s_tester.streams) == 0);
+
+    /* Acquire more streams, which should succeed as we don't close the connection */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_streams_to_acquire));
+    /* waiting for the new connection */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(num_expected_connection + 1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_streams_to_acquire + num_streams_to_acquire));
+    /* all the new streams succeed */
+    ASSERT_TRUE(aws_array_list_length(&s_tester.streams) == num_streams_to_acquire);
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams(true /*Settings needed*/));
+
+    return s_tester_clean_up();
+}
+
+/* Test that the remote max concurrent streams setting hit */
+TEST_CASE(h2_sm_mock_max_concurrent_streams_remote) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 5,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    /* Acquire a stream to trigger */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    /* waiting for one fake connection made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(1));
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(0, s_tester.stream_complete_errors);
+
+    /* Fake peer send settings that only allow 2 concurrent streams */
+    struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&fake_connection->peer));
+    ASSERT_SUCCESS(s_fake_connection_set_remote_max_concurrent_streams(fake_connection, 2));
+
+    /* Acquire tow more streams */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(2));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(1 + 2));
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    /* 1 stream failed with the max concurrent stream exceeded */
+    ASSERT_INT_EQUALS(1, s_tester.stream_complete_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_MAX_CONCURRENT_STREAMS_EXCEEDED, s_tester.stream_completed_error_code);
+    /* We have no extra connection made. */
+    ASSERT_INT_EQUALS(1, aws_array_list_length(&s_tester.fake_connections));
+
+    /* Acquire one more stream, the max concurrent for that stream should be updated, and will create a new connection
+     * for new stream acquiring */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    /* Wait for the second connection */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(2));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(1 + 2 + 1));
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(1, s_tester.stream_complete_errors);
+    /* We have one more connection made. */
+    ASSERT_INT_EQUALS(2, aws_array_list_length(&s_tester.fake_connections));
+    fake_connection = s_get_fake_connection(1);
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&fake_connection->peer));
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams(false /*Settings needed*/));
+
+    return s_tester_clean_up();
+}
+
+/* Test that the stream completed will free the connection for more streams */
+TEST_CASE(h2_sm_mock_complete_stream) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 5,
+        .max_concurrent_streams_per_connection = 2,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    ASSERT_SUCCESS(s_sm_stream_acquiring(2));
+    /* waiting for one fake connection made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(2));
+    ASSERT_INT_EQUALS(1, aws_array_list_length(&s_tester.fake_connections));
+
+    /* Fake peer send settings that only allow 2 concurrent streams */
+    struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&fake_connection->peer));
+    s_fake_connection_complete_streams(fake_connection, 1);
+
+    /* Acquire a new streams */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(2 + 1));
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    /* No error happens */
+    ASSERT_INT_EQUALS(0, s_tester.stream_complete_errors);
+    /* We have no extra connection made. */
+    ASSERT_INT_EQUALS(1, aws_array_list_length(&s_tester.fake_connections));
+
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams(false /*Settings needed*/));
+
+    return s_tester_clean_up();
+}
+
+/* Test that the stream manager closing will stop receive any new request for streams */
+TEST_CASE(h2_sm_mock_closing_error) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 5,
+        .max_concurrent_streams_per_connection = 2,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    ASSERT_SUCCESS(s_sm_stream_acquiring(2));
+    /* waiting for one fake connection made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(2));
+    ASSERT_INT_EQUALS(1, aws_array_list_length(&s_tester.fake_connections));
+    /* No error happens */
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(0, s_tester.stream_complete_errors);
+
+    aws_http2_stream_manager_release(s_tester.stream_manager);
+
+    /* Acquire a new stream will fail */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(2 + 1));
+    /* We have no extra connection made. */
+    ASSERT_INT_EQUALS(1, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN, s_tester.error_code);
+
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams(false /*Settings needed*/));
+    /* The stream manager will finish destroying before release called from clean up, set it to null to avoid use after
+     * free */
+    s_tester.stream_manager = NULL;
+    return s_tester_clean_up();
+}
+
+/* Test that the stream manager closing before connection acquired, all the pending stream acquiring should fail */
+TEST_CASE(h2_sm_mock_closing_before_connection_acquired) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 5,
+        .max_concurrent_streams_per_connection = 2,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_tester.release_sm_during_connection_acquiring = true;
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    ASSERT_SUCCESS(s_sm_stream_acquiring(2));
+    /* waiting for one fake connection made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(2));
+    /* The stream manager will finish destroying before release called from clean up, set it to null to avoid use after
+     * free */
+    s_tester.stream_manager = NULL;
+
+    /* all acquiring stream failed */
+    ASSERT_INT_EQUALS(2, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN, s_tester.error_code);
     return s_tester_clean_up();
 }
 
 /*******************************************************************************
  * Net test, that makes real HTTP/2 connection and requests
  ******************************************************************************/
+
 /* Test that makes real streams */
 TEST_CASE(h2_sm_acquire_stream) {
     (void)ctx;

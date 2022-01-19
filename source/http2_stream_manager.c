@@ -447,7 +447,8 @@ static void s_on_stream_complete(struct aws_http_stream *stream, int error_code,
     struct aws_h2_sm_pending_stream_acquisition *pending_acquisition = user_data;
     struct aws_h2_sm_connection *sm_connection = pending_acquisition->sm_connection;
     struct aws_http2_stream_manager *stream_manager = sm_connection->stream_manager;
-    /* Reach the max current will still allow new requests, but the new stream will complete with erro */
+    /* TODO: Maybe hide some error code and create new error code for this. Let's say if the connection closed or goaway
+     * received. The sm user may not be interesting in it */
     if (pending_acquisition->options.on_complete) {
         pending_acquisition->options.on_complete(stream, error_code, pending_acquisition->options.user_data);
     }
@@ -778,6 +779,9 @@ void aws_http2_stream_manager_acquire_stream(
     struct aws_http2_stream_manager *stream_manager,
     const struct aws_http2_stream_manager_acquire_stream_options *acquire_stream_option) {
     AWS_PRECONDITION(stream_manager);
+    AWS_PRECONDITION(acquire_stream_option);
+    AWS_PRECONDITION(acquire_stream_option->callback);
+    AWS_PRECONDITION(acquire_stream_option->options);
     struct aws_http2_stream_management_transaction work;
     struct aws_h2_sm_pending_stream_acquisition *pending_acquisition = s_new_pending_stream_acquisition(
         stream_manager->allocator,

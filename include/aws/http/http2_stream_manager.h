@@ -77,6 +77,7 @@ struct aws_http2_stream_manager_options {
     const struct aws_http_proxy_options *proxy_options;
     const struct proxy_env_var_settings *proxy_ev_settings;
     /**
+     * TODO: support this
      * Optional.
      * Default is no limit. 0 will be considered as using the default value.
      * The ideal number of concurrent streams for a connection. Stream manager will try to create a new connection if
@@ -110,8 +111,12 @@ struct aws_http2_stream_manager_acquire_stream_options {
      * Invoked when the stream finishes acquiring by stream manager.
      */
     aws_http2_stream_manager_on_stream_acquired_fn *callback;
+    /**
+     * Optional.
+     * User data for the callback.
+     */
     void *user_data;
-    /* see `aws_http_make_request_options` */
+    /* Required. see `aws_http_make_request_options` */
     const struct aws_http_make_request_options *options;
 };
 
@@ -133,9 +138,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
  *
  *
  * @param http2_stream_manager
- * @param options
- * @param callback
- * @param user_data
+ * @param acquire_stream_option see `aws_http2_stream_manager_acquire_stream_options`
  */
 AWS_HTTP_API
 void aws_http2_stream_manager_acquire_stream(

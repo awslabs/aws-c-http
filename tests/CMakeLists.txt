@@ -586,6 +586,12 @@ add_test_case(test_http_stats_multiple_requests_with_gap)
 
 add_test_case(h2_sm_sanity_check)
 add_test_case(h2_sm_mock_connection)
+add_test_case(h2_sm_mock_multiple_connections)
+add_test_case(h2_sm_mock_close_connection)
+add_test_case(h2_sm_mock_max_concurrent_streams_remote)
+add_test_case(h2_sm_mock_complete_stream)
+add_test_case(h2_sm_mock_closing_error)
+add_test_case(h2_sm_mock_closing_before_connection_acquired)
 
 add_net_test_case(h2_sm_acquire_stream)
 add_net_test_case(h2_sm_acquire_stream_multiple_connections)
