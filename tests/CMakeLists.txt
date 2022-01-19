@@ -595,6 +595,7 @@ add_test_case(h2_sm_mock_closing_before_connection_acquired)
 
 add_net_test_case(h2_sm_acquire_stream)
 add_net_test_case(h2_sm_acquire_stream_multiple_connections)
+add_net_test_case(h2_sm_acquire_stream_stress)
 
 set(TEST_BINARY_NAME ${PROJECT_NAME}-tests)
 
