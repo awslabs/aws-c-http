@@ -585,6 +585,7 @@ add_test_case(test_http_stats_pipelined)
 add_test_case(test_http_stats_multiple_requests_with_gap)
 
 add_test_case(h2_sm_sanity_check)
+add_test_case(h2_sm_mock_connection)
 
 add_net_test_case(h2_sm_acquire_stream)
 add_net_test_case(h2_sm_acquire_stream_multiple_connections)

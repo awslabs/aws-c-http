@@ -3,10 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0.
  */
 
+#include "h2_test_helper.h"
+#include "stream_test_helper.h"
+
 #include <aws/http/http2_stream_manager.h>
 
 #include <aws/http/private/connection_impl.h>
+#include <aws/http/private/connection_manager_system_vtable.h>
 #include <aws/http/private/h1_stream.h>
+#include <aws/http/private/h2_connection.h>
 #include <aws/http/private/http2_stream_manager_impl.h>
 #include <aws/http/private/proxy_impl.h>
 #include <aws/http/proxy.h>
@@ -30,6 +35,7 @@ struct sm_tester_options {
     struct aws_allocator *alloc;
     struct aws_http_connection_manager_system_vtable *mock_table;
     bool no_http2;
+    bool mock;
     size_t max_connections;
     size_t ideal_concurrent_streams_per_connection;
     uint32_t max_concurrent_streams_per_connection;
@@ -60,18 +66,61 @@ struct sm_tester {
     size_t wait_for_stream_count;
     bool is_shutdown_complete;
 
-    struct aws_http_connection_manager_system_vtable *mock_table;
-
-    struct aws_atomic_var next_connection_id;
-    struct aws_array_list mock_connections;
-    aws_http_on_client_connection_shutdown_fn *release_connection_fn;
-
-    struct proxy_env_var_settings proxy_ev_settings;
-    bool proxy_request_complete;
-    bool proxy_request_successful;
+    /* Fake HTTP/2 connection */
+    size_t wait_for_fake_connection_count;
+    struct aws_array_list fake_connections;
 };
 
 static struct sm_tester s_tester;
+
+struct sm_fake_connection {
+    struct testing_channel testing_channel;
+    struct h2_fake_peer peer;
+    struct aws_http_client_connection_options options;
+    struct aws_http_connection *connection;
+};
+
+static void s_testing_channel_shutdown(int error_code, void *user_data) {
+    struct sm_fake_connection *fake_connection = (struct sm_fake_connection *)user_data;
+    if (fake_connection->options.on_shutdown) {
+        /* In real world, this is trigger by the bootstrp */
+        fake_connection->options.on_shutdown(
+            fake_connection->connection, error_code, fake_connection->options.user_data);
+    }
+}
+
+static struct sm_fake_connection *s_get_fake_connection(size_t i) {
+    AWS_FATAL_ASSERT(aws_array_list_length(&s_tester.fake_connections) > i);
+    struct sm_fake_connection *fake_connection = NULL;
+    aws_array_list_get_at(&s_tester.fake_connections, &fake_connection, i);
+    return fake_connection;
+}
+
+static struct sm_fake_connection *s_sm_fake_connection_new(void) {
+    struct sm_fake_connection *fake_connection =
+        aws_mem_calloc(s_tester.allocator, 1, sizeof(struct sm_fake_connection));
+
+    struct aws_testing_channel_options options = {.clock_fn = aws_high_res_clock_get_ticks};
+
+    AWS_FATAL_ASSERT(
+        testing_channel_init(&fake_connection->testing_channel, s_tester.allocator, &options) == AWS_OP_SUCCESS);
+    fake_connection->testing_channel.channel_shutdown_user_data = fake_connection;
+    fake_connection->testing_channel.channel_shutdown = s_testing_channel_shutdown;
+    struct h2_fake_peer_options peer_options = {
+        .alloc = s_tester.allocator,
+        .testing_channel = &fake_connection->testing_channel,
+        .is_server = true,
+    };
+    AWS_FATAL_ASSERT(h2_fake_peer_init(&fake_connection->peer, &peer_options) == AWS_OP_SUCCESS);
+
+    return fake_connection;
+}
+
+static void s_sm_fake_connection_destroy(struct sm_fake_connection *fake_connection) {
+    h2_fake_peer_clean_up(&fake_connection->peer);
+    testing_channel_clean_up(&fake_connection->testing_channel);
+    aws_mem_release(s_tester.allocator, fake_connection);
+}
 
 static bool s_is_shutdown_complete(void *context) {
     (void)context;
@@ -109,6 +158,8 @@ static int s_tester_init(struct sm_tester_options *options) {
     s_tester.event_loop_group = aws_event_loop_group_new_default(alloc, 0, NULL);
 
     ASSERT_SUCCESS(aws_array_list_init_dynamic(&s_tester.streams, alloc, 1, sizeof(struct aws_http_stream *)));
+    ASSERT_SUCCESS(
+        aws_array_list_init_dynamic(&s_tester.fake_connections, alloc, 3, sizeof(struct sm_fake_connection *)));
 
     struct aws_host_resolver_default_options resolver_options = {
         .el_group = s_tester.event_loop_group,
@@ -155,6 +206,7 @@ static int s_tester_init(struct sm_tester_options *options) {
         .shutdown_complete_callback = s_sm_tester_on_sm_shutdown_complete,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
+
     return AWS_OP_SUCCESS;
 }
 
@@ -173,8 +225,47 @@ static void s_release_all_streams(void) {
     AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.lock) == AWS_OP_SUCCESS);
 }
 
+static void s_fake_peer_complete_all_streams(struct sm_fake_connection *fake_connection) {
+
+    testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
+
+    AWS_FATAL_ASSERT(h2_fake_peer_decode_messages_from_testing_channel(&fake_connection->peer) == AWS_OP_SUCCESS);
+    struct aws_http_header response_headers_src[] = {
+        DEFINE_HEADER(":status", "404"),
+        DEFINE_HEADER("date", "Wed, 01 Apr 2020 23:02:49 GMT"),
+    };
+    struct aws_http_headers *response_headers = aws_http_headers_new(s_tester.allocator);
+    aws_http_headers_add_array(response_headers, response_headers_src, AWS_ARRAY_SIZE(response_headers_src));
+    size_t release_count = h2_decode_tester_frame_count(&fake_connection->peer.decode);
+    for (size_t i = 0; i < release_count; ++i) {
+        struct h2_decoded_frame *frame = h2_decode_tester_get_frame(&fake_connection->peer.decode, i);
+        if (frame->end_stream) {
+            struct aws_h2_frame *response_frame = aws_h2_frame_new_headers(
+                s_tester.allocator, frame->stream_id, response_headers, true /*end_stream*/, 0, NULL);
+            AWS_FATAL_ASSERT(h2_fake_peer_send_frame(&fake_connection->peer, response_frame) == AWS_OP_SUCCESS);
+        }
+    }
+    aws_http_headers_release(response_headers);
+    testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
+}
+
+static void s_clean_fake_connections(void) {
+
+    size_t release_count = aws_array_list_length(&s_tester.fake_connections);
+    for (size_t i = 0; i < release_count; ++i) {
+        struct sm_fake_connection *fake_connection = NULL;
+        if (aws_array_list_back(&s_tester.fake_connections, &fake_connection)) {
+            continue;
+        }
+        aws_array_list_pop_back(&s_tester.fake_connections);
+        s_sm_fake_connection_destroy(fake_connection);
+    }
+    aws_array_list_clean_up(&s_tester.fake_connections);
+}
+
 static int s_tester_clean_up(void) {
     s_release_all_streams();
+    s_clean_fake_connections();
     aws_http2_stream_manager_release(s_tester.stream_manager);
 
     s_wait_on_shutdown_complete();
@@ -220,7 +311,6 @@ static bool s_is_stream_reply_count_at_least(void *context) {
 }
 
 static int s_wait_on_streams_reply_count(size_t count) {
-
     ASSERT_SUCCESS(aws_mutex_lock(&s_tester.lock));
 
     s_tester.wait_for_stream_count = count;
@@ -232,7 +322,6 @@ static int s_wait_on_streams_reply_count(size_t count) {
 }
 
 static int s_sm_stream_acquiring(int num_streams) {
-
     struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
     ASSERT_NOT_NULL(request);
 
@@ -271,6 +360,86 @@ TEST_CASE(h2_sm_sanity_check) {
     return s_tester_clean_up();
 }
 
+static bool s_is_fake_connection_count(void *context) {
+    (void)context;
+    return s_tester.wait_for_fake_connection_count <= aws_array_list_length(&s_tester.fake_connections);
+}
+
+static int s_wait_on_fake_connection_count(size_t count) {
+    ASSERT_SUCCESS(aws_mutex_lock(&s_tester.lock));
+
+    s_tester.wait_for_fake_connection_count = count;
+    int signal_error =
+        aws_condition_variable_wait_pred(&s_tester.signal, &s_tester.lock, s_is_fake_connection_count, NULL);
+
+    ASSERT_SUCCESS(aws_mutex_unlock(&s_tester.lock));
+    return signal_error;
+}
+
+static int s_aws_http_connection_manager_create_connection_sync_mock(
+    const struct aws_http_client_connection_options *options) {
+    /* TODO: multiple connections */
+    AWS_FATAL_ASSERT(aws_mutex_lock(&s_tester.lock) == AWS_OP_SUCCESS);
+
+    struct sm_fake_connection *fake_connection = s_sm_fake_connection_new();
+    struct aws_http_connection *connection = aws_http_connection_new_http2_client(
+        options->allocator, options->manual_window_management /* manual window management */, options->http2_options);
+    ASSERT_NOT_NULL(connection);
+
+    {
+        /* set connection user_data (handled by http-bootstrap in real world) */
+        connection->user_data = options->user_data;
+        /* re-enact marriage vows of http-connection and channel (handled by http-bootstrap in real world) */
+        struct aws_channel_slot *slot = aws_channel_slot_new(fake_connection->testing_channel.channel);
+        ASSERT_NOT_NULL(slot);
+        ASSERT_SUCCESS(aws_channel_slot_insert_end(fake_connection->testing_channel.channel, slot));
+        ASSERT_SUCCESS(aws_channel_slot_set_handler(slot, &connection->channel_handler));
+        connection->vtable->on_channel_handler_installed(&connection->channel_handler, slot);
+    }
+    options->on_setup(connection, AWS_ERROR_SUCCESS, options->user_data);
+    fake_connection->connection = connection;
+    fake_connection->options = *options;
+    ASSERT_SUCCESS(aws_array_list_push_back(&s_tester.fake_connections, &fake_connection));
+
+    aws_condition_variable_notify_one(&s_tester.signal);
+
+    AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.lock) == AWS_OP_SUCCESS);
+    return AWS_OP_SUCCESS;
+}
+
+static struct aws_http_connection_manager_system_vtable s_mocks;
+
+static void s_override_cm_connect_function(aws_http_connection_manager_create_connection_fn *fn) {
+    s_mocks = *g_aws_http_connection_manager_default_system_vtable_ptr;
+    s_mocks.create_connection = fn;
+    aws_http_connection_manager_set_system_vtable(s_tester.stream_manager->connection_manager, &s_mocks);
+}
+
+TEST_CASE(h2_sm_mock_connection) {
+    struct sm_tester_options options = {
+        .max_connections = 5,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    int num_to_acquire = 5;
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+    /* waiting for one fake connection made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
+    testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_to_acquire));
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&fake_connection->peer));
+    /* complete all the streams from the fake connection */
+    s_fake_peer_complete_all_streams(fake_connection);
+
+    return s_tester_clean_up();
+}
+
+/*******************************************************************************
+ * Net test, that makes real HTTP/2 connection and requests
+ ******************************************************************************/
+/* Test that makes real streams */
 TEST_CASE(h2_sm_acquire_stream) {
     (void)ctx;
     struct sm_tester_options options = {
@@ -285,6 +454,7 @@ TEST_CASE(h2_sm_acquire_stream) {
     return s_tester_clean_up();
 }
 
+/* Test that makes real streams and trigger multiple connections to be created */
 TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
     (void)ctx;
     struct sm_tester_options options = {
