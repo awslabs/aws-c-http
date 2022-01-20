@@ -136,7 +136,6 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
 /**
  * Acquire a stream from stream manager asynchronously.
  *
- *
  * @param http2_stream_manager
  * @param acquire_stream_option see `aws_http2_stream_manager_acquire_stream_options`
  */

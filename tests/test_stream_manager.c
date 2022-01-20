@@ -660,6 +660,58 @@ TEST_CASE(h2_sm_mock_complete_stream) {
     return s_tester_clean_up();
 }
 
+/* Test that goaway received from peer, new connection will be made */
+TEST_CASE(h2_sm_mock_goaway) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 5,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    ASSERT_SUCCESS(s_sm_stream_acquiring(5));
+    /* waiting for one fake connection made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(5));
+    ASSERT_INT_EQUALS(1, aws_array_list_length(&s_tester.fake_connections));
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+
+    /* Fake peer send goaway */
+    struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&fake_connection->peer));
+    struct aws_byte_cursor debug_info;
+    AWS_ZERO_STRUCT(debug_info);
+    struct aws_http_stream *stream = NULL;
+    aws_array_list_front(&s_tester.streams, &stream);
+    struct aws_h2_frame *peer_frame =
+        aws_h2_frame_new_goaway(allocator, aws_http_stream_get_id(stream), AWS_HTTP2_ERR_NO_ERROR, debug_info);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&fake_connection->peer, peer_frame));
+    testing_channel_drain_queued_tasks(&fake_connection->testing_channel);
+
+    /* Should be the streams with id larger than the first stream all completed with error */
+    ASSERT_INT_EQUALS(4, s_tester.stream_complete_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_GOAWAY_RECEIVED, s_tester.stream_completed_error_code);
+
+    /* When we create new streams, stream manager should create a new connection to use */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(5));
+    /* waiting for one fake connection made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(2));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(5 + 5));
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    /* No more stream completed with error */
+    ASSERT_INT_EQUALS(4, s_tester.stream_complete_errors);
+    /* Two connection made */
+    ASSERT_INT_EQUALS(2, aws_array_list_length(&s_tester.fake_connections));
+    fake_connection = s_get_fake_connection(1);
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&fake_connection->peer));
+
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams(false /*Settings needed*/));
+
+    return s_tester_clean_up();
+}
+
 /* Test that the stream manager closing will stop receive any new request for streams */
 TEST_CASE(h2_sm_mock_closing_error) {
     (void)ctx;
@@ -767,7 +819,7 @@ TEST_CASE(h2_sm_acquire_stream_stress) {
         .alloc = allocator,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
-    int num_to_acquire = 500; /* TODO: seems like really slow */
+    int num_to_acquire = 100 * 100 * 2;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_to_acquire));
 

@@ -1256,8 +1256,23 @@ static void s_aws_http_connection_manager_h2_on_goaway_received(
 
     struct aws_connection_management_transaction work;
     s_aws_connection_management_transaction_init(&work, manager);
-    /* Release this connection as no new stream will be allowed */
-    work.connection_to_release = http2_connection;
+
+    /*
+     * Find and, if found, remove it from idle connections
+     */
+    const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections);
+    for (struct aws_linked_list_node *node = aws_linked_list_begin(&manager->idle_connections); node != end;
+         node = aws_linked_list_next(node)) {
+        struct aws_idle_connection *current_idle_connection = AWS_CONTAINER_OF(node, struct aws_idle_connection, node);
+        if (current_idle_connection->connection == http2_connection) {
+            aws_linked_list_remove(node);
+            work.connection_to_release = http2_connection;
+            aws_mem_release(current_idle_connection->allocator, current_idle_connection);
+            --manager->idle_connection_count;
+            break;
+        }
+    }
+
     aws_mutex_lock(&manager->lock);
     s_aws_http_connection_manager_build_transaction(&work);
     aws_mutex_unlock(&manager->lock);
