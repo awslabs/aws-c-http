@@ -1530,9 +1530,7 @@ static void s_http_proxied_socket_channel_shutdown(
 
 int aws_http_proxy_new_socket_channel(
     struct aws_socket_channel_bootstrap_options *channel_options,
-    struct aws_http_proxy_options *proxy_options) {
-    (void)channel_options;
-    (void)proxy_options;
+    const struct aws_http_proxy_options *proxy_options) {
 
     AWS_FATAL_ASSERT(channel_options != NULL && channel_options->bootstrap != NULL);
     AWS_FATAL_ASSERT(proxy_options != NULL);
