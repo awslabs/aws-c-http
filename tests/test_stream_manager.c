@@ -790,6 +790,7 @@ TEST_CASE(h2_sm_acquire_stream) {
     int num_to_acquire = 5;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_to_acquire));
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
 
     return s_tester_clean_up();
 }
@@ -806,6 +807,7 @@ TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
     int num_to_acquire = 20;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_to_acquire));
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
 
     return s_tester_clean_up();
 }
@@ -822,6 +824,7 @@ TEST_CASE(h2_sm_acquire_stream_stress) {
     int num_to_acquire = 100 * 100 * 2;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_to_acquire));
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
 
     return s_tester_clean_up();
 }
