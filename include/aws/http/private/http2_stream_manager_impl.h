@@ -22,8 +22,8 @@ enum aws_h2_sm_state_type {
 struct aws_h2_sm_connection {
     struct aws_http2_stream_manager *stream_manager;
     struct aws_http_connection *connection;
-    size_t num_streams_assigned;     /* From a stream assigned to the connection until the stream completed
-                                                       or failed to be created from the connection. */
+    uint32_t num_streams_assigned;   /* From a stream assigned to the connection until the stream completed
+                                                     or failed to be created from the connection. */
     uint32_t max_concurrent_streams; /* lower bound between user configured and the other side */
     bool full;
     bool sim_full;
@@ -133,7 +133,7 @@ struct aws_http2_stream_manager {
      * The real number of concurrent streams per connection will be controlled by the minmal value of the setting from
      * other end and the value here.
      */
-    uint32_t max_concurrent_streams_per_connection;
+    size_t max_concurrent_streams_per_connection;
     /**
      * Number of we tolarate the underlying connection acquiring failures
      */

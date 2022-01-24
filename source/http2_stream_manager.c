@@ -63,20 +63,6 @@ static void s_pending_stream_acquisition_destroy(struct aws_h2_sm_pending_stream
     aws_mem_release(pending_acquisition->allocator, pending_acquisition);
 }
 
-/**
- * Main actions:
- * - Acquire stream from user
- *      - Check a connection to make stream
- *          - Schedule task from connection eventloop to make request.
- *      - Or make a new connection
- *          - Acquiring a new connection and wait until CM to finish.
- * - Stream completed from HTTP
- *      - Update the connection of how many streams opening
- *      - Connection may be back to available.
- * - Connection acquired from CM
- *      - Finishes the pending stream acquiring on this connection as much as possible
- */
-
 static void s_lock_synced_data(struct aws_http2_stream_manager *stream_manager) {
     int err = aws_mutex_lock(&stream_manager->synced_data.lock);
     AWS_ASSERT(!err && "lock failed");
@@ -230,7 +216,6 @@ static void s_get_sm_connection_synced(
         }
     }
     AWS_ASSERT(errored == 0 && "random access set went wrong");
-    return;
 }
 
 /* This is scheduled to run on a separate event loop to finish pending acquisition asynchronously */
@@ -245,11 +230,8 @@ static void s_finish_pending_acquisitions_task(struct aws_task *task, void *arg,
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
         AWS_ASSERT(stream_manager->synced_data.state == AWS_H2SMST_DESTROYING);
-        /* finishes all the pending acquisition with error */
+        /* swap list to avoid callback with lock held. */
         aws_linked_list_swap_contents(&pending_acquisitions, &stream_manager->synced_data.pending_acquisitions);
-        stream_manager->synced_data.pending_acquisition_count = 0;
-        s_aws_http2_stream_manager_build_transaction_synced(&work);
-
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
     while (!aws_linked_list_empty(&pending_acquisitions)) {
@@ -269,6 +251,14 @@ static void s_finish_pending_acquisitions_task(struct aws_task *task, void *arg,
             (void *)pending_acquisition);
         s_pending_stream_acquisition_destroy(pending_acquisition);
     }
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(stream_manager);
+        /* After the callbacks invoked, now we can update the count */
+        stream_manager->synced_data.pending_acquisition_count = 0;
+        s_aws_http2_stream_manager_build_transaction_synced(&work);
+
+        s_unlock_synced_data(stream_manager);
+    } /* END CRITICAL SECTION */
     s_aws_http2_stream_manager_execute_transaction(&work);
 
     aws_mem_release(stream_manager->allocator, task);
@@ -353,7 +343,7 @@ static struct aws_h2_sm_connection *s_sm_connection_new(
     struct aws_http_connection *connection) {
     struct aws_h2_sm_connection *sm_connection =
         aws_mem_calloc(stream_manager->allocator, 1, sizeof(struct aws_h2_sm_connection));
-    sm_connection->max_concurrent_streams = stream_manager->max_concurrent_streams_per_connection;
+    sm_connection->max_concurrent_streams = (uint32_t)stream_manager->max_concurrent_streams_per_connection;
     sm_connection->connection = connection;
     sm_connection->stream_manager = stream_manager;
     return sm_connection;

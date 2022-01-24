@@ -91,7 +91,7 @@ struct aws_http2_stream_manager_options {
      * The real number of concurrent streams per connection will be controlled by the minmal value of the setting from
      * other end and the value here.
      */
-    uint32_t max_concurrent_streams_per_connection;
+    size_t max_concurrent_streams_per_connection;
     /**
      * Required.
      * The max number of connections will be open at same time. If all the connections are full, manager will wait until

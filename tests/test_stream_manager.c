@@ -38,7 +38,7 @@ struct sm_tester_options {
     bool no_http2;
     size_t max_connections;
     size_t ideal_concurrent_streams_per_connection;
-    uint32_t max_concurrent_streams_per_connection;
+    size_t max_concurrent_streams_per_connection;
 };
 
 struct sm_tester {
@@ -519,7 +519,7 @@ TEST_CASE(h2_sm_mock_connection) {
 
 TEST_CASE(h2_sm_mock_multiple_connections) {
     (void)ctx;
-    uint32_t max_concurrent_streams_per_connection = 3;
+    size_t max_concurrent_streams_per_connection = 3;
     int num_streams_to_acquire = 9;
     int num_expected_connection = num_streams_to_acquire / max_concurrent_streams_per_connection;
     if (num_streams_to_acquire % max_concurrent_streams_per_connection) {
@@ -545,7 +545,7 @@ TEST_CASE(h2_sm_mock_multiple_connections) {
 
 TEST_CASE(h2_sm_mock_close_connection) {
     (void)ctx;
-    uint32_t max_concurrent_streams_per_connection = 3;
+    size_t max_concurrent_streams_per_connection = 3;
     int num_streams_to_acquire = 3;
     int num_expected_connection = num_streams_to_acquire / max_concurrent_streams_per_connection;
     if (num_streams_to_acquire % max_concurrent_streams_per_connection) {
