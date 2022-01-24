@@ -1256,7 +1256,7 @@ static void s_aws_http_connection_manager_h2_on_goaway_received(
 
     struct aws_connection_management_transaction work;
     s_aws_connection_management_transaction_init(&work, manager);
-
+    aws_mutex_lock(&manager->lock);
     /*
      * Find and, if found, remove it from idle connections
      */
@@ -1272,8 +1272,6 @@ static void s_aws_http_connection_manager_h2_on_goaway_received(
             break;
         }
     }
-
-    aws_mutex_lock(&manager->lock);
     s_aws_http_connection_manager_build_transaction(&work);
     aws_mutex_unlock(&manager->lock);
     s_aws_http_connection_manager_execute_transaction(&work);

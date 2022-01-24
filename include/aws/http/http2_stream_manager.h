@@ -23,7 +23,8 @@ struct aws_http_stream;
  * Always invoked asynchronously when the stream was created, successfully or not.
  * When stream is NULL, error code will be set to indicate what happened.
  * If there is a stream returned, you own the stream completely.
- * Invoked on the same thread as other callback of the stream, which will be the thread of the connection.
+ * Invoked on the same thread as other callback of the stream, which will be the thread of the connection, ideally.
+ * If there is no connection made, the callback will be invoked from a sperate thread.
  */
 typedef void(
     aws_http2_stream_manager_on_stream_acquired_fn)(struct aws_http_stream *stream, int error_code, void *user_data);
@@ -122,11 +123,25 @@ struct aws_http2_stream_manager_acquire_stream_options {
 
 AWS_EXTERN_C_BEGIN
 
+/**
+ * Acquire a refcount from the stream manager, stream manager will start to destroy after the refcount drops to zero.
+ * NULL is acceptable. Initial refcount after new is 1.
+ *
+ * @param manager
+ * @return The same pointer acquiring.
+ */
 AWS_HTTP_API
-void aws_http2_stream_manager_acquire(struct aws_http2_stream_manager *manager);
+struct aws_http2_stream_manager *aws_http2_stream_manager_acquire(struct aws_http2_stream_manager *manager);
 
+/**
+ * Release a refcount from the stream manager, stream manager will start to destroy after the refcount drops to zero.
+ * NULL is acceptable. Initial refcount after new is 1.
+ *
+ * @param manager
+ * @return NULL
+ */
 AWS_HTTP_API
-void aws_http2_stream_manager_release(struct aws_http2_stream_manager *manager);
+struct aws_http2_stream_manager *aws_http2_stream_manager_release(struct aws_http2_stream_manager *manager);
 
 AWS_HTTP_API
 struct aws_http2_stream_manager *aws_http2_stream_manager_new(
@@ -134,7 +149,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     struct aws_http2_stream_manager_options *options);
 
 /**
- * Acquire a stream from stream manager asynchronously.
+ * Acquire a stream from stream manager asynchronously. Fails when the stream manager has no external refcount on it.
  *
  * @param http2_stream_manager
  * @param acquire_stream_option see `aws_http2_stream_manager_acquire_stream_options`
