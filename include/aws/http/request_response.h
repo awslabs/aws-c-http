@@ -615,16 +615,21 @@ struct aws_http_message *aws_http2_message_new_response(struct aws_allocator *al
 /**
  * Acquire a hold on the object, preventing it from being deleted until
  * aws_http_message_release() is called by all those with a hold on it.
+ *
+ * This function returns the passed in message (possibly NULL) so that acquire-and-assign can be done with a single
+ * statement.
  */
 AWS_HTTP_API
-void aws_http_message_acquire(struct aws_http_message *message);
+struct aws_http_message *aws_http_message_acquire(struct aws_http_message *message);
 
 /**
  * Release a hold on the object.
  * The object is deleted when all holds on it are released.
+ *
+ * This function always returns NULL so that release-and-assign-NULL can be done with a single statement.
  */
 AWS_HTTP_API
-void aws_http_message_release(struct aws_http_message *message);
+struct aws_http_message *aws_http_message_release(struct aws_http_message *message);
 
 /**
  * Deprecated. This is equivalent to aws_http_message_release().
