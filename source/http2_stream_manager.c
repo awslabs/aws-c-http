@@ -226,6 +226,7 @@ static void s_finish_pending_acquisitions_task(struct aws_task *task, void *arg,
     struct aws_http2_stream_management_transaction work;
     struct aws_linked_list pending_acquisitions;
     aws_linked_list_init(&pending_acquisitions);
+    aws_mem_release(stream_manager->allocator, task);
     s_aws_stream_management_transaction_init(&work, stream_manager);
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
@@ -260,8 +261,6 @@ static void s_finish_pending_acquisitions_task(struct aws_task *task, void *arg,
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
     s_aws_http2_stream_manager_execute_transaction(&work);
-
-    aws_mem_release(stream_manager->allocator, task);
 }
 
 /**

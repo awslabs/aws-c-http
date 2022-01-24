@@ -521,7 +521,7 @@ TEST_CASE(h2_sm_mock_multiple_connections) {
     (void)ctx;
     size_t max_concurrent_streams_per_connection = 3;
     int num_streams_to_acquire = 9;
-    int num_expected_connection = num_streams_to_acquire / max_concurrent_streams_per_connection;
+    int num_expected_connection = num_streams_to_acquire / (int)max_concurrent_streams_per_connection;
     if (num_streams_to_acquire % max_concurrent_streams_per_connection) {
         ++num_expected_connection;
     }
@@ -547,7 +547,7 @@ TEST_CASE(h2_sm_mock_close_connection) {
     (void)ctx;
     size_t max_concurrent_streams_per_connection = 3;
     int num_streams_to_acquire = 3;
-    int num_expected_connection = num_streams_to_acquire / max_concurrent_streams_per_connection;
+    int num_expected_connection = num_streams_to_acquire / (int)max_concurrent_streams_per_connection;
     if (num_streams_to_acquire % max_concurrent_streams_per_connection) {
         ++num_expected_connection;
     }
