@@ -163,7 +163,7 @@ static void s_get_sm_connection_synced(
             STREAM_MANAGER_LOGF(
                 DEBUG,
                 stream_manager,
-                "connection:%p reaches ideal concurrent streams limits. Streams assigned to the connection=%" PRIu32 "",
+                "connection:%p reaches ideal concurrent streams limits. Streams assigned to the connection=%" PRIu32 ""
                 "while ideal limits=%zu. Moving it to soft limited set.",
                 (void *)chosen_connection->connection,
                 chosen_connection->num_streams_assigned,
@@ -177,7 +177,7 @@ static void s_get_sm_connection_synced(
             STREAM_MANAGER_LOGF(
                 DEBUG,
                 stream_manager,
-                "connection:%p reaches max concurrent streams limits. Streams assigned to the connection=%" PRIu32 "",
+                "connection:%p reaches max concurrent streams limits. Streams assigned to the connection=%" PRIu32 ""
                 "while limits=%" PRIu32 ". Moving it out of available connections.",
                 (void *)chosen_connection->connection,
                 chosen_connection->num_streams_assigned,
