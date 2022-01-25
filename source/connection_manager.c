@@ -1271,9 +1271,8 @@ static void s_aws_http_connection_manager_h2_on_goaway_received(
     s_aws_connection_management_transaction_init(&work, manager);
 
     aws_mutex_lock(&manager->lock);
-    /*
-     * Find and, if found, remove it from idle connections
-     */
+    /* Goaway received, remove the connection from idle and release it, if it's there. But, not decrease the
+     * open_connection_count as the shutdown callback will be invoked, we still need the manager to be alive */
     const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections);
     for (struct aws_linked_list_node *node = aws_linked_list_begin(&manager->idle_connections); node != end;
          node = aws_linked_list_next(node)) {
@@ -1384,8 +1383,12 @@ static void s_aws_http_connection_manager_on_connection_setup(
         if (version == AWS_HTTP_VERSION_2) {
             /* For http/2 connection, we vent the connection after the initial settings completed for the user to make
              * sure the connection is really ready to use. So, we can revert the counting and act like nothing happens
-             * here and wait for the on_initial_settings_completed */
-            ++manager->pending_connects_count;
+             * here and wait for the on_initial_settings_completed, which will ALWAYS be invoked before shutdown. BUT,
+             * we increase the open_connection_count, as the shutdown will be invoked no matter what happens. */
+            ++manager->pending_connects_count; /* TODO: I am not sure about whether we should have a pending settings
+                                                  count or not. if we have pending settings count, it seems more clear
+                                                  that how many connections connected but waiting for settings. BUT, all
+                                                  those comparing will be connects count + settings count. */
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
                 "id=%p: New HTTP/2 connection (id=%p) set up, waiting for initial settings to complete",
