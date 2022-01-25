@@ -40,7 +40,6 @@ enum new_connection_result_type {
 struct mock_connection {
     enum new_connection_result_type result;
     bool is_closed_on_release;
-    enum aws_http_version http_version;
 };
 
 struct cm_tester_options {
