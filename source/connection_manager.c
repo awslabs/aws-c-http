@@ -189,6 +189,11 @@ struct aws_http_connection_manager {
     size_t pending_connects_count;
 
     /*
+     * The number of established new HTTP/2 connections we have waiting for SETTINGS from the http layer
+     */
+    size_t pending_settings_count;
+
+    /*
      * The number of connections currently being used by external users.
      */
     size_t vended_connection_count;
@@ -266,6 +271,7 @@ struct aws_http_connection_manager_snapshot {
     size_t idle_connection_count;
     size_t pending_acquisition_count;
     size_t pending_connects_count;
+    size_t pending_settings_count;
     size_t vended_connection_count;
     size_t open_connection_count;
 
@@ -283,6 +289,7 @@ static void s_aws_http_connection_manager_get_snapshot(
     snapshot->idle_connection_count = manager->idle_connection_count;
     snapshot->pending_acquisition_count = manager->pending_acquisition_count;
     snapshot->pending_connects_count = manager->pending_connects_count;
+    snapshot->pending_settings_count = manager->pending_settings_count;
     snapshot->vended_connection_count = manager->vended_connection_count;
     snapshot->open_connection_count = manager->open_connection_count;
 
@@ -296,13 +303,14 @@ static void s_aws_http_connection_manager_log_snapshot(
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_CONNECTION_MANAGER,
             "id=%p: snapshot - state=%d, idle_connection_count=%zu, pending_acquire_count=%zu, "
-            "pending_connect_count=%zu, vended_connection_count=%zu, open_connection_count=%zu, "
-            "ref_count=%zu",
+            "pending_connect_count=%zu, pending_settings_count=%zu, vended_connection_count=%zu, "
+            "open_connection_count=%zu, ref_count=%zu",
             (void *)manager,
             (int)snapshot->state,
             snapshot->idle_connection_count,
             snapshot->pending_acquisition_count,
             snapshot->pending_connects_count,
+            snapshot->pending_settings_count,
             snapshot->vended_connection_count,
             snapshot->open_connection_count,
             snapshot->external_ref_count);
@@ -342,6 +350,8 @@ static bool s_aws_http_connection_manager_should_destroy(struct aws_http_connect
     }
 
     AWS_FATAL_ASSERT(manager->idle_connection_count == 0);
+    /* If no open connections, it should never have pending settings */
+    AWS_FATAL_ASSERT(manager->pending_settings_count == 0);
 
     return true;
 }
@@ -567,13 +577,16 @@ static void s_aws_http_connection_manager_build_transaction(struct aws_connectio
         /*
          * Step 2 - if there's excess pending acquisitions and we have room to make more, make more
          */
-        if (manager->pending_acquisition_count > manager->pending_connects_count) {
+        if (manager->pending_acquisition_count > manager->pending_connects_count + manager->pending_settings_count) {
             AWS_FATAL_ASSERT(
-                manager->max_connections >= manager->vended_connection_count + manager->pending_connects_count);
+                manager->max_connections >=
+                manager->vended_connection_count + manager->pending_connects_count + manager->pending_settings_count);
 
-            work->new_connections = manager->pending_acquisition_count - manager->pending_connects_count;
+            work->new_connections =
+                manager->pending_acquisition_count - manager->pending_connects_count - manager->pending_settings_count;
             size_t max_new_connections =
-                manager->max_connections - (manager->vended_connection_count + manager->pending_connects_count);
+                manager->max_connections -
+                (manager->vended_connection_count + manager->pending_connects_count + manager->pending_settings_count);
 
             if (work->new_connections > max_new_connections) {
                 work->new_connections = max_new_connections;
@@ -633,6 +646,7 @@ static void s_aws_http_connection_manager_finish_destroy(struct aws_http_connect
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Destroying self", (void *)manager);
 
     AWS_FATAL_ASSERT(manager->pending_connects_count == 0);
+    AWS_FATAL_ASSERT(manager->pending_settings_count == 0);
     AWS_FATAL_ASSERT(manager->vended_connection_count == 0);
     AWS_FATAL_ASSERT(manager->pending_acquisition_count == 0);
     AWS_FATAL_ASSERT(manager->open_connection_count == 0);
@@ -1311,8 +1325,8 @@ static void s_aws_http_connection_manager_h2_on_initial_settings_completed(
 
     bool is_shutting_down = manager->state == AWS_HCMST_SHUTTING_DOWN;
 
-    AWS_FATAL_ASSERT(manager->pending_connects_count > 0);
-    --manager->pending_connects_count;
+    AWS_FATAL_ASSERT(manager->pending_settings_count > 0);
+    --manager->pending_settings_count;
 
     if (!error_code) {
         if (is_shutting_down || s_idle_connection(manager, http2_connection)) {
@@ -1328,7 +1342,7 @@ static void s_aws_http_connection_manager_h2_on_initial_settings_completed(
         }
     } else {
         /* fail acquisition as one connection cannot be used any more */
-        while (manager->pending_acquisition_count > manager->pending_connects_count) {
+        while (manager->pending_acquisition_count > manager->pending_connects_count + manager->pending_settings_count) {
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
                 "id=%p: Failing excess connection acquisition with error code %d",
@@ -1385,10 +1399,7 @@ static void s_aws_http_connection_manager_on_connection_setup(
              * sure the connection is really ready to use. So, we can revert the counting and act like nothing happens
              * here and wait for the on_initial_settings_completed, which will ALWAYS be invoked before shutdown. BUT,
              * we increase the open_connection_count, as the shutdown will be invoked no matter what happens. */
-            ++manager->pending_connects_count; /* TODO: I am not sure about whether we should have a pending settings
-                                                  count or not. if we have pending settings count, it seems more clear
-                                                  that how many connections connected but waiting for settings. BUT, all
-                                                  those comparing will be connects count + settings count. */
+            ++manager->pending_settings_count;
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
                 "id=%p: New HTTP/2 connection (id=%p) set up, waiting for initial settings to complete",
@@ -1415,7 +1426,7 @@ static void s_aws_http_connection_manager_on_connection_setup(
          *
          * This won't happen during shutdown since there are no pending acquisitions at that point.
          */
-        while (manager->pending_acquisition_count > manager->pending_connects_count) {
+        while (manager->pending_acquisition_count > manager->pending_connects_count + manager->pending_settings_count) {
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
                 "id=%p: Failing excess connection acquisition with error code %d",
