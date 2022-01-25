@@ -171,16 +171,6 @@ struct aws_http_connection_manager {
      */
     struct aws_linked_list idle_connections;
 
-    /**
-     * The list of all established but NOT available connections, as aws_idle_connection structs.
-     *
-     * A FIFO queue. with struct aws_idle_connection. We don't cull them as the connections here is waiting for HTTP
-     * level MUST happen future. For now, it contains HTTP/2 connection waiting for settings, after goaway received
-     * waiting for shutdown and setting failed waiting for shutdown.
-     */
-    size_t unavailable_connection_count;
-    struct aws_linked_list unavailable_connections;
-
     /*
      * The set of all incomplete connection acquisition requests
      */
@@ -273,7 +263,6 @@ struct aws_http_connection_manager {
 struct aws_http_connection_manager_snapshot {
     enum aws_http_connection_manager_state_type state;
 
-    size_t unavailable_connection_count;
     size_t idle_connection_count;
     size_t pending_acquisition_count;
     size_t pending_connects_count;
@@ -291,7 +280,6 @@ static void s_aws_http_connection_manager_get_snapshot(
     struct aws_http_connection_manager_snapshot *snapshot) {
 
     snapshot->state = manager->state;
-    snapshot->unavailable_connection_count = manager->unavailable_connection_count;
     snapshot->idle_connection_count = manager->idle_connection_count;
     snapshot->pending_acquisition_count = manager->pending_acquisition_count;
     snapshot->pending_connects_count = manager->pending_connects_count;
@@ -307,12 +295,11 @@ static void s_aws_http_connection_manager_log_snapshot(
     if (snapshot->state != AWS_HCMST_UNINITIALIZED) {
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_CONNECTION_MANAGER,
-            "id=%p: snapshot - state=%d, unavailable_connection_count=%zu, idle_connection_count=%zu, "
-            "pending_acquire_count=%zu, pending_connect_count=%zu, vended_connection_count=%zu, "
-            "open_connection_count=%zu, ref_count=%zu",
+            "id=%p: snapshot - state=%d, idle_connection_count=%zu, pending_acquire_count=%zu, "
+            "pending_connect_count=%zu, vended_connection_count=%zu, open_connection_count=%zu, "
+            "ref_count=%zu",
             (void *)manager,
             (int)snapshot->state,
-            snapshot->unavailable_connection_count,
             snapshot->idle_connection_count,
             snapshot->pending_acquisition_count,
             snapshot->pending_connects_count,
@@ -355,7 +342,6 @@ static bool s_aws_http_connection_manager_should_destroy(struct aws_http_connect
     }
 
     AWS_FATAL_ASSERT(manager->idle_connection_count == 0);
-    AWS_FATAL_ASSERT(manager->unavailable_connection_count == 0);
 
     return true;
 }
@@ -1342,7 +1328,7 @@ static void s_aws_http_connection_manager_h2_on_initial_settings_completed(
             work.connection_to_release = http2_connection;
         }
     } else {
-        /* Same as failing from connection setup */
+        /* fail acquisition as one connection cannot be used any more */
         while (manager->pending_acquisition_count > manager->pending_connects_count) {
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
@@ -1351,6 +1337,8 @@ static void s_aws_http_connection_manager_h2_on_initial_settings_completed(
                 (int)error_code);
             s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &work.completions);
         }
+        /* Since the connection never being idle, we need to release the connection here. */
+        work.connection_to_release = http2_connection;
     }
 
     s_aws_http_connection_manager_build_transaction(&work);
