@@ -225,7 +225,6 @@ static void s_finish_pending_acquisitions_task(struct aws_task *task, void *arg,
     struct aws_http2_stream_management_transaction work;
     struct aws_linked_list pending_acquisitions;
     aws_linked_list_init(&pending_acquisitions);
-    aws_mem_release(stream_manager->allocator, task);
     s_aws_stream_management_transaction_init(&work, stream_manager);
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
@@ -259,6 +258,7 @@ static void s_finish_pending_acquisitions_task(struct aws_task *task, void *arg,
 
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
+    aws_mem_release(stream_manager->allocator, task);
     s_aws_http2_stream_manager_execute_transaction(&work);
 }
 
@@ -577,6 +577,8 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
     struct aws_h2_sm_connection *sm_connection = pending_acquisition->sm_connection;
     struct aws_http2_stream_manager *stream_manager = sm_connection->stream_manager;
     int error_code = AWS_ERROR_SUCCESS;
+    /* TODO: check the connection is available or not, if not, we can move this acquisition back to the list waiting for
+     * another connection. */
 
     STREAM_MANAGER_LOGF(
         TRACE,
@@ -631,14 +633,7 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
             aws_error_str(error_code));
         goto error;
     }
-    /* Acquire stream to avoid the case stream is released before or during active */
-    /* TODO: expose stream acquire??? */
-    aws_atomic_fetch_add(&stream->refcount, 1);
-    if (pending_acquisition->callback) {
-        /* TODO: If user activate the stream in the callback and the activate failed........... */
-        pending_acquisition->callback(stream, error_code, pending_acquisition->user_data);
-    }
-    /* It's possible that user released stream from callback, check the stream is still alive */
+    /* Since we're in the connection's thread, this should be safe, there won't be any other callbacks to the user */
     if (aws_http_stream_activate(stream)) {
         /* Activate failed, the on_completed callback will NOT be invoked from HTTP, but we already told user about
          * the stream. Invoke the user completed callback here */
@@ -650,15 +645,12 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
             (void *)pending_acquisition,
             error_code,
             aws_error_str(error_code));
-        if (pending_acquisition->options.on_complete) {
-            pending_acquisition->options.on_complete(stream, error_code, pending_acquisition->options.user_data);
-        }
-        /* Release the stream as we keep it alive before */
-        aws_http_stream_release(stream);
-        goto after_cb_failed;
+        goto error;
     }
-    /* Release the stream as we keep it alive before */
-    aws_http_stream_release(stream);
+    if (pending_acquisition->callback) {
+        pending_acquisition->callback(stream, error_code, pending_acquisition->user_data);
+    }
+
     /* Happy case, the complete callback will be invoked, and we clean things up at the callback, but we can release the
      * request now */
     aws_http_message_release(pending_acquisition->request);
@@ -668,7 +660,6 @@ error:
     if (pending_acquisition->callback) {
         pending_acquisition->callback(NULL, error_code, pending_acquisition->user_data);
     }
-after_cb_failed:
     s_pending_stream_acquisition_destroy(pending_acquisition);
     /* task should happen after destroy, as the task can trigger the whole stream manager to be destroyed */
     s_stream_finishes_internal(sm_connection, stream_manager, error_code);
@@ -789,7 +780,7 @@ void s_stream_manager_on_zero_external_ref(struct aws_http2_stream_manager *stre
     STREAM_MANAGER_LOG(
         TRACE,
         stream_manager,
-        "Last refcount released, manager stop accpectin new stream request and will start to clean up when not "
+        "Last refcount released, manager stop accpecting new stream request and will start to clean up when not "
         "outstanding tasks remaining.");
     struct aws_http2_stream_management_transaction work;
     s_aws_stream_management_transaction_init(&work, stream_manager);

@@ -78,16 +78,15 @@ struct aws_http2_stream_manager_options {
     const struct aws_http_proxy_options *proxy_options;
     const struct proxy_env_var_settings *proxy_ev_settings;
     /**
-     * TODO: support this
      * Optional.
-     * Default is no limit. 0 will be considered as using the default value.
+     * Default is 100. 0 will be considered as using the default value.
      * The ideal number of concurrent streams for a connection. Stream manager will try to create a new connection if
      * one connection reaches this number. But, if the max connections reaches, manager will reuse connections to create
      * the acquired steams as much as possible. */
     size_t ideal_concurrent_streams_per_connection;
     /**
      * Optional.
-     * Default is no limit. 0 will be considered as using the default value.
+     * Default is no limit, which will use the limit from the server. 0 will be considered as using the default value.
      * The real number of concurrent streams per connection will be controlled by the minmal value of the setting from
      * other end and the value here.
      */
