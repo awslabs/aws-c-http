@@ -679,7 +679,7 @@ static int s_aws_input_stream_tester_get_status(struct aws_input_stream *stream,
     return aws_input_stream_get_status(impl->cursor_stream, status);
 }
 
-static int s_aws_input_stream_tester_get_length(struct aws_input_stream *stream, int64_t *out_length) {
+static int s_aws_input_stream_tester_get_length(const struct aws_input_stream *stream, int64_t *out_length) {
     struct aws_input_stream_tester *impl = stream->impl;
     return aws_input_stream_get_length(impl->cursor_stream, out_length);
 }

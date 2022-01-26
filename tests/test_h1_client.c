@@ -2174,7 +2174,7 @@ static int s_slow_stream_get_status(struct aws_input_stream *stream, struct aws_
     *status = sender->status;
     return AWS_OP_SUCCESS;
 }
-static int s_slow_stream_get_length(struct aws_input_stream *stream, int64_t *out_length) {
+static int s_slow_stream_get_length(const struct aws_input_stream *stream, int64_t *out_length) {
     struct slow_body_sender *sender = stream->impl;
     *out_length = sender->cursor.len;
     return AWS_OP_SUCCESS;
