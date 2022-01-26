@@ -7,9 +7,9 @@
  */
 
 #include <aws/common/mutex.h>
-#include <aws/common/random_access_set.h>
 #include <aws/common/ref_count.h>
 #include <aws/http/http2_stream_manager.h>
+#include <aws/http/private/random_access_set.h>
 
 enum aws_h2_sm_state_type {
     AWS_H2SMST_READY,

@@ -4,7 +4,6 @@
  */
 
 #include <aws/common/array_list.h>
-#include <aws/common/device_random.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/logging.h>
 #include <aws/http/connection.h>
