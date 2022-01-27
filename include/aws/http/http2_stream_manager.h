@@ -77,6 +77,15 @@ struct aws_http2_stream_manager_options {
     /* Optional. Proxy configuration for underlying http connection */
     const struct aws_http_proxy_options *proxy_options;
     const struct proxy_env_var_settings *proxy_ev_settings;
+
+    /**
+     * Required.
+     * When the stream manager finishes deleting all the resources, the callback will be invoked.
+     */
+    void *shutdown_complete_user_data;
+    aws_http2_stream_manager_shutdown_complete_fn *shutdown_complete_callback;
+
+    /* TODO: More flexible policy about the connections, but will always has these three values below. */
     /**
      * Optional.
      * Default is 100. 0 will be considered as using the default value.
@@ -96,13 +105,6 @@ struct aws_http2_stream_manager_options {
      * The max number of connections will be open at same time. If all the connections are full, manager will wait until
      * available to vender more streams */
     size_t max_connections;
-
-    /**
-     * Required.
-     * When the stream manager finishes deleting all the resources, the callback will be invoked.
-     */
-    void *shutdown_complete_user_data;
-    aws_http2_stream_manager_shutdown_complete_fn *shutdown_complete_callback;
 };
 
 struct aws_http2_stream_manager_acquire_stream_options {

@@ -13,8 +13,7 @@
 
 enum aws_h2_sm_state_type {
     AWS_H2SMST_READY,
-    AWS_H2SMST_SHUTTING_DOWN, /* On error and not accepting any new streams */
-    AWS_H2SMST_DESTROYING,    /* On zero external ref count, can destroy */
+    AWS_H2SMST_DESTROYING, /* On zero external ref count, can destroy */
 };
 
 /* Live with the streams opening, and if there no outstanding pending acquisition and no opening streams on the
@@ -43,74 +42,6 @@ struct aws_h2_sm_pending_stream_acquisition {
     void *user_data;
 };
 
-/**
- * Vocabulary
- *    Acquisition - a request by a user for a stream
- *    Pending Acquisition - a request by a user for a new stream that has not been completed.  It may be
- *      waiting on connection manager to vend a connection, a release by another user, or the manager itself.
- *    Connection to Acquire - a request of connection needed to be required from connection manager, but has not been
- *      sent yet
- *    Connection Acquiring - a request to the connection manager layer for a new connection that has not been
- *      resolved yet
- *
- * Requirements/Assumptions
- *    (1) Don't invoke user callbacks while holding the internal state lock
- *    (2) Don't invoke downstream connection manager and http calls that have callbacks while holding the internal state
- *          lock TODO: this requirement is in doubt, if we can make all the callbacks invoked asyned, we can remvoe
- *          this.
- *          - Channel shutdown will fire task synchronously
- *          - Connection manager will fire callback synchronously on failure
- *    (3) Only log unusual or rare events while the lock is held.  Common-path logging should be while it is not held.
- *    (4) Don't crash or do awful things (leaking resources is ok though) if the interface contract
- *          (ref counting) is violated by the user
- *
- *  In order to fulfill (1) and (2), all side-effecting operations within the stream manager follow a pattern:
- *    (1) Lock
- *    (2) Make state changes based on the operation
- *    (3) Build a set of work (completions, connect calls, releases, self-destruction) as appropriate to the operation
- *    (4) Unlock
- *    (5) Execute the task set
- *
- *   Asynchronous work order failures are handled in the async callback, but immediate failures require
- *   us to relock and update the internal state.  When there's an immediate connect failure, we use a
- *   conservative policy to fail all excess (beyond the # of pending connects) acquisitions; this allows us
- *   to avoid a possible recursive invocation (and potential failures) to connect again.
- *
- * Stream Manager Lifecycle:
- * Our stream manager implementation also has a reasonably complex lifecycle.
- *
- * - Vended Stream Lifecycle:
- *    (1) HTTP level completed callback.
- *
- * - Internal Connections Lifecycle:
- *    (1) Stream Manager doesn't really control the lifecycle of connections. This's more about when Stream Manager
- *          release holding it.
- *    (2) All streams opened from the connection dies, release holding it.
- *
- * - Internal Connection Manager Lifecycle:
- *      Has the exact same Lifecycle as Stream Manager, which means when Stream Manager starts to destroy, Connection
- *      Manager will start its shutdown process. And when Connection Manager finish shutdown, the Stream Manager will
- *      finish shutdown right after it.
- *
- * - Stream Manager Lifecycle:
- *    (1) External refcount
- *    (2) All state around the life cycle is protected by a lock.
- *    (3) Over the course of its lifetime, a stream manager moves through two states:
- *
- *        - READY - streams may be acquired.  When the external ref count for the manager
- *          drops to zero, the manager moves to:
- *
- *        - SHUTTING_DOWN - streams may no longer be acquired, while in this state, we wait for a set of tracking
- *              counters to all fall to zero:
- *            - connection_acquiring_count - the # of unresolved calls to the connection manager layer
- *            - open_stream_count - the # of streams for whom the completed callback (from http) has not been invoked,
- *                  which also ensures no connection stream manager still holds.
- *
- *      In short: No connections acquiring, no streams alive. Underlying
- *          logic will be no connections held by stream manager(All streams dies, the connections will be released back
- *          to connection manager). Starting that point, underlying connection manager can die and stream manager will
- *          die right after it finishes shutdown.
- */
 struct aws_http2_stream_manager {
     struct aws_allocator *allocator;
     void *shutdown_complete_user_data;
@@ -121,6 +52,8 @@ struct aws_http2_stream_manager {
     struct aws_http_connection_manager *connection_manager;
     struct aws_ref_count ref_count;
     struct aws_client_bootstrap *bootstrap;
+
+    size_t max_connections;
 
     /**
      * Default is no limit. 0 will be considered as using the default value.
@@ -154,10 +87,12 @@ struct aws_http2_stream_manager {
         enum aws_h2_sm_state_type state;
 
         /* A set of all connections that meet all requirement to use. Note: there will be connections not in this set,
-         * but hold by the stream manager, which can be tracked by the streams created on it */
-        struct aws_random_access_set sm_connection_set;
+         * but hold by the stream manager, which can be tracked by the streams created on it. Set of `struct
+         * aws_h2_sm_connection *` */
+        struct aws_random_access_set ideal_sm_connection_set;
         /* A set of all available connections that exceed the soft limits set by users. Note: there will be connections
-         * not in this set, but hold by the stream manager, which can be tracked by the streams created */
+         * not in this set, but hold by the stream manager, which can be tracked by the streams created. Set of `struct
+         * aws_h2_sm_connection *` */
         struct aws_random_access_set soft_limited_sm_connection_set;
 
         /**
@@ -188,9 +123,9 @@ struct aws_http2_stream_manager {
         size_t pending_make_requests_count;
 
         /**
-         * Times the underlying connection acquire failures continuous.
+         * The number of connections acquired from connection manager and not released yet.
          */
-        uint8_t num_connection_acquire_fails;
+        size_t holding_connections_count;
 
         bool finish_pending_acquisitions_task_scheduled;
     } synced_data;
