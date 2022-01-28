@@ -322,8 +322,9 @@ static int s_complete_all_fake_connection_streams(void) {
 static int s_tester_clean_up(void) {
     s_release_all_streams();
     s_clean_fake_connections();
-    aws_http2_stream_manager_release(s_tester.stream_manager);
-
+    if (s_tester.stream_manager) {
+        aws_http2_stream_manager_release(s_tester.stream_manager);
+    }
     s_wait_on_shutdown_complete();
     aws_client_bootstrap_release(s_tester.client_bootstrap);
 
@@ -458,6 +459,7 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
     AWS_FATAL_ASSERT(aws_mutex_lock(&s_tester.lock) == AWS_OP_SUCCESS);
     if (s_tester.release_sm_during_connection_acquiring) {
         aws_http2_stream_manager_release(s_tester.stream_manager);
+        s_tester.stream_manager = NULL;
     }
 
     struct sm_fake_connection *fake_connection = s_sm_fake_connection_new();
