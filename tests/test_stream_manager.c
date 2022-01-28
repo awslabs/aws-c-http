@@ -293,7 +293,7 @@ static void s_drain_all_fake_connection_testing_channel(void) {
     }
 }
 
-static int s_complete_all_fake_connection_streams() {
+static int s_complete_all_fake_connection_streams(void) {
     size_t count = aws_array_list_length(&s_tester.fake_connections);
     for (size_t i = 0; i < count; ++i) {
         struct sm_fake_connection *fake_connection = NULL;
@@ -659,15 +659,15 @@ TEST_CASE(h2_sm_mock_complete_stream) {
 //     (void)ctx;
 //     struct sm_tester_options options = {
 //         .max_connections = 5,
-//         .ideal_concurrent_streams_per_connection = 4,
+//         .ideal_concurrent_streams_per_connection = 3,
 //         .max_concurrent_streams_per_connection = 5,
 //         .alloc = allocator,
 //     };
 //     ASSERT_SUCCESS(s_tester_init(&options));
 //     s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
-//     ASSERT_SUCCESS(s_sm_stream_acquiring(5));
+//     ASSERT_SUCCESS(s_sm_stream_acquiring(15));
 //     /* waiting for one fake connection made */
-//     ASSERT_SUCCESS(s_wait_on_fake_connection_count(2));
+//     ASSERT_SUCCESS(s_wait_on_fake_connection_count(5));
 //     s_drain_all_fake_connection_testing_channel();
 //     ASSERT_SUCCESS(s_wait_on_streams_reply_count(5));
 //     ASSERT_INT_EQUALS(2, aws_array_list_length(&s_tester.fake_connections));
