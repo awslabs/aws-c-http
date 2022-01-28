@@ -128,6 +128,7 @@ static struct sm_fake_connection *s_sm_fake_connection_new(void) {
 }
 
 static void s_sm_fake_connection_destroy(struct sm_fake_connection *fake_connection) {
+    aws_http_connection_release(fake_connection->connection);
     h2_fake_peer_clean_up(&fake_connection->peer);
     testing_channel_clean_up(&fake_connection->testing_channel);
     aws_mem_release(s_tester.allocator, fake_connection);
@@ -463,6 +464,7 @@ static int s_aws_http_connection_manager_create_connection_sync_mock(
     struct aws_http_connection *connection = aws_http_connection_new_http2_client(
         options->allocator, options->manual_window_management /* manual window management */, options->http2_options);
     ASSERT_NOT_NULL(connection);
+    aws_http_connection_acquire(connection);
 
     {
         /* set connection user_data (handled by http-bootstrap in real world) */
