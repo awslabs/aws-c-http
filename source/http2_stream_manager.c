@@ -106,6 +106,15 @@ static void s_sm_count_increase_synced(
     for (size_t i = 0; i < num; i++) {
         aws_ref_count_acquire(&stream_manager->internal_ref_count);
     }
+    STREAM_MANAGER_LOGF(
+        TRACE,
+        stream_manager,
+        "Stream manager internal counts increased. Status: "
+        "connection acquiring=%zu, streams opening=%zu, stream scheduled=%zu, pending acquisition count=%zu",
+        stream_manager->synced_data.connections_acquiring_count,
+        stream_manager->synced_data.open_stream_count,
+        stream_manager->synced_data.pending_make_requests_count,
+        stream_manager->synced_data.pending_acquisition_count);
 }
 
 static void s_sm_count_decrease_synced(
@@ -131,33 +140,15 @@ static void s_sm_count_decrease_synced(
     for (size_t i = 0; i < num; i++) {
         aws_ref_count_release(&stream_manager->internal_ref_count);
     }
-}
-
-/* *_synced should only be called with LOCK HELD or from another synced function */
-static bool s_aws_http2_stream_manager_should_destroy_synced(struct aws_http2_stream_manager *stream_manager) {
-    if (stream_manager->synced_data.state != AWS_H2SMST_DESTROYING) {
-        return false;
-    }
-
-    if (stream_manager->synced_data.connections_acquiring_count > 0 ||
-        stream_manager->synced_data.open_stream_count > 0 ||
-        stream_manager->synced_data.pending_make_requests_count > 0 ||
-        stream_manager->synced_data.pending_acquisition_count > 0) {
-        STREAM_MANAGER_LOGF(
-            DEBUG,
-            stream_manager,
-            "Stream manager is waiting to destroy but waiting for scheduled task and opened stream to finish. Status: "
-            "connection acquiring=%zu, streams opening=%zu, stream scheduled=%zu, pending acquisition count=%zu",
-            stream_manager->synced_data.connections_acquiring_count,
-            stream_manager->synced_data.open_stream_count,
-            stream_manager->synced_data.pending_make_requests_count,
-            stream_manager->synced_data.pending_acquisition_count);
-        return false;
-    }
-
-    STREAM_MANAGER_LOG(TRACE, stream_manager, "Stream manager should start destroying process");
-
-    return true;
+    STREAM_MANAGER_LOGF(
+        TRACE,
+        stream_manager,
+        "Stream manager internal counts decreased. Status: "
+        "connection acquiring=%zu, streams opening=%zu, stream scheduled=%zu, pending acquisition count=%zu",
+        stream_manager->synced_data.connections_acquiring_count,
+        stream_manager->synced_data.open_stream_count,
+        stream_manager->synced_data.pending_make_requests_count,
+        stream_manager->synced_data.pending_acquisition_count);
 }
 
 static void s_aws_stream_management_transaction_init(
@@ -419,8 +410,6 @@ static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2
                 stream_manager->finish_pending_acquisitions_task_event_loop, finish_pending_acquisitions_task);
             stream_manager->synced_data.finish_pending_acquisitions_task_scheduled = true;
         }
-        /* Step 3: Check should destroy the stream manager or not. */
-        work->should_destroy_manager = s_aws_http2_stream_manager_should_destroy_synced(stream_manager);
     }
 }
 
@@ -745,7 +734,6 @@ error:
 static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stream_management_transaction *work) {
 
     struct aws_http2_stream_manager *stream_manager = work->stream_manager;
-    bool should_destroy = work->should_destroy_manager;
 
     /* Step1: Release connection */
     if (work->sm_connection_to_release) {
@@ -801,14 +789,7 @@ static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stre
     }
 
     /*
-     * Step 4: destroy the manager if necessary
-     */
-    if (should_destroy) {
-        s_stream_manager_start_destroy(stream_manager);
-    }
-
-    /*
-     * Step 5: Clean up work.  Do this here rather than at the end of every caller.
+     * Step 4: Clean up work.  Do this here rather than at the end of every caller. Destroy the manager if necessary
      */
     s_aws_stream_management_transaction_clean_up(work);
 }
@@ -853,7 +834,9 @@ static void s_stream_manager_start_destroy(struct aws_http2_stream_manager *stre
     AWS_ASSERT(stream_manager->synced_data.open_stream_count == 0);
     AWS_ASSERT(stream_manager->synced_data.pending_make_requests_count == 0);
     AWS_ASSERT(stream_manager->synced_data.pending_acquisition_count == 0);
+    AWS_ASSERT(stream_manager->connection_manager);
     aws_http_connection_manager_release(stream_manager->connection_manager);
+    stream_manager->connection_manager = NULL;
 }
 
 void s_stream_manager_on_zero_external_ref(struct aws_http2_stream_manager *stream_manager) {

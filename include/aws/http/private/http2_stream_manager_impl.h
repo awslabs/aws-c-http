@@ -163,7 +163,6 @@ struct aws_http2_stream_management_transaction {
     struct aws_h2_sm_connection *sm_connection_to_release;
     struct aws_linked_list
         pending_make_requests; /* List of aws_h2_sm_pending_stream_acquisition with chosen connection */
-    bool should_destroy_manager;
 };
 
 #endif /* AWS_HTTP2_STREAM_MANAGER_IMPL_H */

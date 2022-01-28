@@ -942,8 +942,8 @@ on_error:
 }
 
 void aws_http_connection_manager_acquire(struct aws_http_connection_manager *manager) {
-    aws_ref_count_acquire(&manager->internal_ref_count);
     aws_mutex_lock(&manager->lock);
+    aws_ref_count_acquire(&manager->internal_ref_count);
     AWS_FATAL_ASSERT(manager->external_ref_count > 0);
     manager->external_ref_count += 1;
     aws_mutex_unlock(&manager->lock);
@@ -975,8 +975,8 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
             (void *)manager);
     }
 
-    aws_mutex_unlock(&manager->lock);
     aws_ref_count_release(&manager->internal_ref_count);
+    aws_mutex_unlock(&manager->lock);
 
     s_aws_http_connection_manager_execute_transaction(&work);
 }
