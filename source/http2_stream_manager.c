@@ -499,7 +499,7 @@ static int s_update_sm_connection_set_on_stream_finishes_synced(
         /* I don't think there is case, the connection is not in the soft limited set at this point */
         AWS_ASSERT(
             aws_random_access_set_exist(
-                &stream_manager->synced_data.soft_limited_sm_connection_set, sm_connection, &exist) &&
+                &stream_manager->synced_data.soft_limited_sm_connection_set, sm_connection, &exist) == AWS_OP_SUCCESS &&
             exist);
         re_error |=
             aws_random_access_set_remove(&stream_manager->synced_data.soft_limited_sm_connection_set, sm_connection);
@@ -519,14 +519,18 @@ static int s_update_sm_connection_set_on_stream_finishes_synced(
             (void *)sm_connection->connection,
             cur_num,
             sm_connection->max_concurrent_streams);
-        if (cur_num > ideal_num) {
+        if (cur_num >= ideal_num) {
             bool added = false;
             sm_connection->sim_full = true;
+            STREAM_MANAGER_LOGF(
+                TRACE, stream_manager, "connection:%p added to soft limited set", (void *)sm_connection->connection);
             re_error |= aws_random_access_set_add(
                 &stream_manager->synced_data.soft_limited_sm_connection_set, sm_connection, &added);
             re_error |= !added;
         } else {
             bool added = false;
+            STREAM_MANAGER_LOGF(
+                TRACE, stream_manager, "connection:%p added to ideal set", (void *)sm_connection->connection);
             re_error |=
                 aws_random_access_set_add(&stream_manager->synced_data.ideal_sm_connection_set, sm_connection, &added);
             re_error |= !added;
