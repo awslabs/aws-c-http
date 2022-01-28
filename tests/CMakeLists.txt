@@ -591,6 +591,7 @@ add_test_case(h2_sm_mock_multiple_connections)
 add_test_case(h2_sm_mock_max_concurrent_streams_remote)
 add_test_case(h2_sm_mock_complete_stream)
 add_test_case(h2_sm_mock_ideal_num_streams)
+add_test_case(h2_sm_mock_large_ideal_num_streams)
 add_test_case(h2_sm_mock_goaway)
 add_test_case(h2_sm_mock_closing_before_connection_acquired)
 

@@ -262,19 +262,13 @@ static void s_finish_pending_acquisitions_task(struct aws_task *task, void *arg,
         AWS_ASSERT(stream_manager->synced_data.state == AWS_H2SMST_DESTROYING);
         /* swap list to avoid callback with lock held. */
         aws_linked_list_swap_contents(&pending_acquisitions, &stream_manager->synced_data.pending_acquisitions);
-        s_unlock_synced_data(stream_manager);
-    } /* END CRITICAL SECTION */
-    /* Invoke callback and clean up pending acquisitions */
-    s_finish_pending_acquisitions_list_helper(
-        stream_manager, &pending_acquisitions, AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN);
-    { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(stream_manager);
         /* After the callbacks invoked, now we can update the count */
         stream_manager->synced_data.pending_acquisition_count = 0;
         s_aws_http2_stream_manager_build_transaction_synced(&work);
-
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
+    s_finish_pending_acquisitions_list_helper(
+        stream_manager, &pending_acquisitions, AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN);
     aws_mem_release(stream_manager->allocator, task);
     s_aws_http2_stream_manager_execute_transaction(&work);
 }

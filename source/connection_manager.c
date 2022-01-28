@@ -1221,7 +1221,10 @@ int aws_http_connection_manager_release_connection(
     bool should_release_connection = !manager->system_vtable->is_connection_available(connection);
 
     AWS_LOGF_DEBUG(
-        AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Releasing connection (id=%p)", (void *)manager, (void *)connection);
+        AWS_LS_HTTP_CONNECTION_MANAGER,
+        "id=%p: User releasing connection (id=%p)",
+        (void *)manager,
+        (void *)connection);
 
     aws_mutex_lock(&manager->lock);
 
