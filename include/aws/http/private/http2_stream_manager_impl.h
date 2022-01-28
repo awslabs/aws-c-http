@@ -67,10 +67,6 @@ struct aws_http2_stream_manager {
      * other end and the value here.
      */
     size_t max_concurrent_streams_per_connection;
-    /**
-     * Number of we tolarate the underlying connection acquiring failures
-     */
-    uint8_t num_connection_acquire_retries;
 
     /**
      * Task to invoke pending acquisition callbacks asynchronously if stream manager is shutting.
