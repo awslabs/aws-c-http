@@ -83,7 +83,7 @@ static bool s_aws_http2_stream_manager_should_destroy_synced(struct aws_http2_st
     if (stream_manager->synced_data.connections_acquiring_count > 0 ||
         stream_manager->synced_data.open_stream_count > 0 ||
         stream_manager->synced_data.pending_make_requests_count > 0 ||
-        stream_manager->synced_data.pending_acquisition_count) {
+        stream_manager->synced_data.pending_acquisition_count > 0) {
         STREAM_MANAGER_LOGF(
             DEBUG,
             stream_manager,
