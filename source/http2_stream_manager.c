@@ -851,6 +851,8 @@ void s_stream_manager_on_zero_external_ref(struct aws_http2_stream_manager *stre
         s_lock_synced_data(stream_manager);
         stream_manager->synced_data.state = AWS_H2SMST_DESTROYING;
         s_aws_http2_stream_manager_build_transaction_synced(&work);
+        /* Release the internal ref count as no external usage anymore */
+        aws_ref_count_release(&stream_manager->internal_ref_count);
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
     s_aws_http2_stream_manager_execute_transaction(&work);
@@ -942,7 +944,6 @@ on_error:
 
 struct aws_http2_stream_manager *aws_http2_stream_manager_acquire(struct aws_http2_stream_manager *stream_manager) {
     if (stream_manager) {
-        aws_ref_count_acquire(&stream_manager->external_ref_count);
         aws_ref_count_acquire(&stream_manager->internal_ref_count);
     }
     return stream_manager;
@@ -951,7 +952,6 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_acquire(struct aws_htt
 struct aws_http2_stream_manager *aws_http2_stream_manager_release(struct aws_http2_stream_manager *stream_manager) {
     if (stream_manager) {
         aws_ref_count_release(&stream_manager->external_ref_count);
-        aws_ref_count_release(&stream_manager->internal_ref_count);
     }
     return NULL;
 }
