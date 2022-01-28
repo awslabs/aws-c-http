@@ -270,6 +270,8 @@ static void s_finish_pending_acquisitions_task(struct aws_task *task, void *arg,
     s_finish_pending_acquisitions_list_helper(
         stream_manager, &pending_acquisitions, AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN);
     aws_mem_release(stream_manager->allocator, task);
+    /* TODO: WARNING: The transaction was executed outside lock, if this work has thing to do, but the other work from
+     * another thread now runs and kill the stream manager, this work will crush.  */
     s_aws_http2_stream_manager_execute_transaction(&work);
 }
 

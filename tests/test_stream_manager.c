@@ -829,9 +829,6 @@ TEST_CASE(h2_sm_mock_closing_before_connection_acquired) {
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
     s_drain_all_fake_connection_testing_channel();
     ASSERT_SUCCESS(s_wait_on_streams_reply_count(1));
-    /* The stream manager will finish destroying before release called from clean up, set it to null to avoid use after
-     * free */
-    s_tester.stream_manager = NULL;
 
     /* all acquiring stream failed */
     ASSERT_INT_EQUALS(1, s_tester.acquiring_stream_errors);
