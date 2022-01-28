@@ -50,7 +50,20 @@ struct aws_http2_stream_manager {
      * Underlying connection manager. Always has the same life time with the stream manager who owns it.
      */
     struct aws_http_connection_manager *connection_manager;
-    struct aws_ref_count ref_count;
+    /**
+     * Refcount managed by user. Once this drops to zero, the manager state transitions to shutting down
+     */
+    struct aws_ref_count external_ref_count;
+    /**
+     * Internal refcount that keeps connection manager alive.
+     *
+     * It's a sum of external_ref_count, connections_acquiring_count, open_stream_count, pending_make_requests_count and
+     * pending_acquisition_count, besides the number of `struct aws_http2_stream_management_transaction` alive.
+     *
+     * Once this refcount drops to zero, stream manager should either be cleaned up all the memory all waiting for
+     * the last task to clean un the memory and do nothing else.
+     */
+    struct aws_ref_count internal_ref_count;
     struct aws_client_bootstrap *bootstrap;
 
     size_t max_connections;

@@ -261,7 +261,7 @@ struct aws_http_connection_manager {
      * Internal refcount that keeps connection manager alive.
      *
      * It's a sum of external_ref_count, vended_connection_count, pending_connects_count and open_connection_count,
-     * besides the `struct aws_connection_management_transaction` alive.
+     * besides the number of `struct aws_connection_management_transaction` alive.
      *
      * Once this refcount drops to zero, connection manager should either be cleaned up all the memory all waiting for
      * the last task to clean un the memory and do nothing else.
