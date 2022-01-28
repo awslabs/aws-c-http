@@ -260,8 +260,8 @@ struct aws_http_connection_manager {
     /*
      * Internal refcount that keeps connection manager alive.
      *
-     * It's a sum of external_ref_count, vended_connection_count, pending_connects_count and open_connection_count,
-     * besides the number of `struct aws_connection_management_transaction` alive.
+     * It's a sum of vended_connection_count, pending_connects_count and open_connection_count,
+     * besides the `struct aws_connection_management_transaction` alive and one for any external usage.
      *
      * Once this refcount drops to zero, connection manager should either be cleaned up all the memory all waiting for
      * the last task to clean un the memory and do nothing else.
@@ -967,6 +967,7 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
                 (void *)manager);
             manager->state = AWS_HCMST_SHUTTING_DOWN;
             s_aws_http_connection_manager_build_transaction(&work);
+            aws_ref_count_release(&manager->internal_ref_count);
         }
     } else {
         AWS_LOGF_ERROR(
@@ -975,7 +976,6 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
             (void *)manager);
     }
 
-    aws_ref_count_release(&manager->internal_ref_count);
     aws_mutex_unlock(&manager->lock);
 
     s_aws_http_connection_manager_execute_transaction(&work);

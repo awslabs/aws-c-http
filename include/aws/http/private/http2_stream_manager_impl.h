@@ -58,9 +58,8 @@ struct aws_http2_stream_manager {
      * Internal refcount that keeps connection manager alive.
      *
      * It's a sum of connections_acquiring_count, open_stream_count, pending_make_requests_count and
-     * pending_acquisition_count, besides the number of `struct aws_http2_stream_management_transaction` alive.
-     *
-     * Initial is one, and once all external ref count drop, the initial one for internal will drop.
+     * pending_acquisition_count, besides the number of `struct aws_http2_stream_management_transaction` alive. And one
+     * for external usage.
      *
      * Once this refcount drops to zero, stream manager should either be cleaned up all the memory all waiting for
      * the last task to clean un the memory and do nothing else.
