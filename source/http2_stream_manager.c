@@ -156,6 +156,7 @@ static void s_aws_stream_management_transaction_init(
     struct aws_http2_stream_manager *stream_manager) {
     AWS_ZERO_STRUCT(*work);
 
+    STREAM_MANAGER_LOGF(TRACE, stream_manager, "work:%p inits", (void *)work);
     aws_linked_list_init(&work->pending_make_requests);
     work->stream_manager = stream_manager;
     work->allocator = stream_manager->allocator;
@@ -164,6 +165,7 @@ static void s_aws_stream_management_transaction_init(
 
 static void s_aws_stream_management_transaction_clean_up(struct aws_http2_stream_management_transaction *work) {
     (void)work;
+    STREAM_MANAGER_LOGF(TRACE, work->stream_manager, "work:%p clean up", (void *)work);
     AWS_ASSERT(aws_linked_list_empty(&work->pending_make_requests));
     aws_ref_count_release(&work->stream_manager->internal_ref_count);
 }
@@ -844,7 +846,7 @@ void s_stream_manager_on_zero_external_ref(struct aws_http2_stream_manager *stre
     STREAM_MANAGER_LOG(
         TRACE,
         stream_manager,
-        "Last refcount released, manager stop accpecting new stream request and will start to clean up when not "
+        "Last refcount released, manager stop accepting new stream request and will start to clean up when not "
         "outstanding tasks remaining.");
     struct aws_http2_stream_management_transaction work;
     s_aws_stream_management_transaction_init(&work, stream_manager);
