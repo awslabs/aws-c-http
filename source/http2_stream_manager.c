@@ -734,6 +734,7 @@ error:
 static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stream_management_transaction *work) {
 
     struct aws_http2_stream_manager *stream_manager = work->stream_manager;
+    STREAM_MANAGER_LOGF(TRACE, stream_manager, "work:%p executes", (void *)work);
 
     /* Step1: Release connection */
     if (work->sm_connection_to_release) {
@@ -944,7 +945,7 @@ on_error:
 
 struct aws_http2_stream_manager *aws_http2_stream_manager_acquire(struct aws_http2_stream_manager *stream_manager) {
     if (stream_manager) {
-        aws_ref_count_acquire(&stream_manager->internal_ref_count);
+        aws_ref_count_acquire(&stream_manager->external_ref_count);
     }
     return stream_manager;
 }
