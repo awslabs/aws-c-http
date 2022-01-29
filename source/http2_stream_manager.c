@@ -839,7 +839,6 @@ static void s_stream_manager_start_destroy(struct aws_http2_stream_manager *stre
     AWS_ASSERT(stream_manager->synced_data.pending_acquisition_count == 0);
     AWS_ASSERT(stream_manager->connection_manager);
     aws_http_connection_manager_release(stream_manager->connection_manager);
-    stream_manager->connection_manager = NULL;
 }
 
 void s_stream_manager_on_zero_external_ref(struct aws_http2_stream_manager *stream_manager) {
