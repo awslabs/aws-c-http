@@ -335,6 +335,7 @@ static int s_tester_clean_up(void) {
     if (s_tester.stream_manager) {
         aws_http2_stream_manager_release(s_tester.stream_manager);
     }
+    s_drain_all_fake_connection_testing_channel();
     s_wait_on_shutdown_complete();
     s_clean_fake_connections();
     aws_client_bootstrap_release(s_tester.client_bootstrap);
@@ -723,7 +724,9 @@ TEST_CASE(h2_sm_mock_ideal_num_streams) {
     }
 
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
-
+    s_drain_all_fake_connection_testing_channel();
+    /* completed the remain streams */
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
     return s_tester_clean_up();
 }
 
@@ -765,6 +768,9 @@ TEST_CASE(h2_sm_mock_large_ideal_num_streams) {
         ASSERT_INT_EQUALS(s_fake_connection_get_stream_received(fake_connection), s_tester.max_con_stream_remote);
     }
 
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+    s_drain_all_fake_connection_testing_channel();
+    /* completed the remain streams */
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
 
     return s_tester_clean_up();
