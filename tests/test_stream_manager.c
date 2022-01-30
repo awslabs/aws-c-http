@@ -128,7 +128,7 @@ static struct sm_fake_connection *s_sm_fake_connection_new(void) {
 }
 
 static void s_sm_fake_connection_destroy(struct sm_fake_connection *fake_connection) {
-    h2_fake_peer_clean_up(&fake_connection->peer);
+
     AWS_FATAL_ASSERT(testing_channel_clean_up(&fake_connection->testing_channel) == AWS_OP_SUCCESS);
     aws_mem_release(s_tester.allocator, fake_connection);
 }
@@ -312,6 +312,7 @@ static void s_release_fake_connections(void) {
         struct sm_fake_connection *fake_connection = NULL;
         aws_array_list_get_at(&s_tester.fake_connections, &fake_connection, i);
         aws_http_connection_release(fake_connection->connection);
+        h2_fake_peer_clean_up(&fake_connection->peer);
     }
     s_drain_all_fake_connection_testing_channel();
 }
