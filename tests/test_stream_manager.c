@@ -8,6 +8,7 @@
 
 #include <aws/http/http2_stream_manager.h>
 
+#include <aws/http/connection_manager.h>
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/connection_manager_system_vtable.h>
 #include <aws/http/private/h1_stream.h>
@@ -49,6 +50,7 @@ struct sm_tester {
     struct aws_client_bootstrap *client_bootstrap;
 
     struct aws_http2_stream_manager *stream_manager;
+    struct aws_http_connection_manager *connection_manager;
 
     struct aws_string *host;
     struct aws_tls_ctx *tls_ctx;
@@ -331,8 +333,8 @@ static int s_complete_all_fake_connection_streams(void) {
 
 static int s_tester_clean_up(void) {
     s_release_all_streams();
-    s_release_fake_connections();
     if (s_tester.stream_manager) {
+        s_release_fake_connections();
         aws_http2_stream_manager_release(s_tester.stream_manager);
     }
     s_drain_all_fake_connection_testing_channel();
@@ -523,7 +525,8 @@ static struct aws_http_connection_manager_system_vtable s_mocks;
 static void s_override_cm_connect_function(aws_http_connection_manager_create_connection_fn *fn) {
     s_mocks = *g_aws_http_connection_manager_default_system_vtable_ptr;
     s_mocks.create_connection = fn;
-    aws_http_connection_manager_set_system_vtable(s_tester.stream_manager->connection_manager, &s_mocks);
+    s_tester.connection_manager = s_tester.stream_manager->connection_manager;
+    aws_http_connection_manager_set_system_vtable(s_tester.connection_manager, &s_mocks);
 }
 
 TEST_CASE(h2_sm_mock_connection) {
@@ -844,6 +847,8 @@ TEST_CASE(h2_sm_mock_closing_before_connection_acquired) {
     ASSERT_SUCCESS(s_sm_stream_acquiring(1));
     /* waiting for one fake connection made */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    /* Release the connection before stream manager callback to avoid shutdown race. */
+    s_release_fake_connections();
     s_drain_all_fake_connection_testing_channel();
     ASSERT_SUCCESS(s_wait_on_streams_reply_count(1));
 
