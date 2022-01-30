@@ -128,7 +128,6 @@ static struct sm_fake_connection *s_sm_fake_connection_new(void) {
 }
 
 static void s_sm_fake_connection_destroy(struct sm_fake_connection *fake_connection) {
-    aws_http_connection_release(fake_connection->connection);
     h2_fake_peer_clean_up(&fake_connection->peer);
     AWS_FATAL_ASSERT(testing_channel_clean_up(&fake_connection->testing_channel) == AWS_OP_SUCCESS);
     aws_mem_release(s_tester.allocator, fake_connection);
@@ -307,6 +306,16 @@ static void s_drain_all_fake_connection_testing_channel(void) {
     }
 }
 
+static void s_release_fake_connections(void) {
+    size_t count = aws_array_list_length(&s_tester.fake_connections);
+    for (size_t i = 0; i < count; ++i) {
+        struct sm_fake_connection *fake_connection = NULL;
+        aws_array_list_get_at(&s_tester.fake_connections, &fake_connection, i);
+        aws_http_connection_release(fake_connection->connection);
+    }
+    s_drain_all_fake_connection_testing_channel();
+}
+
 static int s_complete_all_fake_connection_streams(void) {
     size_t count = aws_array_list_length(&s_tester.fake_connections);
     for (size_t i = 0; i < count; ++i) {
@@ -321,11 +330,12 @@ static int s_complete_all_fake_connection_streams(void) {
 
 static int s_tester_clean_up(void) {
     s_release_all_streams();
-    s_clean_fake_connections();
+    s_release_fake_connections();
     if (s_tester.stream_manager) {
         aws_http2_stream_manager_release(s_tester.stream_manager);
     }
     s_wait_on_shutdown_complete();
+    s_clean_fake_connections();
     aws_client_bootstrap_release(s_tester.client_bootstrap);
 
     aws_host_resolver_release(s_tester.host_resolver);
