@@ -593,11 +593,11 @@ add_test_case(h2_sm_mock_complete_stream)
 add_test_case(h2_sm_mock_ideal_num_streams)
 add_test_case(h2_sm_mock_large_ideal_num_streams)
 add_test_case(h2_sm_mock_goaway)
-add_test_case(h2_sm_mock_closing_before_connection_acquired)
 
 add_net_test_case(h2_sm_acquire_stream)
 add_net_test_case(h2_sm_acquire_stream_multiple_connections)
 add_net_test_case(h2_sm_acquire_stream_stress)
+add_net_test_case(h2_sm_closing_before_connection_acquired)
 
 add_test_case(random_access_set_sanitize_test)
 add_test_case(random_access_set_insert_test)
