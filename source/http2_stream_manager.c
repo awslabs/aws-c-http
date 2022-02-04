@@ -188,6 +188,7 @@ static void s_get_sm_connection_synced(
     struct aws_http2_stream_manager *stream_manager,
     struct aws_h2_sm_pending_stream_acquisition *pending_acquisition) {
 
+    ASSERT(pending_acquisition->sm_connection == NULL);
     int errored = 0;
     if (aws_random_access_set_get_size(&stream_manager->synced_data.ideal_sm_connection_set)) {
         struct aws_h2_sm_connection *chosen_connection =
