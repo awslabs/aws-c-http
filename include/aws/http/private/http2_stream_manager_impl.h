@@ -16,6 +16,12 @@ enum aws_h2_sm_state_type {
     AWS_H2SMST_DESTROYING, /* On zero external ref count, can destroy */
 };
 
+enum aws_h2_sm_connection_state_type {
+    AWS_H2SMCST_IDEAL,
+    AWS_H2SMCST_NEARLY_FULL,
+    AWS_H2SMCST_FULL,
+};
+
 /* Live with the streams opening, and if there no outstanding pending acquisition and no opening streams on the
  * connection, this structure should die */
 struct aws_h2_sm_connection {
@@ -24,8 +30,8 @@ struct aws_h2_sm_connection {
     uint32_t num_streams_assigned;   /* From a stream assigned to the connection until the stream completed
                                                      or failed to be created from the connection. */
     uint32_t max_concurrent_streams; /* lower bound between user configured and the other side */
-    bool full;
-    bool sim_full;
+
+    enum aws_h2_sm_connection_state_type state;
 };
 
 /* Live from the user request to acquire a stream to the stream completed. */
@@ -40,6 +46,15 @@ struct aws_h2_sm_pending_stream_acquisition {
     struct aws_channel_task make_request_task;
     aws_http2_stream_manager_on_stream_acquired_fn *callback;
     void *user_data;
+};
+
+/* connections_acquiring_count, open_stream_count, pending_make_requests_count AND pending_stream_acquisition_count */
+enum aws_sm_count_type {
+    AWS_SMCT_CONNECTIONS_ACQUIRING,
+    AWS_SMCT_OPEN_STREAM,
+    AWS_SMCT_PENDING_MAKE_REQUESTS,
+    AWS_SMCT_PENDING_ACQUISITION,
+    AWS_SMCT_COUNT,
 };
 
 struct aws_http2_stream_manager {
@@ -58,8 +73,8 @@ struct aws_http2_stream_manager {
      * Internal refcount that keeps connection manager alive.
      *
      * It's a sum of connections_acquiring_count, open_stream_count, pending_make_requests_count and
-     * pending_acquisition_count, besides the number of `struct aws_http2_stream_management_transaction` alive. And one
-     * for external usage.
+     * pending_stream_acquisition_count, besides the number of `struct aws_http2_stream_management_transaction` alive.
+     * And one for external usage.
      *
      * Once this refcount drops to zero, stream manager should either be cleaned up all the memory all waiting for
      * the last task to clean un the memory and do nothing else.
@@ -85,7 +100,7 @@ struct aws_http2_stream_manager {
     /**
      * Task to invoke pending acquisition callbacks asynchronously if stream manager is shutting.
      */
-    struct aws_event_loop *finish_pending_acquisitions_task_event_loop;
+    struct aws_event_loop *finish_pending_stream_acquisitions_task_event_loop;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
     struct {
@@ -109,35 +124,27 @@ struct aws_http2_stream_manager {
          * The set of all incomplete stream acquisition requests (haven't decide what connection to make the request
          * to), list of `struct aws_h2_sm_pending_stream_acquisition*`
          */
-        struct aws_linked_list pending_acquisitions;
-
-        /**
-         * The number of all incomplete stream acquisition requests (haven't decide what connection to make the request
-         * to). So that we don't have compute the size of a linked list every time.
-         */
-        size_t pending_acquisition_count;
-
-        /**
-         * The number of new connections we acquiring from the connection manager.
-         */
-        size_t connections_acquiring_count;
-
-        /**
-         * The number of streams that opened and not completed yet.
-         */
-        size_t open_stream_count;
-
-        /**
-         * The number of streams that scheduled to be made from a connection yet.
-         */
-        size_t pending_make_requests_count;
+        struct aws_linked_list pending_stream_acquisitions;
 
         /**
          * The number of connections acquired from connection manager and not released yet.
          */
         size_t holding_connections_count;
 
-        bool finish_pending_acquisitions_task_scheduled;
+        /**
+         * Counts that contributes to the internal refcount.
+         * When the value changes, s_sm_count_increase/decrease_synced needed.
+         *
+         * AWS_SMCT_CONNECTIONS_ACQUIRING: The number of new connections we acquiring from the connection manager.
+         * AWS_SMCT_OPEN_STREAM: The number of streams that opened and not completed yet.
+         * AWS_SMCT_PENDING_MAKE_REQUESTS: The number of streams that scheduled to be made from a connection but haven't
+         *      been executed yet.
+         * AWS_SMCT_PENDING_ACQUISITION:  The number of all incomplete stream acquisition requests (haven't decide what
+         *      connection to make the request to). So that we don't have compute the size of a linked list every time.
+         */
+        size_t internal_refcount_stats[AWS_SMCT_COUNT];
+
+        bool finish_pending_stream_acquisitions_task_scheduled;
     } synced_data;
 };
 

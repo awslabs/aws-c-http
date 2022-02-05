@@ -39,27 +39,28 @@ static struct aws_h2_sm_pending_stream_acquisition *s_new_pending_stream_acquisi
     const struct aws_http_make_request_options *options,
     aws_http2_stream_manager_on_stream_acquired_fn *callback,
     void *user_data) {
-    struct aws_h2_sm_pending_stream_acquisition *pending_acquisition =
+    struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition =
         aws_mem_calloc(allocator, 1, sizeof(struct aws_h2_sm_pending_stream_acquisition));
 
     /* Copy the options and keep the underlying message alive */
-    pending_acquisition->options = *options;
-    pending_acquisition->request = options->request;
-    aws_http_message_acquire(pending_acquisition->request);
-    pending_acquisition->callback = callback;
-    pending_acquisition->user_data = user_data;
-    pending_acquisition->allocator = allocator;
-    return pending_acquisition;
+    pending_stream_acquisition->options = *options;
+    pending_stream_acquisition->request = options->request;
+    aws_http_message_acquire(pending_stream_acquisition->request);
+    pending_stream_acquisition->callback = callback;
+    pending_stream_acquisition->user_data = user_data;
+    pending_stream_acquisition->allocator = allocator;
+    return pending_stream_acquisition;
 }
 
-static void s_pending_stream_acquisition_destroy(struct aws_h2_sm_pending_stream_acquisition *pending_acquisition) {
-    if (pending_acquisition == NULL) {
+static void s_pending_stream_acquisition_destroy(
+    struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition) {
+    if (pending_stream_acquisition == NULL) {
         return;
     }
-    if (pending_acquisition->request) {
-        aws_http_message_release(pending_acquisition->request);
+    if (pending_stream_acquisition->request) {
+        aws_http_message_release(pending_stream_acquisition->request);
     }
-    aws_mem_release(pending_acquisition->allocator, pending_acquisition);
+    aws_mem_release(pending_stream_acquisition->allocator, pending_stream_acquisition);
 }
 
 static void s_lock_synced_data(struct aws_http2_stream_manager *stream_manager) {
@@ -74,81 +75,39 @@ static void s_unlock_synced_data(struct aws_http2_stream_manager *stream_manager
     (void)err;
 }
 
-/* connections_acquiring_count, open_stream_count, pending_make_requests_count AND pending_acquisition_count */
-enum sm_count_type {
-    AWS_SMCT_CONNECTIONS_ACQUIRING,
-    AWS_SMCT_OPEN_STREAM,
-    AWS_SMCT_PENDING_MAKE_REQUESTS,
-    AWS_SMCT_PENDING_ACQUISITION,
-};
+static void s_sm_log_stats_synced(struct aws_http2_stream_manager *stream_manager) {
+    STREAM_MANAGER_LOGF(
+        TRACE,
+        stream_manager,
+        "Stream manager internal counts status: "
+        "connection acquiring=%zu, streams opening=%zu, pending make request count=%zu, pending acquisition count=%zu",
+        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_CONNECTIONS_ACQUIRING],
+        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_OPEN_STREAM],
+        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_MAKE_REQUESTS],
+        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION]);
+}
 
 /* The count acquire and release all needs to be invoked helding the lock */
 static void s_sm_count_increase_synced(
     struct aws_http2_stream_manager *stream_manager,
-    enum sm_count_type count_type,
+    enum aws_sm_count_type count_type,
     size_t num) {
-    switch (count_type) {
-        case AWS_SMCT_CONNECTIONS_ACQUIRING:
-            stream_manager->synced_data.connections_acquiring_count += num;
-            break;
-        case AWS_SMCT_OPEN_STREAM:
-            stream_manager->synced_data.open_stream_count += num;
-            break;
-        case AWS_SMCT_PENDING_MAKE_REQUESTS:
-            stream_manager->synced_data.pending_make_requests_count += num;
-            break;
-        case AWS_SMCT_PENDING_ACQUISITION:
-            stream_manager->synced_data.pending_acquisition_count += num;
-            break;
-        default:
-            AWS_ASSERT(false);
-    }
+    stream_manager->synced_data.internal_refcount_stats[count_type] += num;
     for (size_t i = 0; i < num; i++) {
         aws_ref_count_acquire(&stream_manager->internal_ref_count);
     }
-    STREAM_MANAGER_LOGF(
-        TRACE,
-        stream_manager,
-        "Stream manager internal counts increased. Status: "
-        "connection acquiring=%zu, streams opening=%zu, stream scheduled=%zu, pending acquisition count=%zu",
-        stream_manager->synced_data.connections_acquiring_count,
-        stream_manager->synced_data.open_stream_count,
-        stream_manager->synced_data.pending_make_requests_count,
-        stream_manager->synced_data.pending_acquisition_count);
+    s_sm_log_stats_synced(stream_manager);
 }
 
 static void s_sm_count_decrease_synced(
     struct aws_http2_stream_manager *stream_manager,
-    enum sm_count_type count_type,
+    enum aws_sm_count_type count_type,
     size_t num) {
-    switch (count_type) {
-        case AWS_SMCT_CONNECTIONS_ACQUIRING:
-            stream_manager->synced_data.connections_acquiring_count -= num;
-            break;
-        case AWS_SMCT_OPEN_STREAM:
-            stream_manager->synced_data.open_stream_count -= num;
-            break;
-        case AWS_SMCT_PENDING_MAKE_REQUESTS:
-            stream_manager->synced_data.pending_make_requests_count -= num;
-            break;
-        case AWS_SMCT_PENDING_ACQUISITION:
-            stream_manager->synced_data.pending_acquisition_count -= num;
-            break;
-        default:
-            AWS_ASSERT(false);
-    }
+    stream_manager->synced_data.internal_refcount_stats[count_type] -= num;
     for (size_t i = 0; i < num; i++) {
         aws_ref_count_release(&stream_manager->internal_ref_count);
     }
-    STREAM_MANAGER_LOGF(
-        TRACE,
-        stream_manager,
-        "Stream manager internal counts decreased. Status: "
-        "connection acquiring=%zu, streams opening=%zu, stream scheduled=%zu, pending acquisition count=%zu",
-        stream_manager->synced_data.connections_acquiring_count,
-        stream_manager->synced_data.open_stream_count,
-        stream_manager->synced_data.pending_make_requests_count,
-        stream_manager->synced_data.pending_acquisition_count);
+    s_sm_log_stats_synced(stream_manager);
 }
 
 static void s_aws_stream_management_transaction_init(
@@ -186,15 +145,15 @@ static struct aws_h2_sm_connection *s_get_best_sm_connection_from_set(struct aws
 /* *_synced should only be called with LOCK HELD or from another synced function */
 static void s_get_sm_connection_synced(
     struct aws_http2_stream_manager *stream_manager,
-    struct aws_h2_sm_pending_stream_acquisition *pending_acquisition) {
+    struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition) {
 
-    ASSERT(pending_acquisition->sm_connection == NULL);
+    AWS_ASSERT(pending_stream_acquisition->sm_connection == NULL);
     int errored = 0;
     if (aws_random_access_set_get_size(&stream_manager->synced_data.ideal_sm_connection_set)) {
         struct aws_h2_sm_connection *chosen_connection =
             s_get_best_sm_connection_from_set(&stream_manager->synced_data.ideal_sm_connection_set);
         AWS_ASSERT(chosen_connection);
-        pending_acquisition->sm_connection = chosen_connection;
+        pending_stream_acquisition->sm_connection = chosen_connection;
         chosen_connection->num_streams_assigned++;
 
         STREAM_MANAGER_LOGF(
@@ -202,7 +161,7 @@ static void s_get_sm_connection_synced(
             stream_manager,
             "Picking connection:%p for acquisition:%p. Streams assigned to the connection=%" PRIu32 "",
             (void *)chosen_connection->connection,
-            (void *)pending_acquisition,
+            (void *)pending_stream_acquisition,
             chosen_connection->num_streams_assigned);
 
         if (chosen_connection->num_streams_assigned < chosen_connection->max_concurrent_streams &&
@@ -214,7 +173,7 @@ static void s_get_sm_connection_synced(
             errored |= aws_random_access_set_add(
                 &stream_manager->synced_data.soft_limited_sm_connection_set, chosen_connection, &added);
             errored |= !added;
-            chosen_connection->sim_full = true;
+            chosen_connection->state = AWS_H2SMCST_NEARLY_FULL;
             STREAM_MANAGER_LOGF(
                 DEBUG,
                 stream_manager,
@@ -226,8 +185,7 @@ static void s_get_sm_connection_synced(
         } else if (chosen_connection->num_streams_assigned >= chosen_connection->max_concurrent_streams) {
             /* It becomes not available for new streams any more, remove it from the set, but still alive (streams
              * created will track the lifetime) */
-            chosen_connection->sim_full = false;
-            chosen_connection->full = true;
+            chosen_connection->state = AWS_H2SMCST_FULL;
             errored |=
                 aws_random_access_set_remove(&stream_manager->synced_data.ideal_sm_connection_set, chosen_connection);
             STREAM_MANAGER_LOGF(
@@ -245,7 +203,7 @@ static void s_get_sm_connection_synced(
             struct aws_h2_sm_connection *chosen_connection =
                 s_get_best_sm_connection_from_set(&stream_manager->synced_data.soft_limited_sm_connection_set);
             AWS_ASSERT(chosen_connection);
-            pending_acquisition->sm_connection = chosen_connection;
+            pending_stream_acquisition->sm_connection = chosen_connection;
             chosen_connection->num_streams_assigned++;
 
             STREAM_MANAGER_LOGF(
@@ -253,14 +211,13 @@ static void s_get_sm_connection_synced(
                 stream_manager,
                 "Picking connection:%p for acquisition:%p. Streams assigned to the connection=%" PRIu32 "",
                 (void *)chosen_connection->connection,
-                (void *)pending_acquisition,
+                (void *)pending_stream_acquisition,
                 chosen_connection->num_streams_assigned);
 
             if (chosen_connection->num_streams_assigned >= chosen_connection->max_concurrent_streams) {
                 /* It becomes not available for new streams any more, remove it from the set, but still alive (streams
                  * created will track the lifetime) */
-                chosen_connection->sim_full = false;
-                chosen_connection->full = true;
+                chosen_connection->state = AWS_H2SMCST_FULL;
                 errored |= aws_random_access_set_remove(
                     &stream_manager->synced_data.soft_limited_sm_connection_set, chosen_connection);
                 STREAM_MANAGER_LOGF(
@@ -279,65 +236,69 @@ static void s_get_sm_connection_synced(
 }
 
 /* NOTE: never invoke with lock held */
-static void s_finish_pending_acquisitions_list_helper(
+static void s_finish_pending_stream_acquisitions_list_helper(
     struct aws_http2_stream_manager *stream_manager,
-    struct aws_linked_list *pending_acquisitions,
+    struct aws_linked_list *pending_stream_acquisitions,
     int error_code) {
-    while (!aws_linked_list_empty(pending_acquisitions)) {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(pending_acquisitions);
-        struct aws_h2_sm_pending_stream_acquisition *pending_acquisition =
+    while (!aws_linked_list_empty(pending_stream_acquisitions)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(pending_stream_acquisitions);
+        struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition =
             AWS_CONTAINER_OF(node, struct aws_h2_sm_pending_stream_acquisition, node);
         /* Make sure no connection assigned. */
-        AWS_ASSERT(pending_acquisition->sm_connection == NULL);
-        if (pending_acquisition->callback) {
-            pending_acquisition->callback(NULL, error_code, pending_acquisition->user_data);
+        AWS_ASSERT(pending_stream_acquisition->sm_connection == NULL);
+        if (pending_stream_acquisition->callback) {
+            pending_stream_acquisition->callback(NULL, error_code, pending_stream_acquisition->user_data);
         }
         STREAM_MANAGER_LOGF(
             DEBUG,
             stream_manager,
             "acquisition:%p failed with error: %d(%s)",
-            (void *)pending_acquisition,
+            (void *)pending_stream_acquisition,
             error_code,
             aws_error_str(error_code));
-        s_pending_stream_acquisition_destroy(pending_acquisition);
+        s_pending_stream_acquisition_destroy(pending_stream_acquisition);
     }
 }
 
 /* This is scheduled to run on a separate event loop to finish pending acquisition asynchronously */
-static void s_finish_pending_acquisitions_task(struct aws_task *task, void *arg, enum aws_task_status status) {
+static void s_finish_pending_stream_acquisitions_task(struct aws_task *task, void *arg, enum aws_task_status status) {
     (void)status;
     struct aws_http2_stream_manager *stream_manager = arg;
     STREAM_MANAGER_LOG(TRACE, stream_manager, "Stream Manager final task runs");
     struct aws_http2_stream_management_transaction work;
-    struct aws_linked_list pending_acquisitions;
-    aws_linked_list_init(&pending_acquisitions);
+    struct aws_linked_list pending_stream_acquisitions;
+    aws_linked_list_init(&pending_stream_acquisitions);
     s_aws_stream_management_transaction_init(&work, stream_manager);
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
         AWS_ASSERT(stream_manager->synced_data.state == AWS_H2SMST_DESTROYING);
         /* swap list to avoid callback with lock held. */
-        aws_linked_list_swap_contents(&pending_acquisitions, &stream_manager->synced_data.pending_acquisitions);
+        aws_linked_list_swap_contents(
+            &pending_stream_acquisitions, &stream_manager->synced_data.pending_stream_acquisitions);
         /* After the callbacks invoked, now we can update the count */
         s_sm_count_decrease_synced(
-            stream_manager, AWS_SMCT_PENDING_ACQUISITION, stream_manager->synced_data.pending_acquisition_count);
+            stream_manager,
+            AWS_SMCT_PENDING_ACQUISITION,
+            stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION]);
         s_aws_http2_stream_manager_build_transaction_synced(&work);
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
-    s_finish_pending_acquisitions_list_helper(
-        stream_manager, &pending_acquisitions, AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN);
+    s_finish_pending_stream_acquisitions_list_helper(
+        stream_manager, &pending_stream_acquisitions, AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN);
     aws_mem_release(stream_manager->allocator, task);
     s_aws_http2_stream_manager_execute_transaction(&work);
 }
 
 static void s_check_new_connections_needed_synced(struct aws_http2_stream_management_transaction *work) {
     struct aws_http2_stream_manager *stream_manager = work->stream_manager;
-    size_t num_connections_needed =
-        stream_manager->synced_data.pending_acquisition_count / stream_manager->ideal_concurrent_streams_per_connection;
-    if (stream_manager->synced_data.pending_acquisition_count %
+    size_t num_connections_needed = stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION] /
+                                    stream_manager->ideal_concurrent_streams_per_connection;
+    if (stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION] %
         stream_manager->ideal_concurrent_streams_per_connection) {
         ++num_connections_needed;
     }
-    work->new_connections = num_connections_needed - stream_manager->synced_data.connections_acquiring_count;
+    work->new_connections =
+        num_connections_needed - stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_CONNECTIONS_ACQUIRING];
     work->new_connections = aws_min_size(
         stream_manager->max_connections - stream_manager->synced_data.holding_connections_count, work->new_connections);
     s_sm_count_increase_synced(stream_manager, AWS_SMCT_CONNECTIONS_ACQUIRING, work->new_connections);
@@ -346,8 +307,8 @@ static void s_check_new_connections_needed_synced(struct aws_http2_stream_manage
         stream_manager,
         "number of acquisition that waiting for connections to use=%zu. connection acquiring=%zu, connection held=%zu, "
         "max connection=%zu",
-        stream_manager->synced_data.pending_acquisition_count,
-        stream_manager->synced_data.connections_acquiring_count,
+        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION],
+        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_CONNECTIONS_ACQUIRING],
         stream_manager->synced_data.holding_connections_count,
         stream_manager->max_connections);
 }
@@ -365,20 +326,20 @@ static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2
     if (stream_manager->synced_data.state == AWS_H2SMST_READY) {
 
         /* Steps 1: Pending acquisitions of stream */
-        while (!aws_linked_list_empty(&stream_manager->synced_data.pending_acquisitions)) {
+        while (!aws_linked_list_empty(&stream_manager->synced_data.pending_stream_acquisitions)) {
             struct aws_linked_list_node *node =
-                aws_linked_list_pop_front(&stream_manager->synced_data.pending_acquisitions);
-            struct aws_h2_sm_pending_stream_acquisition *pending_acquisition =
+                aws_linked_list_pop_front(&stream_manager->synced_data.pending_stream_acquisitions);
+            struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition =
                 AWS_CONTAINER_OF(node, struct aws_h2_sm_pending_stream_acquisition, node);
-            s_get_sm_connection_synced(stream_manager, pending_acquisition);
-            if (pending_acquisition->sm_connection == NULL) {
+            s_get_sm_connection_synced(stream_manager, pending_stream_acquisition);
+            if (pending_stream_acquisition->sm_connection == NULL) {
                 /* Cannot find any connection, push it back and break the loop */
-                aws_linked_list_push_back(&stream_manager->synced_data.pending_acquisitions, node);
+                aws_linked_list_push_back(&stream_manager->synced_data.pending_stream_acquisitions, node);
                 STREAM_MANAGER_LOGF(
                     TRACE,
                     stream_manager,
                     "acquisition:%p cannot find any connection to use.",
-                    (void *)pending_acquisition);
+                    (void *)pending_stream_acquisition);
                 break;
             } else {
                 /* found connection for the request. Move it to pending make requests and update the count */
@@ -389,27 +350,28 @@ static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2
         }
 
         /* Step 2: Check for new connections needed */
-        if (stream_manager->synced_data.pending_acquisition_count) {
+        if (stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION]) {
             s_check_new_connections_needed_synced(work);
         }
 
     } else {
         /* Stream manager is shutting down */
-        if (stream_manager->synced_data.pending_acquisition_count &&
-            !stream_manager->synced_data.finish_pending_acquisitions_task_scheduled) {
+        if (stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION] &&
+            !stream_manager->synced_data.finish_pending_stream_acquisitions_task_scheduled) {
             /* schedule a task to finish the pending acquisitions if there doesn't have one and needed */
-            stream_manager->finish_pending_acquisitions_task_event_loop =
+            stream_manager->finish_pending_stream_acquisitions_task_event_loop =
                 aws_event_loop_group_get_next_loop(stream_manager->bootstrap->event_loop_group);
-            struct aws_task *finish_pending_acquisitions_task =
+            struct aws_task *finish_pending_stream_acquisitions_task =
                 aws_mem_calloc(stream_manager->allocator, 1, sizeof(struct aws_task));
             aws_task_init(
-                finish_pending_acquisitions_task,
-                s_finish_pending_acquisitions_task,
+                finish_pending_stream_acquisitions_task,
+                s_finish_pending_stream_acquisitions_task,
                 stream_manager,
-                "sm_finish_pending_acquisitions");
+                "sm_finish_pending_stream_acquisitions");
             aws_event_loop_schedule_task_now(
-                stream_manager->finish_pending_acquisitions_task_event_loop, finish_pending_acquisitions_task);
-            stream_manager->synced_data.finish_pending_acquisitions_task_scheduled = true;
+                stream_manager->finish_pending_stream_acquisitions_task_event_loop,
+                finish_pending_stream_acquisitions_task);
+            stream_manager->synced_data.finish_pending_stream_acquisitions_task_scheduled = true;
         }
     }
 }
@@ -428,6 +390,7 @@ static struct aws_h2_sm_connection *s_sm_connection_new(
         aws_min_u32((uint32_t)stream_manager->max_concurrent_streams_per_connection, remote_max_con_streams);
     sm_connection->connection = connection;
     sm_connection->stream_manager = stream_manager;
+    sm_connection->state = AWS_H2SMCST_IDEAL;
     return sm_connection;
 }
 
@@ -474,7 +437,7 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
                 (void *)connection);
             /* Release the acquired connection */
             re_error |= aws_http_connection_manager_release_connection(stream_manager->connection_manager, connection);
-        } else if (stream_manager->synced_data.pending_acquisition_count == 0) {
+        } else if (stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION] == 0) {
             STREAM_MANAGER_LOGF(
                 DEBUG,
                 stream_manager,
@@ -504,10 +467,10 @@ static int s_on_incoming_headers(
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
-    struct aws_h2_sm_pending_stream_acquisition *pending_acquisition = user_data;
-    if (pending_acquisition->options.on_response_headers) {
-        return pending_acquisition->options.on_response_headers(
-            stream, header_block, header_array, num_headers, pending_acquisition->options.user_data);
+    struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition = user_data;
+    if (pending_stream_acquisition->options.on_response_headers) {
+        return pending_stream_acquisition->options.on_response_headers(
+            stream, header_block, header_array, num_headers, pending_stream_acquisition->options.user_data);
     }
     return AWS_OP_SUCCESS;
 }
@@ -516,18 +479,19 @@ static int s_on_incoming_header_block_done(
     struct aws_http_stream *stream,
     enum aws_http_header_block header_block,
     void *user_data) {
-    struct aws_h2_sm_pending_stream_acquisition *pending_acquisition = user_data;
-    if (pending_acquisition->options.on_response_header_block_done) {
-        return pending_acquisition->options.on_response_header_block_done(
-            stream, header_block, pending_acquisition->options.user_data);
+    struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition = user_data;
+    if (pending_stream_acquisition->options.on_response_header_block_done) {
+        return pending_stream_acquisition->options.on_response_header_block_done(
+            stream, header_block, pending_stream_acquisition->options.user_data);
     }
     return AWS_OP_SUCCESS;
 }
 
 static int s_on_incoming_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
-    struct aws_h2_sm_pending_stream_acquisition *pending_acquisition = user_data;
-    if (pending_acquisition->options.on_response_body) {
-        return pending_acquisition->options.on_response_body(stream, data, pending_acquisition->options.user_data);
+    struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition = user_data;
+    if (pending_stream_acquisition->options.on_response_body) {
+        return pending_stream_acquisition->options.on_response_body(
+            stream, data, pending_stream_acquisition->options.user_data);
     }
     return AWS_OP_SUCCESS;
 }
@@ -540,7 +504,7 @@ static int s_update_sm_connection_set_on_stream_finishes_synced(
     size_t cur_num = sm_connection->num_streams_assigned;
     size_t ideal_num = stream_manager->ideal_concurrent_streams_per_connection;
     size_t max_num = sm_connection->max_concurrent_streams;
-    if (sm_connection->sim_full && cur_num < ideal_num && ideal_num < max_num) {
+    if (sm_connection->state == AWS_H2SMCST_NEARLY_FULL && cur_num < ideal_num) {
         /* this connection is back from soft limited to ideal */
         bool exist = false;
         (void)exist;
@@ -555,11 +519,9 @@ static int s_update_sm_connection_set_on_stream_finishes_synced(
         re_error |=
             aws_random_access_set_add(&stream_manager->synced_data.ideal_sm_connection_set, sm_connection, &added);
         re_error |= !added;
-        sm_connection->sim_full = false;
-    }
-    if (sm_connection->full && cur_num < max_num) {
+        sm_connection->state = AWS_H2SMCST_IDEAL;
+    } else if (sm_connection->state == AWS_H2SMCST_FULL && cur_num < max_num) {
         /* this connection is back from full */
-        sm_connection->full = false;
         STREAM_MANAGER_LOGF(
             DEBUG,
             stream_manager,
@@ -567,22 +529,21 @@ static int s_update_sm_connection_set_on_stream_finishes_synced(
             (void *)sm_connection->connection,
             cur_num,
             sm_connection->max_concurrent_streams);
+        bool added = false;
         if (cur_num >= ideal_num) {
-            bool added = false;
-            sm_connection->sim_full = true;
+            sm_connection->state = AWS_H2SMCST_NEARLY_FULL;
             STREAM_MANAGER_LOGF(
                 TRACE, stream_manager, "connection:%p added to soft limited set", (void *)sm_connection->connection);
             re_error |= aws_random_access_set_add(
                 &stream_manager->synced_data.soft_limited_sm_connection_set, sm_connection, &added);
-            re_error |= !added;
         } else {
-            bool added = false;
+            sm_connection->state = AWS_H2SMCST_IDEAL;
             STREAM_MANAGER_LOGF(
                 TRACE, stream_manager, "connection:%p added to ideal set", (void *)sm_connection->connection);
             re_error |=
                 aws_random_access_set_add(&stream_manager->synced_data.ideal_sm_connection_set, sm_connection, &added);
-            re_error |= !added;
         }
+        re_error |= !added;
     }
     return re_error ? AWS_OP_ERR : AWS_OP_SUCCESS;
 }
@@ -623,21 +584,22 @@ static void s_sm_connection_on_scheduled_stream_finishes(
 }
 
 static void s_on_stream_complete(struct aws_http_stream *stream, int error_code, void *user_data) {
-    struct aws_h2_sm_pending_stream_acquisition *pending_acquisition = user_data;
-    struct aws_h2_sm_connection *sm_connection = pending_acquisition->sm_connection;
+    struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition = user_data;
+    struct aws_h2_sm_connection *sm_connection = pending_stream_acquisition->sm_connection;
     struct aws_http2_stream_manager *stream_manager = sm_connection->stream_manager;
-    if (pending_acquisition->options.on_complete) {
-        pending_acquisition->options.on_complete(stream, error_code, pending_acquisition->options.user_data);
+    if (pending_stream_acquisition->options.on_complete) {
+        pending_stream_acquisition->options.on_complete(
+            stream, error_code, pending_stream_acquisition->options.user_data);
     }
-    s_pending_stream_acquisition_destroy(pending_acquisition);
+    s_pending_stream_acquisition_destroy(pending_stream_acquisition);
     s_sm_connection_on_scheduled_stream_finishes(sm_connection, stream_manager);
 }
 
 /* Scheduled to happen from connection's thread */
 static void s_make_request_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
     (void)task;
-    struct aws_h2_sm_pending_stream_acquisition *pending_acquisition = arg;
-    struct aws_h2_sm_connection *sm_connection = pending_acquisition->sm_connection;
+    struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition = arg;
+    struct aws_h2_sm_connection *sm_connection = pending_stream_acquisition->sm_connection;
     struct aws_http2_stream_manager *stream_manager = sm_connection->stream_manager;
     int error_code = AWS_ERROR_SUCCESS;
 
@@ -645,7 +607,7 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
         TRACE,
         stream_manager,
         "Make request task running for acquisition:%p from connection:%p thread",
-        (void *)pending_acquisition,
+        (void *)pending_stream_acquisition,
         (void *)sm_connection->connection);
     bool is_shutting_down = false;
     { /* BEGIN CRITICAL SECTION */
@@ -664,7 +626,10 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
      * to a closed connection. */
     if (status != AWS_TASK_STATUS_RUN_READY) {
         STREAM_MANAGER_LOGF(
-            ERROR, stream_manager, "acquisition:%p failed as the task is cancelled.", (void *)pending_acquisition);
+            ERROR,
+            stream_manager,
+            "acquisition:%p failed as the task is cancelled.",
+            (void *)pending_stream_acquisition);
         error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
         goto error;
     }
@@ -673,18 +638,18 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
             ERROR,
             stream_manager,
             "acquisition:%p failed as stream manager is shutting down before task runs.",
-            (void *)pending_acquisition);
+            (void *)pending_stream_acquisition);
         error_code = AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN;
         goto error;
     }
     struct aws_http_make_request_options request_options = {
         .self_size = sizeof(request_options),
-        .request = pending_acquisition->request,
+        .request = pending_stream_acquisition->request,
         .on_response_headers = s_on_incoming_headers,
         .on_response_header_block_done = s_on_incoming_header_block_done,
         .on_response_body = s_on_incoming_body,
         .on_complete = s_on_stream_complete,
-        .user_data = pending_acquisition,
+        .user_data = pending_stream_acquisition,
     };
     struct aws_http_stream *stream = aws_http_connection_make_request(sm_connection->connection, &request_options);
     if (!stream) {
@@ -694,7 +659,7 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
             ERROR,
             stream_manager,
             "acquisition:%p failed as HTTP level make request failed with error: %d(%s).",
-            (void *)pending_acquisition,
+            (void *)pending_stream_acquisition,
             error_code,
             aws_error_str(error_code));
         goto error;
@@ -708,25 +673,25 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
             ERROR,
             stream_manager,
             "acquisition:%p failed as stream activate failed with error: %d(%s).",
-            (void *)pending_acquisition,
+            (void *)pending_stream_acquisition,
             error_code,
             aws_error_str(error_code));
         goto error;
     }
-    if (pending_acquisition->callback) {
-        pending_acquisition->callback(stream, error_code, pending_acquisition->user_data);
+    if (pending_stream_acquisition->callback) {
+        pending_stream_acquisition->callback(stream, error_code, pending_stream_acquisition->user_data);
     }
 
     /* Happy case, the complete callback will be invoked, and we clean things up at the callback, but we can release the
      * request now */
-    aws_http_message_release(pending_acquisition->request);
-    pending_acquisition->request = NULL;
+    aws_http_message_release(pending_stream_acquisition->request);
+    pending_stream_acquisition->request = NULL;
     return;
 error:
-    if (pending_acquisition->callback) {
-        pending_acquisition->callback(NULL, error_code, pending_acquisition->user_data);
+    if (pending_stream_acquisition->callback) {
+        pending_stream_acquisition->callback(NULL, error_code, pending_stream_acquisition->user_data);
     }
-    s_pending_stream_acquisition_destroy(pending_acquisition);
+    s_pending_stream_acquisition_destroy(pending_stream_acquisition);
     /* task should happen after destroy, as the task can trigger the whole stream manager to be destroyed */
     s_sm_connection_on_scheduled_stream_finishes(sm_connection, stream_manager);
 }
@@ -753,32 +718,33 @@ static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stre
         /* The completions can also fail as the connection can be unavilable after the decision made. We just fail
          * the acquisition */
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&work->pending_make_requests);
-        struct aws_h2_sm_pending_stream_acquisition *pending_acquisition =
+        struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition =
             AWS_CONTAINER_OF(node, struct aws_h2_sm_pending_stream_acquisition, node);
 
         AWS_ASSERT(
-            pending_acquisition->sm_connection &&
+            pending_stream_acquisition->sm_connection &&
             "Stream manager internal bug: connection is not decided before execute transaction");
 
         STREAM_MANAGER_LOGF(
             TRACE,
             stream_manager,
             "acquisition:%p is scheduled to be made request from connection:%p thread",
-            (void *)pending_acquisition,
-            (void *)pending_acquisition->sm_connection->connection);
+            (void *)pending_stream_acquisition,
+            (void *)pending_stream_acquisition->sm_connection->connection);
         /**
          * schedule a task from the connection's event loop to make request, so that:
          * - We can activate the stream for user and then invoked the callback
          * - The callback will happen asynced even the stream failed to be created
          * - We can make sure we will not break the settings
          */
-        struct aws_channel *channel = aws_http_connection_get_channel(pending_acquisition->sm_connection->connection);
+        struct aws_channel *channel =
+            aws_http_connection_get_channel(pending_stream_acquisition->sm_connection->connection);
         aws_channel_task_init(
-            &pending_acquisition->make_request_task,
+            &pending_stream_acquisition->make_request_task,
             s_make_request_task,
-            pending_acquisition,
+            pending_stream_acquisition,
             "Stream manager make request task");
-        aws_channel_schedule_task_now(channel, &pending_acquisition->make_request_task);
+        aws_channel_schedule_task_now(channel, &pending_stream_acquisition->make_request_task);
     }
 
     /* Step 3: Acquire connections if needed */
@@ -804,7 +770,7 @@ void s_stream_manager_destroy_final(struct aws_http2_stream_manager *stream_mana
     STREAM_MANAGER_LOG(TRACE, stream_manager, "Stream Manager finishes destroying self");
     /* Connection manager has already been cleaned up */
     AWS_FATAL_ASSERT(stream_manager->connection_manager == NULL);
-    AWS_FATAL_ASSERT(aws_linked_list_empty(&stream_manager->synced_data.pending_acquisitions));
+    AWS_FATAL_ASSERT(aws_linked_list_empty(&stream_manager->synced_data.pending_stream_acquisitions));
     aws_mutex_clean_up(&stream_manager->synced_data.lock);
     aws_random_access_set_clean_up(&stream_manager->synced_data.ideal_sm_connection_set);
     aws_random_access_set_clean_up(&stream_manager->synced_data.soft_limited_sm_connection_set);
@@ -832,10 +798,10 @@ static void s_stream_manager_start_destroy(struct aws_http2_stream_manager *stre
     /* If there is no outstanding streams, the connections set should be empty. */
     AWS_ASSERT(aws_random_access_set_get_size(&stream_manager->synced_data.ideal_sm_connection_set) == 0);
     AWS_ASSERT(aws_random_access_set_get_size(&stream_manager->synced_data.soft_limited_sm_connection_set) == 0);
-    AWS_ASSERT(stream_manager->synced_data.connections_acquiring_count == 0);
-    AWS_ASSERT(stream_manager->synced_data.open_stream_count == 0);
-    AWS_ASSERT(stream_manager->synced_data.pending_make_requests_count == 0);
-    AWS_ASSERT(stream_manager->synced_data.pending_acquisition_count == 0);
+    AWS_ASSERT(stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_CONNECTIONS_ACQUIRING] == 0);
+    AWS_ASSERT(stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_OPEN_STREAM] == 0);
+    AWS_ASSERT(stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_MAKE_REQUESTS] == 0);
+    AWS_ASSERT(stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION] == 0);
     AWS_ASSERT(stream_manager->connection_manager);
     struct aws_http_connection_manager *cm = stream_manager->connection_manager;
     stream_manager->connection_manager = NULL;
@@ -938,7 +904,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     stream_manager->max_concurrent_streams_per_connection =
         options->max_concurrent_streams_per_connection ? options->max_concurrent_streams_per_connection : UINT32_MAX;
     stream_manager->max_connections = options->max_connections;
-    aws_linked_list_init(&stream_manager->synced_data.pending_acquisitions);
+    aws_linked_list_init(&stream_manager->synced_data.pending_stream_acquisitions);
     return stream_manager;
 on_error:
     s_stream_manager_destroy_final(stream_manager);
@@ -967,19 +933,20 @@ void aws_http2_stream_manager_acquire_stream(
     AWS_PRECONDITION(acquire_stream_option->callback);
     AWS_PRECONDITION(acquire_stream_option->options);
     struct aws_http2_stream_management_transaction work;
-    struct aws_h2_sm_pending_stream_acquisition *pending_acquisition = s_new_pending_stream_acquisition(
+    struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition = s_new_pending_stream_acquisition(
         stream_manager->allocator,
         acquire_stream_option->options,
         acquire_stream_option->callback,
         acquire_stream_option->user_data);
     STREAM_MANAGER_LOGF(
-        TRACE, stream_manager, "Stream Manager creates acquisition:%p for user", (void *)pending_acquisition);
+        TRACE, stream_manager, "Stream Manager creates acquisition:%p for user", (void *)pending_stream_acquisition);
     s_aws_stream_management_transaction_init(&work, stream_manager);
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
         /* it's use after free crime */
         AWS_FATAL_ASSERT(stream_manager->synced_data.state != AWS_H2SMST_DESTROYING);
-        aws_linked_list_push_back(&stream_manager->synced_data.pending_acquisitions, &pending_acquisition->node);
+        aws_linked_list_push_back(
+            &stream_manager->synced_data.pending_stream_acquisitions, &pending_stream_acquisition->node);
         s_sm_count_increase_synced(stream_manager, AWS_SMCT_PENDING_ACQUISITION, 1);
         s_aws_http2_stream_manager_build_transaction_synced(&work);
         s_unlock_synced_data(stream_manager);

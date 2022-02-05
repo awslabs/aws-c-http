@@ -88,7 +88,7 @@ struct aws_http2_stream_manager_options {
     /* TODO: More flexible policy about the connections, but will always has these three values below. */
     /**
      * Optional.
-     * Default is 100. 0 will be considered as using the default value.
+     * 0 will be considered as using a default value.
      * The ideal number of concurrent streams for a connection. Stream manager will try to create a new connection if
      * one connection reaches this number. But, if the max connections reaches, manager will reuse connections to create
      * the acquired steams as much as possible. */
@@ -150,7 +150,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     struct aws_http2_stream_manager_options *options);
 
 /**
- * Acquire a stream from stream manager asynchronously. Fails when the stream manager has no external refcount on it.
+ * Acquire a stream from stream manager asynchronously.
  *
  * @param http2_stream_manager
  * @param acquire_stream_option see `aws_http2_stream_manager_acquire_stream_options`
