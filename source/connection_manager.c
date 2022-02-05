@@ -1434,26 +1434,18 @@ static void s_aws_http_connection_manager_on_connection_setup(
     }
 
     if (connection != NULL && manager->system_vtable->connection_get_version(connection) == AWS_HTTP_VERSION_2) {
-        /* As long as we have the connection, the settings callback will be invoked eventually. */
+        /* If the manager is shutting down, we will still wait for the settings, since we don't have map for connections
+         */
         ++manager->pending_settings_count;
-        if (is_shutting_down) {
-            AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: New connection (id=%p) releasing immediately",
-                (void *)manager,
-                (void *)connection);
-            work.connection_to_release = connection;
-        } else {
-            /* For http/2 connection, we vent the connection after the initial settings completed for the user to make
-             * sure the connection is really ready to use. So, we can revert the counting and act like nothing happens
-             * here and wait for the on_initial_settings_completed, which will ALWAYS be invoked before shutdown. BUT,
-             * we increase the open_connection_count, as the shutdown will be invoked no matter what happens. */
-            AWS_LOGF_TRACE(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: New HTTP/2 connection (id=%p) set up, waiting for initial settings to complete",
-                (void *)manager,
-                (void *)connection);
-        }
+        /* For http/2 connection, we vent the connection after the initial settings completed for the user to make
+         * sure the connection is really ready to use. So, we can revert the counting and act like nothing happens
+         * here and wait for the on_initial_settings_completed, which will ALWAYS be invoked before shutdown. BUT,
+         * we increase the open_connection_count, as the shutdown will be invoked no matter what happens. */
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "id=%p: New HTTP/2 connection (id=%p) set up, waiting for initial settings to complete",
+            (void *)manager,
+            (void *)connection);
     } else {
         /* If there is no connection, error code cannot be zero */
         AWS_ASSERT(connection || error_code);
