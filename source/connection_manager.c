@@ -63,11 +63,20 @@ bool aws_http_connection_manager_system_vtable_is_valid(const struct aws_http_co
 
 enum aws_http_connection_manager_state_type { AWS_HCMST_UNINITIALIZED, AWS_HCMST_READY, AWS_HCMST_SHUTTING_DOWN };
 
-/* vended_connection_count, pending_connects_count and open_connection_count */
+/*
+ * AWS_HCMCT_VENDED_CONNECTION: The number of connections currently being used by external users.
+ * AWS_HCMCT_PENDING_CONNECTIONS: The number of pending new connection requests we have outstanding to the http
+ *      layer.
+ * AWS_HCMCT_OPEN_CONNECTION: Always equal to # of connection shutdown callbacks not yet invoked
+ *      or equivalently:
+ *
+ *      # of connections ever created by the manager - # shutdown callbacks received
+ */
 enum aws_http_connection_manager_count_type {
     AWS_HCMCT_VENDED_CONNECTION,
     AWS_HCMCT_PENDING_CONNECTIONS,
     AWS_HCMCT_OPEN_CONNECTION,
+    AWS_HCMCT_COUNT,
 };
 
 /**
@@ -193,28 +202,23 @@ struct aws_http_connection_manager {
     size_t pending_acquisition_count;
 
     /*
-     * The number of pending new connection requests we have outstanding to the http
-     * layer.
+     * Counts that contributes to the internal refcount.
+     * When the value changes, s_connection_manager_internal_ref_increase/decrease needed.
+     *
+     * AWS_HCMCT_VENDED_CONNECTION: The number of connections currently being used by external users.
+     * AWS_HCMCT_PENDING_CONNECTIONS: The number of pending new connection requests we have outstanding to the http
+     *      layer.
+     * AWS_HCMCT_OPEN_CONNECTION: Always equal to # of connection shutdown callbacks not yet invoked
+     *      or equivalently:
+     *
+     *      # of connections ever created by the manager - # shutdown callbacks received
      */
-    size_t pending_connects_count;
+    size_t internal_ref[AWS_HCMCT_COUNT];
 
     /*
      * The number of established new HTTP/2 connections we have waiting for SETTINGS from the http layer
      */
     size_t pending_settings_count;
-
-    /*
-     * The number of connections currently being used by external users.
-     */
-    size_t vended_connection_count;
-
-    /*
-     * Always equal to # of connection shutdown callbacks not yet invoked
-     * or equivalently:
-     *
-     * # of connections ever created by the manager - # shutdown callbacks received
-     */
-    size_t open_connection_count;
 
     /*
      * All the options needed to create an http connection
@@ -259,8 +263,8 @@ struct aws_http_connection_manager {
     /*
      * Internal refcount that keeps connection manager alive.
      *
-     * It's a sum of vended_connection_count, pending_connects_count and open_connection_count,
-     * besides the `struct aws_connection_management_transaction` alive and one for any external usage.
+     * It's a sum of all internal_ref, the `struct aws_connection_management_transaction` alive and one for any external
+     * usage.
      *
      * Once this refcount drops to zero, connection manager should either be cleaned up all the memory all waiting for
      * the last task to clean un the memory and do nothing else.
@@ -291,8 +295,10 @@ struct aws_http_connection_manager_snapshot {
 
     size_t idle_connection_count;
     size_t pending_acquisition_count;
-    size_t pending_connects_count;
     size_t pending_settings_count;
+
+    /* From internal_ref */
+    size_t pending_connects_count;
     size_t vended_connection_count;
     size_t open_connection_count;
 
@@ -309,10 +315,11 @@ static void s_aws_http_connection_manager_get_snapshot(
     snapshot->state = manager->state;
     snapshot->idle_connection_count = manager->idle_connection_count;
     snapshot->pending_acquisition_count = manager->pending_acquisition_count;
-    snapshot->pending_connects_count = manager->pending_connects_count;
     snapshot->pending_settings_count = manager->pending_settings_count;
-    snapshot->vended_connection_count = manager->vended_connection_count;
-    snapshot->open_connection_count = manager->open_connection_count;
+
+    snapshot->pending_connects_count = manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS];
+    snapshot->vended_connection_count = manager->internal_ref[AWS_HCMCT_VENDED_CONNECTION];
+    snapshot->open_connection_count = manager->internal_ref[AWS_HCMCT_OPEN_CONNECTION];
 
     snapshot->external_ref_count = manager->external_ref_count;
 }
@@ -324,14 +331,14 @@ static void s_aws_http_connection_manager_log_snapshot(
         AWS_LOGF_DEBUG(
             AWS_LS_HTTP_CONNECTION_MANAGER,
             "id=%p: snapshot - state=%d, idle_connection_count=%zu, pending_acquire_count=%zu, "
-            "pending_connect_count=%zu, pending_settings_count=%zu, vended_connection_count=%zu, "
+            "pending_settings_count=%zu, pending_connect_count=%zu, vended_connection_count=%zu, "
             "open_connection_count=%zu, ref_count=%zu",
             (void *)manager,
             (int)snapshot->state,
             snapshot->idle_connection_count,
             snapshot->pending_acquisition_count,
-            snapshot->pending_connects_count,
             snapshot->pending_settings_count,
+            snapshot->pending_connects_count,
             snapshot->vended_connection_count,
             snapshot->open_connection_count,
             snapshot->external_ref_count);
@@ -538,46 +545,26 @@ static void s_aws_connection_management_transaction_clean_up(struct aws_connecti
 }
 
 /* The count acquire and release all needs to be invoked helding the lock */
-static void s_connection_manager_count_increase(
+static void s_connection_manager_internal_ref_increase(
     struct aws_http_connection_manager *manager,
     enum aws_http_connection_manager_count_type count_type,
     size_t num) {
-    switch (count_type) {
-        case AWS_HCMCT_VENDED_CONNECTION:
-            manager->vended_connection_count += num;
-            break;
-        case AWS_HCMCT_PENDING_CONNECTIONS:
-            manager->pending_connects_count += num;
-            break;
-        case AWS_HCMCT_OPEN_CONNECTION:
-            manager->open_connection_count += num;
-            break;
-        default:
-            AWS_ASSERT(false);
-    }
+
+    manager->internal_ref[count_type] += num;
     for (size_t i = 0; i < num; i++) {
         aws_ref_count_acquire(&manager->internal_ref_count);
     }
 }
 
-static void s_connection_manager_count_decrease(
+static void s_connection_manager_internal_ref_decrease(
     struct aws_http_connection_manager *manager,
     enum aws_http_connection_manager_count_type count_type,
     size_t num) {
-    switch (count_type) {
-        case AWS_HCMCT_VENDED_CONNECTION:
-            manager->vended_connection_count -= num;
-            break;
-        case AWS_HCMCT_PENDING_CONNECTIONS:
-            manager->pending_connects_count -= num;
-            break;
-        case AWS_HCMCT_OPEN_CONNECTION:
-            manager->open_connection_count -= num;
-            break;
-        default:
-            AWS_ASSERT(false);
-    }
+
+    manager->internal_ref[count_type] -= num;
     for (size_t i = 0; i < num; i++) {
+        /* This only happens between transcation init and transcation clean up. As transcation always has a internal
+         * refcount, this will never bring the refcount to zero */
         aws_ref_count_release(&manager->internal_ref_count);
     }
 }
@@ -609,7 +596,7 @@ static void s_aws_http_connection_manager_build_transaction(struct aws_connectio
                 (void *)connection);
             s_aws_http_connection_manager_move_front_acquisition(
                 manager, connection, AWS_ERROR_SUCCESS, &work->completions);
-            s_connection_manager_count_increase(manager, AWS_HCMCT_VENDED_CONNECTION, 1);
+            s_connection_manager_internal_ref_increase(manager, AWS_HCMCT_VENDED_CONNECTION, 1);
             --manager->idle_connection_count;
             aws_mem_release(idle_connection->allocator, idle_connection);
         }
@@ -617,21 +604,25 @@ static void s_aws_http_connection_manager_build_transaction(struct aws_connectio
         /*
          * Step 2 - if there's excess pending acquisitions and we have room to make more, make more
          */
-        if (manager->pending_acquisition_count > manager->pending_connects_count + manager->pending_settings_count) {
+        if (manager->pending_acquisition_count >
+            manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] + manager->pending_settings_count) {
             AWS_FATAL_ASSERT(
-                manager->max_connections >=
-                manager->vended_connection_count + manager->pending_connects_count + manager->pending_settings_count);
+                manager->max_connections >= manager->internal_ref[AWS_HCMCT_VENDED_CONNECTION] +
+                                                manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] +
+                                                manager->pending_settings_count);
 
-            work->new_connections =
-                manager->pending_acquisition_count - manager->pending_connects_count - manager->pending_settings_count;
+            work->new_connections = manager->pending_acquisition_count -
+                                    manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] -
+                                    manager->pending_settings_count;
             size_t max_new_connections =
                 manager->max_connections -
-                (manager->vended_connection_count + manager->pending_connects_count + manager->pending_settings_count);
+                (manager->internal_ref[AWS_HCMCT_VENDED_CONNECTION] +
+                 manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] + manager->pending_settings_count);
 
             if (work->new_connections > max_new_connections) {
                 work->new_connections = max_new_connections;
             }
-            s_connection_manager_count_increase(manager, AWS_HCMCT_PENDING_CONNECTIONS, work->new_connections);
+            s_connection_manager_internal_ref_increase(manager, AWS_HCMCT_PENDING_CONNECTIONS, work->new_connections);
         }
     } else {
         /*
@@ -682,11 +673,11 @@ static void s_aws_http_connection_manager_finish_destroy(struct aws_http_connect
 
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Destroying self", (void *)manager);
 
-    AWS_FATAL_ASSERT(manager->pending_connects_count == 0);
+    AWS_FATAL_ASSERT(manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] == 0);
     AWS_FATAL_ASSERT(manager->pending_settings_count == 0);
-    AWS_FATAL_ASSERT(manager->vended_connection_count == 0);
+    AWS_FATAL_ASSERT(manager->internal_ref[AWS_HCMCT_VENDED_CONNECTION] == 0);
     AWS_FATAL_ASSERT(manager->pending_acquisition_count == 0);
-    AWS_FATAL_ASSERT(manager->open_connection_count == 0);
+    AWS_FATAL_ASSERT(manager->internal_ref[AWS_HCMCT_OPEN_CONNECTION] == 0);
     AWS_FATAL_ASSERT(aws_linked_list_empty(&manager->pending_acquisitions));
     AWS_FATAL_ASSERT(aws_linked_list_empty(&manager->idle_connections));
 
@@ -1131,8 +1122,8 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
          */
         aws_mutex_lock(&manager->lock);
 
-        AWS_FATAL_ASSERT(manager->pending_connects_count >= new_connection_failures);
-        s_connection_manager_count_decrease(manager, AWS_HCMCT_PENDING_CONNECTIONS, new_connection_failures);
+        AWS_FATAL_ASSERT(manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] >= new_connection_failures);
+        s_connection_manager_internal_ref_decrease(manager, AWS_HCMCT_PENDING_CONNECTIONS, new_connection_failures);
 
         /*
          * Rather than failing one acquisition for each connection failure, if there's at least one
@@ -1143,7 +1134,7 @@ static void s_aws_http_connection_manager_execute_transaction(struct aws_connect
          * representative error.
          */
         size_t i = 0;
-        while (manager->pending_acquisition_count > manager->pending_connects_count) {
+        while (manager->pending_acquisition_count > manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS]) {
             int error = representative_error;
             if (i < aws_array_list_length(&errors)) {
                 aws_array_list_get_at(&errors, &error, i);
@@ -1262,7 +1253,7 @@ int aws_http_connection_manager_release_connection(
     aws_mutex_lock(&manager->lock);
 
     /* We're probably hosed in this case, but let's not underflow */
-    if (manager->vended_connection_count == 0) {
+    if (manager->internal_ref[AWS_HCMCT_VENDED_CONNECTION] == 0) {
         AWS_LOGF_FATAL(
             AWS_LS_HTTP_CONNECTION_MANAGER,
             "id=%p: Connection released when vended connection count is zero",
@@ -1273,7 +1264,7 @@ int aws_http_connection_manager_release_connection(
 
     result = AWS_OP_SUCCESS;
 
-    s_connection_manager_count_decrease(manager, AWS_HCMCT_VENDED_CONNECTION, 1);
+    s_connection_manager_internal_ref_decrease(manager, AWS_HCMCT_VENDED_CONNECTION, 1);
 
     if (!should_release_connection) {
         if (s_idle_connection(manager, connection)) {
@@ -1337,6 +1328,45 @@ static void s_aws_http_connection_manager_h2_on_goaway_received(
     s_aws_http_connection_manager_execute_transaction(&work);
 }
 
+/* Only invoke with lock held */
+static void s_cm_on_connection_ready_or_failed(
+    struct aws_http_connection_manager *manager,
+    int error_code,
+    struct aws_http_connection *connection,
+    struct aws_connection_management_transaction *work) {
+
+    bool is_shutting_down = manager->state == AWS_HCMST_SHUTTING_DOWN;
+
+    if (!error_code) {
+        if (is_shutting_down || s_idle_connection(manager, connection)) {
+            /*
+             * release it immediately
+             */
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_CONNECTION_MANAGER,
+                "id=%p: New connection (id=%p) releasing immediately",
+                (void *)manager,
+                (void *)connection);
+            work->connection_to_release = connection;
+        }
+    } else {
+        /* fail acquisition as one connection cannot be used any more */
+        while (manager->pending_acquisition_count >
+               manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] + manager->pending_settings_count) {
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_CONNECTION_MANAGER,
+                "id=%p: Failing excess connection acquisition with error code %d",
+                (void *)manager,
+                (int)error_code);
+            s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &work->completions);
+        }
+        /* Since the connection never being idle, we need to release the connection here. */
+        if (connection) {
+            work->connection_to_release = connection;
+        }
+    }
+}
+
 static void s_aws_http_connection_manager_h2_on_initial_settings_completed(
     struct aws_http_connection *http2_connection,
     int error_code,
@@ -1356,36 +1386,9 @@ static void s_aws_http_connection_manager_h2_on_initial_settings_completed(
 
     aws_mutex_lock(&manager->lock);
 
-    bool is_shutting_down = manager->state == AWS_HCMST_SHUTTING_DOWN;
-
     AWS_FATAL_ASSERT(manager->pending_settings_count > 0);
     --manager->pending_settings_count;
-
-    if (!error_code) {
-        if (is_shutting_down || s_idle_connection(manager, http2_connection)) {
-            /*
-             * release it immediately
-             */
-            AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: New HTTP/2 connection (id=%p) releasing immediately",
-                (void *)manager,
-                (void *)http2_connection);
-            work.connection_to_release = http2_connection;
-        }
-    } else {
-        /* fail acquisition as one connection cannot be used any more */
-        while (manager->pending_acquisition_count > manager->pending_connects_count + manager->pending_settings_count) {
-            AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: Failing excess connection acquisition with error code %d",
-                (void *)manager,
-                (int)error_code);
-            s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &work.completions);
-        }
-        /* Since the connection never being idle, we need to release the connection here. */
-        work.connection_to_release = http2_connection;
-    }
+    s_cm_on_connection_ready_or_failed(manager, error_code, http2_connection, &work);
 
     s_aws_http_connection_manager_build_transaction(&work);
 
@@ -1422,12 +1425,22 @@ static void s_aws_http_connection_manager_on_connection_setup(
 
     bool is_shutting_down = manager->state == AWS_HCMST_SHUTTING_DOWN;
 
-    AWS_FATAL_ASSERT(manager->pending_connects_count > 0);
-    s_connection_manager_count_decrease(manager, AWS_HCMCT_PENDING_CONNECTIONS, 1);
+    AWS_FATAL_ASSERT(manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] > 0);
+    s_connection_manager_internal_ref_decrease(manager, AWS_HCMCT_PENDING_CONNECTIONS, 1);
+    if (!error_code) {
+        /* Shutdown will not be invoked if setup completed with error */
+        s_connection_manager_internal_ref_increase(manager, AWS_HCMCT_OPEN_CONNECTION, 1);
+    }
 
-    if (connection != NULL) {
-        enum aws_http_version version = manager->system_vtable->connection_get_version(connection);
-        if (version == AWS_HTTP_VERSION_2) {
+    if (connection != NULL && manager->system_vtable->connection_get_version(connection) == AWS_HTTP_VERSION_2) {
+        if (is_shutting_down) {
+            AWS_LOGF_DEBUG(
+                AWS_LS_HTTP_CONNECTION_MANAGER,
+                "id=%p: New connection (id=%p) releasing immediately",
+                (void *)manager,
+                (void *)connection);
+            work.connection_to_release = connection;
+        } else {
             /* For http/2 connection, we vent the connection after the initial settings completed for the user to make
              * sure the connection is really ready to use. So, we can revert the counting and act like nothing happens
              * here and wait for the on_initial_settings_completed, which will ALWAYS be invoked before shutdown. BUT,
@@ -1438,35 +1451,11 @@ static void s_aws_http_connection_manager_on_connection_setup(
                 "id=%p: New HTTP/2 connection (id=%p) set up, waiting for initial settings to complete",
                 (void *)manager,
                 (void *)connection);
-        } else if (is_shutting_down || s_idle_connection(manager, connection)) {
-            /*
-             * release it immediately
-             */
-            AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: New connection (id=%p) releasing immediately",
-                (void *)manager,
-                (void *)connection);
-            work.connection_to_release = connection;
         }
-        s_connection_manager_count_increase(manager, AWS_HCMCT_OPEN_CONNECTION, 1);
-
     } else {
-        /*
-         * To be safe, if we have an excess of pending acquisitions (beyond the number of pending
-         * connects), we need to fail all of the excess.  Technically, we might be able to try and
-         * make a new connection, if there's room, but that could lead to some bad failure loops.
-         *
-         * This won't happen during shutdown since there are no pending acquisitions at that point.
-         */
-        while (manager->pending_acquisition_count > manager->pending_connects_count + manager->pending_settings_count) {
-            AWS_LOGF_DEBUG(
-                AWS_LS_HTTP_CONNECTION_MANAGER,
-                "id=%p: Failing excess connection acquisition with error code %d",
-                (void *)manager,
-                (int)error_code);
-            s_aws_http_connection_manager_move_front_acquisition(manager, NULL, error_code, &work.completions);
-        }
+        /* If there is no connection, error code cannot be zero */
+        AWS_ASSERT(connection || error_code);
+        s_cm_on_connection_ready_or_failed(manager, error_code, connection, &work);
     }
 
     s_aws_http_connection_manager_build_transaction(&work);
@@ -1495,8 +1484,8 @@ static void s_aws_http_connection_manager_on_connection_shutdown(
 
     aws_mutex_lock(&manager->lock);
 
-    AWS_FATAL_ASSERT(manager->open_connection_count > 0);
-    s_connection_manager_count_decrease(manager, AWS_HCMCT_OPEN_CONNECTION, 1);
+    AWS_FATAL_ASSERT(manager->internal_ref[AWS_HCMCT_OPEN_CONNECTION] > 0);
+    s_connection_manager_internal_ref_decrease(manager, AWS_HCMCT_OPEN_CONNECTION, 1);
 
     /*
      * Find and, if found, remove it from idle connections
