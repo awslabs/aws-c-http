@@ -1433,6 +1433,8 @@ static void s_aws_http_connection_manager_on_connection_setup(
     }
 
     if (connection != NULL && manager->system_vtable->connection_get_version(connection) == AWS_HTTP_VERSION_2) {
+        /* As long as we have the connection, the settings callback will be invoked eventually. */
+        ++manager->pending_settings_count;
         if (is_shutting_down) {
             AWS_LOGF_DEBUG(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
@@ -1445,7 +1447,6 @@ static void s_aws_http_connection_manager_on_connection_setup(
              * sure the connection is really ready to use. So, we can revert the counting and act like nothing happens
              * here and wait for the on_initial_settings_completed, which will ALWAYS be invoked before shutdown. BUT,
              * we increase the open_connection_count, as the shutdown will be invoked no matter what happens. */
-            ++manager->pending_settings_count;
             AWS_LOGF_TRACE(
                 AWS_LS_HTTP_CONNECTION_MANAGER,
                 "id=%p: New HTTP/2 connection (id=%p) set up, waiting for initial settings to complete",
