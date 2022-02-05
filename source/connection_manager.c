@@ -1423,8 +1423,6 @@ static void s_aws_http_connection_manager_on_connection_setup(
 
     aws_mutex_lock(&manager->lock);
 
-    bool is_shutting_down = manager->state == AWS_HCMST_SHUTTING_DOWN;
-
     AWS_FATAL_ASSERT(manager->internal_ref[AWS_HCMCT_PENDING_CONNECTIONS] > 0);
     s_connection_manager_internal_ref_decrease(manager, AWS_HCMCT_PENDING_CONNECTIONS, 1);
     if (!error_code) {
