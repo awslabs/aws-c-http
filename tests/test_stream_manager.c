@@ -641,7 +641,7 @@ TEST_CASE(h2_sm_mock_bad_connection_acquired) {
     size_t good_connections_num = options.max_connections - s_tester.bad_connection_to_offer;
     size_t streams_acquiring_num = 15;
     s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_delay_mock);
-    ASSERT_SUCCESS(s_sm_stream_acquiring(streams_acquiring_num));
+    ASSERT_SUCCESS(s_sm_stream_acquiring((int)streams_acquiring_num));
     /* The count should be max connection now */
     ASSERT_UINT_EQUALS(s_tester.delay_offer_connection_count, options.max_connections);
     /* Offer the connections waiting */
