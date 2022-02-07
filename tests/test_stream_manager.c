@@ -670,6 +670,53 @@ TEST_CASE(h2_sm_mock_bad_connection_acquired) {
     return s_tester_clean_up();
 }
 
+/* Test a connection offerred, and before the stream was made, the connection dies. The stream should fail */
+TEST_CASE(h2_sm_mock_connections_closed_before_request_made) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 1,
+        .max_concurrent_streams_per_connection = 3,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    ASSERT_SUCCESS(s_sm_stream_acquiring(2));
+    /* waiting for one fake connection made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(2));
+    /* No error happens */
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    /* Now, we close the connection, the stream manager will fail the new stream, if the opening streams not completed.
+     */
+    struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
+    aws_http_connection_close(fake_connection->connection);
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_reply_count(3));
+    /* ASSERT new one failed. */
+    ASSERT_INT_EQUALS(1, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, s_tester.error_code);
+    s_tester.acquiring_stream_errors = 0;
+    s_tester.error_code = 0;
+    s_drain_all_fake_connection_testing_channel();
+
+    /* As long as the connection finishes shutting down, we can still make more requests from new connection. */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(2));
+    /* waiting for one fake connection made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(2));
+    s_drain_all_fake_connection_testing_channel();
+    /* No error happens */
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    /* We made 4 streams successfully */
+    ASSERT_INT_EQUALS(4, aws_array_list_length(&s_tester.streams));
+
+    /* Finish all the opening streams */
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+
+    return s_tester_clean_up();
+}
+
 /* Test that the remote max concurrent streams setting hit */
 TEST_CASE(h2_sm_mock_max_concurrent_streams_remote) {
     (void)ctx;

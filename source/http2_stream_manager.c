@@ -80,11 +80,13 @@ static void s_sm_log_stats_synced(struct aws_http2_stream_manager *stream_manage
         TRACE,
         stream_manager,
         "Stream manager internal counts status: "
-        "connection acquiring=%zu, streams opening=%zu, pending make request count=%zu, pending acquisition count=%zu",
+        "connection acquiring=%zu, streams opening=%zu, pending make request count=%zu, pending acquisition count=%zu, "
+        "holding connections count=%zu",
         stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_CONNECTIONS_ACQUIRING],
         stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_OPEN_STREAM],
         stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_MAKE_REQUESTS],
-        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION]);
+        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION],
+        stream_manager->synced_data.holding_connections_count);
 }
 
 /* The count acquire and release all needs to be invoked helding the lock */
@@ -618,6 +620,7 @@ static void s_sm_connection_on_scheduled_stream_finishes(
             /* It might be removed already, but, it's fine */
             aws_random_access_set_remove(&stream_manager->synced_data.ideal_available_set, sm_connection);
             work.sm_connection_to_release = sm_connection;
+            --stream_manager->synced_data.holding_connections_count;
         }
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
