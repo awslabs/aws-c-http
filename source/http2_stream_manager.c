@@ -599,7 +599,6 @@ static void s_sm_connection_on_scheduled_stream_finishes(
     /* Reach the max current will still allow new requests, but the new stream will complete with error */
     bool connection_available = aws_http_connection_new_requests_allowed(sm_connection->connection);
     struct aws_http2_stream_management_transaction work;
-    int re_error = 0;
     s_aws_stream_management_transaction_init(&work, stream_manager);
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
@@ -622,7 +621,6 @@ static void s_sm_connection_on_scheduled_stream_finishes(
         }
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
-    AWS_ASSERT(!re_error && "Stream completed failed with random access set failure");
     s_aws_http2_stream_manager_execute_transaction(&work);
 }
 
