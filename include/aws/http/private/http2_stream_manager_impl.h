@@ -111,14 +111,20 @@ struct aws_http2_stream_manager {
          */
         enum aws_h2_sm_state_type state;
 
-        /* A set of all connections that meet all requirement to use. Note: there will be connections not in this set,
+        /**
+         * A set of all connections that meet all requirement to use. Note: there will be connections not in this set,
          * but hold by the stream manager, which can be tracked by the streams created on it. Set of `struct
-         * aws_h2_sm_connection *` */
-        struct aws_random_access_set ideal_sm_connection_set;
-        /* A set of all available connections that exceed the soft limits set by users. Note: there will be connections
+         * aws_h2_sm_connection *`
+         */
+        struct aws_random_access_set ideal_available_set;
+        /**
+         * A set of all available connections that exceed the soft limits set by users. Note: there will be connections
          * not in this set, but hold by the stream manager, which can be tracked by the streams created. Set of `struct
-         * aws_h2_sm_connection *` */
-        struct aws_random_access_set soft_limited_sm_connection_set;
+         * aws_h2_sm_connection *`
+         */
+        struct aws_random_access_set nonideal_available_set;
+        /* We don't mantain set for connections that is full or "dead" (Cannot make any new streams). We have streams
+         * opening from the connection tracking them */
 
         /**
          * The set of all incomplete stream acquisition requests (haven't decide what connection to make the request

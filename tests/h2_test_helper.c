@@ -528,6 +528,9 @@ int h2_fake_peer_init(struct h2_fake_peer *peer, const struct h2_fake_peer_optio
 }
 
 void h2_fake_peer_clean_up(struct h2_fake_peer *peer) {
+    if (!peer) {
+        return;
+    }
     aws_h2_frame_encoder_clean_up(&peer->encoder);
     h2_decode_tester_clean_up(&peer->decode);
     AWS_ZERO_STRUCT(peer);

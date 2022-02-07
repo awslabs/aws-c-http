@@ -133,6 +133,12 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN,
         "Stream acquisition failed because stream manager is shutting down"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_MANAGER_CONNECTION_ACQUIRE_FAILURE,
+        "Stream acquisition failed because stream manager failed to acquire a connection"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_MANAGER_UNEXPECTED_HTTP_VERSION,
+        "Stream acquisition failed because stream manager got an unexpected version of HTTP connection"),
 };
 /* clang-format on */
 

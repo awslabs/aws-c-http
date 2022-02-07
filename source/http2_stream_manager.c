@@ -142,16 +142,20 @@ static struct aws_h2_sm_connection *s_get_best_sm_connection_from_set(struct aws
     return errored == AWS_ERROR_SUCCESS ? chosen_connection : NULL;
 }
 
+/* helper function for building the transaction: Try to assign connection for a pending stream acquisition */
 /* *_synced should only be called with LOCK HELD or from another synced function */
-static void s_get_sm_connection_synced(
+static void s_sm_try_assign_connection_to_pending_stream_acquisition(
     struct aws_http2_stream_manager *stream_manager,
     struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition) {
 
     AWS_ASSERT(pending_stream_acquisition->sm_connection == NULL);
     int errored = 0;
-    if (aws_random_access_set_get_size(&stream_manager->synced_data.ideal_sm_connection_set)) {
+    if (aws_random_access_set_get_size(&stream_manager->synced_data.ideal_available_set)) {
+        /**
+         * Try assigning to connection from ideal set
+         */
         struct aws_h2_sm_connection *chosen_connection =
-            s_get_best_sm_connection_from_set(&stream_manager->synced_data.ideal_sm_connection_set);
+            s_get_best_sm_connection_from_set(&stream_manager->synced_data.ideal_available_set);
         AWS_ASSERT(chosen_connection);
         pending_stream_acquisition->sm_connection = chosen_connection;
         chosen_connection->num_streams_assigned++;
@@ -163,31 +167,13 @@ static void s_get_sm_connection_synced(
             (void *)chosen_connection->connection,
             (void *)pending_stream_acquisition,
             chosen_connection->num_streams_assigned);
-
-        if (chosen_connection->num_streams_assigned < chosen_connection->max_concurrent_streams &&
-            chosen_connection->num_streams_assigned >= stream_manager->ideal_concurrent_streams_per_connection) {
-            /* It meets the soft limit, but still available for new streams, move it to the soft limited set */
-            errored |=
-                aws_random_access_set_remove(&stream_manager->synced_data.ideal_sm_connection_set, chosen_connection);
-            bool added = false;
-            errored |= aws_random_access_set_add(
-                &stream_manager->synced_data.soft_limited_sm_connection_set, chosen_connection, &added);
-            errored |= !added;
-            chosen_connection->state = AWS_H2SMCST_NEARLY_FULL;
-            STREAM_MANAGER_LOGF(
-                DEBUG,
-                stream_manager,
-                "connection:%p reaches ideal concurrent streams limits. Streams assigned to the connection=%" PRIu32 ""
-                "while ideal limits=%zu. Moving it to soft limited set.",
-                (void *)chosen_connection->connection,
-                chosen_connection->num_streams_assigned,
-                stream_manager->ideal_concurrent_streams_per_connection);
-        } else if (chosen_connection->num_streams_assigned >= chosen_connection->max_concurrent_streams) {
+        /* Check if connection is still available or ideal, and move it if it's not */
+        if (chosen_connection->num_streams_assigned >= chosen_connection->max_concurrent_streams) {
             /* It becomes not available for new streams any more, remove it from the set, but still alive (streams
              * created will track the lifetime) */
             chosen_connection->state = AWS_H2SMCST_FULL;
             errored |=
-                aws_random_access_set_remove(&stream_manager->synced_data.ideal_sm_connection_set, chosen_connection);
+                aws_random_access_set_remove(&stream_manager->synced_data.ideal_available_set, chosen_connection);
             STREAM_MANAGER_LOGF(
                 DEBUG,
                 stream_manager,
@@ -196,12 +182,30 @@ static void s_get_sm_connection_synced(
                 (void *)chosen_connection->connection,
                 chosen_connection->num_streams_assigned,
                 chosen_connection->max_concurrent_streams);
+        } else if (chosen_connection->num_streams_assigned >= stream_manager->ideal_concurrent_streams_per_connection) {
+            /* It meets the ideal limit, but still available for new streams, move it to the nonidea-available set */
+            errored |=
+                aws_random_access_set_remove(&stream_manager->synced_data.ideal_available_set, chosen_connection);
+            bool added = false;
+            errored |= aws_random_access_set_add(
+                &stream_manager->synced_data.nonideal_available_set, chosen_connection, &added);
+            errored |= !added;
+            chosen_connection->state = AWS_H2SMCST_NEARLY_FULL;
+            STREAM_MANAGER_LOGF(
+                DEBUG,
+                stream_manager,
+                "connection:%p reaches ideal concurrent streams limits. Ideal limits=%zu. Moving it to nonlimited set.",
+                (void *)chosen_connection->connection,
+                stream_manager->ideal_concurrent_streams_per_connection);
         }
     } else if (stream_manager->synced_data.holding_connections_count == stream_manager->max_connections) {
-        /* Only check soft limited set when we have all the connections. */
-        if (aws_random_access_set_get_size(&stream_manager->synced_data.soft_limited_sm_connection_set)) {
+        /**
+         * Try assigning to connection from nonideal available set. Only happens when we hold all the connections we can
+         * have
+         */
+        if (aws_random_access_set_get_size(&stream_manager->synced_data.nonideal_available_set)) {
             struct aws_h2_sm_connection *chosen_connection =
-                s_get_best_sm_connection_from_set(&stream_manager->synced_data.soft_limited_sm_connection_set);
+                s_get_best_sm_connection_from_set(&stream_manager->synced_data.nonideal_available_set);
             AWS_ASSERT(chosen_connection);
             pending_stream_acquisition->sm_connection = chosen_connection;
             chosen_connection->num_streams_assigned++;
@@ -219,7 +223,7 @@ static void s_get_sm_connection_synced(
                  * created will track the lifetime) */
                 chosen_connection->state = AWS_H2SMCST_FULL;
                 errored |= aws_random_access_set_remove(
-                    &stream_manager->synced_data.soft_limited_sm_connection_set, chosen_connection);
+                    &stream_manager->synced_data.nonideal_available_set, chosen_connection);
                 STREAM_MANAGER_LOGF(
                     DEBUG,
                     stream_manager,
@@ -289,18 +293,28 @@ static void s_finish_pending_stream_acquisitions_task(struct aws_task *task, voi
     s_aws_http2_stream_manager_execute_transaction(&work);
 }
 
+/* helper function for building the transaction: how many new connections we should request */
 static void s_check_new_connections_needed_synced(struct aws_http2_stream_management_transaction *work) {
     struct aws_http2_stream_manager *stream_manager = work->stream_manager;
-    size_t num_connections_needed = stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION] /
-                                    stream_manager->ideal_concurrent_streams_per_connection;
+    /* The ideal new connection we need to fit all the pending stream acquisitions */
+    size_t ideal_new_connection_count =
+        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION] /
+        stream_manager->ideal_concurrent_streams_per_connection;
+    /* Rounding up */
     if (stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION] %
         stream_manager->ideal_concurrent_streams_per_connection) {
-        ++num_connections_needed;
+        ++ideal_new_connection_count;
     }
-    work->new_connections =
-        num_connections_needed - stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_CONNECTIONS_ACQUIRING];
-    work->new_connections = aws_min_size(
-        stream_manager->max_connections - stream_manager->synced_data.holding_connections_count, work->new_connections);
+    /* The ideal new connections sub the number of connections we are acquiring to avoid the async acquiring */
+    work->new_connections = aws_sub_size_saturating(
+        ideal_new_connection_count,
+        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_CONNECTIONS_ACQUIRING]);
+    /* The real number we can have is the min of how many more we can still have and how many we need */
+    size_t new_connections_avaliable =
+        stream_manager->max_connections - stream_manager->synced_data.holding_connections_count -
+        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_CONNECTIONS_ACQUIRING];
+    work->new_connections = aws_min_size(new_connections_avaliable, work->new_connections);
+    /* Update the number of connections we acquiring */
     s_sm_count_increase_synced(stream_manager, AWS_SMCT_CONNECTIONS_ACQUIRING, work->new_connections);
     STREAM_MANAGER_LOGF(
         TRACE,
@@ -331,10 +345,10 @@ static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2
                 aws_linked_list_pop_front(&stream_manager->synced_data.pending_stream_acquisitions);
             struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition =
                 AWS_CONTAINER_OF(node, struct aws_h2_sm_pending_stream_acquisition, node);
-            s_get_sm_connection_synced(stream_manager, pending_stream_acquisition);
+            s_sm_try_assign_connection_to_pending_stream_acquisition(stream_manager, pending_stream_acquisition);
             if (pending_stream_acquisition->sm_connection == NULL) {
-                /* Cannot find any connection, push it back and break the loop */
-                aws_linked_list_push_back(&stream_manager->synced_data.pending_stream_acquisitions, node);
+                /* Cannot find any connection, push it back to the front and break the loop */
+                aws_linked_list_push_front(&stream_manager->synced_data.pending_stream_acquisitions, node);
                 STREAM_MANAGER_LOGF(
                     TRACE,
                     stream_manager,
@@ -403,11 +417,34 @@ void s_sm_connection_destroy(struct aws_h2_sm_connection *sm_connection) {
     aws_mem_release(sm_connection->stream_manager->allocator, sm_connection);
 }
 
+static void s_sm_on_connection_acquired_failed_synced(
+    struct aws_http2_stream_manager *stream_manager,
+    struct aws_linked_list *stream_acquisitions_to_fail) {
+
+    /* Once we failed to acquire a connection, we fail the stream acquisitions that cannot fit into the remaining
+     * acquiring connections. */
+    size_t num_can_fit = aws_mul_size_saturating(
+        stream_manager->ideal_concurrent_streams_per_connection,
+        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_CONNECTIONS_ACQUIRING]);
+    size_t num_to_fail = aws_sub_size_saturating(
+        stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION], num_can_fit);
+    /* Get a list to fail instead of fail them with in the lock. */
+    for (size_t i = 0; i < num_to_fail; i++) {
+        struct aws_linked_list_node *node =
+            aws_linked_list_pop_front(&stream_manager->synced_data.pending_stream_acquisitions);
+        aws_linked_list_push_back(stream_acquisitions_to_fail, node);
+    }
+    s_sm_count_decrease_synced(stream_manager, AWS_SMCT_PENDING_ACQUISITION, num_to_fail);
+}
+
 static void s_sm_on_connection_acquired(struct aws_http_connection *connection, int error_code, void *user_data) {
     struct aws_http2_stream_manager *stream_manager = user_data;
     struct aws_http2_stream_management_transaction work;
     STREAM_MANAGER_LOGF(TRACE, stream_manager, "connection=%p acquired from connection manager", (void *)connection);
     int re_error = 0;
+    int stream_fail_error_code = AWS_ERROR_SUCCESS;
+    struct aws_linked_list stream_acquisitions_to_fail;
+    aws_linked_list_init(&stream_acquisitions_to_fail);
     s_aws_stream_management_transaction_init(&work, stream_manager);
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(stream_manager);
@@ -419,8 +456,8 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
                 "connection acquired from connection manager failed, with error: %d(%s)",
                 error_code,
                 aws_error_str(error_code));
-
-            /* TODO: fail SOME pending acquisitions */
+            s_sm_on_connection_acquired_failed_synced(stream_manager, &stream_acquisitions_to_fail);
+            stream_fail_error_code = AWS_ERROR_HTTP_STREAM_MANAGER_CONNECTION_ACQUIRE_FAILURE;
         } else if (aws_http_connection_get_version(connection) != AWS_HTTP_VERSION_2) {
             STREAM_MANAGER_LOGF(
                 ERROR,
@@ -428,7 +465,8 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
                 "Unexpected HTTP version acquired, release the connection=%p acquired immediately",
                 (void *)connection);
             re_error |= aws_http_connection_manager_release_connection(stream_manager->connection_manager, connection);
-            /* TODO: fail all the pending acquisitions (?) */
+            s_sm_on_connection_acquired_failed_synced(stream_manager, &stream_acquisitions_to_fail);
+            stream_fail_error_code = AWS_ERROR_HTTP_STREAM_MANAGER_UNEXPECTED_HTTP_VERSION;
         } else if (stream_manager->synced_data.state != AWS_H2SMST_READY) {
             STREAM_MANAGER_LOGF(
                 DEBUG,
@@ -449,7 +487,7 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
             struct aws_h2_sm_connection *sm_connection = s_sm_connection_new(stream_manager, connection);
             bool added = false;
             re_error |=
-                aws_random_access_set_add(&stream_manager->synced_data.ideal_sm_connection_set, sm_connection, &added);
+                aws_random_access_set_add(&stream_manager->synced_data.ideal_available_set, sm_connection, &added);
             re_error |= !added;
             ++stream_manager->synced_data.holding_connections_count;
         }
@@ -458,6 +496,9 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
     } /* END CRITICAL SECTION */
 
     AWS_ASSERT(!re_error && "connection acquired callback fails with programming errors");
+    /* Fail acquisitions if any */
+    s_finish_pending_stream_acquisitions_list_helper(
+        stream_manager, &stream_acquisitions_to_fail, stream_fail_error_code);
     s_aws_http2_stream_manager_execute_transaction(&work);
 }
 
@@ -497,27 +538,31 @@ static int s_on_incoming_body(struct aws_http_stream *stream, const struct aws_b
 }
 
 /* Helper invoked when underlying connections is still aviable and the num stream assigned has been updated */
-static int s_update_sm_connection_set_on_stream_finishes_synced(
+static void s_update_sm_connection_set_on_stream_finishes_synced(
     struct aws_h2_sm_connection *sm_connection,
     struct aws_http2_stream_manager *stream_manager) {
+
     int re_error = 0;
     size_t cur_num = sm_connection->num_streams_assigned;
     size_t ideal_num = stream_manager->ideal_concurrent_streams_per_connection;
     size_t max_num = sm_connection->max_concurrent_streams;
+    /**
+     * TODO: When the MAX_CONCURRENT_STREAMS from other side changed after the initial settings. We need to:
+     * - figure out where I am
+     * - figure out where I should be
+     * - if they're different, remove from where I am, put where should be
+     */
     if (sm_connection->state == AWS_H2SMCST_NEARLY_FULL && cur_num < ideal_num) {
         /* this connection is back from soft limited to ideal */
         bool exist = false;
         (void)exist;
-        /* I don't think there is case, the connection is not in the soft limited set at this point */
         AWS_ASSERT(
-            aws_random_access_set_exist(
-                &stream_manager->synced_data.soft_limited_sm_connection_set, sm_connection, &exist) == AWS_OP_SUCCESS &&
+            aws_random_access_set_exist(&stream_manager->synced_data.nonideal_available_set, sm_connection, &exist) ==
+                AWS_OP_SUCCESS &&
             exist);
-        re_error |=
-            aws_random_access_set_remove(&stream_manager->synced_data.soft_limited_sm_connection_set, sm_connection);
+        re_error |= aws_random_access_set_remove(&stream_manager->synced_data.nonideal_available_set, sm_connection);
         bool added = false;
-        re_error |=
-            aws_random_access_set_add(&stream_manager->synced_data.ideal_sm_connection_set, sm_connection, &added);
+        re_error |= aws_random_access_set_add(&stream_manager->synced_data.ideal_available_set, sm_connection, &added);
         re_error |= !added;
         sm_connection->state = AWS_H2SMCST_IDEAL;
     } else if (sm_connection->state == AWS_H2SMCST_FULL && cur_num < max_num) {
@@ -534,18 +579,18 @@ static int s_update_sm_connection_set_on_stream_finishes_synced(
             sm_connection->state = AWS_H2SMCST_NEARLY_FULL;
             STREAM_MANAGER_LOGF(
                 TRACE, stream_manager, "connection:%p added to soft limited set", (void *)sm_connection->connection);
-            re_error |= aws_random_access_set_add(
-                &stream_manager->synced_data.soft_limited_sm_connection_set, sm_connection, &added);
+            re_error |=
+                aws_random_access_set_add(&stream_manager->synced_data.nonideal_available_set, sm_connection, &added);
         } else {
             sm_connection->state = AWS_H2SMCST_IDEAL;
             STREAM_MANAGER_LOGF(
                 TRACE, stream_manager, "connection:%p added to ideal set", (void *)sm_connection->connection);
             re_error |=
-                aws_random_access_set_add(&stream_manager->synced_data.ideal_sm_connection_set, sm_connection, &added);
+                aws_random_access_set_add(&stream_manager->synced_data.ideal_available_set, sm_connection, &added);
         }
         re_error |= !added;
     }
-    return re_error ? AWS_OP_ERR : AWS_OP_SUCCESS;
+    AWS_ASSERT(re_error == AWS_OP_SUCCESS);
 }
 
 static void s_sm_connection_on_scheduled_stream_finishes(
@@ -562,19 +607,17 @@ static void s_sm_connection_on_scheduled_stream_finishes(
         --sm_connection->num_streams_assigned;
         if (!connection_available) {
             /* It might be removed already, but, it's fine */
-            re_error |=
-                aws_random_access_set_remove(&stream_manager->synced_data.ideal_sm_connection_set, sm_connection);
-            re_error |= aws_random_access_set_remove(
-                &stream_manager->synced_data.soft_limited_sm_connection_set, sm_connection);
+            aws_random_access_set_remove(&stream_manager->synced_data.ideal_available_set, sm_connection);
+            aws_random_access_set_remove(&stream_manager->synced_data.nonideal_available_set, sm_connection);
         } else {
-            re_error |= s_update_sm_connection_set_on_stream_finishes_synced(sm_connection, stream_manager);
+            s_update_sm_connection_set_on_stream_finishes_synced(sm_connection, stream_manager);
         }
         s_aws_http2_stream_manager_build_transaction_synced(&work);
         /* After we build transaction, if the sm_connection still have zero assigned stream, we can kill the
          * sm_connection */
         if (sm_connection->num_streams_assigned == 0) {
-            re_error |=
-                aws_random_access_set_remove(&stream_manager->synced_data.ideal_sm_connection_set, sm_connection);
+            /* It might be removed already, but, it's fine */
+            aws_random_access_set_remove(&stream_manager->synced_data.ideal_available_set, sm_connection);
             work.sm_connection_to_release = sm_connection;
         }
         s_unlock_synced_data(stream_manager);
@@ -679,7 +722,7 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
         goto error;
     }
     if (pending_stream_acquisition->callback) {
-        pending_stream_acquisition->callback(stream, error_code, pending_stream_acquisition->user_data);
+        pending_stream_acquisition->callback(stream, 0, pending_stream_acquisition->user_data);
     }
 
     /* Happy case, the complete callback will be invoked, and we clean things up at the callback, but we can release the
@@ -732,6 +775,7 @@ static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stre
             (void *)pending_stream_acquisition,
             (void *)pending_stream_acquisition->sm_connection->connection);
         /**
+         * TODO: Maybe a task per connection instead.
          * schedule a task from the connection's event loop to make request, so that:
          * - We can activate the stream for user and then invoked the callback
          * - The callback will happen asynced even the stream failed to be created
@@ -772,8 +816,8 @@ void s_stream_manager_destroy_final(struct aws_http2_stream_manager *stream_mana
     AWS_FATAL_ASSERT(stream_manager->connection_manager == NULL);
     AWS_FATAL_ASSERT(aws_linked_list_empty(&stream_manager->synced_data.pending_stream_acquisitions));
     aws_mutex_clean_up(&stream_manager->synced_data.lock);
-    aws_random_access_set_clean_up(&stream_manager->synced_data.ideal_sm_connection_set);
-    aws_random_access_set_clean_up(&stream_manager->synced_data.soft_limited_sm_connection_set);
+    aws_random_access_set_clean_up(&stream_manager->synced_data.ideal_available_set);
+    aws_random_access_set_clean_up(&stream_manager->synced_data.nonideal_available_set);
     aws_client_bootstrap_release(stream_manager->bootstrap);
 
     if (stream_manager->shutdown_complete_callback) {
@@ -796,8 +840,8 @@ void s_stream_manager_on_cm_shutdown_complete(void *user_data) {
 static void s_stream_manager_start_destroy(struct aws_http2_stream_manager *stream_manager) {
     STREAM_MANAGER_LOG(TRACE, stream_manager, "Stream Manager reaches the condition to destroy, start to destroy");
     /* If there is no outstanding streams, the connections set should be empty. */
-    AWS_ASSERT(aws_random_access_set_get_size(&stream_manager->synced_data.ideal_sm_connection_set) == 0);
-    AWS_ASSERT(aws_random_access_set_get_size(&stream_manager->synced_data.soft_limited_sm_connection_set) == 0);
+    AWS_ASSERT(aws_random_access_set_get_size(&stream_manager->synced_data.ideal_available_set) == 0);
+    AWS_ASSERT(aws_random_access_set_get_size(&stream_manager->synced_data.nonideal_available_set) == 0);
     AWS_ASSERT(stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_CONNECTIONS_ACQUIRING] == 0);
     AWS_ASSERT(stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_OPEN_STREAM] == 0);
     AWS_ASSERT(stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_MAKE_REQUESTS] == 0);
@@ -839,7 +883,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         goto on_error;
     }
     if (aws_random_access_set_init(
-            &stream_manager->synced_data.ideal_sm_connection_set,
+            &stream_manager->synced_data.ideal_available_set,
             allocator,
             aws_hash_ptr,
             aws_ptr_eq,
@@ -848,7 +892,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         goto on_error;
     }
     if (aws_random_access_set_init(
-            &stream_manager->synced_data.soft_limited_sm_connection_set,
+            &stream_manager->synced_data.nonideal_available_set,
             allocator,
             aws_hash_ptr,
             aws_ptr_eq,

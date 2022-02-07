@@ -390,7 +390,9 @@ void aws_http_connection_acquire(struct aws_http_connection *connection) {
 }
 
 void aws_http_connection_release(struct aws_http_connection *connection) {
-    AWS_ASSERT(connection);
+    if (!connection) {
+        return;
+    }
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
     if (prev_refcount == 1) {
         AWS_LOGF_TRACE(
