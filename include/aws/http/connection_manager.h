@@ -121,6 +121,8 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
  * Requests a connection from the manager.  The requester is notified of
  * an acquired connection (or failure to acquire) via the supplied callback.
  *
+ * For HTTP/2 connections, the callback will not fire until the server's settings have been received.
+ *
  * Once a connection has been successfully acquired from the manager it
  * must be released back (via aws_http_connection_manager_release_connection)
  * at some point.  Failure to do so will cause a resource leak.

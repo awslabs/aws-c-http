@@ -19,6 +19,8 @@ typedef bool(aws_http_connection_is_connection_available_fn)(const struct aws_ht
 typedef bool(aws_http_connection_manager_is_callers_thread_fn)(struct aws_channel *channel);
 typedef struct aws_channel *(aws_http_connection_manager_connection_get_channel_fn)(
     struct aws_http_connection *connection);
+typedef enum aws_http_version(aws_http_connection_manager_connection_get_version_fn)(
+    const struct aws_http_connection *connection);
 
 struct aws_http_connection_manager_system_vtable {
     /*
@@ -31,6 +33,7 @@ struct aws_http_connection_manager_system_vtable {
     aws_io_clock_fn *get_monotonic_time;
     aws_http_connection_manager_is_callers_thread_fn *is_callers_thread;
     aws_http_connection_manager_connection_get_channel_fn *connection_get_channel;
+    aws_http_connection_manager_connection_get_version_fn *connection_get_version;
 };
 
 AWS_HTTP_API
