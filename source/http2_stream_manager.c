@@ -179,10 +179,9 @@ static void s_sm_try_assign_connection_to_pending_stream_acquisition(
             STREAM_MANAGER_LOGF(
                 DEBUG,
                 stream_manager,
-                "connection:%p reaches max concurrent streams limits. Streams assigned to the connection=%" PRIu32 ""
-                "while limits=%" PRIu32 ". Moving it out of available connections.",
+                "connection:%p reaches max concurrent streams limits. "
+                "Connection max limits=%" PRIu32 ". Moving it out of available connections.",
                 (void *)chosen_connection->connection,
-                chosen_connection->num_streams_assigned,
                 chosen_connection->max_concurrent_streams);
         } else if (chosen_connection->num_streams_assigned >= stream_manager->ideal_concurrent_streams_per_connection) {
             /* It meets the ideal limit, but still available for new streams, move it to the nonidea-available set */
@@ -202,9 +201,12 @@ static void s_sm_try_assign_connection_to_pending_stream_acquisition(
         }
     } else if (stream_manager->synced_data.holding_connections_count == stream_manager->max_connections) {
         /**
-         * Try assigning to connection from nonideal available set. Only happens when we hold all the connections we can
-         * have
+         * Try assigning to connection from nonideal available set.
+         *
+         * Note that we do not assign to nonideal connections until we're holding all the connections we can ever
+         * possibly get. This way, we don't overfill the first connections we get our hands on.
          */
+
         if (aws_random_access_set_get_size(&stream_manager->synced_data.nonideal_available_set)) {
             struct aws_h2_sm_connection *chosen_connection =
                 s_get_best_sm_connection_from_set(&stream_manager->synced_data.nonideal_available_set);
@@ -229,11 +231,9 @@ static void s_sm_try_assign_connection_to_pending_stream_acquisition(
                 STREAM_MANAGER_LOGF(
                     DEBUG,
                     stream_manager,
-                    "connection %p reaches max concurrent streams limits. Streams assigned to the connection=%" PRIu32
-                    ", "
-                    "while limits=%" PRIu32 ". Moving it out of available connections.",
+                    "connection %p reaches max concurrent streams limits. "
+                    "Connection max limits=%" PRIu32 ". Moving it out of available connections.",
                     (void *)chosen_connection->connection,
-                    chosen_connection->num_streams_assigned,
                     chosen_connection->max_concurrent_streams);
             }
         }
@@ -621,6 +621,7 @@ static void s_sm_connection_on_scheduled_stream_finishes(
             aws_random_access_set_remove(&stream_manager->synced_data.ideal_available_set, sm_connection);
             work.sm_connection_to_release = sm_connection;
             --stream_manager->synced_data.holding_connections_count;
+            s_sm_log_stats_synced(stream_manager);
         }
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */

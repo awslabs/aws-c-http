@@ -697,6 +697,7 @@ TEST_CASE(h2_sm_mock_connections_closed_before_request_made) {
     /* ASSERT new one failed. */
     ASSERT_INT_EQUALS(1, s_tester.acquiring_stream_errors);
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, s_tester.error_code);
+    /* Reset errors */
     s_tester.acquiring_stream_errors = 0;
     s_tester.error_code = 0;
     s_drain_all_fake_connection_testing_channel();
@@ -836,7 +837,6 @@ TEST_CASE(h2_sm_mock_ideal_num_streams) {
     return s_tester_clean_up();
 }
 
-/* Test the soft limit from user works as we want */
 TEST_CASE(h2_sm_mock_large_ideal_num_streams) {
     (void)ctx;
     struct sm_tester_options options = {
@@ -863,7 +863,7 @@ TEST_CASE(h2_sm_mock_large_ideal_num_streams) {
         ASSERT_INT_EQUALS(s_fake_connection_get_stream_received(fake_connection), s_tester.max_con_stream_remote);
     }
 
-    /* Acquire 15 more, we can only have 10 (2*5) in total */
+    /* Acquire 15 more, we can only have 10 (2*5) in total. 21 acquisitions made */
     ASSERT_SUCCESS(s_sm_stream_acquiring(15));
     s_drain_all_fake_connection_testing_channel();
     ASSERT_SUCCESS(s_wait_on_streams_reply_count(10 - 6));
@@ -873,11 +873,19 @@ TEST_CASE(h2_sm_mock_large_ideal_num_streams) {
         struct sm_fake_connection *fake_connection = s_get_fake_connection(i);
         ASSERT_INT_EQUALS(s_fake_connection_get_stream_received(fake_connection), s_tester.max_con_stream_remote);
     }
-
+    ASSERT_UINT_EQUALS(10, aws_array_list_length(&s_tester.streams));
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
     s_drain_all_fake_connection_testing_channel();
-    /* completed the remain streams */
+    /* Completed 10 streams, 10 more streams created */
+    ASSERT_UINT_EQUALS(20, aws_array_list_length(&s_tester.streams));
+    /* Completed remain 10 streams */
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+    s_drain_all_fake_connection_testing_channel();
+    /* Should have 1 more streams made now, which will have all 21 made */
+    ASSERT_UINT_EQUALS(21, aws_array_list_length(&s_tester.streams));
+    /* Completed all of them again, and we are good */
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+    s_drain_all_fake_connection_testing_channel();
 
     return s_tester_clean_up();
 }
