@@ -1325,7 +1325,9 @@ static void s_aws_http_connection_manager_h2_on_goaway_received(
         }
     }
     s_aws_http_connection_manager_build_transaction(&work);
+
     aws_mutex_unlock(&manager->lock);
+
     s_aws_http_connection_manager_execute_transaction(&work);
 }
 
