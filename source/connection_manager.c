@@ -124,12 +124,13 @@ enum aws_http_connection_manager_count_type {
  * READY - connections may be acquired and released.  When the external ref count for the manager
  * drops to zero, the manager moves to:
  *
+ * TODO: Seems like connections can still be release while shutting down.
  * SHUTTING_DOWN - connections may no longer be acquired and released (how could they if the external
  * ref count was accurate?) but in case of user ref errors, we simply fail attempts to do so rather
  * than crash or underflow.  While in this state, we wait for a set of tracking counters to all fall to zero:
  *
  *   pending_connect_count - the # of unresolved calls to the http layer's connect logic
- *   open_connection_count - the # of connections for whom the release callback (from http) has not been invoked
+ *   open_connection_count - the # of connections for whom the shutdown callback (from http) has not been invoked
  *   vended_connection_count - the # of connections held by external users that haven't been released.  Under correct
  *      usage this should be zero before SHUTTING_DOWN is entered, but we attempt to handle incorrect usage gracefully.
  *
@@ -933,6 +934,7 @@ on_error:
 
 void aws_http_connection_manager_acquire(struct aws_http_connection_manager *manager) {
     aws_mutex_lock(&manager->lock);
+    aws_ref_count_acquire(&manager->internal_ref_count);
     AWS_FATAL_ASSERT(manager->external_ref_count > 0);
     manager->external_ref_count += 1;
     aws_mutex_unlock(&manager->lock);
@@ -1174,10 +1176,6 @@ void aws_http_connection_manager_acquire_connection(
 
     struct aws_http_connection_acquisition *request =
         aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_http_connection_acquisition));
-    if (request == NULL) {
-        callback(NULL, aws_last_error(), user_data);
-        return;
-    }
 
     request->allocator = manager->allocator;
     request->callback = callback;
@@ -1248,7 +1246,10 @@ int aws_http_connection_manager_release_connection(
     bool should_release_connection = !manager->system_vtable->is_connection_available(connection);
 
     AWS_LOGF_DEBUG(
-        AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Releasing connection (id=%p)", (void *)manager, (void *)connection);
+        AWS_LS_HTTP_CONNECTION_MANAGER,
+        "id=%p: User releasing connection (id=%p)",
+        (void *)manager,
+        (void *)connection);
 
     aws_mutex_lock(&manager->lock);
 
@@ -1324,7 +1325,9 @@ static void s_aws_http_connection_manager_h2_on_goaway_received(
         }
     }
     s_aws_http_connection_manager_build_transaction(&work);
+
     aws_mutex_unlock(&manager->lock);
+
     s_aws_http_connection_manager_execute_transaction(&work);
 }
 
