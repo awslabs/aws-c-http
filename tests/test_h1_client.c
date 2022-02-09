@@ -2142,7 +2142,7 @@ struct slow_body_sender {
 };
 
 static int s_slow_stream_read(struct aws_input_stream *stream, struct aws_byte_buf *dest) {
-    struct slow_body_sender *sender = stream->impl;
+    struct slow_body_sender *sender = aws_input_stream_get_impl(stream);
 
     size_t dst_available = dest->capacity - dest->len;
     size_t writing = 0;
@@ -2170,17 +2170,17 @@ static int s_slow_stream_read(struct aws_input_stream *stream, struct aws_byte_b
     return AWS_OP_SUCCESS;
 }
 static int s_slow_stream_get_status(struct aws_input_stream *stream, struct aws_stream_status *status) {
-    struct slow_body_sender *sender = stream->impl;
+    struct slow_body_sender *sender = aws_input_stream_get_impl(stream);
     *status = sender->status;
     return AWS_OP_SUCCESS;
 }
 static int s_slow_stream_get_length(struct aws_input_stream *stream, int64_t *out_length) {
-    struct slow_body_sender *sender = stream->impl;
+    struct slow_body_sender *sender = aws_input_stream_get_impl(stream);
     *out_length = sender->cursor.len;
     return AWS_OP_SUCCESS;
 }
 static void s_slow_stream_destroy(struct aws_input_stream *stream) {
-    aws_mem_release(stream->allocator, stream);
+    (void)stream;
 }
 
 static struct aws_input_stream_vtable s_slow_stream_vtable = {
@@ -2188,7 +2188,7 @@ static struct aws_input_stream_vtable s_slow_stream_vtable = {
     .read = s_slow_stream_read,
     .get_status = s_slow_stream_get_status,
     .get_length = s_slow_stream_get_length,
-    .destroy = s_slow_stream_destroy,
+    .impl_destroy = s_slow_stream_destroy,
 };
 
 /* It should be fine to receive a response before the request has finished sending */
@@ -2208,11 +2208,13 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
         .delay_ticks = 5,
         .bytes_per_tick = 1,
     };
-    struct aws_input_stream body_stream = {
+    struct aws_input_stream_options body_stream_options = {
         .allocator = allocator,
         .impl = &body_sender,
         .vtable = &s_slow_stream_vtable,
     };
+
+    struct aws_input_stream *body_stream = aws_input_stream_new(&body_stream_options);
 
     struct aws_http_header headers[] = {
         {
@@ -2226,7 +2228,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
     ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("PUT")));
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/plan.txt")));
     ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
-    aws_http_message_set_body_stream(request, &body_stream);
+    aws_http_message_set_body_stream(request, body_stream);
 
     struct client_stream_tester stream_tester;
     ASSERT_SUCCESS(s_stream_tester_init(&stream_tester, &tester, request));
@@ -2236,6 +2238,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
 
     /* Ensure the request can be destroyed after request is sent */
     aws_http_message_destroy(request);
+    aws_input_stream_release(body_stream);
 
     /* send response */
     ASSERT_SUCCESS(testing_channel_push_read_str(&tester.testing_channel, "HTTP/1.1 200 OK\r\n\r\n"));
@@ -2287,11 +2290,12 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_chunks_done_sendin
         .delay_ticks = 5,
         .bytes_per_tick = 1,
     };
-    struct aws_input_stream body_stream = {
+    struct aws_input_stream_options body_stream_options = {
         .allocator = allocator,
         .impl = &body_sender,
         .vtable = &s_slow_stream_vtable,
     };
+    struct aws_input_stream *body_stream = aws_input_stream_new(&body_stream_options);
 
     struct aws_http_message *request = s_new_default_chunked_put_request(allocator);
     struct client_stream_tester stream_tester;
@@ -2305,13 +2309,14 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_chunks_done_sendin
 
     testing_channel_run_currently_queued_tasks(&tester.testing_channel);
 
-    struct aws_http1_chunk_options options = s_default_chunk_options(&body_stream, body_sender.cursor.len);
+    struct aws_http1_chunk_options options = s_default_chunk_options(body_stream, body_sender.cursor.len);
     options.on_complete = NULL; /* The stream_tester takes care of the stream deletion */
     ASSERT_SUCCESS(aws_http1_stream_write_chunk(stream_tester.stream, &options));
     ASSERT_SUCCESS(s_write_termination_chunk(allocator, stream_tester.stream));
 
     /* Ensure the request can be destroyed after request is sent */
     aws_http_message_destroy(request);
+    aws_input_stream_release(body_stream);
 
     /* tick loop until body finishes sending.*/
     while (body_sender.cursor.len > 0) {
@@ -3307,6 +3312,7 @@ struct error_from_callback_tester {
     bool has_errored;
     struct aws_stream_status status;
     int on_complete_error_code;
+    struct aws_allocator *alloc;
 };
 
 static int s_error_from_callback_common(
@@ -3330,7 +3336,7 @@ static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct
 
     (void)dest;
 
-    struct error_from_callback_tester *error_tester = body->impl;
+    struct error_from_callback_tester *error_tester = aws_input_stream_get_impl(body);
     if (s_error_from_callback_common(error_tester, REQUEST_CALLBACK_OUTGOING_BODY)) {
         return AWS_OP_ERR;
     }
@@ -3342,13 +3348,13 @@ static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct
 }
 
 static int s_error_from_outgoing_body_get_status(struct aws_input_stream *body, struct aws_stream_status *status) {
-    struct error_from_callback_tester *error_tester = body->impl;
+    struct error_from_callback_tester *error_tester = aws_input_stream_get_impl(body);
     *status = error_tester->status;
     return AWS_OP_SUCCESS;
 }
 
 static void s_error_from_outgoing_body_destroy(struct aws_input_stream *stream) {
-    aws_mem_release(stream->allocator, stream);
+    (void)stream;
 }
 
 static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
@@ -3356,7 +3362,7 @@ static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
     .read = s_error_from_outgoing_body_read,
     .get_status = s_error_from_outgoing_body_get_status,
     .get_length = NULL,
-    .destroy = s_error_from_outgoing_body_destroy,
+    .impl_destroy = s_error_from_outgoing_body_destroy,
 };
 
 static int s_error_from_incoming_headers(
@@ -3411,12 +3417,14 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
                 .is_end_of_stream = false,
             },
     };
-    struct aws_input_stream error_from_outgoing_body_stream = {
+    struct aws_input_stream_options error_from_outgoing_body_stream_options = {
         .allocator = allocator,
         .impl = &error_tester,
         .vtable = &s_error_from_outgoing_body_vtable,
     };
 
+    struct aws_input_stream *error_from_outgoing_body_stream =
+        aws_input_stream_new(&error_from_outgoing_body_stream_options);
     /* send request */
     struct aws_http_header headers[] = {
         {
@@ -3430,7 +3438,7 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
     ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_http_method_post));
     ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
     ASSERT_SUCCESS(aws_http_message_add_header_array(request, headers, AWS_ARRAY_SIZE(headers)));
-    aws_http_message_set_body_stream(request, &error_from_outgoing_body_stream);
+    aws_http_message_set_body_stream(request, error_from_outgoing_body_stream);
 
     struct aws_http_make_request_options opt = {
         .self_size = sizeof(opt),
@@ -3450,6 +3458,7 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
 
     /* Ensure the request can be destroyed after request is sent */
     aws_http_message_destroy(opt.request);
+    aws_input_stream_release(error_from_outgoing_body_stream);
 
     /* send response */
     ASSERT_SUCCESS(testing_channel_push_read_str_ignore_errors(

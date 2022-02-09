@@ -55,6 +55,9 @@ struct aws_h1_stream {
     /* Buffer for incoming data that needs to stick around. */
     struct aws_byte_buf incoming_storage_buf;
 
+    /* Keep the underlying message alive */
+    struct aws_http_message *http_message;
+
     struct {
         /* TODO: move most other members in here */
 
