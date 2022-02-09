@@ -127,6 +127,7 @@ static struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t p
 static struct aws_h2err s_decoder_on_data_begin(
     uint32_t stream_id,
     uint32_t payload_len,
+    uint32_t total_padding_bytes,
     bool end_stream,
     void *userdata);
 static struct aws_h2err s_decoder_on_data_i(uint32_t stream_id, struct aws_byte_cursor data, void *userdata);
@@ -300,8 +301,11 @@ static struct aws_h2_connection *s_connection_new(
     connection->base.http_version = AWS_HTTP_VERSION_2;
     /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
     connection->base.next_stream_id = (server ? 2 : 1);
-    connection->base.manual_window_management = manual_window_management;
+    /* Stream window management */
+    connection->base.stream_manual_window_management = manual_window_management;
 
+    /* Connection window management */
+    connection->conn_manual_window_management = http2_options->conn_manual_window_management;
     connection->on_goaway_received = http2_options->on_goaway_received;
     connection->on_remote_settings_change = http2_options->on_remote_settings_change;
 
@@ -1146,7 +1150,28 @@ struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised
     return AWS_H2ERR_SUCCESS;
 }
 
-struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_len, bool end_stream, void *userdata) {
+static int s_connection_send_update_window(struct aws_h2_connection *connection, uint32_t window_size) {
+    struct aws_h2_frame *connection_window_update_frame =
+        aws_h2_frame_new_window_update(connection->base.alloc, 0, window_size);
+    if (!connection_window_update_frame) {
+        CONNECTION_LOGF(
+            ERROR,
+            connection,
+            "WINDOW_UPDATE frame on connection failed to be sent, error %s",
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+    aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
+    connection->thread_data.window_size_self += window_size;
+    return AWS_OP_SUCCESS;
+}
+
+struct aws_h2err s_decoder_on_data_begin(
+    uint32_t stream_id,
+    uint32_t payload_len,
+    uint32_t total_padding_bytes,
+    bool end_stream,
+    void *userdata) {
     struct aws_h2_connection *connection = userdata;
 
     /* A receiver that receives a flow-controlled frame MUST always account for its contribution against the connection
@@ -1169,26 +1194,39 @@ struct aws_h2err s_decoder_on_data_begin(uint32_t stream_id, uint32_t payload_le
     }
 
     if (stream) {
-        err = aws_h2_stream_on_decoder_data_begin(stream, payload_len, end_stream);
+        err = aws_h2_stream_on_decoder_data_begin(stream, payload_len, total_padding_bytes, end_stream);
         if (aws_h2err_failed(err)) {
             return err;
         }
     }
 
-    /* if manual_window_management is false, we will automatically maintain the connection self window size */
-    if (payload_len != 0 && !connection->base.manual_window_management) {
-        struct aws_h2_frame *connection_window_update_frame =
-            aws_h2_frame_new_window_update(connection->base.alloc, 0, payload_len);
-        if (!connection_window_update_frame) {
-            CONNECTION_LOGF(
-                ERROR,
-                connection,
-                "WINDOW_UPDATE frame on connection failed to be sent, error %s",
-                aws_error_name(aws_last_error()));
+    if (total_padding_bytes != 0 && connection->conn_manual_window_management) {
+        /**
+         * Automatically update the flow-window to account for padding, even if "manual window management"
+         * is enabled. We do this because the current API doesn't have any way to inform the user about padding,
+         * so we can't expect them to manage it themselves.
+         */
+        if (s_connection_send_update_window(connection, total_padding_bytes)) {
             return aws_h2err_from_last_error();
         }
-        aws_h2_connection_enqueue_outgoing_frame(connection, connection_window_update_frame);
-        connection->thread_data.window_size_self += payload_len;
+        CONNECTION_LOGF(
+            DEBUG,
+            connection,
+            "DATA with %" PRIu32
+            " padding. Updating the window for padding and one byte for padding length automatically.",
+            total_padding_bytes - 1 /* one byte for padding length */);
+    }
+
+    /* if conn_manual_window_management is false, we will automatically maintain the connection self window size */
+    if (payload_len != 0 && !connection->conn_manual_window_management) {
+        if (s_connection_send_update_window(connection, payload_len)) {
+            return aws_h2err_from_last_error();
+        }
+        CONNECTION_LOGF(
+            TRACE,
+            connection,
+            "Connection with no manual window management, updating window with size %" PRIu32 " automatically.",
+            payload_len);
     }
 
     return AWS_H2ERR_SUCCESS;
@@ -1721,110 +1759,6 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
     aws_http_stream_release(&stream->base);
 }
 
-struct aws_http_headers *aws_h2_create_headers_from_request(
-    struct aws_http_message *request,
-    struct aws_allocator *alloc) {
-
-    struct aws_http_headers *old_headers = aws_http_message_get_headers(request);
-    bool is_pseudoheader = false;
-    struct aws_http_headers *result = aws_http_headers_new(alloc);
-    struct aws_http_header header_iter;
-    struct aws_byte_buf lower_name_buf;
-    AWS_ZERO_STRUCT(lower_name_buf);
-
-    /* Check whether the old_headers have pseudo header or not */
-    if (aws_http_headers_count(old_headers)) {
-        if (aws_http_headers_get_index(old_headers, 0, &header_iter)) {
-            goto error;
-        }
-        is_pseudoheader = header_iter.name.ptr[0] == ':';
-    }
-    if (!is_pseudoheader) {
-        /* TODO: Set pseudo headers all from message, which will lead an API change to aws_http_message */
-        /* No pseudoheader detected, we set them from the request */
-        /* Set pseudo headers */
-        struct aws_byte_cursor method;
-        if (aws_http_message_get_request_method(request, &method)) {
-            /* error will happen when the request is invalid */
-            aws_raise_error(AWS_ERROR_HTTP_INVALID_METHOD);
-            goto error;
-        }
-        if (aws_http_headers_add(result, aws_http_header_method, method)) {
-            goto error;
-        }
-        /* we set a default value, "https", for now */
-        struct aws_byte_cursor scheme_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("https");
-        if (aws_http_headers_add(result, aws_http_header_scheme, scheme_cursor)) {
-            goto error;
-        }
-        /* Set an empty authority for now, if host header field is found, we set it as the value of host */
-        struct aws_byte_cursor authority_cursor;
-        struct aws_byte_cursor host_cursor = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("host");
-        if (!aws_http_headers_get(old_headers, host_cursor, &authority_cursor)) {
-            if (aws_http_headers_add(result, aws_http_header_authority, authority_cursor)) {
-                goto error;
-            }
-        }
-        struct aws_byte_cursor path_cursor;
-        if (aws_http_message_get_request_path(request, &path_cursor)) {
-            aws_raise_error(AWS_ERROR_HTTP_INVALID_PATH);
-            goto error;
-        }
-        if (aws_http_headers_add(result, aws_http_header_path, path_cursor)) {
-            goto error;
-        }
-    }
-    /* if pseudoheader is included in message, we just convert all the headers from old_headers to result */
-    if (aws_byte_buf_init(&lower_name_buf, alloc, 256)) {
-        goto error;
-    }
-    for (size_t iter = 0; iter < aws_http_headers_count(old_headers); iter++) {
-        /* name should be converted to lower case */
-        if (aws_http_headers_get_index(old_headers, iter, &header_iter)) {
-            goto error;
-        }
-        /* append lower case name to the buffer */
-        aws_byte_buf_append_with_lookup(&lower_name_buf, &header_iter.name, aws_lookup_table_to_lower_get());
-        struct aws_byte_cursor lower_name_cursor = aws_byte_cursor_from_buf(&lower_name_buf);
-        enum aws_http_header_name name_enum = aws_http_lowercase_str_to_header_name(lower_name_cursor);
-        switch (name_enum) {
-            case AWS_HTTP_HEADER_COOKIE:
-                /* split cookie if USE CACHE */
-                if (header_iter.compression == AWS_HTTP_HEADER_COMPRESSION_USE_CACHE) {
-                    struct aws_byte_cursor cookie_chunk;
-                    AWS_ZERO_STRUCT(cookie_chunk);
-                    while (aws_byte_cursor_next_split(&header_iter.value, ';', &cookie_chunk)) {
-                        if (aws_http_headers_add(
-                                result, lower_name_cursor, aws_strutil_trim_http_whitespace(cookie_chunk))) {
-                            goto error;
-                        }
-                    }
-                } else {
-                    if (aws_http_headers_add(result, lower_name_cursor, header_iter.value)) {
-                        goto error;
-                    }
-                }
-                break;
-            case AWS_HTTP_HEADER_HOST:
-                /* host header has been converted to :authority, do nothing here */
-                break;
-            /* TODO: handle connection-specific header field (RFC7540 8.1.2.2) */
-            default:
-                if (aws_http_headers_add(result, lower_name_cursor, header_iter.value)) {
-                    goto error;
-                }
-                break;
-        }
-        aws_byte_buf_reset(&lower_name_buf, false);
-    }
-    aws_byte_buf_clean_up(&lower_name_buf);
-    return result;
-error:
-    aws_http_headers_release(result);
-    aws_byte_buf_clean_up(&lower_name_buf);
-    return NULL;
-}
-
 int aws_h2_connection_on_stream_closed(
     struct aws_h2_connection *connection,
     struct aws_h2_stream *stream,
@@ -1904,6 +1838,7 @@ static void s_move_stream_to_thread(
     uint32_t max_concurrent_streams = connection->thread_data.settings_peer[AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS];
     if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) >= max_concurrent_streams) {
         AWS_H2_STREAM_LOG(ERROR, stream, "Failed activating stream, max concurrent streams are reached");
+        aws_raise_error(AWS_ERROR_HTTP_MAX_CONCURRENT_STREAMS_EXCEEDED);
         goto error;
     }
 
@@ -2159,10 +2094,12 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
         /* Silently do nothing. */
         return;
     }
-    if (!connection_base->manual_window_management) {
+    if (!connection->conn_manual_window_management) {
         /* auto-mode, manual update window is not supported, silently do nothing with warning log. */
         CONNECTION_LOG(
-            DEBUG, connection, "Manual window management is off, update window operations are not supported.");
+            DEBUG,
+            connection,
+            "Connection manual window management is off, update window operations are not supported.");
         return;
     }
     struct aws_h2_frame *connection_window_update_frame =
@@ -2217,6 +2154,11 @@ static void s_connection_update_window(struct aws_http_connection *connection_ba
         aws_h2_frame_destroy(connection_window_update_frame);
         return;
     }
+    CONNECTION_LOGF(
+        TRACE,
+        connection,
+        "User requested to update the HTTP/2 connection's flow-control windows by %" PRIu32 ".",
+        increment_size);
     return;
 overflow:
     /* Shutdown the connection as overflow detected */

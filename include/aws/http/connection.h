@@ -7,12 +7,12 @@
  */
 
 #include <aws/http/http.h>
-#include <aws/http/proxy.h>
 
 struct aws_client_bootstrap;
 struct aws_socket_options;
 struct aws_tls_connection_options;
 struct aws_http2_setting;
+struct proxy_env_var_settings;
 
 /**
  * An HTTP connection.
@@ -176,7 +176,7 @@ struct aws_http2_connection_options {
 
     /**
      * Required
-     * The num of settings to change.
+     * The num of settings to change (Length of the initial_settings_array).
      */
     size_t num_initial_settings;
 
@@ -215,6 +215,26 @@ struct aws_http2_connection_options {
      * See `aws_http2_on_remote_settings_change_fn`.
      */
     aws_http2_on_remote_settings_change_fn *on_remote_settings_change;
+
+    /**
+     * Optional.
+     * Set to true to manually manage the flow-control window of whole HTTP/2 connection.
+     *
+     * If false, the connection will maintain its flow-control windows such that
+     * no back-pressure is applied and data arrives as fast as possible.
+     *
+     * If true, the flow-control window of the whole connection will shrink as body data
+     * is received (headers, padding, and other metadata do not affect the window) for every streams
+     * created on this connection.
+     * The initial connection flow-control window is 65,535.
+     * Once the connection's flow-control window reaches to 0, all the streams on the connection stop receiving any
+     * further data.
+     * The user must call aws_http2_connection_update_window() to increment the connection's
+     * window and keep data flowing.
+     * Note: the padding of data frame counts to the flow-control window.
+     * But, the client will always automatically update the window for padding even for manual window update.
+     */
+    bool conn_manual_window_management;
 };
 
 /**
@@ -292,20 +312,26 @@ struct aws_http_client_connection_options {
      *
      * If true, the flow-control window of each stream will shrink as body data
      * is received (headers, padding, and other metadata do not affect the window).
-     * `initial_window_size` determines the starting size of each stream's window.
-     * If a stream's flow-control window reaches 0, no further data will be received.
-     * The user must call aws_http_stream_update_window() to increment the stream's
-     * window and keep data flowing.
+     * `initial_window_size` determines the starting size of each stream's window for HTTP/1 stream, while HTTP/2 stream
+     * will use the settings AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE to inform the other side about read back pressure
      *
-     * If you created a HTTP/2 connection, it will also control the connection window
-     * management.
+     * If a stream's flow-control window reaches 0, no further data will be received. The user must call
+     * aws_http_stream_update_window() to increment the stream's window and keep data flowing.
+     *
+     * If a HTTP/2 connection created, it will ONLY control the stream window
+     * management. Connection window management is controlled by
+     * conn_manual_window_management. Note: the padding of data frame counts to the flow-control window.
+     * But, the client will always automatically update the window for padding even for manual window update.
      */
     bool manual_window_management;
 
     /**
-     * The starting size of each HTTP stream's flow-control window.
+     * The starting size of each HTTP stream's flow-control window for HTTP/1 connection.
      * Required if `manual_window_management` is true,
      * ignored if `manual_window_management` is false.
+     *
+     * Always ignored when HTTP/2 connection created. The initial window size is controlled by the settings,
+     * `AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE`
      */
     size_t initial_window_size;
 
@@ -541,7 +567,7 @@ void aws_http2_connection_get_local_settings(
  * Get the settings received from remote peer, which we are using to restricts the message to send.
  *
  * @param http2_connection HTTP/2 connection.
- * @param out_settings fixed size array of aws_http2_setting gets set to  the remote settings
+ * @param out_settings fixed size array of aws_http2_setting gets set to the remote settings
  */
 AWS_HTTP_API
 void aws_http2_connection_get_remote_settings(
@@ -611,14 +637,14 @@ int aws_http2_connection_get_received_goaway(
 /**
  * Increment the connection's flow-control window to keep data flowing (HTTP/2 only).
  *
- * If the connection was created with `manual_window_management` set true,
+ * If the connection was created with `conn_manual_window_management` set true,
  * the flow-control window of the connection will shrink as body data is received for all the streams created on it.
  * (headers, padding, and other metadata do not affect the window).
  * The initial connection flow-control window is 65,535.
  * Once the connection's flow-control window reaches to 0, all the streams on the connection stop receiving any further
  * data.
  *
- * If `manual_window_management` is false, this call will have no effect.
+ * If `conn_manual_window_management` is false, this call will have no effect.
  * The connection maintains its flow-control windows such that
  * no back-pressure is applied and data arrives as fast as possible.
  *

@@ -18,6 +18,7 @@ struct aws_http_stream_vtable {
     int (*activate)(struct aws_http_stream *stream);
 
     int (*http1_write_chunk)(struct aws_http_stream *http1_stream, const struct aws_http1_chunk_options *options);
+    int (*http1_add_trailer)(struct aws_http_stream *http1_stream, const struct aws_http_headers *trailing_headers);
 
     int (*http2_reset_stream)(struct aws_http_stream *http2_stream, uint32_t http2_error);
     int (*http2_get_received_error_code)(struct aws_http_stream *http2_stream, uint32_t *http2_error);
@@ -60,5 +61,22 @@ struct aws_http_stream {
     struct aws_http_stream_client_data *client_data;
     struct aws_http_stream_server_data *server_data;
 };
+
+AWS_EXTERN_C_BEGIN
+
+/**
+ * Create an HTTP/2 message from HTTP/1.1 message.
+ * pseudo headers will be created from the context and added to the headers of new message.
+ * Normal headers will be copied to the headers of new message.
+ * Note: `host` will stay and `:authority` will not be set. (RFC-7540 8.1.2.3). Some sever don't support it.
+ * TODO: (Maybe more, connection-specific header will be removed, etc...)
+ * TODO: REFCOUNT INPUT_STREAMS!!! And make it public.
+ */
+AWS_HTTP_API
+struct aws_http_message *aws_http2_message_new_from_http1(
+    struct aws_http_message *http1_msg,
+    struct aws_allocator *alloc);
+
+AWS_EXTERN_C_END
 
 #endif /* AWS_HTTP_REQUEST_RESPONSE_IMPL_H */

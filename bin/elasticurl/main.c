@@ -158,6 +158,7 @@ static int s_parse_signing_context(
 }
 
 static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
+    bool uri_found = false;
     while (true) {
         int option_index = 0;
         int c =
@@ -278,6 +279,18 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
             case 'h':
                 s_usage(0);
                 break;
+            case 0x02: {
+                struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str(aws_cli_positional_arg);
+                if (aws_uri_init_parse(&ctx->uri, ctx->allocator, &uri_cursor)) {
+                    fprintf(
+                        stderr,
+                        "Failed to parse uri %s with error %s\n",
+                        (char *)uri_cursor.ptr,
+                        aws_error_debug_str(aws_last_error()));
+                    s_usage(1);
+                }
+                uri_found = true;
+            } break;
             default:
                 fprintf(stderr, "Unknown option\n");
                 s_usage(1);
@@ -310,18 +323,7 @@ static void s_parse_options(int argc, char **argv, struct elasticurl_ctx *ctx) {
         ctx->input_body = aws_input_stream_new_from_cursor(ctx->allocator, &empty_cursor);
     }
 
-    if (aws_cli_optind < argc) {
-        struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str(argv[aws_cli_optind++]);
-
-        if (aws_uri_init_parse(&ctx->uri, ctx->allocator, &uri_cursor)) {
-            fprintf(
-                stderr,
-                "Failed to parse uri %s with error %s\n",
-                (char *)uri_cursor.ptr,
-                aws_error_debug_str(aws_last_error()));
-            s_usage(1);
-        };
-    } else {
+    if (!uri_found) {
         fprintf(stderr, "A URI for the request must be supplied.\n");
         s_usage(1);
     }
@@ -389,8 +391,13 @@ static void s_on_stream_complete_fn(struct aws_http_stream *stream, int error_co
     aws_http_stream_release(stream);
 }
 
-static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_ctx) {
-    struct aws_http_message *request = aws_http_message_new_request(app_ctx->allocator);
+static struct aws_http_message *s_build_http_request(
+    struct elasticurl_ctx *app_ctx,
+    enum aws_http_version protocol_version) {
+
+    struct aws_http_message *request = protocol_version == AWS_HTTP_VERSION_2
+                                           ? aws_http2_message_new_request(app_ctx->allocator)
+                                           : aws_http_message_new_request(app_ctx->allocator);
     if (request == NULL) {
         fprintf(stderr, "failed to allocate request\n");
         exit(1);
@@ -398,18 +405,26 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
 
     aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str(app_ctx->verb));
     aws_http_message_set_request_path(request, app_ctx->uri.path_and_query);
+    if (protocol_version == AWS_HTTP_VERSION_2) {
+        struct aws_http_headers *h2_headers = aws_http_message_get_headers(request);
+        aws_http2_headers_set_request_scheme(h2_headers, app_ctx->uri.scheme);
+        aws_http2_headers_set_request_authority(h2_headers, app_ctx->uri.host_name);
+    } else {
+        struct aws_http_header host_header = {
+            .name = aws_byte_cursor_from_c_str("host"),
+            .value = app_ctx->uri.host_name,
+        };
+        aws_http_message_add_header(request, host_header);
+    }
     struct aws_http_header accept_header = {
         .name = aws_byte_cursor_from_c_str("accept"),
         .value = aws_byte_cursor_from_c_str("*/*"),
     };
     aws_http_message_add_header(request, accept_header);
-
-    struct aws_http_header host_header = {.name = aws_byte_cursor_from_c_str("host"), .value = app_ctx->uri.host_name};
-    aws_http_message_add_header(request, host_header);
-
     struct aws_http_header user_agent_header = {
         .name = aws_byte_cursor_from_c_str("user-agent"),
-        .value = aws_byte_cursor_from_c_str("elasticurl 1.0, Powered by the AWS Common Runtime.")};
+        .value = aws_byte_cursor_from_c_str("elasticurl 1.0, Powered by the AWS Common Runtime."),
+    };
     aws_http_message_add_header(request, user_agent_header);
 
     if (app_ctx->input_body) {
@@ -443,7 +458,8 @@ static struct aws_http_message *s_build_http_request(struct elasticurl_ctx *app_
 
         struct aws_http_header custom_header = {
             .name = aws_byte_cursor_from_array(app_ctx->header_lines[i], delimiter - app_ctx->header_lines[i]),
-            .value = aws_byte_cursor_from_c_str(delimiter + 1)};
+            .value = aws_byte_cursor_from_c_str(delimiter + 1),
+        };
         aws_http_message_add_header(request, custom_header);
     }
 
@@ -472,7 +488,7 @@ static void s_on_client_connection_setup(struct aws_http_connection *connection,
     }
 
     app_ctx->connection = connection;
-    app_ctx->request = s_build_http_request(app_ctx);
+    app_ctx->request = s_build_http_request(app_ctx, aws_http_connection_get_version(connection));
 
     /* If async signing function is set, invoke it. It must invoke the signing complete callback when it's done. */
     if (app_ctx->signing_function) {

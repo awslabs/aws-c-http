@@ -4,13 +4,16 @@
  */
 
 #include <aws/common/string.h>
+#include <aws/http/private/request_response_impl.h>
 #include <aws/http/request_response.h>
 #include <aws/http/status_code.h>
-#include <aws/testing/aws_test_allocators.h>
+#include <aws/testing/aws_test_harness.h>
 
 #define TEST_CASE(NAME)                                                                                                \
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
+#define DEFINE_HEADER(NAME, VALUE)                                                                                     \
+    { .name = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(NAME), .value = AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL(VALUE), }
 
 TEST_CASE(message_sanity_check) {
     (void)ctx;
@@ -322,6 +325,87 @@ TEST_CASE(headers_clear) {
     return AWS_OP_SUCCESS;
 }
 
+TEST_CASE(h2_headers_request_pseudos_get_set) {
+    (void)ctx;
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
+    const struct aws_http_header src_headers[] = {
+        s_make_header("Host", "example.com"),
+        s_make_header("Cookie", "a=1"),
+    };
+    ASSERT_SUCCESS(aws_http_headers_add_array(headers, src_headers, AWS_ARRAY_SIZE(src_headers)));
+
+    ASSERT_SUCCESS(aws_http2_headers_set_request_method(headers, aws_byte_cursor_from_c_str("GET")));
+    ASSERT_SUCCESS(aws_http2_headers_set_request_scheme(headers, aws_byte_cursor_from_c_str("https")));
+    ASSERT_SUCCESS(aws_http2_headers_set_request_authority(headers, aws_byte_cursor_from_c_str("www.amazon.com")));
+    ASSERT_SUCCESS(aws_http2_headers_set_request_path(headers, aws_byte_cursor_from_c_str("/")));
+
+    /* pseudo headers should be in the front of headers */
+    struct aws_byte_cursor get;
+    ASSERT_SUCCESS(aws_http2_headers_get_request_method(headers, &get));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, "GET"));
+    ASSERT_SUCCESS(aws_http2_headers_get_request_scheme(headers, &get));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, "https"));
+    ASSERT_SUCCESS(aws_http2_headers_get_request_authority(headers, &get));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, "www.amazon.com"));
+    ASSERT_SUCCESS(aws_http2_headers_get_request_path(headers, &get));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, "/"));
+    /* normal headers should be the end of the headers list */
+    struct aws_http_header get_header;
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 4, &get_header));
+    ASSERT_SUCCESS(s_check_header_eq(get_header, "Host", "example.com"));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 5, &get_header));
+    ASSERT_SUCCESS(s_check_header_eq(get_header, "Cookie", "a=1"));
+
+    /* overwrite method should not change the normal headers */
+    ASSERT_SUCCESS(aws_http2_headers_set_request_method(headers, aws_byte_cursor_from_c_str("PUT")));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 4, &get_header));
+    ASSERT_SUCCESS(s_check_header_eq(get_header, "Host", "example.com"));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 5, &get_header));
+    ASSERT_SUCCESS(s_check_header_eq(get_header, "Cookie", "a=1"));
+    ASSERT_SUCCESS(aws_http2_headers_get_request_method(headers, &get));
+    ASSERT_TRUE(aws_byte_cursor_eq_c_str(&get, "PUT"));
+
+    aws_http_headers_release(headers);
+    return AWS_OP_SUCCESS;
+}
+
+TEST_CASE(h2_headers_response_pseudos_get_set) {
+    (void)ctx;
+    struct aws_http_headers *headers = aws_http_headers_new(allocator);
+    ASSERT_NOT_NULL(headers);
+    const struct aws_http_header src_headers[] = {
+        s_make_header("Host", "example.com"),
+        s_make_header("Cookie", "a=1"),
+    };
+    ASSERT_SUCCESS(aws_http_headers_add_array(headers, src_headers, AWS_ARRAY_SIZE(src_headers)));
+
+    ASSERT_SUCCESS(aws_http2_headers_set_response_status(headers, 200));
+
+    /* pseudo headers should be in the front of headers */
+    int get;
+    ASSERT_SUCCESS(aws_http2_headers_get_response_status(headers, &get));
+    ASSERT_INT_EQUALS(get, 200);
+    /* normal headers should be the end of the headers list */
+    struct aws_http_header get_header;
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 1, &get_header));
+    ASSERT_SUCCESS(s_check_header_eq(get_header, "Host", "example.com"));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 2, &get_header));
+    ASSERT_SUCCESS(s_check_header_eq(get_header, "Cookie", "a=1"));
+
+    /* overwrite method should not change the normal headers */
+    ASSERT_SUCCESS(aws_http2_headers_set_response_status(headers, 404));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 1, &get_header));
+    ASSERT_SUCCESS(s_check_header_eq(get_header, "Host", "example.com"));
+    ASSERT_SUCCESS(aws_http_headers_get_index(headers, 2, &get_header));
+    ASSERT_SUCCESS(s_check_header_eq(get_header, "Cookie", "a=1"));
+    ASSERT_SUCCESS(aws_http2_headers_get_response_status(headers, &get));
+    ASSERT_INT_EQUALS(get, 404);
+
+    aws_http_headers_release(headers);
+    return AWS_OP_SUCCESS;
+}
+
 TEST_CASE(message_refcounts) {
     (void)ctx;
     struct aws_http_message *message = aws_http_message_new_request(allocator);
@@ -366,80 +450,5 @@ TEST_CASE(message_with_existing_headers) {
 
     /* clean up*/
     aws_http_message_release(message);
-    return AWS_OP_SUCCESS;
-}
-
-/* Do every operation that involves allocating some memory */
-static int s_message_handles_oom_attempt(struct aws_http_message *request) {
-    ASSERT_NOT_NULL(request);
-
-    /* Set, and then overwrite, method and path */
-    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("POST")));
-    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/")));
-    ASSERT_SUCCESS(aws_http_message_set_request_method(request, aws_byte_cursor_from_c_str("GET")));
-    ASSERT_SUCCESS(aws_http_message_set_request_path(request, aws_byte_cursor_from_c_str("/chat")));
-
-    /* Add a lot of headers, enough to force the underlying array-list to expand.
-     * (just loop through the list above again and again) */
-    char name_buf[16];
-    char value_buf[16];
-    for (size_t i = 0; i < 128; ++i) {
-        snprintf(name_buf, sizeof(name_buf), "Name-%zu", i);
-        snprintf(name_buf, sizeof(name_buf), "Value-%zu", i);
-        struct aws_http_header header = {.name = aws_byte_cursor_from_c_str(name_buf),
-                                         .value = aws_byte_cursor_from_c_str(value_buf)};
-        ASSERT_SUCCESS(aws_http_message_add_header(request, header));
-    }
-
-    /* Overwrite all the headers */
-    for (size_t i = 0; i < 128; ++i) {
-        snprintf(name_buf, sizeof(name_buf), "New-Name-%zu", i);
-        snprintf(name_buf, sizeof(name_buf), "New-Value-%zu", i);
-        struct aws_http_header header = {.name = aws_byte_cursor_from_c_str(name_buf),
-                                         .value = aws_byte_cursor_from_c_str(value_buf)};
-        ASSERT_SUCCESS(aws_http_headers_set(aws_http_message_get_headers(request), header.name, header.value));
-    }
-
-    return AWS_OP_SUCCESS;
-}
-
-TEST_CASE(message_handles_oom) {
-    (void)ctx;
-    struct aws_allocator timebomb_alloc;
-    ASSERT_SUCCESS(aws_timebomb_allocator_init(&timebomb_alloc, allocator, SIZE_MAX));
-
-    bool test_succeeded = false;
-    size_t allocations_until_failure;
-    for (allocations_until_failure = 0; allocations_until_failure < 10000; ++allocations_until_failure) {
-        /* Allow one more allocation each time we loop. */
-        aws_timebomb_allocator_reset_countdown(&timebomb_alloc, allocations_until_failure);
-
-        /* Create a request, then do a bunch of stuff with it. */
-        struct aws_http_message *request = aws_http_message_new_request(&timebomb_alloc);
-        int err = 0;
-        if (request) {
-            err = s_message_handles_oom_attempt(request);
-            if (err) {
-                /* Ensure failure was due to OOM */
-                ASSERT_INT_EQUALS(AWS_ERROR_OOM, aws_last_error());
-            } else {
-                test_succeeded = true;
-            }
-
-            aws_http_message_destroy(request);
-        } else {
-            /* Ensure failure was due to OOM */
-            ASSERT_INT_EQUALS(AWS_ERROR_OOM, aws_last_error());
-        }
-
-        if (test_succeeded) {
-            break;
-        }
-    }
-
-    ASSERT_TRUE(test_succeeded);
-    ASSERT_TRUE(allocations_until_failure > 2); /* Assert that this did fail a few times */
-
-    aws_timebomb_allocator_clean_up(&timebomb_alloc);
     return AWS_OP_SUCCESS;
 }

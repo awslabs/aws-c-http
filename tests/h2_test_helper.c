@@ -294,9 +294,10 @@ static struct aws_h2err s_decoder_on_push_promise_end(uint32_t stream_id, bool m
 static struct aws_h2err s_decoder_on_data_begin(
     uint32_t stream_id,
     uint32_t payload_len,
+    uint32_t total_padding_bytes,
     bool end_stream,
     void *userdata) {
-
+    (void)total_padding_bytes;
     struct h2_decode_tester *decode_tester = userdata;
     struct h2_decoded_frame *frame;
     s_begin_new_frame(decode_tester, AWS_H2_FRAME_T_DATA, stream_id, &frame);
@@ -527,6 +528,9 @@ int h2_fake_peer_init(struct h2_fake_peer *peer, const struct h2_fake_peer_optio
 }
 
 void h2_fake_peer_clean_up(struct h2_fake_peer *peer) {
+    if (!peer) {
+        return;
+    }
     aws_h2_frame_encoder_clean_up(&peer->encoder);
     h2_decode_tester_clean_up(&peer->decode);
     AWS_ZERO_STRUCT(peer);
@@ -569,6 +573,15 @@ int h2_fake_peer_send_data_frame(
     uint32_t stream_id,
     struct aws_byte_cursor data,
     bool end_stream) {
+    return h2_fake_peer_send_data_frame_with_padding_length(peer, stream_id, data, end_stream, 0);
+}
+
+int h2_fake_peer_send_data_frame_with_padding_length(
+    struct h2_fake_peer *peer,
+    uint32_t stream_id,
+    struct aws_byte_cursor data,
+    bool end_stream,
+    uint8_t padding_length) {
 
     struct aws_input_stream *body_stream = aws_input_stream_new_from_cursor(peer->alloc, &data);
     ASSERT_NOT_NULL(body_stream);
@@ -586,7 +599,7 @@ int h2_fake_peer_send_data_frame(
         stream_id,
         body_stream,
         end_stream,
-        0,
+        padding_length /*pad_length*/,
         &stream_window_size_peer,
         &connection_window_size_peer,
         &msg->message_data,

@@ -681,7 +681,7 @@ H2_DECODER_ON_SERVER_TEST(h2_decoder_headers_cookies) {
     return AWS_OP_SUCCESS;
 }
 
-/* A trailing header has no psuedo-headers, and always ends the stream */
+/* A trailing header has no pseudo-headers, and always ends the stream */
 H2_DECODER_ON_CLIENT_TEST(h2_decoder_headers_trailer) {
     (void)allocator;
     struct fixture *fixture = ctx;

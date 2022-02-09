@@ -226,9 +226,6 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     AWS_PRECONDITION(options);
 
     struct aws_h2_stream *stream = aws_mem_calloc(client_connection->alloc, 1, sizeof(struct aws_h2_stream));
-    if (!stream) {
-        return NULL;
-    }
 
     /* Initialize base stream */
     stream->base.vtable = &s_h2_stream_vtable;
@@ -247,7 +244,27 @@ struct aws_h2_stream *aws_h2_stream_new_request(
 
     /* Init H2 specific stuff */
     stream->thread_data.state = AWS_H2_STREAM_STATE_IDLE;
-    stream->thread_data.outgoing_message = options->request;
+    enum aws_http_version message_version = aws_http_message_get_protocol_version(options->request);
+    switch (message_version) {
+        case AWS_HTTP_VERSION_1_1:
+            stream->thread_data.outgoing_message =
+                aws_http2_message_new_from_http1(options->request, stream->base.alloc);
+            if (!stream->thread_data.outgoing_message) {
+                AWS_H2_STREAM_LOG(ERROR, stream, "Stream failed to create the HTTP/2 message from HTTP/1.1 message");
+                goto error;
+            }
+            stream->backup_outgoing_message = options->request;
+            aws_http_message_acquire(stream->backup_outgoing_message);
+            break;
+        case AWS_HTTP_VERSION_2:
+            stream->thread_data.outgoing_message = options->request;
+            aws_http_message_acquire(stream->thread_data.outgoing_message);
+            break;
+        default:
+            /* Not supported */
+            aws_raise_error(AWS_ERROR_HTTP_UNSUPPORTED_PROTOCOL);
+            goto error;
+    }
 
     stream->sent_reset_error_code = -1;
     stream->received_reset_error_code = -1;
@@ -257,13 +274,14 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     if (aws_mutex_init(&stream->synced_data.lock)) {
         AWS_H2_STREAM_LOGF(
             ERROR, stream, "Mutex init error %d (%s).", aws_last_error(), aws_error_name(aws_last_error()));
-        aws_mem_release(stream->base.alloc, stream);
-        return NULL;
+        goto error;
     }
-    aws_http_message_acquire(stream->thread_data.outgoing_message);
     aws_channel_task_init(
         &stream->cross_thread_work_task, s_stream_cross_thread_work_task, stream, "HTTP/2 stream cross-thread work");
     return stream;
+error:
+    s_stream_destroy(&stream->base);
+    return NULL;
 }
 
 static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
@@ -335,6 +353,7 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     AWS_H2_STREAM_LOG(DEBUG, stream, "Destroying stream");
     aws_mutex_clean_up(&stream->synced_data.lock);
     aws_http_message_release(stream->thread_data.outgoing_message);
+    aws_http_message_release(stream->backup_outgoing_message);
 
     aws_mem_release(stream->base.alloc, stream);
 }
@@ -346,7 +365,7 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
     if (!increment_size) {
         return;
     }
-    if (!connection->base.manual_window_management) {
+    if (!connection->base.stream_manual_window_management) {
         /* auto-mode, manual update window is not supported */
         AWS_H2_STREAM_LOG(
             DEBUG, stream, "Manual window management is off, update window operations are not supported.");
@@ -454,6 +473,12 @@ static int s_stream_reset_stream(struct aws_http_stream *stream_base, uint32_t h
         .h2_code = http2_error,
     };
 
+    AWS_LOGF_TRACE(
+        AWS_LS_HTTP_STREAM,
+        "id=%p: User requested RST_STREAM with error code %s (0x%x)",
+        (void *)stream_base,
+        aws_http2_error_code_to_str(http2_error),
+        http2_error);
     return s_stream_reset_stream_internal(stream_base, stream_error);
 }
 
@@ -542,13 +567,11 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
 
     /* Create HEADERS frame */
     struct aws_http_message *msg = stream->thread_data.outgoing_message;
+    /* Should be ensured when the stream is created */
+    AWS_ASSERT(aws_http_message_get_protocol_version(msg) == AWS_HTTP_VERSION_2);
     bool has_body_stream = aws_http_message_get_body_stream(msg) != NULL;
-    struct aws_http_headers *h2_headers = aws_h2_create_headers_from_request(msg, stream->base.alloc);
-    if (!h2_headers) {
-        AWS_H2_STREAM_LOGF(
-            ERROR, stream, "Failed to create HTTP/2 style headers from request %s", aws_error_name(aws_last_error()));
-        goto error;
-    }
+    struct aws_http_headers *h2_headers = aws_http_message_get_headers(msg);
+
     struct aws_h2_frame *headers_frame = aws_h2_frame_new_headers(
         stream->base.alloc,
         stream->base.id,
@@ -557,8 +580,6 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
         0 /* padding - not currently configurable via public API */,
         NULL /* priority - not currently configurable via public API */);
 
-    /* Release refcount of h2_headers here, let frame take the full ownership of it */
-    aws_http_headers_release(h2_headers);
     if (!headers_frame) {
         AWS_H2_STREAM_LOGF(ERROR, stream, "Failed to create HEADERS frame: %s", aws_error_name(aws_last_error()));
         goto error;
@@ -730,7 +751,7 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_i(
         /* Client */
         if (name_enum == AWS_HTTP_HEADER_STATUS) {
             uint64_t status_code;
-            int err = aws_strutil_read_unsigned_num(header->value, &status_code);
+            int err = aws_byte_cursor_utf8_parse_u64(header->value, &status_code);
             AWS_ASSERT(!err && "Invalid :status value. Decoder should have already validated this");
             (void)err;
 
@@ -816,9 +837,27 @@ struct aws_h2err aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *str
     return AWS_H2ERR_SUCCESS;
 }
 
+static int s_stream_send_update_window(struct aws_h2_stream *stream, uint32_t window_size) {
+    struct aws_h2_frame *stream_window_update_frame =
+        aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, window_size);
+    if (!stream_window_update_frame) {
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "WINDOW_UPDATE frame on stream failed to be sent, error %s",
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+
+    aws_h2_connection_enqueue_outgoing_frame(s_get_h2_connection(stream), stream_window_update_frame);
+    stream->thread_data.window_size_self += window_size;
+    return AWS_OP_SUCCESS;
+}
+
 struct aws_h2err aws_h2_stream_on_decoder_data_begin(
     struct aws_h2_stream *stream,
     uint32_t payload_len,
+    uint32_t total_padding_bytes,
     bool end_stream) {
 
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
@@ -849,22 +888,34 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
     }
     stream->thread_data.window_size_self -= payload_len;
 
-    /* send a stream window_update frame to automatically maintain the stream self window size, if
-     * manual_window_management is not set */
-    if (payload_len != 0 && !end_stream && !stream->base.owning_connection->manual_window_management) {
-        struct aws_h2_frame *stream_window_update_frame =
-            aws_h2_frame_new_window_update(stream->base.alloc, stream->base.id, payload_len);
-        if (!stream_window_update_frame) {
-            AWS_H2_STREAM_LOGF(
-                ERROR,
-                stream,
-                "WINDOW_UPDATE frame on stream failed to be sent, error %s",
-                aws_error_name(aws_last_error()));
+    if (total_padding_bytes != 0 && !end_stream && stream->base.owning_connection->stream_manual_window_management) {
+        /**
+         * Automatically update the flow-window to account for padding, even if "manual window management"
+         * is enabled. We do this because the current API doesn't have any way to inform the user about padding,
+         * so we can't expect them to manage it themselves.
+         */
+        if (s_stream_send_update_window(stream, total_padding_bytes)) {
             return aws_h2err_from_last_error();
         }
-
-        aws_h2_connection_enqueue_outgoing_frame(s_get_h2_connection(stream), stream_window_update_frame);
-        stream->thread_data.window_size_self += payload_len;
+        AWS_H2_STREAM_LOGF(
+            DEBUG,
+            stream,
+            "DATA with %" PRIu32
+            " padding. Updating the window for padding and one byte for padding length automatically for stream.",
+            total_padding_bytes - 1 /* one byte for padding length */);
+    }
+    /* send a stream window_update frame to automatically maintain the stream self window size, if
+     * manual_window_management is not set */
+    if (payload_len != 0 && !end_stream && !stream->base.owning_connection->stream_manual_window_management) {
+        if (s_stream_send_update_window(stream, payload_len)) {
+            return aws_h2err_from_last_error();
+        }
+        AWS_H2_STREAM_LOGF(
+            TRACE,
+            stream,
+            "Connection with no manual window management, updating window with size %" PRIu32
+            " automatically for stream.",
+            payload_len);
     }
 
     return AWS_H2ERR_SUCCESS;
