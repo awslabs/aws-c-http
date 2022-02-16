@@ -220,7 +220,7 @@ static int s_tester_init(struct sm_tester_options *options) {
 
     ASSERT_NOT_NULL(s_tester.tls_ctx);
 
-    s_tester.host = aws_string_new_from_c_str(alloc, "www.amazon.com");
+    s_tester.host = aws_string_new_from_c_str(alloc, "example.com");
     struct aws_byte_cursor server_name = aws_byte_cursor_from_string(s_tester.host);
     aws_tls_connection_options_init_from_ctx(&s_tester.tls_connection_options, s_tester.tls_ctx);
     aws_tls_connection_options_set_server_name(&s_tester.tls_connection_options, alloc, &server_name);
