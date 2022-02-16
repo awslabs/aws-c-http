@@ -65,6 +65,8 @@ struct sm_tester {
     struct aws_array_list streams;
     size_t acquiring_stream_errors;
     size_t stream_complete_errors;
+    size_t stream_200_count;
+    size_t stream_status_not_200_count;
     int error_code;
     int stream_completed_error_code;
 
@@ -215,7 +217,7 @@ static int s_tester_init(struct sm_tester_options *options) {
 
     ASSERT_NOT_NULL(s_tester.tls_ctx);
 
-    s_tester.host = aws_string_new_from_c_str(alloc, "www.google.com");
+    s_tester.host = aws_string_new_from_c_str(alloc, "www.amazon.com");
     struct aws_byte_cursor server_name = aws_byte_cursor_from_string(s_tester.host);
     aws_tls_connection_options_init_from_ctx(&s_tester.tls_connection_options, s_tester.tls_ctx);
     aws_tls_connection_options_set_server_name(&s_tester.tls_connection_options, alloc, &server_name);
@@ -416,6 +418,18 @@ static void s_sm_tester_on_stream_complete(struct aws_http_stream *stream, int e
     if (error_code) {
         ++s_tester.stream_complete_errors;
         s_tester.stream_completed_error_code = error_code;
+    } else {
+        int status = 0;
+        if (aws_http_stream_get_incoming_response_status(stream, &status)) {
+            ++s_tester.stream_complete_errors;
+            s_tester.stream_completed_error_code = aws_last_error();
+        } else {
+            if (status == 200) {
+                ++s_tester.stream_200_count;
+            } else {
+                ++s_tester.stream_status_not_200_count;
+            }
+        }
     }
     AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.lock) == AWS_OP_SUCCESS);
 }
@@ -428,7 +442,11 @@ static int s_sm_stream_acquiring(int num_streams) {
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
         DEFINE_HEADER(":path", "/"),
-        DEFINE_HEADER(":authority", aws_string_c_str(s_tester.host)),
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value =
+                aws_byte_cursor_from_string(s_tester.host), /* aws_string_c_str sometimes gives us shorter string */
+        },
     };
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
     struct aws_http_make_request_options request_options = {
@@ -959,6 +977,7 @@ TEST_CASE(h2_sm_acquire_stream) {
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_to_acquire));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(num_to_acquire, s_tester.stream_200_count);
 
     return s_tester_clean_up();
 }
@@ -977,6 +996,7 @@ TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_to_acquire));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(num_to_acquire, s_tester.stream_200_count);
 
     return s_tester_clean_up();
 }
@@ -995,6 +1015,7 @@ TEST_CASE(h2_sm_acquire_stream_stress) {
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_to_acquire));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(num_to_acquire, s_tester.stream_200_count);
 
     return s_tester_clean_up();
 }
