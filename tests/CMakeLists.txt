@@ -598,6 +598,7 @@ add_test_case(h2_sm_mock_goaway)
 add_net_test_case(h2_sm_acquire_stream)
 add_net_test_case(h2_sm_acquire_stream_multiple_connections)
 add_net_test_case(h2_sm_acquire_stream_stress)
+add_net_test_case(h2_sm_hpack_stress)
 add_net_test_case(h2_sm_closing_before_connection_acquired)
 
 add_test_case(random_access_set_sanitize_test)

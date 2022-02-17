@@ -41,6 +41,8 @@ struct sm_tester_options {
     size_t max_connections;
     size_t ideal_concurrent_streams_per_connection;
     size_t max_concurrent_streams_per_connection;
+
+    struct aws_byte_cursor *endpoint_cursor;
 };
 
 struct sm_tester {
@@ -53,7 +55,7 @@ struct sm_tester {
     struct aws_http2_stream_manager *stream_manager;
     struct aws_http_connection_manager *connection_manager;
 
-    struct aws_string *host;
+    struct aws_uri endpoint;
     struct aws_tls_ctx *tls_ctx;
     struct aws_tls_ctx_options tls_ctx_options;
     struct aws_tls_connection_options tls_connection_options;
@@ -75,8 +77,6 @@ struct sm_tester {
     int stream_completed_error_code;
 
     bool is_shutdown_complete;
-
-    bool real_connection;
 
     /* Fake HTTP/2 connection */
     size_t wait_for_fake_connection_count;
@@ -220,8 +220,14 @@ static int s_tester_init(struct sm_tester_options *options) {
 
     ASSERT_NOT_NULL(s_tester.tls_ctx);
 
-    s_tester.host = aws_string_new_from_c_str(alloc, "example.com");
-    struct aws_byte_cursor server_name = aws_byte_cursor_from_string(s_tester.host);
+    if (options->endpoint_cursor) {
+        ASSERT_SUCCESS(aws_uri_init_parse(&s_tester.endpoint, alloc, options->endpoint_cursor));
+    } else {
+        struct aws_byte_cursor default_host = aws_byte_cursor_from_c_str("example.com");
+        ASSERT_SUCCESS(aws_uri_init_parse(&s_tester.endpoint, alloc, &default_host));
+    }
+
+    struct aws_byte_cursor server_name = *aws_uri_host_name(&s_tester.endpoint);
     aws_tls_connection_options_init_from_ctx(&s_tester.tls_connection_options, s_tester.tls_ctx);
     aws_tls_connection_options_set_server_name(&s_tester.tls_connection_options, alloc, &server_name);
 
@@ -375,7 +381,7 @@ static int s_tester_clean_up(void) {
     aws_mutex_clean_up(&s_tester.lock);
     aws_condition_variable_clean_up(&s_tester.signal);
     aws_array_list_clean_up(&s_tester.streams);
-    aws_string_destroy(s_tester.host);
+    aws_uri_clean_up(&s_tester.endpoint);
 
     return AWS_OP_SUCCESS;
 }
@@ -465,8 +471,7 @@ static int s_sm_stream_acquiring(int num_streams) {
         DEFINE_HEADER(":path", "/"),
         {
             .name = aws_byte_cursor_from_c_str(":authority"),
-            .value =
-                aws_byte_cursor_from_string(s_tester.host), /* aws_string_c_str sometimes gives us shorter string */
+            .value = *aws_uri_host_name(&s_tester.endpoint), /* aws_string_c_str sometimes gives us shorter string */
         },
     };
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
@@ -993,7 +998,6 @@ TEST_CASE(h2_sm_acquire_stream) {
         .alloc = allocator,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
-    s_tester.real_connection = true;
     int num_to_acquire = 5;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
@@ -1012,7 +1016,7 @@ TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
         .max_concurrent_streams_per_connection = 5,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
-    s_tester.real_connection = true;
+
     int num_to_acquire = 20;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
@@ -1031,13 +1035,85 @@ TEST_CASE(h2_sm_acquire_stream_stress) {
         .alloc = allocator,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
-    s_tester.real_connection = true;
     int num_to_acquire = 100 * 100 * 2;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
     ASSERT_INT_EQUALS(num_to_acquire, s_tester.stream_200_count);
 
+    return s_tester_clean_up();
+}
+
+int s_sm_tester_on_echo_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
+    struct aws_byte_buf *echo_body = (struct aws_byte_buf *)user_data;
+    ASSERT_SUCCESS(aws_byte_buf_append_dynamic(echo_body, data));
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that makes tons of streams with all sorts of headers to stress hpack */
+TEST_CASE(h2_sm_hpack_stress) {
+    (void)ctx;
+    struct aws_uri uri;
+    AWS_ZERO_STRUCT(uri);
+    /* Echo server, which will return the headers */
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://httpbin.org/anything");
+    struct sm_tester_options options = {
+        .max_connections = 1, /* only one connection */
+        .max_concurrent_streams_per_connection = 100,
+        .alloc = allocator,
+        .endpoint_cursor = &uri_cursor,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        {
+            .name = aws_byte_cursor_from_c_str(":path"),
+            .value = *aws_uri_path(&s_tester.endpoint), /* aws_string_c_str sometimes gives us shorter string */
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = *aws_uri_host_name(&s_tester.endpoint), /* aws_string_c_str sometimes gives us shorter string */
+        },
+    };
+    int num_to_acquire = 1;
+
+    for (size_t i = 0; i < num_to_acquire; i++) {
+        struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
+        ASSERT_NOT_NULL(request);
+        aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+        char test_header_str[256];
+        sprintf(test_header_str, "test%zu", i);
+        struct aws_http_header test_header = {
+            .name = aws_byte_cursor_from_c_str(test_header_str),
+            .value = aws_byte_cursor_from_c_str(test_header_str),
+        };
+        aws_http_message_add_header(request, test_header);
+        struct aws_byte_buf echo_body;
+        ASSERT_SUCCESS(aws_byte_buf_init(&echo_body, allocator, 100));
+        struct aws_http_make_request_options request_options = {
+            .self_size = sizeof(request_options),
+            .request = request,
+            .user_data = &echo_body,
+            .on_response_body = s_sm_tester_on_echo_body,
+            .on_complete = s_sm_tester_on_stream_complete,
+        };
+        struct aws_http2_stream_manager_acquire_stream_options acquire_stream_option = {
+            .options = &request_options,
+            .callback = s_sm_tester_on_stream_acquired,
+            .user_data = &s_tester,
+        };
+        aws_http2_stream_manager_acquire_stream(s_tester.stream_manager, &acquire_stream_option);
+        /* Wait for the stream to complete */
+        ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
+        /* TODO: check the echo body and ensure it has the header we sent out */
+        aws_http_message_release(request);
+        aws_byte_buf_clean_up(&echo_body);
+    }
+
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(num_to_acquire, s_tester.stream_200_count);
     return s_tester_clean_up();
 }
 
