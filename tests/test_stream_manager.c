@@ -27,6 +27,10 @@
 #include <aws/testing/aws_test_harness.h>
 #include <aws/testing/io_testing_channel.h>
 
+#ifdef _MSC_VER
+#    pragma warning(disable : 4996) /* Disable warnings about sptrintf() being insecure */
+#endif
+
 #define TEST_CASE(NAME)                                                                                                \
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)
@@ -1045,6 +1049,7 @@ TEST_CASE(h2_sm_acquire_stream_stress) {
 }
 
 int s_sm_tester_on_echo_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
+    (void)stream;
     struct aws_byte_buf *echo_body = (struct aws_byte_buf *)user_data;
     ASSERT_SUCCESS(aws_byte_buf_append_dynamic(echo_body, data));
     return AWS_OP_SUCCESS;
@@ -1056,7 +1061,7 @@ TEST_CASE(h2_sm_hpack_stress) {
     struct aws_uri uri;
     AWS_ZERO_STRUCT(uri);
     /* Echo server, which will return the headers */
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://httpbin.org/anything");
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://httpbin.org/headers");
     struct sm_tester_options options = {
         .max_connections = 1, /* only one connection */
         .max_concurrent_streams_per_connection = 100,
