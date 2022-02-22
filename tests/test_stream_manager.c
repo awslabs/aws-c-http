@@ -1082,7 +1082,7 @@ TEST_CASE(h2_sm_hpack_stress) {
             .value = *aws_uri_host_name(&s_tester.endpoint), /* aws_string_c_str sometimes gives us shorter string */
         },
     };
-    int num_to_acquire = 1;
+    size_t num_to_acquire = 1;
 
     for (size_t i = 0; i < num_to_acquire; i++) {
         struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
