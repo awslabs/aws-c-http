@@ -1050,9 +1050,54 @@ TEST_CASE(h2_sm_acquire_stream_stress) {
 
 int s_sm_tester_on_echo_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
     (void)stream;
+    /**
+     * Make request to https://httpbin.org/headers, example response body:
+     *"{\r\n"
+     *"  \"headers\": {\r\n"
+     *"    \"Accept\": \"application/xml\", \r\n"
+     *"    \"Host\": \"httpbin.org\", \r\n"
+     *"    \"Test0\": \"test0\", \r\n"
+     *"    \"User-Agent\": \"elasticurl 1.0, Powered by the AWS Common Runtime.\", \r\n"
+     *"    \"X-Amzn-Trace-Id\": \"Root=1-6216d59a-16a92b5622bb49a0352cf9a4\"\r\n"
+     *"  }\r\n"
+     *"}\r\n"
+     */
     struct aws_byte_buf *echo_body = (struct aws_byte_buf *)user_data;
     ASSERT_SUCCESS(aws_byte_buf_append_dynamic(echo_body, data));
     return AWS_OP_SUCCESS;
+}
+
+static bool s_echo_body_has_header(struct aws_byte_buf *echo_body, struct aws_http_header *header) {
+    struct aws_byte_cursor echo_body_cur = aws_byte_cursor_from_buf(echo_body);
+    char str_to_find[256];
+    /* Echo body will capitalize the header name, ignore the first char. I think it's fine */
+    struct aws_byte_cursor name_without_first_char = header->name;
+    aws_byte_cursor_advance(&name_without_first_char, 1);
+    sprintf(
+        str_to_find,
+        "" PRInSTR "\": \"" PRInSTR "\"",
+        AWS_BYTE_CURSOR_PRI(name_without_first_char),
+        AWS_BYTE_CURSOR_PRI(header->value));
+    struct aws_byte_cursor to_find_cur = aws_byte_cursor_from_c_str(str_to_find);
+    struct aws_byte_cursor found;
+    if (aws_byte_cursor_find_exact(&echo_body_cur, &to_find_cur, &found)) {
+        /* find the value */
+        return false;
+    }
+    return true;
+}
+
+static bool s_echo_body_has_headers(struct aws_byte_buf *echo_body, struct aws_http_headers *headers) {
+    for (size_t i = 0; i < aws_http_headers_count(headers); i++) {
+        struct aws_http_header out_header;
+        if (aws_http_headers_get_index(headers, i, &out_header)) {
+            return false;
+        }
+        if (!s_echo_body_has_header(echo_body, &out_header)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 /* Test that makes tons of streams with all sorts of headers to stress hpack */
@@ -1082,19 +1127,27 @@ TEST_CASE(h2_sm_hpack_stress) {
             .value = *aws_uri_host_name(&s_tester.endpoint), /* aws_string_c_str sometimes gives us shorter string */
         },
     };
-    size_t num_to_acquire = 1;
+    size_t num_to_acquire = 100;
+    size_t num_headers_to_make = 50;
+    size_t header_count = 0;
 
     for (size_t i = 0; i < num_to_acquire; i++) {
         struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
         ASSERT_NOT_NULL(request);
         aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
-        char test_header_str[256];
-        sprintf(test_header_str, "test%zu", i);
-        struct aws_http_header test_header = {
-            .name = aws_byte_cursor_from_c_str(test_header_str),
-            .value = aws_byte_cursor_from_c_str(test_header_str),
-        };
-        aws_http_message_add_header(request, test_header);
+        /* TODO: why we don't have a message_add_headers? I'll add one... */
+        struct aws_http_headers *request_headers = aws_http_message_get_headers(request);
+        struct aws_http_headers *test_headers = aws_http_headers_new(allocator);
+        for (size_t j = 0; j < num_headers_to_make; j++) {
+            char test_header_str[256];
+            sprintf(test_header_str, "test%zu", header_count++);
+            aws_http_headers_add(
+                test_headers, aws_byte_cursor_from_c_str(test_header_str), aws_byte_cursor_from_c_str(test_header_str));
+            aws_http_headers_add(
+                request_headers,
+                aws_byte_cursor_from_c_str(test_header_str),
+                aws_byte_cursor_from_c_str(test_header_str));
+        }
         struct aws_byte_buf echo_body;
         ASSERT_SUCCESS(aws_byte_buf_init(&echo_body, allocator, 100));
         struct aws_http_make_request_options request_options = {
@@ -1112,8 +1165,13 @@ TEST_CASE(h2_sm_hpack_stress) {
         aws_http2_stream_manager_acquire_stream(s_tester.stream_manager, &acquire_stream_option);
         /* Wait for the stream to complete */
         ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
+        --s_tester.stream_completed_count;
+        ASSERT_UINT_EQUALS(s_tester.stream_complete_errors, 0);
         /* TODO: check the echo body and ensure it has the header we sent out */
+        ASSERT_TRUE(s_echo_body_has_headers(&echo_body, test_headers));
+
         aws_http_message_release(request);
+        aws_http_headers_release(test_headers);
         aws_byte_buf_clean_up(&echo_body);
     }
 
