@@ -1127,7 +1127,9 @@ TEST_CASE(h2_sm_hpack_stress) {
             .value = *aws_uri_host_name(&s_tester.endpoint), /* aws_string_c_str sometimes gives us shorter string */
         },
     };
-    size_t num_to_acquire = 100;
+    /* The initail settings header table size is 4096 octets, but the frame size limits us to send too many headers in
+     * one request. */
+    size_t num_to_acquire = 10000;
     size_t num_headers_to_make = 50;
     size_t header_count = 0;
 
@@ -1140,7 +1142,13 @@ TEST_CASE(h2_sm_hpack_stress) {
         struct aws_http_headers *test_headers = aws_http_headers_new(allocator);
         for (size_t j = 0; j < num_headers_to_make; j++) {
             char test_header_str[256];
-            sprintf(test_header_str, "test%zu", header_count++);
+            /**
+             * - Don't use _ or - between word, the response will capitalize the first char of every word :(
+             * - Don't use _, the response will change it to -. :(
+             * TODO: maybe not check the header name as only the name will be changed? Maybe have a helper to transform
+             * the header name?
+             */
+            sprintf(test_header_str, "awscommonruntimetest-%zu", header_count++);
             aws_http_headers_add(
                 test_headers, aws_byte_cursor_from_c_str(test_header_str), aws_byte_cursor_from_c_str(test_header_str));
             aws_http_headers_add(
