@@ -1129,7 +1129,7 @@ TEST_CASE(h2_sm_hpack_stress) {
     };
     /* The initail settings header table size is 4096 octets, but the frame size limits us to send too many headers in
      * one request. */
-    size_t num_to_acquire = 10000;
+    size_t num_to_acquire = 1000;
     size_t num_headers_to_make = 50;
     size_t header_count = 0;
 
