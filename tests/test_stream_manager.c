@@ -397,6 +397,7 @@ static void s_sm_tester_on_stream_acquired(struct aws_http_stream *stream, int e
 
     if (error_code) {
         ++s_tester.acquiring_stream_errors;
+        ++s_tester.stream_completed_count; /* As the stream will never be completed through complet callback */
         s_tester.error_code = error_code;
     } else {
         aws_array_list_push_back(&s_tester.streams, &stream);
@@ -1175,6 +1176,7 @@ TEST_CASE(h2_sm_hpack_stress) {
         ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
         --s_tester.stream_completed_count;
         ASSERT_UINT_EQUALS(s_tester.stream_complete_errors, 0);
+        ASSERT_UINT_EQUALS(s_tester.acquiring_stream_errors, 0);
         /* TODO: check the echo body and ensure it has the header we sent out */
         ASSERT_TRUE(s_echo_body_has_headers(&echo_body, test_headers));
 
