@@ -713,7 +713,7 @@ struct aws_input_stream *aws_input_stream_new_tester(struct aws_allocator *alloc
     impl->allocator = alloc;
     impl->base.vtable = &s_aws_input_stream_tester_vtable;
     aws_ref_count_init(
-        &impl->base.ref_count, impl, (aws_simple_completion_callback *)s_aws_input_stream_tester_get_length);
+        &impl->base.ref_count, impl, (aws_simple_completion_callback *)s_aws_input_stream_tester_destroy);
     return &impl->base;
 }
 
