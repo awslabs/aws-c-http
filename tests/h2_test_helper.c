@@ -643,6 +643,7 @@ int h2_fake_peer_send_connection_preface_default_settings(struct h2_fake_peer *p
 /******************************************************************************/
 
 struct aws_input_stream_tester {
+    struct aws_input_stream base;
     struct aws_allocator *allocator;
     /* aws_input_stream_byte_cursor provides our actual functionality  */
     struct aws_input_stream *cursor_stream;
@@ -656,12 +657,12 @@ static int s_aws_input_stream_tester_seek(
     int64_t offset,
     enum aws_stream_seek_basis basis) {
 
-    struct aws_input_stream_tester *impl = aws_input_stream_get_impl(stream);
+    struct aws_input_stream_tester *impl = AWS_CONTAINER_OF(stream, struct aws_input_stream_tester, base);
     return aws_input_stream_seek(impl->cursor_stream, offset, basis);
 }
 
 static int s_aws_input_stream_tester_read(struct aws_input_stream *stream, struct aws_byte_buf *dest) {
-    struct aws_input_stream_tester *impl = aws_input_stream_get_impl(stream);
+    struct aws_input_stream_tester *impl = AWS_CONTAINER_OF(stream, struct aws_input_stream_tester, base);
 
     if (impl->is_reading_broken) {
         return aws_raise_error(AWS_IO_STREAM_READ_FAILED);
@@ -679,17 +680,16 @@ static int s_aws_input_stream_tester_read(struct aws_input_stream *stream, struc
 }
 
 static int s_aws_input_stream_tester_get_status(struct aws_input_stream *stream, struct aws_stream_status *status) {
-    struct aws_input_stream_tester *impl = aws_input_stream_get_impl(stream);
+    struct aws_input_stream_tester *impl = AWS_CONTAINER_OF(stream, struct aws_input_stream_tester, base);
     return aws_input_stream_get_status(impl->cursor_stream, status);
 }
 
 static int s_aws_input_stream_tester_get_length(struct aws_input_stream *stream, int64_t *out_length) {
-    struct aws_input_stream_tester *impl = aws_input_stream_get_impl(stream);
+    struct aws_input_stream_tester *impl = AWS_CONTAINER_OF(stream, struct aws_input_stream_tester, base);
     return aws_input_stream_get_length(impl->cursor_stream, out_length);
 }
 
-static void s_aws_input_stream_tester_destroy(struct aws_input_stream *stream) {
-    struct aws_input_stream_tester *impl = aws_input_stream_get_impl(stream);
+static void s_aws_input_stream_tester_destroy(struct aws_input_stream_tester *impl) {
     aws_input_stream_release(impl->cursor_stream);
     aws_mem_release(impl->allocator, impl);
 }
@@ -699,7 +699,6 @@ static struct aws_input_stream_vtable s_aws_input_stream_tester_vtable = {
     .read = s_aws_input_stream_tester_read,
     .get_status = s_aws_input_stream_tester_get_status,
     .get_length = s_aws_input_stream_tester_get_length,
-    .impl_destroy = s_aws_input_stream_tester_destroy,
 };
 
 struct aws_input_stream *aws_input_stream_new_tester(struct aws_allocator *alloc, struct aws_byte_cursor cursor) {
@@ -712,20 +711,18 @@ struct aws_input_stream *aws_input_stream_new_tester(struct aws_allocator *alloc
     impl->cursor_stream = aws_input_stream_new_from_cursor(alloc, &cursor);
     AWS_FATAL_ASSERT(impl->cursor_stream);
     impl->allocator = alloc;
-    struct aws_input_stream_options options = {
-        .allocator = alloc,
-        .impl = impl,
-        .vtable = &s_aws_input_stream_tester_vtable,
-    };
-    return aws_input_stream_new(&options);
+    impl->base.vtable = &s_aws_input_stream_tester_vtable;
+    aws_ref_count_init(
+        &impl->base.ref_count, impl, (aws_simple_completion_callback *)s_aws_input_stream_tester_get_length);
+    return &impl->base;
 }
 
 void aws_input_stream_tester_set_max_bytes_per_read(struct aws_input_stream *input_stream, size_t max_bytes) {
-    struct aws_input_stream_tester *impl = aws_input_stream_get_impl(input_stream);
+    struct aws_input_stream_tester *impl = AWS_CONTAINER_OF(input_stream, struct aws_input_stream_tester, base);
     impl->max_bytes_per_read = max_bytes;
 }
 
 void aws_input_stream_tester_set_reading_broken(struct aws_input_stream *input_stream, bool is_broken) {
-    struct aws_input_stream_tester *impl = aws_input_stream_get_impl(input_stream);
+    struct aws_input_stream_tester *impl = AWS_CONTAINER_OF(input_stream, struct aws_input_stream_tester, base);
     impl->is_reading_broken = is_broken;
 }

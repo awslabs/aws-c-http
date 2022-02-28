@@ -2135,6 +2135,7 @@ H1_CLIENT_TEST_CASE(h1_client_response_with_too_much_data_shuts_down_connection)
 }
 
 struct slow_body_sender {
+    struct aws_input_stream base;
     struct aws_stream_status status;
     struct aws_byte_cursor cursor;
     size_t delay_ticks;    /* Don't send anything the first N ticks */
@@ -2142,7 +2143,7 @@ struct slow_body_sender {
 };
 
 static int s_slow_stream_read(struct aws_input_stream *stream, struct aws_byte_buf *dest) {
-    struct slow_body_sender *sender = aws_input_stream_get_impl(stream);
+    struct slow_body_sender *sender = AWS_CONTAINER_OF(stream, struct slow_body_sender, base);
 
     size_t dst_available = dest->capacity - dest->len;
     size_t writing = 0;
@@ -2170,12 +2171,12 @@ static int s_slow_stream_read(struct aws_input_stream *stream, struct aws_byte_b
     return AWS_OP_SUCCESS;
 }
 static int s_slow_stream_get_status(struct aws_input_stream *stream, struct aws_stream_status *status) {
-    struct slow_body_sender *sender = aws_input_stream_get_impl(stream);
+    struct slow_body_sender *sender = AWS_CONTAINER_OF(stream, struct slow_body_sender, base);
     *status = sender->status;
     return AWS_OP_SUCCESS;
 }
 static int s_slow_stream_get_length(struct aws_input_stream *stream, int64_t *out_length) {
-    struct slow_body_sender *sender = aws_input_stream_get_impl(stream);
+    struct slow_body_sender *sender = AWS_CONTAINER_OF(stream, struct slow_body_sender, base);
     *out_length = sender->cursor.len;
     return AWS_OP_SUCCESS;
 }
@@ -2188,7 +2189,6 @@ static struct aws_input_stream_vtable s_slow_stream_vtable = {
     .read = s_slow_stream_read,
     .get_status = s_slow_stream_get_status,
     .get_length = s_slow_stream_get_length,
-    .impl_destroy = s_slow_stream_destroy,
 };
 
 /* It should be fine to receive a response before the request has finished sending */
@@ -2198,7 +2198,10 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* set up request whose body won't send immediately */
+    struct aws_input_stream empty_stream_base;
+    AWS_ZERO_STRUCT(empty_stream_base);
     struct slow_body_sender body_sender = {
+        .base = empty_stream_base,
         .status =
             {
                 .is_end_of_stream = false,
@@ -2208,13 +2211,11 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_done_sending_is_ok
         .delay_ticks = 5,
         .bytes_per_tick = 1,
     };
-    struct aws_input_stream_options body_stream_options = {
-        .allocator = allocator,
-        .impl = &body_sender,
-        .vtable = &s_slow_stream_vtable,
-    };
+    body_sender.base.vtable = &s_slow_stream_vtable;
+    aws_ref_count_init(
+        &body_sender.base.ref_count, &body_sender, (aws_simple_completion_callback *)s_slow_stream_destroy);
 
-    struct aws_input_stream *body_stream = aws_input_stream_new(&body_stream_options);
+    struct aws_input_stream *body_stream = &body_sender.base;
 
     struct aws_http_header headers[] = {
         {
@@ -2280,7 +2281,10 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_chunks_done_sendin
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
     /* set up request whose body won't send immediately */
+    struct aws_input_stream empty_stream_base;
+    AWS_ZERO_STRUCT(empty_stream_base);
     struct slow_body_sender body_sender = {
+        .base = empty_stream_base,
         .status =
             {
                 .is_end_of_stream = false,
@@ -2290,12 +2294,11 @@ H1_CLIENT_TEST_CASE(h1_client_response_arrives_before_request_chunks_done_sendin
         .delay_ticks = 5,
         .bytes_per_tick = 1,
     };
-    struct aws_input_stream_options body_stream_options = {
-        .allocator = allocator,
-        .impl = &body_sender,
-        .vtable = &s_slow_stream_vtable,
-    };
-    struct aws_input_stream *body_stream = aws_input_stream_new(&body_stream_options);
+    body_sender.base.vtable = &s_slow_stream_vtable;
+    aws_ref_count_init(
+        &body_sender.base.ref_count, &body_sender, (aws_simple_completion_callback *)s_slow_stream_destroy);
+
+    struct aws_input_stream *body_stream = &body_sender.base;
 
     struct aws_http_message *request = s_new_default_chunked_put_request(allocator);
     struct client_stream_tester stream_tester;
@@ -3307,6 +3310,7 @@ enum request_callback {
 static const int ERROR_FROM_CALLBACK_ERROR_CODE = (int)0xBEEFCAFE;
 
 struct error_from_callback_tester {
+    struct aws_input_stream base;
     enum request_callback error_at;
     int callback_counts[REQUEST_CALLBACK_COUNT];
     bool has_errored;
@@ -3336,7 +3340,7 @@ static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct
 
     (void)dest;
 
-    struct error_from_callback_tester *error_tester = aws_input_stream_get_impl(body);
+    struct error_from_callback_tester *error_tester = AWS_CONTAINER_OF(body, struct error_from_callback_tester, base);
     if (s_error_from_callback_common(error_tester, REQUEST_CALLBACK_OUTGOING_BODY)) {
         return AWS_OP_ERR;
     }
@@ -3348,7 +3352,7 @@ static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct
 }
 
 static int s_error_from_outgoing_body_get_status(struct aws_input_stream *body, struct aws_stream_status *status) {
-    struct error_from_callback_tester *error_tester = aws_input_stream_get_impl(body);
+    struct error_from_callback_tester *error_tester = AWS_CONTAINER_OF(body, struct error_from_callback_tester, base);
     *status = error_tester->status;
     return AWS_OP_SUCCESS;
 }
@@ -3362,7 +3366,6 @@ static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
     .read = s_error_from_outgoing_body_read,
     .get_status = s_error_from_outgoing_body_get_status,
     .get_length = NULL,
-    .impl_destroy = s_error_from_outgoing_body_destroy,
 };
 
 static int s_error_from_incoming_headers(
@@ -3409,7 +3412,10 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
     struct tester tester;
     ASSERT_SUCCESS(s_tester_init(&tester, allocator));
 
+    struct aws_input_stream empty_stream_base;
+    AWS_ZERO_STRUCT(empty_stream_base);
     struct error_from_callback_tester error_tester = {
+        .base = empty_stream_base,
         .error_at = error_at,
         .status =
             {
@@ -3417,14 +3423,12 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
                 .is_end_of_stream = false,
             },
     };
-    struct aws_input_stream_options error_from_outgoing_body_stream_options = {
-        .allocator = allocator,
-        .impl = &error_tester,
-        .vtable = &s_error_from_outgoing_body_vtable,
-    };
-
-    struct aws_input_stream *error_from_outgoing_body_stream =
-        aws_input_stream_new(&error_from_outgoing_body_stream_options);
+    error_tester.base.vtable = &s_error_from_outgoing_body_vtable;
+    aws_ref_count_init(
+        &error_tester.base.ref_count,
+        &error_tester,
+        (aws_simple_completion_callback *)s_error_from_outgoing_body_destroy);
+    struct aws_input_stream *error_from_outgoing_body_stream = &error_tester.base;
     /* send request */
     struct aws_http_header headers[] = {
         {

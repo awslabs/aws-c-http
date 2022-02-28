@@ -1303,6 +1303,7 @@ enum request_handler_callback {
 static const int ERROR_FROM_CALLBACK_ERROR_CODE = (int)0xBEEFCAFE;
 
 struct error_from_callback_tester {
+    struct aws_input_stream base;
     enum request_handler_callback error_at;
     int callback_counts[REQUEST_HANDLER_CALLBACK_COUNT];
     bool has_errored;
@@ -1341,7 +1342,7 @@ static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct
 
     (void)dest;
 
-    struct error_from_callback_tester *error_tester = aws_input_stream_get_impl(body);
+    struct error_from_callback_tester *error_tester = AWS_CONTAINER_OF(body, struct error_from_callback_tester, base);
     ASSERT_SUCCESS(s_error_from_callback_common(error_tester, REQUEST_HANDLER_CALLBACK_OUTGOING_BODY));
 
     /* If the common fn was successful, write out some data and end the stream */
@@ -1351,7 +1352,7 @@ static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct
 }
 
 static int s_error_from_outgoing_body_get_status(struct aws_input_stream *body, struct aws_stream_status *status) {
-    struct error_from_callback_tester *error_tester = aws_input_stream_get_impl(body);
+    struct error_from_callback_tester *error_tester = AWS_CONTAINER_OF(body, struct error_from_callback_tester, base);
     *status = error_tester->outgoing_body_status;
     return AWS_OP_SUCCESS;
 }
@@ -1365,7 +1366,6 @@ static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
     .read = s_error_from_outgoing_body_read,
     .get_status = s_error_from_outgoing_body_get_status,
     .get_length = NULL,
-    .impl_destroy = s_error_from_outgoing_body_destroy,
 };
 
 static int s_error_from_incoming_headers(
@@ -1553,14 +1553,13 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
         },
     };
 
-    struct aws_input_stream_options error_from_outgoing_body_stream_options = {
-        .allocator = allocator,
-        .impl = &error_tester,
-        .vtable = &s_error_from_outgoing_body_vtable,
-    };
+    error_tester.base.vtable = &s_error_from_outgoing_body_vtable;
+    aws_ref_count_init(
+        &error_tester.base.ref_count,
+        &error_tester,
+        (aws_simple_completion_callback *)s_error_from_outgoing_body_destroy);
 
-    struct aws_input_stream *error_from_outgoing_body_stream =
-        aws_input_stream_new(&error_from_outgoing_body_stream_options);
+    struct aws_input_stream *error_from_outgoing_body_stream = &error_tester.base;
 
     struct aws_http_message *response;
     ASSERT_SUCCESS(
