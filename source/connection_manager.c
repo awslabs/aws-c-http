@@ -573,6 +573,7 @@ static void s_connection_manager_internal_ref_decrease(
     }
 }
 
+/* Only invoked with the lock held */
 static void s_aws_http_connection_manager_build_transaction(struct aws_connection_management_transaction *work) {
     struct aws_http_connection_manager *manager = work->manager;
 
@@ -761,6 +762,8 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
     }
 
     uint64_t cull_task_time = 0;
+
+    aws_mutex_lock(&manager->lock);
     const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections);
     struct aws_linked_list_node *oldest_node = aws_linked_list_begin(&manager->idle_connections);
     if (oldest_node != end) {
@@ -784,6 +787,7 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
             now + aws_timestamp_convert(
                       manager->max_connection_idle_in_milliseconds, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
     }
+    aws_mutex_unlock(&manager->lock);
 
     aws_event_loop_schedule_task_future(manager->cull_event_loop, manager->cull_task, cull_task_time);
 
