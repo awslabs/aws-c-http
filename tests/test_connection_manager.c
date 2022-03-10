@@ -1118,6 +1118,36 @@ static int s_test_connection_manager_idle_culling_mixture(struct aws_allocator *
 AWS_TEST_CASE(test_connection_manager_idle_culling_mixture, s_test_connection_manager_idle_culling_mixture);
 
 /**
+ * Once upon time, if the cullign test is running while the connection manager is shutting, the refcount will be messed
+ * up
+ */
+static int s_test_connection_manager_idle_culling_refcount(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    for (size_t i = 0; i < 100; i++) {
+        /* To reproduce that more stable, repeat it 100 times. */
+        struct cm_tester_options options = {
+            .allocator = allocator,
+            .max_connections = 10,
+            .max_connection_idle_in_ms = 10,
+        };
+
+        ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+        uint64_t ten_ms_in_nanos = aws_timestamp_convert(10, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
+
+        /* Don't ask me how I got the number. :) */
+        aws_thread_current_sleep(ten_ms_in_nanos - 10000);
+
+        ASSERT_SUCCESS(s_cm_tester_clean_up());
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(test_connection_manager_idle_culling_refcount, s_test_connection_manager_idle_culling_refcount);
+
+/**
  * Proxy integration tests. Maybe we should move this to another file. But let's do it later. Someday.
  * AWS_TEST_HTTP_PROXY_HOST - host address of the proxy to use for tests that make open connections to the proxy
  * AWS_TEST_HTTP_PROXY_PORT - port to use for tests that make open connections to the proxy

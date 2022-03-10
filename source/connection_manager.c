@@ -1509,16 +1509,12 @@ static void s_cull_idle_connections(struct aws_http_connection_manager *manager)
     }
 
     struct aws_connection_management_transaction work;
-    bool manager_closing = true;
+    s_aws_connection_management_transaction_init(&work, manager);
 
     aws_mutex_lock(&manager->lock);
 
     /* Only if we're not shutting down */
     if (manager->state == AWS_HCMST_READY) {
-        /* Only create the task when teh manager is not shutting down, otherwise, we could increase the refcount back
-         * from zero. */
-        s_aws_connection_management_transaction_init(&work, manager);
-        manager_closing = false;
         const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections);
         struct aws_linked_list_node *current_node = aws_linked_list_begin(&manager->idle_connections);
         while (current_node != end) {
@@ -1549,9 +1545,8 @@ static void s_cull_idle_connections(struct aws_http_connection_manager *manager)
     }
 
     aws_mutex_unlock(&manager->lock);
-    if (!manager_closing) {
-        s_aws_http_connection_manager_execute_transaction(&work);
-    }
+
+    s_aws_http_connection_manager_execute_transaction(&work);
 }
 
 static void s_cull_task(struct aws_task *task, void *arg, enum aws_task_status status) {

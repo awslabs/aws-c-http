@@ -469,6 +469,7 @@ add_net_test_case(test_connection_manager_proxy_setup_shutdown)
 add_net_test_case(test_connection_manager_idle_culling_single)
 add_net_test_case(test_connection_manager_idle_culling_many)
 add_net_test_case(test_connection_manager_idle_culling_mixture)
+add_net_test_case(test_connection_manager_idle_culling_refcount)
 
 # tests where we establish real connections
 add_net_test_case(test_connection_manager_single_connection)
