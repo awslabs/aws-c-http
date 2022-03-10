@@ -1524,13 +1524,9 @@ static void s_cull_idle_connections(struct aws_http_connection_manager *manager)
                 (void *)manager,
                 (void *)current_idle_connection->connection);
         }
-        s_aws_http_connection_manager_get_snapshot(manager, &work.snapshot);
-    } else {
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_CONNECTION_MANAGER,
-            "id=%p: culling idle connections while manager shutting down. Do nothing",
-            (void *)manager);
     }
+
+    s_aws_http_connection_manager_get_snapshot(manager, &work.snapshot);
 
     aws_mutex_unlock(&manager->lock);
 
