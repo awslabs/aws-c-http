@@ -935,6 +935,7 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
                 "id=%p: ref count now zero, starting shut down process",
                 (void *)manager);
             manager->state = AWS_HCMST_SHUTTING_DOWN;
+            s_aws_http_connection_manager_build_transaction(&work);
             if (manager->cull_event_loop != NULL) {
                 /* When manager shutting down, schedule the task to cancel the cull task if exist. */
                 AWS_FATAL_ASSERT(manager->cull_task);
@@ -943,7 +944,6 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
                 aws_task_init(final_destruction_task, s_final_destruction_task, manager, "final_scheduled_destruction");
                 aws_event_loop_schedule_task_now(manager->cull_event_loop, final_destruction_task);
             }
-            s_aws_http_connection_manager_build_transaction(&work);
             aws_ref_count_release(&manager->internal_ref_count);
         }
     } else {
