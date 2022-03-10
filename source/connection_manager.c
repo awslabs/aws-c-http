@@ -781,6 +781,7 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
          */
         uint64_t now = 0;
         if (manager->system_vtable->get_monotonic_time(&now)) {
+            aws_mutex_unlock(&manager->lock);
             goto on_error;
         }
         cull_task_time =
@@ -795,6 +796,7 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
 
 on_error:
 
+    aws_ref_count_release(&manager->internal_ref_count);
     manager->cull_event_loop = NULL;
     aws_mem_release(manager->allocator, manager->cull_task);
     manager->cull_task = NULL;
