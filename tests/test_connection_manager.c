@@ -1122,8 +1122,8 @@ static int s_test_connection_manager_idle_culling_mixture(struct aws_allocator *
 AWS_TEST_CASE(test_connection_manager_idle_culling_mixture, s_test_connection_manager_idle_culling_mixture);
 
 /**
- * Once upon time, if the cullign test is running while the connection manager is shutting, the refcount will be messed
- * up
+ * Once upon time, if the culling test is running while the connection manager is shutting, the refcount will be messed
+ * up (back from zero to one and trigger the destroy to happen twice)
  */
 static int s_test_connection_manager_idle_culling_refcount(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
