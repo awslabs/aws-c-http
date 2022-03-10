@@ -1130,7 +1130,7 @@ static int s_test_connection_manager_idle_culling_refcount(struct aws_allocator 
 
     aws_http_library_init(allocator);
     for (size_t i = 0; i < 10; i++) {
-        /* To reproduce that more stable, repeat it 100 times. */
+        /* To reproduce that more stable, repeat it 10 times. */
         struct cm_tester_options options = {
             .allocator = allocator,
             .max_connections = 10,
