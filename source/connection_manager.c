@@ -1190,6 +1190,7 @@ void aws_http_connection_manager_acquire_connection(
     s_aws_http_connection_manager_execute_transaction(&work);
 }
 
+/* Only invoke with lock held */
 static int s_idle_connection(struct aws_http_connection_manager *manager, struct aws_http_connection *connection) {
     struct aws_idle_connection *idle_connection =
         aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_idle_connection));
