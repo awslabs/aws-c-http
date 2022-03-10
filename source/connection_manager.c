@@ -767,10 +767,6 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
 
     if (manager->cull_task == NULL) {
         manager->cull_task = aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_task));
-        if (manager->cull_task == NULL) {
-            return;
-        }
-
         aws_task_init(manager->cull_task, s_cull_task, manager, "cull_idle_connections");
     }
 
@@ -1187,14 +1183,8 @@ void aws_http_connection_manager_acquire_connection(
 
     aws_mutex_lock(&manager->lock);
 
-    if (manager->state != AWS_HCMST_READY) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION_MANAGER,
-            "id=%p: Acquire connection called when manager in shut down state",
-            (void *)manager);
-
-        request->error_code = AWS_ERROR_HTTP_CONNECTION_MANAGER_INVALID_STATE_FOR_ACQUIRE;
-    }
+    /* It's a use after free crime, we don't want to handle */
+    AWS_FATAL_ASSERT(manager->state == AWS_HCMST_READY);
 
     aws_linked_list_push_back(&manager->pending_acquisitions, &request->node);
     ++manager->pending_acquisition_count;
@@ -1517,12 +1507,16 @@ static void s_cull_idle_connections(struct aws_http_connection_manager *manager)
     }
 
     struct aws_connection_management_transaction work;
-    s_aws_connection_management_transaction_init(&work, manager);
+    bool manager_closing = true;
 
     aws_mutex_lock(&manager->lock);
 
     /* Only if we're not shutting down */
     if (manager->state == AWS_HCMST_READY) {
+        /* Only create the task when teh manager is not shutting down, otherwise, we could increase the refcount back
+         * from zero. */
+        s_aws_connection_management_transaction_init(&work, manager);
+        manager_closing = false;
         const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections);
         struct aws_linked_list_node *current_node = aws_linked_list_begin(&manager->idle_connections);
         while (current_node != end) {
@@ -1544,13 +1538,18 @@ static void s_cull_idle_connections(struct aws_http_connection_manager *manager)
                 (void *)manager,
                 (void *)current_idle_connection->connection);
         }
+        s_aws_http_connection_manager_get_snapshot(manager, &work.snapshot);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "id=%p: culling idle connections while manager shutting down. Do nothing",
+            (void *)manager);
     }
 
-    s_aws_http_connection_manager_get_snapshot(manager, &work.snapshot);
-
     aws_mutex_unlock(&manager->lock);
-
-    s_aws_http_connection_manager_execute_transaction(&work);
+    if (!manager_closing) {
+        s_aws_http_connection_manager_execute_transaction(&work);
+    }
 }
 
 static void s_cull_task(struct aws_task *task, void *arg, enum aws_task_status status) {
