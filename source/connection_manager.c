@@ -176,6 +176,7 @@ struct aws_http_connection_manager {
     /*
      * The number of all established, idle connections.  So
      * that we don't have compute the size of a linked list every time.
+     * It doesn't contribute to internal refcount as AWS_HCMCT_OPEN_CONNECTION inclues all idle connections as well.
      */
     size_t idle_connection_count;
 
@@ -218,6 +219,8 @@ struct aws_http_connection_manager {
 
     /*
      * The number of established new HTTP/2 connections we have waiting for SETTINGS from the http layer
+     * It doesn't contribute to internal refcount as AWS_HCMCT_OPEN_CONNECTION inclues all connections waiting for
+     * settings as well.
      */
     size_t pending_settings_count;
 
