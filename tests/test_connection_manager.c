@@ -1124,7 +1124,7 @@ AWS_TEST_CASE(test_connection_manager_idle_culling_mixture, s_test_connection_ma
 static int s_test_connection_manager_idle_culling_refcount(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
-    for (size_t i = 0; i < 100; i++) {
+    for (size_t i = 0; i < 10; i++) {
         /* To reproduce that more stable, repeat it 100 times. */
         struct cm_tester_options options = {
             .allocator = allocator,
