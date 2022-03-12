@@ -63,6 +63,7 @@ struct aws_websocket {
         struct aws_websocket_encoder encoder;
         struct aws_linked_list outgoing_frame_list;
         struct outgoing_frame *current_outgoing_frame;
+        struct aws_linked_list write_completion_frames;
 
         struct aws_websocket_decoder decoder;
         struct aws_websocket_incoming_frame *current_incoming_frame;
@@ -167,6 +168,7 @@ static int s_decoder_on_user_payload(struct aws_websocket *websocket, struct aws
 static int s_decoder_on_midchannel_payload(struct aws_websocket *websocket, struct aws_byte_cursor data);
 
 static void s_destroy_outgoing_frame(struct aws_websocket *websocket, struct outgoing_frame *frame, int error_code);
+static void s_complete_frame_list(struct aws_websocket *websocket, struct aws_linked_list *frames, int error_code);
 static void s_complete_incoming_frame(struct aws_websocket *websocket, int error_code, bool *out_callback_result);
 static void s_finish_shutdown(struct aws_websocket *websocket);
 static void s_io_message_write_completed(
@@ -296,6 +298,7 @@ struct aws_websocket *aws_websocket_handler_new(const struct aws_websocket_handl
     aws_channel_task_init(&websocket->close_timeout_task, s_close_timeout_task, websocket, "websocket_close_timeout");
 
     aws_linked_list_init(&websocket->thread_data.outgoing_frame_list);
+    aws_linked_list_init(&websocket->thread_data.write_completion_frames);
 
     aws_websocket_encoder_init(&websocket->thread_data.encoder, s_encoder_stream_outgoing_payload, websocket);
 
@@ -697,7 +700,8 @@ static void s_try_write_outgoing_frames(struct aws_websocket *websocket) {
             wrote_close_frame = true;
         }
 
-        s_destroy_outgoing_frame(websocket, websocket->thread_data.current_outgoing_frame, AWS_ERROR_SUCCESS);
+        aws_linked_list_push_back(
+            &websocket->thread_data.write_completion_frames, &websocket->thread_data.current_outgoing_frame->node);
         websocket->thread_data.current_outgoing_frame = NULL;
 
         if (wrote_close_frame) {
@@ -817,6 +821,8 @@ static void s_io_message_write_completed(
     struct aws_websocket *websocket = user_data;
     AWS_ASSERT(aws_channel_thread_is_callers_thread(channel));
 
+    s_complete_frame_list(websocket, &websocket->thread_data.write_completion_frames, err_code);
+
     if (err_code == AWS_ERROR_SUCCESS) {
         AWS_LOGF_TRACE(
             AWS_LS_HTTP_WEBSOCKET, "id=%p: aws_io_message written to socket, sending more data...", (void *)websocket);
@@ -912,6 +918,19 @@ static void s_destroy_outgoing_frame(struct aws_websocket *websocket, struct out
     }
 
     aws_mem_release(websocket->alloc, frame);
+}
+
+static void s_complete_frame_list(struct aws_websocket *websocket, struct aws_linked_list *frames, int error_code) {
+    struct aws_linked_list_node *node = aws_linked_list_begin(frames);
+    while (node != aws_linked_list_end(frames)) {
+        struct outgoing_frame *frame = AWS_CONTAINER_OF(node, struct outgoing_frame, node);
+
+        node = aws_linked_list_next(node);
+        s_destroy_outgoing_frame(websocket, frame, error_code);
+    }
+
+    /* we've released everything, so reset the list to empty */
+    aws_linked_list_init(frames);
 }
 
 static void s_stop_writing(struct aws_websocket *websocket, int send_frame_error_code) {
@@ -1195,6 +1214,8 @@ static void s_finish_shutdown(struct aws_websocket *websocket) {
 
     s_unlock_synced_data(websocket);
     /* END CRITICAL SECTION */
+
+    s_complete_frame_list(websocket, &websocket->thread_data.write_completion_frames, AWS_ERROR_HTTP_CONNECTION_CLOSED);
 
     while (!aws_linked_list_empty(&websocket->thread_data.outgoing_frame_list)) {
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&websocket->thread_data.outgoing_frame_list);
