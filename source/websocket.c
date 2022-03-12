@@ -61,8 +61,17 @@ struct aws_websocket {
     /* Data that should only be accessed from the websocket's channel thread. */
     struct {
         struct aws_websocket_encoder encoder;
+
+        /* list of outbound frames that have yet to be encoded and sent to the socket */
         struct aws_linked_list outgoing_frame_list;
+
+        /* current outbound frame being encoded and sent to the socket */
         struct outgoing_frame *current_outgoing_frame;
+
+        /*
+         * list of outbound frames that have been completely written to the io message heading to the socket.
+         * When the socket write completes we can in turn invoke completion callbacks for all of these frames
+         */
         struct aws_linked_list write_completion_frames;
 
         struct aws_websocket_decoder decoder;
@@ -700,8 +709,13 @@ static void s_try_write_outgoing_frames(struct aws_websocket *websocket) {
             wrote_close_frame = true;
         }
 
+        /*
+         * a completely-written frame gets added to the write completion list so that when the socket write completes
+         * we can complete all of the outbound frames that were finished as part of the io message
+         */
         aws_linked_list_push_back(
             &websocket->thread_data.write_completion_frames, &websocket->thread_data.current_outgoing_frame->node);
+
         websocket->thread_data.current_outgoing_frame = NULL;
 
         if (wrote_close_frame) {
@@ -821,6 +835,10 @@ static void s_io_message_write_completed(
     struct aws_websocket *websocket = user_data;
     AWS_ASSERT(aws_channel_thread_is_callers_thread(channel));
 
+    /*
+     * Invoke the completion callbacks (and then destroy) for all the frames that were completely written as
+     * part of this message completion at the socket layer
+     */
     s_complete_frame_list(websocket, &websocket->thread_data.write_completion_frames, err_code);
 
     if (err_code == AWS_ERROR_SUCCESS) {
