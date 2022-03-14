@@ -1133,12 +1133,6 @@ TEST_CASE(websocket_handler_send_one_io_msg_at_a_time) {
     return AWS_OP_SUCCESS;
 }
 
-void s_on_websocket_frame_write_completion_final(struct aws_websocket *websocket, int error_code, void *user_data) {
-    (void)websocket;
-    (void)error_code;
-    (void)user_data;
-}
-
 /*
  * Verifies that the write completion callbacks for websocket frames are not invoked immediately after relaying
  * towards the left end (socket) of the channel
@@ -1160,8 +1154,6 @@ TEST_CASE(websocket_handler_delayed_write_completion) {
         send->payload = payload;
         send->def.opcode = AWS_WEBSOCKET_OPCODE_TEXT;
         send->def.fin = true;
-        send->def.on_complete = s_on_websocket_frame_write_completion_final;
-        send->def.user_data = &tester;
 
         ASSERT_SUCCESS(s_send_frame(&tester, send));
     }
