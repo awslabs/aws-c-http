@@ -1133,6 +1133,70 @@ TEST_CASE(websocket_handler_send_one_io_msg_at_a_time) {
     return AWS_OP_SUCCESS;
 }
 
+void s_on_websocket_frame_write_completion_final(struct aws_websocket *websocket, int error_code, void *user_data) {
+    (void)websocket;
+    (void)error_code;
+    (void)user_data;
+}
+
+/*
+ * Verifies that the write completion callbacks for websocket frames are not invoked immediately after relaying
+ * towards the left end (socket) of the channel
+ */
+TEST_CASE(websocket_handler_delayed_write_completion) {
+    (void)ctx;
+    struct tester tester;
+    ASSERT_SUCCESS(s_tester_init(&tester, allocator));
+
+    struct aws_byte_cursor payload = aws_byte_cursor_from_c_str("bitter butter.");
+
+    const size_t count = 2;
+    struct send_tester *sending = aws_mem_acquire(allocator, sizeof(struct send_tester) * count);
+    ASSERT_NOT_NULL(sending);
+    memset(sending, 0, sizeof(struct send_tester) * count);
+
+    for (size_t i = 0; i < count; ++i) {
+        struct send_tester *send = &sending[i];
+        send->payload = payload;
+        send->def.opcode = AWS_WEBSOCKET_OPCODE_TEXT;
+        send->def.fin = true;
+        send->def.on_complete = s_on_websocket_frame_write_completion_final;
+        send->def.user_data = &tester;
+
+        ASSERT_SUCCESS(s_send_frame(&tester, send));
+    }
+
+    /* Turn off instant write completion and run the channel */
+    testing_channel_complete_written_messages_immediately(&tester.testing_channel, false, AWS_OP_SUCCESS);
+    testing_channel_drain_queued_tasks(&tester.testing_channel);
+
+    struct aws_linked_list *io_msgs = testing_channel_get_written_message_queue(&tester.testing_channel);
+    ASSERT_FALSE(aws_linked_list_empty(io_msgs));
+
+    struct aws_linked_list_node *node = aws_linked_list_pop_front(io_msgs);
+    struct aws_io_message *msg = AWS_CONTAINER_OF(node, struct aws_io_message, queueing_handle);
+
+    /* we've relayed the frames, but no frame write completions should have been invoked */
+    for (size_t i = 0; i < count; ++i) {
+        struct send_tester *send = &sending[i];
+        ASSERT_UINT_EQUALS(0, send->on_complete_count);
+    }
+
+    /* manually invoke the write completion on the downstream io message */
+    msg->on_completion(tester.testing_channel.channel, msg, AWS_ERROR_SUCCESS, msg->user_data);
+    aws_mem_release(msg->allocator, msg);
+
+    /* now all frame write completions should have been invoked exactly once */
+    for (size_t i = 0; i < count; ++i) {
+        struct send_tester *send = &sending[i];
+        ASSERT_UINT_EQUALS(1, send->on_complete_count);
+    }
+
+    ASSERT_SUCCESS(s_tester_clean_up(&tester));
+    aws_mem_release(allocator, sending);
+    return AWS_OP_SUCCESS;
+}
+
 TEST_CASE(websocket_handler_send_halts_if_payload_fn_returns_false) {
     (void)ctx;
     struct tester tester;
