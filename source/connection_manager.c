@@ -176,6 +176,7 @@ struct aws_http_connection_manager {
     /*
      * The number of all established, idle connections.  So
      * that we don't have compute the size of a linked list every time.
+     * It doesn't contribute to internal refcount as AWS_HCMCT_OPEN_CONNECTION inclues all idle connections as well.
      */
     size_t idle_connection_count;
 
@@ -218,6 +219,8 @@ struct aws_http_connection_manager {
 
     /*
      * The number of established new HTTP/2 connections we have waiting for SETTINGS from the http layer
+     * It doesn't contribute to internal refcount as AWS_HCMCT_OPEN_CONNECTION inclues all connections waiting for
+     * settings as well.
      */
     size_t pending_settings_count;
 
@@ -570,6 +573,7 @@ static void s_connection_manager_internal_ref_decrease(
     }
 }
 
+/* Only invoked with the lock held */
 static void s_aws_http_connection_manager_build_transaction(struct aws_connection_management_transaction *work) {
     struct aws_http_connection_manager *manager = work->manager;
 
@@ -719,44 +723,20 @@ static void s_aws_http_connection_manager_finish_destroy(struct aws_http_connect
     aws_mem_release(manager->allocator, manager);
 }
 
-/* This is scheduled to run on the cull task's event loop.  If there's no cull task we just destroy the
- * manager directly without a cross-thread task.  */
+/* This is scheduled to run on the cull task's event loop. Should only be scheduled to run if we have one  */
 static void s_final_destruction_task(struct aws_task *task, void *arg, enum aws_task_status status) {
     (void)status;
     struct aws_http_connection_manager *manager = arg;
     struct aws_allocator *allocator = manager->allocator;
 
-    if (manager->cull_task) {
-        AWS_FATAL_ASSERT(manager->cull_event_loop != NULL);
-        aws_event_loop_cancel_task(manager->cull_event_loop, manager->cull_task);
-    }
+    AWS_FATAL_ASSERT(manager->cull_task != NULL);
+    AWS_FATAL_ASSERT(manager->cull_event_loop != NULL);
 
-    s_aws_http_connection_manager_finish_destroy(manager);
-
+    aws_event_loop_cancel_task(manager->cull_event_loop, manager->cull_task);
     aws_mem_release(allocator, task);
-}
 
-static void s_aws_http_connection_manager_begin_destroy(struct aws_http_connection_manager *manager) {
-    if (manager == NULL) {
-        return;
-    }
-
-    /*
-     * If we have a cull task running then we have to cancel it.  But you can only cancel tasks within the event
-     * loop that the task is scheduled on.  So to solve this case, if there's a cull task, rather than doing
-     * cleanup synchronously, we schedule a final destruction task (on the cull event loop) which cancels the
-     * cull task before going on to release all the memory and notify the shutdown callback.
-     *
-     * If there's no cull task we can just cleanup synchronously.
-     */
-    if (manager->cull_event_loop != NULL) {
-        AWS_FATAL_ASSERT(manager->cull_task);
-        struct aws_task *final_destruction_task = aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_task));
-        aws_task_init(final_destruction_task, s_final_destruction_task, manager, "final_scheduled_destruction");
-        aws_event_loop_schedule_task_now(manager->cull_event_loop, final_destruction_task);
-    } else {
-        s_aws_http_connection_manager_finish_destroy(manager);
-    }
+    /* release the refcount on manager as the culling task will not run again */
+    aws_ref_count_release(&manager->internal_ref_count);
 }
 
 static void s_cull_task(struct aws_task *task, void *arg, enum aws_task_status status);
@@ -767,22 +747,19 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
 
     if (manager->cull_task == NULL) {
         manager->cull_task = aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_task));
-        if (manager->cull_task == NULL) {
-            return;
-        }
-
         aws_task_init(manager->cull_task, s_cull_task, manager, "cull_idle_connections");
+        /* For the task to properly run and cancel, we need to keep manager alive */
+        aws_ref_count_acquire(&manager->internal_ref_count);
     }
 
     if (manager->cull_event_loop == NULL) {
         manager->cull_event_loop = aws_event_loop_group_get_next_loop(manager->bootstrap->event_loop_group);
     }
-
-    if (manager->cull_event_loop == NULL) {
-        goto on_error;
-    }
+    AWS_FATAL_ASSERT(manager->cull_event_loop != NULL);
 
     uint64_t cull_task_time = 0;
+
+    aws_mutex_lock(&manager->lock);
     const struct aws_linked_list_node *end = aws_linked_list_end(&manager->idle_connections);
     struct aws_linked_list_node *oldest_node = aws_linked_list_begin(&manager->idle_connections);
     if (oldest_node != end) {
@@ -799,23 +776,16 @@ static void s_schedule_connection_culling(struct aws_http_connection_manager *ma
          * culling interval from now.
          */
         uint64_t now = 0;
-        if (manager->system_vtable->get_monotonic_time(&now)) {
-            goto on_error;
-        }
+        manager->system_vtable->get_monotonic_time(&now);
         cull_task_time =
             now + aws_timestamp_convert(
                       manager->max_connection_idle_in_milliseconds, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
     }
+    aws_mutex_unlock(&manager->lock);
 
     aws_event_loop_schedule_task_future(manager->cull_event_loop, manager->cull_task, cull_task_time);
 
     return;
-
-on_error:
-
-    manager->cull_event_loop = NULL;
-    aws_mem_release(manager->allocator, manager->cull_task);
-    manager->cull_task = NULL;
 }
 
 struct aws_http_connection_manager *aws_http_connection_manager_new(
@@ -857,7 +827,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     aws_ref_count_init(
         &manager->internal_ref_count,
         manager,
-        (aws_simple_completion_callback *)s_aws_http_connection_manager_begin_destroy);
+        (aws_simple_completion_callback *)s_aws_http_connection_manager_finish_destroy);
 
     aws_linked_list_init(&manager->idle_connections);
     aws_linked_list_init(&manager->pending_acquisitions);
@@ -919,6 +889,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
     manager->max_closed_streams = options->max_closed_streams;
     manager->http2_conn_manual_window_management = options->http2_conn_manual_window_management;
 
+    /* NOTHING can fail after here */
     s_schedule_connection_culling(manager);
 
     AWS_LOGF_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "id=%p: Successfully created", (void *)manager);
@@ -927,14 +898,13 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
 
 on_error:
 
-    s_aws_http_connection_manager_begin_destroy(manager);
+    s_aws_http_connection_manager_finish_destroy(manager);
 
     return NULL;
 }
 
 void aws_http_connection_manager_acquire(struct aws_http_connection_manager *manager) {
     aws_mutex_lock(&manager->lock);
-    aws_ref_count_acquire(&manager->internal_ref_count);
     AWS_FATAL_ASSERT(manager->external_ref_count > 0);
     manager->external_ref_count += 1;
     aws_mutex_unlock(&manager->lock);
@@ -958,6 +928,14 @@ void aws_http_connection_manager_release(struct aws_http_connection_manager *man
                 (void *)manager);
             manager->state = AWS_HCMST_SHUTTING_DOWN;
             s_aws_http_connection_manager_build_transaction(&work);
+            if (manager->cull_task != NULL) {
+                /* When manager shutting down, schedule the task to cancel the cull task if exist. */
+                AWS_FATAL_ASSERT(manager->cull_event_loop);
+                struct aws_task *final_destruction_task =
+                    aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_task));
+                aws_task_init(final_destruction_task, s_final_destruction_task, manager, "final_scheduled_destruction");
+                aws_event_loop_schedule_task_now(manager->cull_event_loop, final_destruction_task);
+            }
             aws_ref_count_release(&manager->internal_ref_count);
         }
     } else {
@@ -1187,14 +1165,8 @@ void aws_http_connection_manager_acquire_connection(
 
     aws_mutex_lock(&manager->lock);
 
-    if (manager->state != AWS_HCMST_READY) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION_MANAGER,
-            "id=%p: Acquire connection called when manager in shut down state",
-            (void *)manager);
-
-        request->error_code = AWS_ERROR_HTTP_CONNECTION_MANAGER_INVALID_STATE_FOR_ACQUIRE;
-    }
+    /* It's a use after free crime, we don't want to handle */
+    AWS_FATAL_ASSERT(manager->state == AWS_HCMST_READY);
 
     aws_linked_list_push_back(&manager->pending_acquisitions, &request->node);
     ++manager->pending_acquisition_count;
@@ -1206,6 +1178,7 @@ void aws_http_connection_manager_acquire_connection(
     s_aws_http_connection_manager_execute_transaction(&work);
 }
 
+/* Only invoke with lock held */
 static int s_idle_connection(struct aws_http_connection_manager *manager, struct aws_http_connection *connection) {
     struct aws_idle_connection *idle_connection =
         aws_mem_calloc(manager->allocator, 1, sizeof(struct aws_idle_connection));

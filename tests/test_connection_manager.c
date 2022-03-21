@@ -55,6 +55,7 @@ struct cm_tester_options {
     bool http2;
     struct aws_http2_setting *initial_settings_array;
     size_t num_initial_settings;
+    bool self_lib_init;
 };
 
 struct cm_tester {
@@ -93,6 +94,7 @@ struct cm_tester {
     struct proxy_env_var_settings proxy_ev_settings;
     bool proxy_request_complete;
     bool proxy_request_successful;
+    bool self_lib_init;
 };
 
 static struct cm_tester s_tester;
@@ -134,9 +136,10 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     struct cm_tester *tester = &s_tester;
 
     AWS_ZERO_STRUCT(*tester);
-
-    aws_http_library_init(options->allocator);
-
+    tester->self_lib_init = options->self_lib_init;
+    if (!tester->self_lib_init) {
+        aws_http_library_init(options->allocator);
+    }
     tester->allocator = options->allocator;
 
     ASSERT_SUCCESS(aws_mutex_init(&tester->lock));
@@ -418,8 +421,9 @@ static int s_cm_tester_clean_up(void) {
     aws_tls_connection_options_clean_up(&tester->tls_connection_options);
     aws_tls_ctx_release(tester->tls_ctx);
 
-    aws_http_library_clean_up();
-
+    if (!tester->self_lib_init) {
+        aws_http_library_clean_up();
+    }
     aws_mutex_clean_up(&tester->lock);
     aws_condition_variable_clean_up(&tester->signal);
 
@@ -1116,6 +1120,38 @@ static int s_test_connection_manager_idle_culling_mixture(struct aws_allocator *
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_idle_culling_mixture, s_test_connection_manager_idle_culling_mixture);
+
+/**
+ * Once upon time, if the culling test is running while the connection manager is shutting, the refcount will be messed
+ * up (back from zero to one and trigger the destroy to happen twice)
+ */
+static int s_test_connection_manager_idle_culling_refcount(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    aws_http_library_init(allocator);
+    for (size_t i = 0; i < 10; i++) {
+        /* To reproduce that more stable, repeat it 10 times. */
+        struct cm_tester_options options = {
+            .allocator = allocator,
+            .max_connections = 10,
+            .max_connection_idle_in_ms = 10,
+            .self_lib_init = true,
+        };
+
+        ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+        uint64_t ten_ms_in_nanos = aws_timestamp_convert(10, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
+
+        /* Don't ask me how I got the number. :) */
+        aws_thread_current_sleep(ten_ms_in_nanos - 10000);
+
+        ASSERT_SUCCESS(s_cm_tester_clean_up());
+    }
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(test_connection_manager_idle_culling_refcount, s_test_connection_manager_idle_culling_refcount);
 
 /**
  * Proxy integration tests. Maybe we should move this to another file. But let's do it later. Someday.
