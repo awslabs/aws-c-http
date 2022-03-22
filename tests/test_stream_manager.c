@@ -1045,8 +1045,8 @@ TEST_CASE(h2_sm_acquire_stream_stress) {
     int expected_success = 180 * 1000;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
-    ASSERT_TRUE(s_tester.acquiring_stream_errors < (num_to_acquire - expected_success));
-    ASSERT_TRUE(s_tester.stream_200_count > expected_success);
+    ASSERT_TRUE((int)s_tester.acquiring_stream_errors < (num_to_acquire - expected_success));
+    ASSERT_TRUE((int)s_tester.stream_200_count > expected_success);
 
     return s_tester_clean_up();
 }
