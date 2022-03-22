@@ -25,16 +25,6 @@ typedef void(aws_http_connection_manager_on_connection_setup_fn)(
 
 typedef void(aws_http_connection_manager_shutdown_complete_fn)(void *user_data);
 
-struct aws_http_manager_metric {
-    /**
-     * The number of additional concurrent requests that can be supported by the HTTP client WITHOUT needing to
-     * establish additional connections to the target server.
-     */
-    size_t available_concurrency;
-    size_t leased_concurrency;
-    size_t pending_concurrency_acquiring;
-};
-
 /*
  * Connection manager configuration struct.
  *
