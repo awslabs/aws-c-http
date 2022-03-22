@@ -1040,9 +1040,9 @@ TEST_CASE(h2_sm_acquire_stream_stress) {
         .alloc = allocator,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
-    int num_to_acquire = 1000 * 200;
+    int num_to_acquire = 20 * 1000;
     /* Because of network and things, we may fail some acquisition. Let's expect 90% success */
-    int expected_success = 180 * 1000;
+    int expected_success = 18 * 1000;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_TRUE((int)s_tester.acquiring_stream_errors < (num_to_acquire - expected_success));
