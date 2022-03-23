@@ -255,7 +255,7 @@ int aws_h1_encoder_message_init_from_request(
 
     AWS_ZERO_STRUCT(*message);
 
-    message->body = aws_http_message_get_body_stream(request);
+    message->body = aws_input_stream_acquire(aws_http_message_get_body_stream(request));
     message->pending_chunk_list = pending_chunk_list;
 
     struct aws_byte_cursor method;
@@ -351,7 +351,7 @@ int aws_h1_encoder_message_init_from_response(
 
     AWS_ZERO_STRUCT(*message);
 
-    message->body = aws_http_message_get_body_stream(response);
+    message->body = aws_input_stream_acquire(aws_http_message_get_body_stream(response));
     message->pending_chunk_list = pending_chunk_list;
 
     struct aws_byte_cursor version = aws_http_version_to_str(AWS_HTTP_VERSION_1_1);
@@ -431,6 +431,7 @@ error:
 }
 
 void aws_h1_encoder_message_clean_up(struct aws_h1_encoder_message *message) {
+    aws_input_stream_release(message->body);
     aws_byte_buf_clean_up(&message->outgoing_head_buf);
     aws_h1_trailer_destroy(message->trailer);
     AWS_ZERO_STRUCT(*message);
@@ -545,13 +546,12 @@ struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const str
     }
 
     chunk->allocator = allocator;
-    chunk->data = options->chunk_data;
+    chunk->data = aws_input_stream_acquire(options->chunk_data);
     chunk->data_size = options->chunk_data_size;
     chunk->on_complete = options->on_complete;
     chunk->user_data = options->user_data;
     chunk->chunk_line = aws_byte_buf_from_empty_array(chunk_line_storage, chunk_line_size);
     s_populate_chunk_line_buffer(&chunk->chunk_line, options);
-    aws_input_stream_acquire(chunk->data);
     return chunk;
 }
 

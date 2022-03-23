@@ -25,7 +25,6 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
 
     aws_h1_encoder_message_clean_up(&stream->encoder_message);
     aws_byte_buf_clean_up(&stream->incoming_storage_buf);
-    aws_http_message_release(stream->http_message);
     aws_mem_release(stream->base.alloc, stream);
 }
 
@@ -408,7 +407,6 @@ struct aws_h1_stream *aws_h1_stream_new_request(
             &stream->thread_data.pending_chunk_list)) {
         goto error;
     }
-    stream->http_message = aws_http_message_acquire(options->request);
 
     /* RFC-7230 Section 6.3: The "close" connection option is used to signal
      * that a connection will not persist after the current request/response*/
