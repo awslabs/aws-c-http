@@ -585,7 +585,7 @@ add_test_case(test_http_stats_split_across_gather_boundary)
 add_test_case(test_http_stats_pipelined)
 add_test_case(test_http_stats_multiple_requests_with_gap)
 
-# Tests that not makes real connection but use TLS. So, still need to be marked as net test
+# Tests that not make real connection but use TLS. So, still need to be marked as net test
 add_net_test_case(h2_sm_sanity_check)
 add_net_test_case(h2_sm_mock_connection)
 add_net_test_case(h2_sm_mock_multiple_connections)
