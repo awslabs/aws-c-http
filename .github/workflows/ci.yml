@@ -7,7 +7,7 @@ on:
       - '!main'
 
 env:
-  BUILDER_VERSION: v0.9.14
+  BUILDER_VERSION: v0.9.15
   BUILDER_SOURCE: releases
   BUILDER_HOST: https://d19elf31gohf1l.cloudfront.net
   PACKAGE_NAME: aws-c-http
@@ -23,6 +23,8 @@ jobs:
     strategy:
       matrix:
         image:
+          - manylinux1-x64
+          - manylinux1-x86
           - manylinux2014-x64
           - manylinux2014-x86
           - al2-x64
