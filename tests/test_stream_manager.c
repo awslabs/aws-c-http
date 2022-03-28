@@ -28,7 +28,7 @@
 #include <aws/testing/io_testing_channel.h>
 
 #ifdef _MSC_VER
-#    pragma warning(disable : 4996) /* Disable warnings about sptrintf() being insecure */
+#    pragma warning(disable : 4996) /* Disable warnings about sprintf() being insecure */
 #endif
 
 #define TEST_CASE(NAME)                                                                                                \
