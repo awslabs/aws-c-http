@@ -902,6 +902,7 @@ static bool s_echo_body_has_header(const struct aws_byte_cursor echo_body, const
     struct aws_byte_cursor to_find_cur = aws_byte_cursor_from_c_str(str_to_find);
     struct aws_byte_cursor found;
     if (aws_byte_cursor_find_exact(&echo_body, &to_find_cur, &found)) {
+        printf("xxxxxxxxxxxx body is" PRInSTR "\n", AWS_BYTE_CURSOR_PRI(echo_body));
         /* cannot find the value */
         return false;
     }
@@ -1159,8 +1160,8 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
     size_t error_count = 0;
 
     /* Use a pool of headers and a pool of values, pick up randomly from both pool to stress hpack */
-    size_t headers_pool_size = 1000;
-    size_t values_pool_size = 100;
+    size_t headers_pool_size = 500;
+    size_t values_pool_size = 66;
 
     for (size_t i = 0; i < num_to_acquire; i++) {
         struct aws_http_message *request = aws_http2_message_new_request(allocator);
@@ -1180,12 +1181,27 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
             aws_device_random_u64(&random_64_bit_num);
 
             size_t headers = (size_t)random_64_bit_num % headers_pool_size;
-            sprintf(test_header_str, "awscommonruntimetest-%zu", headers);
+            sprintf(test_header_str, "crttest-%zu", headers);
             char test_value_str[256];
             size_t value = (size_t)random_64_bit_num % values_pool_size;
-            sprintf(test_value_str, "AwscommonRuntimeTestValue-%zu", value);
-            aws_http_headers_add(
-                test_headers, aws_byte_cursor_from_c_str(test_header_str), aws_byte_cursor_from_c_str(test_value_str));
+            sprintf(test_value_str, "value-%zu", value);
+            struct aws_byte_cursor existed_value;
+            if (aws_http_headers_get(test_headers, aws_byte_cursor_from_c_str(test_header_str), &existed_value) ==
+                AWS_OP_SUCCESS) {
+                /* If the header has the same name already exists in the headers, the response will combine the values
+                 * together. Do the same thing for the header to check. */
+                char combined_value_str[1024];
+                sprintf(combined_value_str, "" PRInSTR ",%s", AWS_BYTE_CURSOR_PRI(existed_value), test_value_str);
+                aws_http_headers_set(
+                    test_headers,
+                    aws_byte_cursor_from_c_str(test_header_str),
+                    aws_byte_cursor_from_c_str(combined_value_str));
+            } else {
+                aws_http_headers_add(
+                    test_headers,
+                    aws_byte_cursor_from_c_str(test_header_str),
+                    aws_byte_cursor_from_c_str(test_value_str));
+            }
             aws_http_headers_add(
                 request_headers,
                 aws_byte_cursor_from_c_str(test_header_str),
