@@ -27,10 +27,6 @@
 #include <aws/testing/aws_test_harness.h>
 #include <aws/testing/io_testing_channel.h>
 
-#ifdef _MSC_VER
-#    pragma warning(disable : 4996) /* Disable warnings about sprintf() being insecure */
-#endif
-
 #define TEST_CASE(NAME)                                                                                                \
     AWS_TEST_CASE(NAME, s_test_##NAME);                                                                                \
     static int s_test_##NAME(struct aws_allocator *allocator, void *ctx)

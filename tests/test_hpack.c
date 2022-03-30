@@ -17,6 +17,9 @@
 #include <aws/io/socket.h>
 #include <aws/io/tls_channel_handler.h>
 
+#ifdef _MSC_VER
+#    pragma warning(disable : 4996) /* Disable warnings about sprintf() being insecure */
+#endif
 /* #TODO test that buffer is resized if space is insufficient */
 
 AWS_TEST_CASE(hpack_encode_integer, test_hpack_encode_integer)
