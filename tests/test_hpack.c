@@ -1154,9 +1154,9 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
     };
     /* The initail settings header table size is 4096 octets, but the frame size limits us to send too many headers in
      * one request. */
-    size_t num_to_acquire = 1000;
-    size_t accpected_error = 50;
-    size_t num_headers_to_make = 100;
+    size_t num_to_acquire = 1;
+    size_t accpected_error = 1;
+    size_t num_headers_to_make = 70;
     size_t error_count = 0;
 
     /* Use a pool of headers and a pool of values, pick up randomly from both pool to stress hpack */
