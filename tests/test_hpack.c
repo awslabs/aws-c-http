@@ -1152,11 +1152,11 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
         DEFINE_HEADER(":path", "/headers"),
         DEFINE_HEADER(":authority", "httpbin.org"),
     };
-    /* The initail settings header table size is 4096 octets, but the frame size limits us to send too many headers in
-     * one request. */
+    /* TODO: The initail settings header table size is 4096 octets, not sure about why server response with 400 when we
+     * sent a request with around 100 headers */
     size_t num_to_acquire = 1000;
     size_t accpected_error = 50;
-    size_t num_headers_to_make = 70;
+    size_t num_headers_to_make = 70; /* will have bad request around 100 */
     size_t error_count = 0;
 
     /* Use a pool of headers and a pool of values, pick up randomly from both pool to stress hpack */
