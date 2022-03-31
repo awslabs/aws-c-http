@@ -25,6 +25,14 @@ typedef void(aws_http_connection_manager_on_connection_setup_fn)(
 
 typedef void(aws_http_connection_manager_shutdown_complete_fn)(void *user_data);
 
+struct aws_http_manager_metric {
+    /* The number of additional concurrent requests that can be supported by the HTTP manager without needing to
+     * establish additional connections to the target server. */
+    size_t available_concurrency;
+    /* The number of requests that are awaiting concurrency to be made available from the HTTP manager. */
+    size_t pending_concurrency_acquires;
+};
+
 /*
  * Connection manager configuration struct.
  *
@@ -142,6 +150,14 @@ AWS_HTTP_API
 int aws_http_connection_manager_release_connection(
     struct aws_http_connection_manager *manager,
     struct aws_http_connection *connection);
+
+/**
+ * Fetch the current manager metric from connection manager.
+ */
+AWS_HTTP_API
+void aws_http_connection_manager_fetch_metric(
+    struct aws_http_connection_manager *manager,
+    struct aws_http_manager_metric *out_metric);
 
 AWS_EXTERN_C_END
 

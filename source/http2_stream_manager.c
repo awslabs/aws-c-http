@@ -146,7 +146,7 @@ static struct aws_h2_sm_connection *s_get_best_sm_connection_from_set(struct aws
 
 /* helper function for building the transaction: Try to assign connection for a pending stream acquisition */
 /* *_synced should only be called with LOCK HELD or from another synced function */
-static void s_sm_try_assign_connection_to_pending_stream_acquisition(
+static void s_sm_try_assign_connection_to_pending_stream_acquisition_synced(
     struct aws_http2_stream_manager *stream_manager,
     struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition) {
 
@@ -347,7 +347,7 @@ static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2
                 aws_linked_list_pop_front(&stream_manager->synced_data.pending_stream_acquisitions);
             struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition =
                 AWS_CONTAINER_OF(node, struct aws_h2_sm_pending_stream_acquisition, node);
-            s_sm_try_assign_connection_to_pending_stream_acquisition(stream_manager, pending_stream_acquisition);
+            s_sm_try_assign_connection_to_pending_stream_acquisition_synced(stream_manager, pending_stream_acquisition);
             if (pending_stream_acquisition->sm_connection == NULL) {
                 /* Cannot find any connection, push it back to the front and break the loop */
                 aws_linked_list_push_front(&stream_manager->synced_data.pending_stream_acquisitions, node);
@@ -492,6 +492,9 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
                 aws_random_access_set_add(&stream_manager->synced_data.ideal_available_set, sm_connection, &added);
             re_error |= !added;
             ++stream_manager->synced_data.holding_connections_count;
+            /* A new connection established, increase the available concurrency by the number of streams that
+             * connection can handle */
+            stream_manager->synced_data.available_concurrency += sm_connection->max_concurrent_streams;
         }
         s_aws_http2_stream_manager_build_transaction_synced(&work);
         s_unlock_synced_data(stream_manager);
@@ -606,6 +609,8 @@ static void s_sm_connection_on_scheduled_stream_finishes(
         s_lock_synced_data(stream_manager);
         s_sm_count_decrease_synced(stream_manager, AWS_SMCT_OPEN_STREAM, 1);
         --sm_connection->num_streams_assigned;
+        /* a stream completed, increase the number of available */
+        ++stream_manager->synced_data.available_concurrency;
         if (!connection_available) {
             /* It might be removed already, but, it's fine */
             aws_random_access_set_remove(&stream_manager->synced_data.ideal_available_set, sm_connection);
@@ -621,6 +626,9 @@ static void s_sm_connection_on_scheduled_stream_finishes(
             aws_random_access_set_remove(&stream_manager->synced_data.ideal_available_set, sm_connection);
             work.sm_connection_to_release = sm_connection;
             --stream_manager->synced_data.holding_connections_count;
+            /* Released one connection, decrease the available concurrency by the number of streams that connection can
+             * handle */
+            stream_manager->synced_data.available_concurrency -= sm_connection->max_concurrent_streams;
             s_sm_log_stats_synced(stream_manager);
         }
         s_unlock_synced_data(stream_manager);
@@ -994,8 +1002,24 @@ void aws_http2_stream_manager_acquire_stream(
         aws_linked_list_push_back(
             &stream_manager->synced_data.pending_stream_acquisitions, &pending_stream_acquisition->node);
         s_sm_count_increase_synced(stream_manager, AWS_SMCT_PENDING_ACQUISITION, 1);
+        /* a new acquisition made from user, decrease the number of available */
+        --stream_manager->synced_data.available_concurrency;
         s_aws_http2_stream_manager_build_transaction_synced(&work);
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
     s_aws_http2_stream_manager_execute_transaction(&work);
+}
+
+void aws_http2_stream_manager_fetch_metric(
+    struct aws_http2_stream_manager *stream_manager,
+    struct aws_http_manager_metric *out_metric) {
+    AWS_PRECONDITION(stream_manager);
+    AWS_PRECONDITION(out_metric);
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(stream_manager);
+        out_metric->available_concurrency = stream_manager->synced_data.available_concurrency;
+        out_metric->pending_concurrency_acquires =
+            stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION];
+        s_unlock_synced_data(stream_manager);
+    } /* END CRITICAL SECTION */
 }

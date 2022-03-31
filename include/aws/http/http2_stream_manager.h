@@ -160,5 +160,16 @@ void aws_http2_stream_manager_acquire_stream(
     struct aws_http2_stream_manager *http2_stream_manager,
     const struct aws_http2_stream_manager_acquire_stream_options *acquire_stream_option);
 
+/**
+ * Fetch the current metric from stream manager.
+ *
+ * @param http2_stream_manager
+ * @param out_metric The metric to be fetched
+ */
+AWS_HTTP_API
+void aws_http2_stream_manager_fetch_metric(
+    struct aws_http2_stream_manager *http2_stream_manager,
+    struct aws_http_manager_metric *out_metric);
+
 AWS_EXTERN_C_END
 #endif /* AWS_HTTP2_STREAM_MANAGER_H */
