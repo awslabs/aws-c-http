@@ -18,6 +18,7 @@ struct proxy_env_var_settings;
 struct aws_http2_setting;
 struct aws_http_make_request_options;
 struct aws_http_stream;
+struct aws_http_manager_metric;
 
 /**
  * Always invoked asynchronously when the stream was created, successfully or not.
