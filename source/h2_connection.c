@@ -366,7 +366,6 @@ static struct aws_h2_connection *s_connection_new(
     memcpy(connection->synced_data.settings_peer, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
     memcpy(connection->synced_data.settings_self, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
 
-    /* Connection level initial window size that will not change. */
     connection->thread_data.window_size_peer = AWS_H2_INIT_WINDOW_SIZE;
     connection->thread_data.window_size_self = AWS_H2_INIT_WINDOW_SIZE;
 
