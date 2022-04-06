@@ -41,6 +41,8 @@ struct sm_tester_options {
     size_t max_connections;
     size_t ideal_concurrent_streams_per_connection;
     size_t max_concurrent_streams_per_connection;
+
+    struct aws_byte_cursor *endpoint_cursor;
 };
 
 struct sm_tester {
@@ -53,7 +55,7 @@ struct sm_tester {
     struct aws_http2_stream_manager *stream_manager;
     struct aws_http_connection_manager *connection_manager;
 
-    struct aws_string *host;
+    struct aws_uri endpoint;
     struct aws_tls_ctx *tls_ctx;
     struct aws_tls_ctx_options tls_ctx_options;
     struct aws_tls_connection_options tls_connection_options;
@@ -63,15 +65,18 @@ struct sm_tester {
     struct aws_condition_variable signal;
 
     struct aws_array_list streams;
+    size_t wait_for_stream_acquire_count;
     size_t acquiring_stream_errors;
-    size_t stream_complete_errors;
     int error_code;
+
+    size_t wait_for_stream_completed_count;
+    size_t stream_completed_count;
+    size_t stream_complete_errors;
+    size_t stream_200_count;
+    size_t stream_status_not_200_count;
     int stream_completed_error_code;
 
-    size_t wait_for_stream_count;
     bool is_shutdown_complete;
-
-    bool real_connection;
 
     /* Fake HTTP/2 connection */
     size_t wait_for_fake_connection_count;
@@ -215,8 +220,14 @@ static int s_tester_init(struct sm_tester_options *options) {
 
     ASSERT_NOT_NULL(s_tester.tls_ctx);
 
-    s_tester.host = aws_string_new_from_c_str(alloc, "www.google.com");
-    struct aws_byte_cursor server_name = aws_byte_cursor_from_string(s_tester.host);
+    if (options->endpoint_cursor) {
+        ASSERT_SUCCESS(aws_uri_init_parse(&s_tester.endpoint, alloc, options->endpoint_cursor));
+    } else {
+        struct aws_byte_cursor default_host = aws_byte_cursor_from_c_str("example.com");
+        ASSERT_SUCCESS(aws_uri_init_parse(&s_tester.endpoint, alloc, &default_host));
+    }
+
+    struct aws_byte_cursor server_name = *aws_uri_host_name(&s_tester.endpoint);
     aws_tls_connection_options_init_from_ctx(&s_tester.tls_connection_options, s_tester.tls_ctx);
     aws_tls_connection_options_set_server_name(&s_tester.tls_connection_options, alloc, &server_name);
 
@@ -370,7 +381,7 @@ static int s_tester_clean_up(void) {
     aws_mutex_clean_up(&s_tester.lock);
     aws_condition_variable_clean_up(&s_tester.signal);
     aws_array_list_clean_up(&s_tester.streams);
-    aws_string_destroy(s_tester.host);
+    aws_uri_clean_up(&s_tester.endpoint);
 
     return AWS_OP_SUCCESS;
 }
@@ -382,6 +393,7 @@ static void s_sm_tester_on_stream_acquired(struct aws_http_stream *stream, int e
 
     if (error_code) {
         ++s_tester.acquiring_stream_errors;
+        ++s_tester.stream_completed_count; /* As the stream will never be completed through complet callback */
         s_tester.error_code = error_code;
     } else {
         aws_array_list_push_back(&s_tester.streams, &stream);
@@ -392,18 +404,34 @@ static void s_sm_tester_on_stream_acquired(struct aws_http_stream *stream, int e
     AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.lock) == AWS_OP_SUCCESS);
 }
 
-static bool s_is_stream_reply_count_at_least(void *context) {
+static bool s_is_stream_acquired_count_at_least(void *context) {
     (void)context;
-    return s_tester.wait_for_stream_count <=
+    return s_tester.wait_for_stream_acquire_count <=
            aws_array_list_length(&s_tester.streams) + s_tester.acquiring_stream_errors;
 }
 
-static int s_wait_on_streams_reply_count(size_t count) {
+static int s_wait_on_streams_acquired_count(size_t count) {
     ASSERT_SUCCESS(aws_mutex_lock(&s_tester.lock));
 
-    s_tester.wait_for_stream_count = count;
+    s_tester.wait_for_stream_acquire_count = count;
     int signal_error =
-        aws_condition_variable_wait_pred(&s_tester.signal, &s_tester.lock, s_is_stream_reply_count_at_least, NULL);
+        aws_condition_variable_wait_pred(&s_tester.signal, &s_tester.lock, s_is_stream_acquired_count_at_least, NULL);
+
+    ASSERT_SUCCESS(aws_mutex_unlock(&s_tester.lock));
+    return signal_error;
+}
+
+static bool s_is_stream_completed_count_at_least(void *context) {
+    (void)context;
+    return s_tester.wait_for_stream_completed_count <= s_tester.stream_completed_count;
+}
+
+static int s_wait_on_streams_completed_count(size_t count) {
+    ASSERT_SUCCESS(aws_mutex_lock(&s_tester.lock));
+
+    s_tester.wait_for_stream_completed_count = count;
+    int signal_error =
+        aws_condition_variable_wait_pred(&s_tester.signal, &s_tester.lock, s_is_stream_completed_count_at_least, NULL);
 
     ASSERT_SUCCESS(aws_mutex_unlock(&s_tester.lock));
     return signal_error;
@@ -416,7 +444,21 @@ static void s_sm_tester_on_stream_complete(struct aws_http_stream *stream, int e
     if (error_code) {
         ++s_tester.stream_complete_errors;
         s_tester.stream_completed_error_code = error_code;
+    } else {
+        int status = 0;
+        if (aws_http_stream_get_incoming_response_status(stream, &status)) {
+            ++s_tester.stream_complete_errors;
+            s_tester.stream_completed_error_code = aws_last_error();
+        } else {
+            if (status == 200) {
+                ++s_tester.stream_200_count;
+            } else {
+                ++s_tester.stream_status_not_200_count;
+            }
+        }
     }
+    ++s_tester.stream_completed_count;
+    aws_condition_variable_notify_one(&s_tester.signal);
     AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.lock) == AWS_OP_SUCCESS);
 }
 
@@ -428,7 +470,10 @@ static int s_sm_stream_acquiring(int num_streams) {
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
         DEFINE_HEADER(":path", "/"),
-        DEFINE_HEADER(":authority", aws_string_c_str(s_tester.host)),
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = *aws_uri_host_name(&s_tester.endpoint),
+        },
     };
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
     struct aws_http_make_request_options request_options = {
@@ -595,7 +640,7 @@ TEST_CASE(h2_sm_mock_connection) {
     /* waiting for one fake connection made */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_to_acquire));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(num_to_acquire));
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
 
     return s_tester_clean_up();
@@ -620,7 +665,7 @@ TEST_CASE(h2_sm_mock_multiple_connections) {
     /* waiting for one fake connection made */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(num_expected_connection));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_streams_to_acquire));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(num_streams_to_acquire));
     ASSERT_TRUE(aws_array_list_length(&s_tester.fake_connections) == (size_t)num_expected_connection);
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
 
@@ -649,7 +694,7 @@ TEST_CASE(h2_sm_mock_bad_connection_acquired) {
     /* waiting for 3 fake connection made as the first two connection will fail */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(good_connections_num));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(streams_acquiring_num));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(streams_acquiring_num));
     /* We fail the number of streams cannot fit into the health connections based on the ideal. */
     ASSERT_INT_EQUALS(
         streams_acquiring_num - options.ideal_concurrent_streams_per_connection * good_connections_num,
@@ -662,7 +707,7 @@ TEST_CASE(h2_sm_mock_bad_connection_acquired) {
     /* waiting for the new connection */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(options.max_connections + 2));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(streams_acquiring_num + 4));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(streams_acquiring_num + 4));
     /* all the new streams succeed */
     ASSERT_TRUE(aws_array_list_length(&s_tester.streams) == 10);
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
@@ -684,7 +729,7 @@ TEST_CASE(h2_sm_mock_connections_closed_before_request_made) {
     /* waiting for one fake connection made */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(2));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(2));
     /* No error happens */
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
     /* Now, we close the connection, the stream manager will fail the new stream, if the opening streams not completed.
@@ -693,7 +738,7 @@ TEST_CASE(h2_sm_mock_connections_closed_before_request_made) {
     aws_http_connection_close(fake_connection->connection);
     ASSERT_SUCCESS(s_sm_stream_acquiring(1));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(3));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(3));
     /* ASSERT new one failed. */
     ASSERT_INT_EQUALS(1, s_tester.acquiring_stream_errors);
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, s_tester.error_code);
@@ -734,7 +779,7 @@ TEST_CASE(h2_sm_mock_max_concurrent_streams_remote) {
     /* waiting for one fake connection made */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(1));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
     ASSERT_INT_EQUALS(0, s_tester.stream_complete_errors);
 
@@ -744,7 +789,7 @@ TEST_CASE(h2_sm_mock_max_concurrent_streams_remote) {
     /* We created a new connection */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(2));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(1 + 2));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1 + 2));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
 
     ASSERT_INT_EQUALS(2, aws_array_list_length(&s_tester.fake_connections));
@@ -768,7 +813,7 @@ TEST_CASE(h2_sm_mock_complete_stream) {
     /* waiting for one fake connection made */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(2));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(2));
     ASSERT_INT_EQUALS(1, aws_array_list_length(&s_tester.fake_connections));
 
     /* Fake peer send settings that only allow 2 concurrent streams */
@@ -779,7 +824,7 @@ TEST_CASE(h2_sm_mock_complete_stream) {
     /* Acquire a new streams */
     ASSERT_SUCCESS(s_sm_stream_acquiring(1));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(2 + 1));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(2 + 1));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
     /* No error happens */
     ASSERT_INT_EQUALS(0, s_tester.stream_complete_errors);
@@ -806,7 +851,7 @@ TEST_CASE(h2_sm_mock_ideal_num_streams) {
     /* We will create 5 connections instead of 3 */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(5));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(15));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(15));
     ASSERT_INT_EQUALS(5, aws_array_list_length(&s_tester.fake_connections));
 
     s_drain_all_fake_connection_testing_channel();
@@ -820,7 +865,7 @@ TEST_CASE(h2_sm_mock_ideal_num_streams) {
     /* Acquire 15 more, we can only have 25 (5*5) in total */
     ASSERT_SUCCESS(s_sm_stream_acquiring(15));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(10));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(10));
 
     s_drain_all_fake_connection_testing_channel();
     /* Check all the 5 fake connections received 5 streams each */
@@ -853,7 +898,7 @@ TEST_CASE(h2_sm_mock_large_ideal_num_streams) {
     /* We will create 3 connections instead of 2 */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(3));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(6));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(6));
     ASSERT_INT_EQUALS(3, aws_array_list_length(&s_tester.fake_connections));
 
     s_drain_all_fake_connection_testing_channel();
@@ -866,7 +911,7 @@ TEST_CASE(h2_sm_mock_large_ideal_num_streams) {
     /* Acquire 15 more, we can only have 10 (2*5) in total. 21 acquisitions made */
     ASSERT_SUCCESS(s_sm_stream_acquiring(15));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(10 - 6));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(10 - 6));
 
     s_drain_all_fake_connection_testing_channel();
     for (size_t i = 0; i < aws_array_list_length(&s_tester.fake_connections); ++i) {
@@ -903,7 +948,7 @@ TEST_CASE(h2_sm_mock_goaway) {
     /* waiting for one fake connection made */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(5));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(5));
     ASSERT_INT_EQUALS(1, aws_array_list_length(&s_tester.fake_connections));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
 
@@ -928,7 +973,7 @@ TEST_CASE(h2_sm_mock_goaway) {
     /* waiting for one fake connection made */
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(2));
     s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(5 + 5));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(5 + 5));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
     /* No more stream completed with error */
     ASSERT_INT_EQUALS(4, s_tester.stream_complete_errors);
@@ -954,11 +999,11 @@ TEST_CASE(h2_sm_acquire_stream) {
         .alloc = allocator,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
-    s_tester.real_connection = true;
     int num_to_acquire = 5;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_to_acquire));
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(num_to_acquire, s_tester.stream_200_count);
 
     return s_tester_clean_up();
 }
@@ -972,11 +1017,12 @@ TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
         .max_concurrent_streams_per_connection = 5,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
-    s_tester.real_connection = true;
+
     int num_to_acquire = 20;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_to_acquire));
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    ASSERT_INT_EQUALS(num_to_acquire, s_tester.stream_200_count);
 
     return s_tester_clean_up();
 }
@@ -990,11 +1036,13 @@ TEST_CASE(h2_sm_acquire_stream_stress) {
         .alloc = allocator,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
-    s_tester.real_connection = true;
-    int num_to_acquire = 100 * 100 * 2;
+    int num_to_acquire = 200 * 100;
+    /* Because of network and things, we may fail some acquisition. Let's expect 99% success */
+    int expected_success = 198 * 100;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(num_to_acquire));
-    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
+    ASSERT_TRUE((int)s_tester.acquiring_stream_errors < (num_to_acquire - expected_success));
+    ASSERT_TRUE((int)s_tester.stream_200_count > expected_success);
 
     return s_tester_clean_up();
 }
@@ -1029,7 +1077,7 @@ TEST_CASE(h2_sm_closing_before_connection_acquired) {
     /* only acquire one as the connection create happens synced, the stream manager refcount will be released as the
      * first stream acquiring */
     ASSERT_SUCCESS(s_sm_stream_acquiring(1));
-    ASSERT_SUCCESS(s_wait_on_streams_reply_count(1));
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1));
 
     /* all acquiring stream failed */
     ASSERT_INT_EQUALS(1, s_tester.acquiring_stream_errors);
