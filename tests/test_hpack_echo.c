@@ -360,7 +360,7 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
         /* If we have 4xx error code, which means request was bad */
         ASSERT_UINT_EQUALS(0, s_tester.stream_4xx_count);
         if (!s_tester.stream_completed_with_200) {
-            /* If error happens, we make sure it's acptiable */
+            /* If error happens, we make sure it's acceptable */
             ++error_count;
         } else {
             s_tester.stream_completed_with_200 = false; /* reset complete code */
