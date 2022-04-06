@@ -1405,13 +1405,6 @@ static int s_encode_header_field(
         }
     }
 
-    /* TODO: will the value logged out be a security concern? */
-    HPACK_LOGF(
-        TRACE,
-        context,
-        "Encoding header: name=" PRInSTR " value=" PRInSTR "",
-        AWS_BYTE_CURSOR_PRI(header->name),
-        AWS_BYTE_CURSOR_PRI(header->value));
     return AWS_OP_SUCCESS;
 error:
     output->len = original_len;
