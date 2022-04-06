@@ -1724,9 +1724,9 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
 
     /* If not manual connection window management, update the connection window to max. */
     if (!connection->conn_manual_window_management) {
-        uint32_t initial_window_update_size = AWS_H2_WINDOW_UPDATE_MAX - 1 - AWS_H2_INIT_WINDOW_SIZE;
+        uint32_t initial_window_update_size = AWS_H2_WINDOW_UPDATE_MAX - AWS_H2_INIT_WINDOW_SIZE;
         struct aws_h2_frame *connection_window_update_frame =
-            aws_h2_frame_new_window_update(connection->base.alloc, 0, initial_window_update_size);
+            aws_h2_frame_new_window_update(connection->base.alloc, 0 /* stream_id */, initial_window_update_size);
         AWS_ASSERT(connection_window_update_frame);
         /* enqueue the windows update frame here */
         aws_linked_list_push_back(

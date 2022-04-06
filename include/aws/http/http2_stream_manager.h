@@ -75,7 +75,7 @@ struct aws_http2_stream_manager_options {
     /**
      * HTTP/2 Stream window control.
      * If set to true, the read back pressure mechanism will be enabled for streams created.
-     * The initial window size can be set through `initial window size`
+     * The initial window size can be set by `AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE` via `initial_settings_array`
      */
     bool enable_read_back_pressure;
 
