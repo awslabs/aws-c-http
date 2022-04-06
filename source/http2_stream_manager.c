@@ -911,12 +911,6 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         stream_manager,
         (aws_simple_completion_callback *)s_stream_manager_start_destroy);
 
-    struct aws_http2_setting initial_settings_array[1] = {
-        {
-            .id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE,
-            .value = options->initial_window_size,
-        },
-    };
     stream_manager->bootstrap = aws_client_bootstrap_acquire(options->bootstrap);
     struct aws_http_connection_manager_options cm_options = {
         .bootstrap = options->bootstrap,
@@ -932,8 +926,10 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         .max_connections = options->max_connections,
         .shutdown_complete_user_data = stream_manager,
         .shutdown_complete_callback = s_stream_manager_on_cm_shutdown_complete,
-        .initial_settings_array = options->initial_window_size ? initial_settings_array : NULL,
-        .num_initial_settings = options->initial_window_size ? 1 : 0,
+        .initial_settings_array = options->initial_settings_array,
+        .num_initial_settings = options->num_initial_settings,
+        .max_closed_streams = options->max_closed_streams,
+        .http2_conn_manual_window_management = options->conn_manual_window_management,
     };
     /* aws_http_connection_manager_new needs to be the last thing that can fail */
     stream_manager->connection_manager = aws_http_connection_manager_new(allocator, &cm_options);
