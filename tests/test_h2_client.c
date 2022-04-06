@@ -2317,7 +2317,7 @@ TEST_CASE(h2_client_stream_send_window_update) {
         &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, 0 /*stream_id*/, 0 /*idx*/, &initial_window_update_index);
     ASSERT_NOT_NULL(initial_connection_window_update_frame);
     ASSERT_UINT_EQUALS(
-        AWS_H2_WINDOW_UPDATE_MAX - 1 - AWS_H2_INIT_WINDOW_SIZE,
+        AWS_H2_WINDOW_UPDATE_MAX - AWS_H2_INIT_WINDOW_SIZE,
         initial_connection_window_update_frame->window_size_increment);
 
     /* send request */
