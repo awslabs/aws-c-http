@@ -55,6 +55,7 @@ struct aws_h2err {
 #define AWS_H2_WINDOW_UPDATE_MAX (0x7FFFFFFF) /* cannot use high bit */
 #define AWS_H2_STREAM_ID_MAX (0x7FFFFFFF)     /* cannot use high bit */
 #define AWS_H2_FRAME_PREFIX_SIZE (9)
+#define AWS_H2_INIT_WINDOW_SIZE (65535) /* Defined initial window size */
 
 /* Legal min(inclusive) and max(inclusive) for each setting */
 extern const uint32_t aws_h2_settings_bounds[AWS_HTTP2_SETTINGS_END_RANGE][2];

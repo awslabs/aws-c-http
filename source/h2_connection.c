@@ -366,8 +366,8 @@ static struct aws_h2_connection *s_connection_new(
     memcpy(connection->synced_data.settings_peer, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
     memcpy(connection->synced_data.settings_self, aws_h2_settings_initial, sizeof(aws_h2_settings_initial));
 
-    connection->thread_data.window_size_peer = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
-    connection->thread_data.window_size_self = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE];
+    connection->thread_data.window_size_peer = AWS_H2_INIT_WINDOW_SIZE;
+    connection->thread_data.window_size_self = AWS_H2_INIT_WINDOW_SIZE;
 
     connection->thread_data.goaway_received_last_stream_id = AWS_H2_STREAM_ID_MAX;
     connection->thread_data.goaway_sent_last_stream_id = AWS_H2_STREAM_ID_MAX;
@@ -1722,6 +1722,17 @@ static void s_handler_installed(struct aws_channel_handler *handler, struct aws_
     /* enqueue the initial settings frame here */
     aws_linked_list_push_back(&connection->thread_data.outgoing_frames_queue, &init_settings_frame->node);
 
+    /* If not manual connection window management, update the connection window to max. */
+    if (!connection->conn_manual_window_management) {
+        uint32_t initial_window_update_size = AWS_H2_WINDOW_UPDATE_MAX - AWS_H2_INIT_WINDOW_SIZE;
+        struct aws_h2_frame *connection_window_update_frame =
+            aws_h2_frame_new_window_update(connection->base.alloc, 0 /* stream_id */, initial_window_update_size);
+        AWS_ASSERT(connection_window_update_frame);
+        /* enqueue the windows update frame here */
+        aws_linked_list_push_back(
+            &connection->thread_data.outgoing_frames_queue, &connection_window_update_frame->node);
+        connection->thread_data.window_size_self += initial_window_update_size;
+    }
     aws_h2_try_write_outgoing_frames(connection);
     return;
 
