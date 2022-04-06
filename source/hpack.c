@@ -13,6 +13,8 @@
 #include <aws/common/logging.h>
 #include <aws/common/string.h>
 
+#include <inttypes.h>
+
 /* #TODO split hpack encoder/decoder into different types */
 
 /* #TODO test empty strings */

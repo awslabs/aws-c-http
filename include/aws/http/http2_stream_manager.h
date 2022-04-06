@@ -57,19 +57,27 @@ struct aws_http2_stream_manager_options {
     uint16_t port;
 
     /**
+     * Optional.
+     * HTTP/2 connection configuration. Check `struct aws_http2_connection_options` for details of each config.
+     * Notes for window control:
+     * - By default, client will will maintain its flow-control windows such that no back-pressure is applied and data
+     * arrives as fast as possible.
+     * - For connection level window control, `conn_manual_window_management` will enable manual control. The
+     * inital window size is not controlable.
+     * - For stream level window control, `enable_read_back_pressure` will enable manual control. The initail window
+     * size needs to be set through `initial_settings_array`.
+     */
+    struct aws_http2_setting *initial_settings_array;
+    size_t num_initial_settings;
+    size_t max_closed_streams;
+    bool conn_manual_window_management;
+
+    /**
      * HTTP/2 Stream window control.
      * If set to true, the read back pressure mechanism will be enabled for streams created.
-     * The initial window size can be set through `initial window size`
+     * The initial window size can be set by `AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE` via `initial_settings_array`
      */
     bool enable_read_back_pressure;
-    /**
-     * Optional.
-     * If set, it will be sent to the peer as the `AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE` in the initial settings for
-     * HTTP/2 connection.
-     * If not set, the default will be used, which is 65,535 (2^16-1)(RFC-7540 6.5.2)
-     * Ignored if enable_read_back_pressure is false.
-     */
-    uint32_t initial_window_size;
 
     /* Connection monitor for the underlying connections made */
     const struct aws_http_connection_monitoring_options *monitoring_options;
