@@ -18,4 +18,6 @@ sudo mv ./integration-testing/njs /etc/nginx/
 # overwrite the njs configuration
 sudo mv -f ./integration-testing/nginx.conf /etc/nginx/
 
+sudo systemctl start nginx
+
 curl -k https://localhost:443/echo
