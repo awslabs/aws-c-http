@@ -1,0 +1,19 @@
+# Update the API documentation whenever the `main` branch changes.
+# This documentation lives in its own `docs` branch.
+name: integration-test
+
+on:
+  push:
+    branches:
+      - "local-host"
+
+jobs:
+  update-docs-branch:
+    runs-on: ubuntu-20.04 # latest
+    steps:
+      - name: Install nginx
+        run: |
+          sudo apt install curl gnupg2 ca-certificates lsb-release ubuntu-keyring
+          sudo apt update
+          sudo apt install nginx
+          ./integration-testing/config-local-host.sh
