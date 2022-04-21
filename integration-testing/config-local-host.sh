@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
-sudo nginx -t
-
 # install njs
 curl https://nginx.org/keys/nginx_signing.key | gpg --dearmor \
-    | sudo tee ./nginx-archive-keyring.gpg >/dev/null
-gpg --dry-run --quiet --import --import-options import-show ./nginx-archive-keyring.gpg
-echo "deb [signed-by=./nginx-archive-keyring.gpg] \
+    | sudo tee /usr/share/keyrings/nginx-archive-keyring.gpg >/dev/null
+sudo gpg --dry-run --quiet --import --import-options import-show /usr/share/keyrings/nginx-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
 http://nginx.org/packages/ubuntu `lsb_release -cs` nginx" \
     | sudo tee /etc/apt/sources.list.d/nginx.list
 
