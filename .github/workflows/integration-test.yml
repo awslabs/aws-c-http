@@ -17,7 +17,6 @@ jobs:
       - name: Install nginx
         run: |
           sudo apt install curl gnupg2 ca-certificates lsb-release ubuntu-keyring
-          sudo apt update
-          sudo apt install nginx
-          sudo apt install nginx-module-njs
+          sudo apt-get update
+          sudo apt-get install nginx-module-njs nginx
           ./integration-testing/config-local-host.sh
