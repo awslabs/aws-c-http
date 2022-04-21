@@ -11,6 +11,9 @@ jobs:
   update-docs-branch:
     runs-on: ubuntu-20.04 # latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
       - name: Install nginx
         run: |
           sudo apt install curl gnupg2 ca-certificates lsb-release ubuntu-keyring
