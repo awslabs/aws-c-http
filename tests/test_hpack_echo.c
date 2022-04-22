@@ -238,6 +238,9 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
         .type = AWS_SOCKET_STREAM,
         .connect_timeout_ms =
             (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
+        .keep_alive_timeout_sec = 0,
+        .keepalive = false,
+        .keep_alive_interval_sec = 0,
     };
     struct aws_http_client_connection_options client_options = {
         .self_size = sizeof(struct aws_http_client_connection_options),
