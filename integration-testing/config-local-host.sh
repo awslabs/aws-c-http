@@ -2,6 +2,8 @@
 set -e
 
 # install njs
+sudo apt install curl gnupg2 ca-certificates lsb-release ubuntu-keyring
+
 curl https://nginx.org/keys/nginx_signing.key | gpg --dearmor \
     | sudo tee /usr/share/keyrings/nginx-archive-keyring.gpg >/dev/null
 mkdir ~/.gnupg
@@ -32,8 +34,10 @@ sudo mv ./integration-testing/njs /etc/nginx/
 # overwrite the njs configuration
 sudo mv -f ./integration-testing/nginx.conf /etc/nginx/
 
+# test the config works
 sudo nginx -t
 
+# start the service
 sudo systemctl start nginx
 
-curl -k https://localhost:443/echo
+curl -v -k https://localhost:443/echo
