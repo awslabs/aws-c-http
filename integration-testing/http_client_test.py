@@ -78,7 +78,7 @@ def compare_files(filename_expected, filename_other):
 class SimpleTests(unittest.TestCase):
     def test_simple_get_local_host(self):
         """Local host test"""
-        simple_get_args = elasticurl_cmd_prefix + ['-v', 'ERROR', '-i', '-k', 'https://localhost:345/echo']
+        simple_get_args = elasticurl_cmd_prefix + ['-v', 'ERROR', '-i', '-k', 'https://localhost:443/echo']
         run_command(simple_get_args)
 
     # def test_simple_get_amazon(self):
