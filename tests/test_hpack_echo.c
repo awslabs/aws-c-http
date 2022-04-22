@@ -227,6 +227,8 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
     tester->client_bootstrap = aws_client_bootstrap_new(allocator, &bootstrap_options);
 
     aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, allocator);
+    /* Turn off peer verification as a local host cert used */
+    aws_tls_ctx_options_set_verify_peer(&tester->tls_ctx_options, false);
     aws_tls_ctx_options_set_alpn_list(&tester->tls_ctx_options, "h2");
     tester->tls_ctx_options.verify_peer = false;
 
@@ -274,16 +276,16 @@ AWS_TEST_CASE(hpack_stress, test_hpack_stress)
 static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
     /* Test that makes tons of streams with all sorts of headers to stress hpack */
     (void)ctx;
-    struct aws_byte_cursor host_name = aws_byte_cursor_from_c_str("httpbin.org");
+    struct aws_byte_cursor host_name = aws_byte_cursor_from_c_str("localhost");
     ASSERT_SUCCESS(s_tester_init(&s_tester, allocator, host_name));
     /* wait for connection connected */
     ASSERT_SUCCESS(s_wait_on_connection_connected(&s_tester));
-    // httpbin.org/headers is an echo server that will return the headers of your request from the body.
+    // localhost/echo is an echo server that will return the headers of your request from the body.
     struct aws_http_header request_headers_src[] = {
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":path", "/headers"),
-        DEFINE_HEADER(":authority", "httpbin.org"),
+        DEFINE_HEADER(":path", "/echo"),
+        DEFINE_HEADER(":authority", "localhost"),
     };
     /* TODO: The initail settings header table size is 4096 octets, not sure about why server response with 400 when we
      * sent a request with around 100 headers */
