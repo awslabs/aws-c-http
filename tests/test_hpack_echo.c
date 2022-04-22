@@ -275,9 +275,7 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
     /* TODO: The initail settings header table size is 4096 octets, not sure about why server response with 400 when we
      * sent a request with around 100 headers */
     size_t num_to_acquire = 1;
-    size_t accpected_error = 0;
     size_t num_headers_to_make = 1; /* will have bad request around 100 */
-    size_t error_count = 0;
 
     /* Use a pool of headers and a pool of values, pick up randomly from both pool to stress hpack */
     size_t headers_pool_size = 500;
@@ -351,6 +349,5 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
         aws_http_headers_release(received_headers);
     }
 
-    ASSERT_TRUE(error_count < accpected_error);
     return s_tester_clean_up(&s_tester);
 }
