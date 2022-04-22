@@ -21,55 +21,38 @@
 #    pragma warning(disable : 4996) /* Disable warnings about sprintf() being insecure */
 #endif
 
-static bool s_echo_body_has_header(const struct aws_byte_cursor echo_body, const struct aws_http_header *header) {
-    char str_to_find[256];
-    /* Echo body will capitalize the header name, ignore the first char. I think it's fine */
-    struct aws_byte_cursor name_without_first_char = header->name;
-    aws_byte_cursor_advance(&name_without_first_char, 1);
-    sprintf(
-        str_to_find,
-        "" PRInSTR "\": \"" PRInSTR "\"",
-        AWS_BYTE_CURSOR_PRI(name_without_first_char),
-        AWS_BYTE_CURSOR_PRI(header->value));
-    struct aws_byte_cursor to_find_cur = aws_byte_cursor_from_c_str(str_to_find);
-    struct aws_byte_cursor found;
-    if (aws_byte_cursor_find_exact(&echo_body, &to_find_cur, &found)) {
-        /* cannot find the value */
-        return false;
-    }
-    return true;
-}
+static int s_tester_on_headers(
+    struct aws_http_stream *stream,
+    enum aws_http_header_block header_block,
+    const struct aws_http_header *header_array,
+    size_t num_headers,
+    void *user_data) {
+    struct aws_http_headers *received_headers = (struct aws_http_headers *)user_data;
 
-static bool s_echo_body_has_headers(const struct aws_byte_cursor echo_body, const struct aws_http_headers *headers) {
-    for (size_t i = 0; i < aws_http_headers_count(headers); i++) {
-        struct aws_http_header out_header;
-        if (aws_http_headers_get_index(headers, i, &out_header)) {
-            return false;
-        }
-        if (!s_echo_body_has_header(echo_body, &out_header)) {
-            return false;
-        }
+    for (size_t i = 0; i < num_headers; ++i) {
+        ASSERT_SUCCESS(aws_http_headers_add_header(received_headers, &header_array[i]));
     }
-    return true;
-}
-
-static int s_tester_on_echo_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
-    (void)stream;
-    /**
-     * Make request to https://httpbin.org/headers, example response body:
-     *"{\r\n"
-     *"  \"headers\": {\r\n"
-     *"    \"Accept\": \"application/xml\", \r\n"
-     *"    \"Host\": \"httpbin.org\", \r\n"
-     *"    \"Test0\": \"test0\", \r\n"
-     *"    \"User-Agent\": \"elasticurl 1.0, Powered by the AWS Common Runtime.\", \r\n"
-     *"    \"X-Amzn-Trace-Id\": \"Root=1-6216d59a-16a92b5622bb49a0352cf9a4\"\r\n"
-     *"  }\r\n"
-     *"}\r\n"
-     */
-    struct aws_byte_buf *echo_body = (struct aws_byte_buf *)user_data;
-    ASSERT_SUCCESS(aws_byte_buf_append_dynamic(echo_body, data));
     return AWS_OP_SUCCESS;
+}
+
+static bool s_check_headers_received(
+    const struct aws_http_headers *received_headers,
+    const struct aws_http_headers *headers_to_check) {
+    for (size_t i = 0; i < aws_http_headers_count(headers_to_check); i++) {
+        struct aws_http_header header;
+        if (aws_http_headers_get_index(headers_to_check, i, &header)) {
+            return false;
+        }
+        struct aws_byte_cursor out_value;
+        if (aws_http_headers_get(received_headers, header.name, &out_value)) {
+            /* Not found */
+            return false;
+        }
+        if (!aws_byte_cursor_eq(&out_value, &header.value)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 struct tester {
@@ -344,13 +327,12 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
                 aws_byte_cursor_from_c_str(test_header_str),
                 aws_byte_cursor_from_c_str(test_value_str));
         }
-        struct aws_byte_buf echo_body;
-        ASSERT_SUCCESS(aws_byte_buf_init(&echo_body, allocator, 100));
+        struct aws_http_headers *received_headers = aws_http_headers_new(allocator);
         struct aws_http_make_request_options request_options = {
             .self_size = sizeof(request_options),
             .request = request,
-            .user_data = &echo_body,
-            .on_response_body = s_tester_on_echo_body,
+            .user_data = received_headers,
+            .on_response_headers = s_tester_on_headers,
             .on_complete = s_tester_on_stream_completed,
         };
         struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
@@ -361,21 +343,12 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
         /* Wait for the stream to complete */
         ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
         --s_tester.stream_completed_count;
-        /* If we have 4xx error code, which means request was bad */
-        ASSERT_UINT_EQUALS(0, s_tester.stream_4xx_count);
-        if (!s_tester.stream_completed_with_200) {
-            /* If error happens, we make sure it's acceptable */
-            ++error_count;
-        } else {
-            s_tester.stream_completed_with_200 = false; /* reset complete code */
-            ASSERT_TRUE(s_echo_body_has_headers(
-                aws_byte_cursor_from_buf(&echo_body),
-                test_headers)); /* Make sure we have the expected headers when 200 received */
-        }
+        ASSERT_TRUE(s_tester.stream_completed_with_200);
+        ASSERT_TRUE(s_check_headers_received(received_headers, test_headers));
 
         aws_http_message_release(request);
         aws_http_headers_release(test_headers);
-        aws_byte_buf_clean_up(&echo_body);
+        aws_http_headers_release(received_headers);
     }
 
     ASSERT_TRUE(error_count < accpected_error);
