@@ -38,6 +38,6 @@ sudo mv -f ./integration-testing/nginx.conf /etc/nginx/
 sudo nginx -t
 
 # start the service
-sudo systemctl start nginx
+sudo service nginx start
 
 curl -v -k https://localhost:345/echo
