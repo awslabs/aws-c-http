@@ -274,7 +274,7 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
         DEFINE_HEADER(":path", "/echo"),
         DEFINE_HEADER(":authority", "localhost"),
     };
-    size_t num_to_acquire = 10000;
+    size_t num_to_acquire = 1000;
     size_t num_headers_to_make = 100;
 
     /* Use a pool of headers and a pool of values, pick up randomly from both pool to stress hpack */
