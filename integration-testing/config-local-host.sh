@@ -40,4 +40,4 @@ sudo nginx -t
 # start the service
 sudo systemctl start nginx
 
-curl -v -k https://localhost:443/echo
+curl -v -k https://localhost:345/echo
