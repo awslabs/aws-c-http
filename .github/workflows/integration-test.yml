@@ -27,7 +27,6 @@ jobs:
       - name: Build and test
         run: |
           sudo apt install curl gnupg2 ca-certificates lsb-release ubuntu-keyring
-          ./integration-testing/config-local-host.sh
           python3 -c "from urllib.request import urlretrieve; urlretrieve('$BUILDER_HOST/$BUILDER_SOURCE/$BUILDER_VERSION/builder.pyz', 'builder.pyz')"
-          python3 builder.pyz build -p aws-c-http --cmake-extra=-ENABLE_LOCAL_HOST_INTEGRATION_TESTS=ON
+          python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCAL_HOST_INTEGRATION_TESTS=ON
           curl -v -k https://localhost:345/echo
