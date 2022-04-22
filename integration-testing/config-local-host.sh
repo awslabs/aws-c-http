@@ -40,4 +40,5 @@ sudo nginx -t
 # start the service
 sudo service nginx start
 
+# use curl to test if the server works
 curl -v -k https://localhost:443/echo
