@@ -15,4 +15,10 @@ elif [ -d "../../aws-c-http" ]; then
     cd ../../aws-c-http
 fi
 
-ctest --output-on-failure -R hpack_stress
+LOCAL_HOST_SETUP=/usr/share/keyrings/nginx-archive-keyring.gpg
+if [ -f "$LOCAL_HOST_SETUP" ]; then
+    echo "run test with local host only"
+    ctest --output-on-failure -R hpack_stress
+else
+    ctest --output-on-failure
+fi
