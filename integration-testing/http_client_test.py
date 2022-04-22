@@ -72,6 +72,11 @@ def compare_files(filename_expected, filename_other):
         print("filecmp says these files differ, but they are identical. what the heck.")
 
 class SimpleTests(unittest.TestCase):
+    def test_simple_get_local_host(self):
+        """Local host test"""
+        simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', '-k', 'https://localhost:443/echo']
+        run_command(simple_get_args)
+
     def test_simple_get_amazon(self):
         """make a simple GET request via alpn h2;http/1.1 to amazon and make sure it succeeds"""
         simple_get_args = elasticurl_cmd_prefix + ['-v', 'TRACE', 'https://www.amazon.com']

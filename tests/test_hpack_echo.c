@@ -227,9 +227,8 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
     tester->client_bootstrap = aws_client_bootstrap_new(allocator, &bootstrap_options);
 
     aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, allocator);
-    /* Turn off peer verification as a local host cert used */
-    aws_tls_ctx_options_set_verify_peer(&tester->tls_ctx_options, false);
     aws_tls_ctx_options_set_alpn_list(&tester->tls_ctx_options, "h2");
+    /* Turn off peer verification as a local host cert used */
     tester->tls_ctx_options.verify_peer = false;
 
     tester->tls_ctx = aws_tls_client_ctx_new(allocator, &tester->tls_ctx_options);
