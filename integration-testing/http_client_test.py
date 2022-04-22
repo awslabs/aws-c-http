@@ -37,10 +37,6 @@ def run_command(args):
         args_str = subprocess.list2cmdline(args)
         output = process.communicate()[0]
     finally:
-        args_str = subprocess.list2cmdline(args)
-        print(args_str)
-        for line in output.splitlines():
-            print(line.decode())
         if process.returncode != 0 or timedout:
             args_str = subprocess.list2cmdline(args)
             print(args_str)
