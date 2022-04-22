@@ -27,6 +27,8 @@ static int s_tester_on_headers(
     const struct aws_http_header *header_array,
     size_t num_headers,
     void *user_data) {
+    (void)stream;
+    (void)header_block;
     struct aws_http_headers *received_headers = (struct aws_http_headers *)user_data;
 
     for (size_t i = 0; i < num_headers; ++i) {
@@ -272,10 +274,8 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
         DEFINE_HEADER(":path", "/echo"),
         DEFINE_HEADER(":authority", "localhost"),
     };
-    /* TODO: The initail settings header table size is 4096 octets, not sure about why server response with 400 when we
-     * sent a request with around 100 headers */
-    size_t num_to_acquire = 1;
-    size_t num_headers_to_make = 1; /* will have bad request around 100 */
+    size_t num_to_acquire = 1000;
+    size_t num_headers_to_make = 100;
 
     /* Use a pool of headers and a pool of values, pick up randomly from both pool to stress hpack */
     size_t headers_pool_size = 500;
