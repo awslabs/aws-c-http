@@ -2,7 +2,7 @@
 set -e
 
 # install njs
-sudo apt install curl gnupg2 ca-certificates lsb-release ubuntu-keyring
+sudo apt install -y curl gnupg2 ca-certificates lsb-release ubuntu-keyring
 
 curl https://nginx.org/keys/nginx_signing.key | gpg --dearmor \
     | sudo tee /usr/share/keyrings/nginx-archive-keyring.gpg >/dev/null
@@ -16,7 +16,7 @@ echo -e "Package: *\nPin: origin nginx.org\nPin: release o=nginx\nPin-Priority: 
     | sudo tee /etc/apt/preferences.d/99nginx
 
 sudo apt update
-sudo apt install nginx nginx-module-njs
+sudo apt install -y nginx nginx-module-njs
 
 
 #Generate local ssl cert
