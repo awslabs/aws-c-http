@@ -275,7 +275,7 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
         DEFINE_HEADER(":authority", "localhost"),
     };
     // TODO after 2k streams, server closed
-    size_t num_to_acquire = 1999;
+    size_t num_to_acquire = 2000;
     size_t num_headers_to_make = 100;
 
     /* Use a pool of headers and a pool of values, pick up randomly from both pool to stress hpack */

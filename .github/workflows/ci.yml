@@ -138,3 +138,9 @@ jobs:
           ./integration-testing/config-local-host.sh
           python3 -c "from urllib.request import urlretrieve; urlretrieve('$BUILDER_HOST/$BUILDER_SOURCE/$BUILDER_VERSION/builder.pyz', 'builder.pyz')"
           python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCAL_HOST_INTEGRATION_TESTS=ON
+      - uses: actions/upload-artifact@v2
+        if: failure()
+        with:
+          name: server-logs
+          path: |
+            /var/log/nginx/error.log
