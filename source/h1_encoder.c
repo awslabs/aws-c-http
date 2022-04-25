@@ -243,6 +243,7 @@ static void s_write_headers(struct aws_byte_buf *dst, const struct aws_http_head
         wrote_all &= s_write_crlf(dst);
     }
     AWS_ASSERT(wrote_all);
+    (void)wrote_all;
 }
 
 int aws_h1_encoder_message_init_from_request(
@@ -506,6 +507,7 @@ static void s_populate_chunk_line_buffer(
     }
     wrote_chunk_line &= s_write_crlf(chunk_line);
     AWS_ASSERT(wrote_chunk_line);
+    (void)wrote_chunk_line;
 }
 
 struct aws_h1_trailer *aws_h1_trailer_new(
