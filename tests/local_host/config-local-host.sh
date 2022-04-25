@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -ex
 
 # install njs
 sudo apt install -y curl gnupg2 ca-certificates lsb-release ubuntu-keyring
@@ -26,13 +26,13 @@ openssl req -x509 -out localhost.crt -keyout localhost.key \
    printf "[dn]\nCN=localhost\n[req]\ndistinguished_name = dn\n[EXT]\nsubjectAltName=DNS:localhost\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth")
 
 # copy config to etc/nginx/
-sudo mv localhost.key localhost.crt /etc/nginx/
+sudo cp localhost.key localhost.crt /etc/nginx/
 
 # copy the njs script
-sudo mv ./integration-testing/njs /etc/nginx/
+sudo cp ./tests/local_host/njs /etc/nginx/
 
 # overwrite the njs configuration
-sudo mv -f ./integration-testing/nginx.conf /etc/nginx/
+sudo cp ./tests/local_host/nginx.conf /etc/nginx/
 
 # test the config works
 sudo nginx -t

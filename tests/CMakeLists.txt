@@ -246,8 +246,8 @@ add_test_case(hpack_dynamic_table_empty_value)
 add_test_case(hpack_dynamic_table_with_empty_header)
 add_test_case(hpack_dynamic_table_size_update_from_setting)
 
-if (ENABLE_LOCAL_HOST_INTEGRATION_TESTS)
-    add_net_test_case(hpack_stress)
+if (ENABLE_LOCALHOST_INTEGRATION_TESTS)
+    add_net_test_case(localhost_integ_hpack_stress)
 endif()
 
 add_test_case(h2_header_empty_payload)

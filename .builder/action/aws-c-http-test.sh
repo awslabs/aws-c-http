@@ -18,7 +18,7 @@ fi
 LOCAL_HOST_SETUP=/usr/share/keyrings/nginx-archive-keyring.gpg
 if [ -f "$LOCAL_HOST_SETUP" ]; then
     echo "run test with local host only"
-    ctest --output-on-failure -R hpack_stress
+    ctest --output-on-failure -R localhost_integ_*
 else
     ctest --output-on-failure
 fi

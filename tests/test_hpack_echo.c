@@ -259,7 +259,7 @@ static int s_tester_clean_up(struct tester *tester) {
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(hpack_stress, test_hpack_stress)
+AWS_TEST_CASE(localhost_integ_hpack_stress, test_hpack_stress)
 static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
     /* Test that makes tons of streams with all sorts of headers to stress hpack */
     (void)ctx;
