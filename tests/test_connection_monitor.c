@@ -17,7 +17,7 @@
 #include <aws/testing/io_testing_channel.h>
 
 #ifdef _MSC_VER
-#    pragma warning(disable : 4996) /* Disable warnings about sptrintf() being insecure */
+#    pragma warning(disable : 4996) /* Disable warnings about sprintf() being insecure */
 #endif
 
 static int s_test_http_connection_monitor_options_is_valid(struct aws_allocator *allocator, void *ctx) {

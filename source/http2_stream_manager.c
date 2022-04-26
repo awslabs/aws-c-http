@@ -142,6 +142,7 @@ static struct aws_h2_sm_connection *s_get_best_sm_connection_from_set(struct aws
         sm_connection_a->num_streams_assigned > sm_connection_b->num_streams_assigned ? sm_connection_b
                                                                                       : sm_connection_a;
     return errored == AWS_ERROR_SUCCESS ? chosen_connection : NULL;
+    (void)errored;
 }
 
 /* helper function for building the transaction: Try to assign connection for a pending stream acquisition */
@@ -239,6 +240,7 @@ static void s_sm_try_assign_connection_to_pending_stream_acquisition(
         }
     }
     AWS_ASSERT(errored == 0 && "random access set went wrong");
+    (void)errored;
 }
 
 /* NOTE: never invoke with lock held */
@@ -498,6 +500,8 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
     } /* END CRITICAL SECTION */
 
     AWS_ASSERT(!re_error && "connection acquired callback fails with programming errors");
+    (void)re_error;
+
     /* Fail acquisitions if any */
     s_finish_pending_stream_acquisitions_list_helper(
         stream_manager, &stream_acquisitions_to_fail, stream_fail_error_code);
@@ -593,6 +597,7 @@ static void s_update_sm_connection_set_on_stream_finishes_synced(
         re_error |= !added;
     }
     AWS_ASSERT(re_error == AWS_OP_SUCCESS);
+    (void)re_error;
 }
 
 static void s_sm_connection_on_scheduled_stream_finishes(
@@ -911,12 +916,6 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         stream_manager,
         (aws_simple_completion_callback *)s_stream_manager_start_destroy);
 
-    struct aws_http2_setting initial_settings_array[1] = {
-        {
-            .id = AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE,
-            .value = options->initial_window_size,
-        },
-    };
     stream_manager->bootstrap = aws_client_bootstrap_acquire(options->bootstrap);
     struct aws_http_connection_manager_options cm_options = {
         .bootstrap = options->bootstrap,
@@ -932,8 +931,10 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         .max_connections = options->max_connections,
         .shutdown_complete_user_data = stream_manager,
         .shutdown_complete_callback = s_stream_manager_on_cm_shutdown_complete,
-        .initial_settings_array = options->initial_window_size ? initial_settings_array : NULL,
-        .num_initial_settings = options->initial_window_size ? 1 : 0,
+        .initial_settings_array = options->initial_settings_array,
+        .num_initial_settings = options->num_initial_settings,
+        .max_closed_streams = options->max_closed_streams,
+        .http2_conn_manual_window_management = options->conn_manual_window_management,
     };
     /* aws_http_connection_manager_new needs to be the last thing that can fail */
     stream_manager->connection_manager = aws_http_connection_manager_new(allocator, &cm_options);
