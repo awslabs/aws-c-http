@@ -259,10 +259,8 @@ static int s_tester_clean_up(struct tester *tester) {
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(localhost_integ_hpack_stress, test_hpack_stress)
-static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
+static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool compression) {
     /* Test that makes tons of streams with all sorts of headers to stress hpack */
-    (void)ctx;
     struct aws_byte_cursor host_name = aws_byte_cursor_from_c_str("localhost");
     ASSERT_SUCCESS(s_tester_init(&s_tester, allocator, host_name));
     /* wait for connection connected */
@@ -317,99 +315,11 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
                     aws_byte_cursor_from_c_str(test_header_str),
                     aws_byte_cursor_from_c_str(test_value_str));
             }
-            aws_http_headers_add(
-                request_headers,
-                aws_byte_cursor_from_c_str(test_header_str),
-                aws_byte_cursor_from_c_str(test_value_str));
-        }
-        struct aws_http_headers *received_headers = aws_http_headers_new(allocator);
-        struct aws_http_make_request_options request_options = {
-            .self_size = sizeof(request_options),
-            .request = request,
-            .user_data = received_headers,
-            .on_response_headers = s_tester_on_headers,
-            .on_complete = s_tester_on_stream_completed,
-        };
-        struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
-        ASSERT_NOT_NULL(stream);
-        aws_http_stream_activate(stream);
-        aws_http_stream_release(stream);
-
-        /* Wait for the stream to complete */
-        ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
-        --s_tester.stream_completed_count;
-        ASSERT_TRUE(s_tester.stream_completed_with_200);
-        ASSERT_TRUE(s_check_headers_received(received_headers, test_headers));
-
-        aws_http_message_release(request);
-        aws_http_headers_release(test_headers);
-        aws_http_headers_release(received_headers);
-    }
-
-    return s_tester_clean_up(&s_tester);
-}
-
-AWS_TEST_CASE(localhost_integ_hpack_compression_stress, test_hpack_compression_stress)
-static int test_hpack_compression_stress(struct aws_allocator *allocator, void *ctx) {
-    /* Test that makes tons of streams with all sorts of headers to stress hpack */
-    (void)ctx;
-    struct aws_byte_cursor host_name = aws_byte_cursor_from_c_str("localhost");
-    ASSERT_SUCCESS(s_tester_init(&s_tester, allocator, host_name));
-    /* wait for connection connected */
-    ASSERT_SUCCESS(s_wait_on_connection_connected(&s_tester));
-    // localhost/echo is an echo server that will return the headers of your request from the body.
-    struct aws_http_header request_headers_src[] = {
-        DEFINE_HEADER(":method", "GET"),
-        DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":path", "/echo"),
-        DEFINE_HEADER(":authority", "localhost"),
-    };
-
-    size_t num_to_acquire = 5000;
-    size_t num_headers_to_make = 100;
-
-    /* Use a pool of headers and a pool of values, pick up randomly from both pool to stress hpack */
-    size_t headers_pool_size = 500;
-    size_t values_pool_size = 66;
-
-    for (size_t i = 0; i < num_to_acquire; i++) {
-        struct aws_http_message *request = aws_http2_message_new_request(allocator);
-        ASSERT_NOT_NULL(request);
-        aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
-        struct aws_http_headers *request_headers = aws_http_message_get_headers(request);
-        struct aws_http_headers *test_headers =
-            aws_http_headers_new(allocator); /* as request headers has the pesudo headers, make a copy of the real
-                                                headers to check the result */
-        for (size_t j = 0; j < num_headers_to_make; j++) {
-            char test_header_str[256];
-            uint64_t random_64_bit_num = 0;
-            aws_device_random_u64(&random_64_bit_num);
-
-            size_t headers = (size_t)random_64_bit_num % headers_pool_size;
-            sprintf(test_header_str, "crttest-%zu", headers);
-            char test_value_str[256];
-            size_t value = (size_t)random_64_bit_num % values_pool_size;
-            sprintf(test_value_str, "value-%zu", value);
-            struct aws_byte_cursor existed_value;
-            if (aws_http_headers_get(test_headers, aws_byte_cursor_from_c_str(test_header_str), &existed_value) ==
-                AWS_OP_SUCCESS) {
-                /* If the header has the same name already exists in the headers, the response will combine the values
-                 * together. Do the same thing for the header to check. */
-                char combined_value_str[1024];
-                sprintf(combined_value_str, "" PRInSTR ",%s", AWS_BYTE_CURSOR_PRI(existed_value), test_value_str);
-                aws_http_headers_set(
-                    test_headers,
-                    aws_byte_cursor_from_c_str(test_header_str),
-                    aws_byte_cursor_from_c_str(combined_value_str));
-            } else {
-                aws_http_headers_add(
-                    test_headers,
-                    aws_byte_cursor_from_c_str(test_header_str),
-                    aws_byte_cursor_from_c_str(test_value_str));
-            }
-
             struct aws_http_header request_header = {
-                .compression = random_64_bit_num % 3, // With random type of compression, make sure it works
+                .compression =
+                    compression
+                        ? random_64_bit_num % 3
+                        : AWS_HTTP_HEADER_COMPRESSION_USE_CACHE, // With random type of compression, make sure it works
                 .name = aws_byte_cursor_from_c_str(test_header_str),
                 .value = aws_byte_cursor_from_c_str(test_value_str),
             };
@@ -440,4 +350,15 @@ static int test_hpack_compression_stress(struct aws_allocator *allocator, void *
     }
 
     return s_tester_clean_up(&s_tester);
+}
+AWS_TEST_CASE(localhost_integ_hpack_stress, test_hpack_stress)
+static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    return s_test_hpack_stress_helper(allocator, false /*compression*/);
+}
+
+AWS_TEST_CASE(localhost_integ_hpack_compression_stress, test_hpack_compression_stress)
+static int test_hpack_compression_stress(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    return s_test_hpack_stress_helper(allocator, true /*compression*/);
 }
