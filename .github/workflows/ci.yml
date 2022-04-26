@@ -135,7 +135,7 @@ jobs:
 
       - name: Build and test
         run: |
-          ./tests/local_host/config-localhost.sh
+          ./tests/localhost/config-localhost.sh
           python3 -c "from urllib.request import urlretrieve; urlretrieve('$BUILDER_HOST/$BUILDER_SOURCE/$BUILDER_VERSION/builder.pyz', 'builder.pyz')"
           python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON
       - uses: actions/upload-artifact@v3 # to find the file https://github.com/actions/upload-artifact#where-does-the-upload-go
