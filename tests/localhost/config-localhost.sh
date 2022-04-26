@@ -29,10 +29,10 @@ openssl req -x509 -out localhost.crt -keyout localhost.key \
 sudo cp localhost.key localhost.crt /etc/nginx/
 
 # copy the njs script
-sudo cp -r ./tests/local_host/njs /etc/nginx/
+sudo cp -r ./tests/localhost/njs /etc/nginx/
 
 # overwrite the njs configuration
-sudo cp ./tests/local_host/nginx.conf /etc/nginx/
+sudo cp ./tests/localhost/nginx.conf /etc/nginx/
 
 # test the config works
 sudo nginx -t

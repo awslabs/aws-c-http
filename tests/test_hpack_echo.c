@@ -213,7 +213,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
 
     aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, allocator);
     aws_tls_ctx_options_set_alpn_list(&tester->tls_ctx_options, "h2");
-    /* Turn off peer verification as a local host cert used */
+    /* Turn off peer verification as a localhost cert used */
     tester->tls_ctx_options.verify_peer = false;
 
     tester->tls_ctx = aws_tls_client_ctx_new(allocator, &tester->tls_ctx_options);
