@@ -51,3 +51,13 @@ git clone git@github.com:awslabs/aws-c-http.git
 cmake -S aws-c-http -B aws-c-http/build -DCMAKE_INSTALL_PREFIX=<install-path> -DCMAKE_PREFIX_PATH=<install-path>
 cmake --build aws-c-http/build --target install
 ```
+
+#### Run Integration Tests with local host
+
+To run some of the integration tests (start with localhost_integ_*), you need to set up a local host that echo the request headers back first.
+
+To do that, we have a script that can run on ubuntu machine, `./tests/local_host/config-local-host.sh`. It will install nginx and njs for you and run a server that echo the request headers back.
+
+After that, configure and build your cmake project with `-DENABLE_LOCALHOST_INTEGRATION_TESTS=true` to build the tests with local host and run them from `ctest --output-on-failure -R localhost_integ_*`.
+
+Note: The nginx/njs does not support Windows, and the script is ubuntu only.
