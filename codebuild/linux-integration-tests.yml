@@ -10,7 +10,7 @@ phases:
   pre_build:
     commands:
       - export CC=gcc-7
-      - export BUILDER_VERSION=v0.8.27
+      - export BUILDER_VERSION=v0.9.12
       - export BUILDER_SOURCE=releases
       - export BUILDER_HOST=https://d19elf31gohf1l.cloudfront.net
   build:

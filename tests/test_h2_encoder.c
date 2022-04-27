@@ -104,7 +104,7 @@ TEST_CASE(h2_encoder_data) {
     ASSERT_FALSE(body_stalled);
 
     aws_byte_buf_clean_up(&output);
-    aws_input_stream_destroy(body);
+    aws_input_stream_release(body);
     aws_h2_frame_encoder_clean_up(&encoder);
     return AWS_OP_SUCCESS;
 }
@@ -158,7 +158,7 @@ TEST_CASE(h2_encoder_data_stalled) {
     ASSERT_TRUE(body_stalled);
 
     aws_byte_buf_clean_up(&output);
-    aws_input_stream_destroy(body);
+    aws_input_stream_release(body);
     aws_h2_frame_encoder_clean_up(&encoder);
     return AWS_OP_SUCCESS;
 }
@@ -201,7 +201,7 @@ TEST_CASE(h2_encoder_data_stalled_completely) {
 
     /* clean up */
     aws_byte_buf_clean_up(&output);
-    aws_input_stream_destroy(body);
+    aws_input_stream_release(body);
     aws_h2_frame_encoder_clean_up(&encoder);
     return AWS_OP_SUCCESS;
 }

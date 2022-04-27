@@ -209,7 +209,7 @@ static int s_server_request_clean_up(void) {
     for (int i = 0; i < s_tester.request_num; i++) {
         aws_http_stream_release(s_tester.requests[i].request_handler);
         aws_byte_buf_clean_up(&s_tester.requests[i].storage);
-        aws_input_stream_destroy(s_tester.requests[i].response_body);
+        aws_input_stream_release(s_tester.requests[i].response_body);
     }
     return AWS_OP_SUCCESS;
 }
@@ -1303,6 +1303,7 @@ enum request_handler_callback {
 static const int ERROR_FROM_CALLBACK_ERROR_CODE = (int)0xBEEFCAFE;
 
 struct error_from_callback_tester {
+    struct aws_input_stream base;
     enum request_handler_callback error_at;
     int callback_counts[REQUEST_HANDLER_CALLBACK_COUNT];
     bool has_errored;
@@ -1341,7 +1342,7 @@ static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct
 
     (void)dest;
 
-    struct error_from_callback_tester *error_tester = body->impl;
+    struct error_from_callback_tester *error_tester = AWS_CONTAINER_OF(body, struct error_from_callback_tester, base);
     ASSERT_SUCCESS(s_error_from_callback_common(error_tester, REQUEST_HANDLER_CALLBACK_OUTGOING_BODY));
 
     /* If the common fn was successful, write out some data and end the stream */
@@ -1351,13 +1352,13 @@ static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct
 }
 
 static int s_error_from_outgoing_body_get_status(struct aws_input_stream *body, struct aws_stream_status *status) {
-    struct error_from_callback_tester *error_tester = body->impl;
+    struct error_from_callback_tester *error_tester = AWS_CONTAINER_OF(body, struct error_from_callback_tester, base);
     *status = error_tester->outgoing_body_status;
     return AWS_OP_SUCCESS;
 }
 
-static void s_error_from_outgoing_body_destroy(struct aws_input_stream *stream) {
-    aws_mem_release(stream->allocator, stream);
+static void s_error_from_outgoing_body_destroy(struct aws_input_stream *body) {
+    (void)body;
 }
 
 static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
@@ -1365,7 +1366,6 @@ static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
     .read = s_error_from_outgoing_body_read,
     .get_status = s_error_from_outgoing_body_get_status,
     .get_length = NULL,
-    .destroy = s_error_from_outgoing_body_destroy,
 };
 
 static int s_error_from_incoming_headers(
@@ -1553,15 +1553,17 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
         },
     };
 
-    struct aws_input_stream error_from_outgoing_body_stream = {
-        .allocator = allocator,
-        .impl = &error_tester,
-        .vtable = &s_error_from_outgoing_body_vtable,
-    };
+    error_tester.base.vtable = &s_error_from_outgoing_body_vtable;
+    aws_ref_count_init(
+        &error_tester.base.ref_count,
+        &error_tester,
+        (aws_simple_completion_callback *)s_error_from_outgoing_body_destroy);
+
+    struct aws_input_stream *error_from_outgoing_body_stream = &error_tester.base;
 
     struct aws_http_message *response;
     ASSERT_SUCCESS(
-        s_create_response(&response, 200, headers, AWS_ARRAY_SIZE(headers), &error_from_outgoing_body_stream));
+        s_create_response(&response, 200, headers, AWS_ARRAY_SIZE(headers), error_from_outgoing_body_stream));
 
     /* send_response() may succeed or fail, depending on when things shut down */
     aws_http_stream_send_response(request->request_handler, response);
@@ -1581,6 +1583,7 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, enum requ
     ASSERT_INT_EQUALS(ERROR_FROM_CALLBACK_ERROR_CODE, error_tester.on_complete_error_code);
 
     aws_http_message_destroy(response);
+    aws_input_stream_release(error_from_outgoing_body_stream);
     ASSERT_SUCCESS(s_server_error_tester_clean_up(&error_tester));
     return AWS_OP_SUCCESS;
 }
