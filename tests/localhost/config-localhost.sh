@@ -27,7 +27,8 @@ cd nginx-1.21.6
 mkdir nginx
 ./configure --add-dynamic-module=../njs/nginx --add-dynamic-module=../echo-nginx-module --with-openssl=../openssl --with-http_ssl_module --with-http_v2_module --prefix=./nginx --with-pcre=../pcre-8.45/ --with-zlib=../zlib-1.2.12
 
-make --jobs=`getconf _NPROCESSORS_ONLN` && sudo make install
+time make --jobs=`getconf _NPROCESSORS_ONLN`
+sudo make install
 
 #Generate local ssl cert
 openssl req -x509 -out localhost.crt -keyout localhost.key \
@@ -39,10 +40,10 @@ openssl req -x509 -out localhost.crt -keyout localhost.key \
 sudo cp localhost.key localhost.crt ./nginx/conf/
 
 # copy the njs script
-sudo cp -r ./tests/localhost/njs ./nginx/conf/
+sudo cp -r ../tests/localhost/njs ./nginx/conf/
 
 # overwrite the njs configuration
-sudo cp ./tests/localhost/nginx.conf ./nginx/conf/
+sudo cp ../tests/localhost/nginx.conf ./nginx/conf/
 
 # check if the config works
 sudo ./nginx/sbin/nginx -t
