@@ -127,15 +127,35 @@ jobs:
         chmod a+x builder
         ./builder build downstream -p ${{ env.PACKAGE_NAME }}
 
-  localhost-test:
+  localhost-test-linux:
     runs-on: ubuntu-20.04 # latest
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-
-      - name: Build and test
+      - name: Configure local host
         run: |
           ./tests/localhost/config-localhost.sh
+      - name: Build and test
+        run: |
+          python3 -c "from urllib.request import urlretrieve; urlretrieve('$BUILDER_HOST/$BUILDER_SOURCE/$BUILDER_VERSION/builder.pyz', 'builder.pyz')"
+          python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON
+      - uses: actions/upload-artifact@v3 # to find the file https://github.com/actions/upload-artifact#where-does-the-upload-go
+        if: failure()
+        with:
+          name: server-logs
+          path: |
+            /var/log/nginx/error.log
+
+  localhost-test-mac:
+    runs-on: macos-11 # latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Configure local host
+        run: |
+          ./tests/localhost/config-localhost.sh
+      - name: Build and test
+        run: |
           python3 -c "from urllib.request import urlretrieve; urlretrieve('$BUILDER_HOST/$BUILDER_SOURCE/$BUILDER_VERSION/builder.pyz', 'builder.pyz')"
           python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON
       - uses: actions/upload-artifact@v3 # to find the file https://github.com/actions/upload-artifact#where-does-the-upload-go
