@@ -2,8 +2,8 @@
 set -ex
 
 # nginx source
-curl -OL http://nginx.org/download/nginx-1.21.6.tar.gz
-tar -xvzf nginx-1.21.6.tar.gz && rm nginx-1.21.6.tar.gz
+curl -OL http://nginx.org/download/nginx-1.21.6.tar.gz --output-dir /tmp/
+tar -xvzf /tmp/nginx-1.21.6.tar.gz && rm nginx-1.21.6.tar.gz
 
 # openssl source
 git clone -b openssl-3.0.2 https://github.com/openssl/openssl.git
