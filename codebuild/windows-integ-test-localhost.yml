@@ -15,7 +15,7 @@ phases:
       - /tmp/setup_localhost_test.bat
       - python -c "from urllib.request import urlretrieve; urlretrieve('https://d19elf31gohf1l.cloudfront.net/releases/v0.9.12/builder.pyz', 'builder.pyz')"
       - python -c "from urllib.request import urlretrieve; urlretrieve('https://github.com/Kitware/CMake/releases/download/v3.23.1/cmake-3.23.1-windows-x86_64.zip', 'cmake-3.23.1-windows-x86_64.zip')"
-      - unzip cmake-3.23.1-windows-x86_64.zip
+      - pip install cmake
       - python builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON
   post_build:
     commands:
