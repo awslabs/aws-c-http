@@ -11,7 +11,6 @@ phases:
     commands:
       - echo Build started on `date`
       - aws s3 cp s3://aws-crt-test-stuff/setup_localhost_test.bat /tmp/setup_localhost_test.bat
-      - /tmp/setup_localhost_test.bat
       - pip install cmake
       - python -c "from urllib.request import urlretrieve; urlretrieve('https://d19elf31gohf1l.cloudfront.net/releases/v0.9.12/builder.pyz', 'builder.pyz')"
       - python builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON
