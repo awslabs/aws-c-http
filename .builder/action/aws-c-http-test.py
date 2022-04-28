@@ -7,6 +7,7 @@ import os
 class AWSCHttpTest(Builder.Action):
 
     def run(self, env):
+        owd = os.getcwd()
         if os.path.exists('/tmp/setup_proxy_test_env.sh'):
             env.shell.setenv('AWS_PROXY_NO_VERIFY_PEER', 'on')
             print("setting proxy integration test environment")
@@ -20,5 +21,5 @@ class AWSCHttpTest(Builder.Action):
             actions.append(['ctest', '--output-on-failure', '-R', 'localhost_integ_*'])
         else:
             actions.append(['ctest', '--output-on-failure'])
-
+        actions.append(['cd', '{}'.format(owd)]) # back to old directory
         return Builder.Script(actions, name='aws-c-http-test')
