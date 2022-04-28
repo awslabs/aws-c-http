@@ -23,7 +23,7 @@ tar xvzf zlib-1.2.12.tar.gz
 # configure and build
 cd nginx-1.21.6
 mkdir nginx
-./configure --add-dynamic-module=../njs/nginx --add-dynamic-module=../echo-nginx-module --with-openssl=../openssl --with-http_ssl_module --with-http_v2_module --prefix=./nginx --with-pcre=../pcre-8.45/ --with-zlib=../zlib-1.2.12
+./configure --add-dynamic-module=../njs/nginx --with-openssl=../openssl --with-http_ssl_module --with-http_v2_module --prefix=./nginx --with-pcre=../pcre-8.45/ --with-zlib=../zlib-1.2.12
 
 time make --jobs=`getconf _NPROCESSORS_ONLN`
 sudo make install
