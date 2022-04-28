@@ -12,9 +12,6 @@ git clone -b openssl-3.0.2 https://github.com/openssl/openssl.git
 # njs source
 git clone -b 0.7.3 https://github.com/nginx/njs.git
 
-# echo module?
-git clone -b v0.62 https://github.com/openresty/echo-nginx-module.git
-
 # PCRE lib
 curl -OL https://sourceforge.net/projects/pcre/files/pcre/8.45/pcre-8.45.tar.gz
 tar xvzf pcre-8.45.tar.gz
