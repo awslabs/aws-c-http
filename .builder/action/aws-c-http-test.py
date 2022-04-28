@@ -15,9 +15,8 @@ class AWSCHttpTest(Builder.Action):
         elif os.path.exists('../../aws-c-http'):
             os.chdir('../../aws-c-http')
 
-
         actions = []
-        if os.path.exists('/tmp/nginx-1.21.6.tar.gz'):
+        if os.path.exists('/tmp/nginx-1.21.6.tar.gz') or os.environ.get('AWS_TEST_LOCALHOST_HOST')!=None:
             actions.append(['ctest', '--output-on-failure', '-R', 'localhost_integ_*'])
         else:
             actions.append(['ctest', '--output-on-failure'])
