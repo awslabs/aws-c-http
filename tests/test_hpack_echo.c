@@ -9,6 +9,8 @@
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
 #include <aws/common/device_random.h>
+#include <aws/common/environment.h>
+#include <aws/common/string.h>
 #include <aws/http/connection.h>
 #include <aws/http/request_response.h>
 #include <aws/io/channel_bootstrap.h>
@@ -259,9 +261,17 @@ static int s_tester_clean_up(struct tester *tester) {
     return AWS_OP_SUCCESS;
 }
 
+AWS_STATIC_STRING_FROM_LITERAL(s_http_localhost_env_var, "AWS_TEST_LOCALHOST_HOST");
+
 static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool compression) {
     /* Test that makes tons of streams with all sorts of headers to stress hpack */
-    struct aws_byte_cursor host_name = aws_byte_cursor_from_c_str("localhost");
+    struct aws_string *http_localhost_host = NULL;
+    if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
+        http_localhost_host == NULL) {
+        /* The envrionment variable is not set, default to localhost */
+        http_localhost_host = aws_string_new_from_c_str(allocator, "localhost");
+    }
+    struct aws_byte_cursor host_name = aws_byte_cursor_from_string(http_localhost_host);
     ASSERT_SUCCESS(s_tester_init(&s_tester, allocator, host_name));
     /* wait for connection connected */
     ASSERT_SUCCESS(s_wait_on_connection_connected(&s_tester));
@@ -270,7 +280,10 @@ static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool comp
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
         DEFINE_HEADER(":path", "/echo"),
-        DEFINE_HEADER(":authority", "localhost"),
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = host_name,
+        },
     };
 
     size_t num_to_acquire = 2000;
@@ -349,6 +362,7 @@ static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool comp
         aws_http_headers_release(received_headers);
     }
 
+    aws_string_destroy(http_localhost_host);
     return s_tester_clean_up(&s_tester);
 }
 AWS_TEST_CASE(localhost_integ_hpack_stress, test_hpack_stress)
