@@ -7,7 +7,7 @@ import re
 
 class AWSCHttpTest(Builder.Action):
 
-    def _export_env_var(filename, env):
+    def _export_env_var(self, filename, env):
         file = open(filename)
         pattern = re.compile("(\w+) (\w+)=(.+)")
         for i in file.readlines():
