@@ -48,7 +48,7 @@ static bool s_check_headers_received(
             return false;
         }
         struct aws_http_header received_header;
-        if (aws_http_headers_get_index(headers_to_check, i, &received_header)) {
+        if (aws_http_headers_get_index(received_headers, i + 1, &received_header)) {
             /* Not found */
             return false;
         }
