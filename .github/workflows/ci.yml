@@ -157,7 +157,7 @@ jobs:
           python3 -c "from urllib.request import urlretrieve; urlretrieve('$BUILDER_HOST/$BUILDER_SOURCE/$BUILDER_VERSION/builder.pyz', 'builder.pyz')"
           python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON
 
-  windows:
+  localhost-test-win:
     runs-on: windows-2022 # latest
     steps:
       - name: Checkout

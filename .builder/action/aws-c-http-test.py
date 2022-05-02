@@ -27,15 +27,7 @@ class AWSCHttpTest(Builder.Action):
         elif os.path.exists('../../aws-c-http'):
             os.chdir('../../aws-c-http')
 
-        localhost = False
-        if os.path.exists('/tmp/setup_localhost_test.bat'):
-            print("setting localhost integration test environment")
-            self._export_env_var('/tmp/setup_localhost_test.bat', env)
-            localhost = True
+        actions.append(['ctest', '--output-on-failure',
+                        '-R', 'localhost_integ_*'])
 
-        if os.path.exists('/tmp/nginx-1.21.6.tar.gz') or localhost:
-            actions.append(['ctest', '--output-on-failure',
-                           '-R', 'localhost_integ_*'])
-        else:
-            actions.append(['ctest', '--output-on-failure'])
         return Builder.Script(actions, name='aws-c-http-test')
