@@ -141,12 +141,6 @@ jobs:
         run: |
           python3 -c "from urllib.request import urlretrieve; urlretrieve('$BUILDER_HOST/$BUILDER_SOURCE/$BUILDER_VERSION/builder.pyz', 'builder.pyz')"
           python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON
-      - uses: actions/upload-artifact@v3 # to find the file https://github.com/actions/upload-artifact#where-does-the-upload-go
-        if: failure()
-        with:
-          name: server-logs-linux
-          path: |
-            /var/log/nginx/error.log
 
   localhost-test-mac:
     runs-on: macos-11 # latest
@@ -162,9 +156,18 @@ jobs:
         run: |
           python3 -c "from urllib.request import urlretrieve; urlretrieve('$BUILDER_HOST/$BUILDER_SOURCE/$BUILDER_VERSION/builder.pyz', 'builder.pyz')"
           python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON
-      - uses: actions/upload-artifact@v3 # to find the file https://github.com/actions/upload-artifact#where-does-the-upload-go
-        if: failure()
-        with:
-          name: server-logs-mac
-          path: |
-            /var/log/nginx/error.log
+
+  windows:
+    runs-on: windows-2022 # latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Configure local host
+        run: |
+          python -m pip install h2
+          cd ./tests/py_localhost/
+          Start-Process -NoNewWindow python .\server.py
+      - name: Build and test
+        run: |
+          python -c "from urllib.request import urlretrieve; urlretrieve('$BUILDER_HOST/$BUILDER_SOURCE/$BUILDER_VERSION/builder.pyz', 'builder.pyz')"
+          python builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON
