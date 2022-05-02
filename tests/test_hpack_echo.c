@@ -47,12 +47,13 @@ static bool s_check_headers_received(
         if (aws_http_headers_get_index(headers_to_check, i, &header)) {
             return false;
         }
-        struct aws_byte_cursor out_value;
-        if (aws_http_headers_get(received_headers, header.name, &out_value)) {
+        struct aws_http_header received_header;
+        if (aws_http_headers_get_index(headers_to_check, i, &received_header)) {
             /* Not found */
             return false;
         }
-        if (!aws_byte_cursor_eq(&out_value, &header.value)) {
+        if (!aws_byte_cursor_eq(&received_header.value, &header.value) ||
+            !aws_byte_cursor_eq(&received_header.name, &header.name)) {
             return false;
         }
     }
@@ -311,23 +312,7 @@ static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool comp
             char test_value_str[256];
             size_t value = (size_t)random_64_bit_num % values_pool_size;
             sprintf(test_value_str, "value-%zu", value);
-            struct aws_byte_cursor existed_value;
-            if (aws_http_headers_get(test_headers, aws_byte_cursor_from_c_str(test_header_str), &existed_value) ==
-                AWS_OP_SUCCESS) {
-                /* If the header has the same name already exists in the headers, the response will combine the values
-                 * together. Do the same thing for the header to check. */
-                char combined_value_str[1024];
-                sprintf(combined_value_str, "" PRInSTR ",%s", AWS_BYTE_CURSOR_PRI(existed_value), test_value_str);
-                aws_http_headers_set(
-                    test_headers,
-                    aws_byte_cursor_from_c_str(test_header_str),
-                    aws_byte_cursor_from_c_str(combined_value_str));
-            } else {
-                aws_http_headers_add(
-                    test_headers,
-                    aws_byte_cursor_from_c_str(test_header_str),
-                    aws_byte_cursor_from_c_str(test_value_str));
-            }
+
             struct aws_http_header request_header = {
                 .compression =
                     compression
@@ -337,6 +322,7 @@ static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool comp
                 .value = aws_byte_cursor_from_c_str(test_value_str),
             };
             ASSERT_SUCCESS(aws_http_headers_add_header(request_headers, &request_header));
+            ASSERT_SUCCESS(aws_http_headers_add_header(test_headers, &request_header));
         }
         struct aws_http_headers *received_headers = aws_http_headers_new(allocator);
         struct aws_http_make_request_options request_options = {
