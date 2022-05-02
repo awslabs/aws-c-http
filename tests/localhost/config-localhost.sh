@@ -3,7 +3,7 @@ set -ex
 
 # nginx source
 curl -OL http://nginx.org/download/nginx-1.21.6.tar.gz
-mv nginx-1.21.6.tar.gz /tmp/nginx-1.21.6.tar.gz # for the path to check
+mv -f nginx-1.21.6.tar.gz /tmp/nginx-1.21.6.tar.gz # for the path to check
 tar -xvzf /tmp/nginx-1.21.6.tar.gz
 
 # openssl source
