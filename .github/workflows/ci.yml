@@ -134,7 +134,9 @@ jobs:
         uses: actions/checkout@v3
       - name: Configure local host
         run: |
-          ./tests/localhost/config-localhost.sh
+          python3 -m pip install asyncio h2
+          cd ./tests/py_localhost/
+          python3 server.py &
       - name: Build and test
         run: |
           python3 -c "from urllib.request import urlretrieve; urlretrieve('$BUILDER_HOST/$BUILDER_SOURCE/$BUILDER_VERSION/builder.pyz', 'builder.pyz')"
