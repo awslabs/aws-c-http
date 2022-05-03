@@ -27,7 +27,13 @@ class AWSCHttpTest(Builder.Action):
         elif os.path.exists('../../aws-c-http'):
             os.chdir('../../aws-c-http')
 
-        actions.append(['ctest', '--output-on-failure',
-                        '-R', 'localhost_integ_*'])
+        try:
+            import h2
+        except ImportError:
+            actions.append(['ctest', '--output-on-failure'])
+        else:
+            # If h2 module installed, we are testing localhost
+            actions.append(['ctest', '--output-on-failure',
+                            '-R', 'localhost_integ_*'])
 
         return Builder.Script(actions, name='aws-c-http-test')
