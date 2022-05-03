@@ -76,7 +76,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_content_length_put_request_headers) {
     ASSERT_FALSE(encoder_message.has_connection_close_header);
     ASSERT_UINT_EQUALS(body.len, encoder_message.content_length);
 
-    aws_input_stream_destroy(body_stream);
+    aws_input_stream_release(body_stream);
     aws_http_message_destroy(request);
     aws_h1_encoder_message_clean_up(&encoder_message);
     aws_h1_encoder_clean_up(&encoder);
@@ -232,7 +232,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_not_chunked_put_request_header
     ASSERT_FALSE(encoder_message.has_connection_close_header);
     ASSERT_UINT_EQUALS(0, encoder_message.content_length);
 
-    aws_input_stream_destroy(body_stream);
+    aws_input_stream_release(body_stream);
     aws_http_message_destroy(request);
     aws_h1_encoder_message_clean_up(&encoder_message);
     aws_h1_encoder_clean_up(&encoder);
@@ -274,7 +274,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_set_body_stream_errors) {
     ASSERT_FALSE(encoder_message.has_connection_close_header);
     ASSERT_UINT_EQUALS(0, encoder_message.content_length);
 
-    aws_input_stream_destroy(body_stream);
+    aws_input_stream_release(body_stream);
     aws_http_message_destroy(request);
     aws_h1_encoder_message_clean_up(&encoder_message);
     aws_h1_encoder_clean_up(&encoder);
@@ -396,7 +396,7 @@ H1_ENCODER_TEST_CASE(h1_encoder_transfer_encoding_chunked_and_content_length_put
     ASSERT_INT_EQUALS(
         AWS_OP_ERR, aws_h1_encoder_message_init_from_request(&encoder_message, allocator, request, &chunk_list));
 
-    aws_input_stream_destroy(body_stream);
+    aws_input_stream_release(body_stream);
     aws_http_message_destroy(request);
     aws_h1_encoder_message_clean_up(&encoder_message);
     aws_h1_encoder_clean_up(&encoder);

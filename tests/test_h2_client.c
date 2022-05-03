@@ -76,6 +76,8 @@ static struct tester {
     struct testing_channel testing_channel;
     struct h2_fake_peer peer;
     struct connection_user_data user_data;
+
+    bool no_conn_manual_win_management;
 } s_tester;
 
 static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
@@ -99,6 +101,7 @@ static int s_tester_init(struct aws_allocator *alloc, void *ctx) {
         .max_closed_streams = AWS_HTTP2_DEFAULT_MAX_CLOSED_STREAMS,
         .on_goaway_received = s_on_goaway_received,
         .on_remote_settings_change = s_on_remote_settings_change,
+        .conn_manual_window_management = !s_tester.no_conn_manual_win_management,
     };
 
     s_tester.connection =
@@ -315,7 +318,7 @@ TEST_CASE(h2_client_auto_ping_ack_higher_priority) {
     /* clean up */
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -787,7 +790,7 @@ TEST_CASE(h2_client_stream_err_state_forbids_frame) {
     aws_http_headers_release(response_headers);
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -1521,7 +1524,7 @@ TEST_CASE(h2_client_stream_send_data) {
     aws_http_headers_release(response_headers);
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -1669,7 +1672,7 @@ TEST_CASE(h2_client_stream_send_lots_of_data) {
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
         client_stream_tester_clean_up(&stream_testers[i]);
         aws_http_message_release(requests[i]);
-        aws_input_stream_destroy(request_bodies[i]);
+        aws_input_stream_release(request_bodies[i]);
         aws_byte_buf_clean_up(&request_body_bufs[i]);
     }
     return s_tester_clean_up();
@@ -1743,7 +1746,7 @@ TEST_CASE(h2_client_stream_send_stalled_data) {
     /* clean up */
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -1855,7 +1858,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_stream_window_size) {
     aws_http_headers_release(response_headers);
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -1965,7 +1968,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_negative_stream_window_size) 
     aws_http_headers_release(response_headers);
     aws_http_message_release(request);
     client_stream_tester_clean_up(&stream_tester);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -2089,7 +2092,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_window_size) {
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
         client_stream_tester_clean_up(&stream_testers[i]);
         aws_http_message_release(requests[i]);
-        aws_input_stream_destroy(request_bodies[i]);
+        aws_input_stream_release(request_bodies[i]);
         aws_byte_buf_clean_up(&request_body_bufs[i]);
     }
     return s_tester_clean_up();
@@ -2292,7 +2295,7 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
     for (size_t i = 0; i < NUM_STREAMS; ++i) {
         client_stream_tester_clean_up(&stream_testers[i]);
         aws_http_message_release(requests[i]);
-        aws_input_stream_destroy(request_bodies[i]);
+        aws_input_stream_release(request_bodies[i]);
         aws_byte_buf_clean_up(&request_body_bufs[i]);
     }
     return s_tester_clean_up();
@@ -2300,11 +2303,22 @@ TEST_CASE(h2_client_stream_send_data_controlled_by_connection_and_stream_window_
 
 /* Test receiving a response with DATA frames, the window update frame will be sent */
 TEST_CASE(h2_client_stream_send_window_update) {
+    /* Enable automatic window manager management */
+    s_tester.no_conn_manual_win_management = true;
     ASSERT_SUCCESS(s_tester_init(allocator, ctx));
 
     /* fake peer sends connection preface */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    /* Check the inital window update frame has been sent to maximize the connection window */
+    size_t initial_window_update_index = 0;
+    struct h2_decoded_frame *initial_connection_window_update_frame = h2_decode_tester_find_stream_frame(
+        &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, 0 /*stream_id*/, 0 /*idx*/, &initial_window_update_index);
+    ASSERT_NOT_NULL(initial_connection_window_update_frame);
+    ASSERT_UINT_EQUALS(
+        AWS_H2_WINDOW_UPDATE_MAX - AWS_H2_INIT_WINDOW_SIZE,
+        initial_connection_window_update_frame->window_size_increment);
 
     /* send request */
     struct aws_http_message *request = aws_http2_message_new_request(allocator);
@@ -2349,7 +2363,11 @@ TEST_CASE(h2_client_stream_send_window_update) {
     ASSERT_UINT_EQUALS(5, stream_window_update_frame->window_size_increment);
 
     struct h2_decoded_frame *connection_window_update_frame = h2_decode_tester_find_stream_frame(
-        &s_tester.peer.decode, AWS_H2_FRAME_T_WINDOW_UPDATE, 0 /*stream_id*/, 0 /*idx*/, NULL);
+        &s_tester.peer.decode,
+        AWS_H2_FRAME_T_WINDOW_UPDATE,
+        0 /*stream_id*/,
+        initial_window_update_index + 1 /*idx*/,
+        NULL);
     ASSERT_NOT_NULL(connection_window_update_frame);
     ASSERT_UINT_EQUALS(5, connection_window_update_frame->window_size_increment);
 
@@ -2814,7 +2832,7 @@ TEST_CASE(h2_client_stream_receive_end_stream_before_done_sending) {
     aws_http_headers_release(response_headers);
     client_stream_tester_clean_up(&stream_tester);
     aws_http_message_release(request);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -2886,7 +2904,7 @@ TEST_CASE(h2_client_stream_receive_end_stream_and_rst_before_done_sending) {
     aws_http_headers_release(response_headers);
     client_stream_tester_clean_up(&stream_tester);
     aws_http_message_release(request);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 
@@ -2931,7 +2949,7 @@ TEST_CASE(h2_client_stream_err_input_stream_failure) {
     /* clean up */
     client_stream_tester_clean_up(&stream_tester);
     aws_http_message_release(request);
-    aws_input_stream_destroy(request_body);
+    aws_input_stream_release(request_body);
     return s_tester_clean_up();
 }
 

@@ -11,7 +11,8 @@
         { "name": "aws-c-compression" }
     ],
     "downstream": [
-        { "name": "aws-c-auth" }
+        { "name": "aws-c-auth" },
+        { "name": "aws-c-mqtt" }
     ],
     "test_steps": [
         ["bash", "./.builder/action/aws-c-http-test.sh"],

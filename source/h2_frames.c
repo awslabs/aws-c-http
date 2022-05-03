@@ -31,7 +31,7 @@ const uint32_t aws_h2_settings_initial[AWS_HTTP2_SETTINGS_END_RANGE] = {
     [AWS_HTTP2_SETTINGS_HEADER_TABLE_SIZE] = 4096,
     [AWS_HTTP2_SETTINGS_ENABLE_PUSH] = 1,
     [AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS] = UINT32_MAX, /* "Initially there is no limit to this value" */
-    [AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] = 65535,
+    [AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE] = AWS_H2_INIT_WINDOW_SIZE,
     [AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE] = 16384,
     [AWS_HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE] = UINT32_MAX, /* "The initial value of this setting is unlimited" */
 };
@@ -227,6 +227,7 @@ static void s_frame_priority_settings_encode(
     writes_ok &= aws_byte_buf_write_u8(output, priority->weight);
 
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 }
 
 /***********************************************************************************************************************
@@ -279,6 +280,7 @@ static void s_frame_prefix_encode(
     writes_ok &= aws_byte_buf_write_be32(output, stream_id);
 
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 }
 
 /***********************************************************************************************************************
@@ -444,6 +446,7 @@ int aws_h2_encode_data_frame(
     *stream_window_size_peer -= (int32_t)payload_len;
 
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
     return AWS_OP_SUCCESS;
 
 handle_waiting_for_more_space:
@@ -721,6 +724,7 @@ static void s_encode_single_header_block_frame(
     }
 
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     /* Success! Wrote entire frame. It's safe to change state now */
     frame->state =
@@ -887,6 +891,7 @@ static int s_frame_prebuilt_encode(
     struct aws_byte_cursor chunk = aws_byte_cursor_advance(&frame->cursor, chunk_len);
     writes_ok &= aws_byte_buf_write_from_whole_cursor(output, chunk);
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     if (frame->cursor.len == 0) {
         *complete = true;
@@ -966,6 +971,7 @@ struct aws_h2_frame *aws_h2_frame_new_rst_stream(
     bool writes_ok = true;
     writes_ok &= aws_byte_buf_write_be32(&frame->encoded_buf, error_code);
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     return &frame->base;
 }
@@ -1026,6 +1032,7 @@ struct aws_h2_frame *aws_h2_frame_new_settings(
         writes_ok &= aws_byte_buf_write_be32(&frame->encoded_buf, settings_array[i].value);
     }
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     return &frame->base;
 }
@@ -1059,6 +1066,7 @@ struct aws_h2_frame *aws_h2_frame_new_ping(
     bool writes_ok = true;
     writes_ok &= aws_byte_buf_write(&frame->encoded_buf, opaque_data, AWS_HTTP2_PING_DATA_SIZE);
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     /* PING responses SHOULD be given higher priority than any other frame */
     frame->base.high_priority = ack;
@@ -1117,6 +1125,7 @@ struct aws_h2_frame *aws_h2_frame_new_goaway(
     writes_ok &= aws_byte_buf_write_be32(&frame->encoded_buf, error_code);
     writes_ok &= aws_byte_buf_write_from_whole_cursor(&frame->encoded_buf, debug_data);
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     return &frame->base;
 }
@@ -1165,6 +1174,7 @@ struct aws_h2_frame *aws_h2_frame_new_window_update(
     bool writes_ok = true;
     writes_ok &= aws_byte_buf_write_be32(&frame->encoded_buf, window_size_increment);
     AWS_ASSERT(writes_ok);
+    (void)writes_ok;
 
     return &frame->base;
 }
