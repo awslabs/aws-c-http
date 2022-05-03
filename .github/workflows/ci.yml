@@ -17,115 +17,115 @@ env:
   AWS_REGION: us-east-1
 
 jobs:
-  # linux-compat:
-  #   runs-on: ubuntu-20.04 # latest
-  #   strategy:
-  #     matrix:
-  #       image:
-  #         - manylinux1-x64
-  #         - manylinux1-x86
-  #         - manylinux2014-x64
-  #         - manylinux2014-x86
-  #         - al2-x64
-  #         - fedora-34-x64
-  #         - opensuse-leap
-  #         - rhel8-x64
+  linux-compat:
+    runs-on: ubuntu-20.04 # latest
+    strategy:
+      matrix:
+        image:
+          - manylinux1-x64
+          - manylinux1-x86
+          - manylinux2014-x64
+          - manylinux2014-x86
+          - al2-x64
+          - fedora-34-x64
+          - opensuse-leap
+          - rhel8-x64
 
-  #   steps:
-  #     # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
-  #     - name: Build ${{ env.PACKAGE_NAME }}
-  #       run: |
-  #         aws s3 cp s3://aws-crt-test-stuff/ci/${{ env.BUILDER_VERSION }}/linux-container-ci.sh ./linux-container-ci.sh && chmod a+x ./linux-container-ci.sh
-  #         ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ matrix.image }} build downstream -p ${{ env.PACKAGE_NAME }}
+    steps:
+      # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
+      - name: Build ${{ env.PACKAGE_NAME }}
+        run: |
+          aws s3 cp s3://aws-crt-test-stuff/ci/${{ env.BUILDER_VERSION }}/linux-container-ci.sh ./linux-container-ci.sh && chmod a+x ./linux-container-ci.sh
+          ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ matrix.image }} build downstream -p ${{ env.PACKAGE_NAME }}
 
-  # linux-compiler-compat:
-  #   runs-on: ubuntu-20.04 # latest
-  #   strategy:
-  #     matrix:
-  #       compiler:
-  #         - clang-3
-  #         - clang-6
-  #         - clang-8
-  #         - clang-9
-  #         - clang-10
-  #         - clang-11
-  #         - gcc-4.8
-  #         - gcc-5
-  #         - gcc-6
-  #         - gcc-7
-  #         - gcc-8
-  #   steps:
-  #     # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
-  #     - name: Build ${{ env.PACKAGE_NAME }}
-  #       run: |
-  #         aws s3 cp s3://aws-crt-test-stuff/ci/${{ env.BUILDER_VERSION }}/linux-container-ci.sh ./linux-container-ci.sh && chmod a+x ./linux-container-ci.sh
-  #         ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ env.LINUX_BASE_IMAGE }} build downstream -p ${{ env.PACKAGE_NAME }} --compiler=${{ matrix.compiler }}
+  linux-compiler-compat:
+    runs-on: ubuntu-20.04 # latest
+    strategy:
+      matrix:
+        compiler:
+          - clang-3
+          - clang-6
+          - clang-8
+          - clang-9
+          - clang-10
+          - clang-11
+          - gcc-4.8
+          - gcc-5
+          - gcc-6
+          - gcc-7
+          - gcc-8
+    steps:
+      # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
+      - name: Build ${{ env.PACKAGE_NAME }}
+        run: |
+          aws s3 cp s3://aws-crt-test-stuff/ci/${{ env.BUILDER_VERSION }}/linux-container-ci.sh ./linux-container-ci.sh && chmod a+x ./linux-container-ci.sh
+          ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ env.LINUX_BASE_IMAGE }} build downstream -p ${{ env.PACKAGE_NAME }} --compiler=${{ matrix.compiler }}
 
-  # clang-sanitizers:
-  #   runs-on: ubuntu-20.04 # latest
-  #   strategy:
-  #     matrix:
-  #       sanitizers: [",thread", ",address,undefined"]
-  #   steps:
-  #     # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
-  #     - name: Build ${{ env.PACKAGE_NAME }}
-  #       run: |
-  #         aws s3 cp s3://aws-crt-test-stuff/ci/${{ env.BUILDER_VERSION }}/linux-container-ci.sh ./linux-container-ci.sh && chmod a+x ./linux-container-ci.sh
-  #         ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ env.LINUX_BASE_IMAGE }} build -p ${{ env.PACKAGE_NAME }} --compiler=clang-11 --cmake-extra=-DENABLE_SANITIZERS=ON --cmake-extra=-DSANITIZERS="${{ matrix.sanitizers }}"
+  clang-sanitizers:
+    runs-on: ubuntu-20.04 # latest
+    strategy:
+      matrix:
+        sanitizers: [",thread", ",address,undefined"]
+    steps:
+      # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
+      - name: Build ${{ env.PACKAGE_NAME }}
+        run: |
+          aws s3 cp s3://aws-crt-test-stuff/ci/${{ env.BUILDER_VERSION }}/linux-container-ci.sh ./linux-container-ci.sh && chmod a+x ./linux-container-ci.sh
+          ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ env.LINUX_BASE_IMAGE }} build -p ${{ env.PACKAGE_NAME }} --compiler=clang-11 --cmake-extra=-DENABLE_SANITIZERS=ON --cmake-extra=-DSANITIZERS="${{ matrix.sanitizers }}"
 
-  # linux-shared-libs:
-  #   runs-on: ubuntu-20.04 # latest
-  #   steps:
-  #     # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
-  #     - name: Build ${{ env.PACKAGE_NAME }}
-  #       run: |
-  #         aws s3 cp s3://aws-crt-test-stuff/ci/${{ env.BUILDER_VERSION }}/linux-container-ci.sh ./linux-container-ci.sh && chmod a+x ./linux-container-ci.sh
-  #         ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ env.LINUX_BASE_IMAGE }} build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DBUILD_SHARED_LIBS=ON
+  linux-shared-libs:
+    runs-on: ubuntu-20.04 # latest
+    steps:
+      # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
+      - name: Build ${{ env.PACKAGE_NAME }}
+        run: |
+          aws s3 cp s3://aws-crt-test-stuff/ci/${{ env.BUILDER_VERSION }}/linux-container-ci.sh ./linux-container-ci.sh && chmod a+x ./linux-container-ci.sh
+          ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ env.LINUX_BASE_IMAGE }} build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DBUILD_SHARED_LIBS=ON
 
-  # byo-crypto:
-  #   runs-on: ubuntu-20.04 # latest
-  #   steps:
-  #     # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
-  #     - name: Build ${{ env.PACKAGE_NAME }}
-  #       run: |
-  #         aws s3 cp s3://aws-crt-test-stuff/ci/${{ env.BUILDER_VERSION }}/linux-container-ci.sh ./linux-container-ci.sh && chmod a+x ./linux-container-ci.sh
-  #         ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ env.LINUX_BASE_IMAGE }} build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DBYO_CRYPTO=ON
+  byo-crypto:
+    runs-on: ubuntu-20.04 # latest
+    steps:
+      # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
+      - name: Build ${{ env.PACKAGE_NAME }}
+        run: |
+          aws s3 cp s3://aws-crt-test-stuff/ci/${{ env.BUILDER_VERSION }}/linux-container-ci.sh ./linux-container-ci.sh && chmod a+x ./linux-container-ci.sh
+          ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ env.LINUX_BASE_IMAGE }} build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DBYO_CRYPTO=ON
 
-  # windows:
-  #   runs-on: windows-2022 # latest
-  #   steps:
-  #     - name: Build ${{ env.PACKAGE_NAME }} + consumers
-  #       run: |
-  #         python -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
-  #         python builder.pyz build -p ${{ env.PACKAGE_NAME }}
+  windows:
+    runs-on: windows-2022 # latest
+    steps:
+      - name: Build ${{ env.PACKAGE_NAME }} + consumers
+        run: |
+          python -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
+          python builder.pyz build -p ${{ env.PACKAGE_NAME }}
 
-  # windows-vc14:
-  #   runs-on: windows-2019 # windows-2019 is last env with Visual Studio 2015 (v14.0)
-  #   strategy:
-  #     matrix:
-  #       arch: [x86, x64]
-  #   steps:
-  #     - name: Build ${{ env.PACKAGE_NAME }} + consumers
-  #       run: |
-  #         python -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
-  #         python builder.pyz build -p ${{ env.PACKAGE_NAME }} --target windows-${{ matrix.arch }} --compiler msvc-14
+  windows-vc14:
+    runs-on: windows-2019 # windows-2019 is last env with Visual Studio 2015 (v14.0)
+    strategy:
+      matrix:
+        arch: [x86, x64]
+    steps:
+      - name: Build ${{ env.PACKAGE_NAME }} + consumers
+        run: |
+          python -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
+          python builder.pyz build -p ${{ env.PACKAGE_NAME }} --target windows-${{ matrix.arch }} --compiler msvc-14
 
-  # windows-shared-libs:
-  #   runs-on: windows-2022 # latest
-  #   steps:
-  #     - name: Build ${{ env.PACKAGE_NAME }} + consumers
-  #       run: |
-  #         python -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
-  #         python builder.pyz build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DBUILD_SHARED_LIBS=ON
+  windows-shared-libs:
+    runs-on: windows-2022 # latest
+    steps:
+      - name: Build ${{ env.PACKAGE_NAME }} + consumers
+        run: |
+          python -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
+          python builder.pyz build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DBUILD_SHARED_LIBS=ON
 
-  # osx:
-  #   runs-on: macos-11 # latest
-  #   steps:
-  #     - name: Build ${{ env.PACKAGE_NAME }} + consumers
-  #       run: |
-  #         python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder')"
-  #         chmod a+x builder
-  #         ./builder build downstream -p ${{ env.PACKAGE_NAME }}
+  osx:
+    runs-on: macos-11 # latest
+    steps:
+      - name: Build ${{ env.PACKAGE_NAME }} + consumers
+        run: |
+          python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder')"
+          chmod a+x builder
+          ./builder build downstream -p ${{ env.PACKAGE_NAME }}
 
   localhost-test-linux:
     runs-on: ubuntu-20.04 # latest
@@ -134,7 +134,7 @@ jobs:
         uses: actions/checkout@v3
       - name: Configure local host
         run: |
-          python3 -m pip install asyncio h2
+          python3 -m pip install h2
           cd ./tests/py_localhost/
           python3 server.py &
       - name: Build and test
@@ -149,7 +149,7 @@ jobs:
         uses: actions/checkout@v3
       - name: Configure local host
         run: |
-          python3 -m pip install asyncio h2
+          python3 -m pip install h2
           cd ./tests/py_localhost/
           python3 server.py &
       - name: Build and test
@@ -165,9 +165,9 @@ jobs:
       - name: Configure local host
         run: |
           python -m pip install h2
-          cd ./tests/py_localhost/
-          Start-Process -NoNewWindow python .\server.py
       - name: Build and test
         run: |
+          cd ./tests/py_localhost/
+          Start-Process -NoNewWindow python .\server.py
           python -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
           python builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON
