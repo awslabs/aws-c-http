@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# Minor change based on the example from hyper h2 server
+# https://github.com/python-hyper/h2/blob/master/examples/asyncio/asyncio-server.py
 
 """
 
@@ -165,6 +167,7 @@ class H2Protocol(asyncio.Protocol):
         response_headers = [(':status', '200')]
 
         for i in self.raw_headers:
+            # Response headers back and exclude pesudo headers
             if i[0][0] != ':':
                 response_headers.append(i)
 
