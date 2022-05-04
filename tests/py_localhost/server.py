@@ -16,6 +16,7 @@ import asyncio
 import io
 import json
 import ssl
+import os
 import collections
 from typing import List, Tuple
 
@@ -40,6 +41,7 @@ class H2Protocol(asyncio.Protocol):
         self.transport = None
         self.stream_data = {}
         self.flow_control_futures = {}
+        self.file_path = None
 
     def connection_made(self, transport: asyncio.Transport):
         self.transport = transport
@@ -79,9 +81,14 @@ class H2Protocol(asyncio.Protocol):
                 self.transport.write(self.conn.data_to_send())
 
     def request_received(self, headers: List[Tuple[str, str]], stream_id: int):
-        self.raw_headers = headers
         headers = collections.OrderedDict(headers)
+        path = headers[':path']
         method = headers[':method']
+        if method == "PUT" or method == "POST":
+            self.file_path = os.path.join(os.path.curdir, path[1:])
+            print(self.file_path)
+            if os.path.exists(self.file_path):
+                os.remove(self.file_path)
 
         # Store off the request data.
         request_data = RequestData(headers, io.BytesIO())
@@ -89,10 +96,10 @@ class H2Protocol(asyncio.Protocol):
 
     def handle_request_echo(self, stream_id: int, request_data: RequestData):
         response_headers = [(':status', '200')]
-        for i in self.raw_headers:
+        for i in request_data.headers:
             # Response headers back and exclude pseudo headers
-            if i[0][0] != ':':
-                response_headers.append(i)
+            if i[0] != ':':
+                response_headers.append((i, request_data.headers[i]))
         body = request_data.data.getvalue().decode('utf-8')
         data = json.dumps(
             {"body": body}, indent=4
@@ -111,7 +118,11 @@ class H2Protocol(asyncio.Protocol):
             return
 
         path = request_data.headers[':path']
-        if path == '/echo':
+        method = request_data.headers[':method']
+        if method == "PUT" or method == "POST":
+            self.conn.send_headers(stream_id, [(':status', '200')])
+            asyncio.ensure_future(self.send_data(b"success", stream_id))
+        elif path == '/echo':
             self.handle_request_echo(stream_id, request_data)
         else:
             self.conn.send_headers(stream_id, [(':status', '404')])
@@ -129,7 +140,13 @@ class H2Protocol(asyncio.Protocol):
                 stream_id, error_code=ErrorCodes.PROTOCOL_ERROR
             )
         else:
-            stream_data.data.write(data)
+            method = stream_data.headers[':method']
+            if method == "PUT" or method == "POST":
+                # write the data to the local file system instead of storing in memory
+                with open(self.file_path, 'ab') as f:
+                    f.write(data)
+            else:
+                stream_data.data.write(data)
 
     def stream_reset(self, stream_id):
         """
@@ -194,14 +211,12 @@ class H2Protocol(asyncio.Protocol):
 
 
 ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-ssl_context.options |= (
-    ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1 | ssl.OP_NO_COMPRESSION
-)
+ssl_context.options |= (ssl.OP_NO_COMPRESSION)
 ssl_context.load_cert_chain(
     certfile="../resources/unittests.crt", keyfile="../resources/unittests.key")
 ssl_context.set_alpn_protocols(["h2"])
 
-loop = asyncio.get_event_loop()
+loop = asyncio.new_event_loop()
 # Each client connection will create a new protocol instance
 coro = loop.create_server(H2Protocol, '127.0.0.1', 8443, ssl=ssl_context)
 server = loop.run_until_complete(coro)

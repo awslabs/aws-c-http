@@ -215,7 +215,7 @@ static int s_tester_init(struct sm_tester_options *options) {
     if (options->uri_cursor) {
         ASSERT_SUCCESS(aws_uri_init_parse(&s_tester.endpoint, alloc, options->uri_cursor));
     } else {
-        struct aws_byte_cursor default_host = aws_byte_cursor_from_c_str("http://example.com");
+        struct aws_byte_cursor default_host = aws_byte_cursor_from_c_str("https://example.com");
         ASSERT_SUCCESS(aws_uri_init_parse(&s_tester.endpoint, alloc, &default_host));
     }
 

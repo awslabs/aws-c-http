@@ -351,6 +351,7 @@ static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool comp
     aws_string_destroy(http_localhost_host);
     return s_tester_clean_up(&s_tester);
 }
+
 AWS_TEST_CASE(localhost_integ_hpack_stress, test_hpack_stress)
 static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
