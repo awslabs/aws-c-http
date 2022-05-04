@@ -42,7 +42,7 @@ struct sm_tester_options {
     size_t ideal_concurrent_streams_per_connection;
     size_t max_concurrent_streams_per_connection;
 
-    struct aws_byte_cursor *endpoint_cursor;
+    struct aws_byte_cursor *uri_cursor;
 };
 
 struct sm_tester {
@@ -216,27 +216,37 @@ static int s_tester_init(struct sm_tester_options *options) {
     if (!options->no_http2) {
         ASSERT_SUCCESS(aws_tls_ctx_options_set_alpn_list(&s_tester.tls_ctx_options, "h2"));
     }
-    s_tester.tls_ctx = aws_tls_client_ctx_new(alloc, &s_tester.tls_ctx_options);
 
-    ASSERT_NOT_NULL(s_tester.tls_ctx);
-
-    if (options->endpoint_cursor) {
-        ASSERT_SUCCESS(aws_uri_init_parse(&s_tester.endpoint, alloc, options->endpoint_cursor));
+    if (options->uri_cursor) {
+        ASSERT_SUCCESS(aws_uri_init_parse(&s_tester.endpoint, alloc, options->uri_cursor));
     } else {
-        struct aws_byte_cursor default_host = aws_byte_cursor_from_c_str("example.com");
+        struct aws_byte_cursor default_host = aws_byte_cursor_from_c_str("http://example.com");
         ASSERT_SUCCESS(aws_uri_init_parse(&s_tester.endpoint, alloc, &default_host));
     }
 
-    struct aws_byte_cursor server_name = *aws_uri_host_name(&s_tester.endpoint);
+    struct aws_byte_cursor server_name = s_tester.endpoint.host_name;
+    if (aws_byte_cursor_eq_c_str_ignore_case(&server_name, "localhost")) {
+        /* Turn off peer verification as a localhost cert used */
+        s_tester.tls_ctx_options.verify_peer = false;
+    }
+    s_tester.tls_ctx = aws_tls_client_ctx_new(alloc, &s_tester.tls_ctx_options);
+
+    ASSERT_NOT_NULL(s_tester.tls_ctx);
     aws_tls_connection_options_init_from_ctx(&s_tester.tls_connection_options, s_tester.tls_ctx);
     aws_tls_connection_options_set_server_name(&s_tester.tls_connection_options, alloc, &server_name);
+    uint16_t port = 443;
+    if (s_tester.endpoint.port) {
+        port = s_tester.endpoint.port;
+    } else if (aws_byte_cursor_eq_c_str_ignore_case(&s_tester.endpoint.scheme, "http")) {
+        port = 80;
+    }
 
     struct aws_http2_stream_manager_options sm_options = {
         .bootstrap = s_tester.client_bootstrap,
         .socket_options = &socket_options,
         .tls_connection_options = &s_tester.tls_connection_options,
         .host = server_name,
-        .port = 443,
+        .port = port,
         .ideal_concurrent_streams_per_connection = options->ideal_concurrent_streams_per_connection,
         .max_concurrent_streams_per_connection = options->max_concurrent_streams_per_connection,
         .max_connections = options->max_connections,
@@ -468,8 +478,14 @@ static int s_sm_stream_acquiring(int num_streams) {
 
     struct aws_http_header request_headers_src[] = {
         DEFINE_HEADER(":method", "GET"),
-        DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":path", "/"),
+        {
+            .name = aws_byte_cursor_from_c_str(":scheme"),
+            .value = *aws_uri_scheme(&s_tester.endpoint),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":path"),
+            .value = *aws_uri_path(&s_tester.endpoint),
+        },
         {
             .name = aws_byte_cursor_from_c_str(":authority"),
             .value = *aws_uri_host_name(&s_tester.endpoint),
@@ -1082,5 +1098,25 @@ TEST_CASE(h2_sm_closing_before_connection_acquired) {
     /* all acquiring stream failed */
     ASSERT_INT_EQUALS(1, s_tester.acquiring_stream_errors);
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN, s_tester.error_code);
+    return s_tester_clean_up();
+}
+
+/* Test that makes tons of real streams against local host */
+TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
+    (void)ctx;
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/echo");
+    struct sm_tester_options options = {
+        .max_connections = 100,
+        .max_concurrent_streams_per_connection = 100,
+        .alloc = allocator,
+        .uri_cursor = &uri_cursor,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    int num_to_acquire = 200 * 100;
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
+    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
+    ASSERT_TRUE((int)s_tester.stream_200_count == num_to_acquire);
+
     return s_tester_clean_up();
 }
