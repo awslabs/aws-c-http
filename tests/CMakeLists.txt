@@ -245,7 +245,12 @@ add_test_case(hpack_decode_indexed_from_dynamic_table)
 add_test_case(hpack_dynamic_table_empty_value)
 add_test_case(hpack_dynamic_table_with_empty_header)
 add_test_case(hpack_dynamic_table_size_update_from_setting)
-add_net_test_case(hpack_stress)
+
+if (ENABLE_LOCALHOST_INTEGRATION_TESTS)
+    # Tests should be named with localhost_integ_*
+    add_net_test_case(localhost_integ_hpack_stress)
+    add_net_test_case(localhost_integ_hpack_compression_stress)
+endif()
 
 add_test_case(h2_header_empty_payload)
 add_one_byte_at_a_time_test_set(h2_header_ex_2_1)
