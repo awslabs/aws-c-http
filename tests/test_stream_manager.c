@@ -212,11 +212,6 @@ static int s_tester_init(struct sm_tester_options *options) {
         .connect_timeout_ms = (uint32_t)aws_timestamp_convert(10, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
     };
 
-    aws_tls_ctx_options_init_default_client(&s_tester.tls_ctx_options, alloc);
-    if (!options->no_http2) {
-        ASSERT_SUCCESS(aws_tls_ctx_options_set_alpn_list(&s_tester.tls_ctx_options, "h2"));
-    }
-
     if (options->uri_cursor) {
         ASSERT_SUCCESS(aws_uri_init_parse(&s_tester.endpoint, alloc, options->uri_cursor));
     } else {
@@ -224,28 +219,42 @@ static int s_tester_init(struct sm_tester_options *options) {
         ASSERT_SUCCESS(aws_uri_init_parse(&s_tester.endpoint, alloc, &default_host));
     }
 
-    struct aws_byte_cursor server_name = s_tester.endpoint.host_name;
-    if (aws_byte_cursor_eq_c_str_ignore_case(&server_name, "localhost")) {
-        /* Turn off peer verification as a localhost cert used */
-        s_tester.tls_ctx_options.verify_peer = false;
-    }
-    s_tester.tls_ctx = aws_tls_client_ctx_new(alloc, &s_tester.tls_ctx_options);
-
-    ASSERT_NOT_NULL(s_tester.tls_ctx);
-    aws_tls_connection_options_init_from_ctx(&s_tester.tls_connection_options, s_tester.tls_ctx);
-    aws_tls_connection_options_set_server_name(&s_tester.tls_connection_options, alloc, &server_name);
+    bool use_tls = true;
     uint16_t port = 443;
+    if (!s_tester.endpoint.scheme.len && (s_tester.endpoint.port == 80 || s_tester.endpoint.port == 8080)) {
+        use_tls = false;
+    } else {
+        if (aws_byte_cursor_eq_c_str_ignore_case(&s_tester.endpoint.scheme, "http")) {
+            use_tls = false;
+        }
+    }
     if (s_tester.endpoint.port) {
         port = s_tester.endpoint.port;
     } else if (aws_byte_cursor_eq_c_str_ignore_case(&s_tester.endpoint.scheme, "http")) {
         port = 80;
     }
 
+    if (use_tls) {
+        aws_tls_ctx_options_init_default_client(&s_tester.tls_ctx_options, alloc);
+        if (!options->no_http2) {
+            ASSERT_SUCCESS(aws_tls_ctx_options_set_alpn_list(&s_tester.tls_ctx_options, "h2"));
+        }
+        if (aws_byte_cursor_eq_c_str_ignore_case(&s_tester.endpoint.host_name, "localhost")) {
+            /* Turn off peer verification as a localhost cert used */
+            s_tester.tls_ctx_options.verify_peer = false;
+        }
+        s_tester.tls_ctx = aws_tls_client_ctx_new(alloc, &s_tester.tls_ctx_options);
+
+        ASSERT_NOT_NULL(s_tester.tls_ctx);
+        aws_tls_connection_options_init_from_ctx(&s_tester.tls_connection_options, s_tester.tls_ctx);
+        aws_tls_connection_options_set_server_name(
+            &s_tester.tls_connection_options, alloc, &s_tester.endpoint.host_name);
+    }
     struct aws_http2_stream_manager_options sm_options = {
         .bootstrap = s_tester.client_bootstrap,
         .socket_options = &socket_options,
-        .tls_connection_options = &s_tester.tls_connection_options,
-        .host = server_name,
+        .tls_connection_options = use_tls ? &s_tester.tls_connection_options : NULL,
+        .host = s_tester.endpoint.host_name,
         .port = port,
         .ideal_concurrent_streams_per_connection = options->ideal_concurrent_streams_per_connection,
         .max_concurrent_streams_per_connection = options->max_concurrent_streams_per_connection,
@@ -1098,6 +1107,26 @@ TEST_CASE(h2_sm_closing_before_connection_acquired) {
     /* all acquiring stream failed */
     ASSERT_INT_EQUALS(1, s_tester.acquiring_stream_errors);
     ASSERT_INT_EQUALS(AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN, s_tester.error_code);
+    return s_tester_clean_up();
+}
+
+/* Test our http2 stream manager works with prior knowledge */
+TEST_CASE(localhost_integ_h2_sm_prior_knowledge) {
+    (void)ctx;
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("http://localhost:8080");
+    struct sm_tester_options options = {
+        .max_connections = 100,
+        .max_concurrent_streams_per_connection = 100,
+        .alloc = allocator,
+        .uri_cursor = &uri_cursor,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    int num_to_acquire = 2;
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
+    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
+    ASSERT_TRUE((int)s_tester.stream_200_count == num_to_acquire);
+
     return s_tester_clean_up();
 }
 

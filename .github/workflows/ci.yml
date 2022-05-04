@@ -138,6 +138,7 @@ jobs:
         python3 -m pip install h2
         cd ./tests/py_localhost/
         python3 server.py &
+        python3 non_tls_server.py &
     - name: Build and test
       run: |
         python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
@@ -153,6 +154,7 @@ jobs:
         python3 -m pip install h2
         cd ./tests/py_localhost/
         python3 server.py &
+        python3 non_tls_server.py &
     - name: Build and test
       run: |
         python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
@@ -170,5 +172,6 @@ jobs:
       run: |
         cd ./tests/py_localhost/
         Start-Process -NoNewWindow python .\server.py
+        Start-Process -NoNewWindow python .\non_tls_server.py
         python -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
         python builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON

@@ -611,7 +611,7 @@ add_net_test_case(h2_sm_closing_before_connection_acquired)
 # Tests against local server
 if (ENABLE_LOCALHOST_INTEGRATION_TESTS)
     # Tests should be named with localhost_integ_*
-    # add_net_test_case(localhost_integ_h2_sm_prior_knowledge)
+    add_net_test_case(localhost_integ_h2_sm_prior_knowledge)
     add_net_test_case(localhost_integ_h2_sm_acquire_stream_stress)
 endif()
 
