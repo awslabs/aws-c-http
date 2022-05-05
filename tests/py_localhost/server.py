@@ -139,8 +139,6 @@ class H2Protocol(asyncio.Protocol):
         expecting data on, save it off. Otherwise, reset the stream.
         """
         try:
-            print("test_pre????")
-            print(len(data))
             stream_data = self.stream_data[stream_id]
         except KeyError:
             self.conn.reset_stream(
@@ -149,17 +147,11 @@ class H2Protocol(asyncio.Protocol):
         else:
             method = stream_data.headers[':method']
             if method == "PUT" or method == "POST":
-                print("test????")
-                print(len(data))
                 self.num_sentence_received = self.num_sentence_received + \
                     data.count(b".")
                 # update window for stream
                 self.conn.increment_flow_control_window(len(data))
                 self.conn.increment_flow_control_window(len(data), stream_id)
-                print("test2????")
-                # write the data to the local file system instead of storing in memory
-                with open(self.file_path, 'ab') as f:
-                    f.write(data)
             else:
                 stream_data.data.write(data)
 

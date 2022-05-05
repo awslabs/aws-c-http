@@ -371,6 +371,7 @@ static int test_hpack_compression_stress(struct aws_allocator *allocator, void *
 static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
 
     (void)stream;
+    (void)user_data;
     struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.alloc, data);
     s_tester.num_sen_received = (uint32_t)atoi((const char *)content_length_header_str->bytes);
     aws_string_destroy(content_length_header_str);
