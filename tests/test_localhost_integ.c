@@ -381,7 +381,7 @@ static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws
 
 static int s_test_upload_helper(struct aws_allocator *allocator) {
     s_tester.alloc = allocator;
-    size_t length = 2500000UL; /* over int max, which it the max for settings */
+    size_t length = 250000000UL; /* over int max, which it the max for settings */
 
     /* Test that makes tons of streams with all sorts of headers to stress hpack */
     struct aws_string *http_localhost_host = NULL;
