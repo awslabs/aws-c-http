@@ -381,7 +381,7 @@ static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws
 
 static int s_test_upload_helper(struct aws_allocator *allocator) {
     s_tester.alloc = allocator;
-    size_t length = 250000000UL; /* over int max, which it the max for settings */
+    size_t length = 2500000000UL; /* over int max, which it the max for settings */
 
     /* Test that makes tons of streams with all sorts of headers to stress hpack */
     struct aws_string *http_localhost_host = NULL;
@@ -414,7 +414,6 @@ static int s_test_upload_helper(struct aws_allocator *allocator) {
     ASSERT_NOT_NULL(request);
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
     struct aws_input_stream *body_stream = aws_input_stream_tester_upload_new(allocator, length);
-    size_t num_sentence_sent = aws_input_stream_tester_upload_get_num_sentence_sent(body_stream);
     aws_http_message_set_body_stream(request, body_stream);
     aws_input_stream_release(body_stream);
 
