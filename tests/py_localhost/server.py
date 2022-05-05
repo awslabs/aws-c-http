@@ -42,6 +42,8 @@ class H2Protocol(asyncio.Protocol):
         self.stream_data = {}
         self.flow_control_futures = {}
         self.file_path = None
+        self.num_sentence_received = 0
+        self.raw_headers = None
 
     def connection_made(self, transport: asyncio.Transport):
         self.transport = transport
@@ -81,6 +83,7 @@ class H2Protocol(asyncio.Protocol):
                 self.transport.write(self.conn.data_to_send())
 
     def request_received(self, headers: List[Tuple[str, str]], stream_id: int):
+        self.raw_headers = headers
         headers = collections.OrderedDict(headers)
         path = headers[':path']
         method = headers[':method']
@@ -96,10 +99,10 @@ class H2Protocol(asyncio.Protocol):
 
     def handle_request_echo(self, stream_id: int, request_data: RequestData):
         response_headers = [(':status', '200')]
-        for i in request_data.headers:
+        for i in self.raw_headers:
             # Response headers back and exclude pseudo headers
-            if i[0] != ':':
-                response_headers.append((i, request_data.headers[i]))
+            if i[0][0] != ':':
+                response_headers.append(i)
         body = request_data.data.getvalue().decode('utf-8')
         data = json.dumps(
             {"body": body}, indent=4
@@ -121,7 +124,9 @@ class H2Protocol(asyncio.Protocol):
         method = request_data.headers[':method']
         if method == "PUT" or method == "POST":
             self.conn.send_headers(stream_id, [(':status', '200')])
-            asyncio.ensure_future(self.send_data(b"success", stream_id))
+            print(self.num_sentence_received)
+            asyncio.ensure_future(self.send_data(
+                str(self.num_sentence_received).encode(), stream_id))
         elif path == '/echo':
             self.handle_request_echo(stream_id, request_data)
         else:
@@ -134,6 +139,8 @@ class H2Protocol(asyncio.Protocol):
         expecting data on, save it off. Otherwise, reset the stream.
         """
         try:
+            print("test_pre????")
+            print(len(data))
             stream_data = self.stream_data[stream_id]
         except KeyError:
             self.conn.reset_stream(
@@ -142,6 +149,14 @@ class H2Protocol(asyncio.Protocol):
         else:
             method = stream_data.headers[':method']
             if method == "PUT" or method == "POST":
+                print("test????")
+                print(len(data))
+                self.num_sentence_received = self.num_sentence_received + \
+                    data.count(b".")
+                # update window for stream
+                self.conn.increment_flow_control_window(len(data))
+                self.conn.increment_flow_control_window(len(data), stream_id)
+                print("test2????")
                 # write the data to the local file system instead of storing in memory
                 with open(self.file_path, 'ab') as f:
                     f.write(data)
