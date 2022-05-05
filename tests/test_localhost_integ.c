@@ -431,7 +431,7 @@ static int s_test_upload_helper(struct aws_allocator *allocator) {
 
     /* Wait for the stream to complete */
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
-    ASSERT_UINT_EQUALS(s_tester.num_sen_received, num_sentence_sent);
+    ASSERT_UINT_EQUALS(s_tester.num_sen_received, length);
     ASSERT_TRUE(s_tester.stream_completed_with_200);
 
     aws_http_message_release(request);

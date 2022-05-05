@@ -148,7 +148,7 @@ class H2Protocol(asyncio.Protocol):
             method = stream_data.headers[':method']
             if method == "PUT" or method == "POST":
                 self.num_sentence_received = self.num_sentence_received + \
-                    data.count(b".")
+                    len(data)
                 # update window for stream
                 self.conn.increment_flow_control_window(len(data))
                 self.conn.increment_flow_control_window(len(data), stream_id)
