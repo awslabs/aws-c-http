@@ -44,6 +44,7 @@ class H2Protocol(asyncio.Protocol):
         self.file_path = None
         self.num_sentence_received = 0
         self.raw_headers = None
+        self.download_test_length = 2500000000
 
     def connection_made(self, transport: asyncio.Transport):
         self.transport = transport
@@ -129,6 +130,11 @@ class H2Protocol(asyncio.Protocol):
                 str(self.num_sentence_received).encode(), stream_id))
         elif path == '/echo':
             self.handle_request_echo(stream_id, request_data)
+        elif path == '/downloadTest':
+            length = self.download_test_length
+            self.conn.send_headers(
+                stream_id, [(':status', '200'), ('content-length', str(length))])
+            asyncio.ensure_future(self.send_repeat_data(length, stream_id))
         else:
             self.conn.send_headers(stream_id, [(':status', '404')])
             asyncio.ensure_future(self.send_data(b"Not Found", stream_id))
@@ -193,6 +199,41 @@ class H2Protocol(asyncio.Protocol):
 
             self.transport.write(self.conn.data_to_send())
             data = data[chunk_size:]
+
+    async def send_repeat_data(self, length, stream_id):
+        """
+        Send data with length according to the flow control rules.
+        """
+        while length > 0:
+            while self.conn.local_flow_control_window(stream_id) < 1:
+                try:
+                    await self.wait_for_flow_control(stream_id)
+                except asyncio.CancelledError:
+                    return
+
+            chunk_size = min(
+                self.conn.local_flow_control_window(stream_id),
+                length,
+                self.conn.max_outbound_frame_size,
+            )
+            repeated = b"This is CRT HTTP test."
+            data = int(chunk_size/len(repeated)) * repeated + \
+                repeated[:chunk_size % len(repeated)]
+            print(chunk_size)
+
+            try:
+                self.conn.send_data(
+                    stream_id,
+                    data,
+                    end_stream=(chunk_size == length)
+                )
+            except (StreamClosedError, ProtocolError):
+                # The stream got closed and we didn't get told. We're done
+                # here.
+                break
+
+            self.transport.write(self.conn.data_to_send())
+            length = length - chunk_size
 
     async def wait_for_flow_control(self, stream_id):
         """
