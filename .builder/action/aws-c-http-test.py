@@ -33,6 +33,6 @@ class AWSCHttpTest(Builder.Action):
             os.chdir('../../aws-c-http')
 
         actions.append(['ctest', '--output-on-failure', '-R',
-                       'localhost_integ_h2_download_stress'])
+                       'localhost_integ_h2_*'])
 
         return Builder.Script(actions, name='aws-c-http-test')
