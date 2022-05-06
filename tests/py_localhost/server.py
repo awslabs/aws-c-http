@@ -90,7 +90,6 @@ class H2Protocol(asyncio.Protocol):
         method = headers[':method']
         if method == "PUT" or method == "POST":
             self.file_path = os.path.join(os.path.curdir, path[1:])
-            print(self.file_path)
             if os.path.exists(self.file_path):
                 os.remove(self.file_path)
 
@@ -219,7 +218,6 @@ class H2Protocol(asyncio.Protocol):
             repeated = b"This is CRT HTTP test."
             data = int(chunk_size/len(repeated)) * repeated + \
                 repeated[:chunk_size % len(repeated)]
-            print(chunk_size)
 
             try:
                 self.conn.send_data(
