@@ -388,6 +388,8 @@ AWS_TEST_CASE(localhost_integ_h2_upload_stress, s_localhost_integ_h2_upload_stre
 static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_tester.alloc = allocator;
+    /* TODO: 2.5GB takes over 30 mins to run on linux but only 3-5 mins on mac. Need to investigate one the reason
+     * behind */
     size_t length = 250000000UL; /* over int max, which it the max for settings */
 
     struct aws_string *http_localhost_host = NULL;
