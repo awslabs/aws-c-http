@@ -8,12 +8,26 @@ Python 3.5+ required. Command here works for OSX and linux.
 
 - Install hyper h2 python module. `python3 -m pip install h2`
 
-### TLS echo server
+### TLS server
 
-- The code is based the [example](https://github.com/python-hyper/h2/blob/master/examples/asyncio/asyncio-server.py) from hyper h2 server. Minor changed based on the example to response the headers of requests back within the headers from `/echo`.
+- The code is based the [example](https://github.com/python-hyper/h2/blob/master/examples/asyncio/asyncio-server.py) from hyper h2 server.
 - Have the cert/key ready. The script now using `../resources/unittests.crt`, you can either just run the script within this directory, which will find the certificates and key from the related path, or you can use your own and change the code coordinately.
 - Run python. `python3 ./server.py`.
+
+#### Echo
+
+- Minor changed based on the example to response the headers of requests back within the headers from `/echo`.
 - To test the server runs correctly, you can do `curl -k -v -H "foo:bar" https://localhost:8443/echo` and check the result.
+
+#### Download test
+
+- To test download, when `:path` is `/downloadTest`, server will response a repeated string with length `self.download_test_length`, which is 2,500,000,000 now. It will be repeats of sting "This is CRT HTTP test."
+- To test the server runs correctly, you can do `curl -k -v -H "foo:bar" https://localhost:8443/downloadTest` and check the result.
+
+#### Upload test
+
+- To test upload, when `:method` is `POST` or `PUT`, server will response the length received from response body
+- To test the server runs correctly, you can do `curl -k -X POST -F'data=@upload_test.txt' https://localhost:8443/upload_test` where `upload_test.txt` is file to upload.
 
 ### Non-TLS server
 
