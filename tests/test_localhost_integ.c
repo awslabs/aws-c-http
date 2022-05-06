@@ -388,7 +388,7 @@ AWS_TEST_CASE(localhost_integ_h2_upload_stress, s_localhost_integ_h2_upload_stre
 static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_tester.alloc = allocator;
-    size_t length = 2500000000UL; /* over int max, which it the max for settings */
+    size_t length = 250000000UL; /* over int max, which it the max for settings */
 
     struct aws_string *http_localhost_host = NULL;
     if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
