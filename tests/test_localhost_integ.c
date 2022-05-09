@@ -17,7 +17,10 @@
 #include <aws/io/event_loop.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
+#include <aws/io/stream.h>
 #include <aws/io/tls_channel_handler.h>
+
+#include "h2_test_helper.h"
 
 #ifdef _MSC_VER
 #    pragma warning(disable : 4996) /* Disable warnings about sprintf() being insecure */
@@ -81,8 +84,13 @@ struct tester {
     size_t stream_200_count;
     size_t stream_4xx_count;
     size_t stream_status_not_200_count;
+
+    size_t num_sen_received;
     int stream_completed_error_code;
     bool stream_completed_with_200;
+
+    size_t download_body_len;
+    size_t content_len;
 
     int wait_result;
 };
@@ -351,6 +359,7 @@ static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool comp
     aws_string_destroy(http_localhost_host);
     return s_tester_clean_up(&s_tester);
 }
+
 AWS_TEST_CASE(localhost_integ_hpack_stress, test_hpack_stress)
 static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -361,4 +370,142 @@ AWS_TEST_CASE(localhost_integ_hpack_compression_stress, test_hpack_compression_s
 static int test_hpack_compression_stress(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     return s_test_hpack_stress_helper(allocator, true /*compression*/);
+}
+
+static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
+
+    (void)stream;
+    (void)user_data;
+    struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.alloc, data);
+    s_tester.num_sen_received = (uint32_t)atoi((const char *)content_length_header_str->bytes);
+    aws_string_destroy(content_length_header_str);
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that upload a 0.25GB data to local server */
+AWS_TEST_CASE(localhost_integ_h2_upload_stress, s_localhost_integ_h2_upload_stress)
+static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    s_tester.alloc = allocator;
+    /* Using Python hyper h2 server frame work, met a weird upload performance issue on Linux. Our client against nginx
+     * platform has not met the same issue. We assume it's because the server framework implementation. Test 0.25GB now
+     */
+    size_t length = 250000000UL;
+
+    struct aws_string *http_localhost_host = NULL;
+    if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
+        http_localhost_host == NULL) {
+        /* The envrionment variable is not set, default to localhost */
+        http_localhost_host = aws_string_new_from_c_str(allocator, "localhost");
+    }
+    struct aws_byte_cursor host_name = aws_byte_cursor_from_string(http_localhost_host);
+    ASSERT_SUCCESS(s_tester_init(&s_tester, allocator, host_name));
+    /* wait for connection connected */
+    ASSERT_SUCCESS(s_wait_on_connection_connected(&s_tester));
+    char content_length_sprintf_buffer[128] = "";
+    snprintf(content_length_sprintf_buffer, sizeof(content_length_sprintf_buffer), "%zu", length);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "PUT"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/upload_test.txt"),
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = host_name,
+        },
+        {
+            .name = aws_byte_cursor_from_c_str("content_length"),
+            .value = aws_byte_cursor_from_c_str(content_length_sprintf_buffer),
+        },
+    };
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct aws_input_stream *body_stream = aws_input_stream_tester_upload_new(allocator, length);
+    aws_http_message_set_body_stream(request, body_stream);
+    aws_input_stream_release(body_stream);
+
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .on_complete = s_tester_on_stream_completed,
+        .on_response_body = s_tester_on_put_body,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
+    ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
+    aws_http_stream_release(stream);
+
+    /* Wait for the stream to complete */
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
+    ASSERT_UINT_EQUALS(s_tester.num_sen_received, length);
+    ASSERT_TRUE(s_tester.stream_completed_with_200);
+
+    aws_http_message_release(request);
+    aws_string_destroy(http_localhost_host);
+    return s_tester_clean_up(&s_tester);
+}
+
+static int s_tester_on_download_body(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    void *user_data) {
+
+    (void)stream;
+    (void)user_data;
+    s_tester.download_body_len += data->len;
+
+    return AWS_OP_SUCCESS;
+}
+/* Test that download a 2.5GB data from local server */
+AWS_TEST_CASE(localhost_integ_h2_download_stress, s_localhost_integ_h2_download_stress)
+static int s_localhost_integ_h2_download_stress(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    s_tester.alloc = allocator;
+    size_t length = 2500000000UL; /* over int max, which it the max for settings */
+
+    struct aws_string *http_localhost_host = NULL;
+    if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
+        http_localhost_host == NULL) {
+        /* The envrionment variable is not set, default to localhost */
+        http_localhost_host = aws_string_new_from_c_str(allocator, "localhost");
+    }
+    struct aws_byte_cursor host_name = aws_byte_cursor_from_string(http_localhost_host);
+    ASSERT_SUCCESS(s_tester_init(&s_tester, allocator, host_name));
+    /* wait for connection connected */
+    ASSERT_SUCCESS(s_wait_on_connection_connected(&s_tester));
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/downloadTest"),
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = host_name,
+        },
+    };
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .on_complete = s_tester_on_stream_completed,
+        .on_response_body = s_tester_on_download_body,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
+    ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
+    aws_http_stream_release(stream);
+
+    /* Wait for the stream to complete */
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
+    ASSERT_UINT_EQUALS(s_tester.download_body_len, length);
+    ASSERT_TRUE(s_tester.stream_completed_with_200);
+
+    aws_http_message_release(request);
+    aws_string_destroy(http_localhost_host);
+    return s_tester_clean_up(&s_tester);
 }

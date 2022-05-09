@@ -16,6 +16,7 @@ import asyncio
 import io
 import json
 import ssl
+import os
 import collections
 from typing import List, Tuple
 
@@ -40,6 +41,10 @@ class H2Protocol(asyncio.Protocol):
         self.transport = None
         self.stream_data = {}
         self.flow_control_futures = {}
+        self.file_path = None
+        self.num_sentence_received = 0
+        self.raw_headers = None
+        self.download_test_length = 2500000000
 
     def connection_made(self, transport: asyncio.Transport):
         self.transport = transport
@@ -81,7 +86,12 @@ class H2Protocol(asyncio.Protocol):
     def request_received(self, headers: List[Tuple[str, str]], stream_id: int):
         self.raw_headers = headers
         headers = collections.OrderedDict(headers)
+        path = headers[':path']
         method = headers[':method']
+        if method == "PUT" or method == "POST":
+            self.file_path = os.path.join(os.path.curdir, path[1:])
+            if os.path.exists(self.file_path):
+                os.remove(self.file_path)
 
         # Store off the request data.
         request_data = RequestData(headers, io.BytesIO())
@@ -111,8 +121,19 @@ class H2Protocol(asyncio.Protocol):
             return
 
         path = request_data.headers[':path']
-        if path == '/echo':
+        method = request_data.headers[':method']
+        if method == "PUT" or method == "POST":
+            self.conn.send_headers(stream_id, [(':status', '200')])
+            print(self.num_sentence_received)
+            asyncio.ensure_future(self.send_data(
+                str(self.num_sentence_received).encode(), stream_id))
+        elif path == '/echo':
             self.handle_request_echo(stream_id, request_data)
+        elif path == '/downloadTest':
+            length = self.download_test_length
+            self.conn.send_headers(
+                stream_id, [(':status', '200'), ('content-length', str(length))])
+            asyncio.ensure_future(self.send_repeat_data(length, stream_id))
         else:
             self.conn.send_headers(stream_id, [(':status', '404')])
             asyncio.ensure_future(self.send_data(b"Not Found", stream_id))
@@ -129,7 +150,15 @@ class H2Protocol(asyncio.Protocol):
                 stream_id, error_code=ErrorCodes.PROTOCOL_ERROR
             )
         else:
-            stream_data.data.write(data)
+            method = stream_data.headers[':method']
+            if method == "PUT" or method == "POST":
+                self.num_sentence_received = self.num_sentence_received + \
+                    len(data)
+                # update window for stream
+                self.conn.increment_flow_control_window(len(data))
+                self.conn.increment_flow_control_window(len(data), stream_id)
+            else:
+                stream_data.data.write(data)
 
     def stream_reset(self, stream_id):
         """
@@ -170,6 +199,40 @@ class H2Protocol(asyncio.Protocol):
             self.transport.write(self.conn.data_to_send())
             data = data[chunk_size:]
 
+    async def send_repeat_data(self, length, stream_id):
+        """
+        Send data with length according to the flow control rules.
+        """
+        while length > 0:
+            while self.conn.local_flow_control_window(stream_id) < 1:
+                try:
+                    await self.wait_for_flow_control(stream_id)
+                except asyncio.CancelledError:
+                    return
+
+            chunk_size = min(
+                self.conn.local_flow_control_window(stream_id),
+                length,
+                self.conn.max_outbound_frame_size,
+            )
+            repeated = b"This is CRT HTTP test."
+            data = int(chunk_size/len(repeated)) * repeated + \
+                repeated[:chunk_size % len(repeated)]
+
+            try:
+                self.conn.send_data(
+                    stream_id,
+                    data,
+                    end_stream=(chunk_size == length)
+                )
+            except (StreamClosedError, ProtocolError):
+                # The stream got closed and we didn't get told. We're done
+                # here.
+                break
+
+            self.transport.write(self.conn.data_to_send())
+            length = length - chunk_size
+
     async def wait_for_flow_control(self, stream_id):
         """
         Waits for a Future that fires when the flow control window is opened.
@@ -194,14 +257,12 @@ class H2Protocol(asyncio.Protocol):
 
 
 ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-ssl_context.options |= (
-    ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1 | ssl.OP_NO_COMPRESSION
-)
+ssl_context.options |= (ssl.OP_NO_COMPRESSION)
 ssl_context.load_cert_chain(
     certfile="../resources/unittests.crt", keyfile="../resources/unittests.key")
 ssl_context.set_alpn_protocols(["h2"])
 
-loop = asyncio.get_event_loop()
+loop = asyncio.new_event_loop()
 # Each client connection will create a new protocol instance
 coro = loop.create_server(H2Protocol, '127.0.0.1', 8443, ssl=ssl_context)
 server = loop.run_until_complete(coro)
