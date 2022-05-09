@@ -98,7 +98,6 @@ static void s_sm_count_increase_synced(
     for (size_t i = 0; i < num; i++) {
         aws_ref_count_acquire(&stream_manager->internal_ref_count);
     }
-    s_sm_log_stats_synced(stream_manager);
 }
 
 static void s_sm_count_decrease_synced(
@@ -109,15 +108,12 @@ static void s_sm_count_decrease_synced(
     for (size_t i = 0; i < num; i++) {
         aws_ref_count_release(&stream_manager->internal_ref_count);
     }
-    s_sm_log_stats_synced(stream_manager);
 }
 
 static void s_aws_stream_management_transaction_init(
     struct aws_http2_stream_management_transaction *work,
     struct aws_http2_stream_manager *stream_manager) {
     AWS_ZERO_STRUCT(*work);
-
-    STREAM_MANAGER_LOGF(TRACE, stream_manager, "work:%p inits", (void *)work);
     aws_linked_list_init(&work->pending_make_requests);
     work->stream_manager = stream_manager;
     work->allocator = stream_manager->allocator;
@@ -126,7 +122,6 @@ static void s_aws_stream_management_transaction_init(
 
 static void s_aws_stream_management_transaction_clean_up(struct aws_http2_stream_management_transaction *work) {
     (void)work;
-    STREAM_MANAGER_LOGF(TRACE, work->stream_manager, "work:%p clean up", (void *)work);
     AWS_ASSERT(aws_linked_list_empty(&work->pending_make_requests));
     aws_ref_count_release(&work->stream_manager->internal_ref_count);
 }
@@ -392,6 +387,7 @@ static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2
             stream_manager->synced_data.finish_pending_stream_acquisitions_task_scheduled = true;
         }
     }
+    s_sm_log_stats_synced(stream_manager);
 }
 
 static struct aws_h2_sm_connection *s_sm_connection_new(
@@ -455,7 +451,7 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
         s_sm_count_decrease_synced(stream_manager, AWS_SMCT_CONNECTIONS_ACQUIRING, 1);
         if (error_code || !connection) {
             STREAM_MANAGER_LOGF(
-                WARN,
+                ERROR,
                 stream_manager,
                 "connection acquired from connection manager failed, with error: %d(%s)",
                 error_code,
@@ -626,7 +622,6 @@ static void s_sm_connection_on_scheduled_stream_finishes(
             aws_random_access_set_remove(&stream_manager->synced_data.ideal_available_set, sm_connection);
             work.sm_connection_to_release = sm_connection;
             --stream_manager->synced_data.holding_connections_count;
-            s_sm_log_stats_synced(stream_manager);
         }
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
@@ -750,7 +745,6 @@ error:
 static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stream_management_transaction *work) {
 
     struct aws_http2_stream_manager *stream_manager = work->stream_manager;
-    STREAM_MANAGER_LOGF(TRACE, stream_manager, "work:%p executes", (void *)work);
 
     /* Step1: Release connection */
     if (work->sm_connection_to_release) {
