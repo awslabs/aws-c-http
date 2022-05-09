@@ -4902,7 +4902,7 @@ static int s_error_from_callback_common(
     struct error_from_callback_tester *error_tester,
     enum request_callback current_callback) {
 
-    error_tester->callback_counts[current_callback]++;
+    error_tester->callback_counts[0]++;
 
     /* After error code returned, no more callbacks should fire (except for on_complete) */
     AWS_FATAL_ASSERT(!error_tester->has_errored);
@@ -5004,10 +5004,7 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, void *ctx
     };
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
 
-    struct aws_input_stream error_from_outgoing_body_stream;
-    AWS_ZERO_STRUCT(error_from_outgoing_body_stream);
     struct error_from_callback_tester error_tester = {
-        .base = error_from_outgoing_body_stream,
         .error_at = error_at,
         .status =
             {
@@ -5015,10 +5012,10 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, void *ctx
                 .is_end_of_stream = false,
             },
     };
-    error_from_outgoing_body_stream.vtable = &s_error_from_outgoing_body_vtable;
-    aws_ref_count_init(&error_from_outgoing_body_stream.ref_count, &error_tester, s_error_from_outgoing_body_destroy);
+    error_tester.base.vtable = &s_error_from_outgoing_body_vtable;
+    aws_ref_count_init(&error_tester.base.ref_count, &error_tester, s_error_from_outgoing_body_destroy);
 
-    aws_http_message_set_body_stream(request, &error_from_outgoing_body_stream);
+    aws_http_message_set_body_stream(request, &error_tester.base);
 
     struct aws_http_make_request_options opt = {
         .self_size = sizeof(opt),
