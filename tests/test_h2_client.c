@@ -4878,9 +4878,8 @@ TEST_CASE(h2_client_request_apis_failed_after_connection_begin_shutdown) {
     return s_tester_clean_up();
 }
 
-/* TODO: test outgoing body after the input stream refcount */
 enum request_callback {
-    // REQUEST_CALLBACK_OUTGOING_BODY,
+    REQUEST_CALLBACK_OUTGOING_BODY,
     REQUEST_CALLBACK_INCOMING_HEADERS,
     REQUEST_CALLBACK_INCOMING_HEADERS_DONE,
     REQUEST_CALLBACK_INCOMING_BODY,
@@ -4889,6 +4888,7 @@ enum request_callback {
 };
 
 struct error_from_callback_tester {
+    struct aws_input_stream base;
     enum request_callback error_at;
     int callback_counts[REQUEST_CALLBACK_COUNT];
     bool has_errored;
@@ -4915,38 +4915,37 @@ static int s_error_from_callback_common(
     return AWS_OP_SUCCESS;
 }
 
-// static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct aws_byte_buf *dest) {
+static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct aws_byte_buf *dest) {
 
-//     (void)dest;
+    (void)dest;
 
-//     struct error_from_callback_tester *error_tester = body->impl;
-//     if (s_error_from_callback_common(error_tester, REQUEST_CALLBACK_OUTGOING_BODY)) {
-//         return AWS_OP_ERR;
-//     }
+    struct error_from_callback_tester *error_tester = AWS_CONTAINER_OF(body, struct error_from_callback_tester, base);
+    if (s_error_from_callback_common(error_tester, REQUEST_CALLBACK_OUTGOING_BODY)) {
+        return AWS_OP_ERR;
+    }
 
-//     /* If the common fn was successful, write out some data and end the stream */
-//     ASSERT_TRUE(aws_byte_buf_write(dest, (const uint8_t *)"abcd", 4));
-//     error_tester->status.is_end_of_stream = true;
-//     return AWS_OP_SUCCESS;
-// }
+    /* If the common fn was successful, write out some data and end the stream */
+    ASSERT_TRUE(aws_byte_buf_write(dest, (const uint8_t *)"abcd", 4));
+    error_tester->status.is_end_of_stream = true;
+    return AWS_OP_SUCCESS;
+}
 
-// static int s_error_from_outgoing_body_get_status(struct aws_input_stream *body, struct aws_stream_status *status) {
-//     struct error_from_callback_tester *error_tester = body->impl;
-//     *status = error_tester->status;
-//     return AWS_OP_SUCCESS;
-// }
+static int s_error_from_outgoing_body_get_status(struct aws_input_stream *body, struct aws_stream_status *status) {
+    struct error_from_callback_tester *error_tester = AWS_CONTAINER_OF(body, struct error_from_callback_tester, base);
+    *status = error_tester->status;
+    return AWS_OP_SUCCESS;
+}
 
-// static void s_error_from_outgoing_body_destroy(struct aws_input_stream *stream) {
-//     aws_mem_release(stream->allocator, stream);
-// }
-
-// static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
-//     .seek = NULL,
-//     .read = s_error_from_outgoing_body_read,
-//     .get_status = s_error_from_outgoing_body_get_status,
-//     .get_length = NULL,
-//     .destroy = s_error_from_outgoing_body_destroy,
-// };
+static void s_error_from_outgoing_body_destroy(void *stream) {
+    /* allocated from stack, nothing to do */
+    (void)stream;
+}
+static struct aws_input_stream_vtable s_error_from_outgoing_body_vtable = {
+    .seek = NULL,
+    .read = s_error_from_outgoing_body_read,
+    .get_status = s_error_from_outgoing_body_get_status,
+    .get_length = NULL,
+};
 
 static int s_error_from_incoming_headers(
     struct aws_http_stream *stream,
@@ -5005,7 +5004,10 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, void *ctx
     };
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
 
+    struct aws_input_stream error_from_outgoing_body_stream;
+    AWS_ZERO_STRUCT(error_from_outgoing_body_stream);
     struct error_from_callback_tester error_tester = {
+        .base = error_from_outgoing_body_stream,
         .error_at = error_at,
         .status =
             {
@@ -5013,13 +5015,10 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, void *ctx
                 .is_end_of_stream = false,
             },
     };
-    // struct aws_input_stream error_from_outgoing_body_stream = {
-    //     .allocator = allocator,
-    //     .impl = &error_tester,
-    //     .vtable = &s_error_from_outgoing_body_vtable,
-    // };
+    error_from_outgoing_body_stream.vtable = &s_error_from_outgoing_body_vtable;
+    aws_ref_count_init(&error_from_outgoing_body_stream.ref_count, &error_tester, s_error_from_outgoing_body_destroy);
 
-    // aws_http_message_set_body_stream(request, &error_from_outgoing_body_stream);
+    aws_http_message_set_body_stream(request, &error_from_outgoing_body_stream);
 
     struct aws_http_make_request_options opt = {
         .self_size = sizeof(opt),
@@ -5093,11 +5092,11 @@ static int s_test_error_from_callback(struct aws_allocator *allocator, void *ctx
     return s_tester_clean_up();
 }
 
-// TEST_CASE(h2_client_error_from_outgoing_body_callback_reset_stream) {
-//     (void)ctx;
-//     ASSERT_SUCCESS(s_test_error_from_callback(allocator, ctx, REQUEST_CALLBACK_OUTGOING_BODY));
-//     return AWS_OP_SUCCESS;
-// }
+TEST_CASE(h2_client_error_from_outgoing_body_callback_reset_stream) {
+    (void)ctx;
+    ASSERT_SUCCESS(s_test_error_from_callback(allocator, ctx, REQUEST_CALLBACK_OUTGOING_BODY));
+    return AWS_OP_SUCCESS;
+}
 
 TEST_CASE(h2_client_error_from_incoming_headers_callback_reset_stream) {
     (void)ctx;
