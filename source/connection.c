@@ -174,6 +174,7 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
         }
     } else {
         if (prior_knowledge_http2) {
+            AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "Using prior knowledge to start HTTP/2 connection");
             version = AWS_HTTP_VERSION_2;
         }
     }

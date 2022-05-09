@@ -51,3 +51,11 @@ git clone git@github.com:awslabs/aws-c-http.git
 cmake -S aws-c-http -B aws-c-http/build -DCMAKE_INSTALL_PREFIX=<install-path> -DCMAKE_PREFIX_PATH=<install-path>
 cmake --build aws-c-http/build --target install
 ```
+
+#### Run Integration Tests with localhost
+
+To run some of the integration tests (start with localhost_integ_*), you need to set up a localhost that echo the request headers from `/echo` back first.
+
+To do that, check [localhost](./tests/py_localhost/) script we have.
+
+After that, configure and build your cmake project with `-DENABLE_LOCALHOST_INTEGRATION_TESTS=true` to build the tests with localhost and run them from `ctest --output-on-failure -R localhost_integ_*`.
