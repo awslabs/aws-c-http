@@ -4,7 +4,7 @@ Local server based on [python-hyper/h2](https://github.com/python-hyper/h2).
 
 ## How to run the server
 
-Python 3.5+ required. Command here works for OSX and linux.
+Python 3.5+ required.
 
 - Install hyper h2 python module. `python3 -m pip install h2`
 
