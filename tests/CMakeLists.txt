@@ -245,7 +245,14 @@ add_test_case(hpack_decode_indexed_from_dynamic_table)
 add_test_case(hpack_dynamic_table_empty_value)
 add_test_case(hpack_dynamic_table_with_empty_header)
 add_test_case(hpack_dynamic_table_size_update_from_setting)
-add_net_test_case(hpack_stress)
+
+if (ENABLE_LOCALHOST_INTEGRATION_TESTS)
+    # Tests should be named with localhost_integ_*
+    add_net_test_case(localhost_integ_hpack_stress)
+    add_net_test_case(localhost_integ_hpack_compression_stress)
+    add_net_test_case(localhost_integ_h2_upload_stress)
+    add_net_test_case(localhost_integ_h2_download_stress)
+endif()
 
 add_test_case(h2_header_empty_payload)
 add_one_byte_at_a_time_test_set(h2_header_ex_2_1)
@@ -601,10 +608,17 @@ add_net_test_case(h2_sm_mock_ideal_num_streams)
 add_net_test_case(h2_sm_mock_large_ideal_num_streams)
 add_net_test_case(h2_sm_mock_goaway)
 
+# Tests against real world server
 add_net_test_case(h2_sm_acquire_stream)
 add_net_test_case(h2_sm_acquire_stream_multiple_connections)
 add_net_test_case(h2_sm_acquire_stream_stress)
 add_net_test_case(h2_sm_closing_before_connection_acquired)
+# Tests against local server
+if (ENABLE_LOCALHOST_INTEGRATION_TESTS)
+    # Tests should be named with localhost_integ_*
+    add_net_test_case(localhost_integ_h2_sm_prior_knowledge)
+    add_net_test_case(localhost_integ_h2_sm_acquire_stream_stress)
+endif()
 
 add_test_case(random_access_set_sanitize_test)
 add_test_case(random_access_set_insert_test)

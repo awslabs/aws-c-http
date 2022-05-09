@@ -9,67 +9,58 @@
 #include <aws/common/clock.h>
 #include <aws/common/condition_variable.h>
 #include <aws/common/device_random.h>
+#include <aws/common/environment.h>
+#include <aws/common/string.h>
 #include <aws/http/connection.h>
 #include <aws/http/request_response.h>
 #include <aws/io/channel_bootstrap.h>
 #include <aws/io/event_loop.h>
 #include <aws/io/logging.h>
 #include <aws/io/socket.h>
+#include <aws/io/stream.h>
 #include <aws/io/tls_channel_handler.h>
+
+#include "h2_test_helper.h"
 
 #ifdef _MSC_VER
 #    pragma warning(disable : 4996) /* Disable warnings about sprintf() being insecure */
 #endif
 
-static bool s_echo_body_has_header(const struct aws_byte_cursor echo_body, const struct aws_http_header *header) {
-    char str_to_find[256];
-    /* Echo body will capitalize the header name, ignore the first char. I think it's fine */
-    struct aws_byte_cursor name_without_first_char = header->name;
-    aws_byte_cursor_advance(&name_without_first_char, 1);
-    sprintf(
-        str_to_find,
-        "" PRInSTR "\": \"" PRInSTR "\"",
-        AWS_BYTE_CURSOR_PRI(name_without_first_char),
-        AWS_BYTE_CURSOR_PRI(header->value));
-    struct aws_byte_cursor to_find_cur = aws_byte_cursor_from_c_str(str_to_find);
-    struct aws_byte_cursor found;
-    if (aws_byte_cursor_find_exact(&echo_body, &to_find_cur, &found)) {
-        /* cannot find the value */
-        return false;
-    }
-    return true;
-}
-
-static bool s_echo_body_has_headers(const struct aws_byte_cursor echo_body, const struct aws_http_headers *headers) {
-    for (size_t i = 0; i < aws_http_headers_count(headers); i++) {
-        struct aws_http_header out_header;
-        if (aws_http_headers_get_index(headers, i, &out_header)) {
-            return false;
-        }
-        if (!s_echo_body_has_header(echo_body, &out_header)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static int s_tester_on_echo_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
+static int s_tester_on_headers(
+    struct aws_http_stream *stream,
+    enum aws_http_header_block header_block,
+    const struct aws_http_header *header_array,
+    size_t num_headers,
+    void *user_data) {
     (void)stream;
-    /**
-     * Make request to https://httpbin.org/headers, example response body:
-     *"{\r\n"
-     *"  \"headers\": {\r\n"
-     *"    \"Accept\": \"application/xml\", \r\n"
-     *"    \"Host\": \"httpbin.org\", \r\n"
-     *"    \"Test0\": \"test0\", \r\n"
-     *"    \"User-Agent\": \"elasticurl 1.0, Powered by the AWS Common Runtime.\", \r\n"
-     *"    \"X-Amzn-Trace-Id\": \"Root=1-6216d59a-16a92b5622bb49a0352cf9a4\"\r\n"
-     *"  }\r\n"
-     *"}\r\n"
-     */
-    struct aws_byte_buf *echo_body = (struct aws_byte_buf *)user_data;
-    ASSERT_SUCCESS(aws_byte_buf_append_dynamic(echo_body, data));
+    (void)header_block;
+    struct aws_http_headers *received_headers = (struct aws_http_headers *)user_data;
+
+    for (size_t i = 0; i < num_headers; ++i) {
+        ASSERT_SUCCESS(aws_http_headers_add_header(received_headers, &header_array[i]));
+    }
     return AWS_OP_SUCCESS;
+}
+
+static bool s_check_headers_received(
+    const struct aws_http_headers *received_headers,
+    const struct aws_http_headers *headers_to_check) {
+    for (size_t i = 0; i < aws_http_headers_count(headers_to_check); i++) {
+        struct aws_http_header header;
+        if (aws_http_headers_get_index(headers_to_check, i, &header)) {
+            return false;
+        }
+        struct aws_http_header received_header;
+        if (aws_http_headers_get_index(received_headers, i + 1, &received_header)) {
+            /* Not found */
+            return false;
+        }
+        if (!aws_byte_cursor_eq(&received_header.value, &header.value) ||
+            !aws_byte_cursor_eq(&received_header.name, &header.name)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 struct tester {
@@ -93,8 +84,13 @@ struct tester {
     size_t stream_200_count;
     size_t stream_4xx_count;
     size_t stream_status_not_200_count;
+
+    size_t num_sen_received;
     int stream_completed_error_code;
     bool stream_completed_with_200;
+
+    size_t download_body_len;
+    size_t content_len;
 
     int wait_result;
 };
@@ -228,6 +224,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
 
     aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, allocator);
     aws_tls_ctx_options_set_alpn_list(&tester->tls_ctx_options, "h2");
+    /* Turn off peer verification as a localhost cert used */
     tester->tls_ctx_options.verify_peer = false;
 
     tester->tls_ctx = aws_tls_client_ctx_new(allocator, &tester->tls_ctx_options);
@@ -237,13 +234,16 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
         .type = AWS_SOCKET_STREAM,
         .connect_timeout_ms =
             (uint32_t)aws_timestamp_convert(TESTER_TIMEOUT_SEC, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_MILLIS, NULL),
+        .keep_alive_timeout_sec = 0,
+        .keepalive = false,
+        .keep_alive_interval_sec = 0,
     };
     struct aws_http_client_connection_options client_options = {
         .self_size = sizeof(struct aws_http_client_connection_options),
         .allocator = allocator,
         .bootstrap = tester->client_bootstrap,
         .host_name = host_name,
-        .port = 443,
+        .port = 8443,
         .socket_options = &socket_options,
         .user_data = tester,
         .tls_options = &tester->tls_connection_options,
@@ -270,27 +270,33 @@ static int s_tester_clean_up(struct tester *tester) {
     return AWS_OP_SUCCESS;
 }
 
-AWS_TEST_CASE(hpack_stress, test_hpack_stress)
-static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
+AWS_STATIC_STRING_FROM_LITERAL(s_http_localhost_env_var, "AWS_TEST_LOCALHOST_HOST");
+
+static int s_test_hpack_stress_helper(struct aws_allocator *allocator, bool compression) {
     /* Test that makes tons of streams with all sorts of headers to stress hpack */
-    (void)ctx;
-    struct aws_byte_cursor host_name = aws_byte_cursor_from_c_str("httpbin.org");
+    struct aws_string *http_localhost_host = NULL;
+    if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
+        http_localhost_host == NULL) {
+        /* The envrionment variable is not set, default to localhost */
+        http_localhost_host = aws_string_new_from_c_str(allocator, "localhost");
+    }
+    struct aws_byte_cursor host_name = aws_byte_cursor_from_string(http_localhost_host);
     ASSERT_SUCCESS(s_tester_init(&s_tester, allocator, host_name));
     /* wait for connection connected */
     ASSERT_SUCCESS(s_wait_on_connection_connected(&s_tester));
-    // httpbin.org/headers is an echo server that will return the headers of your request from the body.
+    // localhost/echo is an echo server that will return the headers of your request from the body.
     struct aws_http_header request_headers_src[] = {
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
-        DEFINE_HEADER(":path", "/headers"),
-        DEFINE_HEADER(":authority", "httpbin.org"),
+        DEFINE_HEADER(":path", "/echo"),
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = host_name,
+        },
     };
-    /* TODO: The initail settings header table size is 4096 octets, not sure about why server response with 400 when we
-     * sent a request with around 100 headers */
-    size_t num_to_acquire = 1000;
-    size_t accpected_error = 50;
-    size_t num_headers_to_make = 70; /* will have bad request around 100 */
-    size_t error_count = 0;
+
+    size_t num_to_acquire = 2000;
+    size_t num_headers_to_make = 100;
 
     /* Use a pool of headers and a pool of values, pick up randomly from both pool to stress hpack */
     size_t headers_pool_size = 500;
@@ -306,10 +312,6 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
                                                 headers to check the result */
         for (size_t j = 0; j < num_headers_to_make; j++) {
             char test_header_str[256];
-            /**
-             * - Don't use _ or - between word, the response will capitalize the first char of every word :(
-             * - Don't use _, the response will change it to -. :(
-             */
             uint64_t random_64_bit_num = 0;
             aws_device_random_u64(&random_64_bit_num);
 
@@ -318,35 +320,24 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
             char test_value_str[256];
             size_t value = (size_t)random_64_bit_num % values_pool_size;
             sprintf(test_value_str, "value-%zu", value);
-            struct aws_byte_cursor existed_value;
-            if (aws_http_headers_get(test_headers, aws_byte_cursor_from_c_str(test_header_str), &existed_value) ==
-                AWS_OP_SUCCESS) {
-                /* If the header has the same name already exists in the headers, the response will combine the values
-                 * together. Do the same thing for the header to check. */
-                char combined_value_str[1024];
-                sprintf(combined_value_str, "" PRInSTR ",%s", AWS_BYTE_CURSOR_PRI(existed_value), test_value_str);
-                aws_http_headers_set(
-                    test_headers,
-                    aws_byte_cursor_from_c_str(test_header_str),
-                    aws_byte_cursor_from_c_str(combined_value_str));
-            } else {
-                aws_http_headers_add(
-                    test_headers,
-                    aws_byte_cursor_from_c_str(test_header_str),
-                    aws_byte_cursor_from_c_str(test_value_str));
-            }
-            aws_http_headers_add(
-                request_headers,
-                aws_byte_cursor_from_c_str(test_header_str),
-                aws_byte_cursor_from_c_str(test_value_str));
+
+            struct aws_http_header request_header = {
+                .compression =
+                    compression
+                        ? random_64_bit_num % 3
+                        : AWS_HTTP_HEADER_COMPRESSION_USE_CACHE, // With random type of compression, make sure it works
+                .name = aws_byte_cursor_from_c_str(test_header_str),
+                .value = aws_byte_cursor_from_c_str(test_value_str),
+            };
+            ASSERT_SUCCESS(aws_http_headers_add_header(request_headers, &request_header));
+            ASSERT_SUCCESS(aws_http_headers_add_header(test_headers, &request_header));
         }
-        struct aws_byte_buf echo_body;
-        ASSERT_SUCCESS(aws_byte_buf_init(&echo_body, allocator, 100));
+        struct aws_http_headers *received_headers = aws_http_headers_new(allocator);
         struct aws_http_make_request_options request_options = {
             .self_size = sizeof(request_options),
             .request = request,
-            .user_data = &echo_body,
-            .on_response_body = s_tester_on_echo_body,
+            .user_data = received_headers,
+            .on_response_headers = s_tester_on_headers,
             .on_complete = s_tester_on_stream_completed,
         };
         struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
@@ -357,23 +348,164 @@ static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
         /* Wait for the stream to complete */
         ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
         --s_tester.stream_completed_count;
-        /* If we have 4xx error code, which means request was bad */
-        ASSERT_UINT_EQUALS(0, s_tester.stream_4xx_count);
-        if (!s_tester.stream_completed_with_200) {
-            /* If error happens, we make sure it's acceptable */
-            ++error_count;
-        } else {
-            s_tester.stream_completed_with_200 = false; /* reset complete code */
-            ASSERT_TRUE(s_echo_body_has_headers(
-                aws_byte_cursor_from_buf(&echo_body),
-                test_headers)); /* Make sure we have the expected headers when 200 received */
-        }
+        ASSERT_TRUE(s_tester.stream_completed_with_200);
+        ASSERT_TRUE(s_check_headers_received(received_headers, test_headers));
 
         aws_http_message_release(request);
         aws_http_headers_release(test_headers);
-        aws_byte_buf_clean_up(&echo_body);
+        aws_http_headers_release(received_headers);
     }
 
-    ASSERT_TRUE(error_count < accpected_error);
+    aws_string_destroy(http_localhost_host);
+    return s_tester_clean_up(&s_tester);
+}
+
+AWS_TEST_CASE(localhost_integ_hpack_stress, test_hpack_stress)
+static int test_hpack_stress(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    return s_test_hpack_stress_helper(allocator, false /*compression*/);
+}
+
+AWS_TEST_CASE(localhost_integ_hpack_compression_stress, test_hpack_compression_stress)
+static int test_hpack_compression_stress(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    return s_test_hpack_stress_helper(allocator, true /*compression*/);
+}
+
+static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
+
+    (void)stream;
+    (void)user_data;
+    struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.alloc, data);
+    s_tester.num_sen_received = (uint32_t)atoi((const char *)content_length_header_str->bytes);
+    aws_string_destroy(content_length_header_str);
+
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that upload a 0.25GB data to local server */
+AWS_TEST_CASE(localhost_integ_h2_upload_stress, s_localhost_integ_h2_upload_stress)
+static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    s_tester.alloc = allocator;
+    /* Using Python hyper h2 server frame work, met a weird upload performance issue on Linux. Our client against nginx
+     * platform has not met the same issue. We assume it's because the server framework implementation. Test 0.25GB now
+     */
+    size_t length = 250000000UL;
+
+    struct aws_string *http_localhost_host = NULL;
+    if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
+        http_localhost_host == NULL) {
+        /* The envrionment variable is not set, default to localhost */
+        http_localhost_host = aws_string_new_from_c_str(allocator, "localhost");
+    }
+    struct aws_byte_cursor host_name = aws_byte_cursor_from_string(http_localhost_host);
+    ASSERT_SUCCESS(s_tester_init(&s_tester, allocator, host_name));
+    /* wait for connection connected */
+    ASSERT_SUCCESS(s_wait_on_connection_connected(&s_tester));
+    char content_length_sprintf_buffer[128] = "";
+    snprintf(content_length_sprintf_buffer, sizeof(content_length_sprintf_buffer), "%zu", length);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "PUT"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/upload_test.txt"),
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = host_name,
+        },
+        {
+            .name = aws_byte_cursor_from_c_str("content_length"),
+            .value = aws_byte_cursor_from_c_str(content_length_sprintf_buffer),
+        },
+    };
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+    struct aws_input_stream *body_stream = aws_input_stream_tester_upload_new(allocator, length);
+    aws_http_message_set_body_stream(request, body_stream);
+    aws_input_stream_release(body_stream);
+
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .on_complete = s_tester_on_stream_completed,
+        .on_response_body = s_tester_on_put_body,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
+    ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
+    aws_http_stream_release(stream);
+
+    /* Wait for the stream to complete */
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
+    ASSERT_UINT_EQUALS(s_tester.num_sen_received, length);
+    ASSERT_TRUE(s_tester.stream_completed_with_200);
+
+    aws_http_message_release(request);
+    aws_string_destroy(http_localhost_host);
+    return s_tester_clean_up(&s_tester);
+}
+
+static int s_tester_on_download_body(
+    struct aws_http_stream *stream,
+    const struct aws_byte_cursor *data,
+    void *user_data) {
+
+    (void)stream;
+    (void)user_data;
+    s_tester.download_body_len += data->len;
+
+    return AWS_OP_SUCCESS;
+}
+/* Test that download a 2.5GB data from local server */
+AWS_TEST_CASE(localhost_integ_h2_download_stress, s_localhost_integ_h2_download_stress)
+static int s_localhost_integ_h2_download_stress(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    s_tester.alloc = allocator;
+    size_t length = 2500000000UL; /* over int max, which it the max for settings */
+
+    struct aws_string *http_localhost_host = NULL;
+    if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
+        http_localhost_host == NULL) {
+        /* The envrionment variable is not set, default to localhost */
+        http_localhost_host = aws_string_new_from_c_str(allocator, "localhost");
+    }
+    struct aws_byte_cursor host_name = aws_byte_cursor_from_string(http_localhost_host);
+    ASSERT_SUCCESS(s_tester_init(&s_tester, allocator, host_name));
+    /* wait for connection connected */
+    ASSERT_SUCCESS(s_wait_on_connection_connected(&s_tester));
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "GET"),
+        DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":path", "/downloadTest"),
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = host_name,
+        },
+    };
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
+    ASSERT_NOT_NULL(request);
+    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+
+    struct aws_http_make_request_options request_options = {
+        .self_size = sizeof(request_options),
+        .request = request,
+        .on_complete = s_tester_on_stream_completed,
+        .on_response_body = s_tester_on_download_body,
+    };
+    struct aws_http_stream *stream = aws_http_connection_make_request(s_tester.connection, &request_options);
+    ASSERT_NOT_NULL(stream);
+    aws_http_stream_activate(stream);
+    aws_http_stream_release(stream);
+
+    /* Wait for the stream to complete */
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
+    ASSERT_UINT_EQUALS(s_tester.download_body_len, length);
+    ASSERT_TRUE(s_tester.stream_completed_with_200);
+
+    aws_http_message_release(request);
+    aws_string_destroy(http_localhost_host);
     return s_tester_clean_up(&s_tester);
 }

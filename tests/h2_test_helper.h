@@ -268,4 +268,10 @@ void aws_input_stream_tester_set_max_bytes_per_read(struct aws_input_stream *inp
 
 void aws_input_stream_tester_set_reading_broken(struct aws_input_stream *input_stream, bool is_broken);
 
+/**
+ * Create input stream that can upload a certain length of stuff
+ */
+struct aws_input_stream *aws_input_stream_tester_upload_new(struct aws_allocator *alloc, size_t length);
+size_t aws_input_stream_tester_upload_get_num_sentence_sent(struct aws_input_stream *stream);
+
 #endif /* AWS_HTTP_H2_TEST_HELPER_H */
