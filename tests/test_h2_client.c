@@ -4902,7 +4902,7 @@ static int s_error_from_callback_common(
     struct error_from_callback_tester *error_tester,
     enum request_callback current_callback) {
 
-    error_tester->callback_counts[0]++;
+    error_tester->callback_counts[current_callback]++;
 
     /* After error code returned, no more callbacks should fire (except for on_complete) */
     AWS_FATAL_ASSERT(!error_tester->has_errored);
