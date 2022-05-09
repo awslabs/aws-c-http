@@ -4920,7 +4920,7 @@ static int s_error_from_outgoing_body_read(struct aws_input_stream *body, struct
     (void)dest;
 
     struct error_from_callback_tester *error_tester = AWS_CONTAINER_OF(body, struct error_from_callback_tester, base);
-    if (s_error_from_callback_common(error_tester, REQUEST_CALLBACK_OUTGOING_BODY)) {
+    if (s_error_from_callback_common(error_tester, error_tester->error_at)) {
         return AWS_OP_ERR;
     }
 
