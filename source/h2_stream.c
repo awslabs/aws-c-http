@@ -761,10 +761,9 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_i(
 
     if (stream->base.on_incoming_headers) {
         if (stream->base.on_incoming_headers(&stream->base, block_type, header, 1, stream->base.user_data)) {
-            /* #TODO: callback errors should be Stream Errors, not Connection Errors */
             AWS_H2_STREAM_LOGF(
                 ERROR, stream, "Incoming header callback raised error, %s", aws_error_name(aws_last_error()));
-            return aws_h2err_from_last_error();
+            return s_send_rst_and_close_stream(stream, aws_h2err_from_last_error());
         }
     }
 
@@ -811,7 +810,7 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_end(
                 stream,
                 "Incoming-header-block-done callback raised error, %s",
                 aws_error_name(aws_last_error()));
-            return aws_h2err_from_last_error();
+            return s_send_rst_and_close_stream(stream, aws_h2err_from_last_error());
         }
     }
 
@@ -931,7 +930,7 @@ struct aws_h2err aws_h2_stream_on_decoder_data_i(struct aws_h2_stream *stream, s
         if (stream->base.on_incoming_body(&stream->base, &data, stream->base.user_data)) {
             AWS_H2_STREAM_LOGF(
                 ERROR, stream, "Incoming body callback raised error, %s", aws_error_name(aws_last_error()));
-            return aws_h2err_from_last_error();
+            return s_send_rst_and_close_stream(stream, aws_h2err_from_last_error());
         }
     }
 

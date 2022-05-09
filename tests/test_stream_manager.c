@@ -823,6 +823,46 @@ TEST_CASE(h2_sm_mock_max_concurrent_streams_remote) {
     return s_tester_clean_up();
 }
 
+/* Test that the remote max concurrent streams setting hit */
+TEST_CASE(h2_sm_mock_fetch_metric) {
+    (void)ctx;
+    struct sm_tester_options options = {
+        .max_connections = 5,
+        .alloc = allocator,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    /* Set the remote max to be 2 */
+    s_tester.max_con_stream_remote = 2;
+    /* Acquire a stream to trigger */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    /* waiting for one fake connection made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1));
+    struct aws_http_manager_metric out_metric;
+    AWS_ZERO_STRUCT(out_metric);
+
+    aws_http2_stream_manager_fetch_metric(s_tester.stream_manager, &out_metric);
+    /* Acquired 1 stream, and we hold one connection, the max streams per connection is 2. */
+    ASSERT_UINT_EQUALS(out_metric.available_concurrency, 1);
+    ASSERT_UINT_EQUALS(out_metric.pending_concurrency_acquires, 0);
+
+    /* Fake peer send settings that only allow 2 concurrent streams */
+    /* Acquire tow more streams */
+    ASSERT_SUCCESS(s_sm_stream_acquiring(2));
+    /* We created a new connection */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(2));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1 + 2));
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+
+    ASSERT_INT_EQUALS(2, aws_array_list_length(&s_tester.fake_connections));
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+
+    return s_tester_clean_up();
+}
+
 /* Test that the stream completed will free the connection for more streams */
 TEST_CASE(h2_sm_mock_complete_stream) {
     (void)ctx;

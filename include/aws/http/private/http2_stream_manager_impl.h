@@ -151,11 +151,6 @@ struct aws_http2_stream_manager {
         size_t internal_refcount_stats[AWS_SMCT_COUNT];
 
         bool finish_pending_stream_acquisitions_task_scheduled;
-
-        /**
-         * Number of streams can be made without make any new connections. Only used for metric purpose.
-         */
-        size_t available_concurrency;
     } synced_data;
 };
 
