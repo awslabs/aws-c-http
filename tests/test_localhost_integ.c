@@ -383,14 +383,15 @@ static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws
     return AWS_OP_SUCCESS;
 }
 
-/* Test that upload a 2.5GB data to local server */
+/* Test that upload a 0.25GB data to local server */
 AWS_TEST_CASE(localhost_integ_h2_upload_stress, s_localhost_integ_h2_upload_stress)
 static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_tester.alloc = allocator;
-    /* TODO: 2.5GB takes over 30 mins to run on linux but only 3-5 mins on mac. Need to investigate one the reason
-     * behind */
-    size_t length = 250000000UL; /* over int max, which it the max for settings */
+    /* Using Python hyper h2 server frame work, met a weird upload performance issue on Linux. Our client against nginx
+     * platform has not met the same issue. We assume it's because the server framework implementation. Test 0.25GB now
+     */
+    size_t length = 250000000UL;
 
     struct aws_string *http_localhost_host = NULL;
     if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
