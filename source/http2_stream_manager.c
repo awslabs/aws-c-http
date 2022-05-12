@@ -1021,8 +1021,7 @@ void aws_http2_stream_manager_fetch_metric(
             s_get_available_streams_num_from_connection_set(&stream_manager->synced_data.nonideal_available_set);
         out_metric->pending_concurrency_acquires =
             stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION];
-        /* Current available concurrency equals to all available streams - acquisitions that are pending */
-        out_metric->available_concurrency = all_available_streams_num - out_metric->pending_concurrency_acquires;
+        out_metric->available_concurrency = all_available_streams_num;
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
 }

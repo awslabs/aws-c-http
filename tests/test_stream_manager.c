@@ -848,16 +848,26 @@ TEST_CASE(h2_sm_mock_fetch_metric) {
     ASSERT_UINT_EQUALS(out_metric.available_concurrency, 1);
     ASSERT_UINT_EQUALS(out_metric.pending_concurrency_acquires, 0);
 
-    /* Fake peer send settings that only allow 2 concurrent streams */
-    /* Acquire tow more streams */
-    ASSERT_SUCCESS(s_sm_stream_acquiring(2));
-    /* We created a new connection */
-    ASSERT_SUCCESS(s_wait_on_fake_connection_count(2));
-    s_drain_all_fake_connection_testing_channel();
-    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1 + 2));
-    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
 
-    ASSERT_INT_EQUALS(2, aws_array_list_length(&s_tester.fake_connections));
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(2));
+    aws_http2_stream_manager_fetch_metric(s_tester.stream_manager, &out_metric);
+    ASSERT_UINT_EQUALS(out_metric.available_concurrency, 0);
+    ASSERT_UINT_EQUALS(out_metric.pending_concurrency_acquires, 0);
+
+    ASSERT_SUCCESS(s_sm_stream_acquiring(10));
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(5));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(10));
+    aws_http2_stream_manager_fetch_metric(s_tester.stream_manager, &out_metric);
+    ASSERT_UINT_EQUALS(out_metric.available_concurrency, 0);
+    ASSERT_UINT_EQUALS(out_metric.pending_concurrency_acquires, 2);
+
+    ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
+    /* Still have two more streams that have not been completed */
+    s_drain_all_fake_connection_testing_channel();
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
 
     return s_tester_clean_up();
