@@ -1540,7 +1540,7 @@ static void s_cull_task(struct aws_task *task, void *arg, enum aws_task_status s
 }
 
 void aws_http_connection_manager_fetch_metric(
-    const struct aws_http_connection_manager *manager,
+    struct aws_http_connection_manager *manager,
     struct aws_http_manager_metric *out_metric) {
     AWS_PRECONDITION(manager);
     AWS_PRECONDITION(out_metric);
