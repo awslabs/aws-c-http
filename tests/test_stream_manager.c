@@ -840,30 +840,30 @@ TEST_CASE(h2_sm_mock_fetch_metric) {
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
     s_drain_all_fake_connection_testing_channel();
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(1));
-    struct aws_http_manager_metric out_metric;
-    AWS_ZERO_STRUCT(out_metric);
+    struct aws_http_manager_metrics out_metrics;
+    AWS_ZERO_STRUCT(out_metrics);
 
-    aws_http2_stream_manager_fetch_metric(s_tester.stream_manager, &out_metric);
+    aws_http2_stream_manager_fetch_metrics(s_tester.stream_manager, &out_metrics);
     /* Acquired 1 stream, and we hold one connection, the max streams per connection is 2. */
-    ASSERT_UINT_EQUALS(out_metric.available_concurrency, 1);
-    ASSERT_UINT_EQUALS(out_metric.pending_concurrency_acquires, 0);
+    ASSERT_UINT_EQUALS(out_metrics.available_concurrency, 1);
+    ASSERT_UINT_EQUALS(out_metrics.pending_concurrency_acquires, 0);
 
     ASSERT_SUCCESS(s_sm_stream_acquiring(1));
 
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(1));
     s_drain_all_fake_connection_testing_channel();
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(2));
-    aws_http2_stream_manager_fetch_metric(s_tester.stream_manager, &out_metric);
-    ASSERT_UINT_EQUALS(out_metric.available_concurrency, 0);
-    ASSERT_UINT_EQUALS(out_metric.pending_concurrency_acquires, 0);
+    aws_http2_stream_manager_fetch_metrics(s_tester.stream_manager, &out_metrics);
+    ASSERT_UINT_EQUALS(out_metrics.available_concurrency, 0);
+    ASSERT_UINT_EQUALS(out_metrics.pending_concurrency_acquires, 0);
 
     ASSERT_SUCCESS(s_sm_stream_acquiring(10));
     ASSERT_SUCCESS(s_wait_on_fake_connection_count(5));
     s_drain_all_fake_connection_testing_channel();
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(10));
-    aws_http2_stream_manager_fetch_metric(s_tester.stream_manager, &out_metric);
-    ASSERT_UINT_EQUALS(out_metric.available_concurrency, 0);
-    ASSERT_UINT_EQUALS(out_metric.pending_concurrency_acquires, 2);
+    aws_http2_stream_manager_fetch_metrics(s_tester.stream_manager, &out_metrics);
+    ASSERT_UINT_EQUALS(out_metrics.available_concurrency, 0);
+    ASSERT_UINT_EQUALS(out_metrics.pending_concurrency_acquires, 2);
 
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());
     /* Still have two more streams that have not been completed */

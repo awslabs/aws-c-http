@@ -28,14 +28,14 @@ typedef void(aws_http_connection_manager_shutdown_complete_fn)(void *user_data);
 /**
  * Metrics for logging and debugging purpose.
  */
-struct aws_http_manager_metric {
+struct aws_http_manager_metrics {
     /**
      * The number of additional concurrent requests that can be supported by the HTTP manager without needing to
      * establish additional connections to the target server.
      *
      * For connection manager, it equals to connections that's idle.
-     * For stream manager, it equals to the number of streams that are possiblily made without creating new connection.
-     * Altough the implementation can create new connection without fully filling it.
+     * For stream manager, it equals to the number of streams that are possible to be made without creating new
+     * connection, although the implementation can create new connection without fully filling it.
      */
     size_t available_concurrency;
     /* The number of requests that are awaiting concurrency to be made available from the HTTP manager. */
@@ -161,12 +161,12 @@ int aws_http_connection_manager_release_connection(
     struct aws_http_connection *connection);
 
 /**
- * Fetch the current manager metric from connection manager.
+ * Fetch the current manager metrics from connection manager.
  */
 AWS_HTTP_API
-void aws_http_connection_manager_fetch_metric(
-    struct aws_http_connection_manager *manager,
-    struct aws_http_manager_metric *out_metric);
+void aws_http_connection_manager_fetch_metrics(
+    const struct aws_http_connection_manager *manager,
+    struct aws_http_manager_metrics *out_metric);
 
 AWS_EXTERN_C_END
 

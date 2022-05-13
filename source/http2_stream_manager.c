@@ -1007,21 +1007,21 @@ static size_t s_get_available_streams_num_from_connection_set(const struct aws_r
     return all_available_streams_num;
 }
 
-void aws_http2_stream_manager_fetch_metric(
-    struct aws_http2_stream_manager *stream_manager,
-    struct aws_http_manager_metric *out_metric) {
+void aws_http2_stream_manager_fetch_metrics(
+    const struct aws_http2_stream_manager *stream_manager,
+    struct aws_http_manager_metrics *out_metrics) {
     AWS_PRECONDITION(stream_manager);
-    AWS_PRECONDITION(out_metric);
+    AWS_PRECONDITION(out_metrics);
     { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(stream_manager);
+        s_lock_synced_data((struct aws_http2_stream_manager *)(void *)stream_manager);
         size_t all_available_streams_num = 0;
         all_available_streams_num +=
             s_get_available_streams_num_from_connection_set(&stream_manager->synced_data.ideal_available_set);
         all_available_streams_num +=
             s_get_available_streams_num_from_connection_set(&stream_manager->synced_data.nonideal_available_set);
-        out_metric->pending_concurrency_acquires =
+        out_metrics->pending_concurrency_acquires =
             stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION];
-        out_metric->available_concurrency = all_available_streams_num;
-        s_unlock_synced_data(stream_manager);
+        out_metrics->available_concurrency = all_available_streams_num;
+        s_unlock_synced_data((struct aws_http2_stream_manager *)(void *)stream_manager);
     } /* END CRITICAL SECTION */
 }
