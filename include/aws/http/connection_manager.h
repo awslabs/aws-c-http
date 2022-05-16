@@ -166,7 +166,7 @@ int aws_http_connection_manager_release_connection(
 AWS_HTTP_API
 void aws_http_connection_manager_fetch_metrics(
     const struct aws_http_connection_manager *manager,
-    struct aws_http_manager_metrics *out_metric);
+    struct aws_http_manager_metrics *out_metrics);
 
 AWS_EXTERN_C_END
 
