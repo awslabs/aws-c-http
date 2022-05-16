@@ -142,7 +142,7 @@ static struct aws_h2_sm_connection *s_get_best_sm_connection_from_set(struct aws
 
 /* helper function for building the transaction: Try to assign connection for a pending stream acquisition */
 /* *_synced should only be called with LOCK HELD or from another synced function */
-static void s_sm_try_assign_connection_to_pending_stream_acquisition(
+static void s_sm_try_assign_connection_to_pending_stream_acquisition_synced(
     struct aws_http2_stream_manager *stream_manager,
     struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition) {
 
@@ -344,7 +344,7 @@ static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2
                 aws_linked_list_pop_front(&stream_manager->synced_data.pending_stream_acquisitions);
             struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition =
                 AWS_CONTAINER_OF(node, struct aws_h2_sm_pending_stream_acquisition, node);
-            s_sm_try_assign_connection_to_pending_stream_acquisition(stream_manager, pending_stream_acquisition);
+            s_sm_try_assign_connection_to_pending_stream_acquisition_synced(stream_manager, pending_stream_acquisition);
             if (pending_stream_acquisition->sm_connection == NULL) {
                 /* Cannot find any connection, push it back to the front and break the loop */
                 aws_linked_list_push_front(&stream_manager->synced_data.pending_stream_acquisitions, node);
@@ -993,4 +993,35 @@ void aws_http2_stream_manager_acquire_stream(
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
     s_aws_http2_stream_manager_execute_transaction(&work);
+}
+
+static size_t s_get_available_streams_num_from_connection_set(const struct aws_random_access_set *set) {
+    size_t all_available_streams_num = 0;
+    size_t ideal_connection_num = aws_random_access_set_get_size(set);
+    for (size_t i = 0; i < ideal_connection_num; i++) {
+        struct aws_h2_sm_connection *sm_connection = NULL;
+        AWS_FATAL_ASSERT(aws_random_access_set_random_get_ptr_index(set, (void **)&sm_connection, i) == AWS_OP_SUCCESS);
+        uint32_t available_streams = sm_connection->max_concurrent_streams - sm_connection->num_streams_assigned;
+        all_available_streams_num += (size_t)available_streams;
+    }
+    return all_available_streams_num;
+}
+
+void aws_http2_stream_manager_fetch_metrics(
+    const struct aws_http2_stream_manager *stream_manager,
+    struct aws_http_manager_metrics *out_metrics) {
+    AWS_PRECONDITION(stream_manager);
+    AWS_PRECONDITION(out_metrics);
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data((struct aws_http2_stream_manager *)(void *)stream_manager);
+        size_t all_available_streams_num = 0;
+        all_available_streams_num +=
+            s_get_available_streams_num_from_connection_set(&stream_manager->synced_data.ideal_available_set);
+        all_available_streams_num +=
+            s_get_available_streams_num_from_connection_set(&stream_manager->synced_data.nonideal_available_set);
+        out_metrics->pending_concurrency_acquires =
+            stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION];
+        out_metrics->available_concurrency = all_available_streams_num;
+        s_unlock_synced_data((struct aws_http2_stream_manager *)(void *)stream_manager);
+    } /* END CRITICAL SECTION */
 }

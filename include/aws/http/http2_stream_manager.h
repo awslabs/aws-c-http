@@ -18,6 +18,7 @@ struct proxy_env_var_settings;
 struct aws_http2_setting;
 struct aws_http_make_request_options;
 struct aws_http_stream;
+struct aws_http_manager_metrics;
 
 /**
  * Always invoked asynchronously when the stream was created, successfully or not.
@@ -167,6 +168,17 @@ AWS_HTTP_API
 void aws_http2_stream_manager_acquire_stream(
     struct aws_http2_stream_manager *http2_stream_manager,
     const struct aws_http2_stream_manager_acquire_stream_options *acquire_stream_option);
+
+/**
+ * Fetch the current metrics from stream manager.
+ *
+ * @param http2_stream_manager
+ * @param out_metrics The metrics to be fetched
+ */
+AWS_HTTP_API
+void aws_http2_stream_manager_fetch_metrics(
+    const struct aws_http2_stream_manager *http2_stream_manager,
+    struct aws_http_manager_metrics *out_metrics);
 
 AWS_EXTERN_C_END
 #endif /* AWS_HTTP2_STREAM_MANAGER_H */

@@ -1538,3 +1538,15 @@ static void s_cull_task(struct aws_task *task, void *arg, enum aws_task_status s
 
     s_schedule_connection_culling(manager);
 }
+
+void aws_http_connection_manager_fetch_metrics(
+    const struct aws_http_connection_manager *manager,
+    struct aws_http_manager_metrics *out_metrics) {
+    AWS_PRECONDITION(manager);
+    AWS_PRECONDITION(out_metrics);
+
+    AWS_FATAL_ASSERT(aws_mutex_lock((struct aws_mutex *)(void *)&manager->lock) == AWS_OP_SUCCESS);
+    out_metrics->available_concurrency = manager->idle_connection_count;
+    out_metrics->pending_concurrency_acquires = manager->pending_acquisition_count;
+    AWS_FATAL_ASSERT(aws_mutex_unlock((struct aws_mutex *)(void *)&manager->lock) == AWS_OP_SUCCESS);
+}

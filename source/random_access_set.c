@@ -150,7 +150,7 @@ int aws_random_access_set_remove(struct aws_random_access_set *set, const void *
     return AWS_OP_SUCCESS;
 }
 
-int aws_random_access_set_random_get_ptr(struct aws_random_access_set *set, void **out) {
+int aws_random_access_set_random_get_ptr(const struct aws_random_access_set *set, void **out) {
     AWS_PRECONDITION(set);
     AWS_PRECONDITION(out != NULL);
     size_t length = aws_array_list_length(&set->impl->list);
@@ -166,11 +166,11 @@ int aws_random_access_set_random_get_ptr(struct aws_random_access_set *set, void
     return aws_array_list_get_at(&set->impl->list, (void *)out, index);
 }
 
-size_t aws_random_access_set_get_size(struct aws_random_access_set *set) {
+size_t aws_random_access_set_get_size(const struct aws_random_access_set *set) {
     return aws_array_list_length(&set->impl->list);
 }
 
-int aws_random_access_set_exist(struct aws_random_access_set *set, const void *element, bool *exist) {
+int aws_random_access_set_exist(const struct aws_random_access_set *set, const void *element, bool *exist) {
     AWS_PRECONDITION(set);
     AWS_PRECONDITION(element);
     AWS_PRECONDITION(exist);
@@ -178,4 +178,10 @@ int aws_random_access_set_exist(struct aws_random_access_set *set, const void *e
     int re = aws_hash_table_find(&set->impl->map, element, &find);
     *exist = find != NULL;
     return re;
+}
+
+int aws_random_access_set_random_get_ptr_index(const struct aws_random_access_set *set, void **out, size_t index) {
+    AWS_PRECONDITION(set);
+    AWS_PRECONDITION(out != NULL);
+    return aws_array_list_get_at(&set->impl->list, (void *)out, index);
 }

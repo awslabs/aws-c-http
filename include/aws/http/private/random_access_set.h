@@ -64,16 +64,23 @@ int aws_random_access_set_remove(struct aws_random_access_set *set, const void *
  * Get the pointer to a random element from the data structure. Fails when the data structure is empty.
  */
 AWS_HTTP_API
-int aws_random_access_set_random_get_ptr(struct aws_random_access_set *set, void **out);
+int aws_random_access_set_random_get_ptr(const struct aws_random_access_set *set, void **out);
 
 AWS_HTTP_API
-size_t aws_random_access_set_get_size(struct aws_random_access_set *set);
+size_t aws_random_access_set_get_size(const struct aws_random_access_set *set);
 
 /**
  * Check the element exist in the data structure or not.
  */
 AWS_HTTP_API
-int aws_random_access_set_exist(struct aws_random_access_set *set, const void *element, bool *exist);
+int aws_random_access_set_exist(const struct aws_random_access_set *set, const void *element, bool *exist);
+
+/**
+ * Get the pointer to an element that currently stored at that index. It may change if operations like remove and add
+ * happens. Helpful for debugging and iterating through the whole set.
+ */
+AWS_HTTP_API
+int aws_random_access_set_random_get_ptr_index(const struct aws_random_access_set *set, void **out, size_t index);
 
 AWS_EXTERN_C_END
 #endif /* AWS_HTTP_RANDOM_ACCESS_SET_H */
