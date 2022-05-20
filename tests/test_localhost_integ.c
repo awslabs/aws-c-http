@@ -420,7 +420,6 @@ static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, v
         },
     };
     struct aws_http_message *request = aws_http2_message_new_request(allocator);
-    ASSERT_NOT_NULL(request);
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
     struct aws_input_stream *body_stream = aws_input_stream_tester_upload_new(allocator, length);
     aws_http_message_set_body_stream(request, body_stream);
