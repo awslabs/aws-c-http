@@ -202,6 +202,8 @@ static void s_tester_on_stream_completed(struct aws_http_stream *stream, int err
     AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.wait_lock) == AWS_OP_SUCCESS);
 }
 
+static struct aws_logger s_logger;
+
 static int s_tester_init(struct tester *tester, struct aws_allocator *allocator, struct aws_byte_cursor host_name) {
     aws_http_library_init(allocator);
 
@@ -251,6 +253,13 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
         .on_shutdown = s_on_connection_shutdown,
     };
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
+    struct aws_logger_standard_options logger_options = {
+        .level = AWS_LOG_LEVEL_DEBUG,
+        .file = stderr,
+    };
+
+    aws_logger_init_standard(&s_logger, allocator, &logger_options);
+    aws_logger_set(&s_logger);
     return AWS_OP_SUCCESS;
 }
 
@@ -267,6 +276,7 @@ static int s_tester_clean_up(struct tester *tester) {
 
     aws_mutex_clean_up(&tester->wait_lock);
     aws_http_library_clean_up();
+    aws_logger_clean_up(&s_logger);
     return AWS_OP_SUCCESS;
 }
 
