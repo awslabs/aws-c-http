@@ -156,7 +156,6 @@ class H2Protocol(asyncio.Protocol):
                         len(data)
                 else:
                     self.num_sentence_received[stream_id] = len(data)
-                print(self.num_sentence_received[stream_id])
                 # update window for stream
                 if len(data) > 0:
                     self.conn.increment_flow_control_window(len(data))
