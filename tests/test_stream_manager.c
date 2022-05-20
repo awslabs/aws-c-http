@@ -97,6 +97,8 @@ struct sm_tester {
 
     /* To invoke the real on_setup */
     aws_http_on_client_connection_setup_fn *on_setup;
+
+    size_t length_sent;
 };
 
 static struct sm_tester s_tester;
@@ -1209,12 +1211,11 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
 }
 
 static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
-
+    (void)user_data;
     (void)stream;
-    size_t *length = (size_t *)user_data;
     struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.allocator, data);
     size_t num_received = (uint32_t)atoi((const char *)content_length_header_str->bytes);
-    AWS_FATAL_ASSERT(*length == num_received);
+    AWS_FATAL_ASSERT(s_tester.length_sent == num_received);
     aws_string_destroy(content_length_header_str);
 
     return AWS_OP_SUCCESS;
@@ -1222,8 +1223,7 @@ static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws
 
 static int s_sm_stream_acquiring_with_body(int num_streams) {
     char content_length_sprintf_buffer[128] = "";
-    size_t length = 2000;
-    snprintf(content_length_sprintf_buffer, sizeof(content_length_sprintf_buffer), "%zu", length);
+    snprintf(content_length_sprintf_buffer, sizeof(content_length_sprintf_buffer), "%zu", s_tester.length_sent);
 
     struct aws_http_header request_headers_src[] = {
         DEFINE_HEADER(":method", "PUT"),
@@ -1249,13 +1249,13 @@ static int s_sm_stream_acquiring_with_body(int num_streams) {
          * asynchronously, we cannot ensure it as well. */
         struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
         aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
-        struct aws_input_stream *body_stream = aws_input_stream_tester_upload_new(s_tester.allocator, length);
+        struct aws_input_stream *body_stream =
+            aws_input_stream_tester_upload_new(s_tester.allocator, s_tester.length_sent);
         aws_http_message_set_body_stream(request, body_stream);
         aws_input_stream_release(body_stream);
         struct aws_http_make_request_options request_options = {
             .self_size = sizeof(request_options),
             .request = request,
-            .user_data = &length,
             .on_response_body = s_tester_on_put_body,
             .on_complete = s_sm_tester_on_stream_complete,
         };
@@ -1282,6 +1282,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
         .uri_cursor = &uri_cursor,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
+    s_tester.length_sent = 2000;
     int num_to_acquire = 500 * 100;
 
 #ifdef AWS_OS_LINUX
