@@ -18,6 +18,7 @@
 #include <aws/http/private/proxy_impl.h>
 #include <aws/http/proxy.h>
 
+#include <aws/io/stream.h>
 #include <aws/io/uri.h>
 
 #include <aws/common/byte_buf.h>
@@ -1211,7 +1212,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
 static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
 
     (void)stream;
-    size_t length = (size_t)user_data;
+    size_t length = *(size_t *)user_data;
     struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.allocator, data);
     size_t num_received = (uint32_t)atoi((const char *)content_length_header_str->bytes);
     AWS_FATAL_ASSERT(length == num_received);
@@ -1264,6 +1265,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
         .self_size = sizeof(request_options),
         .request = request,
         .user_data = &length,
+        .on_response_body = s_tester_on_put_body,
         .on_complete = s_sm_tester_on_stream_complete,
     };
 

@@ -124,7 +124,6 @@ class H2Protocol(asyncio.Protocol):
         method = request_data.headers[':method']
         if method == "PUT" or method == "POST":
             self.conn.send_headers(stream_id, [(':status', '200')])
-            print(self.num_sentence_received)
             asyncio.ensure_future(self.send_data(
                 str(self.num_sentence_received).encode(), stream_id))
         elif path == '/echo':
@@ -155,8 +154,10 @@ class H2Protocol(asyncio.Protocol):
                 self.num_sentence_received = self.num_sentence_received + \
                     len(data)
                 # update window for stream
-                self.conn.increment_flow_control_window(len(data))
-                self.conn.increment_flow_control_window(len(data), stream_id)
+                if len(data) > 0:
+                    self.conn.increment_flow_control_window(len(data))
+                    self.conn.increment_flow_control_window(
+                        len(data), stream_id)
             else:
                 stream_data.data.write(data)
 
