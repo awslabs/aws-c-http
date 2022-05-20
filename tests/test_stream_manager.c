@@ -524,7 +524,7 @@ static int s_sm_stream_acquiring(int num_streams) {
         .user_data = &s_tester,
         .on_complete = s_sm_tester_on_stream_complete,
     };
-    int return_code = s_sm_stream_acquiring_customize_request(num_streams, request, &request_options);
+    int return_code = s_sm_stream_acquiring_customize_request(num_streams, &request_options);
     aws_http_message_release(request);
     return return_code;
 }
