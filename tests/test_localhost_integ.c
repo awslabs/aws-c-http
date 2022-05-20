@@ -85,7 +85,7 @@ struct tester {
     size_t stream_4xx_count;
     size_t stream_status_not_200_count;
 
-    size_t num_sen_received;
+    uint64_t num_sen_received;
     int stream_completed_error_code;
     bool stream_completed_with_200;
 
@@ -387,7 +387,7 @@ static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws
     (void)stream;
     (void)user_data;
     struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.alloc, data);
-    s_tester.num_sen_received = (uint32_t)atoi((const char *)content_length_header_str->bytes);
+    s_tester.num_sen_received = (uint64_t)strtoull((const char *)content_length_header_str->bytes, NULL, 10);
     aws_string_destroy(content_length_header_str);
 
     return AWS_OP_SUCCESS;
