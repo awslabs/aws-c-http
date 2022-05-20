@@ -1221,18 +1221,7 @@ static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws
     return AWS_OP_SUCCESS;
 }
 
-/* Test that makes tons of real streams with body against local host */
-TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
-    (void)ctx;
-    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/upload_test");
-    struct sm_tester_options options = {
-        .max_connections = 100,
-        .max_concurrent_streams_per_connection = 100,
-        .alloc = allocator,
-        .uri_cursor = &uri_cursor,
-    };
-    ASSERT_SUCCESS(s_tester_init(&options));
-    int num_to_acquire = 500 * 100;
+static int s_sm_stream_acquiring_with_body(int num_streams) {
     char content_length_sprintf_buffer[128] = "";
     size_t length = 2000;
     snprintf(content_length_sprintf_buffer, sizeof(content_length_sprintf_buffer), "%zu", length);
@@ -1256,24 +1245,50 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
             .value = aws_byte_cursor_from_c_str(content_length_sprintf_buffer),
         },
     };
-    struct aws_http_message *request = aws_http2_message_new_request(allocator);
-    aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
-    struct aws_input_stream *body_stream = aws_input_stream_tester_upload_new(allocator, length);
-    aws_http_message_set_body_stream(request, body_stream);
-    aws_input_stream_release(body_stream);
-    struct aws_http_make_request_options request_options = {
-        .self_size = sizeof(request_options),
-        .request = request,
-        .user_data = &length,
-        .on_response_body = s_tester_on_put_body,
-        .on_complete = s_sm_tester_on_stream_complete,
-    };
+    for (int i = 0; i < num_streams; ++i) {
+        /* TODO: Test the callback will always be fired asynced, as now the CM cannot ensure the callback happens
+         * asynchronously, we cannot ensure it as well. */
+        struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
+        aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+        struct aws_input_stream *body_stream = aws_input_stream_tester_upload_new(s_tester.allocator, length);
+        aws_http_message_set_body_stream(request, body_stream);
+        aws_input_stream_release(body_stream);
+        struct aws_http_make_request_options request_options = {
+            .self_size = sizeof(request_options),
+            .request = request,
+            .user_data = &length,
+            .on_response_body = s_tester_on_put_body,
+            .on_complete = s_sm_tester_on_stream_complete,
+        };
 
-    ASSERT_SUCCESS(s_sm_stream_acquiring_customize_request(num_to_acquire, request, &request_options));
+        struct aws_http2_stream_manager_acquire_stream_options acquire_stream_option = {
+            .options = &request_options,
+            .callback = s_sm_tester_on_stream_acquired,
+            .user_data = &s_tester,
+        };
+        aws_http2_stream_manager_acquire_stream(s_tester.stream_manager, &acquire_stream_option);
+        aws_http_message_release(request);
+    }
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that makes tons of real streams with body against local host */
+TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
+    (void)ctx;
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/upload_test");
+    struct sm_tester_options options = {
+        .max_connections = 100,
+        .max_concurrent_streams_per_connection = 100,
+        .alloc = allocator,
+        .uri_cursor = &uri_cursor,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    int num_to_acquire = 500 * 100;
+
+    ASSERT_SUCCESS(s_sm_stream_acquiring_with_body(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
     ASSERT_TRUE((int)s_tester.stream_200_count == num_to_acquire);
 
-    aws_http_message_release(request);
     return s_tester_clean_up();
 }
