@@ -254,7 +254,8 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
     };
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
     struct aws_logger_standard_options logger_options = {
-        .level = AWS_LOG_LEVEL_DEBUG,
+        .level = AWS_LOG_LEVEL_DEBUG, /* We are stress testing, and if this ever failed, the default trace level log is
+                                         too much to handle, let's do debug level instead */
         .file = stderr,
     };
 
