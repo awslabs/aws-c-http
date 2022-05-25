@@ -683,8 +683,10 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
 
     struct aws_h2_frame *headers_frame = aws_h2_frame_new_headers(
         stream->base.alloc,
+        stream->base.id,
         h2_headers,
         !has_body_stream && write_ends_stream /* end_stream */,
+        0 /* padding - not currently configurable via public API */,
         NULL /* priority - not currently configurable via public API */);
 
     if (!headers_frame) {
@@ -1240,10 +1242,6 @@ static int s_stream_write_data(
     return AWS_OP_SUCCESS;
 }
 
-static void s_stream_end_stream_destroy(struct aws_input_stream *stream) {
-    (void)stream;
-}
-
 static int s_stream_end_stream_get_length(struct aws_input_stream *stream, int64_t *length) {
     (void)stream;
     *length = 0;
@@ -1265,7 +1263,6 @@ static int s_stream_end_stream_read(struct aws_input_stream *stream, struct aws_
 }
 
 static struct aws_input_stream_vtable s_stream_end_stream_vtable = {
-    .destroy = s_stream_end_stream_destroy,
     .get_length = s_stream_end_stream_get_length,
     .get_status = s_stream_end_stream_get_status,
     .read = s_stream_end_stream_read,
@@ -1275,7 +1272,6 @@ static struct aws_input_stream_vtable s_stream_end_stream_vtable = {
 /* virtual stream whose only job is to communicate EOF and end the DATA frame body write */
 static struct aws_input_stream s_stream_end_stream = {
     .vtable = &s_stream_end_stream_vtable,
-    .allocator = NULL,
     .impl = NULL,
 };
 
