@@ -7,7 +7,6 @@
  */
 
 #include <aws/http/http.h>
-#include <aws/http/proxy.h>
 
 #include <aws/common/byte_buf.h>
 
@@ -16,6 +15,8 @@ struct aws_http_connection;
 struct aws_http_connection_manager;
 struct aws_socket_options;
 struct aws_tls_connection_options;
+struct proxy_env_var_settings;
+struct aws_http2_setting;
 
 typedef void(aws_http_connection_manager_on_connection_setup_fn)(
     struct aws_http_connection *connection,
@@ -23,6 +24,23 @@ typedef void(aws_http_connection_manager_on_connection_setup_fn)(
     void *user_data);
 
 typedef void(aws_http_connection_manager_shutdown_complete_fn)(void *user_data);
+
+/**
+ * Metrics for logging and debugging purpose.
+ */
+struct aws_http_manager_metrics {
+    /**
+     * The number of additional concurrent requests that can be supported by the HTTP manager without needing to
+     * establish additional connections to the target server.
+     *
+     * For connection manager, it equals to connections that's idle.
+     * For stream manager, it equals to the number of streams that are possible to be made without creating new
+     * connection, although the implementation can create new connection without fully filling it.
+     */
+    size_t available_concurrency;
+    /* The number of requests that are awaiting concurrency to be made available from the HTTP manager. */
+    size_t pending_concurrency_acquires;
+};
 
 /*
  * Connection manager configuration struct.
@@ -32,7 +50,7 @@ typedef void(aws_http_connection_manager_shutdown_complete_fn)(void *user_data);
  */
 struct aws_http_connection_manager_options {
     /*
-     * http connection configuration
+     * http connection configuration, check `struct aws_http_client_connection_options` for details of each config
      */
     struct aws_client_bootstrap *bootstrap;
     size_t initial_window_size;
@@ -41,6 +59,17 @@ struct aws_http_connection_manager_options {
     const struct aws_http_connection_monitoring_options *monitoring_options;
     struct aws_byte_cursor host;
     uint16_t port;
+    bool prior_knowledge_http2;
+
+    /**
+     * Optional.
+     * HTTP/2 specific configuration. Check `struct aws_http2_connection_options` for details of each config
+     */
+    struct aws_http2_setting *initial_settings_array;
+    size_t num_initial_settings;
+    size_t max_closed_streams;
+    bool http2_conn_manual_window_management;
+
     /* Proxy configuration for http connection */
     const struct aws_http_proxy_options *proxy_options;
 
@@ -110,6 +139,8 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
  * Requests a connection from the manager.  The requester is notified of
  * an acquired connection (or failure to acquire) via the supplied callback.
  *
+ * For HTTP/2 connections, the callback will not fire until the server's settings have been received.
+ *
  * Once a connection has been successfully acquired from the manager it
  * must be released back (via aws_http_connection_manager_release_connection)
  * at some point.  Failure to do so will cause a resource leak.
@@ -128,6 +159,14 @@ AWS_HTTP_API
 int aws_http_connection_manager_release_connection(
     struct aws_http_connection_manager *manager,
     struct aws_http_connection *connection);
+
+/**
+ * Fetch the current manager metrics from connection manager.
+ */
+AWS_HTTP_API
+void aws_http_connection_manager_fetch_metrics(
+    const struct aws_http_connection_manager *manager,
+    struct aws_http_manager_metrics *out_metrics);
 
 AWS_EXTERN_C_END
 

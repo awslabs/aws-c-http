@@ -548,7 +548,8 @@ static int s_aws_http_apply_http_connection_to_proxied_channel(struct aws_http_p
         context->original_initial_window_size,
         NULL, /* alpn_string_map */
         &context->original_http1_options,
-        NULL); /* TODO: support http2 options */
+        NULL,
+        context->original_user_data); /* TODO: support http2 options */
     if (connection == NULL) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
@@ -558,8 +559,6 @@ static int s_aws_http_apply_http_connection_to_proxied_channel(struct aws_http_p
 
         return AWS_OP_ERR;
     }
-
-    connection->user_data = context->original_user_data;
 
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
@@ -1531,9 +1530,7 @@ static void s_http_proxied_socket_channel_shutdown(
 
 int aws_http_proxy_new_socket_channel(
     struct aws_socket_channel_bootstrap_options *channel_options,
-    struct aws_http_proxy_options *proxy_options) {
-    (void)channel_options;
-    (void)proxy_options;
+    const struct aws_http_proxy_options *proxy_options) {
 
     AWS_FATAL_ASSERT(channel_options != NULL && channel_options->bootstrap != NULL);
     AWS_FATAL_ASSERT(proxy_options != NULL);

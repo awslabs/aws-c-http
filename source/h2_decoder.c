@@ -665,15 +665,16 @@ static struct aws_h2err s_state_fn_prefix(struct aws_h2_decoder *decoder, struct
         frame->stream_id,
         frame->payload_len);
 
-    if (decoder->frame_in_progress.type == AWS_H2_FRAME_T_DATA) {
-        /* We invoke the on_data_begin here to report the whole payload size */
-        DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_data_begin, frame->payload_len, frame->flags.end_stream);
-    }
     if (is_padded) {
         /* Read padding length if necessary */
         return s_decoder_switch_state(decoder, &s_state_padding_len);
-
-    } else if (decoder->frame_in_progress.flags.priority) {
+    }
+    if (decoder->frame_in_progress.type == AWS_H2_FRAME_T_DATA) {
+        /* We invoke the on_data_begin here to report the whole payload size */
+        DECODER_CALL_VTABLE_STREAM_ARGS(
+            decoder, on_data_begin, frame->payload_len, 0 /*padding_len*/, frame->flags.end_stream);
+    }
+    if (decoder->frame_in_progress.flags.priority) {
         /* Read the stream dependency and weight if PRIORITY is set */
         return s_decoder_switch_state(decoder, &s_state_priority_block);
     }
@@ -692,22 +693,29 @@ static struct aws_h2err s_state_fn_padding_len(struct aws_h2_decoder *decoder, s
 
     AWS_ASSERT(input->len >= s_state_padding_len_requires_1_bytes);
 
+    struct aws_frame_in_progress *frame = &decoder->frame_in_progress;
     /* Read the padding length */
-    bool succ = aws_byte_cursor_read_u8(input, &decoder->frame_in_progress.padding_len);
+    bool succ = aws_byte_cursor_read_u8(input, &frame->padding_len);
     AWS_ASSERT(succ);
     (void)succ;
 
     /* Adjust payload size so it doesn't include padding (or the 1-byte padding length) */
-    uint32_t reduce_payload = s_state_padding_len_requires_1_bytes + decoder->frame_in_progress.padding_len;
+    uint32_t reduce_payload = s_state_padding_len_requires_1_bytes + frame->padding_len;
     if (reduce_payload > decoder->frame_in_progress.payload_len) {
         DECODER_LOG(ERROR, decoder, "Padding length exceeds payload length");
         return aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR);
     }
-    decoder->frame_in_progress.payload_len -= reduce_payload;
 
-    DECODER_LOGF(TRACE, decoder, "Padding length of frame: %" PRIu32, decoder->frame_in_progress.padding_len);
+    if (frame->type == AWS_H2_FRAME_T_DATA) {
+        /* We invoke the on_data_begin here to report the whole payload size and the padding size */
+        DECODER_CALL_VTABLE_STREAM_ARGS(
+            decoder, on_data_begin, frame->payload_len, frame->padding_len + 1, frame->flags.end_stream);
+    }
 
-    if (decoder->frame_in_progress.flags.priority) {
+    frame->payload_len -= reduce_payload;
+
+    DECODER_LOGF(TRACE, decoder, "Padding length of frame: %" PRIu32, frame->padding_len);
+    if (frame->flags.priority) {
         /* Read the stream dependency and weight if PRIORITY is set */
         return s_decoder_switch_state(decoder, &s_state_priority_block);
     }
@@ -1156,7 +1164,7 @@ static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
         struct aws_byte_cursor status_value =
             aws_byte_cursor_from_string(current_block->pseudoheader_values[PSEUDOHEADER_STATUS]);
         uint64_t status_code;
-        if (status_value.len != 3 || aws_strutil_read_unsigned_num(status_value, &status_code)) {
+        if (status_value.len != 3 || aws_byte_cursor_utf8_parse_u64(status_value, &status_code)) {
             DECODER_LOG(ERROR, decoder, ":status header has invalid value");
             DECODER_LOGF(DEBUG, decoder, "Bad :status value is '" PRInSTR "'", AWS_BYTE_CURSOR_PRI(status_value));
             goto malformed;

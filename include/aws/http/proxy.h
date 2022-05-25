@@ -548,7 +548,7 @@ void aws_http_proxy_options_init_from_config(
  */
 AWS_HTTP_API int aws_http_proxy_new_socket_channel(
     struct aws_socket_channel_bootstrap_options *channel_options,
-    struct aws_http_proxy_options *proxy_options);
+    const struct aws_http_proxy_options *proxy_options);
 
 AWS_EXTERN_C_END
 

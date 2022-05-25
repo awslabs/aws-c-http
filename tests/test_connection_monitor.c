@@ -17,7 +17,7 @@
 #include <aws/testing/io_testing_channel.h>
 
 #ifdef _MSC_VER
-#    pragma warning(disable : 4996) /* Disable warnings about sptrintf() being insecure */
+#    pragma warning(disable : 4996) /* Disable warnings about sprintf() being insecure */
 #endif
 
 static int s_test_http_connection_monitor_options_is_valid(struct aws_allocator *allocator, void *ctx) {
@@ -147,7 +147,7 @@ static void s_clean_up_monitor_test(void) {
         if (request_info) {
             aws_http_message_destroy(request_info->request);
             aws_http_stream_release(request_info->stream);
-            aws_input_stream_destroy(request_info->body);
+            aws_input_stream_release(request_info->body);
         }
     }
 

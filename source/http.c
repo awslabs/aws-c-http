@@ -127,6 +127,18 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_PROTOCOL_SWITCH_FAILURE,
         "Internal state failure prevent connection from switching protocols"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_MAX_CONCURRENT_STREAMS_EXCEEDED,
+        "Max concurrent stream reached"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_MANAGER_SHUTTING_DOWN,
+        "Stream acquisition failed because stream manager is shutting down"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_MANAGER_CONNECTION_ACQUIRE_FAILURE,
+        "Stream acquisition failed because stream manager failed to acquire a connection"),
+    AWS_DEFINE_ERROR_INFO_HTTP(
+        AWS_ERROR_HTTP_STREAM_MANAGER_UNEXPECTED_HTTP_VERSION,
+        "Stream acquisition failed because stream manager got an unexpected version of HTTP connection"),
 };
 /* clang-format on */
 
@@ -143,6 +155,7 @@ static struct aws_log_subject_info s_log_subject_infos[] = {
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_SERVER, "http-server", "HTTP server socket listening for incoming connections"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_STREAM, "http-stream", "HTTP request-response exchange"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_CONNECTION_MANAGER, "connection-manager", "HTTP connection manager"),
+    DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_STREAM_MANAGER, "http2-stream-manager", "HTTP/2 stream manager"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET, "websocket", "Websocket"),
     DEFINE_LOG_SUBJECT_INFO(AWS_LS_HTTP_WEBSOCKET_SETUP, "websocket-setup", "Websocket setup"),
     DEFINE_LOG_SUBJECT_INFO(
@@ -279,11 +292,32 @@ static void s_headers_init(struct aws_allocator *alloc) {
     s_header_enum_to_str[AWS_HTTP_HEADER_PATH] = aws_byte_cursor_from_c_str(":path");
     s_header_enum_to_str[AWS_HTTP_HEADER_STATUS] = aws_byte_cursor_from_c_str(":status");
     s_header_enum_to_str[AWS_HTTP_HEADER_COOKIE] = aws_byte_cursor_from_c_str("cookie");
+    s_header_enum_to_str[AWS_HTTP_HEADER_SET_COOKIE] = aws_byte_cursor_from_c_str("set-cookie");
     s_header_enum_to_str[AWS_HTTP_HEADER_HOST] = aws_byte_cursor_from_c_str("host");
     s_header_enum_to_str[AWS_HTTP_HEADER_CONNECTION] = aws_byte_cursor_from_c_str("connection");
     s_header_enum_to_str[AWS_HTTP_HEADER_CONTENT_LENGTH] = aws_byte_cursor_from_c_str("content-length");
     s_header_enum_to_str[AWS_HTTP_HEADER_EXPECT] = aws_byte_cursor_from_c_str("expect");
     s_header_enum_to_str[AWS_HTTP_HEADER_TRANSFER_ENCODING] = aws_byte_cursor_from_c_str("transfer-encoding");
+    s_header_enum_to_str[AWS_HTTP_HEADER_CACHE_CONTROL] = aws_byte_cursor_from_c_str("cache-control");
+    s_header_enum_to_str[AWS_HTTP_HEADER_MAX_FORWARDS] = aws_byte_cursor_from_c_str("max-forwards");
+    s_header_enum_to_str[AWS_HTTP_HEADER_PRAGMA] = aws_byte_cursor_from_c_str("pragma");
+    s_header_enum_to_str[AWS_HTTP_HEADER_RANGE] = aws_byte_cursor_from_c_str("range");
+    s_header_enum_to_str[AWS_HTTP_HEADER_TE] = aws_byte_cursor_from_c_str("te");
+    s_header_enum_to_str[AWS_HTTP_HEADER_CONTENT_ENCODING] = aws_byte_cursor_from_c_str("content-encoding");
+    s_header_enum_to_str[AWS_HTTP_HEADER_CONTENT_TYPE] = aws_byte_cursor_from_c_str("content-type");
+    s_header_enum_to_str[AWS_HTTP_HEADER_CONTENT_RANGE] = aws_byte_cursor_from_c_str("content-range");
+    s_header_enum_to_str[AWS_HTTP_HEADER_TRAILER] = aws_byte_cursor_from_c_str("trailer");
+    s_header_enum_to_str[AWS_HTTP_HEADER_WWW_AUTHENTICATE] = aws_byte_cursor_from_c_str("www-authenticate");
+    s_header_enum_to_str[AWS_HTTP_HEADER_AUTHORIZATION] = aws_byte_cursor_from_c_str("authorization");
+    s_header_enum_to_str[AWS_HTTP_HEADER_PROXY_AUTHENTICATE] = aws_byte_cursor_from_c_str("proxy-authenticate");
+    s_header_enum_to_str[AWS_HTTP_HEADER_PROXY_AUTHORIZATION] = aws_byte_cursor_from_c_str("proxy-authorization");
+    s_header_enum_to_str[AWS_HTTP_HEADER_AGE] = aws_byte_cursor_from_c_str("age");
+    s_header_enum_to_str[AWS_HTTP_HEADER_EXPIRES] = aws_byte_cursor_from_c_str("expires");
+    s_header_enum_to_str[AWS_HTTP_HEADER_DATE] = aws_byte_cursor_from_c_str("date");
+    s_header_enum_to_str[AWS_HTTP_HEADER_LOCATION] = aws_byte_cursor_from_c_str("location");
+    s_header_enum_to_str[AWS_HTTP_HEADER_RETRY_AFTER] = aws_byte_cursor_from_c_str("retry-after");
+    s_header_enum_to_str[AWS_HTTP_HEADER_VARY] = aws_byte_cursor_from_c_str("vary");
+    s_header_enum_to_str[AWS_HTTP_HEADER_WARNING] = aws_byte_cursor_from_c_str("warning");
 
     s_init_str_to_enum_hash_table(
         &s_header_str_to_enum,

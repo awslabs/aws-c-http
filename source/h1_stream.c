@@ -61,6 +61,9 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
     bool found_chunks = !aws_linked_list_empty(&stream->synced_data.pending_chunk_list);
     aws_linked_list_move_all_back(&stream->thread_data.pending_chunk_list, &stream->synced_data.pending_chunk_list);
 
+    stream->encoder_message.trailer = stream->synced_data.pending_trailer;
+    stream->synced_data.pending_trailer = NULL;
+
     bool has_outgoing_response = stream->synced_data.has_outgoing_response;
 
     uint64_t pending_window_update = stream->synced_data.pending_window_update;
@@ -103,7 +106,7 @@ static void s_stream_update_window(struct aws_http_stream *stream_base, size_t i
         return;
     }
 
-    if (!stream_base->owning_connection->manual_window_management) {
+    if (!stream_base->owning_connection->stream_manual_window_management) {
         return;
     }
 
@@ -184,7 +187,17 @@ static int s_stream_write_chunk(struct aws_http_stream *stream_base, const struc
             goto unlock;
         }
 
+        if (stream->synced_data.has_final_chunk) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM, "id=%p: Cannot write additional chunk after final chunk.", (void *)stream_base);
+            error_code = AWS_ERROR_INVALID_STATE;
+            goto unlock;
+        }
+
         /* success */
+        if (chunk->data_size == 0) {
+            stream->synced_data.has_final_chunk = true;
+        }
         aws_linked_list_push_back(&stream->synced_data.pending_chunk_list, &chunk->node);
         should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
         stream->synced_data.is_cross_thread_work_task_scheduled = true;
@@ -225,11 +238,99 @@ static int s_stream_write_chunk(struct aws_http_stream *stream_base, const struc
     return AWS_OP_SUCCESS;
 }
 
+static int s_stream_add_trailer(struct aws_http_stream *stream_base, const struct aws_http_headers *trailing_headers) {
+    AWS_PRECONDITION(stream_base);
+    AWS_PRECONDITION(trailing_headers);
+    struct aws_h1_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h1_stream, base);
+
+    struct aws_h1_trailer *trailer = aws_h1_trailer_new(stream_base->alloc, trailing_headers);
+    if (AWS_UNLIKELY(NULL == trailer)) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Failed to initialize streamed trailer, error %d (%s).",
+            (void *)stream_base,
+            aws_last_error(),
+            aws_error_name(aws_last_error()));
+        return AWS_OP_ERR;
+    }
+
+    int error_code = 0;
+    bool should_schedule_task = false;
+
+    { /* BEGIN CRITICAL SECTION */
+        s_stream_lock_synced_data(stream);
+        /* Can only add trailers while stream is active. */
+        if (stream->synced_data.api_state != AWS_H1_STREAM_API_STATE_ACTIVE) {
+            error_code = (stream->synced_data.api_state == AWS_H1_STREAM_API_STATE_INIT)
+                             ? AWS_ERROR_HTTP_STREAM_NOT_ACTIVATED
+                             : AWS_ERROR_HTTP_STREAM_HAS_COMPLETED;
+            goto unlock;
+        }
+
+        if (!stream->synced_data.using_chunked_encoding) {
+            AWS_LOGF_ERROR(
+                AWS_LS_HTTP_STREAM,
+                "id=%p: Cannot write trailers without 'transfer-encoding: chunked' header.",
+                (void *)stream_base);
+            error_code = AWS_ERROR_INVALID_STATE;
+            goto unlock;
+        }
+
+        if (stream->synced_data.has_added_trailer) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Cannot write trailers twice.", (void *)stream_base);
+            error_code = AWS_ERROR_INVALID_STATE;
+            goto unlock;
+        }
+
+        if (stream->synced_data.has_final_chunk) {
+            AWS_LOGF_ERROR(AWS_LS_HTTP_STREAM, "id=%p: Cannot write trailers after final chunk.", (void *)stream_base);
+            error_code = AWS_ERROR_INVALID_STATE;
+            goto unlock;
+        }
+
+        stream->synced_data.has_added_trailer = true;
+        stream->synced_data.pending_trailer = trailer;
+        should_schedule_task = !stream->synced_data.is_cross_thread_work_task_scheduled;
+        stream->synced_data.is_cross_thread_work_task_scheduled = true;
+
+    unlock:
+        s_stream_unlock_synced_data(stream);
+    } /* END CRITICAL SECTION */
+
+    if (error_code) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_STREAM,
+            "id=%p: Failed to add trailer, error %d (%s)",
+            (void *)stream_base,
+            error_code,
+            aws_error_name(error_code));
+
+        aws_h1_trailer_destroy(trailer);
+        return aws_raise_error(error_code);
+    }
+
+    AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Adding trailer to stream", (void *)stream);
+
+    if (should_schedule_task) {
+        /* Keep stream alive until task completes */
+        aws_atomic_fetch_add(&stream->base.refcount, 1);
+        AWS_LOGF_TRACE(AWS_LS_HTTP_STREAM, "id=%p: Scheduling stream cross-thread work task.", (void *)stream_base);
+        aws_channel_schedule_task_now(
+            stream->base.owning_connection->channel_slot->channel, &stream->cross_thread_work_task);
+    } else {
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_STREAM, "id=%p: Stream cross-thread work task was already scheduled.", (void *)stream_base);
+    }
+
+    return AWS_OP_SUCCESS;
+}
+
 static const struct aws_http_stream_vtable s_stream_vtable = {
     .destroy = s_stream_destroy,
     .update_window = s_stream_update_window,
     .activate = aws_h1_stream_activate,
     .http1_write_chunk = s_stream_write_chunk,
+    .http1_add_trailer = s_stream_add_trailer,
     .http2_reset_stream = NULL,
     .http2_get_received_error_code = NULL,
     .http2_get_sent_error_code = NULL,

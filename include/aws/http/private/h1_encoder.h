@@ -19,6 +19,11 @@ struct aws_h1_chunk {
     struct aws_byte_buf chunk_line;
 };
 
+struct aws_h1_trailer {
+    struct aws_allocator *allocator;
+    struct aws_byte_buf trailer_data;
+};
+
 /**
  * Message to be submitted to encoder.
  * Contains data necessary for encoder to write an outgoing request or response.
@@ -35,6 +40,9 @@ struct aws_h1_encoder_message {
      * If list goes empty, encoder waits for more chunks to arrive.
      * A chunk with data_size=0 means "final chunk" */
     struct aws_linked_list *pending_chunk_list;
+
+    /* Pointer to chunked_trailer, used for chunked_trailer. */
+    struct aws_h1_trailer *trailer;
 
     /* If non-zero, length of unchunked body to send */
     uint64_t content_length;
@@ -71,6 +79,11 @@ struct aws_h1_encoder {
 };
 
 struct aws_h1_chunk *aws_h1_chunk_new(struct aws_allocator *allocator, const struct aws_http1_chunk_options *options);
+struct aws_h1_trailer *aws_h1_trailer_new(
+    struct aws_allocator *allocator,
+    const struct aws_http_headers *trailing_headers);
+
+void aws_h1_trailer_destroy(struct aws_h1_trailer *trailer);
 
 /* Just destroy the chunk (don't fire callback) */
 void aws_h1_chunk_destroy(struct aws_h1_chunk *chunk);

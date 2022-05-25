@@ -62,6 +62,8 @@ struct aws_h1_stream {
          * Encoder completes/frees/pops front chunk when it's done sending. */
         struct aws_linked_list pending_chunk_list;
 
+        struct aws_h1_encoder_message message;
+
         /* Size of stream's flow-control window.
          * Only body data (not headers, etc) counts against the stream's flow-control window. */
         uint64_t stream_window;
@@ -79,6 +81,10 @@ struct aws_h1_stream {
          * but haven't yet moved to encoder_message.pending_chunk_list where the encoder will find them. */
         struct aws_linked_list pending_chunk_list;
 
+        /* trailing headers which have been submitted by user,
+         * but haven't yet moved to encoder_message where the encoder will find them. */
+        struct aws_h1_trailer *pending_trailer;
+
         enum aws_h1_stream_api_state api_state;
 
         /* Sum of all aws_http_stream_update_window() calls that haven't yet moved to thread_data.stream_window */
@@ -93,6 +99,12 @@ struct aws_h1_stream {
 
         /* Whether the outgoing message is using chunked encoding */
         bool using_chunked_encoding : 1;
+
+        /* Whether the final 0 length chunk has already been sent */
+        bool has_final_chunk : 1;
+
+        /* Whether the chunked trailer has already been sent */
+        bool has_added_trailer : 1;
     } synced_data;
 };
 

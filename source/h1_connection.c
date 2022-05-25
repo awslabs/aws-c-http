@@ -246,7 +246,7 @@ static size_t s_calculate_stream_mode_desired_connection_window(struct aws_h1_co
     AWS_ASSERT(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
     AWS_ASSERT(!connection->thread_data.has_switched_protocols);
 
-    if (!connection->base.manual_window_management) {
+    if (!connection->base.stream_manual_window_management) {
         return SIZE_MAX;
     }
 
@@ -1146,7 +1146,7 @@ static int s_decoder_on_body(const struct aws_byte_cursor *data, bool finished, 
     AWS_LOGF_TRACE(
         AWS_LS_HTTP_STREAM, "id=%p: Incoming body: %zu bytes received.", (void *)&incoming_stream->base, data->len);
 
-    if (connection->base.manual_window_management) {
+    if (connection->base.stream_manual_window_management) {
         /* Let stream window shrink by amount of body data received */
         if (data->len > incoming_stream->thread_data.stream_window) {
             /* This error shouldn't be possible, but it's all complicated, so do runtime check to be safe. */
@@ -1271,7 +1271,7 @@ static struct aws_h1_connection *s_connection_new(
     connection->base.channel_handler.alloc = alloc;
     connection->base.channel_handler.impl = connection;
     connection->base.http_version = AWS_HTTP_VERSION_1_1;
-    connection->base.manual_window_management = manual_window_management;
+    connection->base.stream_manual_window_management = manual_window_management;
 
     /* Init the next stream id (server must use even ids, client odd [RFC 7540 5.1.1])*/
     connection->base.next_stream_id = server ? 2 : 1;

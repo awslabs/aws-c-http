@@ -118,6 +118,12 @@ struct aws_h2_stream {
 
     /* Store the received reset HTTP/2 error code, set to -1, if none has received so far */
     int64_t received_reset_error_code;
+
+    /**
+     * Back up the message if we create a new message from it to keep the underlying input stream alive.
+     * TODO: remove this once we have input stream refcounted
+     */
+    struct aws_http_message *backup_outgoing_message;
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);
@@ -163,6 +169,7 @@ struct aws_h2err aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *str
 struct aws_h2err aws_h2_stream_on_decoder_data_begin(
     struct aws_h2_stream *stream,
     uint32_t payload_len,
+    uint32_t total_padding_bytes,
     bool end_stream);
 struct aws_h2err aws_h2_stream_on_decoder_data_i(struct aws_h2_stream *stream, struct aws_byte_cursor data);
 struct aws_h2err aws_h2_stream_on_decoder_window_update(

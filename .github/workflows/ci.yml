@@ -2,16 +2,15 @@ name: CI
 
 on:
   push:
-    branches:
-      - '*'
-      - '!main'
+    branches-ignore:
+      - 'main'
 
 env:
-  BUILDER_VERSION: v0.8.27
+  BUILDER_VERSION: v0.9.15
   BUILDER_SOURCE: releases
   BUILDER_HOST: https://d19elf31gohf1l.cloudfront.net
   PACKAGE_NAME: aws-c-http
-  LINUX_BASE_IMAGE: ubuntu-16-x64
+  LINUX_BASE_IMAGE: ubuntu-18-x64
   RUN: ${{ github.run_id }}-${{ github.run_number }}
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -19,7 +18,7 @@ env:
 
 jobs:
   linux-compat:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04 # latest
     strategy:
       matrix:
         image:
@@ -40,7 +39,7 @@ jobs:
         ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ matrix.image }} build downstream -p ${{ env.PACKAGE_NAME }}
 
   linux-compiler-compat:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04 # latest
     strategy:
       matrix:
         compiler:
@@ -63,7 +62,7 @@ jobs:
           ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ env.LINUX_BASE_IMAGE }} build downstream -p ${{ env.PACKAGE_NAME }} --compiler=${{ matrix.compiler }}
 
   clang-sanitizers:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04 # latest
     strategy:
       matrix:
         sanitizers: [",thread", ",address,undefined"]
@@ -75,7 +74,7 @@ jobs:
           ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ env.LINUX_BASE_IMAGE }} build -p ${{ env.PACKAGE_NAME }} --compiler=clang-11 --cmake-extra=-DENABLE_SANITIZERS=ON --cmake-extra=-DSANITIZERS="${{ matrix.sanitizers }}"
 
   linux-shared-libs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04 # latest
     steps:
       # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
       - name: Build ${{ env.PACKAGE_NAME }}
@@ -84,7 +83,7 @@ jobs:
           ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ env.LINUX_BASE_IMAGE }} build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DBUILD_SHARED_LIBS=ON
 
   byo-crypto:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04 # latest
     steps:
       # We can't use the `uses: docker://image` version yet, GitHub lacks authentication for actions -> packages
       - name: Build ${{ env.PACKAGE_NAME }}
@@ -93,7 +92,7 @@ jobs:
           ./linux-container-ci.sh ${{ env.BUILDER_VERSION }} aws-crt-${{ env.LINUX_BASE_IMAGE }} build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DBYO_CRYPTO=ON
 
   windows:
-    runs-on: windows-latest
+    runs-on: windows-2022 # latest
     steps:
     - name: Build ${{ env.PACKAGE_NAME }} + consumers
       run: |
@@ -101,7 +100,7 @@ jobs:
         python builder.pyz build -p ${{ env.PACKAGE_NAME }}
 
   windows-vc14:
-    runs-on: windows-latest
+    runs-on: windows-2019 # windows-2019 is last env with Visual Studio 2015 (v14.0)
     strategy:
       matrix:
         arch: [x86, x64]
@@ -112,7 +111,7 @@ jobs:
         python builder.pyz build -p ${{ env.PACKAGE_NAME }} --target windows-${{ matrix.arch }} --compiler msvc-14
 
   windows-shared-libs:
-    runs-on: windows-latest
+    runs-on: windows-2022 # latest
     steps:
     - name: Build ${{ env.PACKAGE_NAME }} + consumers
       run: |
@@ -120,7 +119,7 @@ jobs:
         python builder.pyz build -p ${{ env.PACKAGE_NAME }} --cmake-extra=-DBUILD_SHARED_LIBS=ON
 
   osx:
-    runs-on: macos-latest
+    runs-on: macos-11 # latest
     steps:
     - name: Build ${{ env.PACKAGE_NAME }} + consumers
       run: |
@@ -129,3 +128,50 @@ jobs:
         ./builder build downstream -p ${{ env.PACKAGE_NAME }}
 
 
+  localhost-test-linux:
+    runs-on: ubuntu-20.04 # latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    - name: Configure local host
+      run: |
+        python3 -m pip install h2
+        cd ./tests/py_localhost/
+        python3 server.py &
+        python3 non_tls_server.py &
+    - name: Build and test
+      run: |
+        python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
+        python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON
+
+  localhost-test-mac:
+    runs-on: macos-11 # latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    - name: Configure local host
+      run: |
+        python3 -m pip install h2
+        cd ./tests/py_localhost/
+        python3 server.py &
+        python3 non_tls_server.py &
+    - name: Build and test
+      run: |
+        python3 -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
+        python3 builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON
+
+  localhost-test-win:
+    runs-on: windows-2022 # latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    - name: Configure local host
+      run: |
+        python -m pip install h2
+    - name: Build and test
+      run: |
+        cd ./tests/py_localhost/
+        Start-Process -NoNewWindow python .\server.py
+        Start-Process -NoNewWindow python .\non_tls_server.py
+        python -c "from urllib.request import urlretrieve; urlretrieve('${{ env.BUILDER_HOST }}/${{ env.BUILDER_SOURCE }}/${{ env.BUILDER_VERSION }}/builder.pyz?run=${{ env.RUN }}', 'builder.pyz')"
+        python builder.pyz build -p aws-c-http --cmake-extra=-DENABLE_LOCALHOST_INTEGRATION_TESTS=ON

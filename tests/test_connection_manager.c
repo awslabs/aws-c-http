@@ -52,6 +52,10 @@ struct cm_tester_options {
     size_t max_connections;
     uint64_t max_connection_idle_in_ms;
     uint64_t starting_mock_time;
+    bool http2;
+    struct aws_http2_setting *initial_settings_array;
+    size_t num_initial_settings;
+    bool self_lib_init;
 };
 
 struct cm_tester {
@@ -90,6 +94,7 @@ struct cm_tester {
     struct proxy_env_var_settings proxy_ev_settings;
     bool proxy_request_complete;
     bool proxy_request_successful;
+    bool self_lib_init;
 };
 
 static struct cm_tester s_tester;
@@ -131,9 +136,10 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     struct cm_tester *tester = &s_tester;
 
     AWS_ZERO_STRUCT(*tester);
-
-    aws_http_library_init(options->allocator);
-
+    tester->self_lib_init = options->self_lib_init;
+    if (!tester->self_lib_init) {
+        aws_http_library_init(options->allocator);
+    }
     tester->allocator = options->allocator;
 
     ASSERT_SUCCESS(aws_mutex_init(&tester->lock));
@@ -172,8 +178,12 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
     };
 
     aws_tls_ctx_options_init_default_client(&tester->tls_ctx_options, options->allocator);
+    if (options->http2) {
+        ASSERT_SUCCESS(aws_tls_ctx_options_set_alpn_list(&tester->tls_ctx_options, "h2"));
+    }
 
     tester->tls_ctx = aws_tls_client_ctx_new(options->allocator, &tester->tls_ctx_options);
+
     ASSERT_NOT_NULL(tester->tls_ctx);
 
     struct aws_byte_cursor server_name = aws_byte_cursor_from_c_str("www.google.com");
@@ -202,6 +212,9 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         .shutdown_complete_user_data = tester,
         .shutdown_complete_callback = s_cm_tester_on_cm_shutdown_complete,
         .max_connection_idle_in_milliseconds = options->max_connection_idle_in_ms,
+        .prior_knowledge_http2 = !options->use_tls && options->http2,
+        .initial_settings_array = options->initial_settings_array,
+        .num_initial_settings = options->num_initial_settings,
     };
 
     if (options->mock_table) {
@@ -408,8 +421,9 @@ static int s_cm_tester_clean_up(void) {
     aws_tls_connection_options_clean_up(&tester->tls_connection_options);
     aws_tls_ctx_release(tester->tls_ctx);
 
-    aws_http_library_clean_up();
-
+    if (!tester->self_lib_init) {
+        aws_http_library_clean_up();
+    }
     aws_mutex_clean_up(&tester->lock);
     aws_condition_variable_clean_up(&tester->signal);
 
@@ -456,6 +470,86 @@ static int s_test_connection_manager_single_connection(struct aws_allocator *all
 }
 AWS_TEST_CASE(test_connection_manager_single_connection, s_test_connection_manager_single_connection);
 
+static int s_test_connection_manager_single_http2_connection(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+        .http2 = true,
+        .use_tls = true,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_acquire_connections(1);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
+
+    ASSERT_SUCCESS(s_release_connections(1, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_single_http2_connection, s_test_connection_manager_single_http2_connection);
+
+static int s_test_connection_manager_single_http2_connection_failed(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    /* google don't support prior_knowledge, so, this will fail to create the connection. Check we are good when acquire
+     * failed. */
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+        .http2 = true,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_acquire_connections(1);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
+
+    ASSERT_SUCCESS(s_release_connections(1, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_connection_manager_single_http2_connection_failed,
+    s_test_connection_manager_single_http2_connection_failed);
+
+static int s_test_connection_manager_single_http2_connection_with_settings(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+    struct aws_http2_setting settings_array[] = {
+        {.id = AWS_HTTP2_SETTINGS_ENABLE_PUSH, .value = 0},
+    };
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 5,
+        .http2 = true,
+        .use_tls = true,
+        .initial_settings_array = settings_array,
+        .num_initial_settings = AWS_ARRAY_SIZE(settings_array),
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_acquire_connections(1);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(1));
+
+    ASSERT_SUCCESS(s_release_connections(1, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(
+    test_connection_manager_single_http2_connection_with_settings,
+    s_test_connection_manager_single_http2_connection_with_settings);
+
 static int s_test_connection_manager_many_connections(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
 
@@ -477,6 +571,30 @@ static int s_test_connection_manager_many_connections(struct aws_allocator *allo
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_many_connections, s_test_connection_manager_many_connections);
+
+static int s_test_connection_manager_many_http2_connections(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    struct cm_tester_options options = {
+        .allocator = allocator,
+        .max_connections = 20,
+        .http2 = true,
+        .use_tls = true,
+    };
+
+    ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+    s_acquire_connections(20);
+
+    ASSERT_SUCCESS(s_wait_on_connection_reply_count(20));
+
+    ASSERT_SUCCESS(s_release_connections(20, false));
+
+    ASSERT_SUCCESS(s_cm_tester_clean_up());
+
+    return AWS_OP_SUCCESS;
+}
+AWS_TEST_CASE(test_connection_manager_many_http2_connections, s_test_connection_manager_many_http2_connections);
 
 static int s_test_connection_manager_acquire_release(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
@@ -638,6 +756,13 @@ static struct aws_channel *s_aws_http_connection_manager_connection_get_channel_
     return (struct aws_channel *)1;
 }
 
+static enum aws_http_version s_aws_http_connection_manager_connection_get_version_sync_mock(
+    const struct aws_http_connection *connection) {
+    (void)connection;
+
+    return AWS_HTTP_VERSION_1_1;
+}
+
 static struct aws_http_connection_manager_system_vtable s_synchronous_mocks = {
     .create_connection = s_aws_http_connection_manager_create_connection_sync_mock,
     .release_connection = s_aws_http_connection_manager_release_connection_sync_mock,
@@ -646,6 +771,7 @@ static struct aws_http_connection_manager_system_vtable s_synchronous_mocks = {
     .get_monotonic_time = aws_high_res_clock_get_ticks,
     .connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
     .is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
+    .connection_get_version = s_aws_http_connection_manager_connection_get_version_sync_mock,
 };
 
 static int s_test_connection_manager_acquire_release_mix_synchronous(struct aws_allocator *allocator, void *ctx) {
@@ -770,6 +896,7 @@ static struct aws_http_connection_manager_system_vtable s_idle_mocks = {
     .get_monotonic_time = s_tester_get_mock_time,
     .connection_get_channel = s_aws_http_connection_manager_connection_get_channel_sync_mock,
     .is_callers_thread = s_aws_http_connection_manager_is_callers_thread_sync_mock,
+    .connection_get_version = s_aws_http_connection_manager_connection_get_version_sync_mock,
 };
 
 static int s_register_acquired_connections(struct aws_array_list *seen_connections) {
@@ -993,6 +1120,38 @@ static int s_test_connection_manager_idle_culling_mixture(struct aws_allocator *
     return AWS_OP_SUCCESS;
 }
 AWS_TEST_CASE(test_connection_manager_idle_culling_mixture, s_test_connection_manager_idle_culling_mixture);
+
+/**
+ * Once upon time, if the culling test is running while the connection manager is shutting, the refcount will be messed
+ * up (back from zero to one and trigger the destroy to happen twice)
+ */
+static int s_test_connection_manager_idle_culling_refcount(struct aws_allocator *allocator, void *ctx) {
+    (void)ctx;
+
+    aws_http_library_init(allocator);
+    for (size_t i = 0; i < 10; i++) {
+        /* To reproduce that more stable, repeat it 10 times. */
+        struct cm_tester_options options = {
+            .allocator = allocator,
+            .max_connections = 10,
+            .max_connection_idle_in_ms = 10,
+            .self_lib_init = true,
+        };
+
+        ASSERT_SUCCESS(s_cm_tester_init(&options));
+
+        uint64_t ten_ms_in_nanos = aws_timestamp_convert(10, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
+
+        /* Don't ask me how I got the number. :) */
+        aws_thread_current_sleep(ten_ms_in_nanos - 10000);
+
+        ASSERT_SUCCESS(s_cm_tester_clean_up());
+    }
+    aws_http_library_clean_up();
+    return AWS_OP_SUCCESS;
+}
+
+AWS_TEST_CASE(test_connection_manager_idle_culling_refcount, s_test_connection_manager_idle_culling_refcount);
 
 /**
  * Proxy integration tests. Maybe we should move this to another file. But let's do it later. Someday.

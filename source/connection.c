@@ -89,7 +89,8 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
     size_t initial_window_size,
     const struct aws_hash_table *alpn_string_map,
     const struct aws_http1_connection_options *http1_options,
-    const struct aws_http2_connection_options *http2_options) {
+    const struct aws_http2_connection_options *http2_options,
+    void *connection_user_data) {
 
     struct aws_channel_slot *connection_slot = NULL;
     struct aws_http_connection *connection = NULL;
@@ -173,6 +174,7 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
         }
     } else {
         if (prior_knowledge_http2) {
+            AWS_LOGF_TRACE(AWS_LS_HTTP_CONNECTION, "Using prior knowledge to start HTTP/2 connection");
             version = AWS_HTTP_VERSION_2;
         }
     }
@@ -216,6 +218,7 @@ struct aws_http_connection *aws_http_connection_new_channel_handler(
 
         goto error;
     }
+    connection->user_data = connection_user_data;
 
     /* Connect handler and slot */
     if (aws_channel_slot_set_handler(connection_slot, &connection->channel_handler)) {
@@ -388,7 +391,9 @@ void aws_http_connection_acquire(struct aws_http_connection *connection) {
 }
 
 void aws_http_connection_release(struct aws_http_connection *connection) {
-    AWS_ASSERT(connection);
+    if (!connection) {
+        return;
+    }
     size_t prev_refcount = aws_atomic_fetch_sub(&connection->refcount, 1);
     if (prev_refcount == 1) {
         AWS_LOGF_TRACE(
@@ -451,7 +456,8 @@ static void s_server_bootstrap_on_accept_channel_setup(
         server->initial_window_size,
         NULL, /* alpn_string_map */
         &http1_options,
-        &http2_options);
+        &http2_options,
+        NULL /* connection_user_data */);
     if (!connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_SERVER,
@@ -779,12 +785,13 @@ static void s_client_bootstrap_on_channel_setup(
         channel,
         false,
         http_bootstrap->is_using_tls,
-        http_bootstrap->manual_window_management,
+        http_bootstrap->stream_manual_window_management,
         http_bootstrap->prior_knowledge_http2,
         http_bootstrap->initial_window_size,
         http_bootstrap->alpn_string_map,
         &http_bootstrap->http1_options,
-        &http_bootstrap->http2_options);
+        &http_bootstrap->http2_options,
+        http_bootstrap->user_data);
     if (!http_bootstrap->connection) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION,
@@ -812,7 +819,6 @@ static void s_client_bootstrap_on_channel_setup(
     }
 
     http_bootstrap->connection->proxy_request_transform = http_bootstrap->proxy_request_transform;
-    http_bootstrap->connection->user_data = http_bootstrap->user_data;
 
     AWS_LOGF_INFO(
         AWS_LS_HTTP_CONNECTION,
@@ -1036,7 +1042,7 @@ int aws_http_client_connect_internal(
 
     http_bootstrap->alloc = options.allocator;
     http_bootstrap->is_using_tls = options.tls_options != NULL;
-    http_bootstrap->manual_window_management = options.manual_window_management;
+    http_bootstrap->stream_manual_window_management = options.manual_window_management;
     http_bootstrap->prior_knowledge_http2 = options.prior_knowledge_http2;
     http_bootstrap->initial_window_size = options.initial_window_size;
     http_bootstrap->user_data = options.user_data;
