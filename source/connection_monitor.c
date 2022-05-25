@@ -111,7 +111,6 @@ static void s_process_statistics(
             max_pending_io_interval_ms = pending_read_interval_ms;
         }
     }
-    /* TODO: Read bytes_per_second will overwrite write???? */
 
     AWS_LOGF_DEBUG(
         AWS_LS_IO_CHANNEL,
