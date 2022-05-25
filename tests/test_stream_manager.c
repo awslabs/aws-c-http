@@ -17,6 +17,7 @@
 #include <aws/http/private/http2_stream_manager_impl.h>
 #include <aws/http/private/proxy_impl.h>
 #include <aws/http/proxy.h>
+#include <aws/http/statistics.h>
 
 #include <aws/io/stream.h>
 #include <aws/io/uri.h>
@@ -42,6 +43,8 @@ struct sm_tester_options {
     size_t max_connections;
     size_t ideal_concurrent_streams_per_connection;
     size_t max_concurrent_streams_per_connection;
+
+    const struct aws_http_connection_monitoring_options *monitor_opt;
 
     struct aws_byte_cursor *uri_cursor;
 };
@@ -264,6 +267,7 @@ static int s_tester_init(struct sm_tester_options *options) {
         .max_connections = options->max_connections,
         .shutdown_complete_user_data = &s_tester,
         .shutdown_complete_callback = s_sm_tester_on_sm_shutdown_complete,
+        .monitoring_options = options->monitor_opt,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
@@ -1297,6 +1301,63 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
     ASSERT_TRUE((int)s_tester.stream_200_count == num_to_acquire);
+
+    return s_tester_clean_up();
+}
+
+struct observer_cb_data {
+    bool invoked;
+    size_t nonce;
+    size_t number_of_stats;
+    struct aws_crt_statistics_socket socket_stats;
+    struct aws_crt_statistics_http1_channel http_stats;
+};
+
+static void s_on_statistics_observe(size_t connection_nonce, const struct aws_array_list *stats, void *user_data) {
+    struct observer_cb_data *cb_data = user_data;
+    cb_data->invoked = true;
+    cb_data->nonce = connection_nonce;
+    cb_data->number_of_stats = aws_array_list_length(stats);
+
+    for (size_t i = 0; i < cb_data->number_of_stats; ++i) {
+        struct aws_crt_statistics_base *base_ptr = NULL;
+        aws_array_list_get_at(stats, (void **)&base_ptr, i);
+
+        if (base_ptr->category == AWSCRT_STAT_CAT_SOCKET) {
+            cb_data->socket_stats = *(struct aws_crt_statistics_socket *)base_ptr;
+        }
+
+        if (base_ptr->category == AWSCRT_STAT_CAT_HTTP1_CHANNEL) {
+            cb_data->http_stats = *(struct aws_crt_statistics_http1_channel *)base_ptr;
+        }
+    }
+}
+
+/* Test that connection monitor works properly with HTTP/2 stream manager */
+TEST_CASE(localhost_integ_h2_sm_connection_monitor) {
+    (void)ctx;
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/slowConnTest");
+    struct observer_cb_data cb_data;
+    AWS_ZERO_STRUCT(cb_data);
+    struct aws_http_connection_monitoring_options monitor_opt = {
+        .allowable_throughput_failure_interval_seconds = 1,
+        .minimum_throughput_bytes_per_second = 1000,
+        .statistics_observer_fn = s_on_statistics_observe,
+        .statistics_observer_user_data = &cb_data,
+    };
+    struct sm_tester_options options = {
+        .max_connections = 100,
+        .max_concurrent_streams_per_connection = 100,
+        .alloc = allocator,
+        .uri_cursor = &uri_cursor,
+        .monitor_opt = &monitor_opt,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
+    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
+    ASSERT_TRUE((int)s_tester.stream_200_count == 1);
 
     return s_tester_clean_up();
 }

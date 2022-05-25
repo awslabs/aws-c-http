@@ -102,6 +102,7 @@ static void s_process_statistics(
             max_pending_io_interval_ms = pending_read_interval_ms;
         }
     }
+    /* TODO: Read bytes_per_second will overwrite write???? */
 
     AWS_LOGF_DEBUG(
         AWS_LS_IO_CHANNEL,
@@ -112,8 +113,12 @@ static void s_process_statistics(
     /*
      * Check throughput only if at least one stream exists and was observed in that role previously
      *
+     * TODO: WHAT IS THIS? "observed in that role previously"? Same ID as before? Why?
+     *
      * ToDo: This logic only makes sense from an h1 perspective.  A similar requirement could be placed on
      * h2 stats by analyzing/tracking the min and max stream ids (per odd/even) at process timepoints.
+     *
+     * TODO: I don't understand this ToDo
      */
     bool check_throughput =
         (current_incoming_stream_id != 0 && current_incoming_stream_id == impl->last_incoming_stream_id) ||

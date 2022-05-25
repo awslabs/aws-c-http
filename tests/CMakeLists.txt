@@ -621,6 +621,7 @@ if (ENABLE_LOCALHOST_INTEGRATION_TESTS)
     add_net_test_case(localhost_integ_h2_sm_prior_knowledge)
     add_net_test_case(localhost_integ_h2_sm_acquire_stream_stress)
     add_net_test_case(localhost_integ_h2_sm_acquire_stream_stress_with_body)
+    add_net_test_case(localhost_integ_h2_sm_connection_monitor)
 endif()
 
 add_test_case(random_access_set_sanitize_test)

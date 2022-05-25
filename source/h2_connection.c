@@ -146,6 +146,8 @@ struct aws_h2err s_decoder_on_goaway(
     uint32_t error_code,
     struct aws_byte_cursor debug_data,
     void *userdata);
+static void s_reset_statistics(struct aws_channel_handler *handler);
+static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_array_list *stats);
 
 static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .channel_handler_vtable =
@@ -157,6 +159,8 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
             .initial_window_size = s_handler_initial_window_size,
             .message_overhead = s_handler_message_overhead,
             .destroy = s_handler_destroy,
+            .reset_statistics = s_reset_statistics,
+            .gather_statistics = s_gather_statistics,
         },
 
     .on_channel_handler_installed = s_handler_installed,
@@ -2742,4 +2746,53 @@ static size_t s_handler_message_overhead(struct aws_channel_handler *handler) {
 
     /* "All frames begin with a fixed 9-octet header followed by a variable-length payload" (RFC-7540 4.1) */
     return 9;
+}
+
+static void s_reset_statistics(struct aws_channel_handler *handler) {
+    struct aws_h2_connection *connection = handler->impl;
+
+    aws_crt_statistics_http1_channel_reset(&connection->thread_data.stats);
+}
+
+static void s_pull_up_stats_timestamps(struct aws_h2_connection *connection) {
+    uint64_t now_ns = 0;
+    if (aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns)) {
+        return;
+    }
+
+    if (connection->thread_data.outgoing_stream) {
+        s_add_time_measurement_to_stats(
+            connection->thread_data.outgoing_stream_timestamp_ns,
+            now_ns,
+            &connection->thread_data.stats.pending_outgoing_stream_ms);
+
+        connection->thread_data.outgoing_stream_timestamp_ns = now_ns;
+
+        connection->thread_data.stats.current_outgoing_stream_id =
+            aws_http_stream_get_id(&connection->thread_data.outgoing_stream->base);
+    }
+
+    if (connection->thread_data.incoming_stream) {
+        s_add_time_measurement_to_stats(
+            connection->thread_data.incoming_stream_timestamp_ns,
+            now_ns,
+            &connection->thread_data.stats.pending_incoming_stream_ms);
+
+        connection->thread_data.incoming_stream_timestamp_ns = now_ns;
+
+        connection->thread_data.stats.current_incoming_stream_id =
+            aws_http_stream_get_id(&connection->thread_data.incoming_stream->base);
+    }
+}
+
+static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_array_list *stats) {
+    struct aws_h2_connection *connection = handler->impl;
+
+    /* TODO: Need update the way we calculate statistics, to account for user-controlled pauses.
+     * If user is adding chunks 1 by 1, there can naturally be a gap in the upload.
+     * If the user lets the stream-window go to zero, there can naturally be a gap in the download. */
+    s_pull_up_stats_timestamps(connection);
+
+    void *stats_base = &connection->thread_data.stats;
+    aws_array_list_push_back(stats, &stats_base);
 }
