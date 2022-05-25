@@ -5140,7 +5140,7 @@ TEST_CASE(h2_client_manual_data_write) {
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
@@ -5206,7 +5206,7 @@ TEST_CASE(h2_client_manual_data_write_no_data) {
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
 
-    struct aws_http_message *request = aws_http_message_new_request(allocator);
+    struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
 
     struct aws_http_header request_headers_src[] = {
