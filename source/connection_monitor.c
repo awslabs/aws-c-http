@@ -39,6 +39,8 @@ static void s_process_statistics(
      * Pull out the data needed to perform the throughput calculation
      */
     size_t stats_count = aws_array_list_length(stats_list);
+    bool http2 = false;
+    bool http2_was_non_active = false;
     for (size_t i = 0; i < stats_count; ++i) {
         struct aws_crt_statistics_base *stats_base = NULL;
         if (aws_array_list_get_at(stats_list, &stats_base, i)) {
@@ -54,6 +56,7 @@ static void s_process_statistics(
             }
 
             case AWSCRT_STAT_CAT_HTTP1_CHANNEL: {
+                AWS_ASSERT(!http2);
                 struct aws_crt_statistics_http1_channel *http1_stats =
                     (struct aws_crt_statistics_http1_channel *)stats_base;
                 pending_read_interval_ms = http1_stats->pending_incoming_stream_ms;
@@ -69,7 +72,8 @@ static void s_process_statistics(
                     (struct aws_crt_statistics_http2_channel *)stats_base;
                 pending_read_interval_ms = http2_stats->pending_incoming_stream_ms;
                 pending_write_interval_ms = http2_stats->pending_outgoing_stream_ms;
-
+                http2_was_non_active |= http2_stats->was_non_active;
+                http2 = true;
                 break;
             }
 
@@ -119,21 +123,21 @@ static void s_process_statistics(
         bytes_per_second);
 
     /*
-     * Check throughput only if at least one stream exists and was observed in that role previously
-     *
-     * TODO: WHAT IS THIS? "observed in that role previously"? Same ID as before? Why?
-     *
-     * ToDo: This logic only makes sense from an h1 perspective.  A similar requirement could be placed on
-     * h2 stats by analyzing/tracking the min and max stream ids (per odd/even) at process timepoints.
-     *
-     * TODO: I don't understand this ToDo
+     * Check throughput only if the connection has active stream and no gap between.
      */
-    bool check_throughput =
-        (current_incoming_stream_id != 0 && current_incoming_stream_id == impl->last_incoming_stream_id) ||
-        (current_outgoing_stream_id != 0 && current_outgoing_stream_id == impl->last_outgoing_stream_id);
+    bool check_throughput = false;
+    if (http2) {
+        /* For HTTP/2, check throughput only if there always has any active stream on the connection */
+        check_throughput = !http2_was_non_active;
+    } else {
+        /* For HTTP/1, check throughput only if at least one stream exists and was observed in that role previously */
+        check_throughput =
+            (current_incoming_stream_id != 0 && current_incoming_stream_id == impl->last_incoming_stream_id) ||
+            (current_outgoing_stream_id != 0 && current_outgoing_stream_id == impl->last_outgoing_stream_id);
 
-    impl->last_outgoing_stream_id = current_outgoing_stream_id;
-    impl->last_incoming_stream_id = current_incoming_stream_id;
+        impl->last_outgoing_stream_id = current_outgoing_stream_id;
+        impl->last_incoming_stream_id = current_incoming_stream_id;
+    }
     impl->last_measured_throughput = bytes_per_second;
 
     if (!check_throughput) {

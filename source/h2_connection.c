@@ -383,6 +383,7 @@ static struct aws_h2_connection *s_connection_new(
     connection->thread_data.goaway_sent_last_stream_id = AWS_H2_STREAM_ID_MAX;
 
     aws_crt_statistics_http2_channel_init(&connection->thread_data.stats);
+    connection->thread_data.stats.was_non_active = true; /* Start with non active streams */
 
     connection->synced_data.is_open = true;
     connection->synced_data.new_stream_error_code = AWS_ERROR_SUCCESS;
@@ -1787,11 +1788,12 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
     if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0) {
         uint64_t now_ns = 0;
         aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns);
-        /* transition from something to read -> nothing to read */
+        /* transition from something to read -> nothing to read and nothing to write */
         s_add_time_measurement_to_stats(
             connection->thread_data.incoming_timestamp_ns,
             now_ns,
             &connection->thread_data.stats.pending_incoming_stream_ms);
+        connection->thread_data.stats.was_non_active = true;
     }
 
     /* Invoke callback */
@@ -2818,6 +2820,8 @@ static void s_pull_up_stats_timestamps(struct aws_h2_connection *connection) {
             &connection->thread_data.stats.pending_incoming_stream_ms);
 
         connection->thread_data.incoming_timestamp_ns = now_ns;
+    } else {
+        connection->thread_data.stats.was_non_active = true;
     }
 }
 
@@ -2833,4 +2837,8 @@ static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_
 
     void *stats_base = &connection->thread_data.stats;
     aws_array_list_push_back(stats, &stats_base);
+    if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) != 0) {
+        /* The statistic has been reported, reset the state only if there is any active streams. */
+        connection->thread_data.stats.was_non_active = false;
+    }
 }
