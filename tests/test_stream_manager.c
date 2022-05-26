@@ -47,8 +47,10 @@ struct sm_tester_options {
     const struct aws_http_connection_monitoring_options *monitor_opt;
 
     struct aws_byte_cursor *uri_cursor;
+    const enum aws_log_level *log_level;
 };
 
+static struct aws_logger s_logger;
 struct sm_tester {
     struct aws_allocator *allocator;
     struct aws_event_loop_group *event_loop_group;
@@ -189,6 +191,14 @@ static int s_tester_init(struct sm_tester_options *options) {
     aws_http_library_init(alloc);
 
     s_tester.allocator = alloc;
+
+    struct aws_logger_standard_options logger_options = {
+        .level = options->log_level ? *options->log_level : AWS_LOG_LEVEL_TRACE,
+        .file = stderr,
+    };
+
+    aws_logger_init_standard(&s_logger, alloc, &logger_options);
+    aws_logger_set(&s_logger);
 
     ASSERT_SUCCESS(aws_mutex_init(&s_tester.lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&s_tester.signal));
@@ -408,6 +418,7 @@ static int s_tester_clean_up(void) {
     aws_condition_variable_clean_up(&s_tester.signal);
     aws_array_list_clean_up(&s_tester.streams);
     aws_uri_clean_up(&s_tester.endpoint);
+    aws_logger_clean_up(&s_logger);
 
     return AWS_OP_SUCCESS;
 }
@@ -1202,12 +1213,14 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
         .allowable_throughput_failure_interval_seconds = 1,
         .minimum_throughput_bytes_per_second = 1000,
     };
+    enum aws_log_level log_level = AWS_LOG_LEVEL_DEBUG;
     struct sm_tester_options options = {
         .max_connections = 100,
         .max_concurrent_streams_per_connection = 100,
         .alloc = allocator,
         .uri_cursor = &uri_cursor,
         .monitor_opt = &monitor_opt,
+        .log_level = &log_level,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
     int num_to_acquire = 500 * 100;

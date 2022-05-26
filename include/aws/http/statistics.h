@@ -37,6 +37,7 @@ struct aws_crt_statistics_http2_channel {
 
     /* True if during the time of report, there has ever been no active streams on the connection */
     bool was_non_active;
+    uint32_t num_active_streams;
 };
 
 AWS_EXTERN_C_BEGIN

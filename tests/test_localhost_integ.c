@@ -240,6 +240,10 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
         .keepalive = false,
         .keep_alive_interval_sec = 0,
     };
+    struct aws_http_connection_monitoring_options monitor_opt = {
+        .allowable_throughput_failure_interval_seconds = 1,
+        .minimum_throughput_bytes_per_second = 1000,
+    };
     struct aws_http_client_connection_options client_options = {
         .self_size = sizeof(struct aws_http_client_connection_options),
         .allocator = allocator,
@@ -251,6 +255,7 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
         .tls_options = &tester->tls_connection_options,
         .on_setup = s_on_connection_setup,
         .on_shutdown = s_on_connection_shutdown,
+        .monitoring_options = &monitor_opt,
     };
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
     struct aws_logger_standard_options logger_options = {

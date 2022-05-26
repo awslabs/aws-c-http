@@ -2812,8 +2812,9 @@ static void s_pull_up_stats_timestamps(struct aws_h2_connection *connection) {
 
         connection->thread_data.outgoing_timestamp_ns = now_ns;
     }
-
-    if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) != 0) {
+    connection->thread_data.stats.num_active_streams =
+        aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map);
+    if (connection->thread_data.stats.num_active_streams != 0) {
         s_add_time_measurement_to_stats(
             connection->thread_data.incoming_timestamp_ns,
             now_ns,

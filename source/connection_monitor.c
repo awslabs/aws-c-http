@@ -41,6 +41,8 @@ static void s_process_statistics(
     size_t stats_count = aws_array_list_length(stats_list);
     bool http2 = false;
     bool http2_was_non_active = false;
+    uint32_t h2_num_active_stream = 0;
+
     for (size_t i = 0; i < stats_count; ++i) {
         struct aws_crt_statistics_base *stats_base = NULL;
         if (aws_array_list_get_at(stats_list, &stats_base, i)) {
@@ -73,6 +75,7 @@ static void s_process_statistics(
                 pending_read_interval_ms = http2_stats->pending_incoming_stream_ms;
                 pending_write_interval_ms = http2_stats->pending_outgoing_stream_ms;
                 http2_was_non_active |= http2_stats->was_non_active;
+                h2_num_active_stream = http2_stats->num_active_streams;
                 http2 = true;
                 break;
             }
@@ -144,6 +147,12 @@ static void s_process_statistics(
         AWS_LOGF_TRACE(AWS_LS_IO_CHANNEL, "id=%p: channel throughput does not need to be checked", (void *)channel);
         impl->throughput_failure_time_ms = 0;
         return;
+    } else {
+        AWS_LOGF_DEBUG(
+            AWS_LS_IO_CHANNEL,
+            "id=%p: h2 connection has %" PRIu32 " active streams",
+            (void *)channel,
+            h2_num_active_stream);
     }
 
     if (bytes_per_second >= impl->options.minimum_throughput_bytes_per_second) {
