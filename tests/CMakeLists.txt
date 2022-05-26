@@ -613,7 +613,6 @@ add_net_test_case(h2_sm_mock_goaway)
 # Tests against real world server
 add_net_test_case(h2_sm_acquire_stream)
 add_net_test_case(h2_sm_acquire_stream_multiple_connections)
-add_net_test_case(h2_sm_acquire_stream_stress)
 add_net_test_case(h2_sm_closing_before_connection_acquired)
 # Tests against local server
 if (ENABLE_LOCALHOST_INTEGRATION_TESTS)

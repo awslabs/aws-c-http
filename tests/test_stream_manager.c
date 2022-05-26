@@ -1127,26 +1127,6 @@ TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
     return s_tester_clean_up();
 }
 
-/* Test that makes tons of real streams */
-TEST_CASE(h2_sm_acquire_stream_stress) {
-    (void)ctx;
-    struct sm_tester_options options = {
-        .max_connections = 100,
-        .max_concurrent_streams_per_connection = 100,
-        .alloc = allocator,
-    };
-    ASSERT_SUCCESS(s_tester_init(&options));
-    int num_to_acquire = 200 * 100;
-    /* Because of network and things, we may fail some acquisition. Let's expect 99% success */
-    int expected_success = 198 * 100;
-    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
-    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
-    ASSERT_TRUE((int)s_tester.acquiring_stream_errors < (num_to_acquire - expected_success));
-    ASSERT_TRUE((int)s_tester.stream_200_count > expected_success);
-
-    return s_tester_clean_up();
-}
-
 static void s_sm_tester_on_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     if (s_tester.release_sm_during_connection_acquiring) {
         aws_http2_stream_manager_release(s_tester.stream_manager);
