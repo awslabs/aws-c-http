@@ -69,6 +69,11 @@ struct aws_h2_stream {
         int64_t window_size_self;
         struct aws_http_message *outgoing_message;
         bool received_main_headers;
+
+        /* The received content length, if any */
+        int64_t content_length;
+        /* The total length of payload of data frame received */
+        uint64_t received_data_length;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
