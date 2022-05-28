@@ -243,18 +243,6 @@ static const bool s_num_table[256] = {
     ['8'] = true,
     ['9'] = true,
 };
-static const int s_atoi_table[256] = {
-    ['0'] = 0,
-    ['1'] = 1,
-    ['2'] = 2,
-    ['3'] = 3,
-    ['4'] = 4,
-    ['5'] = 5,
-    ['6'] = 6,
-    ['7'] = 7,
-    ['8'] = 8,
-    ['9'] = 9,
-};
 
 int aws_strutil_to_uint64(struct aws_byte_cursor cursor, uint64_t *out) {
     uint64_t result = 0;
@@ -266,7 +254,7 @@ int aws_strutil_to_uint64(struct aws_byte_cursor cursor, uint64_t *out) {
         if (!s_num_table[cur]) {
             return AWS_OP_ERR;
         }
-        result = result * 10 + s_atoi_table[cur];
+        result = result * 10 + cur - '0';
     }
     *out = result;
     return AWS_OP_SUCCESS;
