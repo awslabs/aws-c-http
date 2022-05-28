@@ -761,7 +761,7 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_i(
                 stream->base.client_data->response_status = (int)status_code;
             } break;
             case AWS_HTTP_HEADER_CONTENT_LENGTH: {
-                stream->thread_data.content_length = strtoll((char *)header->value.ptr, NULL, 10);
+                aws_strutil_to_uint64(header->value, &stream->thread_data.content_length);
             } break;
             default:
                 break;

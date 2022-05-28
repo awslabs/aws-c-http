@@ -230,3 +230,44 @@ bool aws_strutil_is_http_pseudo_header_name(struct aws_byte_cursor cursor) {
     }
     return true;
 }
+
+static const bool s_num_table[256] = {
+    ['0'] = true,
+    ['1'] = true,
+    ['2'] = true,
+    ['3'] = true,
+    ['4'] = true,
+    ['5'] = true,
+    ['6'] = true,
+    ['7'] = true,
+    ['8'] = true,
+    ['9'] = true,
+};
+static const int s_atoi_table[256] = {
+    ['0'] = 0,
+    ['1'] = 1,
+    ['2'] = 2,
+    ['3'] = 3,
+    ['4'] = 4,
+    ['5'] = 5,
+    ['6'] = 6,
+    ['7'] = 7,
+    ['8'] = 8,
+    ['9'] = 9,
+};
+
+int aws_strutil_to_uint64(struct aws_byte_cursor cursor, uint64_t *out) {
+    uint64_t result = 0;
+    if (cursor.len == 0) {
+        return AWS_OP_ERR;
+    }
+    for (size_t i = 0; i < cursor.len; i++) {
+        const uint8_t cur = cursor.ptr[i];
+        if (!s_num_table[cur]) {
+            return AWS_OP_ERR;
+        }
+        result = result * 10 + s_atoi_table[cur];
+    }
+    *out = result;
+    return AWS_OP_SUCCESS;
+}

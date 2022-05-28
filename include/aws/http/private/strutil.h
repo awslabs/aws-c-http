@@ -80,5 +80,12 @@ bool aws_strutil_is_http_request_target(struct aws_byte_cursor cursor);
 AWS_HTTP_API
 bool aws_strutil_is_http_pseudo_header_name(struct aws_byte_cursor cursor);
 
+/**
+ * Parse the cursor as unsigned int.
+ * Return AWS_OP_ERROR if failed.
+ */
+AWS_HTTP_API
+int aws_strutil_to_uint64(struct aws_byte_cursor cursor, uint64_t *out);
+
 AWS_EXTERN_C_END
 #endif /* AWS_HTTP_STRUTIL_H */
