@@ -761,7 +761,9 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_i(
                 stream->base.client_data->response_status = (int)status_code;
             } break;
             case AWS_HTTP_HEADER_CONTENT_LENGTH: {
-                aws_strutil_to_uint64(header->value, &stream->thread_data.content_length);
+                int err = aws_byte_cursor_utf8_parse_u64(header->value, &stream->thread_data.content_length);
+                AWS_ASSERT(!err && "Invalid content-length value?");
+                (void)err;
             } break;
             default:
                 break;
