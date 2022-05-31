@@ -5182,7 +5182,7 @@ TEST_CASE(h2_client_manual_data_write) {
         }
     }
 
-    ASSERT_SUCCESS(aws_http2_stream_end(stream));
+    ASSERT_SUCCESS(aws_http2_stream_end_manual_write(stream));
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
@@ -5205,6 +5205,7 @@ TEST_CASE(h2_client_manual_data_write_no_data) {
     /* get connection preface and acks out of the way */
     ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&s_tester.peer));
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
+    size_t frame_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
 
     struct aws_http_message *request = aws_http2_message_new_request(allocator);
     ASSERT_NOT_NULL(request);
@@ -5225,11 +5226,15 @@ TEST_CASE(h2_client_manual_data_write_no_data) {
 
     aws_http_stream_activate(stream);
 
-    ASSERT_SUCCESS(aws_http2_stream_end(stream));
+    ASSERT_SUCCESS(aws_http2_stream_end_manual_write(stream));
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
-
+    size_t frame_count2 = h2_decode_tester_frame_count(&s_tester.peer.decode);
+    /* Peer should received header frame without end_stream and empty data frame with end_stream */
+    struct h2_decoded_frame *frame = h2_decode_tester_get_frame(&s_tester.peer.decode, 0);
+    struct h2_decoded_frame *frame_1 = h2_decode_tester_get_frame(&s_tester.peer.decode, 1);
+    struct h2_decoded_frame *frame_2 = h2_decode_tester_get_frame(&s_tester.peer.decode, 2);
     aws_http_message_release(request);
     aws_http_stream_release(stream);
 

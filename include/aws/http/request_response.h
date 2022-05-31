@@ -809,7 +809,7 @@ AWS_HTTP_API int aws_http2_stream_write_data(
  * Indicates that no more writes will be made to this stream
  * @see `aws_http2_stream_write_data` for an example
  */
-AWS_HTTP_API int aws_http2_stream_end(struct aws_http_stream *http2_stream);
+AWS_HTTP_API int aws_http2_stream_end_manual_write(struct aws_http_stream *http2_stream);
 
 /**
  * Add a list of headers to be added as trailing headers sent after the last chunk is sent.

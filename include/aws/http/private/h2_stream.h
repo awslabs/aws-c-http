@@ -98,7 +98,7 @@ struct aws_h2_stream {
          * code we want to inform user about. */
         struct aws_h2err reset_error;
         bool reset_called;
-        bool end_called;
+        bool manual_write_ended;
 
         /* Simplified stream state. */
         enum aws_h2_stream_api_state api_state;
@@ -112,6 +112,7 @@ struct aws_h2_stream {
          */
         bool waiting_for_writes;
     } synced_data;
+    bool manual_write;
 
     /* Store the sent reset HTTP/2 error code, set to -1, if none has sent so far */
     int64_t sent_reset_error_code;

@@ -762,12 +762,12 @@ int aws_http2_stream_write_data(
     return http2_stream->vtable->http2_write_data(http2_stream, options);
 }
 
-int aws_http2_stream_end(struct aws_http_stream *http2_stream) {
+int aws_http2_stream_end_manual_write(struct aws_http_stream *http2_stream) {
     AWS_PRECONDITION(http2_stream);
     AWS_PRECONDITION(http2_stream->vtable);
-    AWS_PRECONDITION(http2_stream->vtable->http2_end_stream);
+    AWS_PRECONDITION(http2_stream->vtable->http2_end_manual_write);
 
-    return http2_stream->vtable->http2_end_stream(http2_stream);
+    return http2_stream->vtable->http2_end_manual_write(http2_stream);
 }
 
 int aws_http1_stream_add_chunked_trailer(
