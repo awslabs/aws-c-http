@@ -318,6 +318,9 @@ static void s_headers_init(struct aws_allocator *alloc) {
     s_header_enum_to_str[AWS_HTTP_HEADER_RETRY_AFTER] = aws_byte_cursor_from_c_str("retry-after");
     s_header_enum_to_str[AWS_HTTP_HEADER_VARY] = aws_byte_cursor_from_c_str("vary");
     s_header_enum_to_str[AWS_HTTP_HEADER_WARNING] = aws_byte_cursor_from_c_str("warning");
+    s_header_enum_to_str[AWS_HTTP_HEADER_UPGRADE] = aws_byte_cursor_from_c_str("upgrade");
+    s_header_enum_to_str[AWS_HTTP_HEADER_KEEP_ALIVE] = aws_byte_cursor_from_c_str("keep-alive");
+    s_header_enum_to_str[AWS_HTTP_HEADER_PROXY_CONNECTION] = aws_byte_cursor_from_c_str("proxy-connection");
 
     s_init_str_to_enum_hash_table(
         &s_header_str_to_enum,

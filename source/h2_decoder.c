@@ -1340,7 +1340,17 @@ static struct aws_h2err s_process_header_field(
                     return aws_h2err_from_last_error();
                 }
                 break;
-            /* TODO: Validate connection-specific header field (RFC7540 8.1.2.2) */
+            case AWS_HTTP_HEADER_TRANSFER_ENCODING:
+            case AWS_HTTP_HEADER_UPGRADE:
+            case AWS_HTTP_HEADER_KEEP_ALIVE:
+            case AWS_HTTP_HEADER_PROXY_CONNECTION: {
+                /* connection-specific header field are treated as malformed (RFC9113 8.2.2) */
+                DECODER_LOG(ERROR, decoder, "Connection-specific headers found.");
+                DECODER_LOGF(
+                    DEBUG, decoder, "Connection-specific header name is '" PRInSTR "'", AWS_BYTE_CURSOR_PRI(name));
+                goto malformed;
+            } break;
+
             default:
                 /* Deliver header-field via callback */
                 if (current_block->is_push_promise) {
