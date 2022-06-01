@@ -1304,20 +1304,22 @@ static int s_stream_end_manual_write(struct aws_http_stream *stream_base) {
         aws_mem_calloc(stream->base.alloc, 1, sizeof(struct aws_h2_stream_data_write));
     pending_write->data_stream = aws_input_stream_acquire(&s_stream_end_stream);
     pending_write->end_stream = true;
-    s_lock_synced_data(stream);
-    {
-        if (stream->synced_data.manual_write_ended) {
-            s_unlock_synced_data(stream);
-            s_stream_data_write_destroy(stream, pending_write, AWS_OP_SUCCESS);
-            AWS_LOGF_WARN(AWS_LS_HTTP_STREAM, "Ignoring redundant request to end stream %p", (void *)stream_base);
-            return AWS_OP_SUCCESS;
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(stream);
+        {
+            if (stream->synced_data.manual_write_ended) {
+                s_unlock_synced_data(stream);
+                s_stream_data_write_destroy(stream, pending_write, AWS_OP_SUCCESS);
+                AWS_LOGF_WARN(AWS_LS_HTTP_STREAM, "Ignoring redundant request to end stream %p", (void *)stream_base);
+                return AWS_OP_SUCCESS;
+            }
+            stream->synced_data.manual_write_ended = true;
+            aws_linked_list_push_back(&stream->synced_data.pending_write_list, &pending_write->node);
+            schedule_cross_thread_work = !stream->synced_data.is_cross_thread_work_task_scheduled;
+            stream->synced_data.is_cross_thread_work_task_scheduled = true;
         }
-        stream->synced_data.manual_write_ended = true;
-        aws_linked_list_push_back(&stream->synced_data.pending_write_list, &pending_write->node);
-        schedule_cross_thread_work = !stream->synced_data.is_cross_thread_work_task_scheduled;
-        stream->synced_data.is_cross_thread_work_task_scheduled = true;
-    }
-    s_unlock_synced_data(stream);
+        s_unlock_synced_data(stream);
+    } /* END CRITICAL SECTION */
 
     if (schedule_cross_thread_work) {
         AWS_H2_STREAM_LOG(TRACE, stream, "Scheduling stream cross-thread work task");
