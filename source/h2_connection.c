@@ -326,7 +326,6 @@ static struct aws_h2_connection *s_connection_new(
     aws_linked_list_init(&connection->synced_data.pending_settings_list);
     aws_linked_list_init(&connection->synced_data.pending_ping_list);
     aws_linked_list_init(&connection->synced_data.pending_goaway_list);
-    aws_linked_list_init(&connection->synced_data.pending_resume_list);
 
     aws_linked_list_init(&connection->thread_data.outgoing_streams_list);
     aws_linked_list_init(&connection->thread_data.pending_settings_queue);
@@ -455,7 +454,6 @@ static void s_handler_destroy(struct aws_channel_handler *handler) {
         !aws_hash_table_is_valid(&connection->thread_data.active_streams_map) ||
         aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0);
 
-    AWS_ASSERT(aws_linked_list_empty(&connection->synced_data.pending_resume_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.waiting_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.stalled_window_streams_list));
     AWS_ASSERT(aws_linked_list_empty(&connection->thread_data.outgoing_streams_list));
@@ -860,10 +858,8 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
                 aws_linked_list_push_back(&stalled_streams_list, node);
                 break;
             case AWS_H2_DATA_ENCODE_ONGOING_WAITING_FOR_DATA:
-                aws_mutex_lock(&stream->synced_data.lock);
-                stream->synced_data.waiting_for_writes = true;
+                stream->thread_data.waiting_for_writes = true;
                 aws_linked_list_push_back(waiting_streams_list, node);
-                aws_mutex_unlock(&stream->synced_data.lock);
                 break;
             case AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED:
                 aws_linked_list_push_back(stalled_window_streams_list, node);
@@ -1873,11 +1869,13 @@ static void s_move_stream_to_thread(
     }
 
     bool has_outgoing_data = false;
-    if (aws_h2_stream_on_activated(stream, &has_outgoing_data)) {
+    bool waiting_for_writes = false;
+    if (aws_h2_stream_on_activated(stream, &has_outgoing_data, &waiting_for_writes)) {
         goto error;
     }
-
-    if (has_outgoing_data) {
+    if (waiting_for_writes) {
+        aws_linked_list_push_back(&connection->thread_data.waiting_streams_list, &stream->node);
+    } else if (has_outgoing_data) {
         aws_linked_list_push_back(&connection->thread_data.outgoing_streams_list, &stream->node);
     }
 
@@ -1911,9 +1909,6 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
     struct aws_linked_list pending_goaway;
     aws_linked_list_init(&pending_goaway);
 
-    struct aws_linked_list pending_resume;
-    aws_linked_list_init(&pending_resume);
-
     size_t window_update_size;
     int new_stream_error_code;
     { /* BEGIN CRITICAL SECTION */
@@ -1925,7 +1920,6 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         aws_linked_list_swap_contents(&connection->synced_data.pending_settings_list, &pending_settings);
         aws_linked_list_swap_contents(&connection->synced_data.pending_ping_list, &pending_ping);
         aws_linked_list_swap_contents(&connection->synced_data.pending_goaway_list, &pending_goaway);
-        aws_linked_list_swap_contents(&connection->synced_data.pending_resume_list, &pending_resume);
         window_update_size = connection->synced_data.window_update_size;
         connection->synced_data.window_update_size = 0;
         new_stream_error_code = connection->synced_data.new_stream_error_code;
@@ -1972,11 +1966,6 @@ static void s_cross_thread_work_task(struct aws_channel_task *task, void *arg, e
         aws_mem_release(connection->base.alloc, goaway);
     }
 
-    /* re-awaken sleeping streams */
-    while (!aws_linked_list_empty(&pending_resume)) {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(&pending_resume);
-        aws_linked_list_push_back(&connection->thread_data.outgoing_streams_list, node);
-    }
     /* It's likely that frames were queued while processing cross-thread work.
      * If so, try writing them now */
     aws_h2_try_write_outgoing_frames(connection);

@@ -284,7 +284,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     if (body_stream) {
         struct aws_h2_stream_data_write *body_write =
             aws_mem_calloc(stream->base.alloc, 1, sizeof(struct aws_h2_stream_data_write));
-        body_write->data_stream = body_stream;
+        body_write->data_stream = aws_input_stream_acquire(body_stream);
         body_write->end_stream = true;
         aws_linked_list_push_back(&stream->thread_data.outgoing_writes, &body_write->node);
     }
@@ -367,6 +367,12 @@ static void s_stream_cross_thread_work_task(struct aws_channel_task *task, void 
         }
     }
 
+    if (stream->thread_data.waiting_for_writes && !aws_linked_list_empty(&pending_writes)) {
+        /* Got more to write, move the stream back to outgoing list */
+        aws_linked_list_remove(&stream->node);
+        aws_linked_list_push_back(&connection->thread_data.outgoing_streams_list, &stream->node);
+        stream->thread_data.waiting_for_writes = false;
+    }
     /* move any pending writes to the outgoing write queue */
     aws_linked_list_move_all_back(&stream->thread_data.outgoing_writes, &pending_writes);
 
@@ -676,7 +682,7 @@ static bool s_h2_stream_current_write_ends_stream(struct aws_h2_stream *stream) 
     return write->end_stream;
 }
 
-int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data) {
+int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data, bool *waiting_for_writes) {
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
 
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
@@ -686,16 +692,6 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
     /* Should be ensured when the stream is created */
     AWS_ASSERT(aws_http_message_get_protocol_version(msg) == AWS_HTTP_VERSION_2);
     /* If manual write, always has data to be sent. */
-    if (stream->manual_write) {
-        if (aws_http_message_get_body_stream(msg) == NULL) {
-            /* TODO: lock */
-            { /* BEGIN CRITICAL SECTION */
-                s_lock_synced_data(stream);
-                stream->synced_data.waiting_for_writes = true;
-                s_unlock_synced_data(stream);
-            } /* END CRITICAL SECTION */
-        }
-    }
     bool with_data = aws_http_message_get_body_stream(msg) != NULL || stream->manual_write;
 
     struct aws_http_headers *h2_headers = aws_http_message_get_headers(msg);
@@ -728,8 +724,14 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgo
         stream->thread_data.state = AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL;
         AWS_H2_STREAM_LOG(TRACE, stream, "Sending HEADERS with END_STREAM. State -> HALF_CLOSED_LOCAL");
     }
-
-    *out_has_outgoing_data = aws_http_message_get_body_stream(msg) != NULL;
+    if (stream->manual_write) {
+        if (!s_h2_stream_has_outgoing_writes(stream)) {
+            /* Manual write, but don't have outgoing writes at the moment. Waiting for writes is true */
+            stream->thread_data.waiting_for_writes = true;
+            *waiting_for_writes = true;
+        }
+    }
+    *out_has_outgoing_data = s_h2_stream_has_outgoing_writes(stream);
     aws_h2_connection_enqueue_outgoing_frame(connection, headers_frame);
     return AWS_OP_SUCCESS;
 
@@ -1196,21 +1198,6 @@ struct aws_h2err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *strea
     return AWS_H2ERR_SUCCESS;
 }
 
-/* *_synced only invoked with lock held. */
-static void s_stream_queue_pending_write_synced(
-    struct aws_h2_stream *stream,
-    struct aws_h2_stream_data_write *pending_write) {
-    struct aws_h2_connection *connection = s_get_h2_connection(stream);
-    aws_linked_list_push_back(&stream->synced_data.pending_write_list, &pending_write->node);
-
-    /* If the stream is currently asleep */
-    if (stream->synced_data.waiting_for_writes) {
-        /* queue the stream for wake up */
-        aws_linked_list_push_back(&connection->synced_data.pending_resume_list, &stream->node);
-        stream->synced_data.waiting_for_writes = false;
-    }
-}
-
 static int s_stream_write_data(
     struct aws_http_stream *stream_base,
     const struct aws_http2_stream_write_data_options *options) {
@@ -1249,7 +1236,7 @@ static int s_stream_write_data(
             pending_write->on_complete = options->on_complete;
             pending_write->user_data = options->user_data;
 
-            s_stream_queue_pending_write_synced(stream, pending_write);
+            aws_linked_list_push_back(&stream->synced_data.pending_write_list, &pending_write->node);
             schedule_cross_thread_work = !stream->synced_data.is_cross_thread_work_task_scheduled;
             stream->synced_data.is_cross_thread_work_task_scheduled = true;
         }
@@ -1326,7 +1313,7 @@ static int s_stream_end_manual_write(struct aws_http_stream *stream_base) {
             return AWS_OP_SUCCESS;
         }
         stream->synced_data.manual_write_ended = true;
-        s_stream_queue_pending_write_synced(stream, pending_write);
+        aws_linked_list_push_back(&stream->synced_data.pending_write_list, &pending_write->node);
         schedule_cross_thread_work = !stream->synced_data.is_cross_thread_work_task_scheduled;
         stream->synced_data.is_cross_thread_work_task_scheduled = true;
     }

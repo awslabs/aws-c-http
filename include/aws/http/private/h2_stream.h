@@ -77,12 +77,16 @@ struct aws_h2_stream {
          * We leave it up to the remote peer to detect whether the max window size has been exceeded. */
         int64_t window_size_self;
         struct aws_http_message *outgoing_message;
-        /* all queued writes. If the message provides a body stream, it will be first in this list
+        /* All queued writes. If the message provides a body stream, it will be first in this list
          * This list can drain, which results in the stream being put to sleep (moved to waiting_streams_list in
-         * h2_connection).
-         */
+         * h2_connection). */
         struct aws_linked_list outgoing_writes; /* aws_http2_stream_data_write */
         bool received_main_headers;
+
+        /* Indicates that the stream is currently in the waiting_streams_list and is
+         * asleep. When stream needs to be awaken, moving the stream back to the outgoing_streams_list and set this bool
+         * to false */
+        bool waiting_for_writes;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */
@@ -105,12 +109,6 @@ struct aws_h2_stream {
 
         /* any data streams sent manually via aws_http2_stream_write_data */
         struct aws_linked_list pending_write_list; /* aws_h2_stream_pending_data */
-
-        /* indicates that the stream is currently in the waiting_streams_list and is
-         * asleep. Moving the stream back to the outgoing_streams_list in the connection
-         * will awaken it
-         */
-        bool waiting_for_writes;
     } synced_data;
     bool manual_write;
 
@@ -138,7 +136,7 @@ enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *str
 struct aws_h2err aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed, bool self);
 
 /* Connection is ready to send frames from stream now */
-int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data);
+int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data, bool *waiting_for_writes);
 
 /* Connection is closing stream for one reason or another, clean up any pending writes/resources */
 void aws_h2_stream_on_closed(struct aws_h2_stream *stream, int error_code);
