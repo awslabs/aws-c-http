@@ -895,6 +895,22 @@ struct aws_http_message *aws_http2_message_new_from_http1(
             (int)scheme_cursor.len,
             scheme_cursor.ptr);
 
+        struct aws_byte_cursor host_value;
+        AWS_ZERO_STRUCT(host_value);
+        if (aws_http_headers_get(http1_msg->headers, aws_byte_cursor_from_c_str("host"), &host_value) ==
+            AWS_OP_SUCCESS) {
+            if (aws_http_headers_add(copied_headers, aws_http_header_authority, host_value)) {
+                goto error;
+            }
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_GENERAL,
+                "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
+                (int)aws_http_header_authority.len,
+                aws_http_header_authority.ptr,
+                (int)host_value.len,
+                host_value.ptr);
+        }
+
         struct aws_byte_cursor path_cursor;
         if (aws_http_message_get_request_path(http1_msg, &path_cursor)) {
             AWS_LOGF_ERROR(
@@ -935,20 +951,6 @@ struct aws_http_message *aws_http2_message_new_from_http1(
             (int)aws_http_header_status.len,
             aws_http_header_status.ptr,
             status);
-    }
-    struct aws_byte_cursor host_value;
-    AWS_ZERO_STRUCT(host_value);
-    if (aws_http_headers_get(http1_msg->headers, aws_byte_cursor_from_c_str("host"), &host_value) == AWS_OP_SUCCESS) {
-        if (aws_http_headers_add(copied_headers, aws_http_header_authority, host_value)) {
-            goto error;
-        }
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_GENERAL,
-            "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
-            (int)aws_http_header_authority.len,
-            aws_http_header_authority.ptr,
-            (int)host_value.len,
-            host_value.ptr);
     }
 
     if (aws_byte_buf_init(&lower_name_buf, alloc, 256)) {
