@@ -226,6 +226,8 @@ static void s_release_stream_and_connection_lock(struct aws_h2_stream *stream, s
 static void s_add_time_measurement_to_stats(uint64_t start_ns, uint64_t end_ns, uint64_t *output_ms) {
     if (end_ns > start_ns) {
         *output_ms += aws_timestamp_convert(end_ns - start_ns, AWS_TIMESTAMP_NANOS, AWS_TIMESTAMP_MILLIS, NULL);
+    } else {
+        *output_ms = 0;
     }
 }
 
@@ -383,7 +385,7 @@ static struct aws_h2_connection *s_connection_new(
     connection->thread_data.goaway_sent_last_stream_id = AWS_H2_STREAM_ID_MAX;
 
     aws_crt_statistics_http2_channel_init(&connection->thread_data.stats);
-    connection->thread_data.stats.was_non_active = true; /* Start with non active streams */
+    connection->thread_data.stats.was_inactive = true; /* Start with non active streams */
 
     connection->synced_data.is_open = true;
     connection->synced_data.new_stream_error_code = AWS_ERROR_SUCCESS;
@@ -805,6 +807,9 @@ static int s_encode_outgoing_frames_queue(struct aws_h2_connection *connection, 
 static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connection, struct aws_byte_buf *output) {
 
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+    if (aws_linked_list_empty(outgoing_streams_list)) {
+        return AWS_OP_SUCCESS;
+    }
     struct aws_linked_list *outgoing_streams_list = &connection->thread_data.outgoing_streams_list;
     struct aws_linked_list *stalled_window_streams_list = &connection->thread_data.stalled_window_streams_list;
 
@@ -814,7 +819,6 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
     aws_linked_list_init(&stalled_streams_list);
 
     int aws_error_code = 0;
-    bool pre_empty = aws_linked_list_empty(outgoing_streams_list);
 
     /* We simply round-robin through streams, instead of using stream priority.
      * Respecting priority is not required (RFC-7540 5.3), so we're ignoring it for now. This also keeps use safe
@@ -827,7 +831,7 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
                 "Peer connection's flow-control window is too small now %zu. Connection will stop sending DATA until "
                 "WINDOW_UPDATE is received.",
                 connection->thread_data.window_size_peer);
-            break;
+            goto done;
         }
 
         /* Stop looping if message is so full it's not worth the bother */
@@ -888,7 +892,11 @@ done:
         aws_linked_list_push_back(outgoing_streams_list, aws_linked_list_pop_front(&stalled_streams_list));
     }
 
-    if (!pre_empty && aws_linked_list_empty(outgoing_streams_list)) {
+    if (aws_error_code) {
+        return aws_raise_error(aws_error_code);
+    }
+
+    if (aws_linked_list_empty(outgoing_streams_list)) {
         /* transition from something to write -> nothing to write */
         uint64_t now_ns = 0;
         aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns);
@@ -896,10 +904,6 @@ done:
             connection->thread_data.outgoing_timestamp_ns,
             now_ns,
             &connection->thread_data.stats.pending_outgoing_stream_ms);
-    }
-
-    if (aws_error_code) {
-        return aws_raise_error(aws_error_code);
     }
 
     return AWS_OP_SUCCESS;
@@ -1785,7 +1789,8 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
         aws_linked_list_remove(&stream->node);
     }
 
-    if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0) {
+    if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0 &&
+            connection->thread_data.incoming_timestamp_ns != 0;) {
         uint64_t now_ns = 0;
         aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns);
         /* transition from something to read -> nothing to read and nothing to write */
@@ -1793,7 +1798,8 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
             connection->thread_data.incoming_timestamp_ns,
             now_ns,
             &connection->thread_data.stats.pending_incoming_stream_ms);
-        connection->thread_data.stats.was_non_active = true;
+        connection->thread_data.stats.was_inactive = true;
+        connection->thread_data.incoming_timestamp_ns = 0;
     }
 
     /* Invoke callback */
@@ -1888,13 +1894,6 @@ static void s_move_stream_to_thread(
         goto error;
     }
 
-    if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0) {
-        /* transition from nothing to read -> something to read */
-        uint64_t now_ns = 0;
-        aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns);
-        connection->thread_data.incoming_timestamp_ns = now_ns;
-    }
-
     if (aws_hash_table_put(
             &connection->thread_data.active_streams_map, (void *)(size_t)stream->base.id, stream, NULL)) {
         AWS_H2_STREAM_LOG(ERROR, stream, "Failed inserting stream into map");
@@ -1904,6 +1903,13 @@ static void s_move_stream_to_thread(
     bool has_outgoing_data = false;
     if (aws_h2_stream_on_activated(stream, &has_outgoing_data)) {
         goto error;
+    }
+
+    if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0) {
+        /* transition from nothing to read -> something to read */
+        uint64_t now_ns = 0;
+        aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns);
+        connection->thread_data.incoming_timestamp_ns = now_ns;
     }
 
     if (has_outgoing_data) {
@@ -2795,10 +2801,23 @@ static size_t s_handler_message_overhead(struct aws_channel_handler *handler) {
 static void s_reset_statistics(struct aws_channel_handler *handler) {
     struct aws_h2_connection *connection = handler->impl;
     aws_crt_statistics_http2_channel_reset(&connection->thread_data.stats);
+    if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0) {
+        /* The statistic has been reported, reset the state only if there is any active streams. */
+        connection->thread_data.stats.was_inactive = true;
+    }
     return;
 }
 
-static void s_pull_up_stats_timestamps(struct aws_h2_connection *connection) {
+static void s_pull_up_stats_timestamps(struct aws_h2_connection *connection) {}
+
+static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_array_list *stats) {
+
+    struct aws_h2_connection *connection = handler->impl;
+    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+
+    /* TODO: Need update the way we calculate statistics, to account for user-controlled pauses.
+     * If user is adding chunks 1 by 1, there can naturally be a gap in the upload.
+     * If the user lets the stream-window go to zero, there can naturally be a gap in the download. */
     uint64_t now_ns = 0;
     if (aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns)) {
         return;
@@ -2812,9 +2831,7 @@ static void s_pull_up_stats_timestamps(struct aws_h2_connection *connection) {
 
         connection->thread_data.outgoing_timestamp_ns = now_ns;
     }
-    connection->thread_data.stats.num_active_streams =
-        (uint32_t)aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map);
-    if (connection->thread_data.stats.num_active_streams != 0) {
+    if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) != 0) {
         s_add_time_measurement_to_stats(
             connection->thread_data.incoming_timestamp_ns,
             now_ns,
@@ -2822,24 +2839,9 @@ static void s_pull_up_stats_timestamps(struct aws_h2_connection *connection) {
 
         connection->thread_data.incoming_timestamp_ns = now_ns;
     } else {
-        connection->thread_data.stats.was_non_active = true;
+        connection->thread_data.stats.was_inactive = true;
     }
-}
-
-static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_array_list *stats) {
-
-    struct aws_h2_connection *connection = handler->impl;
-    AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
-
-    /* TODO: Need update the way we calculate statistics, to account for user-controlled pauses.
-     * If user is adding chunks 1 by 1, there can naturally be a gap in the upload.
-     * If the user lets the stream-window go to zero, there can naturally be a gap in the download. */
-    s_pull_up_stats_timestamps(connection);
 
     void *stats_base = &connection->thread_data.stats;
     aws_array_list_push_back(stats, &stats_base);
-    if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) != 0) {
-        /* The statistic has been reported, reset the state only if there is any active streams. */
-        connection->thread_data.stats.was_non_active = false;
-    }
 }

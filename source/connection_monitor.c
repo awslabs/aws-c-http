@@ -32,16 +32,15 @@ static void s_process_statistics(
     uint64_t pending_write_interval_ms = 0;
     uint64_t bytes_read = 0;
     uint64_t bytes_written = 0;
-    uint32_t current_outgoing_stream_id = 0;
-    uint32_t current_incoming_stream_id = 0;
+    uint32_t h1_current_outgoing_stream_id = 0;
+    uint32_t h1_current_incoming_stream_id = 0;
 
     /*
      * Pull out the data needed to perform the throughput calculation
      */
     size_t stats_count = aws_array_list_length(stats_list);
-    bool http2 = false;
-    bool http2_was_non_active = false;
-    uint32_t h2_num_active_stream = 0;
+    bool h2 = false;
+    bool h2_was_inactive = false;
 
     for (size_t i = 0; i < stats_count; ++i) {
         struct aws_crt_statistics_base *stats_base = NULL;
@@ -58,25 +57,23 @@ static void s_process_statistics(
             }
 
             case AWSCRT_STAT_CAT_HTTP1_CHANNEL: {
-                AWS_ASSERT(!http2);
+                AWS_ASSERT(!h2);
                 struct aws_crt_statistics_http1_channel *http1_stats =
                     (struct aws_crt_statistics_http1_channel *)stats_base;
                 pending_read_interval_ms = http1_stats->pending_incoming_stream_ms;
                 pending_write_interval_ms = http1_stats->pending_outgoing_stream_ms;
-                current_outgoing_stream_id = http1_stats->current_outgoing_stream_id;
-                current_incoming_stream_id = http1_stats->current_incoming_stream_id;
+                h1_current_outgoing_stream_id = http1_stats->current_outgoing_stream_id;
+                h1_current_incoming_stream_id = http1_stats->current_incoming_stream_id;
 
                 break;
             }
 
             case AWSCRT_STAT_CAT_HTTP2_CHANNEL: {
-                struct aws_crt_statistics_http2_channel *http2_stats =
-                    (struct aws_crt_statistics_http2_channel *)stats_base;
-                pending_read_interval_ms = http2_stats->pending_incoming_stream_ms;
-                pending_write_interval_ms = http2_stats->pending_outgoing_stream_ms;
-                http2_was_non_active |= http2_stats->was_non_active;
-                h2_num_active_stream = http2_stats->num_active_streams;
-                http2 = true;
+                struct aws_crt_statistics_http2_channel *h2_stats = (struct aws_crt_statistics_h2_channel *)stats_base;
+                pending_read_interval_ms = h2_stats->pending_incoming_stream_ms;
+                pending_write_interval_ms = h2_stats->pending_outgoing_stream_ms;
+                h2_was_inactive |= h2_stats->was_inactive;
+                h2 = true;
                 break;
             }
 
@@ -129,17 +126,17 @@ static void s_process_statistics(
      * Check throughput only if the connection has active stream and no gap between.
      */
     bool check_throughput = false;
-    if (http2) {
+    if (h2) {
         /* For HTTP/2, check throughput only if there always has any active stream on the connection */
-        check_throughput = !http2_was_non_active;
+        check_throughput = !h2_was_inactive;
     } else {
         /* For HTTP/1, check throughput only if at least one stream exists and was observed in that role previously */
         check_throughput =
-            (current_incoming_stream_id != 0 && current_incoming_stream_id == impl->last_incoming_stream_id) ||
-            (current_outgoing_stream_id != 0 && current_outgoing_stream_id == impl->last_outgoing_stream_id);
+            (h1_current_incoming_stream_id != 0 && h1_current_incoming_stream_id == impl->last_incoming_stream_id) ||
+            (h1_current_outgoing_stream_id != 0 && h1_current_outgoing_stream_id == impl->last_outgoing_stream_id);
 
-        impl->last_outgoing_stream_id = current_outgoing_stream_id;
-        impl->last_incoming_stream_id = current_incoming_stream_id;
+        impl->last_outgoing_stream_id = h1_current_outgoing_stream_id;
+        impl->last_incoming_stream_id = h1_current_incoming_stream_id;
     }
     impl->last_measured_throughput = bytes_per_second;
 
@@ -147,12 +144,6 @@ static void s_process_statistics(
         AWS_LOGF_TRACE(AWS_LS_IO_CHANNEL, "id=%p: channel throughput does not need to be checked", (void *)channel);
         impl->throughput_failure_time_ms = 0;
         return;
-    } else {
-        AWS_LOGF_DEBUG(
-            AWS_LS_IO_CHANNEL,
-            "id=%p: h2 connection has %" PRIu32 " active streams",
-            (void *)channel,
-            h2_num_active_stream);
     }
 
     if (bytes_per_second >= impl->options.minimum_throughput_bytes_per_second) {

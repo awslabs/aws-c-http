@@ -31,6 +31,5 @@ void aws_crt_statistics_http2_channel_init(struct aws_crt_statistics_http2_chann
 void aws_crt_statistics_http2_channel_reset(struct aws_crt_statistics_http2_channel *stats) {
     stats->pending_outgoing_stream_ms = 0;
     stats->pending_incoming_stream_ms = 0;
-    stats->num_active_streams = 0;
-    stats->was_non_active = false;
+    stats->was_inactive = false;
 }
