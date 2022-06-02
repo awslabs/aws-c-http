@@ -1905,7 +1905,7 @@ static void s_move_stream_to_thread(
         goto error;
     }
 
-    if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0) {
+    if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 1) {
         /* transition from nothing to read -> something to read */
         uint64_t now_ns = 0;
         aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns);
