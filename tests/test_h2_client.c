@@ -5188,8 +5188,9 @@ TEST_CASE(h2_client_manual_data_write) {
         }
         aws_input_stream_release(data_stream);
     }
+    struct aws_http2_stream_write_data_options last_write = {.end_stream = true};
 
-    ASSERT_SUCCESS(aws_http2_stream_end_manual_write(stream));
+    ASSERT_SUCCESS(aws_http2_stream_write_data(stream, &last_write));
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
@@ -5251,7 +5252,8 @@ TEST_CASE(h2_client_manual_data_write_no_data) {
 
     aws_http_stream_activate(stream);
 
-    ASSERT_SUCCESS(aws_http2_stream_end_manual_write(stream));
+    struct aws_http2_stream_write_data_options last_write = {.end_stream = true};
+    ASSERT_SUCCESS(aws_http2_stream_write_data(stream, &last_write));
 
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));

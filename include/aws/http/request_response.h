@@ -395,7 +395,18 @@ typedef aws_http_stream_write_complete_fn aws_http2_stream_write_data_complete_f
  * Encoding options for manual H2 data frame writes
  */
 struct aws_http2_stream_write_data_options {
+    /**
+     * The data to be sent.
+     * Optional.
+     * If not set, input stream with length 0 will be used.
+     */
     struct aws_input_stream *data;
+
+    /**
+     * Set true when it's the last chunk to be sent.
+     * After a write with end_stream, no more data write will be accepted.
+     */
+    bool end_stream;
 
     /**
      * Invoked when the data stream is no longer in use, whether or not it was successfully sent.
@@ -786,8 +797,12 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
  * The stream must have specified `http2_use_manual_data_writes` during request creation.
  * For client streams, activate() must be called before any frames are submitted.
  * For server streams, the response headers must be submitted before any frames.
- * @return AWS_OP_SUCCESS if the write was queued, or else AWS_OP_ERROR indicating the attempt raised an error code,
- *         usually due to incorrect configuration of the stream, or attempts to send data after the stream is closed.
+ * A write with options that has end_stream set to be true will end the stream and prevent any further write.
+ *
+ * @return AWS_OP_SUCCESS if the write was queued
+ *         AWS_OP_ERROR indicating the attempt raised an error code.
+ *              AWS_ERROR_INVALID_STATE will be raised for invalid usage.
+ *              AWS_ERROR_HTTP_STREAM_HAS_COMPLETED will be raised if the stream ended for reasons behind the scenes.
  *
  * Typical usage will be something like:
  * options.http2_use_manual_data_writes = true;
@@ -797,19 +812,15 @@ AWS_HTTP_API int aws_http1_stream_write_chunk(
  * struct aws_http2_stream_write_data_options write;
  * aws_http2_stream_write_data(stream, &write);
  * ...
- * aws_http_stream_end(stream); // done writing frames
+ * struct aws_http2_stream_write_data_options last_write;
+ * last_write.end_stream = true;
+ * aws_http2_stream_write_data(stream, &write);
  * ...
  * aws_http_stream_release(stream);
  */
 AWS_HTTP_API int aws_http2_stream_write_data(
     struct aws_http_stream *http2_stream,
     const struct aws_http2_stream_write_data_options *options);
-
-/**
- * Indicates that no more writes will be made to this stream
- * @see `aws_http2_stream_write_data` for an example
- */
-AWS_HTTP_API int aws_http2_stream_end_manual_write(struct aws_http_stream *http2_stream);
 
 /**
  * Add a list of headers to be added as trailing headers sent after the last chunk is sent.

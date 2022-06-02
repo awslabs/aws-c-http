@@ -857,7 +857,7 @@ static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connect
             case AWS_H2_DATA_ENCODE_ONGOING_BODY_STREAM_STALLED:
                 aws_linked_list_push_back(&stalled_streams_list, node);
                 break;
-            case AWS_H2_DATA_ENCODE_ONGOING_WAITING_FOR_DATA:
+            case AWS_H2_DATA_ENCODE_ONGOING_WAITING_FOR_WRITES:
                 stream->thread_data.waiting_for_writes = true;
                 aws_linked_list_push_back(waiting_streams_list, node);
                 break;
@@ -1768,7 +1768,7 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
         aws_linked_list_remove(&stream->node);
     }
 
-    aws_h2_stream_on_closed(stream, error_code);
+    aws_h2_stream_destroy_pending_writes(stream, error_code);
 
     /* Invoke callback */
     if (stream->base.on_complete) {
@@ -1868,17 +1868,20 @@ static void s_move_stream_to_thread(
         goto error;
     }
 
-    bool has_outgoing_data = false;
-    bool waiting_for_writes = false;
-    if (aws_h2_stream_on_activated(stream, &has_outgoing_data, &waiting_for_writes)) {
+    enum aws_h2_stream_body_state body_state = AWS_H2_STREAM_BODY_STATE_NONE;
+    if (aws_h2_stream_on_activated(stream, &body_state)) {
         goto error;
     }
-    if (waiting_for_writes) {
-        aws_linked_list_push_back(&connection->thread_data.waiting_streams_list, &stream->node);
-    } else if (has_outgoing_data) {
-        aws_linked_list_push_back(&connection->thread_data.outgoing_streams_list, &stream->node);
+    switch (body_state) {
+        case AWS_H2_STREAM_BODY_STATE_WAITING_WRITES:
+            aws_linked_list_push_back(&connection->thread_data.waiting_streams_list, &stream->node);
+            break;
+        case AWS_H2_STREAM_BODY_STATE_ONGOING:
+            aws_linked_list_push_back(&connection->thread_data.outgoing_streams_list, &stream->node);
+            break;
+        default:
+            break;
     }
-
     return;
 error:
     /* If the stream got into any datastructures, s_stream_complete() will remove it */

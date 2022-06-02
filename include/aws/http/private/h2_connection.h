@@ -209,7 +209,7 @@ enum aws_h2_data_encode_status {
     AWS_H2_DATA_ENCODE_COMPLETE,
     AWS_H2_DATA_ENCODE_ONGOING,
     AWS_H2_DATA_ENCODE_ONGOING_BODY_STREAM_STALLED, /* stalled reading from body stream */
-    AWS_H2_DATA_ENCODE_ONGOING_WAITING_FOR_DATA,    /* waiting for next manual write */
+    AWS_H2_DATA_ENCODE_ONGOING_WAITING_FOR_WRITES,  /* waiting for next manual write */
     AWS_H2_DATA_ENCODE_ONGOING_WINDOW_STALLED,      /* stalled due to reduced window size */
 };
 

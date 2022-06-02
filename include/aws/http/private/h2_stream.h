@@ -53,6 +53,14 @@ enum aws_h2_stream_api_state {
     AWS_H2_STREAM_API_STATE_COMPLETE,
 };
 
+/* Indicates the state of the body of the HTTP/2 stream */
+enum aws_h2_stream_body_state {
+    AWS_H2_STREAM_BODY_STATE_NONE,           /* Has no body for the HTTP/2 stream */
+    AWS_H2_STREAM_BODY_STATE_WAITING_WRITES, /* Has no active body, but waiting for more to be
+                                                write */
+    AWS_H2_STREAM_BODY_STATE_ONGOING,        /* Has active ongoing body */
+};
+
 /* represents a write operation, which will be turned into a data frame */
 struct aws_h2_stream_data_write {
     struct aws_linked_list_node node;
@@ -136,10 +144,11 @@ enum aws_h2_stream_state aws_h2_stream_get_state(const struct aws_h2_stream *str
 struct aws_h2err aws_h2_stream_window_size_change(struct aws_h2_stream *stream, int32_t size_changed, bool self);
 
 /* Connection is ready to send frames from stream now */
-int aws_h2_stream_on_activated(struct aws_h2_stream *stream, bool *out_has_outgoing_data, bool *waiting_for_writes);
+int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_body_state *body_state);
 
-/* Connection is closing stream for one reason or another, clean up any pending writes/resources */
-void aws_h2_stream_on_closed(struct aws_h2_stream *stream, int error_code);
+/* Connection is closing stream for one reason or another, clean up any pending writes/resources.
+ * Only called when stream is not active and will never be active afterward (destroying). */
+void aws_h2_stream_destroy_pending_writes(struct aws_h2_stream *stream, int error_code);
 
 /* Connection is ready to send data from stream now.
  * Stream may complete itself during this call.
