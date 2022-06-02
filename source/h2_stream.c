@@ -1244,7 +1244,7 @@ static int s_stream_write_data(
     if (options->data) {
         pending_write->data_stream = aws_input_stream_acquire(options->data);
     } else {
-        pending_write->data_stream = aws_input_stream_new_from_cursor(stream->base.alloc, &s_stream_empty_stream);
+        pending_write->data_stream = aws_input_stream_acquire(&s_stream_empty_stream);
     }
     bool schedule_cross_thread_work = false;
     { /* BEGIN CRITICAL SECTION */
