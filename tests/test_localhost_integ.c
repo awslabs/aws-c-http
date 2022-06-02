@@ -85,7 +85,7 @@ struct tester {
     size_t stream_4xx_count;
     size_t stream_status_not_200_count;
 
-    size_t num_sen_received;
+    uint64_t num_sen_received;
     int stream_completed_error_code;
     bool stream_completed_with_200;
 
@@ -202,6 +202,8 @@ static void s_tester_on_stream_completed(struct aws_http_stream *stream, int err
     AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.wait_lock) == AWS_OP_SUCCESS);
 }
 
+static struct aws_logger s_logger;
+
 static int s_tester_init(struct tester *tester, struct aws_allocator *allocator, struct aws_byte_cursor host_name) {
     aws_http_library_init(allocator);
 
@@ -251,6 +253,14 @@ static int s_tester_init(struct tester *tester, struct aws_allocator *allocator,
         .on_shutdown = s_on_connection_shutdown,
     };
     ASSERT_SUCCESS(aws_http_client_connect(&client_options));
+    struct aws_logger_standard_options logger_options = {
+        .level = AWS_LOG_LEVEL_DEBUG, /* We are stress testing, and if this ever failed, the default trace level log is
+                                         too much to handle, let's do debug level instead */
+        .file = stderr,
+    };
+
+    aws_logger_init_standard(&s_logger, allocator, &logger_options);
+    aws_logger_set(&s_logger);
     return AWS_OP_SUCCESS;
 }
 
@@ -267,6 +277,7 @@ static int s_tester_clean_up(struct tester *tester) {
 
     aws_mutex_clean_up(&tester->wait_lock);
     aws_http_library_clean_up();
+    aws_logger_clean_up(&s_logger);
     return AWS_OP_SUCCESS;
 }
 
@@ -377,21 +388,25 @@ static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws
     (void)stream;
     (void)user_data;
     struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.alloc, data);
-    s_tester.num_sen_received = (uint32_t)atoi((const char *)content_length_header_str->bytes);
+    s_tester.num_sen_received = (uint64_t)strtoull((const char *)content_length_header_str->bytes, NULL, 10);
     aws_string_destroy(content_length_header_str);
 
     return AWS_OP_SUCCESS;
 }
 
-/* Test that upload a 0.25GB data to local server */
+/* Test that upload a 2.5GB data to local server */
 AWS_TEST_CASE(localhost_integ_h2_upload_stress, s_localhost_integ_h2_upload_stress)
 static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, void *ctx) {
     (void)ctx;
     s_tester.alloc = allocator;
+
+    size_t length = 2500000000UL;
+#ifdef AWS_OS_LINUX
     /* Using Python hyper h2 server frame work, met a weird upload performance issue on Linux. Our client against nginx
-     * platform has not met the same issue. We assume it's because the server framework implementation. Test 0.25GB now
-     */
-    size_t length = 250000000UL;
+     * platform has not met the same issue. We assume it's because the server framework implementation.  Use lower
+     * number of linux */
+    length = 250000000UL;
+#endif
 
     struct aws_string *http_localhost_host = NULL;
     if (aws_get_environment_value(allocator, s_http_localhost_env_var, &http_localhost_host) ||
@@ -420,7 +435,6 @@ static int s_localhost_integ_h2_upload_stress(struct aws_allocator *allocator, v
         },
     };
     struct aws_http_message *request = aws_http2_message_new_request(allocator);
-    ASSERT_NOT_NULL(request);
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
     struct aws_input_stream *body_stream = aws_input_stream_tester_upload_new(allocator, length);
     aws_http_message_set_body_stream(request, body_stream);
