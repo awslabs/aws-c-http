@@ -2808,8 +2808,6 @@ static void s_reset_statistics(struct aws_channel_handler *handler) {
     return;
 }
 
-static void s_pull_up_stats_timestamps(struct aws_h2_connection *connection) {}
-
 static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_array_list *stats) {
 
     struct aws_h2_connection *connection = handler->impl;
