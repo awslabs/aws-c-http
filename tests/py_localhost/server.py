@@ -262,7 +262,6 @@ class H2Protocol(asyncio.Protocol):
                 self.conn.max_outbound_frame_size,
                 self.out_bytes_per_second
             )
-            print(chunk_size)
             repeated = b"This is CRT HTTP test."
             data = int(chunk_size/len(repeated)) * repeated + \
                 repeated[:chunk_size % len(repeated)]
