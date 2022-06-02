@@ -18,6 +18,7 @@
 #include <aws/http/private/proxy_impl.h>
 #include <aws/http/proxy.h>
 
+#include <aws/io/stream.h>
 #include <aws/io/uri.h>
 
 #include <aws/common/byte_buf.h>
@@ -96,6 +97,8 @@ struct sm_tester {
 
     /* To invoke the real on_setup */
     aws_http_on_client_connection_setup_fn *on_setup;
+
+    size_t length_sent;
 };
 
 static struct sm_tester s_tester;
@@ -481,6 +484,22 @@ static void s_sm_tester_on_stream_complete(struct aws_http_stream *stream, int e
     AWS_FATAL_ASSERT(aws_mutex_unlock(&s_tester.lock) == AWS_OP_SUCCESS);
 }
 
+static int s_sm_stream_acquiring_customize_request(
+    int num_streams,
+    struct aws_http_make_request_options *request_options) {
+    struct aws_http2_stream_manager_acquire_stream_options acquire_stream_option = {
+        .options = request_options,
+        .callback = s_sm_tester_on_stream_acquired,
+        .user_data = &s_tester,
+    };
+    for (int i = 0; i < num_streams; ++i) {
+        /* TODO: Test the callback will always be fired asynced, as now the CM cannot ensure the callback happens
+         * asynchronously, we cannot ensure it as well. */
+        aws_http2_stream_manager_acquire_stream(s_tester.stream_manager, &acquire_stream_option);
+    }
+    return AWS_OP_SUCCESS;
+}
+
 static int s_sm_stream_acquiring(int num_streams) {
     struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
     ASSERT_NOT_NULL(request);
@@ -507,18 +526,9 @@ static int s_sm_stream_acquiring(int num_streams) {
         .user_data = &s_tester,
         .on_complete = s_sm_tester_on_stream_complete,
     };
-    struct aws_http2_stream_manager_acquire_stream_options acquire_stream_option = {
-        .options = &request_options,
-        .callback = s_sm_tester_on_stream_acquired,
-        .user_data = &s_tester,
-    };
-    for (int i = 0; i < num_streams; ++i) {
-        /* TODO: Test the callback will always be fired asynced, as now the CM cannot ensure the callback happens
-         * asynchronously, we cannot ensure it as well. */
-        aws_http2_stream_manager_acquire_stream(s_tester.stream_manager, &acquire_stream_option);
-    }
+    int return_code = s_sm_stream_acquiring_customize_request(num_streams, &request_options);
     aws_http_message_release(request);
-    return AWS_OP_SUCCESS;
+    return return_code;
 }
 
 /* Test the common setup/teardown used by all tests in this file */
@@ -1191,8 +1201,99 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
         .uri_cursor = &uri_cursor,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
-    int num_to_acquire = 200 * 100;
+    int num_to_acquire = 500 * 100;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
+    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
+    ASSERT_TRUE((int)s_tester.stream_200_count == num_to_acquire);
+
+    return s_tester_clean_up();
+}
+
+static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws_byte_cursor *data, void *user_data) {
+    (void)user_data;
+    (void)stream;
+    struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.allocator, data);
+    size_t num_received = (uint32_t)atoi((const char *)content_length_header_str->bytes);
+    AWS_FATAL_ASSERT(s_tester.length_sent == num_received);
+    aws_string_destroy(content_length_header_str);
+
+    return AWS_OP_SUCCESS;
+}
+
+static int s_sm_stream_acquiring_with_body(int num_streams) {
+    char content_length_sprintf_buffer[128] = "";
+    snprintf(content_length_sprintf_buffer, sizeof(content_length_sprintf_buffer), "%zu", s_tester.length_sent);
+
+    struct aws_http_header request_headers_src[] = {
+        DEFINE_HEADER(":method", "PUT"),
+        {
+            .name = aws_byte_cursor_from_c_str(":scheme"),
+            .value = *aws_uri_scheme(&s_tester.endpoint),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":path"),
+            .value = *aws_uri_path(&s_tester.endpoint),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str(":authority"),
+            .value = *aws_uri_host_name(&s_tester.endpoint),
+        },
+        {
+            .name = aws_byte_cursor_from_c_str("content_length"),
+            .value = aws_byte_cursor_from_c_str(content_length_sprintf_buffer),
+        },
+    };
+    for (int i = 0; i < num_streams; ++i) {
+        /* TODO: Test the callback will always be fired asynced, as now the CM cannot ensure the callback happens
+         * asynchronously, we cannot ensure it as well. */
+        struct aws_http_message *request = aws_http2_message_new_request(s_tester.allocator);
+        aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
+        struct aws_input_stream *body_stream =
+            aws_input_stream_tester_upload_new(s_tester.allocator, s_tester.length_sent);
+        aws_http_message_set_body_stream(request, body_stream);
+        aws_input_stream_release(body_stream);
+        struct aws_http_make_request_options request_options = {
+            .self_size = sizeof(request_options),
+            .request = request,
+            .on_response_body = s_tester_on_put_body,
+            .on_complete = s_sm_tester_on_stream_complete,
+        };
+
+        struct aws_http2_stream_manager_acquire_stream_options acquire_stream_option = {
+            .options = &request_options,
+            .callback = s_sm_tester_on_stream_acquired,
+            .user_data = &s_tester,
+        };
+        aws_http2_stream_manager_acquire_stream(s_tester.stream_manager, &acquire_stream_option);
+        aws_http_message_release(request);
+    }
+    return AWS_OP_SUCCESS;
+}
+
+/* Test that makes tons of real streams with body against local host */
+TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
+    (void)ctx;
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/upload_test");
+    struct sm_tester_options options = {
+        .max_connections = 100,
+        .max_concurrent_streams_per_connection = 100,
+        .alloc = allocator,
+        .uri_cursor = &uri_cursor,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_tester.length_sent = 2000;
+    int num_to_acquire = 500 * 100;
+
+#ifdef AWS_OS_LINUX
+    /* Using Python hyper h2 server frame work, met a weird upload performance issue on Linux. Our client against nginx
+     * platform has not met the same issue. We assume it's because the server framework implementation. Use lower
+     * number of linux
+     */
+    num_to_acquire = 500;
+#endif
+
+    ASSERT_SUCCESS(s_sm_stream_acquiring_with_body(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
     ASSERT_TRUE((int)s_tester.stream_200_count == num_to_acquire);

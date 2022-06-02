@@ -64,8 +64,8 @@ struct aws_http2_stream_manager_options {
      * - By default, client will will maintain its flow-control windows such that no back-pressure is applied and data
      * arrives as fast as possible.
      * - For connection level window control, `conn_manual_window_management` will enable manual control. The
-     * inital window size is not controlable.
-     * - For stream level window control, `enable_read_back_pressure` will enable manual control. The initail window
+     * inital window size is not controllable.
+     * - For stream level window control, `enable_read_back_pressure` will enable manual control. The initial window
      * size needs to be set through `initial_settings_array`.
      */
     struct aws_http2_setting *initial_settings_array;
