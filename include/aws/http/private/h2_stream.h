@@ -70,8 +70,9 @@ struct aws_h2_stream {
         struct aws_http_message *outgoing_message;
         bool received_main_headers;
 
+        bool content_length_received;
         /* The received content length, if any */
-        int64_t content_length;
+        uint64_t content_length;
         /* The total length of payload of data frame received */
         uint64_t received_data_length;
     } thread_data;

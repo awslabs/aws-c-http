@@ -1345,9 +1345,11 @@ static struct aws_h2err s_process_header_field(
             case AWS_HTTP_HEADER_KEEP_ALIVE:
             case AWS_HTTP_HEADER_PROXY_CONNECTION: {
                 /* connection-specific header field are treated as malformed (RFC9113 8.2.2) */
-                DECODER_LOG(ERROR, decoder, "Connection-specific headers found.");
                 DECODER_LOGF(
-                    DEBUG, decoder, "Connection-specific header name is '" PRInSTR "'", AWS_BYTE_CURSOR_PRI(name));
+                    ERROR,
+                    decoder,
+                    "Connection-specific header ('" PRInSTR "') found, not allowed in HTTP/2",
+                    AWS_BYTE_CURSOR_PRI(name));
                 goto malformed;
             } break;
 
