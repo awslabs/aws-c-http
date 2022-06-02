@@ -613,6 +613,18 @@ AWS_HTTP_API
 struct aws_http_message *aws_http2_message_new_response(struct aws_allocator *allocator);
 
 /**
+ * Create an HTTP/2 message from HTTP/1.1 message.
+ * pseudo headers will be created from the context and added to the headers of new message.
+ * Normal headers will be copied to the headers of new message.
+ * Note: if `host` exist, it will stay and `:authority` will be added using the information.
+ * `:scheme` is default to be "https". If a different scheme wants to be used, create the HTTP/2 message directly
+ */
+AWS_HTTP_API
+struct aws_http_message *aws_http2_message_new_from_http1(
+    struct aws_http_message *http1_msg,
+    struct aws_allocator *alloc);
+
+/**
  * Acquire a hold on the object, preventing it from being deleted until
  * aws_http_message_release() is called by all those with a hold on it.
  *

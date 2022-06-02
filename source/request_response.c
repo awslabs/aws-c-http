@@ -850,11 +850,12 @@ struct aws_http_message *aws_http2_message_new_from_http1(
     AWS_ZERO_STRUCT(lower_name_buf);
     struct aws_http_message *message = aws_http_message_is_request(http1_msg) ? aws_http2_message_new_request(alloc)
                                                                               : aws_http2_message_new_response(alloc);
-    struct aws_http_headers *copied_headers = message->headers;
     if (!message) {
         return NULL;
     }
-    AWS_LOGF_TRACE(AWS_LS_HTTP_GENERAL, "Creating HTTP/2 message from HTTP/1 message id: %p", (void *)http1_msg)
+    struct aws_http_headers *copied_headers = message->headers;
+    AWS_LOGF_TRACE(AWS_LS_HTTP_GENERAL, "Creating HTTP/2 message from HTTP/1 message id: %p", (void *)http1_msg);
+
     /* Set pseudo headers from HTTP/1.1 message */
     if (aws_http_message_is_request(http1_msg)) {
         struct aws_byte_cursor method;
@@ -867,7 +868,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
             aws_raise_error(AWS_ERROR_HTTP_INVALID_METHOD);
             goto error;
         }
-        /* Use add intead of set method to avoid push front to the array list */
+        /* Use add instead of set method to avoid push front to the array list */
         if (aws_http_headers_add(copied_headers, aws_http_header_method, method)) {
             goto error;
         }
@@ -893,7 +894,6 @@ struct aws_http_message *aws_http2_message_new_from_http1(
             aws_http_header_scheme.ptr,
             (int)scheme_cursor.len,
             scheme_cursor.ptr);
-        /* :authority SHOULD NOT be created when translating HTTP/1 request.(RFC 7540 8.1.2.3) */
 
         struct aws_byte_cursor path_cursor;
         if (aws_http_message_get_request_path(http1_msg, &path_cursor)) {
@@ -936,6 +936,20 @@ struct aws_http_message *aws_http2_message_new_from_http1(
             aws_http_header_status.ptr,
             status);
     }
+    struct aws_byte_cursor host_value;
+    AWS_ZERO_STRUCT(host_value);
+    if (aws_http_headers_get(http1_msg->headers, aws_byte_cursor_from_c_str("host"), &host_value) == AWS_OP_SUCCESS) {
+        if (aws_http_headers_add(copied_headers, aws_http_header_authority, host_value)) {
+            goto error;
+        }
+        AWS_LOGF_TRACE(
+            AWS_LS_HTTP_GENERAL,
+            "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
+            (int)aws_http_header_authority.len,
+            aws_http_header_authority.ptr,
+            (int)host_value.len,
+            host_value.ptr);
+    }
 
     if (aws_byte_buf_init(&lower_name_buf, alloc, 256)) {
         goto error;
@@ -964,7 +978,6 @@ struct aws_http_message *aws_http2_message_new_from_http1(
     }
     aws_byte_buf_clean_up(&lower_name_buf);
     aws_http_message_set_body_stream(message, aws_http_message_get_body_stream(http1_msg));
-    /* TODO: Refcount the input stream of old message */
 
     return message;
 error:
