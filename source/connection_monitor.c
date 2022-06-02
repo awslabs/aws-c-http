@@ -69,7 +69,8 @@ static void s_process_statistics(
             }
 
             case AWSCRT_STAT_CAT_HTTP2_CHANNEL: {
-                struct aws_crt_statistics_http2_channel *h2_stats = (struct aws_crt_statistics_h2_channel *)stats_base;
+                struct aws_crt_statistics_http2_channel *h2_stats =
+                    (struct aws_crt_statistics_http2_channel *)stats_base;
                 pending_read_interval_ms = h2_stats->pending_incoming_stream_ms;
                 pending_write_interval_ms = h2_stats->pending_outgoing_stream_ms;
                 h2_was_inactive |= h2_stats->was_inactive;

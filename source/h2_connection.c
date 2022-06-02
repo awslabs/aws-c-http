@@ -807,10 +807,10 @@ static int s_encode_outgoing_frames_queue(struct aws_h2_connection *connection, 
 static int s_encode_data_from_outgoing_streams(struct aws_h2_connection *connection, struct aws_byte_buf *output) {
 
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
+    struct aws_linked_list *outgoing_streams_list = &connection->thread_data.outgoing_streams_list;
     if (aws_linked_list_empty(outgoing_streams_list)) {
         return AWS_OP_SUCCESS;
     }
-    struct aws_linked_list *outgoing_streams_list = &connection->thread_data.outgoing_streams_list;
     struct aws_linked_list *stalled_window_streams_list = &connection->thread_data.stalled_window_streams_list;
 
     /* If a stream stalls, put it in this list until the function ends so we don't keep trying to read from it.
@@ -1790,7 +1790,7 @@ static void s_stream_complete(struct aws_h2_connection *connection, struct aws_h
     }
 
     if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0 &&
-            connection->thread_data.incoming_timestamp_ns != 0;) {
+        connection->thread_data.incoming_timestamp_ns != 0) {
         uint64_t now_ns = 0;
         aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns);
         /* transition from something to read -> nothing to read and nothing to write */
