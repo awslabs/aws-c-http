@@ -583,6 +583,7 @@ TEST_CASE(h2_client_stream_with_h1_request_message) {
     struct aws_http_header expected_headers_src[] = {
         DEFINE_HEADER(":method", "POST"),
         DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":authority", "example.com"),
         DEFINE_HEADER(":path", "/"),
         DEFINE_HEADER("accept", "*/*"),
         DEFINE_HEADER("host", "example.com"),
@@ -635,6 +636,7 @@ TEST_CASE(h2_client_stream_with_cookies_headers) {
     struct aws_http_header expected_headers_src[] = {
         DEFINE_HEADER(":method", "GET"),
         DEFINE_HEADER(":scheme", "https"),
+        DEFINE_HEADER(":authority", "example.com"),
         DEFINE_HEADER(":path", "/"),
         DEFINE_HEADER("accept", "*/*"),
         DEFINE_HEADER("host", "example.com"),
