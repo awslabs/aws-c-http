@@ -2802,7 +2802,7 @@ static void s_reset_statistics(struct aws_channel_handler *handler) {
     struct aws_h2_connection *connection = handler->impl;
     aws_crt_statistics_http2_channel_reset(&connection->thread_data.stats);
     if (aws_hash_table_get_entry_count(&connection->thread_data.active_streams_map) == 0) {
-        /* The statistic has been reported, reset the state only if there is any active streams. */
+        /* Check the current state */
         connection->thread_data.stats.was_inactive = true;
     }
     return;
