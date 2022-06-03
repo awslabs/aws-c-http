@@ -895,6 +895,10 @@ struct aws_http_message *aws_http2_message_new_from_http1(
             (int)scheme_cursor.len,
             scheme_cursor.ptr);
 
+        /**
+         * An intermediary that forwards a request over HTTP/2 MUST construct an ":authority" pseudo-header field using
+         * the authority information from the control data of the original request. (RFC=9113 8.3.1)
+         */
         struct aws_byte_cursor host_value;
         AWS_ZERO_STRUCT(host_value);
         if (aws_http_headers_get(http1_msg->headers, aws_byte_cursor_from_c_str("host"), &host_value) ==
@@ -964,8 +968,29 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         /* append lower case name to the buffer */
         aws_byte_buf_append_with_lookup(&lower_name_buf, &header_iter.name, aws_lookup_table_to_lower_get());
         struct aws_byte_cursor lower_name_cursor = aws_byte_cursor_from_buf(&lower_name_buf);
+        enum aws_http_header_name name_enum = aws_http_lowercase_str_to_header_name(lower_name_cursor);
+        switch (name_enum) {
+            case AWS_HTTP_HEADER_TRANSFER_ENCODING:
+            case AWS_HTTP_HEADER_UPGRADE:
+            case AWS_HTTP_HEADER_KEEP_ALIVE:
+            case AWS_HTTP_HEADER_PROXY_CONNECTION:
+                /**
+                 * An intermediary transforming an HTTP/1.x message to HTTP/2 MUST remove connection-specific header
+                 * fields as discussed in Section 7.6.1 of [HTTP]. (RFC=9113 8.2.2)
+                 */
+                AWS_LOGF_TRACE(
+                    AWS_LS_HTTP_GENERAL,
+                    "Skip connection-specific headers - \"%.*s\" ",
+                    (int)lower_name_cursor.len,
+                    lower_name_cursor.ptr);
+                aws_byte_buf_reset(&lower_name_buf, false);
+                continue;
+                break;
 
-        /* TODO: handle connection-specific header field (RFC7540 8.1.2.2) */
+            default:
+                break;
+        }
+
         if (aws_http_headers_add(copied_headers, lower_name_cursor, header_iter.value)) {
             goto error;
         }
