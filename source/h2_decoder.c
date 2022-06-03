@@ -8,6 +8,7 @@
 #include <aws/http/private/strutil.h>
 
 #include <aws/common/string.h>
+#include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 
 #include <inttypes.h>
@@ -258,6 +259,9 @@ struct aws_h2_decoder {
          * A malformed header-block is not a connection error, it's a Stream Error (RFC-7540 5.4.2).
          * We continue decoding and report that it's malformed in on_headers_end(). */
         bool malformed;
+
+        bool body_headers_ignored;
+        bool body_headers_forbidden;
 
         /* Buffer up cookie header fields to concatenate separate ones */
         struct aws_byte_buf cookies;
@@ -1178,9 +1182,12 @@ static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
                 DECODER_LOG(ERROR, decoder, "Informational (1xx) response cannot END_STREAM");
                 goto malformed;
             }
+            current_block->body_headers_forbidden |= true;
         } else {
             current_block->block_type = AWS_HTTP_HEADER_BLOCK_MAIN;
         }
+        current_block->body_headers_ignored |= status_code == AWS_HTTP_STATUS_CODE_304_NOT_MODIFIED;
+        current_block->body_headers_forbidden |= status_code == AWS_HTTP_STATUS_CODE_204_NO_CONTENT;
 
     } else {
         /* Trailing header block. */
@@ -1353,6 +1360,13 @@ static struct aws_h2err s_process_header_field(
                 goto malformed;
             } break;
 
+            case AWS_HTTP_HEADER_CONTENT_LENGTH:
+                if (current_block->body_headers_forbidden) {
+                    /* The content-length are forbidden */
+                    DECODER_LOG(ERROR, decoder, "Unexpected Connection-Length header found");
+                    goto malformed;
+                }
+                /* Fall through */
             default:
                 /* Deliver header-field via callback */
                 if (current_block->is_push_promise) {
@@ -1428,7 +1442,11 @@ static struct aws_h2err s_state_fn_header_block_loop(struct aws_h2_decoder *deco
                 DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_end, malformed);
             } else {
                 DECODER_CALL_VTABLE_STREAM_ARGS(
-                    decoder, on_headers_end, malformed, decoder->header_block_in_progress.block_type);
+                    decoder,
+                    on_headers_end,
+                    malformed,
+                    decoder->header_block_in_progress.body_headers_ignored,
+                    decoder->header_block_in_progress.block_type);
             }
 
             /* If header-block began with END_STREAM flag, alert user now */

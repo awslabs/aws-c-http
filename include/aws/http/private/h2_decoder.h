@@ -34,8 +34,12 @@ struct aws_h2_decoder_vtable {
         enum aws_http_header_name name_enum,
         enum aws_http_header_block block_type,
         void *userdata);
-    struct aws_h2err (
-        *on_headers_end)(uint32_t stream_id, bool malformed, enum aws_http_header_block block_type, void *userdata);
+    struct aws_h2err (*on_headers_end)(
+        uint32_t stream_id,
+        bool malformed,
+        bool ignore_content_length,
+        enum aws_http_header_block block_type,
+        void *userdata);
 
     /* For PUSH_PROMISE header-block: _begin() is called, then 0+ _i() calls, then _end().
      * No other decoder callbacks will occur in this time.

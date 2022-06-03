@@ -121,6 +121,7 @@ static struct aws_h2err s_decoder_on_headers_i(
 static struct aws_h2err s_decoder_on_headers_end(
     uint32_t stream_id,
     bool malformed,
+    bool ignore_content_length,
     enum aws_http_header_block block_type,
     void *userdata);
 static struct aws_h2err s_decoder_on_push_promise(uint32_t stream_id, uint32_t promised_stream_id, void *userdata);
@@ -1091,6 +1092,7 @@ struct aws_h2err s_decoder_on_headers_i(
 struct aws_h2err s_decoder_on_headers_end(
     uint32_t stream_id,
     bool malformed,
+    bool ignore_content_length,
     enum aws_http_header_block block_type,
     void *userdata) {
 
@@ -1103,7 +1105,7 @@ struct aws_h2err s_decoder_on_headers_end(
     }
 
     if (stream) {
-        err = aws_h2_stream_on_decoder_headers_end(stream, malformed, block_type);
+        err = aws_h2_stream_on_decoder_headers_end(stream, malformed, ignore_content_length, block_type);
         if (aws_h2err_failed(err)) {
             return err;
         }

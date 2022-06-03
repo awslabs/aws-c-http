@@ -248,7 +248,7 @@ struct aws_h2_stream *aws_h2_stream_new_request(
     switch (message_version) {
         case AWS_HTTP_VERSION_1_1:
             stream->thread_data.outgoing_message =
-                aws_http2_message_new_from_http1(options->request, stream->base.alloc);
+                aws_http2_message_new_from_http1(stream->base.alloc, options->request);
             if (!stream->thread_data.outgoing_message) {
                 AWS_H2_STREAM_LOG(ERROR, stream, "Stream failed to create the HTTP/2 message from HTTP/1.1 message");
                 goto error;
@@ -757,11 +757,15 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_i(
                 stream->base.client_data->response_status = (int)status_code;
             } break;
             case AWS_HTTP_HEADER_CONTENT_LENGTH: {
-                if (aws_byte_cursor_utf8_parse_u64(header->value, &stream->thread_data.content_length)) {
+                if (stream->thread_data.check_incoming_content_length) {
+                    AWS_H2_STREAM_LOG(ERROR, stream, "Duplicate content-length value");
+                    goto malformed;
+                }
+                if (aws_byte_cursor_utf8_parse_u64(header->value, &stream->thread_data.incoming_content_length)) {
                     AWS_H2_STREAM_LOG(ERROR, stream, "Invalid content-length value");
                     goto malformed;
                 }
-                stream->thread_data.content_length_received = true;
+                stream->thread_data.check_incoming_content_length = true;
             } break;
             default:
                 break;
@@ -785,6 +789,7 @@ malformed:
 struct aws_h2err aws_h2_stream_on_decoder_headers_end(
     struct aws_h2_stream *stream,
     bool malformed,
+    bool ignore_content_length,
     enum aws_http_header_block block_type) {
 
     AWS_PRECONDITION_ON_CHANNEL_THREAD(stream);
@@ -820,6 +825,11 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_end(
                 "Incoming-header-block-done callback raised error, %s",
                 aws_error_name(aws_last_error()));
             return s_send_rst_and_close_stream(stream, aws_h2err_from_last_error());
+        }
+    }
+    if (stream->thread_data.check_incoming_content_length) {
+        if (ignore_content_length) {
+            stream->thread_data.check_incoming_content_length = false;
         }
     }
 
@@ -880,34 +890,17 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
         return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR));
     }
 
-    if (stream->thread_data.content_length_received) {
-        stream->thread_data.received_data_length += payload_len;
-        /**
-         * RFC-9113 8.1.1:
-         * A request or response is also malformed if the value of a content-length header field does not equal the
-         * sum of the DATA frame payload lengths that form the content, unless the message is defined as having no
-         * content.
-         *
-         * Clients MUST NOT accept a malformed response.
-         */
-        if (stream->thread_data.received_data_length > stream->thread_data.content_length) {
+    if (stream->thread_data.check_incoming_content_length) {
+        stream->thread_data.incoming_data_length += payload_len;
+
+        if (stream->thread_data.incoming_data_length > stream->thread_data.incoming_content_length) {
             AWS_H2_STREAM_LOGF(
                 ERROR,
                 stream,
                 "Total received data payload=%" PRIu64 " has exceed the received content-length header, which=%" PRIi64
                 ". Closing malformed stream",
-                stream->thread_data.received_data_length,
-                stream->thread_data.content_length);
-            return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR));
-        }
-        if (end_stream && stream->thread_data.received_data_length != stream->thread_data.content_length) {
-            AWS_H2_STREAM_LOGF(
-                ERROR,
-                stream,
-                "Total received data payload=%" PRIu64
-                " does not match the received content-length header, which=%" PRIi64 ". Closing malformed stream",
-                stream->thread_data.received_data_length,
-                stream->thread_data.content_length);
+                stream->thread_data.incoming_data_length,
+                stream->thread_data.incoming_content_length);
             return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR));
         }
     }
@@ -1015,6 +1008,26 @@ struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *strea
     /* Not calling s_check_state_allows_frame_type() here because END_STREAM isn't
      * an actual frame type. It's a flag on DATA or HEADERS frames, and we
      * already checked the legality of those frames in their respective callbacks. */
+
+    if (stream->thread_data.check_incoming_content_length &&
+        stream->thread_data.incoming_data_length != stream->thread_data.incoming_content_length) {
+        /**
+         * RFC-9113 8.1.1:
+         * A request or response is also malformed if the value of a content-length header field does not equal the
+         * sum of the DATA frame payload lengths that form the content, unless the message is defined as having no
+         * content.
+         *
+         * Clients MUST NOT accept a malformed response.
+         */
+        AWS_H2_STREAM_LOGF(
+            ERROR,
+            stream,
+            "Total received data payload=%" PRIu64 " does not match the received content-length header, which=%" PRIi64
+            ". Closing malformed stream",
+            stream->thread_data.incoming_data_length,
+            stream->thread_data.incoming_content_length);
+        return s_send_rst_and_close_stream(stream, aws_h2err_from_h2_code(AWS_HTTP2_ERR_PROTOCOL_ERROR));
+    }
 
     if (stream->thread_data.state == AWS_H2_STREAM_STATE_HALF_CLOSED_LOCAL) {
         /* Both sides have sent END_STREAM */
