@@ -438,6 +438,9 @@ void aws_h2_stream_complete(struct aws_h2_stream *stream, int error_code) {
         stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_COMPLETE;
         s_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
+
+    s_h2_stream_destroy_pending_writes(stream, AWS_HTTP2_ERR_STREAM_CLOSED);
+
     /* Invoke callback */
     if (stream->base.on_complete) {
         stream->base.on_complete(&stream->base, error_code, stream->base.user_data);
