@@ -146,9 +146,8 @@ struct aws_h2err aws_h2_stream_window_size_change(struct aws_h2_stream *stream, 
 /* Connection is ready to send frames from stream now */
 int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_body_state *body_state);
 
-/* Connection is closing stream for one reason or another, clean up any pending writes/resources.
- * Only called when stream is not active and will never be active afterward (destroying). */
-void aws_h2_stream_destroy_pending_writes(struct aws_h2_stream *stream, int error_code);
+/* Completes stream for one reason or another, clean up any pending writes/resources. */
+void aws_h2_stream_complete(struct aws_h2_stream *stream, int error_code);
 
 /* Connection is ready to send data from stream now.
  * Stream may complete itself during this call.

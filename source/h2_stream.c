@@ -398,11 +398,29 @@ static void s_stream_data_write_destroy(
     aws_mem_release(stream->base.alloc, write);
 }
 
+static void s_h2_stream_destroy_pending_writes(struct aws_h2_stream *stream, int error_code) {
+    /**
+     * Only called when stream is not active and will never be active afterward (destroying).
+     * Under this assumption, we can safely touch `stream->synced_data.pending_write_list` without
+     * lock, as the user can only add write to the list when the stream is ACTIVE
+     */
+    AWS_ASSERT(stream->synced_data.api_state != AWS_H2_STREAM_API_STATE_ACTIVE);
+    aws_linked_list_move_all_back(
+        &stream->thread_data.outgoing_writes,
+        &stream->synced_data.pending_write_list); /* clean up any outgoing writes */
+    while (!aws_linked_list_empty(&stream->thread_data.outgoing_writes)) {
+        struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
+        struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
+        AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "Stream closing, cancelling write of stream %p", (void *)write->data_stream);
+        s_stream_data_write_destroy(stream, write, error_code);
+    }
+}
+
 static void s_stream_destroy(struct aws_http_stream *stream_base) {
     AWS_PRECONDITION(stream_base);
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
 
-    aws_h2_stream_destroy_pending_writes(stream, AWS_HTTP2_ERR_STREAM_CLOSED);
+    s_h2_stream_destroy_pending_writes(stream, AWS_HTTP2_ERR_STREAM_CLOSED);
 
     AWS_H2_STREAM_LOG(DEBUG, stream, "Destroying stream");
     aws_mutex_clean_up(&stream->synced_data.lock);
@@ -412,22 +430,17 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     aws_mem_release(stream->base.alloc, stream);
 }
 
-void aws_h2_stream_destroy_pending_writes(struct aws_h2_stream *stream, int error_code) {
-    struct aws_linked_list pending_writes;
-    aws_linked_list_init(&pending_writes);
-    /**
-     * Only called when stream is not active and will never be active afterward (destroying).
-     * Under this assumption, we can safely touch `stream->synced_data.pending_write_list` without lock, as the user can
-     * only add write to the list when the stream is ACTIVE
-     */
-    AWS_ASSERT(stream->synced_data.api_state != AWS_H2_STREAM_API_STATE_ACTIVE);
-    aws_linked_list_move_all_back(&stream->thread_data.outgoing_writes, &stream->synced_data.pending_write_list);
-    /* clean up any outgoing writes */
-    while (!aws_linked_list_empty(&stream->thread_data.outgoing_writes)) {
-        struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
-        struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
-        AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "Stream closing, cancelling write of stream %p", (void *)write->data_stream);
-        s_stream_data_write_destroy(stream, write, error_code);
+void aws_h2_stream_complete(struct aws_h2_stream *stream, int error_code) {
+    { /* BEGIN CRITICAL SECTION */
+        /* clean up any pending writes */
+        s_lock_synced_data(stream);
+        /* The stream is complete now, this will prevent further writes from being queued */
+        stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_COMPLETE;
+        s_unlock_synced_data(stream);
+    } /* END CRITICAL SECTION */
+    /* Invoke callback */
+    if (stream->base.on_complete) {
+        stream->base.on_complete(&stream->base, error_code, stream->base.user_data);
     }
 }
 
@@ -587,11 +600,6 @@ static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream
     struct aws_h2_connection *connection = s_get_h2_connection(stream);
 
     stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
-    { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(stream);
-        stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_COMPLETE;
-        s_unlock_synced_data(stream);
-    } /* END CRITICAL SECTION */
     AWS_H2_STREAM_LOGF(
         DEBUG,
         stream,
@@ -602,10 +610,7 @@ static struct aws_h2err s_send_rst_and_close_stream(struct aws_h2_stream *stream
     /* Send RST_STREAM */
     struct aws_h2_frame *rst_stream_frame =
         aws_h2_frame_new_rst_stream(stream->base.alloc, stream->base.id, stream_error.h2_code);
-    if (!rst_stream_frame) {
-        AWS_H2_STREAM_LOGF(ERROR, stream, "Error creating RST_STREAM frame, %s", aws_error_name(aws_last_error()));
-        return aws_h2err_from_last_error();
-    }
+    AWS_FATAL_ASSERT(rst_stream_frame != NULL);
     aws_h2_connection_enqueue_outgoing_frame(connection, rst_stream_frame); /* connection takes ownership of frame */
     stream->sent_reset_error_code = stream_error.h2_code;
 
@@ -715,6 +720,7 @@ int aws_h2_stream_on_activated(struct aws_h2_stream *stream, enum aws_h2_stream_
         *body_state = AWS_H2_STREAM_BODY_STATE_ONGOING;
     } else {
         if (stream->manual_write) {
+            stream->thread_data.waiting_for_writes = true;
             *body_state = AWS_H2_STREAM_BODY_STATE_WAITING_WRITES;
         } else {
             *body_state = AWS_H2_STREAM_BODY_STATE_NONE;
@@ -789,11 +795,6 @@ int aws_h2_stream_encode_data_frame(
             /* Both sides have sent END_STREAM */
             stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
             AWS_H2_STREAM_LOG(TRACE, stream, "Sent END_STREAM. State -> CLOSED");
-            { /* BEGIN CRITICAL SECTION */
-                s_lock_synced_data(stream);
-                stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_COMPLETE;
-                s_unlock_synced_data(stream);
-            } /* END CRITICAL SECTION */
             /* Tell connection that stream is now closed */
             if (aws_h2_connection_on_stream_closed(
                     connection, stream, AWS_H2_STREAM_CLOSED_WHEN_BOTH_SIDES_END_STREAM, AWS_ERROR_SUCCESS)) {
@@ -1114,11 +1115,6 @@ struct aws_h2err aws_h2_stream_on_decoder_end_stream(struct aws_h2_stream *strea
         /* Both sides have sent END_STREAM */
         stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
         AWS_H2_STREAM_LOG(TRACE, stream, "Received END_STREAM. State -> CLOSED");
-        { /* BEGIN CRITICAL SECTION */
-            s_lock_synced_data(stream);
-            stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_COMPLETE;
-            s_unlock_synced_data(stream);
-        } /* END CRITICAL SECTION */
         /* Tell connection that stream is now closed */
         if (aws_h2_connection_on_stream_closed(
                 s_get_h2_connection(stream),
@@ -1168,11 +1164,6 @@ struct aws_h2err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *strea
     }
 
     stream->thread_data.state = AWS_H2_STREAM_STATE_CLOSED;
-    { /* BEGIN CRITICAL SECTION */
-        s_lock_synced_data(stream);
-        stream->synced_data.api_state = AWS_H2_STREAM_API_STATE_COMPLETE;
-        s_unlock_synced_data(stream);
-    } /* END CRITICAL SECTION */
     stream->received_reset_error_code = h2_error_code;
 
     AWS_H2_STREAM_LOGF(
