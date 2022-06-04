@@ -118,6 +118,7 @@ struct aws_h2_connection {
         bool channel_shutdown_immediately;
         bool channel_shutdown_waiting_for_goaway_to_be_written;
 
+        /* TODO: Consider adding stream monitor */
         struct aws_crt_statistics_http2_channel stats;
 
         /* Timestamp when connection has data to send, which is when there is an active stream with body to send */
