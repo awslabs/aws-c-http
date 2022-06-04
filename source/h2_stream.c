@@ -398,7 +398,7 @@ static void s_stream_data_write_destroy(
     aws_mem_release(stream->base.alloc, write);
 }
 
-static void s_h2_stream_destroy_pending_writes(struct aws_h2_stream *stream, int error_code) {
+static void s_h2_stream_destroy_pending_writes(struct aws_h2_stream *stream) {
     /**
      * Only called when stream is not active and will never be active afterward (destroying).
      * Under this assumption, we can safely touch `stream->synced_data.pending_write_list` without
@@ -412,7 +412,7 @@ static void s_h2_stream_destroy_pending_writes(struct aws_h2_stream *stream, int
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&stream->thread_data.outgoing_writes);
         struct aws_h2_stream_data_write *write = AWS_CONTAINER_OF(node, struct aws_h2_stream_data_write, node);
         AWS_LOGF_DEBUG(AWS_LS_HTTP_STREAM, "Stream closing, cancelling write of stream %p", (void *)write->data_stream);
-        s_stream_data_write_destroy(stream, write, error_code);
+        s_stream_data_write_destroy(stream, write, AWS_ERROR_HTTP_STREAM_HAS_COMPLETED);
     }
 }
 
@@ -420,7 +420,7 @@ static void s_stream_destroy(struct aws_http_stream *stream_base) {
     AWS_PRECONDITION(stream_base);
     struct aws_h2_stream *stream = AWS_CONTAINER_OF(stream_base, struct aws_h2_stream, base);
 
-    s_h2_stream_destroy_pending_writes(stream, AWS_HTTP2_ERR_STREAM_CLOSED);
+    s_h2_stream_destroy_pending_writes(stream);
 
     AWS_H2_STREAM_LOG(DEBUG, stream, "Destroying stream");
     aws_mutex_clean_up(&stream->synced_data.lock);
@@ -439,7 +439,7 @@ void aws_h2_stream_complete(struct aws_h2_stream *stream, int error_code) {
         s_unlock_synced_data(stream);
     } /* END CRITICAL SECTION */
 
-    s_h2_stream_destroy_pending_writes(stream, AWS_HTTP2_ERR_STREAM_CLOSED);
+    s_h2_stream_destroy_pending_writes(stream);
 
     /* Invoke callback */
     if (stream->base.on_complete) {
@@ -1184,48 +1184,6 @@ struct aws_h2err aws_h2_stream_on_decoder_rst_stream(struct aws_h2_stream *strea
     return AWS_H2ERR_SUCCESS;
 }
 
-static int s_stream_empty_stream_get_length(struct aws_input_stream *stream, int64_t *length) {
-    (void)stream;
-    *length = 0;
-    return AWS_OP_SUCCESS;
-}
-
-static int s_stream_empty_stream_get_status(struct aws_input_stream *stream, struct aws_stream_status *status) {
-    (void)stream;
-    AWS_PRECONDITION(status);
-    status->is_end_of_stream = true;
-    status->is_valid = true;
-    return AWS_OP_SUCCESS;
-}
-
-static int s_stream_empty_stream_read(struct aws_input_stream *stream, struct aws_byte_buf *buffer) {
-    (void)stream;
-    (void)buffer;
-    return AWS_OP_SUCCESS;
-}
-
-static void s_stream_empty_stream_acquire(struct aws_input_stream *stream) {
-    (void)stream;
-}
-static void s_stream_empty_stream_release(struct aws_input_stream *stream) {
-    (void)stream;
-}
-
-static struct aws_input_stream_vtable s_stream_empty_stream_vtable = {
-    .get_length = s_stream_empty_stream_get_length,
-    .get_status = s_stream_empty_stream_get_status,
-    .read = s_stream_empty_stream_read,
-    .acquire = s_stream_empty_stream_acquire,
-    .release = s_stream_empty_stream_release,
-    .seek = NULL,
-};
-
-/* virtual stream whose only job is to communicate EOF and end the DATA frame body write */
-static struct aws_input_stream s_stream_empty_stream = {
-    .vtable = &s_stream_empty_stream_vtable,
-    .impl = NULL,
-};
-
 static int s_stream_write_data(
     struct aws_http_stream *stream_base,
     const struct aws_http2_stream_write_data_options *options) {
@@ -1238,7 +1196,9 @@ static int s_stream_write_data(
     if (options->data) {
         pending_write->data_stream = aws_input_stream_acquire(options->data);
     } else {
-        pending_write->data_stream = aws_input_stream_acquire(&s_stream_empty_stream);
+        struct aws_byte_cursor empty_cursor;
+        AWS_ZERO_STRUCT(empty_cursor);
+        pending_write->data_stream = aws_input_stream_new_from_cursor(stream->base.alloc, &empty_cursor);
     }
     bool schedule_cross_thread_work = false;
     { /* BEGIN CRITICAL SECTION */
