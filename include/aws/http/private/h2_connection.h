@@ -13,6 +13,7 @@
 
 #include <aws/http/private/connection_impl.h>
 #include <aws/http/private/h2_frames.h>
+#include <aws/http/statistics.h>
 
 struct aws_h2_decoder;
 struct aws_h2_stream;
@@ -116,6 +117,14 @@ struct aws_h2_connection {
         int channel_shutdown_error_code;
         bool channel_shutdown_immediately;
         bool channel_shutdown_waiting_for_goaway_to_be_written;
+
+        /* TODO: Consider adding stream monitor */
+        struct aws_crt_statistics_http2_channel stats;
+
+        /* Timestamp when connection has data to send, which is when there is an active stream with body to send */
+        uint64_t outgoing_timestamp_ns;
+        /* Timestamp when connection has data to receive, which is when there is an active stream */
+        uint64_t incoming_timestamp_ns;
     } thread_data;
 
     /* Any thread may touch this data, but the lock must be held (unless it's an atomic) */

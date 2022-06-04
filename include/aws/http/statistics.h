@@ -12,6 +12,7 @@
 
 enum aws_crt_http_statistics_category {
     AWSCRT_STAT_CAT_HTTP1_CHANNEL = AWS_CRT_STATISTICS_CATEGORY_BEGIN_RANGE(AWS_C_HTTP_PACKAGE_ID),
+    AWSCRT_STAT_CAT_HTTP2_CHANNEL,
 };
 
 /**
@@ -26,6 +27,16 @@ struct aws_crt_statistics_http1_channel {
 
     uint32_t current_outgoing_stream_id;
     uint32_t current_incoming_stream_id;
+};
+
+struct aws_crt_statistics_http2_channel {
+    aws_crt_statistics_category_t category;
+
+    uint64_t pending_outgoing_stream_ms;
+    uint64_t pending_incoming_stream_ms;
+
+    /* True if during the time of report, there has ever been no active streams on the connection */
+    bool was_inactive;
 };
 
 AWS_EXTERN_C_BEGIN
@@ -47,6 +58,17 @@ void aws_crt_statistics_http1_channel_cleanup(struct aws_crt_statistics_http1_ch
  */
 AWS_HTTP_API
 void aws_crt_statistics_http1_channel_reset(struct aws_crt_statistics_http1_channel *stats);
+
+/**
+ * Initializes a HTTP/2 channel handler statistics struct
+ */
+AWS_HTTP_API
+void aws_crt_statistics_http2_channel_init(struct aws_crt_statistics_http2_channel *stats);
+/**
+ * Resets a HTTP/2 channel handler statistics struct's statistics
+ */
+AWS_HTTP_API
+void aws_crt_statistics_http2_channel_reset(struct aws_crt_statistics_http2_channel *stats);
 
 AWS_EXTERN_C_END
 

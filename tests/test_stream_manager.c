@@ -17,6 +17,7 @@
 #include <aws/http/private/http2_stream_manager_impl.h>
 #include <aws/http/private/proxy_impl.h>
 #include <aws/http/proxy.h>
+#include <aws/http/statistics.h>
 
 #include <aws/io/stream.h>
 #include <aws/io/uri.h>
@@ -43,9 +44,13 @@ struct sm_tester_options {
     size_t ideal_concurrent_streams_per_connection;
     size_t max_concurrent_streams_per_connection;
 
+    const struct aws_http_connection_monitoring_options *monitor_opt;
+
     struct aws_byte_cursor *uri_cursor;
+    const enum aws_log_level *log_level;
 };
 
+static struct aws_logger s_logger;
 struct sm_tester {
     struct aws_allocator *allocator;
     struct aws_event_loop_group *event_loop_group;
@@ -187,6 +192,14 @@ static int s_tester_init(struct sm_tester_options *options) {
 
     s_tester.allocator = alloc;
 
+    struct aws_logger_standard_options logger_options = {
+        .level = options->log_level ? *options->log_level : AWS_LOG_LEVEL_TRACE,
+        .file = stderr,
+    };
+
+    aws_logger_init_standard(&s_logger, alloc, &logger_options);
+    aws_logger_set(&s_logger);
+
     ASSERT_SUCCESS(aws_mutex_init(&s_tester.lock));
     ASSERT_SUCCESS(aws_condition_variable_init(&s_tester.signal));
 
@@ -264,6 +277,7 @@ static int s_tester_init(struct sm_tester_options *options) {
         .max_connections = options->max_connections,
         .shutdown_complete_user_data = &s_tester,
         .shutdown_complete_callback = s_sm_tester_on_sm_shutdown_complete,
+        .monitoring_options = options->monitor_opt,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
@@ -404,6 +418,7 @@ static int s_tester_clean_up(void) {
     aws_condition_variable_clean_up(&s_tester.signal);
     aws_array_list_clean_up(&s_tester.streams);
     aws_uri_clean_up(&s_tester.endpoint);
+    aws_logger_clean_up(&s_logger);
 
     return AWS_OP_SUCCESS;
 }
@@ -1112,26 +1127,6 @@ TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
     return s_tester_clean_up();
 }
 
-/* Test that makes tons of real streams */
-TEST_CASE(h2_sm_acquire_stream_stress) {
-    (void)ctx;
-    struct sm_tester_options options = {
-        .max_connections = 100,
-        .max_concurrent_streams_per_connection = 100,
-        .alloc = allocator,
-    };
-    ASSERT_SUCCESS(s_tester_init(&options));
-    int num_to_acquire = 200 * 100;
-    /* Because of network and things, we may fail some acquisition. Let's expect 99% success */
-    int expected_success = 198 * 100;
-    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
-    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
-    ASSERT_TRUE((int)s_tester.acquiring_stream_errors < (num_to_acquire - expected_success));
-    ASSERT_TRUE((int)s_tester.stream_200_count > expected_success);
-
-    return s_tester_clean_up();
-}
-
 static void s_sm_tester_on_connection_setup(struct aws_http_connection *connection, int error_code, void *user_data) {
     if (s_tester.release_sm_during_connection_acquiring) {
         aws_http2_stream_manager_release(s_tester.stream_manager);
@@ -1194,11 +1189,18 @@ TEST_CASE(localhost_integ_h2_sm_prior_knowledge) {
 TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
     (void)ctx;
     struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/echo");
+    struct aws_http_connection_monitoring_options monitor_opt = {
+        .allowable_throughput_failure_interval_seconds = 1,
+        .minimum_throughput_bytes_per_second = 1000,
+    };
+    enum aws_log_level log_level = AWS_LOG_LEVEL_DEBUG;
     struct sm_tester_options options = {
         .max_connections = 100,
         .max_concurrent_streams_per_connection = 100,
         .alloc = allocator,
         .uri_cursor = &uri_cursor,
+        .monitor_opt = &monitor_opt,
+        .log_level = &log_level,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
     int num_to_acquire = 500 * 100;
@@ -1297,6 +1299,31 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
     ASSERT_TRUE((int)s_tester.stream_200_count == num_to_acquire);
+
+    return s_tester_clean_up();
+}
+
+/* Test that connection monitor works properly with HTTP/2 stream manager */
+TEST_CASE(localhost_integ_h2_sm_connection_monitor_kill_slow_connection) {
+    (void)ctx;
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/slowConnTest");
+    struct aws_http_connection_monitoring_options monitor_opt = {
+        .allowable_throughput_failure_interval_seconds = 1,
+        .minimum_throughput_bytes_per_second = 1000,
+    };
+    struct sm_tester_options options = {
+        .max_connections = 100,
+        .max_concurrent_streams_per_connection = 100,
+        .alloc = allocator,
+        .uri_cursor = &uri_cursor,
+        .monitor_opt = &monitor_opt,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+
+    ASSERT_SUCCESS(s_sm_stream_acquiring(1));
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(1));
+    /* Check the connection closed by connection monitor and the stream should completed with corresponding error */
+    ASSERT_UINT_EQUALS(s_tester.stream_completed_error_code, AWS_ERROR_HTTP_CONNECTION_CLOSED);
 
     return s_tester_clean_up();
 }

@@ -616,7 +616,6 @@ add_net_test_case(h2_sm_mock_goaway)
 # Tests against real world server
 add_net_test_case(h2_sm_acquire_stream)
 add_net_test_case(h2_sm_acquire_stream_multiple_connections)
-add_net_test_case(h2_sm_acquire_stream_stress)
 add_net_test_case(h2_sm_closing_before_connection_acquired)
 # Tests against local server
 if (ENABLE_LOCALHOST_INTEGRATION_TESTS)
@@ -624,6 +623,7 @@ if (ENABLE_LOCALHOST_INTEGRATION_TESTS)
     add_net_test_case(localhost_integ_h2_sm_prior_knowledge)
     add_net_test_case(localhost_integ_h2_sm_acquire_stream_stress)
     add_net_test_case(localhost_integ_h2_sm_acquire_stream_stress_with_body)
+    add_net_test_case(localhost_integ_h2_sm_connection_monitor_kill_slow_connection)
 endif()
 
 add_test_case(random_access_set_sanitize_test)
