@@ -860,7 +860,7 @@ AWS_HTTP_API int aws_http1_stream_add_chunked_trailer(
  * are available on the aws_http_message datastructure.
  */
 AWS_HTTP_API
-struct aws_http_headers *aws_http_message_get_headers(struct aws_http_message *message);
+struct aws_http_headers *aws_http_message_get_headers(const struct aws_http_message *message);
 
 /**
  * Get the message's const aws_http_headers.

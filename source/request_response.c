@@ -784,7 +784,7 @@ struct aws_input_stream *aws_http_message_get_body_stream(const struct aws_http_
     return message->body_stream;
 }
 
-struct aws_http_headers *aws_http_message_get_headers(struct aws_http_message *message) {
+struct aws_http_headers *aws_http_message_get_headers(const struct aws_http_message *message) {
     AWS_PRECONDITION(message);
     return message->headers;
 }
