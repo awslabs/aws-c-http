@@ -70,7 +70,7 @@ struct aws_h2_stream {
         struct aws_http_message *outgoing_message;
         bool received_main_headers;
 
-        bool check_incoming_content_length;
+        bool content_length_received;
         /* Set if incoming message has content-length header */
         uint64_t incoming_content_length;
         /* The total length of payload of data frame received */
@@ -140,7 +140,6 @@ struct aws_h2err aws_h2_stream_on_decoder_headers_i(
 struct aws_h2err aws_h2_stream_on_decoder_headers_end(
     struct aws_h2_stream *stream,
     bool malformed,
-    bool ignore_content_length,
     enum aws_http_header_block block_type);
 
 struct aws_h2err aws_h2_stream_on_decoder_push_promise(struct aws_h2_stream *stream, uint32_t promised_stream_id);

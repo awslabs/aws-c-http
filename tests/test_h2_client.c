@@ -564,7 +564,7 @@ TEST_CASE(h2_client_stream_with_h1_request_message) {
         DEFINE_HEADER("Accept", "*/*"),
         DEFINE_HEADER("Host", "example.com"),
         DEFINE_HEADER("Content-Length", "5"),
-        DEFINE_HEADER("Transfer-Encoding", "chunked"), /* Connection-specific header should be skiped */
+        DEFINE_HEADER("Upgrade", "HTTP/2.0"), /* Connection-specific header should be skiped */
     };
     aws_http_message_add_header_array(request, request_headers_src, AWS_ARRAY_SIZE(request_headers_src));
     /* body */

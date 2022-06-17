@@ -622,7 +622,7 @@ struct aws_http_message *aws_http2_message_new_response(struct aws_allocator *al
 AWS_HTTP_API
 struct aws_http_message *aws_http2_message_new_from_http1(
     struct aws_allocator *alloc,
-    struct aws_http_message *http1_msg);
+    const struct aws_http_message *http1_msg);
 
 /**
  * Acquire a hold on the object, preventing it from being deleted until

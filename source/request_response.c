@@ -842,7 +842,7 @@ struct aws_http_stream *aws_http_connection_make_request(
 
 struct aws_http_message *aws_http2_message_new_from_http1(
     struct aws_allocator *alloc,
-    struct aws_http_message *http1_msg) {
+    const struct aws_http_message *http1_msg) {
 
     struct aws_http_headers *old_headers = aws_http_message_get_headers(http1_msg);
     struct aws_http_header header_iter;
@@ -984,8 +984,7 @@ struct aws_http_message *aws_http2_message_new_from_http1(
                     (int)lower_name_cursor.len,
                     lower_name_cursor.ptr);
                 aws_byte_buf_reset(&lower_name_buf, false);
-                continue;
-                break;
+                continue; /* jump to next for-loop iteration */
 
             default:
                 break;
