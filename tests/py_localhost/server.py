@@ -136,7 +136,7 @@ class H2Protocol(asyncio.Protocol):
                 stream_id, [(':status', '200'), ('content-length', str(length))])
             asyncio.ensure_future(self.send_repeat_data(length, stream_id))
         elif path == '/slowConnTest':
-            length = self.download_test_length/1000
+            length = int(self.download_test_length/1000)
             self.conn.send_headers(
                 stream_id, [(':status', '200'), ('content-length', str(length))])
             asyncio.ensure_future(
