@@ -875,8 +875,9 @@ void s_stream_manager_on_zero_external_ref(struct aws_http2_stream_manager *stre
 struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     struct aws_allocator *allocator,
     struct aws_http2_stream_manager_options *options) {
-    AWS_PRECONDITION(allocator);
 
+    AWS_PRECONDITION(allocator);
+    /* The options are validated by the aws_http_connection_manager_new */
     struct aws_http2_stream_manager *stream_manager =
         aws_mem_calloc(allocator, 1, sizeof(struct aws_http2_stream_manager));
     stream_manager->allocator = allocator;
@@ -915,7 +916,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         .bootstrap = options->bootstrap,
         .socket_options = options->socket_options,
         .tls_connection_options = options->tls_connection_options,
-        .prior_knowledge_http2 = options->tls_connection_options ? false : true,
+        .prior_knowledge_http2 = options->prior_knowledge,
         .host = options->host,
         .port = options->port,
         .enable_read_back_pressure = options->enable_read_back_pressure,
