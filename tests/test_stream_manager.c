@@ -49,6 +49,7 @@ struct sm_tester_options {
     struct aws_byte_cursor *uri_cursor;
     const enum aws_log_level *log_level;
     const bool prior_knowledge;
+    const bool close_connection_on_server_error;
 };
 
 static struct aws_logger s_logger;
@@ -280,6 +281,7 @@ static int s_tester_init(struct sm_tester_options *options) {
         .shutdown_complete_callback = s_sm_tester_on_sm_shutdown_complete,
         .monitoring_options = options->monitor_opt,
         .prior_knowledge = options->prior_knowledge,
+        .close_connection_on_server_error = options->close_connection_on_server_error,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
@@ -432,7 +434,7 @@ static void s_sm_tester_on_stream_acquired(struct aws_http_stream *stream, int e
 
     if (error_code) {
         ++s_tester.acquiring_stream_errors;
-        ++s_tester.stream_completed_count; /* As the stream will never be completed through complet callback */
+        ++s_tester.stream_completed_count; /* As the stream will never be completed through complete callback */
         s_tester.error_code = error_code;
     } else {
         aws_array_list_push_back(&s_tester.streams, &stream);
@@ -1125,6 +1127,31 @@ TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
     ASSERT_INT_EQUALS(num_to_acquire, s_tester.stream_200_count);
+
+    return s_tester_clean_up();
+}
+
+/* Test that makes tons of real streams against local host */
+TEST_CASE(h2_sm_close_connection_on_server_error) {
+    (void)ctx;
+    /* server that will return 500 status code all the time. */
+    struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://httpbin.org/status/500");
+    struct sm_tester_options options = {
+        .max_connections = 1,
+        .max_concurrent_streams_per_connection = 100,
+        .alloc = allocator,
+        .uri_cursor = &uri_cursor,
+        .close_connection_on_server_error = true,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    int num_to_acquire = 500;
+    ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
+    ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
+    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
+    ASSERT_TRUE((int)s_tester.stream_200_count == 0);
+    /* Check some of the stream completed with AWS_ERROR_HTTP_CONNECTION_CLOSED */
+    ASSERT_TRUE((int)s_tester.stream_complete_errors > 0);
+    ASSERT_TRUE((int)s_tester.stream_completed_error_code == AWS_ERROR_HTTP_CONNECTION_CLOSED);
 
     return s_tester_clean_up();
 }

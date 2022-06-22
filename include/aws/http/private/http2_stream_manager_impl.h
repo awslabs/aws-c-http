@@ -82,7 +82,10 @@ struct aws_http2_stream_manager {
     struct aws_ref_count internal_ref_count;
     struct aws_client_bootstrap *bootstrap;
 
+    /* Configurations */
     size_t max_connections;
+    /* Connection will be closed if 5xx response received from server. */
+    bool close_connection_on_server_error;
 
     /**
      * Default is no limit. 0 will be considered as using the default value.

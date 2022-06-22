@@ -97,6 +97,12 @@ struct aws_http2_stream_manager_options {
     void *shutdown_complete_user_data;
     aws_http2_stream_manager_shutdown_complete_fn *shutdown_complete_callback;
 
+    /**
+     * Optional.
+     * When set, connection will be closed if 5xx response received from server.
+     */
+    bool close_connection_on_server_error;
+
     /* TODO: More flexible policy about the connections, but will always has these three values below. */
     /**
      * Optional.

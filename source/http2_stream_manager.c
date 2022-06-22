@@ -309,10 +309,10 @@ static void s_check_new_connections_needed_synced(struct aws_http2_stream_manage
         ideal_new_connection_count,
         stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_CONNECTIONS_ACQUIRING]);
     /* The real number we can have is the min of how many more we can still have and how many we need */
-    size_t new_connections_avaliable =
+    size_t new_connections_available =
         stream_manager->max_connections - stream_manager->synced_data.holding_connections_count -
         stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_CONNECTIONS_ACQUIRING];
-    work->new_connections = aws_min_size(new_connections_avaliable, work->new_connections);
+    work->new_connections = aws_min_size(new_connections_available, work->new_connections);
     /* Update the number of connections we acquiring */
     s_sm_count_increase_synced(stream_manager, AWS_SMCT_CONNECTIONS_ACQUIRING, work->new_connections);
     STREAM_MANAGER_LOGF(
@@ -539,7 +539,7 @@ static int s_on_incoming_body(struct aws_http_stream *stream, const struct aws_b
     return AWS_OP_SUCCESS;
 }
 
-/* Helper invoked when underlying connections is still aviable and the num stream assigned has been updated */
+/* Helper invoked when underlying connections is still available and the num stream assigned has been updated */
 static void s_update_sm_connection_set_on_stream_finishes_synced(
     struct aws_h2_sm_connection *sm_connection,
     struct aws_http2_stream_manager *stream_manager) {
@@ -622,6 +622,11 @@ static void s_sm_connection_on_scheduled_stream_finishes(
             aws_random_access_set_remove(&stream_manager->synced_data.ideal_available_set, sm_connection);
             work.sm_connection_to_release = sm_connection;
             --stream_manager->synced_data.holding_connections_count;
+            /* After we release one connection back, we should check if we need more connections */
+            if (stream_manager->synced_data.state == AWS_H2SMST_READY &&
+                stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION]) {
+                s_check_new_connections_needed_synced(&work);
+            }
         }
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
@@ -635,6 +640,22 @@ static void s_on_stream_complete(struct aws_http_stream *stream, int error_code,
     if (pending_stream_acquisition->options.on_complete) {
         pending_stream_acquisition->options.on_complete(
             stream, error_code, pending_stream_acquisition->options.user_data);
+    }
+    if (stream_manager->close_connection_on_server_error && error_code == AWS_ERROR_SUCCESS) {
+        /* Check status code if stream completed successfully. */
+        int status_code = 0;
+        aws_http_stream_get_incoming_response_status(stream, &status_code);
+        AWS_ASSERT(status_code != 0); /* The get status should not fail */
+        if (status_code / 100 == 5) {
+            STREAM_MANAGER_LOGF(
+                DEBUG,
+                stream_manager,
+                "%d response received for stream: %p. Closing connection: %p",
+                status_code,
+                (void *)stream,
+                (void *)sm_connection->connection);
+            aws_http_connection_close(sm_connection->connection);
+        }
     }
     s_pending_stream_acquisition_destroy(pending_stream_acquisition);
     s_sm_connection_on_scheduled_stream_finishes(sm_connection, stream_manager);
@@ -946,6 +967,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     stream_manager->max_concurrent_streams_per_connection =
         options->max_concurrent_streams_per_connection ? options->max_concurrent_streams_per_connection : UINT32_MAX;
     stream_manager->max_connections = options->max_connections;
+    stream_manager->close_connection_on_server_error = options->close_connection_on_server_error;
     aws_linked_list_init(&stream_manager->synced_data.pending_stream_acquisitions);
     return stream_manager;
 on_error:
