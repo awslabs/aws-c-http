@@ -1078,7 +1078,8 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
             STREAM_MANAGER_LOGF(
                 ERROR,
                 stream_manager,
-                "Invalid options: connection_ping_period_sec: %zu is shorter than connection_ping_timeout_ns: %zu",
+                "Invalid options: connection_ping_period_sec: %zu is shorter than connection_ping_timeout_ns: %" PRIu64
+                "",
                 options->connection_ping_period_sec,
                 stream_manager->connection_ping_period_ns);
             aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);

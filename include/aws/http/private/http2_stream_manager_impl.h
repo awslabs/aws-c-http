@@ -94,8 +94,8 @@ struct aws_http2_stream_manager {
     /* Connection will be closed if 5xx response received from server. */
     bool close_connection_on_server_error;
 
-    size_t connection_ping_period_ns;
-    size_t connection_ping_timeout_ns;
+    uint64_t connection_ping_period_ns;
+    uint64_t connection_ping_timeout_ns;
 
     /**
      * Default is no limit. 0 will be considered as using the default value.
