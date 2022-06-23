@@ -812,14 +812,6 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         return NULL;
     }
 
-    if (!options->tls_connection_options && !options->prior_knowledge_http2) {
-        AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION_MANAGER,
-            "Invalid options - Both TLS and prior knowledge not set. Upgrade from HTTP/1 is not supported");
-        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-        return NULL;
-    }
-
     if (options->tls_connection_options && options->prior_knowledge_http2) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - prior knowledge cannot be set when TLS is used");

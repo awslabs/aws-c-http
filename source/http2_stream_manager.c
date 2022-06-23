@@ -877,7 +877,14 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     struct aws_http2_stream_manager_options *options) {
 
     AWS_PRECONDITION(allocator);
-    /* The options are validated by the aws_http_connection_manager_new */
+    /* The other options are validated by the aws_http_connection_manager_new */
+    if (!options->prior_knowledge && !options->tls_connection_options) {
+        AWS_LOGF_ERROR(
+            AWS_LS_HTTP_CONNECTION_MANAGER,
+            "Invalid options - Both TLS and prior knowledge not set. Upgrade from HTTP/1 is not supported");
+        aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+        return NULL;
+    }
     struct aws_http2_stream_manager *stream_manager =
         aws_mem_calloc(allocator, 1, sizeof(struct aws_http2_stream_manager));
     stream_manager->allocator = allocator;
