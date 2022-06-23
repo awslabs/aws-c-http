@@ -51,12 +51,12 @@ struct aws_http2_stream_manager_options {
     /**
      * If TLS options is set, you also need to handle ALPN, otherwise, may not able to get HTTP/2 connection and fail
      * the stream manager.
-     * If TLS options not set, you can set prior_knowledge to true to establish HTTP/2 connection. We don't support
-     * upgrade from HTTP/1 connection.
+     * If TLS options not set, you can set prior_knowledge to true to establish HTTP/2 connection. Upgrade from HTTP/1
+     * connection is not supported.
      */
     const struct aws_tls_connection_options *tls_connection_options;
     /* Use prior knowledge or not. Error out when TLS is set and this is true. */
-    const bool prior_knowledge;
+    bool prior_knowledge;
     struct aws_byte_cursor host;
     uint16_t port;
 

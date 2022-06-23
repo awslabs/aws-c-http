@@ -48,7 +48,7 @@ struct sm_tester_options {
 
     struct aws_byte_cursor *uri_cursor;
     const enum aws_log_level *log_level;
-    const bool prior_knowledge;
+    bool prior_knowledge;
 };
 
 static struct aws_logger s_logger;
