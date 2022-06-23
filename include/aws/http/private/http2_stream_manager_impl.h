@@ -25,11 +25,18 @@ enum aws_h2_sm_connection_state_type {
 /* Live with the streams opening, and if there no outstanding pending acquisition and no opening streams on the
  * connection, this structure should die */
 struct aws_h2_sm_connection {
+    struct aws_allocator *allocator;
     struct aws_http2_stream_manager *stream_manager;
     struct aws_http_connection *connection;
     uint32_t num_streams_assigned;   /* From a stream assigned to the connection until the stream completed
                                                      or failed to be created from the connection. */
     uint32_t max_concurrent_streams; /* lower bound between user configured and the other side */
+
+    /* task to send ping periodically from connection thread. */
+    struct aws_ref_count ref_count;
+    struct aws_channel_task ping_task;
+    struct aws_channel_task ping_timeout_task;
+    bool ping_received;
 
     enum aws_h2_sm_connection_state_type state;
 };
@@ -86,6 +93,9 @@ struct aws_http2_stream_manager {
     size_t max_connections;
     /* Connection will be closed if 5xx response received from server. */
     bool close_connection_on_server_error;
+
+    size_t connection_ping_period_ns;
+    size_t connection_ping_timeout_ns;
 
     /**
      * Default is no limit. 0 will be considered as using the default value.

@@ -102,6 +102,20 @@ struct aws_http2_stream_manager_options {
      * When set, connection will be closed if 5xx response received from server.
      */
     bool close_connection_on_server_error;
+    /**
+     * Optional.
+     * The period for all the connections held by stream manager to send a PING in seconds.
+     * If you specify 0, manager will NOT send any PING.
+     * Note: if set, it must be large than the time of ping timeout setting.
+     */
+    size_t connection_ping_period_sec;
+    /**
+     * Optional.
+     * Network connection will be closed if a ping response is not received
+     * within this amount of time (nanoseconds).
+     * If you specify 0, a default value of 3 seconds is used.
+     */
+    size_t connection_ping_timeout_ns;
 
     /* TODO: More flexible policy about the connections, but will always has these three values below. */
     /**

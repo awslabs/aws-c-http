@@ -4,6 +4,7 @@
  */
 
 #include <aws/common/array_list.h>
+#include <aws/common/clock.h>
 #include <aws/common/hash_table.h>
 #include <aws/common/logging.h>
 #include <aws/http/connection.h>
@@ -29,6 +30,9 @@
 #define STREAM_MANAGER_LOGF(level, stream_manager, text, ...)                                                          \
     AWS_LOGF_##level(AWS_LS_HTTP_STREAM_MANAGER, "id=%p: " text, (void *)(stream_manager), __VA_ARGS__)
 #define STREAM_MANAGER_LOG(level, stream_manager, text) STREAM_MANAGER_LOGF(level, stream_manager, "%s", text)
+
+/* 3 seconds */
+static const uint64_t s_default_ping_timeout_ns = 3000000000;
 
 static void s_stream_manager_start_destroy(struct aws_http2_stream_manager *stream_manager);
 static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2_stream_management_transaction *work);
@@ -390,11 +394,125 @@ static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2
     s_sm_log_stats_synced(stream_manager);
 }
 
+static void s_on_ping_complete(
+    struct aws_http_connection *http2_connection,
+    uint64_t round_trip_time_ns,
+    int error_code,
+    void *user_data) {
+
+    (void)http2_connection;
+    struct aws_h2_sm_connection *sm_connection = user_data;
+    if (error_code) {
+        /* Connection error happened. Not reschedule the ping task, release the refcount for the ping task. */
+        aws_ref_count_release(&sm_connection->ref_count);
+        return;
+    }
+    if (!sm_connection->connection) {
+        /* The connection has been released before complete, just release the refcount */
+        aws_ref_count_release(&sm_connection->ref_count);
+        return;
+    }
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(aws_http_connection_get_channel(sm_connection->connection)));
+    if (round_trip_time_ns > sm_connection->stream_manager->connection_ping_timeout_ns) {
+        /* Timeout happened. It may be caught by the timeout task first, but still close the connection. */
+        STREAM_MANAGER_LOGF(
+            ERROR,
+            sm_connection->stream_manager,
+            "ping timeout detected for connection: %p from ping_complete, round trip time in ns is: %" PRIu64
+            ". Closing connection.",
+            (void *)sm_connection->connection,
+            round_trip_time_ns);
+        aws_http_connection_close(sm_connection->connection);
+        aws_ref_count_release(&sm_connection->ref_count);
+        return;
+    }
+    /* All good. Reschedule the ping task. */
+    STREAM_MANAGER_LOGF(
+        TRACE,
+        sm_connection->stream_manager,
+        "PINGACK received for connection: %p. Schedule another PING to be sent.",
+        (void *)sm_connection->connection);
+    sm_connection->ping_received = true;
+    struct aws_channel *channel = aws_http_connection_get_channel(sm_connection->connection);
+    uint64_t schedule_time = 0;
+    aws_channel_current_clock_time(channel, &schedule_time);
+    schedule_time += sm_connection->stream_manager->connection_ping_period_ns;
+    aws_channel_schedule_task_future(channel, &sm_connection->ping_task, schedule_time);
+}
+
+static void s_connection_ping_timeout_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    (void)status;
+    struct aws_h2_sm_connection *sm_connection = arg;
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        /* Release refcount for ping timeout task */
+        aws_ref_count_release(&sm_connection->ref_count);
+        return;
+    }
+    if (!sm_connection->connection) {
+        /* The connection has been released before timeout happens, just release the refcount */
+        aws_ref_count_release(&sm_connection->ref_count);
+        return;
+    }
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(aws_http_connection_get_channel(sm_connection->connection)));
+    if (!sm_connection->ping_received) {
+        /* Timeout happened */
+        STREAM_MANAGER_LOGF(
+            ERROR,
+            sm_connection->stream_manager,
+            "ping timeout detected for connection: %p, closing connection.",
+            (void *)sm_connection->connection);
+        /* TODO: think of a way to propagate the error code. But, will it be more informative to user about PING timeout
+         * vs connection closed? */
+        aws_http_connection_close(sm_connection->connection);
+    }
+    /* Release refcount for ping timeout task */
+    aws_ref_count_release(&sm_connection->ref_count);
+}
+
+static void s_connection_ping_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    (void)status;
+    struct aws_h2_sm_connection *sm_connection = arg;
+    if (status != AWS_TASK_STATUS_RUN_READY) {
+        aws_ref_count_release(&sm_connection->ref_count);
+        return;
+    }
+    if (!sm_connection->connection) {
+        /* The connection has been released before ping task, just release the refcount */
+        aws_ref_count_release(&sm_connection->ref_count);
+        return;
+    }
+    AWS_ASSERT(aws_channel_thread_is_callers_thread(aws_http_connection_get_channel(sm_connection->connection)));
+
+    STREAM_MANAGER_LOGF(
+        TRACE, sm_connection->stream_manager, "Sending PING for connection: %p.", (void *)sm_connection->connection);
+    aws_http2_connection_ping(sm_connection->connection, NULL, s_on_ping_complete, sm_connection);
+    struct aws_channel *channel = aws_http_connection_get_channel(sm_connection->connection);
+    uint64_t schedule_time = 0;
+    aws_channel_current_clock_time(channel, &schedule_time);
+    schedule_time += sm_connection->stream_manager->connection_ping_timeout_ns;
+    aws_channel_task_init(
+        &sm_connection->ping_timeout_task,
+        s_connection_ping_timeout_task,
+        sm_connection,
+        "Stream manager connection ping timeout task");
+    aws_channel_schedule_task_future(channel, &sm_connection->ping_timeout_task, schedule_time);
+    /* acquire a refcount for timeout task to run */
+    aws_ref_count_acquire(&sm_connection->ref_count);
+}
+
+static void s_sm_connection_destroy(void *user_data) {
+    struct aws_h2_sm_connection *sm_connection = user_data;
+    aws_mem_release(sm_connection->allocator, sm_connection);
+}
+
 static struct aws_h2_sm_connection *s_sm_connection_new(
     struct aws_http2_stream_manager *stream_manager,
     struct aws_http_connection *connection) {
     struct aws_h2_sm_connection *sm_connection =
         aws_mem_calloc(stream_manager->allocator, 1, sizeof(struct aws_h2_sm_connection));
+    sm_connection->allocator = stream_manager->allocator;
     /* Max concurrent stream reached, we need to update the max for the sm_connection */
     struct aws_http2_setting out_settings[AWS_HTTP2_SETTINGS_COUNT];
     /* The setting id equals to the index plus one. */
@@ -405,16 +523,33 @@ static struct aws_h2_sm_connection *s_sm_connection_new(
     sm_connection->connection = connection;
     sm_connection->stream_manager = stream_manager;
     sm_connection->state = AWS_H2SMCST_IDEAL;
+    aws_ref_count_init(&sm_connection->ref_count, sm_connection, s_sm_connection_destroy);
+    if (stream_manager->connection_ping_period_ns) {
+        struct aws_channel *channel = aws_http_connection_get_channel(connection);
+        uint64_t schedule_time = 0;
+        aws_channel_current_clock_time(channel, &schedule_time);
+        schedule_time += stream_manager->connection_ping_period_ns;
+        aws_channel_task_init(
+            &sm_connection->ping_task, s_connection_ping_task, sm_connection, "Stream manager connection ping task");
+        aws_channel_schedule_task_future(channel, &sm_connection->ping_task, schedule_time);
+        /* Keep a refcount on sm_connection for the task to run. */
+        aws_ref_count_acquire(&sm_connection->ref_count);
+    }
     return sm_connection;
 }
 
-void s_sm_connection_destroy(struct aws_h2_sm_connection *sm_connection) {
+static void s_sm_connection_release_connection(struct aws_h2_sm_connection *sm_connection) {
     AWS_ASSERT(sm_connection->num_streams_assigned == 0);
     if (sm_connection->connection) {
-        aws_http_connection_manager_release_connection(
+        /* Should only be invoked from the connection thread. */
+        AWS_ASSERT(aws_channel_thread_is_callers_thread(aws_http_connection_get_channel(sm_connection->connection)));
+        int error = aws_http_connection_manager_release_connection(
             sm_connection->stream_manager->connection_manager, sm_connection->connection);
+        AWS_ASSERT(!error);
+        (void)error;
+        sm_connection->connection = NULL;
     }
-    aws_mem_release(sm_connection->stream_manager->allocator, sm_connection);
+    aws_ref_count_release(&sm_connection->ref_count);
 }
 
 static void s_sm_on_connection_acquired_failed_synced(
@@ -775,7 +910,7 @@ static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stre
             stream_manager,
             "Release connection:%p back to connection manager as no outstanding streams",
             (void *)work->sm_connection_to_release->connection);
-        s_sm_connection_destroy(work->sm_connection_to_release);
+        s_sm_connection_release_connection(work->sm_connection_to_release);
     }
 
     /* Step2: Make request. The work should know what connection for the request to be made. */
@@ -902,6 +1037,8 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
     struct aws_http2_stream_manager *stream_manager =
         aws_mem_calloc(allocator, 1, sizeof(struct aws_http2_stream_manager));
     stream_manager->allocator = allocator;
+    aws_linked_list_init(&stream_manager->synced_data.pending_stream_acquisitions);
+
     if (aws_mutex_init(&stream_manager->synced_data.lock)) {
         goto on_error;
     }
@@ -931,6 +1068,23 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         &stream_manager->internal_ref_count,
         stream_manager,
         (aws_simple_completion_callback *)s_stream_manager_start_destroy);
+
+    stream_manager->connection_ping_timeout_ns =
+        options->connection_ping_timeout_ns ? options->connection_ping_timeout_ns : s_default_ping_timeout_ns;
+    if (options->connection_ping_period_sec) {
+        stream_manager->connection_ping_period_ns =
+            aws_timestamp_convert(options->connection_ping_period_sec, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL);
+        if (stream_manager->connection_ping_period_ns <= stream_manager->connection_ping_timeout_ns) {
+            STREAM_MANAGER_LOGF(
+                ERROR,
+                stream_manager,
+                "Invalid options: connection_ping_period_sec: %zu is shorter than connection_ping_timeout_ns: %zu",
+                options->connection_ping_period_sec,
+                stream_manager->connection_ping_period_ns);
+            aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
+            goto on_error;
+        }
+    }
 
     stream_manager->bootstrap = aws_client_bootstrap_acquire(options->bootstrap);
     struct aws_http_connection_manager_options cm_options = {
@@ -968,7 +1122,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         options->max_concurrent_streams_per_connection ? options->max_concurrent_streams_per_connection : UINT32_MAX;
     stream_manager->max_connections = options->max_connections;
     stream_manager->close_connection_on_server_error = options->close_connection_on_server_error;
-    aws_linked_list_init(&stream_manager->synced_data.pending_stream_acquisitions);
+
     return stream_manager;
 on_error:
     s_stream_manager_destroy_final(stream_manager);

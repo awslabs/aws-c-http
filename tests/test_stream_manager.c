@@ -50,6 +50,8 @@ struct sm_tester_options {
     const enum aws_log_level *log_level;
     const bool prior_knowledge;
     const bool close_connection_on_server_error;
+    const size_t connection_ping_period_sec;
+    const size_t connection_ping_timeout_ns;
 };
 
 static struct aws_logger s_logger;
@@ -282,6 +284,8 @@ static int s_tester_init(struct sm_tester_options *options) {
         .monitoring_options = options->monitor_opt,
         .prior_knowledge = options->prior_knowledge,
         .close_connection_on_server_error = options->close_connection_on_server_error,
+        .connection_ping_period_sec = options->connection_ping_period_sec,
+        .connection_ping_timeout_ns = options->connection_ping_timeout_ns,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
@@ -769,7 +773,7 @@ TEST_CASE(h2_sm_mock_bad_connection_acquired) {
     return s_tester_clean_up();
 }
 
-/* Test a connection offerred, and before the stream was made, the connection dies. The stream should fail */
+/* Test a connection offered, and before the stream was made, the connection dies. The stream should fail */
 TEST_CASE(h2_sm_mock_connections_closed_before_request_made) {
     (void)ctx;
     struct sm_tester_options options = {
@@ -1091,6 +1095,74 @@ TEST_CASE(h2_sm_mock_goaway) {
     return s_tester_clean_up();
 }
 
+/* Test that PING works as expected. */
+TEST_CASE(h2_sm_connection_ping) {
+    (void)ctx;
+    size_t connection_ping_timeout_ns = AWS_TIMESTAMP_NANOS;
+    struct sm_tester_options options = {
+        .max_connections = 3,
+        .alloc = allocator,
+        .max_concurrent_streams_per_connection = 2,
+        .connection_ping_period_sec = 2,
+        .connection_ping_timeout_ns = connection_ping_timeout_ns,
+    };
+    ASSERT_SUCCESS(s_tester_init(&options));
+    s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
+    ASSERT_SUCCESS(s_sm_stream_acquiring(6));
+    /* waiting for one fake connection made */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(3));
+    s_drain_all_fake_connection_testing_channel();
+    ASSERT_SUCCESS(s_wait_on_streams_acquired_count(6));
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
+
+    aws_thread_current_sleep(2 * AWS_TIMESTAMP_NANOS); /* Sleep 1 sec */
+
+    /* Check PING received for all the connections */
+    struct sm_fake_connection *fake_connection_1 = s_get_fake_connection(0);
+    struct sm_fake_connection *fake_connection_2 = s_get_fake_connection(1);
+    struct sm_fake_connection *fake_connection_3 = s_get_fake_connection(2);
+    testing_channel_drain_queued_tasks(&fake_connection_1->testing_channel);
+    testing_channel_drain_queued_tasks(&fake_connection_2->testing_channel);
+    testing_channel_drain_queued_tasks(&fake_connection_3->testing_channel);
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&fake_connection_1->peer));
+    struct h2_decoded_frame *ping_frame =
+        h2_decode_tester_find_frame(&fake_connection_1->peer.decode, AWS_H2_FRAME_T_PING, 0, NULL);
+    ASSERT_NOT_NULL(ping_frame);
+
+    /* Fake peer only send PINGACK to the first connection immediately */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&fake_connection_1->peer));
+    struct aws_h2_frame *peer_frame = aws_h2_frame_new_ping(allocator, true /*ACK*/, ping_frame->ping_opaque_data);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&fake_connection_1->peer, peer_frame));
+    testing_channel_drain_queued_tasks(&fake_connection_1->testing_channel);
+    s_fake_connection_complete_streams(
+        fake_connection_1, 0 /*all streams*/); /* Make sure the streams completed successfully */
+
+    /* Check fake connection 2 received PING */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&fake_connection_2->peer));
+    ping_frame = h2_decode_tester_find_frame(&fake_connection_2->peer.decode, AWS_H2_FRAME_T_PING, 0, NULL);
+    ASSERT_NOT_NULL(ping_frame);
+    /* Check fake connection 3 received PING, but never send ping for connection 3 */
+    ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&fake_connection_3->peer));
+    ping_frame = h2_decode_tester_find_frame(&fake_connection_3->peer.decode, AWS_H2_FRAME_T_PING, 0, NULL);
+    ASSERT_NOT_NULL(ping_frame);
+
+    aws_thread_current_sleep(connection_ping_timeout_ns); /* Sleep the timeout */
+    testing_channel_drain_queued_tasks(&fake_connection_2->testing_channel);
+    testing_channel_drain_queued_tasks(&fake_connection_3->testing_channel);
+
+    /* Send PINGACK for connection 2 after timeout has happened */
+    ASSERT_SUCCESS(h2_fake_peer_send_connection_preface_default_settings(&fake_connection_2->peer));
+    peer_frame = aws_h2_frame_new_ping(allocator, true /*ACK*/, ping_frame->ping_opaque_data);
+    ASSERT_SUCCESS(h2_fake_peer_send_frame(&fake_connection_2->peer, peer_frame));
+    testing_channel_drain_queued_tasks(&fake_connection_2->testing_channel);
+
+    /* The streams on second and third connection should failed to complete */
+    ASSERT_INT_EQUALS(4, s_tester.stream_complete_errors);
+    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, s_tester.stream_completed_error_code);
+
+    return s_tester_clean_up();
+}
+
 /*******************************************************************************
  * Net test, that makes real HTTP/2 connection and requests
  ******************************************************************************/
@@ -1227,6 +1299,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
     struct sm_tester_options options = {
         .max_connections = 100,
         .max_concurrent_streams_per_connection = 100,
+        .connection_ping_period_sec = 100,
         .alloc = allocator,
         .uri_cursor = &uri_cursor,
         .monitor_opt = &monitor_opt,
@@ -1310,6 +1383,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
     struct sm_tester_options options = {
         .max_connections = 100,
         .max_concurrent_streams_per_connection = 100,
+        .connection_ping_period_sec = 100,
         .alloc = allocator,
         .uri_cursor = &uri_cursor,
     };
