@@ -814,7 +814,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
 
     if (options->tls_connection_options && options->prior_knowledge_http2) {
         AWS_LOGF_ERROR(
-            AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - prior knowledge cannot be set when TLS is used");
+            AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - HTTP/2 prior knowledge cannot be set when TLS is used");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }

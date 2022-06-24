@@ -878,10 +878,11 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
 
     AWS_PRECONDITION(allocator);
     /* The other options are validated by the aws_http_connection_manager_new */
-    if (!options->prior_knowledge && !options->tls_connection_options) {
+    if (!options->prior_knowledge_http2 && !options->tls_connection_options) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION_MANAGER,
-            "Invalid options - Both TLS and prior knowledge not set. Upgrade from HTTP/1 is not supported");
+            "Invalid options - Prior knowledge must be used for cleartext HTTP/2 connections."
+            " Upgrade from HTTP/1.1 is not supported.");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
         return NULL;
     }
@@ -923,7 +924,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         .bootstrap = options->bootstrap,
         .socket_options = options->socket_options,
         .tls_connection_options = options->tls_connection_options,
-        .prior_knowledge_http2 = options->prior_knowledge,
+        .prior_knowledge_http2 = options->prior_knowledge_http2,
         .host = options->host,
         .port = options->port,
         .enable_read_back_pressure = options->enable_read_back_pressure,
