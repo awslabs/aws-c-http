@@ -212,7 +212,7 @@ static int s_cm_tester_init(struct cm_tester_options *options) {
         .shutdown_complete_user_data = tester,
         .shutdown_complete_callback = s_cm_tester_on_cm_shutdown_complete,
         .max_connection_idle_in_milliseconds = options->max_connection_idle_in_ms,
-        .prior_knowledge_http2 = !options->use_tls && options->http2,
+        .http2_prior_knowledge = !options->use_tls && options->http2,
         .initial_settings_array = options->initial_settings_array,
         .num_initial_settings = options->num_initial_settings,
     };

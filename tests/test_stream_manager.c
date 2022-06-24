@@ -48,6 +48,7 @@ struct sm_tester_options {
 
     struct aws_byte_cursor *uri_cursor;
     const enum aws_log_level *log_level;
+    bool prior_knowledge;
 };
 
 static struct aws_logger s_logger;
@@ -278,6 +279,7 @@ static int s_tester_init(struct sm_tester_options *options) {
         .shutdown_complete_user_data = &s_tester,
         .shutdown_complete_callback = s_sm_tester_on_sm_shutdown_complete,
         .monitoring_options = options->monitor_opt,
+        .http2_prior_knowledge = options->prior_knowledge,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
@@ -1174,6 +1176,7 @@ TEST_CASE(localhost_integ_h2_sm_prior_knowledge) {
         .max_concurrent_streams_per_connection = 100,
         .alloc = allocator,
         .uri_cursor = &uri_cursor,
+        .prior_knowledge = true,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
     int num_to_acquire = 2;

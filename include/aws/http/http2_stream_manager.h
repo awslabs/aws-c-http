@@ -48,12 +48,23 @@ struct aws_http2_stream_manager_options {
      */
     struct aws_client_bootstrap *bootstrap;
     const struct aws_socket_options *socket_options;
+
     /**
-     * If TLS options is set, you also need to handle ALPN, otherwise, may not able to get HTTP/2 connection and fail
-     * the stream manager.
-     * If TLS options not set, prior knowledge will be used.
+     * Options to create secure (HTTPS) connections.
+     * For secure connections, the ALPN string must be "h2".
+     *
+     * To create cleartext (HTTP) connections, leave this NULL
+     * and set `http2_prior_knowledge` (RFC-7540 3.4).
      */
     const struct aws_tls_connection_options *tls_connection_options;
+
+    /**
+     * Specify whether you have prior knowledge that cleartext (HTTP) connections are HTTP/2 (RFC-7540 3.4).
+     * It is illegal to set this true when secure connections are being used.
+     * Note that upgrading from HTTP/1.1 to HTTP/2 is not supported (RFC-7540 3.2).
+     */
+    bool http2_prior_knowledge;
+
     struct aws_byte_cursor host;
     uint16_t port;
 
