@@ -279,7 +279,7 @@ static int s_tester_init(struct sm_tester_options *options) {
         .shutdown_complete_user_data = &s_tester,
         .shutdown_complete_callback = s_sm_tester_on_sm_shutdown_complete,
         .monitoring_options = options->monitor_opt,
-        .prior_knowledge_http2 = options->prior_knowledge,
+        .http2_prior_knowledge = options->prior_knowledge,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 

@@ -240,7 +240,7 @@ struct aws_http_connection_manager {
     /*
      * HTTP/2 specific.
      */
-    bool prior_knowledge_http2;
+    bool http2_prior_knowledge;
     struct aws_array_list *initial_settings;
     size_t max_closed_streams;
     bool http2_conn_manual_window_management;
@@ -812,7 +812,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         return NULL;
     }
 
-    if (options->tls_connection_options && options->prior_knowledge_http2) {
+    if (options->tls_connection_options && options->http2_prior_knowledge) {
         AWS_LOGF_ERROR(
             AWS_LS_HTTP_CONNECTION_MANAGER, "Invalid options - HTTP/2 prior knowledge cannot be set when TLS is used");
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -883,7 +883,7 @@ struct aws_http_connection_manager *aws_http_connection_manager_new(
         }
         manager->proxy_ev_settings.tls_options = manager->proxy_ev_tls_options;
     }
-    manager->prior_knowledge_http2 = options->prior_knowledge_http2;
+    manager->http2_prior_knowledge = options->http2_prior_knowledge;
     if (options->num_initial_settings > 0) {
         manager->initial_settings = aws_mem_calloc(allocator, 1, sizeof(struct aws_array_list));
         aws_array_list_init_dynamic(
@@ -995,7 +995,7 @@ static int s_aws_http_connection_manager_new_connection(struct aws_http_connecti
     options.on_shutdown = s_aws_http_connection_manager_on_connection_shutdown;
     options.manual_window_management = manager->enable_read_back_pressure;
     options.proxy_ev_settings = &manager->proxy_ev_settings;
-    options.prior_knowledge_http2 = manager->prior_knowledge_http2;
+    options.prior_knowledge_http2 = manager->http2_prior_knowledge;
 
     struct aws_http2_connection_options h2_options;
     AWS_ZERO_STRUCT(h2_options);
