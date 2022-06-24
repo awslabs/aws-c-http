@@ -48,8 +48,8 @@ struct sm_tester_options {
 
     struct aws_byte_cursor *uri_cursor;
     const enum aws_log_level *log_level;
-    const bool prior_knowledge;
-    const bool close_connection_on_server_error;
+    bool prior_knowledge;
+    bool close_connection_on_server_error;
 };
 
 static struct aws_logger s_logger;
@@ -280,8 +280,7 @@ static int s_tester_init(struct sm_tester_options *options) {
         .shutdown_complete_user_data = &s_tester,
         .shutdown_complete_callback = s_sm_tester_on_sm_shutdown_complete,
         .monitoring_options = options->monitor_opt,
-        .prior_knowledge = options->prior_knowledge,
-        .close_connection_on_server_error = options->close_connection_on_server_error,
+        .http2_prior_knowledge = options->prior_knowledge,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
