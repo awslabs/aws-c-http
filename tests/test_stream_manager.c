@@ -52,7 +52,6 @@ struct sm_tester_options {
     bool close_connection_on_server_error;
     size_t connection_ping_period_sec;
     size_t connection_ping_timeout_ns;
-    bool prior_knowledge;
 };
 
 static struct aws_logger s_logger;
