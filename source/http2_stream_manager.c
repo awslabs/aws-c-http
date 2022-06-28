@@ -646,9 +646,30 @@ static int s_on_incoming_headers(
     size_t num_headers,
     void *user_data) {
     struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition = user_data;
+    struct aws_h2_sm_connection *sm_connection = pending_stream_acquisition->sm_connection;
+    struct aws_http2_stream_manager *stream_manager = sm_connection->stream_manager;
+
     if (pending_stream_acquisition->options.on_response_headers) {
         return pending_stream_acquisition->options.on_response_headers(
             stream, header_block, header_array, num_headers, pending_stream_acquisition->options.user_data);
+    }
+    if (stream_manager->close_connection_on_server_error) {
+        /* Check status code if stream completed successfully. */
+        int status_code = 0;
+        aws_http_stream_get_incoming_response_status(stream, &status_code);
+        AWS_ASSERT(status_code != 0); /* The get status should not fail */
+        if (status_code / 100 == 5) {
+            STREAM_MANAGER_LOGF(
+                DEBUG,
+                stream_manager,
+                "%d response received for stream: %p. Closing connection: %p",
+                status_code,
+                (void *)stream,
+                (void *)sm_connection->connection);
+            struct aws_byte_cursor debug_data = aws_byte_cursor_from_c_str("Close connection for 5xx status received.");
+            aws_http2_connection_send_goaway(
+                sm_connection->connection, AWS_HTTP2_ERR_NO_ERROR, false /**/, &debug_data);
+        }
     }
     return AWS_OP_SUCCESS;
 }
@@ -775,22 +796,6 @@ static void s_on_stream_complete(struct aws_http_stream *stream, int error_code,
     if (pending_stream_acquisition->options.on_complete) {
         pending_stream_acquisition->options.on_complete(
             stream, error_code, pending_stream_acquisition->options.user_data);
-    }
-    if (stream_manager->close_connection_on_server_error && error_code == AWS_ERROR_SUCCESS) {
-        /* Check status code if stream completed successfully. */
-        int status_code = 0;
-        aws_http_stream_get_incoming_response_status(stream, &status_code);
-        AWS_ASSERT(status_code != 0); /* The get status should not fail */
-        if (status_code / 100 == 5) {
-            STREAM_MANAGER_LOGF(
-                DEBUG,
-                stream_manager,
-                "%d response received for stream: %p. Closing connection: %p",
-                status_code,
-                (void *)stream,
-                (void *)sm_connection->connection);
-            aws_http_connection_close(sm_connection->connection);
-        }
     }
     s_pending_stream_acquisition_destroy(pending_stream_acquisition);
     s_sm_connection_on_scheduled_stream_finishes(sm_connection, stream_manager);

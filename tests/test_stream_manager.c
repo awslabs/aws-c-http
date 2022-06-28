@@ -286,6 +286,7 @@ static int s_tester_init(struct sm_tester_options *options) {
         .connection_ping_period_sec = options->connection_ping_period_sec,
         .connection_ping_timeout_ns = options->connection_ping_timeout_ns,
         .http2_prior_knowledge = options->prior_knowledge,
+        .close_connection_on_server_error = options->close_connection_on_server_error,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
@@ -1210,13 +1211,13 @@ TEST_CASE(h2_sm_close_connection_on_server_error) {
     struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://httpbin.org/status/500");
     struct sm_tester_options options = {
         .max_connections = 1,
-        .max_concurrent_streams_per_connection = 100,
+        .max_concurrent_streams_per_connection = 10,
         .alloc = allocator,
         .uri_cursor = &uri_cursor,
         .close_connection_on_server_error = true,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
-    int num_to_acquire = 500;
+    int num_to_acquire = 50;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
