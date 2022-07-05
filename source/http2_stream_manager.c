@@ -404,13 +404,11 @@ static void s_on_ping_complete(
     struct aws_h2_sm_connection *sm_connection = user_data;
     if (error_code) {
         /* Connection error happened. Not reschedule the ping task, release the refcount for the ping task. */
-        aws_ref_count_release(&sm_connection->ref_count);
-        return;
+        goto error;
     }
     if (!sm_connection->connection) {
         /* The connection has been released before complete, just release the refcount */
-        aws_ref_count_release(&sm_connection->ref_count);
-        return;
+        goto error;
     }
     AWS_ASSERT(aws_channel_thread_is_callers_thread(aws_http_connection_get_channel(sm_connection->connection)));
     if (round_trip_time_ns > sm_connection->stream_manager->connection_ping_timeout_ns) {
@@ -423,21 +421,19 @@ static void s_on_ping_complete(
             (void *)sm_connection->connection,
             round_trip_time_ns);
         aws_http_connection_close(sm_connection->connection);
-        aws_ref_count_release(&sm_connection->ref_count);
-        return;
+        goto error;
     }
-    /* All good. Reschedule the ping task. */
+    /* All good. Reschedule the ping task. Don't release the refcount. */
     STREAM_MANAGER_LOGF(
         TRACE,
         sm_connection->stream_manager,
         "PINGACK received for connection: %p. Schedule another PING to be sent.",
         (void *)sm_connection->connection);
-    sm_connection->ping_received = true;
-    struct aws_channel *channel = aws_http_connection_get_channel(sm_connection->connection);
-    uint64_t schedule_time = 0;
-    aws_channel_current_clock_time(channel, &schedule_time);
-    schedule_time += sm_connection->stream_manager->connection_ping_period_ns;
-    aws_channel_schedule_task_future(channel, &sm_connection->ping_task, schedule_time);
+    sm_connection->thread_data.ping_received = true;
+    return;
+error:
+    /* Release refcount for ping timeout task */
+    aws_ref_count_release(&sm_connection->ref_count);
 }
 
 static void s_connection_ping_timeout_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
@@ -445,27 +441,27 @@ static void s_connection_ping_timeout_task(struct aws_channel_task *task, void *
     (void)status;
     struct aws_h2_sm_connection *sm_connection = arg;
     if (status != AWS_TASK_STATUS_RUN_READY) {
-        /* Release refcount for ping timeout task */
-        aws_ref_count_release(&sm_connection->ref_count);
-        return;
+        goto done;
     }
     if (!sm_connection->connection) {
         /* The connection has been released before timeout happens, just release the refcount */
-        aws_ref_count_release(&sm_connection->ref_count);
-        return;
+        goto done;
     }
     AWS_ASSERT(aws_channel_thread_is_callers_thread(aws_http_connection_get_channel(sm_connection->connection)));
-    if (!sm_connection->ping_received) {
+    if (!sm_connection->thread_data.ping_received) {
         /* Timeout happened */
         STREAM_MANAGER_LOGF(
             ERROR,
             sm_connection->stream_manager,
             "ping timeout detected for connection: %p, closing connection.",
             (void *)sm_connection->connection);
-        /* TODO: think of a way to propagate the error code. But, will it be more informative to user about PING timeout
-         * vs connection closed? */
+
         aws_http_connection_close(sm_connection->connection);
     }
+    struct aws_channel *channel = aws_http_connection_get_channel(sm_connection->connection);
+    aws_channel_schedule_task_future(
+        channel, &sm_connection->ping_task, sm_connection->thread_data.next_ping_task_time);
+done:
     /* Release refcount for ping timeout task */
     aws_ref_count_release(&sm_connection->ref_count);
 }
@@ -488,18 +484,21 @@ static void s_connection_ping_task(struct aws_channel_task *task, void *arg, enu
     STREAM_MANAGER_LOGF(
         TRACE, sm_connection->stream_manager, "Sending PING for connection: %p.", (void *)sm_connection->connection);
     aws_http2_connection_ping(sm_connection->connection, NULL, s_on_ping_complete, sm_connection);
+    sm_connection->thread_data.ping_received = false;
     struct aws_channel *channel = aws_http_connection_get_channel(sm_connection->connection);
     uint64_t schedule_time = 0;
     aws_channel_current_clock_time(channel, &schedule_time);
+    sm_connection->thread_data.next_ping_task_time =
+        schedule_time + sm_connection->stream_manager->connection_ping_period_ns;
     schedule_time += sm_connection->stream_manager->connection_ping_timeout_ns;
     aws_channel_task_init(
         &sm_connection->ping_timeout_task,
         s_connection_ping_timeout_task,
         sm_connection,
         "Stream manager connection ping timeout task");
-    aws_channel_schedule_task_future(channel, &sm_connection->ping_timeout_task, schedule_time);
     /* acquire a refcount for timeout task to run */
     aws_ref_count_acquire(&sm_connection->ref_count);
+    aws_channel_schedule_task_future(channel, &sm_connection->ping_timeout_task, schedule_time);
 }
 
 static void s_sm_connection_destroy(void *user_data) {
@@ -531,9 +530,9 @@ static struct aws_h2_sm_connection *s_sm_connection_new(
         schedule_time += stream_manager->connection_ping_period_ns;
         aws_channel_task_init(
             &sm_connection->ping_task, s_connection_ping_task, sm_connection, "Stream manager connection ping task");
-        aws_channel_schedule_task_future(channel, &sm_connection->ping_task, schedule_time);
         /* Keep a refcount on sm_connection for the task to run. */
         aws_ref_count_acquire(&sm_connection->ref_count);
+        aws_channel_schedule_task_future(channel, &sm_connection->ping_task, schedule_time);
     }
     return sm_connection;
 }
