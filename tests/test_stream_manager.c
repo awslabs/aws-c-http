@@ -1203,7 +1203,7 @@ TEST_CASE(h2_sm_acquire_stream_multiple_connections) {
     return s_tester_clean_up();
 }
 
-/* Test that makes tons of real streams against local host */
+/* Test that makes tons of real streams against real world */
 TEST_CASE(h2_sm_close_connection_on_server_error) {
     (void)ctx;
     /* server that will return 500 status code all the time. */
