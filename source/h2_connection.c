@@ -68,7 +68,7 @@ static int s_connection_send_ping(
     const struct aws_byte_cursor *optional_opaque_data,
     aws_http2_on_ping_complete_fn *on_completed,
     void *user_data);
-static int s_connection_send_goaway(
+static void s_connection_send_goaway(
     struct aws_http_connection *connection_base,
     uint32_t http2_error,
     bool allow_more_streams,
@@ -2364,7 +2364,7 @@ closed:
     return aws_raise_error(AWS_ERROR_INVALID_STATE);
 }
 
-static int s_connection_send_goaway(
+static void s_connection_send_goaway(
     struct aws_http_connection *connection_base,
     uint32_t http2_error,
     bool allow_more_streams,
@@ -2373,11 +2373,6 @@ static int s_connection_send_goaway(
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     struct aws_h2_pending_goaway *pending_goaway =
         s_new_pending_goaway(connection->base.alloc, http2_error, allow_more_streams, optional_debug_data);
-
-    if (!pending_goaway) {
-        /* error happened during acquire memory. Error code raised there and skip logging. */
-        return AWS_OP_ERR;
-    }
 
     bool was_cross_thread_work_scheduled = false;
     bool connection_open;
@@ -2389,7 +2384,7 @@ static int s_connection_send_goaway(
             s_unlock_synced_data(connection);
             CONNECTION_LOG(DEBUG, connection, "Goaway not sent, connection is closed or closing.");
             aws_mem_release(connection->base.alloc, pending_goaway);
-            goto done;
+            return;
         }
         was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
         connection->synced_data.is_cross_thread_work_task_scheduled = true;
@@ -2410,8 +2405,6 @@ static int s_connection_send_goaway(
         CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
         aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
     }
-done:
-    return AWS_OP_SUCCESS;
 }
 
 static void s_get_settings_general(

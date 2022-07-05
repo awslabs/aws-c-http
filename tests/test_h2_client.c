@@ -4639,8 +4639,8 @@ TEST_CASE(h2_client_send_multiple_goaway) {
     struct aws_byte_cursor debug_info = aws_byte_cursor_from_buf(&info_buf);
 
     /* First graceful shutdown warning */
-    ASSERT_SUCCESS(aws_http2_connection_send_goaway(
-        s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, true /*allow_more_streams*/, &debug_info /*debug_data*/));
+    aws_http2_connection_send_goaway(
+        s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, true /*allow_more_streams*/, &debug_info /*debug_data*/);
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* Check the goaway frame received */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
@@ -4650,8 +4650,8 @@ TEST_CASE(h2_client_send_multiple_goaway) {
     ASSERT_TRUE(aws_byte_buf_eq_c_str(&latest_frame->data, "this is a debug info"));
 
     /* Real GOAWAY */
-    ASSERT_SUCCESS(aws_http2_connection_send_goaway(
-        s_tester.connection, AWS_HTTP2_ERR_PROTOCOL_ERROR, false /*allow_more_streams*/, &debug_info));
+    aws_http2_connection_send_goaway(
+        s_tester.connection, AWS_HTTP2_ERR_PROTOCOL_ERROR, false /*allow_more_streams*/, &debug_info);
     /* It is fine to free the buffer right after the call, since we keep it in the connection's memory */
     aws_byte_buf_clean_up(&info_buf);
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
@@ -4664,8 +4664,8 @@ TEST_CASE(h2_client_send_multiple_goaway) {
     size_t frames_count = h2_decode_tester_frame_count(&s_tester.peer.decode);
 
     /* Graceful shutdown warning after real GOAWAY will be ignored */
-    ASSERT_SUCCESS(aws_http2_connection_send_goaway(
-        s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, true /*allow_more_streams*/, NULL /*debug_data*/));
+    aws_http2_connection_send_goaway(
+        s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, true /*allow_more_streams*/, NULL /*debug_data*/);
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     /* Check the goaway frame received */
     ASSERT_SUCCESS(h2_fake_peer_decode_messages_from_testing_channel(&s_tester.peer));
@@ -4687,8 +4687,8 @@ TEST_CASE(h2_client_get_sent_goaway) {
     ASSERT_FAILS(aws_http2_connection_get_sent_goaway(s_tester.connection, &http2_error, &last_stream_id));
 
     /* First graceful shutdown warning */
-    ASSERT_SUCCESS(aws_http2_connection_send_goaway(
-        s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, true /*allow_more_streams*/, NULL /*debug_data*/));
+    aws_http2_connection_send_goaway(
+        s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, true /*allow_more_streams*/, NULL /*debug_data*/);
     /* User send goaway asynchronously, you are not able to get the sent goaway right after the call */
     ASSERT_FAILS(aws_http2_connection_get_sent_goaway(s_tester.connection, &http2_error, &last_stream_id));
 
@@ -4698,8 +4698,8 @@ TEST_CASE(h2_client_get_sent_goaway) {
     ASSERT_UINT_EQUALS(AWS_HTTP2_ERR_NO_ERROR, http2_error);
 
     /* Second graceful shutdown warning, with non-zero error. Well it's not against the law, just do what user wants */
-    ASSERT_SUCCESS(aws_http2_connection_send_goaway(
-        s_tester.connection, AWS_HTTP2_ERR_ENHANCE_YOUR_CALM, true /*allow_more_streams*/, NULL /*debug_data*/));
+    aws_http2_connection_send_goaway(
+        s_tester.connection, AWS_HTTP2_ERR_ENHANCE_YOUR_CALM, true /*allow_more_streams*/, NULL /*debug_data*/);
     testing_channel_drain_queued_tasks(&s_tester.testing_channel);
     ASSERT_SUCCESS(aws_http2_connection_get_sent_goaway(s_tester.connection, &http2_error, &last_stream_id));
     ASSERT_UINT_EQUALS(AWS_H2_STREAM_ID_MAX, last_stream_id);
@@ -4864,8 +4864,8 @@ TEST_CASE(h2_client_request_apis_failed_after_connection_begin_shutdown) {
     aws_http_connection_close(s_tester.connection);
 
     /* Send goaway will silently do nothing as the connection already closed */
-    ASSERT_SUCCESS(aws_http2_connection_send_goaway(
-        s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, false /*allow_more_streams*/, NULL /*debug_data*/));
+    aws_http2_connection_send_goaway(
+        s_tester.connection, AWS_HTTP2_ERR_NO_ERROR, false /*allow_more_streams*/, NULL /*debug_data*/);
     /* validate all those user apis to add stuff into synced data will fail */
     ASSERT_FAILS(aws_http_stream_activate(stream));
     ASSERT_FAILS(aws_http2_connection_change_settings(

@@ -286,7 +286,6 @@ static int s_tester_init(struct sm_tester_options *options) {
         .connection_ping_period_sec = options->connection_ping_period_sec,
         .connection_ping_timeout_ns = options->connection_ping_timeout_ns,
         .http2_prior_knowledge = options->prior_knowledge,
-        .close_connection_on_server_error = options->close_connection_on_server_error,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
 
@@ -1222,9 +1221,6 @@ TEST_CASE(h2_sm_close_connection_on_server_error) {
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
     ASSERT_TRUE((int)s_tester.stream_200_count == 0);
-    /* Check some of the stream completed with AWS_ERROR_HTTP_CONNECTION_CLOSED */
-    ASSERT_TRUE((int)s_tester.stream_complete_errors > 0);
-    ASSERT_TRUE((int)s_tester.stream_completed_error_code == AWS_ERROR_HTTP_CONNECTION_CLOSED);
 
     return s_tester_clean_up();
 }

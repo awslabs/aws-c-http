@@ -296,7 +296,7 @@ int aws_http2_connection_ping(
     return http2_connection->vtable->send_ping(http2_connection, optional_opaque_data, on_ack, user_data);
 }
 
-int aws_http2_connection_send_goaway(
+void aws_http2_connection_send_goaway(
     struct aws_http_connection *http2_connection,
     uint32_t http2_error,
     bool allow_more_streams,
@@ -304,8 +304,7 @@ int aws_http2_connection_send_goaway(
     AWS_ASSERT(http2_connection);
     AWS_PRECONDITION(http2_connection->vtable);
     AWS_FATAL_ASSERT(http2_connection->http_version == AWS_HTTP_VERSION_2);
-    return http2_connection->vtable->send_goaway(
-        http2_connection, http2_error, allow_more_streams, optional_debug_data);
+    http2_connection->vtable->send_goaway(http2_connection, http2_error, allow_more_streams, optional_debug_data);
 }
 
 int aws_http2_connection_get_sent_goaway(

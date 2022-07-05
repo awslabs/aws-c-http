@@ -667,8 +667,11 @@ static int s_on_incoming_headers(
                 (void *)stream,
                 (void *)sm_connection->connection);
             struct aws_byte_cursor debug_data = aws_byte_cursor_from_c_str("Close connection for 5xx status received.");
-            aws_http2_connection_send_goaway(
-                sm_connection->connection, AWS_HTTP2_ERR_NO_ERROR, false /**/, &debug_data);
+            if (!sm_connection->thread_data.goaway_scheduled) {
+                aws_http2_connection_send_goaway(
+                    sm_connection->connection, AWS_HTTP2_ERR_NO_ERROR, false /*allow_more_streams*/, &debug_data);
+                sm_connection->thread_data.goaway_scheduled = true;
+            }
         }
     }
     return AWS_OP_SUCCESS;

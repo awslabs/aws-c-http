@@ -597,7 +597,7 @@ void aws_http2_connection_get_remote_settings(
  */
 
 AWS_HTTP_API
-int aws_http2_connection_send_goaway(
+void aws_http2_connection_send_goaway(
     struct aws_http_connection *http2_connection,
     uint32_t http2_error,
     bool allow_more_streams,
