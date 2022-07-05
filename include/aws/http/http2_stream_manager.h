@@ -120,10 +120,10 @@ struct aws_http2_stream_manager_options {
     /**
      * Optional.
      * Network connection will be closed if a ping response is not received
-     * within this amount of time (nanoseconds).
+     * within this amount of time (milliseconds).
      * If you specify 0, a default value will be used.
      */
-    size_t connection_ping_timeout_ns;
+    size_t connection_ping_timeout_ms;
 
     /* TODO: More flexible policy about the connections, but will always has these three values below. */
     /**

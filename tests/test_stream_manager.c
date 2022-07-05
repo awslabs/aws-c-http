@@ -51,7 +51,7 @@ struct sm_tester_options {
     bool prior_knowledge;
     bool close_connection_on_server_error;
     size_t connection_ping_period_sec;
-    size_t connection_ping_timeout_ns;
+    size_t connection_ping_timeout_ms;
 };
 
 static struct aws_logger s_logger;
@@ -284,7 +284,7 @@ static int s_tester_init(struct sm_tester_options *options) {
         .monitoring_options = options->monitor_opt,
         .close_connection_on_server_error = options->close_connection_on_server_error,
         .connection_ping_period_sec = options->connection_ping_period_sec,
-        .connection_ping_timeout_ns = options->connection_ping_timeout_ns,
+        .connection_ping_timeout_ms = options->connection_ping_timeout_ms,
         .http2_prior_knowledge = options->prior_knowledge,
     };
     s_tester.stream_manager = aws_http2_stream_manager_new(alloc, &sm_options);
@@ -1098,13 +1098,13 @@ TEST_CASE(h2_sm_mock_goaway) {
 /* Test that PING works as expected. */
 TEST_CASE(h2_sm_connection_ping) {
     (void)ctx;
-    size_t connection_ping_timeout_ns = AWS_TIMESTAMP_NANOS;
+    size_t connection_ping_timeout_ms = AWS_TIMESTAMP_NANOS;
     struct sm_tester_options options = {
         .max_connections = 3,
         .alloc = allocator,
         .max_concurrent_streams_per_connection = 2,
         .connection_ping_period_sec = 2,
-        .connection_ping_timeout_ns = connection_ping_timeout_ns,
+        .connection_ping_timeout_ms = connection_ping_timeout_ms,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
     s_override_cm_connect_function(s_aws_http_connection_manager_create_connection_sync_mock);
@@ -1146,7 +1146,7 @@ TEST_CASE(h2_sm_connection_ping) {
     ping_frame = h2_decode_tester_find_frame(&fake_connection_3->peer.decode, AWS_H2_FRAME_T_PING, 0, NULL);
     ASSERT_NOT_NULL(ping_frame);
 
-    aws_thread_current_sleep(connection_ping_timeout_ns); /* Sleep the timeout */
+    aws_thread_current_sleep(connection_ping_timeout_ms); /* Sleep the timeout */
     testing_channel_drain_queued_tasks(&fake_connection_2->testing_channel);
     testing_channel_drain_queued_tasks(&fake_connection_3->testing_channel);
 

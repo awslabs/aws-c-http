@@ -1085,7 +1085,10 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         (aws_simple_completion_callback *)s_stream_manager_start_destroy);
 
     stream_manager->connection_ping_timeout_ns =
-        options->connection_ping_timeout_ns ? options->connection_ping_timeout_ns : s_default_ping_timeout_ns;
+        options->connection_ping_timeout_ms
+            ? aws_timestamp_convert(
+                  options->connection_ping_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL)
+            : s_default_ping_timeout_ns;
     if (options->connection_ping_period_sec) {
         stream_manager->connection_ping_period_ns =
             aws_timestamp_convert(options->connection_ping_period_sec, AWS_TIMESTAMP_SECS, AWS_TIMESTAMP_NANOS, NULL);
@@ -1093,7 +1096,7 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
             STREAM_MANAGER_LOGF(
                 ERROR,
                 stream_manager,
-                "Invalid options: connection_ping_period_sec: %zu is shorter than connection_ping_timeout_ns: %" PRIu64
+                "Invalid options: connection_ping_period_sec: %zu is shorter than connection_ping_timeout_ms: %" PRIu64
                 "",
                 options->connection_ping_period_sec,
                 stream_manager->connection_ping_period_ns);
