@@ -1098,7 +1098,7 @@ TEST_CASE(h2_sm_mock_goaway) {
 /* Test that PING works as expected. */
 TEST_CASE(h2_sm_connection_ping) {
     (void)ctx;
-    size_t connection_ping_timeout_ms = AWS_TIMESTAMP_NANOS;
+    size_t connection_ping_timeout_ms = AWS_TIMESTAMP_MILLIS; /* 1 sec */
     struct sm_tester_options options = {
         .max_connections = 3,
         .alloc = allocator,
@@ -1115,7 +1115,7 @@ TEST_CASE(h2_sm_connection_ping) {
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(6));
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
 
-    aws_thread_current_sleep(2 * AWS_TIMESTAMP_NANOS); /* Sleep 1 sec */
+    aws_thread_current_sleep(2 * AWS_TIMESTAMP_NANOS); /* Sleep 2 sec */
 
     /* Check PING received for all the connections */
     struct sm_fake_connection *fake_connection_1 = s_get_fake_connection(0);
@@ -1146,7 +1146,7 @@ TEST_CASE(h2_sm_connection_ping) {
     ping_frame = h2_decode_tester_find_frame(&fake_connection_3->peer.decode, AWS_H2_FRAME_T_PING, 0, NULL);
     ASSERT_NOT_NULL(ping_frame);
 
-    aws_thread_current_sleep(connection_ping_timeout_ms); /* Sleep the timeout */
+    aws_thread_current_sleep(AWS_TIMESTAMP_NANOS); /* Sleep 1 sec */
     testing_channel_drain_queued_tasks(&fake_connection_2->testing_channel);
     testing_channel_drain_queued_tasks(&fake_connection_3->testing_channel);
 
