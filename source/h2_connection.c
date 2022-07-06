@@ -1234,34 +1234,28 @@ struct aws_h2err s_decoder_on_data_begin(
             return err;
         }
     }
-
-    if (total_padding_bytes != 0 && connection->conn_manual_window_management) {
-        /**
-         * Automatically update the flow-window to account for padding, even if "manual window management"
+    /* Handle automatic updates of the connection flow window */
+    uint32_t window_update;
+    if (connection->conn_manual_window_management) {
+        /* Automatically update the flow-window to account for padding, even though "manual window management"
          * is enabled. We do this because the current API doesn't have any way to inform the user about padding,
-         * so we can't expect them to manage it themselves.
-         */
-        if (s_connection_send_update_window(connection, total_padding_bytes)) {
-            return aws_h2err_from_last_error();
-        }
-        CONNECTION_LOGF(
-            DEBUG,
-            connection,
-            "DATA with %" PRIu32
-            " padding. Updating the window for padding and one byte for padding length automatically.",
-            total_padding_bytes - 1 /* one byte for padding length */);
+         * so we can't expect them to manage it themselves. */
+        window_update = total_padding_bytes;
+    } else {
+        /* Automatically update the full amount we just received */
+        window_update = payload_len;
     }
 
-    /* if conn_manual_window_management is false, we will automatically maintain the connection self window size */
-    if (payload_len != 0 && !connection->conn_manual_window_management) {
-        if (s_connection_send_update_window(connection, payload_len)) {
+    if (window_update != 0) {
+        if (s_connection_send_update_window(connection, window_update)) {
             return aws_h2err_from_last_error();
         }
         CONNECTION_LOGF(
             TRACE,
             connection,
-            "Connection with no manual window management, updating window with size %" PRIu32 " automatically.",
-            payload_len);
+            "Automatically updating connection window by %" PRIu32 "(%" PRIu32 " due to padding).",
+            window_update,
+            total_padding_bytes);
     }
 
     return AWS_H2ERR_SUCCESS;

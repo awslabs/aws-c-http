@@ -1026,34 +1026,30 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
     }
     stream->thread_data.window_size_self -= payload_len;
 
-    if (total_padding_bytes != 0 && !end_stream && stream->base.owning_connection->stream_manual_window_management) {
-        /**
-         * Automatically update the flow-window to account for padding, even if "manual window management"
-         * is enabled. We do this because the current API doesn't have any way to inform the user about padding,
-         * so we can't expect them to manage it themselves.
-         */
-        if (s_stream_send_update_window(stream, total_padding_bytes)) {
-            return aws_h2err_from_last_error();
+    /* If stream isn't over, we may need to send automatic window updates to keep data flowing */
+    if (!end_stream) {
+        uint32_t window_update;
+        if (stream->base.owning_connection->stream_manual_window_management) {
+            /* Automatically update the flow-window to account for padding, even though "manual window management"
+             * is enabled, because the current API doesn't have any way to inform the user about padding,
+             * so we can't expect them to manage it themselves. */
+            window_update = total_padding_bytes;
+        } else {
+            /* Automatically update the full amount we just received */
+            window_update = payload_len;
         }
-        AWS_H2_STREAM_LOGF(
-            DEBUG,
-            stream,
-            "DATA with %" PRIu32
-            " padding. Updating the window for padding and one byte for padding length automatically for stream.",
-            total_padding_bytes - 1 /* one byte for padding length */);
-    }
-    /* send a stream window_update frame to automatically maintain the stream self window size, if
-     * manual_window_management is not set */
-    if (payload_len != 0 && !end_stream && !stream->base.owning_connection->stream_manual_window_management) {
-        if (s_stream_send_update_window(stream, payload_len)) {
-            return aws_h2err_from_last_error();
+
+        if (window_update != 0) {
+            if (s_stream_send_update_window(stream, window_update)) {
+                return aws_h2err_from_last_error();
+            }
+            AWS_H2_STREAM_LOGF(
+                TRACE,
+                stream,
+                "Automatically updating stream window by %" PRIu32 "(%" PRIu32 " due to padding).",
+                window_update,
+                total_padding_bytes);
         }
-        AWS_H2_STREAM_LOGF(
-            TRACE,
-            stream,
-            "Connection with no manual window management, updating window with size %" PRIu32
-            " automatically for stream.",
-            payload_len);
     }
 
     return AWS_H2ERR_SUCCESS;
