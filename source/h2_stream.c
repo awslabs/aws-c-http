@@ -1028,26 +1028,26 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
 
     /* If stream isn't over, we may need to send automatic window updates to keep data flowing */
     if (!end_stream) {
-        uint32_t window_update;
+        uint32_t auto_window_update;
         if (stream->base.owning_connection->stream_manual_window_management) {
             /* Automatically update the flow-window to account for padding, even though "manual window management"
              * is enabled, because the current API doesn't have any way to inform the user about padding,
              * so we can't expect them to manage it themselves. */
-            window_update = total_padding_bytes;
+            auto_window_update = total_padding_bytes;
         } else {
             /* Automatically update the full amount we just received */
-            window_update = payload_len;
+            auto_window_update = payload_len;
         }
 
-        if (window_update != 0) {
-            if (s_stream_send_update_window(stream, window_update)) {
+        if (auto_window_update != 0) {
+            if (s_stream_send_update_window(stream, auto_window_update)) {
                 return aws_h2err_from_last_error();
             }
             AWS_H2_STREAM_LOGF(
                 TRACE,
                 stream,
                 "Automatically updating stream window by %" PRIu32 "(%" PRIu32 " due to padding).",
-                window_update,
+                auto_window_update,
                 total_padding_bytes);
         }
     }

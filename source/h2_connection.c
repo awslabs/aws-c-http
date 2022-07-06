@@ -1235,26 +1235,26 @@ struct aws_h2err s_decoder_on_data_begin(
         }
     }
     /* Handle automatic updates of the connection flow window */
-    uint32_t window_update;
+    uint32_t auto_window_update;
     if (connection->conn_manual_window_management) {
         /* Automatically update the flow-window to account for padding, even though "manual window management"
          * is enabled. We do this because the current API doesn't have any way to inform the user about padding,
          * so we can't expect them to manage it themselves. */
-        window_update = total_padding_bytes;
+        auto_window_update = total_padding_bytes;
     } else {
         /* Automatically update the full amount we just received */
-        window_update = payload_len;
+        auto_window_update = payload_len;
     }
 
-    if (window_update != 0) {
-        if (s_connection_send_update_window(connection, window_update)) {
+    if (auto_window_update != 0) {
+        if (s_connection_send_update_window(connection, auto_window_update)) {
             return aws_h2err_from_last_error();
         }
         CONNECTION_LOGF(
             TRACE,
             connection,
             "Automatically updating connection window by %" PRIu32 "(%" PRIu32 " due to padding).",
-            window_update,
+            auto_window_update,
             total_padding_bytes);
     }
 
