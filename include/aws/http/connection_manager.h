@@ -55,11 +55,28 @@ struct aws_http_connection_manager_options {
     struct aws_client_bootstrap *bootstrap;
     size_t initial_window_size;
     const struct aws_socket_options *socket_options;
+
+    /**
+     * Options to create secure (HTTPS) connections.
+     * For secure connections, set "h2" in the ALPN string for HTTP/2, otherwise HTTP/1.1 is used.
+     *
+     * Leave NULL to create cleartext (HTTP) connections.
+     * For cleartext connections, use `http2_prior_knowledge` (RFC-7540 3.4)
+     * to control whether that are treated as HTTP/1.1 or HTTP/2.
+     */
     const struct aws_tls_connection_options *tls_connection_options;
+
+    /**
+     * Specify whether you have prior knowledge that cleartext (HTTP) connections are HTTP/2 (RFC-7540 3.4).
+     * If false, then cleartext connections are treated as HTTP/1.1.
+     * It is illegal to set this true when secure connections are being used.
+     * Note that upgrading from HTTP/1.1 to HTTP/2 is not supported (RFC-7540 3.2).
+     */
+    bool http2_prior_knowledge;
+
     const struct aws_http_connection_monitoring_options *monitoring_options;
     struct aws_byte_cursor host;
     uint16_t port;
-    bool prior_knowledge_http2;
 
     /**
      * Optional.
