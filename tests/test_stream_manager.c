@@ -1296,7 +1296,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
     struct sm_tester_options options = {
         .max_connections = 100,
         .max_concurrent_streams_per_connection = 100,
-        .connection_ping_period_ms = 100,
+        .connection_ping_period_ms = 100 * AWS_TIMESTAMP_MILLIS,
         .alloc = allocator,
         .uri_cursor = &uri_cursor,
         .monitor_opt = &monitor_opt,
@@ -1380,7 +1380,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
     struct sm_tester_options options = {
         .max_connections = 100,
         .max_concurrent_streams_per_connection = 100,
-        .connection_ping_period_ms = 100,
+        .connection_ping_period_ms = 100 * AWS_TIMESTAMP_MILLIS,
         .alloc = allocator,
         .uri_cursor = &uri_cursor,
     };
