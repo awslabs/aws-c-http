@@ -1031,8 +1031,9 @@ struct aws_h2err aws_h2_stream_on_decoder_data_begin(
     }
 
     if (stream->thread_data.content_length_received) {
+        uint64_t data_len = payload_len - total_padding_bytes;
         if (aws_add_u64_checked(
-                stream->thread_data.incoming_data_length, payload_len, &stream->thread_data.incoming_data_length)) {
+                stream->thread_data.incoming_data_length, data_len, &stream->thread_data.incoming_data_length)) {
             return s_send_rst_and_close_stream(stream, aws_h2err_from_aws_code(AWS_ERROR_OVERFLOW_DETECTED));
         }
 

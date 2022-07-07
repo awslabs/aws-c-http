@@ -972,6 +972,8 @@ struct aws_http_message *aws_http2_message_new_from_http1(
         goto error;
     }
     for (size_t iter = 0; iter < aws_http_headers_count(old_headers); iter++) {
+        aws_byte_buf_reset(&lower_name_buf, false);
+        bool copy_header = true;
         /* name should be converted to lower case */
         if (aws_http_headers_get_index(old_headers, iter, &header_iter)) {
             goto error;
@@ -994,24 +996,24 @@ struct aws_http_message *aws_http2_message_new_from_http1(
                     "Skip connection-specific headers - \"%.*s\" ",
                     (int)lower_name_cursor.len,
                     lower_name_cursor.ptr);
-                aws_byte_buf_reset(&lower_name_buf, false);
-                continue; /* jump to next for-loop iteration */
+                copy_header = false;
+                break;
 
             default:
                 break;
         }
-
-        if (aws_http_headers_add(copied_headers, lower_name_cursor, header_iter.value)) {
-            goto error;
+        if (copy_header) {
+            if (aws_http_headers_add(copied_headers, lower_name_cursor, header_iter.value)) {
+                goto error;
+            }
+            AWS_LOGF_TRACE(
+                AWS_LS_HTTP_GENERAL,
+                "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
+                (int)lower_name_cursor.len,
+                lower_name_cursor.ptr,
+                (int)header_iter.value.len,
+                header_iter.value.ptr);
         }
-        AWS_LOGF_TRACE(
-            AWS_LS_HTTP_GENERAL,
-            "Added header to new HTTP/2 header - \"%.*s\": \"%.*s\" ",
-            (int)lower_name_cursor.len,
-            lower_name_cursor.ptr,
-            (int)header_iter.value.len,
-            header_iter.value.ptr);
-        aws_byte_buf_reset(&lower_name_buf, false);
     }
     aws_byte_buf_clean_up(&lower_name_buf);
     aws_http_message_set_body_stream(message, aws_http_message_get_body_stream(http1_msg));
