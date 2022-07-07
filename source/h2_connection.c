@@ -54,6 +54,7 @@ static struct aws_http_stream *s_connection_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options);
 static void s_connection_close(struct aws_http_connection *connection_base);
+static void s_connection_stop_new_request(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
 static void s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size);
@@ -168,6 +169,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .new_server_request_handler_stream = NULL,
     .stream_send_response = NULL,
     .close = s_connection_close,
+    .stop_new_request = s_connection_stop_new_request,
     .is_open = s_connection_is_open,
     .new_requests_allowed = s_connection_new_requests_allowed,
     .update_window = s_connection_update_window,
@@ -565,10 +567,9 @@ static struct aws_h2_pending_goaway *s_new_pending_goaway(
     }
     struct aws_h2_pending_goaway *pending_goaway;
     void *debug_data_storage;
-    if (!aws_mem_acquire_many(
-            allocator, 2, &pending_goaway, sizeof(struct aws_h2_pending_goaway), &debug_data_storage, debug_data.len)) {
-        return NULL;
-    }
+    /* mem acquire cannot fail anymore */
+    aws_mem_acquire_many(
+        allocator, 2, &pending_goaway, sizeof(struct aws_h2_pending_goaway), &debug_data_storage, debug_data.len);
     if (debug_data.len) {
         memcpy(debug_data_storage, debug_data.ptr, debug_data.len);
         debug_data.ptr = debug_data_storage;
@@ -2132,6 +2133,16 @@ static void s_connection_close(struct aws_http_connection *connection_base) {
 
     /* Don't stop reading/writing immediately, let that happen naturally during the channel shutdown process. */
     s_stop(connection, false /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, AWS_ERROR_SUCCESS);
+}
+
+static void s_connection_stop_new_request(struct aws_http_connection *connection_base) {
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
+
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_NEW_REQUEST_STOPPED;
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
 }
 
 static bool s_connection_is_open(const struct aws_http_connection *connection_base) {

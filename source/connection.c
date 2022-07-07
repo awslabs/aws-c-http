@@ -254,6 +254,11 @@ void aws_http_connection_close(struct aws_http_connection *connection) {
     connection->vtable->close(connection);
 }
 
+void aws_http_connection_stop_new_request(struct aws_http_connection *connection) {
+    AWS_ASSERT(connection);
+    connection->vtable->stop_new_request(connection);
+}
+
 bool aws_http_connection_is_open(const struct aws_http_connection *connection) {
     AWS_ASSERT(connection);
     return connection->vtable->is_open(connection);

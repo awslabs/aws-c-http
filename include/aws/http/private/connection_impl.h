@@ -40,6 +40,7 @@ struct aws_http_connection_vtable {
         const struct aws_http_request_handler_options *options);
     int (*stream_send_response)(struct aws_http_stream *stream, struct aws_http_message *response);
     void (*close)(struct aws_http_connection *connection);
+    void (*stop_new_request)(struct aws_http_connection *connection);
     bool (*is_open)(const struct aws_http_connection *connection);
     bool (*new_requests_allowed)(const struct aws_http_connection *connection);
 

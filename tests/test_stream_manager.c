@@ -50,7 +50,7 @@ struct sm_tester_options {
     const enum aws_log_level *log_level;
     bool prior_knowledge;
     bool close_connection_on_server_error;
-    size_t connection_ping_period_sec;
+    size_t connection_ping_period_ms;
     size_t connection_ping_timeout_ms;
 };
 
@@ -283,7 +283,7 @@ static int s_tester_init(struct sm_tester_options *options) {
         .shutdown_complete_callback = s_sm_tester_on_sm_shutdown_complete,
         .monitoring_options = options->monitor_opt,
         .close_connection_on_server_error = options->close_connection_on_server_error,
-        .connection_ping_period_sec = options->connection_ping_period_sec,
+        .connection_ping_period_ms = options->connection_ping_period_ms,
         .connection_ping_timeout_ms = options->connection_ping_timeout_ms,
         .http2_prior_knowledge = options->prior_knowledge,
     };
@@ -1103,7 +1103,7 @@ TEST_CASE(h2_sm_connection_ping) {
         .max_connections = 3,
         .alloc = allocator,
         .max_concurrent_streams_per_connection = 2,
-        .connection_ping_period_sec = 2,
+        .connection_ping_period_ms = 2 * AWS_TIMESTAMP_MILLIS,
         .connection_ping_timeout_ms = connection_ping_timeout_ms,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
@@ -1296,7 +1296,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
     struct sm_tester_options options = {
         .max_connections = 100,
         .max_concurrent_streams_per_connection = 100,
-        .connection_ping_period_sec = 100,
+        .connection_ping_period_ms = 100,
         .alloc = allocator,
         .uri_cursor = &uri_cursor,
         .monitor_opt = &monitor_opt,
@@ -1380,7 +1380,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress_with_body) {
     struct sm_tester_options options = {
         .max_connections = 100,
         .max_concurrent_streams_per_connection = 100,
-        .connection_ping_period_sec = 100,
+        .connection_ping_period_ms = 100,
         .alloc = allocator,
         .uri_cursor = &uri_cursor,
     };
