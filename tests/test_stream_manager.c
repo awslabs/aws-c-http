@@ -1206,7 +1206,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
         .log_level = &log_level,
     };
     ASSERT_SUCCESS(s_tester_init(&options));
-    int num_to_acquire = 500 * 100;
+    int num_to_acquire = 500;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
     ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
