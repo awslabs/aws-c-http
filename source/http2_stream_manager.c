@@ -650,15 +650,18 @@ static int s_on_incoming_headers(
         aws_http_stream_get_incoming_response_status(stream, &status_code);
         AWS_ASSERT(status_code != 0); /* The get status should not fail */
         if (status_code / 100 == 5) {
-            STREAM_MANAGER_LOGF(
-                DEBUG,
-                stream_manager,
-                "%d response received for stream: %p. Closing connection: %p",
-                status_code,
-                (void *)stream,
-                (void *)sm_connection->connection);
-            struct aws_byte_cursor debug_data = aws_byte_cursor_from_c_str("Close connection for 5xx status received.");
             if (!sm_connection->thread_data.goaway_scheduled) {
+                /* Sending goaway and stops new requests to be made on the connection. */
+                STREAM_MANAGER_LOGF(
+                    DEBUG,
+                    stream_manager,
+                    "%d response received for stream: %p. Closing connection: %p",
+                    status_code,
+                    (void *)stream,
+                    (void *)sm_connection->connection);
+                struct aws_byte_cursor debug_data =
+                    aws_byte_cursor_from_c_str("Close connection for 5xx status received.");
+
                 aws_http2_connection_send_goaway(
                     sm_connection->connection, AWS_HTTP2_ERR_NO_ERROR, false /*allow_more_streams*/, &debug_data);
                 aws_http_connection_stop_new_request(sm_connection->connection);
