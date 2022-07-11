@@ -240,6 +240,7 @@ struct aws_hpack_context {
         size_t size;
         size_t max_size;
 
+        /* TODO: check the new (RFC 9113 - 4.3.1) to make sure we did it right */
         /* SETTINGS_HEADER_TABLE_SIZE from http2 */
         size_t protocol_max_size_setting;
         /* aws_http_header * -> size_t */

@@ -8,6 +8,7 @@
 #include <aws/http/private/strutil.h>
 
 #include <aws/common/string.h>
+#include <aws/http/status_code.h>
 #include <aws/io/logging.h>
 
 #include <inttypes.h>
@@ -258,6 +259,8 @@ struct aws_h2_decoder {
          * A malformed header-block is not a connection error, it's a Stream Error (RFC-7540 5.4.2).
          * We continue decoding and report that it's malformed in on_headers_end(). */
         bool malformed;
+
+        bool body_headers_forbidden;
 
         /* Buffer up cookie header fields to concatenate separate ones */
         struct aws_byte_buf cookies;
@@ -1178,9 +1181,16 @@ static struct aws_h2err s_flush_pseudoheaders(struct aws_h2_decoder *decoder) {
                 DECODER_LOG(ERROR, decoder, "Informational (1xx) response cannot END_STREAM");
                 goto malformed;
             }
+            current_block->body_headers_forbidden = true;
         } else {
             current_block->block_type = AWS_HTTP_HEADER_BLOCK_MAIN;
         }
+        /**
+         * RFC-9110 8.6.
+         * A server MUST NOT send a Content-Length header field in any response with a status code of 1xx
+         * (Informational) or 204 (No Content).
+         */
+        current_block->body_headers_forbidden |= status_code == AWS_HTTP_STATUS_CODE_204_NO_CONTENT;
 
     } else {
         /* Trailing header block. */
@@ -1339,17 +1349,36 @@ static struct aws_h2err s_process_header_field(
                 if (aws_byte_buf_append_dynamic(&current_block->cookies, &header_field->value)) {
                     return aws_h2err_from_last_error();
                 }
-                break;
-            /* TODO: Validate connection-specific header field (RFC7540 8.1.2.2) */
-            default:
-                /* Deliver header-field via callback */
-                if (current_block->is_push_promise) {
-                    DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, header_field, name_enum);
-                } else {
-                    DECODER_CALL_VTABLE_STREAM_ARGS(
-                        decoder, on_headers_i, header_field, name_enum, current_block->block_type);
+                /* Early return */
+                return AWS_H2ERR_SUCCESS;
+            case AWS_HTTP_HEADER_TRANSFER_ENCODING:
+            case AWS_HTTP_HEADER_UPGRADE:
+            case AWS_HTTP_HEADER_KEEP_ALIVE:
+            case AWS_HTTP_HEADER_PROXY_CONNECTION: {
+                /* connection-specific header field are treated as malformed (RFC9113 8.2.2) */
+                DECODER_LOGF(
+                    ERROR,
+                    decoder,
+                    "Connection-specific header ('" PRInSTR "') found, not allowed in HTTP/2",
+                    AWS_BYTE_CURSOR_PRI(name));
+                goto malformed;
+            } break;
+
+            case AWS_HTTP_HEADER_CONTENT_LENGTH:
+                if (current_block->body_headers_forbidden) {
+                    /* The content-length are forbidden */
+                    DECODER_LOG(ERROR, decoder, "Unexpected Content-Length header found");
+                    goto malformed;
                 }
                 break;
+            default:
+                break;
+        }
+        /* Deliver header-field via callback */
+        if (current_block->is_push_promise) {
+            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_push_promise_i, header_field, name_enum);
+        } else {
+            DECODER_CALL_VTABLE_STREAM_ARGS(decoder, on_headers_i, header_field, name_enum, current_block->block_type);
         }
     }
 

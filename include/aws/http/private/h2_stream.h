@@ -91,6 +91,11 @@ struct aws_h2_stream {
         struct aws_linked_list outgoing_writes; /* aws_http2_stream_data_write */
         bool received_main_headers;
 
+        bool content_length_received;
+        /* Set if incoming message has content-length header */
+        uint64_t incoming_content_length;
+        /* The total length of payload of data frame received */
+        uint64_t incoming_data_length;
         /* Indicates that the stream is currently in the waiting_streams_list and is
          * asleep. When stream needs to be awaken, moving the stream back to the outgoing_streams_list and set this bool
          * to false */
@@ -125,12 +130,6 @@ struct aws_h2_stream {
 
     /* Store the received reset HTTP/2 error code, set to -1, if none has received so far */
     int64_t received_reset_error_code;
-
-    /**
-     * Back up the message if we create a new message from it to keep the underlying input stream alive.
-     * TODO: remove this once we have input stream refcounted
-     */
-    struct aws_http_message *backup_outgoing_message;
 };
 
 const char *aws_h2_stream_state_to_str(enum aws_h2_stream_state state);

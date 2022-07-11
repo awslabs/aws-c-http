@@ -261,7 +261,6 @@ static struct aws_h2err s_decoder_on_headers_end(
     bool malformed,
     enum aws_http_header_block block_type,
     void *userdata) {
-
     return s_on_headers_end(false /*is_push_promise*/, stream_id, malformed, block_type, userdata);
 }
 

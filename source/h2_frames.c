@@ -504,6 +504,8 @@ static struct aws_h2_frame *s_frame_new_headers_or_push_promise(
     const struct aws_h2_frame_priority_settings *optional_priority,
     uint32_t promised_stream_id) {
 
+    /* TODO: Host and ":authority" are no longer permitted to disagree. Should we enforce it here or sent it as
+     * requested, let the server side reject the request? */
     AWS_PRECONDITION(allocator);
     AWS_PRECONDITION(frame_type == AWS_H2_FRAME_T_HEADERS || frame_type == AWS_H2_FRAME_T_PUSH_PROMISE);
     AWS_PRECONDITION(headers);
