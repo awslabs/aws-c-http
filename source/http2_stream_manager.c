@@ -33,7 +33,7 @@
 #define STREAM_MANAGER_LOG(level, stream_manager, text) STREAM_MANAGER_LOGF(level, stream_manager, "%s", text)
 
 /* 3 seconds */
-static const uint64_t s_default_ping_timeout_ms = 3000;
+static const size_t s_default_ping_timeout_ms = 3000;
 
 static void s_stream_manager_start_destroy(struct aws_http2_stream_manager *stream_manager);
 static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2_stream_management_transaction *work);
