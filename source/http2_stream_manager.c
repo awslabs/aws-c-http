@@ -855,9 +855,11 @@ static void s_make_request_task(struct aws_channel_task *task, void *arg, enum a
         .on_complete = s_on_stream_complete,
         .user_data = pending_stream_acquisition,
     };
+    /* TODO: we could put the pending acquisition back to the list if the connection is not available for new request.
+     */
+
     struct aws_http_stream *stream = aws_http_connection_make_request(sm_connection->connection, &request_options);
     if (!stream) {
-        /* TODO: we could put the pending acquisition back to the list instead. */
         error_code = aws_last_error();
         STREAM_MANAGER_LOGF(
             ERROR,
@@ -918,7 +920,7 @@ static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stre
 
     /* Step2: Make request. The work should know what connection for the request to be made. */
     while (!aws_linked_list_empty(&work->pending_make_requests)) {
-        /* The completions can also fail as the connection can be unavilable after the decision made. We just fail
+        /* The completions can also fail as the connection can be unavailable after the decision made. We just fail
          * the acquisition */
         struct aws_linked_list_node *node = aws_linked_list_pop_front(&work->pending_make_requests);
         struct aws_h2_sm_pending_stream_acquisition *pending_stream_acquisition =
@@ -935,7 +937,6 @@ static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stre
             (void *)pending_stream_acquisition,
             (void *)pending_stream_acquisition->sm_connection->connection);
         /**
-         * TODO: Maybe a task per connection instead.
          * schedule a task from the connection's event loop to make request, so that:
          * - We can activate the stream for user and then invoked the callback
          * - The callback will happen asynced even the stream failed to be created
