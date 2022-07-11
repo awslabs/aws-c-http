@@ -925,6 +925,8 @@ struct aws_http_message *aws_http2_message_new_from_http1(
                 (int)host_value.len,
                 host_value.ptr);
         }
+        /* TODO: If the host headers is missing, the target URI could be the other source of the authority information
+         */
 
         struct aws_byte_cursor path_cursor;
         if (aws_http_message_get_request_path(http1_msg, &path_cursor)) {
