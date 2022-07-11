@@ -17,6 +17,7 @@
 #include <aws/http/http2_stream_manager.h>
 #include <aws/http/private/http2_stream_manager_impl.h>
 #include <aws/http/private/request_response_impl.h>
+#include <aws/http/status_code.h>
 
 #include <inttypes.h>
 
@@ -32,7 +33,7 @@
 #define STREAM_MANAGER_LOG(level, stream_manager, text) STREAM_MANAGER_LOGF(level, stream_manager, "%s", text)
 
 /* 3 seconds */
-static const uint64_t s_default_ping_timeout_ns = 3000000000;
+static const uint64_t s_default_ping_timeout_ms = 3000;
 
 static void s_stream_manager_start_destroy(struct aws_http2_stream_manager *stream_manager);
 static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2_stream_management_transaction *work);
@@ -649,24 +650,26 @@ static int s_on_incoming_headers(
         int status_code = 0;
         aws_http_stream_get_incoming_response_status(stream, &status_code);
         AWS_ASSERT(status_code != 0); /* The get status should not fail */
-        if (status_code / 100 == 5) {
-            if (!sm_connection->thread_data.goaway_scheduled) {
-                /* Sending goaway and stops new requests to be made on the connection. */
-                STREAM_MANAGER_LOGF(
-                    DEBUG,
-                    stream_manager,
-                    "%d response received for stream: %p. Closing connection: %p",
-                    status_code,
-                    (void *)stream,
-                    (void *)sm_connection->connection);
-                struct aws_byte_cursor debug_data =
-                    aws_byte_cursor_from_c_str("Close connection for 5xx status received.");
-
-                aws_http2_connection_send_goaway(
-                    sm_connection->connection, AWS_HTTP2_ERR_NO_ERROR, false /*allow_more_streams*/, &debug_data);
-                aws_http_connection_stop_new_request(sm_connection->connection);
-                sm_connection->thread_data.goaway_scheduled = true;
-            }
+        switch (status_code) {
+            case AWS_HTTP_STATUS_CODE_500_INTERNAL_SERVER_ERROR:
+            case AWS_HTTP_STATUS_CODE_502_BAD_GATEWAY:
+            case AWS_HTTP_STATUS_CODE_503_SERVICE_UNAVAILABLE:
+            case AWS_HTTP_STATUS_CODE_504_GATEWAY_TIMEOUT:
+                /* For those error code if the retry happens, it should not use the same connection. */
+                if (!sm_connection->thread_data.stopped_new_requests) {
+                    STREAM_MANAGER_LOGF(
+                        DEBUG,
+                        stream_manager,
+                        "no longer using connection: %p due to receiving %d server error status code for stream: %p",
+                        (void *)sm_connection->connection,
+                        status_code,
+                        (void *)stream);
+                    aws_http_connection_stop_new_requests(sm_connection->connection);
+                    sm_connection->thread_data.stopped_new_requests = true;
+                }
+                break;
+            default:
+                break;
         }
     }
     return AWS_OP_SUCCESS;
@@ -1081,23 +1084,23 @@ struct aws_http2_stream_manager *aws_http2_stream_manager_new(
         stream_manager,
         (aws_simple_completion_callback *)s_stream_manager_start_destroy);
 
-    stream_manager->connection_ping_timeout_ns =
-        options->connection_ping_timeout_ms
-            ? aws_timestamp_convert(
-                  options->connection_ping_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL)
-            : s_default_ping_timeout_ns;
     if (options->connection_ping_period_ms) {
         stream_manager->connection_ping_period_ns =
             aws_timestamp_convert(options->connection_ping_period_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
-        if (stream_manager->connection_ping_period_ns <= stream_manager->connection_ping_timeout_ns) {
+        size_t connection_ping_timeout_ms =
+            options->connection_ping_timeout_ms ? options->connection_ping_timeout_ms : s_default_ping_timeout_ms;
+        stream_manager->connection_ping_timeout_ns =
+            aws_timestamp_convert(connection_ping_timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL);
+        if (stream_manager->connection_ping_period_ns < stream_manager->connection_ping_timeout_ns) {
             STREAM_MANAGER_LOGF(
-                ERROR,
+                WARN,
                 stream_manager,
-                "Invalid options: connection_ping_period_ms: %zu is shorter than connection_ping_timeout_ms: %zu",
+                "connection_ping_period_ms: %zu is shorter than connection_ping_timeout_ms: %zu. Clapping "
+                "connection_ping_timeout_ms to %zu",
                 options->connection_ping_period_ms,
-                options->connection_ping_timeout_ms);
-            aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
-            goto on_error;
+                connection_ping_timeout_ms,
+                options->connection_ping_period_ms);
+            stream_manager->connection_ping_timeout_ns = stream_manager->connection_ping_period_ns;
         }
     }
 

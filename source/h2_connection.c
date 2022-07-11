@@ -169,7 +169,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .new_server_request_handler_stream = NULL,
     .stream_send_response = NULL,
     .close = s_connection_close,
-    .stop_new_request = s_connection_stop_new_request,
+    .stop_new_requests = s_connection_stop_new_request,
     .is_open = s_connection_is_open,
     .new_requests_allowed = s_connection_new_requests_allowed,
     .update_window = s_connection_update_window,
@@ -2134,7 +2134,9 @@ static void s_connection_stop_new_request(struct aws_http_connection *connection
 
     { /* BEGIN CRITICAL SECTION */
         s_lock_synced_data(connection);
-        connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_NEW_REQUEST_STOPPED;
+        if (!connection->synced_data.new_stream_error_code) {
+            connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
+        }
         s_unlock_synced_data(connection);
     } /* END CRITICAL SECTION */
 }

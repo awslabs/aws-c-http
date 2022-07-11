@@ -139,9 +139,6 @@ static struct aws_error_info s_errors[] = {
     AWS_DEFINE_ERROR_INFO_HTTP(
         AWS_ERROR_HTTP_STREAM_MANAGER_UNEXPECTED_HTTP_VERSION,
         "Stream acquisition failed because stream manager got an unexpected version of HTTP connection"),
-    AWS_DEFINE_ERROR_INFO_HTTP(
-        AWS_ERROR_HTTP_CONNECTION_NEW_REQUEST_STOPPED,
-        "The connection stopped accepting new request as user requested."),
 };
 /* clang-format on */
 

@@ -38,7 +38,7 @@ struct aws_h2_sm_connection {
     struct aws_channel_task ping_timeout_task;
     struct {
         bool ping_received;
-        bool goaway_scheduled;
+        bool stopped_new_requests;
         uint64_t next_ping_task_time;
     } thread_data;
 
