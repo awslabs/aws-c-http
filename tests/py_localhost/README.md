@@ -24,6 +24,10 @@ Python 3.5+ required.
 - To test download, when `:path` is `/downloadTest`, server will response a repeated string with length `self.download_test_length`, which is 2,500,000,000 now. It will be repeats of sting "This is CRT HTTP test."
 - To test the server runs correctly, you can do `curl -k -v -H "foo:bar" https://localhost:8443/downloadTest` and check the result.
 
+#### Slow Connection Test
+
+- Simulate a slow connection when `:path` is `/slowConnTest`. The speed is controlled by `out_bytes_per_second`. Default speed is 900 B/s, which will send 900 bytes of data and wait a sec to send new 900 bytes of data.
+
 #### Upload test
 
 - To test upload, when `:method` is `POST` or `PUT`, server will response the length received from response body

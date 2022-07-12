@@ -40,6 +40,7 @@ struct aws_http_connection_vtable {
         const struct aws_http_request_handler_options *options);
     int (*stream_send_response)(struct aws_http_stream *stream, struct aws_http_message *response);
     void (*close)(struct aws_http_connection *connection);
+    void (*stop_new_requests)(struct aws_http_connection *connection);
     bool (*is_open)(const struct aws_http_connection *connection);
     bool (*new_requests_allowed)(const struct aws_http_connection *connection);
 
@@ -56,7 +57,7 @@ struct aws_http_connection_vtable {
         const struct aws_byte_cursor *optional_opaque_data,
         aws_http2_on_ping_complete_fn *on_completed,
         void *user_data);
-    int (*send_goaway)(
+    void (*send_goaway)(
         struct aws_http_connection *http2_connection,
         uint32_t http2_error,
         bool allow_more_streams,

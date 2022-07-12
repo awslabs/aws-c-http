@@ -54,6 +54,7 @@ static struct aws_http_stream *s_connection_make_request(
     struct aws_http_connection *client_connection,
     const struct aws_http_make_request_options *options);
 static void s_connection_close(struct aws_http_connection *connection_base);
+static void s_connection_stop_new_request(struct aws_http_connection *connection_base);
 static bool s_connection_is_open(const struct aws_http_connection *connection_base);
 static bool s_connection_new_requests_allowed(const struct aws_http_connection *connection_base);
 static void s_connection_update_window(struct aws_http_connection *connection_base, uint32_t increment_size);
@@ -68,7 +69,7 @@ static int s_connection_send_ping(
     const struct aws_byte_cursor *optional_opaque_data,
     aws_http2_on_ping_complete_fn *on_completed,
     void *user_data);
-static int s_connection_send_goaway(
+static void s_connection_send_goaway(
     struct aws_http_connection *connection_base,
     uint32_t http2_error,
     bool allow_more_streams,
@@ -168,6 +169,7 @@ static struct aws_http_connection_vtable s_h2_connection_vtable = {
     .new_server_request_handler_stream = NULL,
     .stream_send_response = NULL,
     .close = s_connection_close,
+    .stop_new_requests = s_connection_stop_new_request,
     .is_open = s_connection_is_open,
     .new_requests_allowed = s_connection_new_requests_allowed,
     .update_window = s_connection_update_window,
@@ -565,10 +567,9 @@ static struct aws_h2_pending_goaway *s_new_pending_goaway(
     }
     struct aws_h2_pending_goaway *pending_goaway;
     void *debug_data_storage;
-    if (!aws_mem_acquire_many(
-            allocator, 2, &pending_goaway, sizeof(struct aws_h2_pending_goaway), &debug_data_storage, debug_data.len)) {
-        return NULL;
-    }
+    /* mem acquire cannot fail anymore */
+    aws_mem_acquire_many(
+        allocator, 2, &pending_goaway, sizeof(struct aws_h2_pending_goaway), &debug_data_storage, debug_data.len);
     if (debug_data.len) {
         memcpy(debug_data_storage, debug_data.ptr, debug_data.len);
         debug_data.ptr = debug_data_storage;
@@ -2128,6 +2129,18 @@ static void s_connection_close(struct aws_http_connection *connection_base) {
     s_stop(connection, false /*stop_reading*/, false /*stop_writing*/, true /*schedule_shutdown*/, AWS_ERROR_SUCCESS);
 }
 
+static void s_connection_stop_new_request(struct aws_http_connection *connection_base) {
+    struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
+
+    { /* BEGIN CRITICAL SECTION */
+        s_lock_synced_data(connection);
+        if (!connection->synced_data.new_stream_error_code) {
+            connection->synced_data.new_stream_error_code = AWS_ERROR_HTTP_CONNECTION_CLOSED;
+        }
+        s_unlock_synced_data(connection);
+    } /* END CRITICAL SECTION */
+}
+
 static bool s_connection_is_open(const struct aws_http_connection *connection_base) {
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     bool is_open;
@@ -2358,7 +2371,7 @@ closed:
     return aws_raise_error(AWS_ERROR_INVALID_STATE);
 }
 
-static int s_connection_send_goaway(
+static void s_connection_send_goaway(
     struct aws_http_connection *connection_base,
     uint32_t http2_error,
     bool allow_more_streams,
@@ -2367,11 +2380,6 @@ static int s_connection_send_goaway(
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(connection_base, struct aws_h2_connection, base);
     struct aws_h2_pending_goaway *pending_goaway =
         s_new_pending_goaway(connection->base.alloc, http2_error, allow_more_streams, optional_debug_data);
-
-    if (!pending_goaway) {
-        /* error happened during acquire memory. Error code raised there and skip logging. */
-        return AWS_OP_ERR;
-    }
 
     bool was_cross_thread_work_scheduled = false;
     bool connection_open;
@@ -2383,7 +2391,7 @@ static int s_connection_send_goaway(
             s_unlock_synced_data(connection);
             CONNECTION_LOG(DEBUG, connection, "Goaway not sent, connection is closed or closing.");
             aws_mem_release(connection->base.alloc, pending_goaway);
-            goto done;
+            return;
         }
         was_cross_thread_work_scheduled = connection->synced_data.is_cross_thread_work_task_scheduled;
         connection->synced_data.is_cross_thread_work_task_scheduled = true;
@@ -2404,8 +2412,6 @@ static int s_connection_send_goaway(
         CONNECTION_LOG(TRACE, connection, "Scheduling cross-thread work task");
         aws_channel_schedule_task_now(connection->base.channel_slot->channel, &connection->cross_thread_work_task);
     }
-done:
-    return AWS_OP_SUCCESS;
 }
 
 static void s_get_settings_general(
