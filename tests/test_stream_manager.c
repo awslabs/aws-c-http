@@ -1303,8 +1303,8 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
     int num_to_acquire = 500 * 100;
     ASSERT_SUCCESS(s_sm_stream_acquiring(num_to_acquire));
     ASSERT_SUCCESS(s_wait_on_streams_completed_count(num_to_acquire));
-    ASSERT_TRUE((int)s_tester.acquiring_stream_errors == 0);
-    ASSERT_TRUE((int)s_tester.stream_200_count == num_to_acquire);
+    ASSERT_INT_EQUALS((int)s_tester.acquiring_stream_errors, 0);
+    ASSERT_INT_EQUALS((int)s_tester.stream_200_count, num_to_acquire);
 
     return s_tester_clean_up();
 }
