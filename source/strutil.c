@@ -153,9 +153,10 @@ static const bool s_http_field_content_table[256] = {
 };
 
 /**
- * From RFC7230 section 3.2:
- * field-value    = *( field-content / obs-fold )
+ * From RFC9110 section 5.5:
+ * field-value    = *field-content
  * field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
+ * field-vchar    = VCHAR / obs-text
  *
  * But we're forbidding obs-fold
  */

@@ -1289,6 +1289,21 @@ static struct aws_h2err s_process_header_field(
         goto malformed;
     }
 
+    if (!aws_strutil_is_http_field_value(header_field->value)) {
+        /**
+         * RFC9113 8.2.1  HTTP/2 implementations SHOULD validate field names and values, respectively, and treat
+         * messages that contain prohibited characters as malformed.
+         */
+        DECODER_LOG(ERROR, decoder, "Invalid header field, bad value");
+        DECODER_LOGF(
+            DEBUG,
+            decoder,
+            "Bad header field is: \"" PRInSTR ": " PRInSTR "\"",
+            AWS_BYTE_CURSOR_PRI(header_field->name),
+            AWS_BYTE_CURSOR_PRI(header_field->value));
+        goto malformed;
+    }
+
     enum aws_http_header_name name_enum = aws_http_lowercase_str_to_header_name(name);
 
     bool is_pseudoheader = name.ptr[0] == ':';
