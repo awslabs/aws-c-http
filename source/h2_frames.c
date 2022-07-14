@@ -504,8 +504,6 @@ static struct aws_h2_frame *s_frame_new_headers_or_push_promise(
     const struct aws_h2_frame_priority_settings *optional_priority,
     uint32_t promised_stream_id) {
 
-    /* TODO: Host and ":authority" are no longer permitted to disagree. Should we enforce it here or sent it as
-     * requested, let the server side reject the request? */
     AWS_PRECONDITION(allocator);
     AWS_PRECONDITION(frame_type == AWS_H2_FRAME_T_HEADERS || frame_type == AWS_H2_FRAME_T_PUSH_PROMISE);
     AWS_PRECONDITION(headers);
@@ -1228,7 +1226,8 @@ int aws_h2_encode_frame(
 
 void aws_h2_frame_encoder_set_setting_header_table_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {
     /* Setting for dynamic table size changed from peer, we will update the dynamic table size when we encoder the next
-     * header block */
+     * header block. The spec requires us to update the table if the updated size is smaller than the current size, but
+     * we can still update it even if not */
     aws_hpack_set_max_table_size(encoder->hpack, data);
     aws_hpack_set_protocol_max_size_setting(encoder->hpack, data);
 }

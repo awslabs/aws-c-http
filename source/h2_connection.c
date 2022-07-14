@@ -2082,9 +2082,6 @@ static struct aws_http_stream *s_connection_make_request(
 
     struct aws_h2_connection *connection = AWS_CONTAINER_OF(client_connection, struct aws_h2_connection, base);
 
-    /* #TODO: http/2-ify the request (ex: add ":method" header). Should we mutate a copy or the original? Validate?
-     *  Or just pass pointer to headers struct and let encoder transform it while encoding? */
-
     struct aws_h2_stream *stream = aws_h2_stream_new_request(client_connection, options);
     if (!stream) {
         CONNECTION_LOGF(
@@ -2112,8 +2109,22 @@ static struct aws_http_stream *s_connection_make_request(
             aws_error_name(aws_last_error()));
         goto error;
     }
+    int error = 0;
+    struct aws_byte_cursor method;
+    AWS_ZERO_STRUCT(method);
+    struct aws_byte_cursor path;
+    AWS_ZERO_STRUCT(path);
 
-    AWS_H2_STREAM_LOG(DEBUG, stream, "Created HTTP/2 request stream"); /* #TODO: print method & path */
+    error |= aws_http_message_get_request_method(stream->thread_data.outgoing_message, &method);
+    error |= aws_http_message_get_request_path(stream->thread_data.outgoing_message, &path);
+    AWS_ASSERT(!error);
+
+    AWS_H2_STREAM_LOGF(
+        DEBUG,
+        stream,
+        "Created HTTP/2 request stream, method: " PRInSTR ". path: " PRInSTR "",
+        AWS_BYTE_CURSOR_PRI(method),
+        AWS_BYTE_CURSOR_PRI(path));
     return &stream->base;
 
 error:
@@ -2818,15 +2829,18 @@ static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_
     struct aws_h2_connection *connection = handler->impl;
     AWS_PRECONDITION(aws_channel_thread_is_callers_thread(connection->base.channel_slot->channel));
 
-    /* TODO: Need update the way we calculate statistics, to account for user-controlled pauses.
-     * If user is adding chunks 1 by 1, there can naturally be a gap in the upload.
-     * If the user lets the stream-window go to zero, there can naturally be a gap in the download. */
     uint64_t now_ns = 0;
     if (aws_channel_current_clock_time(connection->base.channel_slot->channel, &now_ns)) {
         return;
     }
 
     if (!aws_linked_list_empty(&connection->thread_data.outgoing_streams_list)) {
+        /**
+         * For stream flow control stall and writing to stream over time, the stream will be removed from the
+         * outgoing_streams_list.
+         * For connection level flow control, as there could be streams waiting for response, we cannot mark the
+         * connection is inactive.
+         */
         s_add_time_measurement_to_stats(
             connection->thread_data.outgoing_timestamp_ns,
             now_ns,
@@ -2842,6 +2856,9 @@ static void s_gather_statistics(struct aws_channel_handler *handler, struct aws_
 
         connection->thread_data.incoming_timestamp_ns = now_ns;
     } else {
+        /**
+         * was inactive as no stream has data to write or waiting for data from the other side.
+         */
         connection->thread_data.stats.was_inactive = true;
     }
 

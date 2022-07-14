@@ -795,25 +795,22 @@ TEST_CASE(h2_sm_mock_connections_closed_before_request_made) {
     struct sm_fake_connection *fake_connection = s_get_fake_connection(0);
     aws_http_connection_close(fake_connection->connection);
     ASSERT_SUCCESS(s_sm_stream_acquiring(1));
-    s_drain_all_fake_connection_testing_channel();
+    /* The new stream should trigger a new connection to be created and complete from the new connection */
+    s_drain_all_fake_connection_testing_channel();      /* Trigger the acquisition of new connection */
+    ASSERT_SUCCESS(s_wait_on_fake_connection_count(2)); /* wait for the new connection */
+    s_drain_all_fake_connection_testing_channel();      /* Wait for the tasks assigned to the new connection */
     ASSERT_SUCCESS(s_wait_on_streams_acquired_count(3));
-    /* ASSERT new one failed. */
-    ASSERT_INT_EQUALS(1, s_tester.acquiring_stream_errors);
-    ASSERT_INT_EQUALS(AWS_ERROR_HTTP_CONNECTION_CLOSED, s_tester.error_code);
-    /* Reset errors */
-    s_tester.acquiring_stream_errors = 0;
-    s_tester.error_code = 0;
-    s_drain_all_fake_connection_testing_channel();
+    /* ASSERT no failure. */
+    ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
 
-    /* As long as the connection finishes shutting down, we can still make more requests from new connection. */
+    /* we can still make more requests from new connection. */
     ASSERT_SUCCESS(s_sm_stream_acquiring(2));
-    /* waiting for one fake connection made */
-    ASSERT_SUCCESS(s_wait_on_fake_connection_count(2));
+
     s_drain_all_fake_connection_testing_channel();
     /* No error happens */
     ASSERT_INT_EQUALS(0, s_tester.acquiring_stream_errors);
-    /* We made 4 streams successfully */
-    ASSERT_INT_EQUALS(4, aws_array_list_length(&s_tester.streams));
+    /* We made 5 streams successfully */
+    ASSERT_INT_EQUALS(5, aws_array_list_length(&s_tester.streams));
 
     /* Finish all the opening streams */
     ASSERT_SUCCESS(s_complete_all_fake_connection_streams());

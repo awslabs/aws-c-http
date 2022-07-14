@@ -240,7 +240,6 @@ struct aws_hpack_context {
         size_t size;
         size_t max_size;
 
-        /* TODO: check the new (RFC 9113 - 4.3.1) to make sure we did it right */
         /* SETTINGS_HEADER_TABLE_SIZE from http2 */
         size_t protocol_max_size_setting;
         /* aws_http_header * -> size_t */
@@ -458,7 +457,7 @@ const struct aws_http_header *aws_hpack_get_header(const struct aws_hpack_contex
 
 static const struct aws_http_header *s_get_header_u64(const struct aws_hpack_context *context, uint64_t index) {
     if (index > SIZE_MAX) {
-        HPACK_LOG(ERROR, context, "Header index is absurdly large")
+        HPACK_LOG(ERROR, context, "Header index is absurdly large");
         aws_raise_error(AWS_ERROR_INVALID_INDEX);
         return NULL;
     }
@@ -661,8 +660,16 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
 
     /* If for whatever reason this new header is bigger than the total table size, burn everything to the ground. */
     if (AWS_UNLIKELY(header_size > context->dynamic_table.max_size)) {
-        /* #TODO handle this. It's not an error. It should simply result in an empty table RFC-7541 4.4 */
-        goto error;
+        /* It's not an error. It should simply result in an empty table RFC-7541 4.4 */
+        HPACK_LOG(
+            WARN,
+            context,
+            "Attempt to add an entry larger than the maximum size causes the table to be emptied of all existing "
+            "entries and results in an empty table");
+        if (s_dynamic_table_shrink(context, 0)) {
+            goto error;
+        }
+        return AWS_OP_SUCCESS;
     }
 
     /* Rotate out headers until there's room for the new header (this function will return immediately if nothing needs
@@ -699,7 +706,6 @@ int aws_hpack_insert_header(struct aws_hpack_context *context, const struct aws_
     /* Put the header at the "front" of the table */
     struct aws_http_header *table_header = s_dynamic_table_get(context, 0);
 
-    /* TODO:: We can optimize this with ring buffer. */
     /* allocate memory for the name and value, which will be deallocated whenever the entry is evicted from the table or
      * the table is cleaned up. We keep the pointer in the name pointer of each entry */
     const size_t buf_memory_size = header->name.len + header->value.len;
@@ -1103,6 +1109,26 @@ int aws_hpack_decode(
                     context->progress_entry.u.literal.prefix_size = 4;
                     context->progress_entry.state = HPACK_ENTRY_STATE_LITERAL_BEGIN;
                 }
+
+                if (context->dynamic_table.protocol_max_size_setting < context->dynamic_table.size) {
+                    /**
+                     * RFC-9113 4.3.1 An endpoint MUST treat a field block that follows an acknowledgment of the
+                     * reduction to the maximum dynamic table size as a connection error of type
+                     * COMPRESSION_ERROR if it does not start with a conformant Dynamic Table Size Update instruction.
+                     *
+                     * The protocol max will only be updated once the SETTING ACK received.
+                     */
+                    if (context->progress_entry.state != HPACK_ENTRY_STATE_DYNAMIC_TABLE_RESIZE) {
+                        /* it will result in AWS_HTTP2_ERR_COMPRESSION_ERROR  */
+                        HPACK_LOG(
+                            ERROR,
+                            context,
+                            "SETTINGS_HEADER_TABLE_SIZE below the current size and other end has acknowledged the "
+                            "change, but not started with a conformant Dynamic Table Size Update instruction as "
+                            "required");
+                        return aws_raise_error(AWS_ERROR_INVALID_STATE);
+                    }
+                }
             } break;
 
             /* RFC-7541 6.1. Indexed Header Field Representation.
@@ -1239,7 +1265,7 @@ int aws_hpack_decode(
                 /* The new maximum size MUST be lower than or equal to the limit determined by the protocol using HPACK.
                  * A value that exceeds this limit MUST be treated as a decoding error. */
                 if (*size64 > context->dynamic_table.protocol_max_size_setting) {
-                    HPACK_LOG(ERROR, context, "Dynamic table update size is larger than the protocal setting");
+                    HPACK_LOG(ERROR, context, "Dynamic table update size is larger than the protocol setting");
                     return aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
                 }
                 size_t size = (size_t)*size64;
