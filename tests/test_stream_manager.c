@@ -1286,7 +1286,7 @@ TEST_CASE(localhost_integ_h2_sm_acquire_stream_stress) {
     (void)ctx;
     struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/echo");
     struct aws_http_connection_monitoring_options monitor_opt = {
-        .allowable_throughput_failure_interval_seconds = 1,
+        .allowable_throughput_failure_interval_seconds = 2,
         .minimum_throughput_bytes_per_second = 1000,
     };
     enum aws_log_level log_level = AWS_LOG_LEVEL_DEBUG;
@@ -1406,7 +1406,7 @@ TEST_CASE(localhost_integ_h2_sm_connection_monitor_kill_slow_connection) {
     (void)ctx;
     struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str("https://localhost:8443/slowConnTest");
     struct aws_http_connection_monitoring_options monitor_opt = {
-        .allowable_throughput_failure_interval_seconds = 1,
+        .allowable_throughput_failure_interval_seconds = 2,
         .minimum_throughput_bytes_per_second = 1000,
     };
     struct sm_tester_options options = {

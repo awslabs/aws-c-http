@@ -235,7 +235,7 @@ static int s_do_http_monitoring_test(
 }
 
 static struct aws_http_connection_monitoring_options s_test_options = {
-    .allowable_throughput_failure_interval_seconds = 1,
+    .allowable_throughput_failure_interval_seconds = 2,
     .minimum_throughput_bytes_per_second = 1000,
 };
 
