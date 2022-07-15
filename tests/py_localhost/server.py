@@ -105,12 +105,9 @@ class H2Protocol(asyncio.Protocol):
             # Response headers back and exclude pseudo headers
             if i[0][0] != ':':
                 response_headers.append(i)
-        body = request_data.data.getvalue().decode('utf-8')
-        data = json.dumps(
-            {"body": body}, indent=4
-        ).encode("utf8")
+        body = request_data.data.getvalue()
         self.conn.send_headers(stream_id, response_headers)
-        asyncio.ensure_future(self.send_data(data, stream_id))
+        asyncio.ensure_future(self.send_data(body, stream_id))
 
     def stream_complete(self, stream_id: int):
         """
