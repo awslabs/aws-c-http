@@ -181,6 +181,19 @@ class H2Protocol(asyncio.Protocol):
         """
         Send data according to the flow control rules.
         """
+        if not data:
+            try:
+                self.conn.send_data(
+                    stream_id,
+                    data,
+                    True
+                )
+            except (StreamClosedError, ProtocolError):
+                # The stream got closed and we didn't get told. We're done
+                # here.
+                return
+            self.transport.write(self.conn.data_to_send())
+
         while data:
             while self.conn.local_flow_control_window(stream_id) < 1:
                 try:
