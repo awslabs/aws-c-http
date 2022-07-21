@@ -171,6 +171,8 @@ void aws_http_connection_manager_acquire_connection(
 /*
  * Returns a connection back to the manager.  All acquired connections must
  * eventually be released back to the manager in order to avoid a resource leak.
+ *
+ * Note: it can lead to another acquired callback to be invoked within the thread.
  */
 AWS_HTTP_API
 int aws_http_connection_manager_release_connection(

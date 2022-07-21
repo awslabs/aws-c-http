@@ -570,6 +570,7 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
     STREAM_MANAGER_LOGF(TRACE, stream_manager, "connection=%p acquired from connection manager", (void *)connection);
     int re_error = 0;
     int stream_fail_error_code = AWS_ERROR_SUCCESS;
+    bool should_release_connection = false;
     struct aws_linked_list stream_acquisitions_to_fail;
     aws_linked_list_init(&stream_acquisitions_to_fail);
     s_aws_stream_management_transaction_init(&work, stream_manager);
@@ -591,7 +592,7 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
                 stream_manager,
                 "Unexpected HTTP version acquired, release the connection=%p acquired immediately",
                 (void *)connection);
-            re_error |= aws_http_connection_manager_release_connection(stream_manager->connection_manager, connection);
+            should_release_connection = true;
             s_sm_on_connection_acquired_failed_synced(stream_manager, &stream_acquisitions_to_fail);
             stream_fail_error_code = AWS_ERROR_HTTP_STREAM_MANAGER_UNEXPECTED_HTTP_VERSION;
         } else if (stream_manager->synced_data.state != AWS_H2SMST_READY) {
@@ -601,7 +602,7 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
                 "shutting down, release the connection=%p acquired immediately",
                 (void *)connection);
             /* Release the acquired connection */
-            re_error |= aws_http_connection_manager_release_connection(stream_manager->connection_manager, connection);
+            should_release_connection = true;
         } else if (stream_manager->synced_data.internal_refcount_stats[AWS_SMCT_PENDING_ACQUISITION] == 0) {
             STREAM_MANAGER_LOGF(
                 DEBUG,
@@ -609,7 +610,7 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
                 "No pending acquisition, release the connection=%p acquired immediately",
                 (void *)connection);
             /* Release the acquired connection */
-            re_error |= aws_http_connection_manager_release_connection(stream_manager->connection_manager, connection);
+            should_release_connection = true;
         } else {
             struct aws_h2_sm_connection *sm_connection = s_sm_connection_new(stream_manager, connection);
             bool added = false;
@@ -621,6 +622,11 @@ static void s_sm_on_connection_acquired(struct aws_http_connection *connection, 
         s_aws_http2_stream_manager_build_transaction_synced(&work);
         s_unlock_synced_data(stream_manager);
     } /* END CRITICAL SECTION */
+
+    if (should_release_connection) {
+        STREAM_MANAGER_LOGF(DEBUG, stream_manager, "Releasing connection: %p", (void *)connection);
+        re_error |= aws_http_connection_manager_release_connection(stream_manager->connection_manager, connection);
+    }
 
     AWS_ASSERT(!re_error && "connection acquired callback fails with programming errors");
     (void)re_error;
