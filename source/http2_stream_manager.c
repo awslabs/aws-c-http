@@ -164,7 +164,7 @@ static void s_sm_try_assign_connection_to_pending_stream_acquisition_synced(
         chosen_connection->num_streams_assigned++;
 
         STREAM_MANAGER_LOGF(
-            TRACE,
+            DEBUG,
             stream_manager,
             "Picking connection:%p for acquisition:%p. Streams assigned to the connection=%" PRIu32 "",
             (void *)chosen_connection->connection,
@@ -216,7 +216,7 @@ static void s_sm_try_assign_connection_to_pending_stream_acquisition_synced(
             chosen_connection->num_streams_assigned++;
 
             STREAM_MANAGER_LOGF(
-                TRACE,
+                DEBUG,
                 stream_manager,
                 "Picking connection:%p for acquisition:%p. Streams assigned to the connection=%" PRIu32 "",
                 (void *)chosen_connection->connection,
@@ -321,7 +321,7 @@ static void s_check_new_connections_needed_synced(struct aws_http2_stream_manage
     /* Update the number of connections we acquiring */
     s_sm_count_increase_synced(stream_manager, AWS_SMCT_CONNECTIONS_ACQUIRING, work->new_connections);
     STREAM_MANAGER_LOGF(
-        TRACE,
+        DEBUG,
         stream_manager,
         "number of acquisition that waiting for connections to use=%zu. connection acquiring=%zu, connection held=%zu, "
         "max connection=%zu",
@@ -354,7 +354,7 @@ static void s_aws_http2_stream_manager_build_transaction_synced(struct aws_http2
                 /* Cannot find any connection, push it back to the front and break the loop */
                 aws_linked_list_push_front(&stream_manager->synced_data.pending_stream_acquisitions, node);
                 STREAM_MANAGER_LOGF(
-                    TRACE,
+                    DEBUG,
                     stream_manager,
                     "acquisition:%p cannot find any connection to use.",
                     (void *)pending_stream_acquisition);
@@ -963,7 +963,7 @@ static void s_aws_http2_stream_manager_execute_transaction(struct aws_http2_stre
 
     /* Step 3: Acquire connections if needed */
     if (work->new_connections) {
-        STREAM_MANAGER_LOGF(TRACE, stream_manager, "acquiring %zu new connections", work->new_connections);
+        STREAM_MANAGER_LOGF(DEBUG, stream_manager, "acquiring %zu new connections", work->new_connections);
     }
     for (size_t i = 0; i < work->new_connections; ++i) {
         aws_http_connection_manager_acquire_connection(
