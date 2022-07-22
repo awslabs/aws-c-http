@@ -1229,8 +1229,7 @@ int aws_h2_encode_frame(
 void aws_h2_frame_encoder_set_setting_header_table_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {
     /* Setting for dynamic table size changed from peer, we will update the dynamic table size when we encoder the next
      * header block */
-    aws_hpack_set_max_table_size(encoder->hpack, data);
-    aws_hpack_set_protocol_max_size_setting(encoder->hpack, data);
+    aws_hpack_encoder_update_max_table_size(encoder->hpack, data);
 }
 
 void aws_h2_frame_encoder_set_setting_max_frame_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {

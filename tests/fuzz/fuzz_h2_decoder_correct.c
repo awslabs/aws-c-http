@@ -218,7 +218,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     /* figure out if we should use huffman encoding */
     uint8_t huffman_choice = 0;
     aws_byte_cursor_read_u8(&input, &huffman_choice);
-    aws_hpack_set_huffman_mode(encoder.hpack, huffman_choice % 3);
+    aws_hpack_encoder_set_huffman_mode(encoder.hpack, huffman_choice % 3);
 
     switch (frame_type) {
         case AWS_H2_FRAME_T_DATA: {

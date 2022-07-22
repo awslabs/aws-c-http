@@ -185,7 +185,7 @@ HEADER_TEST(h2_header_empty_payload, s_test_empty_payload, NULL);
 /* RFC-7541 - Header Field Representation Examples - C.2.1. Literal Header Field with Indexing */
 static int s_test_ex_2_1_init(struct header_test_fixture *fixture) {
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
+    aws_hpack_encoder_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
 
     struct aws_http_header headers[] = {
         DEFINE_STATIC_HEADER("custom-key", "custom-header", USE_CACHE),
@@ -205,7 +205,7 @@ HEADER_TEST(h2_header_ex_2_1, s_test_ex_2_1_init, NULL);
 /* RFC-7541 - Header Field Representation Examples - C.2.2. Literal Header Field without Indexing */
 static int s_test_ex_2_2_init(struct header_test_fixture *fixture) {
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
+    aws_hpack_encoder_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
 
     struct aws_http_header headers[] = {
         DEFINE_STATIC_HEADER(":path", "/sample/path", NO_CACHE),
@@ -224,7 +224,7 @@ HEADER_TEST(h2_header_ex_2_2, s_test_ex_2_2_init, NULL);
 /* RFC-7541 - Header Field Representation Examples - C.2.3. Literal Header Field Never Indexed */
 static int s_test_ex_2_3_init(struct header_test_fixture *fixture) {
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
+    aws_hpack_encoder_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
 
     struct aws_http_header headers[] = {
         DEFINE_STATIC_HEADER("password", "secret", NO_FORWARD_CACHE),
@@ -243,7 +243,7 @@ HEADER_TEST(h2_header_ex_2_3, s_test_ex_2_3_init, NULL);
 /* RFC-7541 - Header Field Representation Examples - C.2.3. Indexed Header Field */
 static int s_test_ex_2_4_init(struct header_test_fixture *fixture) {
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
+    aws_hpack_encoder_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
 
     struct aws_http_header headers[] = {
         DEFINE_STATIC_HEADER(":method", "GET", USE_CACHE),
@@ -351,14 +351,14 @@ static int s_dynamic_table_last_entry_check(
     /* check the decoder's dynamic table */
     struct aws_hpack_context *context = fixture->decoder;
     /* get the last element in dynamic table, which will be the absolute index plus all the elements in static table */
-    ASSERT_TRUE(dynamic_table_len == aws_hpack_get_dynamic_table_num_elements(context));
-    const struct aws_http_header *back = aws_hpack_get_header(context, dynamic_table_len + 61);
+    ASSERT_TRUE(dynamic_table_len == aws_hpack_dynamic_table_get_num_elements(context));
+    const struct aws_http_header *back = aws_hpack_decoder_get_header(context, dynamic_table_len + 61);
     ASSERT_TRUE(aws_byte_cursor_eq(&back->name, &expected_entry->name));
     ASSERT_TRUE(aws_byte_cursor_eq(&back->value, &expected_entry->value));
     /* check the encoder's dynamic table */
     context = fixture->encoder;
-    ASSERT_TRUE(dynamic_table_len == aws_hpack_get_dynamic_table_num_elements(context));
-    back = aws_hpack_get_header(context, dynamic_table_len + 61);
+    ASSERT_TRUE(dynamic_table_len == aws_hpack_dynamic_table_get_num_elements(context));
+    back = aws_hpack_decoder_get_header(context, dynamic_table_len + 61);
     ASSERT_TRUE(aws_byte_cursor_eq(&back->name, &expected_entry->name));
     ASSERT_TRUE(aws_byte_cursor_eq(&back->value, &expected_entry->value));
     return AWS_OP_SUCCESS;
@@ -440,7 +440,7 @@ static int s_header_request_response_test_after(struct aws_allocator *allocator,
 /* RFC-7541 - Request Examples without Huffman Coding - C.3 */
 static int s_test_ex_3_init(struct header_request_response_test_fixture *fixture) {
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
+    aws_hpack_encoder_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
     int index = 0;
     /* First Request RFC-7541 C.3.1 */
     struct aws_http_header headers_1[] = {
@@ -508,7 +508,7 @@ HEADER_REQUEST_RESPONSE_TEST(h2_header_ex_3, s_test_ex_3_init, NULL);
 /* RFC-7541 - Request Examples with Huffman Coding - C.4 */
 static int s_test_ex_4_init(struct header_request_response_test_fixture *fixture) {
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_ALWAYS);
+    aws_hpack_encoder_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_ALWAYS);
     int index = 0;
     /* First Request RFC-7541 C.4.1 */
     struct aws_http_header headers_1[] = {
@@ -575,10 +575,10 @@ HEADER_REQUEST_RESPONSE_TEST(h2_header_ex_4, s_test_ex_4_init, NULL);
 static int s_test_ex_5_init(struct header_request_response_test_fixture *fixture) {
 
     /* set the max table size to 256 */
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(fixture->encoder, 256));
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(fixture->decoder, 256));
+    ASSERT_SUCCESS(aws_hpack_dynamic_table_resize(&fixture->encoder.dynamic_table, 256));
+    ASSERT_SUCCESS(aws_hpack_dynamic_table_resize(&fixture->decoder.dynamic_table, 256));
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
+    aws_hpack_encoder_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_NEVER);
     int index = 0;
     /* First Response RFC-7541 C.5.1 */
     struct aws_http_header headers_1[] = {
@@ -651,10 +651,10 @@ HEADER_REQUEST_RESPONSE_TEST(h2_header_ex_5, s_test_ex_5_init, NULL);
 static int s_test_ex_6_init(struct header_request_response_test_fixture *fixture) {
 
     /* set the max table size to 256 */
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(fixture->encoder, 256));
-    ASSERT_SUCCESS(aws_hpack_resize_dynamic_table(fixture->decoder, 256));
+    ASSERT_SUCCESS(aws_hpack_dynamic_table_resize(&fixture->encoder.dynamic_table, 256));
+    ASSERT_SUCCESS(aws_hpack_dynamic_table_resize(&fixture->decoder.dynamic_table, 256));
 
-    aws_hpack_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_ALWAYS);
+    aws_hpack_encoder_set_huffman_mode(fixture->encoder, AWS_HPACK_HUFFMAN_ALWAYS);
 
     int index = 0;
     /* First Response RFC-7541 C.6.1 */
