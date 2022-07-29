@@ -22,6 +22,8 @@ void aws_hpack_decoder_init(struct aws_hpack_decoder *decoder, struct aws_alloca
 
     aws_hpack_context_init(&decoder->context, allocator, AWS_LS_HTTP_DECODER, log_id);
 
+    aws_byte_buf_init(&decoder->progress_entry.scratch, allocator, s_hpack_decoder_scratch_initial_size);
+
     decoder->dynamic_table_protocol_max_size_setting = aws_hpack_get_dynamic_table_max_size(&decoder->context);
 }
 
