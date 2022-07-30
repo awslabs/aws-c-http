@@ -237,18 +237,6 @@ int aws_hpack_encode_header_block(
     const struct aws_http_headers *headers,
     struct aws_byte_buf *output);
 
-/* Private part of encoder API, but public for testing purposes.
- * Output will be dynamically resized if it's too short */
-AWS_HTTP_API
-int aws_hpack_encode_integer(uint64_t integer, uint8_t starting_bits, uint8_t prefix_size, struct aws_byte_buf *output);
-
-/* Private part of encoder API, but public for testing purposes.
- * Output will be dynamically resized if it's too short */
-AWS_HTTP_API
-int aws_hpack_encode_string(
-    struct aws_hpack_encoder *encoder,
-    struct aws_byte_cursor to_encode,
-    struct aws_byte_buf *output);
 
 AWS_HTTP_API
 void aws_hpack_decoder_init(struct aws_hpack_decoder *decoder, struct aws_allocator *allocator, const void *log_id);
@@ -275,7 +263,22 @@ int aws_hpack_decode(
     struct aws_byte_cursor *to_decode,
     struct aws_hpack_decode_result *result);
 
-/* Private part of decoder API, but public for testing purposes. */
+/*******************************************************************************
+ * Private functions for encoder/decoder, but public for testing purposes
+ ******************************************************************************/
+
+/* Output will be dynamically resized if it's too short */
+AWS_HTTP_API
+int aws_hpack_encode_integer(uint64_t integer, uint8_t starting_bits, uint8_t prefix_size, struct aws_byte_buf *output);
+
+/* Output will be dynamically resized if it's too short */
+AWS_HTTP_API
+int aws_hpack_encode_string(
+    struct aws_hpack_encoder *encoder,
+    struct aws_byte_cursor to_encode,
+    struct aws_byte_buf *output);
+
+
 AWS_HTTP_API
 int aws_hpack_decode_integer(
     struct aws_hpack_decoder *decoder,
@@ -284,7 +287,6 @@ int aws_hpack_decode_integer(
     uint64_t *integer,
     bool *complete);
 
-/* Private part of decoder API, but public for testing purposes. */
 AWS_HTTP_API
 int aws_hpack_decode_string(
     struct aws_hpack_decoder *decoder,
