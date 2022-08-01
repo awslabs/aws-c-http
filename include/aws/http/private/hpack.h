@@ -237,7 +237,6 @@ int aws_hpack_encode_header_block(
     const struct aws_http_headers *headers,
     struct aws_byte_buf *output);
 
-
 AWS_HTTP_API
 void aws_hpack_decoder_init(struct aws_hpack_decoder *decoder, struct aws_allocator *allocator, const void *log_id);
 
@@ -277,7 +276,6 @@ int aws_hpack_encode_string(
     struct aws_hpack_encoder *encoder,
     struct aws_byte_cursor to_encode,
     struct aws_byte_buf *output);
-
 
 AWS_HTTP_API
 int aws_hpack_decode_integer(
