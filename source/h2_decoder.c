@@ -193,7 +193,7 @@ struct aws_h2_decoder {
     /* Implementation data. */
     struct aws_allocator *alloc;
     const void *logging_id;
-    struct aws_hpack_context *hpack;
+    struct aws_hpack_decoder hpack;
     bool is_server;
     struct aws_byte_buf scratch;
     const struct decoder_state *state;
@@ -313,10 +313,7 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
 
     decoder->scratch = aws_byte_buf_from_empty_array(scratch_buf, s_scratch_space_size);
 
-    decoder->hpack = aws_hpack_context_new(params->alloc, AWS_LS_HTTP_DECODER, decoder);
-    if (!decoder->hpack) {
-        goto error;
-    }
+    aws_hpack_decoder_init(&decoder->hpack, params->alloc, decoder);
 
     if (decoder->is_server && !params->skip_connection_preface) {
         decoder->state = &s_state_connection_preface_string;
@@ -342,7 +339,7 @@ struct aws_h2_decoder *aws_h2_decoder_new(struct aws_h2_decoder_params *params) 
 
 error:
     if (decoder) {
-        aws_hpack_context_destroy(decoder->hpack);
+        aws_hpack_decoder_clean_up(&decoder->hpack);
         aws_array_list_clean_up(&decoder->settings_buffer_list);
         aws_byte_buf_clean_up(&decoder->header_block_in_progress.cookies);
     }
@@ -365,7 +362,7 @@ void aws_h2_decoder_destroy(struct aws_h2_decoder *decoder) {
         return;
     }
     aws_array_list_clean_up(&decoder->settings_buffer_list);
-    aws_hpack_context_destroy(decoder->hpack);
+    aws_hpack_decoder_clean_up(&decoder->hpack);
     s_reset_header_block_in_progress(decoder);
     aws_byte_buf_clean_up(&decoder->header_block_in_progress.cookies);
     aws_byte_buf_clean_up(&decoder->goaway_in_progress.debug_data);
@@ -1488,7 +1485,7 @@ static struct aws_h2err s_state_fn_header_block_entry(struct aws_h2_decoder *dec
     const size_t prev_fragment_len = fragment.len;
 
     struct aws_hpack_decode_result result;
-    if (aws_hpack_decode(decoder->hpack, &fragment, &result)) {
+    if (aws_hpack_decode(&decoder->hpack, &fragment, &result)) {
         DECODER_LOGF(ERROR, decoder, "Error decoding header-block fragment: %s", aws_error_name(aws_last_error()));
 
         /* Any possible error from HPACK decoder (except OOM) is treated as a COMPRESSION error. */
@@ -1583,7 +1580,7 @@ static struct aws_h2err s_state_fn_connection_preface_string(
 
 void aws_h2_decoder_set_setting_header_table_size(struct aws_h2_decoder *decoder, uint32_t data) {
     /* Set the protocol_max_size_setting for hpack. */
-    aws_hpack_set_protocol_max_size_setting(decoder->hpack, data);
+    aws_hpack_decoder_update_max_table_size(&decoder->hpack, data);
 }
 
 void aws_h2_decoder_set_setting_enable_push(struct aws_h2_decoder *decoder, uint32_t data) {

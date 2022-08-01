@@ -7,6 +7,7 @@
  */
 
 #include <aws/http/connection.h>
+#include <aws/http/private/hpack.h>
 #include <aws/http/request_response.h>
 
 #include <aws/common/byte_buf.h>
@@ -106,7 +107,7 @@ struct aws_h2_frame {
 struct aws_h2_frame_encoder {
     struct aws_allocator *allocator;
     const void *logging_id;
-    struct aws_hpack_context *hpack;
+    struct aws_hpack_encoder hpack;
     struct aws_h2_frame *current_frame;
 
     /* Settings for frame encoder, which is based on the settings received from peer */

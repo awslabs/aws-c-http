@@ -4,7 +4,6 @@
  */
 
 #include <aws/http/private/h2_frames.h>
-#include <aws/http/private/hpack.h>
 
 #include <aws/compression/huffman.h>
 
@@ -298,10 +297,7 @@ int aws_h2_frame_encoder_init(
     encoder->allocator = allocator;
     encoder->logging_id = logging_id;
 
-    encoder->hpack = aws_hpack_context_new(allocator, AWS_LS_HTTP_ENCODER, logging_id);
-    if (!encoder->hpack) {
-        return AWS_OP_ERR;
-    }
+    aws_hpack_encoder_init(&encoder->hpack, allocator, logging_id);
 
     encoder->settings.max_frame_size = aws_h2_settings_initial[AWS_HTTP2_SETTINGS_MAX_FRAME_SIZE];
     return AWS_OP_SUCCESS;
@@ -309,7 +305,7 @@ int aws_h2_frame_encoder_init(
 void aws_h2_frame_encoder_clean_up(struct aws_h2_frame_encoder *encoder) {
     AWS_PRECONDITION(encoder);
 
-    aws_hpack_context_destroy(encoder->hpack);
+    aws_hpack_encoder_clean_up(&encoder->hpack);
 }
 
 /***********************************************************************************************************************
@@ -755,7 +751,7 @@ static int s_frame_headers_encode(
     /* Pre-encode the entire header-block into another buffer
      * the first time we're called. */
     if (frame->state == AWS_H2_HEADERS_STATE_INIT) {
-        if (aws_hpack_encode_header_block(encoder->hpack, frame->headers, &frame->whole_encoded_header_block)) {
+        if (aws_hpack_encode_header_block(&encoder->hpack, frame->headers, &frame->whole_encoded_header_block)) {
             ENCODER_LOGF(
                 ERROR,
                 encoder,
@@ -1229,8 +1225,7 @@ int aws_h2_encode_frame(
 void aws_h2_frame_encoder_set_setting_header_table_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {
     /* Setting for dynamic table size changed from peer, we will update the dynamic table size when we encoder the next
      * header block */
-    aws_hpack_set_max_table_size(encoder->hpack, data);
-    aws_hpack_set_protocol_max_size_setting(encoder->hpack, data);
+    aws_hpack_encoder_update_max_table_size(&encoder->hpack, data);
 }
 
 void aws_h2_frame_encoder_set_setting_max_frame_size(struct aws_h2_frame_encoder *encoder, uint32_t data) {
