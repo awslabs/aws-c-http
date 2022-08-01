@@ -1314,7 +1314,7 @@ static int s_tester_on_put_body(struct aws_http_stream *stream, const struct aws
     (void)stream;
     struct aws_string *content_length_header_str = aws_string_new_from_cursor(s_tester.allocator, data);
     size_t num_received = (uint32_t)atoi((const char *)content_length_header_str->bytes);
-    AWS_FATAL_ASSERT(s_tester.length_sent == num_received);
+    ASSERT_UINT_EQUALS(s_tester.length_sent, num_received);
     aws_string_destroy(content_length_header_str);
 
     return AWS_OP_SUCCESS;
